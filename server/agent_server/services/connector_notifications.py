@@ -362,40 +362,12 @@ class TimelineNotificationHandler:
     ) -> IngestEffect:
         items = [TimelineItemIn.model_validate(item) for item in params.get("items", [])]
         requested_session_id = params["sessionId"]
-        metadata = params.get("metadata") if isinstance(params.get("metadata"), dict) else {}
-        logger.info(
-            "Connector timeline sync received connector_id={} requested_session_id={} external_session_id={} items={} complete={} metadata_message_count={} metadata_synced_message_count={}",
-            connector_id,
-            requested_session_id,
-            params.get("externalSessionId"),
-            len(items),
-            params.get("complete") is True,
-            metadata.get("messageCount"),
-            metadata.get("syncedMessageCount"),
-        )
         session_id = await _resolve_timeline_session_id(
             self._store,
             connector_id,
             requested_session_id,
             items,
         )
-        logger.info(
-            "Connector timeline sync resolved connector_id={} requested_session_id={} resolved_session_id={} items={} complete={}",
-            connector_id,
-            requested_session_id,
-            session_id,
-            len(items),
-            params.get("complete") is True,
-        )
-        if not items and metadata.get("syncedMessageCount", 0):
-            logger.warning(
-                "Connector timeline sync has messages but no items connector_id={} requested_session_id={} resolved_session_id={} external_session_id={} metadata={}",
-                connector_id,
-                requested_session_id,
-                session_id,
-                params.get("externalSessionId"),
-                metadata,
-            )
         if await _session_disabled(self._store, session_id):
             return IngestEffect()
         items = [_timeline_item_for_session(item, session_id) for item in items]

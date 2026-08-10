@@ -15,6 +15,7 @@ from connector.runtime_protocol import (
     RuntimeModelCatalog,
     RuntimeOperationResult,
     RuntimePermissionCatalog,
+    PreparedSessionTimelineSync,
     RuntimeSessionStateCache,
     RuntimeTimelineSnapshot,
     SessionMeta,
@@ -231,6 +232,16 @@ class CodexRuntime(AgentRuntime):
             session_id,
             external_session_id,
             limit,
+        )
+
+    async def prepare_session_timeline_sync(
+        self,
+        session_id: str,
+        external_session_id: str | None = None,
+    ) -> PreparedSessionTimelineSync | None:
+        return await self._session_reader.prepare_session_timeline_sync(
+            session_id,
+            external_session_id,
         )
 
     async def create_and_start_session(

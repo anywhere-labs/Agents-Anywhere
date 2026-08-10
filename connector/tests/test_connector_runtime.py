@@ -28,6 +28,7 @@ from connector.runtime_protocol import (
     MessageTimelineContent,
     MessageTimelineItem,
     PlatformTimelineItem,
+    PreparedSessionTimelineSync,
     ReasoningSystemContent,
     RuntimeAttachmentContent,
     RuntimeCapability,
@@ -1157,6 +1158,22 @@ async def _exercise_runtime_sync_pushes_each_session_snapshot_before_next_meta()
 
     runtime = SyncRuntime()
     host = RecordingRuntimeHost()
+    ingested_batches: list[list[dict[str, Any]]] = []
+
+    async def ingest_notifications(notifications: list[dict[str, Any]]) -> None:
+        ingested_batches.append(list(notifications))
+        for notification in notifications:
+            params = notification["params"]
+            session_id = params.get("sessionId") or params.get("item", {}).get("sessionId")
+            if notification["method"] == "session.meta.upsert":
+                host.events.append(("meta", session_id))
+            elif notification["method"] == "timeline.sync":
+                host.events.append(("timeline", session_id))
+            elif notification["method"] == "session.state.updated":
+                host.events.append(("state", session_id))
+            elif notification["method"] == "notice.upsert":
+                host.events.append(("notice", session_id))
+
     runner = RuntimeSyncRunner(
         config=ConnectorConfig(
             server_url="http://127.0.0.1:8000",
@@ -1167,6 +1184,7 @@ async def _exercise_runtime_sync_pushes_each_session_snapshot_before_next_meta()
         host=host,
         preferences_reader=dict,
         send_notification=unused_notification_sender,
+        ingest_notifications=ingest_notifications,
     )
 
     await runner.sync_existing_once()
@@ -1190,6 +1208,17 @@ async def _exercise_runtime_sync_pushes_each_session_snapshot_before_next_meta()
     ]
     sync_call = next(call for call in runtime.calls if call[0] == "session.sync")
     assert sync_call[1]["limit"] is None
+    assert [
+        notification["method"]
+        for notification in ingested_batches[0]
+    ] == [
+        "session.meta.upsert",
+        "timeline.sync",
+        "session.state.updated",
+        "notice.upsert",
+    ]
+    assert ingested_batches[0][0]["params"]["sessionId"] == "sess_changed"
+    assert ingested_batches[0][1]["params"]["sessionId"] == "sess_changed"
 
 
 async def _exercise_runtime_sync_uses_runtime_timeline_hook_when_available() -> None:
@@ -1218,24 +1247,41 @@ async def _exercise_runtime_sync_uses_runtime_timeline_hook_when_available() -> 
                 ),
             )
 
-        async def sync_session_timeline(
+        async def prepare_session_timeline_sync(
             self,
             session_id: str,
             external_session_id: str | None = None,
-        ) -> bool:
+        ) -> PreparedSessionTimelineSync | None:
             self.calls.append(
                 (
-                    "session.timelineHook",
+                    "session.prepareTimeline",
                     {
                         "sessionId": session_id,
                         "externalSessionId": external_session_id,
                     },
                 )
             )
-            return True
+            async def commit() -> None:
+                self.calls.append(("session.commitTimeline", {"sessionId": session_id}))
+
+            return PreparedSessionTimelineSync(snapshot=None, commit=commit)
 
     runtime = HookRuntime()
     host = RecordingRuntimeHost()
+    ingested_batches: list[list[dict[str, Any]]] = []
+
+    async def ingest_notifications(notifications: list[dict[str, Any]]) -> None:
+        ingested_batches.append(list(notifications))
+        for notification in notifications:
+            params = notification["params"]
+            session_id = params.get("sessionId")
+            if notification["method"] == "session.meta.upsert":
+                host.events.append(("meta", session_id))
+            elif notification["method"] == "session.state.updated":
+                host.events.append(("state", session_id))
+            elif notification["method"] == "notice.upsert":
+                host.events.append(("notice", session_id))
+
     runner = RuntimeSyncRunner(
         config=ConnectorConfig(
             server_url="http://127.0.0.1:8000",
@@ -1246,6 +1292,7 @@ async def _exercise_runtime_sync_uses_runtime_timeline_hook_when_available() -> 
         host=host,
         preferences_reader=dict,
         send_notification=unused_notification_sender,
+        ingest_notifications=ingest_notifications,
     )
 
     await runner.sync_existing_once()
@@ -1261,9 +1308,15 @@ async def _exercise_runtime_sync_uses_runtime_timeline_hook_when_available() -> 
         "runtime.modelCatalog",
         "runtime.permissionCatalog",
         "session.discover",
-        "session.timelineHook",
+        "session.prepareTimeline",
         "session.state",
         "session.notices",
+        "session.commitTimeline",
+    ]
+    assert [notification["method"] for notification in ingested_batches[0]] == [
+        "session.meta.upsert",
+        "session.state.updated",
+        "notice.upsert",
     ]
 
 

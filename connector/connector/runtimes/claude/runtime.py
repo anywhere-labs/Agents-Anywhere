@@ -13,6 +13,7 @@ from connector.runtime_protocol import (
     RuntimeModelCatalog,
     RuntimeOperationResult,
     RuntimePermissionCatalog,
+    PreparedSessionTimelineSync,
     RuntimeSessionStateCache,
     RuntimeTimelineSnapshot,
     SessionMeta,
@@ -210,6 +211,16 @@ class ClaudeRuntime(AgentRuntime):
         external_session_id: str | None = None,
     ) -> bool:
         return await self._history_syncer.sync_session_timeline(
+            session_id=session_id,
+            external_session_id=external_session_id,
+        )
+
+    async def prepare_session_timeline_sync(
+        self,
+        session_id: str,
+        external_session_id: str | None = None,
+    ) -> PreparedSessionTimelineSync | None:
+        return await self._history_syncer.prepare_session_timeline_sync(
             session_id=session_id,
             external_session_id=external_session_id,
         )

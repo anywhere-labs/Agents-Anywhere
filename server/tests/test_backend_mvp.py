@@ -5555,6 +5555,68 @@ def test_connector_ingest_archives_local_hidden_session_meta(tmp_path):
     assert state.json()["session"]["archivedAt"] is not None
 
 
+def test_connector_ingest_ordered_meta_then_timeline_creates_session_before_items(tmp_path):
+    client = make_client(tmp_path)
+    _, access_token, _, headers = create_connector_and_session(client)
+
+    response = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={
+            "notifications": [
+                {
+                    "method": "session.meta.upsert",
+                    "params": {
+                        "sessionId": "sess_scanner_ordered",
+                        "runtime": "codex",
+                        "externalSessionId": "thr_scanner_ordered",
+                        "title": "Scanner ordered",
+                        "cwd": "/repo",
+                    },
+                },
+                {
+                    "method": "timeline.sync",
+                    "params": {
+                        "sessionId": "sess_scanner_ordered",
+                        "runtime": "codex",
+                        "externalSessionId": "thr_scanner_ordered",
+                        "complete": True,
+                        "items": [
+                            {
+                                "id": "tl_scanner_ordered_user",
+                                "sessionId": "sess_scanner_ordered",
+                                "type": "message",
+                                "status": "done",
+                                "role": "user",
+                                "content": {
+                                    "kind": "markdown",
+                                    "text": "scanner history",
+                                    "format": "markdown",
+                                },
+                                "source": {
+                                    "runtime": "codex",
+                                    "sessionId": "thr_scanner_ordered",
+                                    "itemId": "item_scanner_ordered_user",
+                                    "event": "thread/read",
+                                },
+                                "orderSeq": 1,
+                                "revision": 1,
+                                "contentHash": "sha256:scanner-ordered-user",
+                            }
+                        ],
+                    },
+                },
+            ],
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["accepted"] == 2
+    state = session_view_for_assertions(client, "sess_scanner_ordered", headers)
+    assert state["session"]["externalSessionId"] == "thr_scanner_ordered"
+    assert [item["id"] for item in state["items"]] == ["tl_scanner_ordered_user"]
+
+
 def test_connector_ingest_prefers_explicit_platform_session_over_external_match(tmp_path):
     client = make_client(tmp_path)
     connector_id, access_token, _, headers = create_connector_and_session(client)

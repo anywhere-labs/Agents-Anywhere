@@ -16,6 +16,7 @@ from connector.runtime_protocol.models import (
     RuntimeOperationResult,
     RuntimePermissionCatalog,
     RuntimeTimelineSnapshot,
+    PreparedSessionTimelineSync,
     SessionMeta,
     SessionNotice,
     SessionState,
@@ -89,6 +90,14 @@ class AgentRuntime(ABC):
         """
         _ = session_id, external_session_id
         return False
+
+    async def prepare_session_timeline_sync(
+        self,
+        session_id: str,
+        external_session_id: str | None = None,
+    ) -> PreparedSessionTimelineSync | None:
+        _ = session_id, external_session_id
+        return None
 
     async def get_session_state(
         self,

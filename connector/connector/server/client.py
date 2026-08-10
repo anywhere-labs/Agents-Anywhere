@@ -109,6 +109,7 @@ class BackendRpcClient:
             host=self.agent_runtime_host,
             preferences_reader=self._preferences_reader,
             send_notification=self.send_notification,
+            ingest_notifications=self.ingest_notifications,
         )
 
     async def run_forever(self) -> None:

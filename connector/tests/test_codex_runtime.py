@@ -1594,8 +1594,9 @@ async def _test_codex_runtime_lists_sessions_from_thread_list() -> None:
     assert sessions[1].metadata["local_state"] == "archived"
     assert sessions[1].metadata["hidden"] is True
     assert sessions[1].metadata["sync"]["requires_timeline_sync"] is False
-    assert host.sync_states["codex/session-sync/thread_1"]["session_id"] == (
-        stable_session_id("conn_test", "thread_1")
+    assert "codex/session-sync/thread_1" not in host.sync_states
+    assert host.sync_states["codex/session-sync/thread_archived"]["session_id"] == (
+        stable_session_id("conn_test", "thread_archived")
     )
 
 
@@ -1609,6 +1610,13 @@ async def _test_codex_runtime_session_sync_marker_skips_unchanged_timeline() -> 
     runtime = CodexRuntime(config=_config(), host=host, client=client)
 
     first = await runtime.list_sessions(limit=10)
+    prepared = await runtime.prepare_session_timeline_sync(
+        first[0].session_id,
+        first[0].external_session_id,
+    )
+    assert prepared is not None
+    assert prepared.commit is not None
+    await prepared.commit()
     second = await runtime.list_sessions(limit=10)
     restarted_runtime = CodexRuntime(config=_config(), host=host, client=client)
     after_restart = await restarted_runtime.list_sessions(limit=10)
@@ -1618,7 +1626,7 @@ async def _test_codex_runtime_session_sync_marker_skips_unchanged_timeline() -> 
     assert second[0].metadata["sync"]["requires_timeline_sync"] is False
     assert after_restart[0].session_id == first[0].session_id
     assert after_restart[0].metadata["sync"]["changed"] is False
-    assert all(request[0] != "thread/read" for request in client.requests)
+    assert [request[0] for request in client.requests].count("thread/read") == 1
 
 
 def test_codex_runtime_session_sync_force_requires_timeline() -> None:
@@ -1650,7 +1658,14 @@ async def _test_codex_runtime_session_sync_marker_allows_rename_only_meta_update
     host = FakeHost()
     runtime = CodexRuntime(config=_config(), host=host, client=client)
 
-    await runtime.list_sessions(limit=10)
+    first = await runtime.list_sessions(limit=10)
+    prepared = await runtime.prepare_session_timeline_sync(
+        first[0].session_id,
+        first[0].external_session_id,
+    )
+    assert prepared is not None
+    assert prepared.commit is not None
+    await prepared.commit()
     client.results["thread/list"] = {
         "threads": [
             {
