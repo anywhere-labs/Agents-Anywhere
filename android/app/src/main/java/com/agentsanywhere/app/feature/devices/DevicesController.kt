@@ -197,17 +197,20 @@ class DevicesController(
 
         return withContext(Dispatchers.IO) {
             runCatching {
-                val schema = sessionsApi.getRuntimeConfigSchema(
-                    serverUrl = auth.serverUrl,
-                    authorizationToken = auth.accessToken,
-                    runtime = runtime,
-                )
-                devicesApi.getDeviceAgentSettings(
+                val settings = devicesApi.getDeviceAgentSettings(
                     serverUrl = auth.serverUrl,
                     authorizationToken = auth.accessToken,
                     deviceId = connectorId,
                     runtime = runtime,
-                ).toRuntimeSettingsState(schema)
+                )
+                // Prefer the device-merged schema returned by the device settings
+                // endpoint (live modelOptions), falling back to the global schema.
+                val schema = settings.schema ?: sessionsApi.getRuntimeConfigSchema(
+                    serverUrl = auth.serverUrl,
+                    authorizationToken = auth.accessToken,
+                    runtime = runtime,
+                )
+                settings.toRuntimeSettingsState(schema)
             }.recoverCatching { error ->
                 if (error is ApiException) throw error
                 throw IllegalStateException(error.message ?: "Could not load agent settings.", error)

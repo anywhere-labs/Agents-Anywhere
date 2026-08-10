@@ -232,15 +232,17 @@ class SessionDetailController(
         return withContext(Dispatchers.IO) {
             runCatching {
                 val auth = authSession()
-                val schema = sessionsApi.getRuntimeConfigSchema(
-                    serverUrl = auth.serverUrl,
-                    authorizationToken = auth.accessToken,
-                    runtime = runtime,
-                )
                 val settings = sessionsApi.getSessionRuntimeSettings(
                     serverUrl = auth.serverUrl,
                     authorizationToken = auth.accessToken,
                     sessionId = sessionId,
+                )
+                // Prefer the device-merged schema returned by the runtime-settings
+                // endpoint (live modelOptions), falling back to the global schema.
+                val schema = settings.schema ?: sessionsApi.getRuntimeConfigSchema(
+                    serverUrl = auth.serverUrl,
+                    authorizationToken = auth.accessToken,
+                    runtime = runtime,
                 )
                 settings.toRuntimeSettingsState(schema)
             }
