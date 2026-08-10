@@ -7,7 +7,16 @@ from pydantic import BaseModel, ConfigDict, Field
 RuntimeName = Literal["codex", "claude", "opencode", "acp"]
 ConnectorStatus = Literal["offline", "online"]
 ConnectorDeviceOs = Literal["macos", "windows", "linux"]
-SessionStatus = Literal["idle", "waiting", "pending", "running", "stopping", "blocked"]
+SessionStatus = Literal[
+    "idle",
+    "waiting",
+    "pending",
+    "running",
+    "stopping",
+    "waiting_approval",
+    "error",
+    "blocked",
+]
 TimelineType = Literal[
     "turn.start",
     "turn.end",

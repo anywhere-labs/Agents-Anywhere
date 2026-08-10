@@ -26,12 +26,12 @@ class CodexNoticeHandler:
         params: dict[str, Any],
         request_id: Any,
     ) -> None:
-        """Publish an approval notice and blocked session state.
+        """Publish an approval notice and waiting-approval session state.
 
         Side effects:
         - binds the active turn id when the approval event carries one
         - upserts a SessionNotice through the host
-        - updates SessionState.status to blocked
+        - updates SessionState.status to waiting_approval
         """
 
         turn_id = codex_sessions.turn_id_from_result(
@@ -62,7 +62,7 @@ class CodexNoticeHandler:
         await self.session_states.update(
             session_id=session_id,
             external_session_id=thread_id,
-            status="blocked",
+            status="waiting_approval",
             metadata={
                 "source": method,
                 "notice_id": notice.notice_id,

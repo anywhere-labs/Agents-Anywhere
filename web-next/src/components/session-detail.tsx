@@ -2013,7 +2013,7 @@ function effectiveRuntimeStatus(
 ): RuntimeStatusValue {
   if (runtimeState) return runtimeState.status
   if (session?.connectorStatus === "offline") return "disconnected"
-  return "idle"
+  return session?.status ?? "idle"
 }
 
 function mergeNotices(current: Notice[], incoming: Notice[]): Notice[] {

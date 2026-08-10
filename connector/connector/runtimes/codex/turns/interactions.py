@@ -104,7 +104,7 @@ class CodexInteractionController:
         cached_state = self.session_states.get(session_id)
         if cached_state is not None:
             next_status = (
-                "blocked"
+                "waiting_approval"
                 if self.notices.open_blocking_for_session(session_id)
                 else "running"
                 if self.active_turn_ids.get(session_id) is not None
@@ -213,7 +213,7 @@ class CodexInteractionController:
             await self.session_states.update(
                 session_id=session_id,
                 external_session_id=cached_state.external_session_id,
-                status="blocked",
+                status="waiting_approval",
                 metadata={
                     "source": "codex.approval/respond_failed",
                     "notice_id": notice_id,

@@ -304,7 +304,16 @@ class SessionRunService:
         if not isinstance(state, dict):
             return "idle"
         status = state.get("status")
-        if status in {"idle", "waiting", "pending", "running", "stopping", "blocked"}:
+        if status in {
+            "idle",
+            "waiting",
+            "pending",
+            "running",
+            "stopping",
+            "waiting_approval",
+            "error",
+            "blocked",
+        }:
             return status
         return "idle"
 

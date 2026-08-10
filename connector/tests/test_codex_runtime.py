@@ -3645,12 +3645,12 @@ async def _test_codex_runtime_failed_turn_creates_blocking_error_notice() -> Non
     assert host.state_updates[-1]["status"] == "idle"
     assert interrupt.ok is False
     assert interrupt.code == "codex_no_active_turn"
-    blocked_update = next(
+    error_update = next(
         update
         for update in reversed(host.state_updates)
-        if update["status"] == "blocked"
+        if update["status"] == "error"
     )
-    assert blocked_update["error"]["code"] == "boom"
+    assert error_update["error"]["code"] == "boom"
 
 
 def test_codex_runtime_tags_completed_user_echo_with_client_message_id() -> None:
@@ -4139,7 +4139,7 @@ async def _test_codex_runtime_approval_request_upserts_session_notice() -> None:
     }
     assert notice.context["turnId"] == "turn_1"
     assert notice.context["command"] == "ls -la"
-    assert host.state_updates[-1]["status"] == "blocked"
+    assert host.state_updates[-1]["status"] == "waiting_approval"
     assert host.state_updates[-1]["metadata"]["notice_id"] == "notice_approval_appr_cmd"
     assert [action["actionId"] for action in notice.actions] == [
         "approve",
@@ -4545,7 +4545,7 @@ async def _test_codex_runtime_failed_approval_response_keeps_notice_retryable() 
         "code": "RuntimeError",
         "message": "ipc disconnected",
     }
-    assert host.state_updates[-1]["status"] == "blocked"
+    assert host.state_updates[-1]["status"] == "waiting_approval"
     assert host.state_updates[-1]["metadata"]["notice_id"] == "notice_approval_appr_cmd"
 
 
@@ -4623,13 +4623,13 @@ async def _test_codex_runtime_interrupt_closes_open_approval_notice() -> None:
     assert host.state_updates[-1]["status"] == "idle"
 
 
-def test_codex_runtime_resolved_approval_keeps_blocked_with_other_open_notice() -> None:
+def test_codex_runtime_resolved_approval_keeps_waiting_approval_with_other_open_notice() -> None:
     asyncio.run(
-        _test_codex_runtime_resolved_approval_keeps_blocked_with_other_open_notice()
+        _test_codex_runtime_resolved_approval_keeps_waiting_approval_with_other_open_notice()
     )
 
 
-async def _test_codex_runtime_resolved_approval_keeps_blocked_with_other_open_notice() -> (
+async def _test_codex_runtime_resolved_approval_keeps_waiting_approval_with_other_open_notice() -> (
     None
 ):
     client = FakeCodexClient()
@@ -4662,7 +4662,7 @@ async def _test_codex_runtime_resolved_approval_keeps_blocked_with_other_open_no
     assert result.ok is True
     assert host.notice_upserts[-1].notice_id == "notice_approval_appr_one"
     assert host.notice_upserts[-1].status == "resolved"
-    assert host.state_updates[-1]["status"] == "blocked"
+    assert host.state_updates[-1]["status"] == "waiting_approval"
     assert host.state_updates[-1]["metadata"]["notice_id"] == "notice_approval_appr_one"
 
 

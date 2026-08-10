@@ -146,7 +146,7 @@ class ClaudeInteractionController:
         await self.notifications.notice_handler.notice_upsert(notice)
         await self.notifications.session_state.session_state_update(
             session,
-            "blocked",
+            "waiting_approval",
             metadata={
                 "source": "claude.can_use_tool",
                 "notice_id": notice.notice_id,

@@ -97,14 +97,14 @@ class CodexTurnLifecycleHandler:
         thread_id: str,
         event: CodexSdkEvent,
     ) -> None:
-        """Publish failed turn items, notice, and blocked state.
+        """Publish failed turn items, notice, and error state.
 
         Side effects:
         - clears active_turn_ids for the session
         - may publish timeline_sync with failed turn items
         - closes blocking notices
         - upserts an execution error notice
-        - updates SessionState.status to blocked
+        - updates SessionState.status to error
         """
 
         params = event.params
@@ -142,7 +142,7 @@ class CodexTurnLifecycleHandler:
         await self.session_states.update(
             session_id=session_id,
             external_session_id=thread_id,
-            status="blocked",
+            status="error",
             error=error_from_params(params),
             metadata={
                 "source": "codex.turn/failed",

@@ -757,6 +757,8 @@
             "pending",
             "running",
             "stopping",
+            "waiting_approval",
+            "error",
             "blocked"
           ],
           "title": "Status",
@@ -963,6 +965,8 @@
             "pending",
             "running",
             "stopping",
+            "waiting_approval",
+            "error",
             "blocked"
           ],
           "title": "Status",
