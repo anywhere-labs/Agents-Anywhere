@@ -213,7 +213,9 @@ class BackendRpcClient:
         self, method: str, params: dict[str, Any]
     ) -> None:
         if notification_requires_ingest(method):
-            await self._ingest.enqueue(method, params)
+            await self._ingest.ingest_notifications(
+                [{"method": method, "params": params}]
+            )
             return
         if self._rpc.connected:
             try:

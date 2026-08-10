@@ -4,6 +4,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
+CLAUDE_HISTORY_CURSOR_VERSION = 2
+
 
 @dataclass(frozen=True, slots=True)
 class ClaudeHistoryCursor:
@@ -28,6 +30,7 @@ def cursor_for(session_info: Any, messages: tuple[Any, ...]) -> ClaudeHistoryCur
 
 def cursor_to_state(cursor: ClaudeHistoryCursor) -> dict[str, Any]:
     return {
+        "version": CLAUDE_HISTORY_CURSOR_VERSION,
         "fingerprint": {
             "lastModified": cursor.last_modified,
             "fileSize": cursor.file_size,
@@ -41,6 +44,8 @@ def cursor_to_state(cursor: ClaudeHistoryCursor) -> dict[str, Any]:
 
 def cursor_from_state(state: Mapping[str, Any] | None) -> ClaudeHistoryCursor | None:
     if state is None:
+        return None
+    if _optional_int(state.get("version")) != CLAUDE_HISTORY_CURSOR_VERSION:
         return None
     fingerprint = state.get("fingerprint")
     cursor = state.get("cursor")

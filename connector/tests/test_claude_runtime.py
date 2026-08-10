@@ -902,11 +902,63 @@ async def _test_claude_runtime_scanner_syncs_full_history_without_cursor() -> No
     assert sync["metadata"]["source"] == "claude.history.sync"
     assert [item.role for item in sync["items"]] == ["user", "assistant"]
     assert (
+        host.sync_states["claude/history/cursor/claude_history_full"]["version"] == 2
+    )
+    assert (
         host.sync_states["claude/history/cursor/claude_history_full"]["cursor"][
             "lastMessageUuid"
         ]
         == "history_full_assistant"
     )
+
+
+def test_claude_runtime_ignores_legacy_unacked_history_cursor() -> None:
+    asyncio.run(_test_claude_runtime_ignores_legacy_unacked_history_cursor())
+
+
+async def _test_claude_runtime_ignores_legacy_unacked_history_cursor() -> None:
+    host = _RecordingHost()
+    host.sync_states["claude/history/cursor/claude_history_legacy"] = {
+        "fingerprint": {"lastModified": 1, "fileSize": 2},
+        "cursor": {"messageCount": 1, "lastMessageUuid": "legacy_assistant"},
+    }
+    sdk = _HistorySdk(
+        infos={
+            "claude_history_legacy": SimpleNamespace(
+                session_id="claude_history_legacy",
+                last_modified=1,
+                file_size=2,
+            )
+        },
+        messages={
+            "claude_history_legacy": [
+                SimpleNamespace(
+                    type="assistant",
+                    uuid="legacy_assistant",
+                    session_id="claude_history_legacy",
+                    message={
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": "restored"}],
+                    },
+                )
+            ]
+        },
+    )
+    runtime = _runtime(host=host, sdk=sdk)
+
+    handled = await runtime.sync_session_timeline(
+        "sess_history_legacy",
+        "claude_history_legacy",
+    )
+
+    assert handled is True
+    assert len(host.timeline_syncs) == 1
+    sync = host.timeline_syncs[0]
+    assert sync["complete"] is True
+    assert sync["items"][0].content["text"] == "restored"
+    assert host.sync_states["claude/history/cursor/claude_history_legacy"][
+        "version"
+    ] == 2
 
 
 def test_claude_runtime_scanner_syncs_delta_after_cursor() -> None:
