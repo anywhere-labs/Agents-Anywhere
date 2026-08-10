@@ -168,10 +168,23 @@ private struct SidebarDrawerInteractive<
                         content: mainContent(safeAreaInsets),
                         close: closeFromOverlay
                     )
+
+                    if usesOpeningEdgeGestureRegion {
+                        Color.clear
+                            .frame(
+                                width: max(configuration.edgeActivationWidth, 0),
+                                height: screenSize.height
+                            )
+                            .contentShape(Rectangle())
+                            .highPriorityGesture(drawerGesture(revealWidth: revealWidth))
+                    }
                 }
                 .frame(width: screenSize.width, height: screenSize.height)
                 .contentShape(Rectangle())
-                .simultaneousGesture(drawerGesture(revealWidth: revealWidth))
+                .simultaneousGesture(
+                    drawerGesture(revealWidth: revealWidth),
+                    isEnabled: !usesOpeningEdgeGestureRegion
+                )
                 .onChange(of: isOpen) { _, newValue in
                     synchronizeProgress(with: newValue)
                 }
@@ -196,6 +209,10 @@ private struct SidebarDrawerInteractive<
 
     private var contentOverlayOpacity: CGFloat {
         configuration.contentOverlayOpacity.clamped(to: 0 ... 1) * progress
+    }
+
+    private var usesOpeningEdgeGestureRegion: Bool {
+        progress <= 0.001 || dragStartProgress.map { $0 <= 0.001 } == true
     }
 
     private func drawerGesture(revealWidth: CGFloat) -> some Gesture {
