@@ -4,7 +4,7 @@ import hashlib
 import json
 import time
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import Any
 
@@ -15,6 +15,7 @@ from connector.runtime_protocol import (
     RuntimeTimelineSnapshot,
     SessionMeta,
     SessionState,
+    timeline_content_hash,
 )
 from connector.runtime_protocol.host import RuntimeHostClient
 from connector.runtimes.claude.domain.session import (
@@ -320,7 +321,46 @@ def _history_items_from_messages(
                 native_item_id=native_id or f"history_{index}",
             )
         )
-    return tuple(items)
+    return _dedupe_history_items(items)
+
+
+def _dedupe_history_items(
+    items: list[RuntimeTimelineItem],
+) -> tuple[RuntimeTimelineItem, ...]:
+    deduped: list[RuntimeTimelineItem] = []
+    index_by_id: dict[str, int] = {}
+    for item in items:
+        existing_index = index_by_id.get(item.id)
+        if existing_index is None:
+            index_by_id[item.id] = len(deduped)
+            deduped.append(item)
+            continue
+        deduped[existing_index] = _merge_duplicate_history_item(
+            deduped[existing_index],
+            item,
+        )
+    return tuple(deduped)
+
+
+def _merge_duplicate_history_item(
+    existing: RuntimeTimelineItem,
+    incoming: RuntimeTimelineItem,
+) -> RuntimeTimelineItem:
+    if existing.type != "tool" or incoming.type != "tool":
+        return incoming
+
+    content = {**existing.content, **incoming.content}
+    return replace(
+        incoming,
+        order_seq=existing.order_seq,
+        content=content,
+        content_hash=timeline_content_hash(
+            item_type=incoming.type,  # type: ignore[arg-type]
+            status=incoming.status,  # type: ignore[arg-type]
+            role=incoming.role,  # type: ignore[arg-type]
+            content=content,
+        ),
+    )
 
 
 def _merge_session_metas(

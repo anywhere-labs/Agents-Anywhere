@@ -607,17 +607,17 @@ async def _test_claude_runtime_projects_sdk_history_snapshot() -> None:
         "message",
         "message",
         "tool",
-        "tool",
     ]
+    assert len({item.id for item in snapshot.items}) == len(snapshot.items)
     assert [item.role for item in snapshot.items[:2]] == ["user", "assistant"]
     assert snapshot.items[0].content["text"] == "hello"
     assert snapshot.items[1].content["text"] == "hi"
-    assert snapshot.items[2].content["kind"] == "command"
+    assert snapshot.items[2].status == "done"
+    assert snapshot.items[2].content["kind"] == "tool_result"
     assert snapshot.items[2].content["command"] == "pwd"
-    assert snapshot.items[3].status == "done"
-    assert snapshot.items[3].content["output"] == "/repo"
-    assert snapshot.items[3].content["outputText"] == "/repo"
-    assert snapshot.items[3].content["outputLength"] == 5
+    assert snapshot.items[2].content["output"] == "/repo"
+    assert snapshot.items[2].content["outputText"] == "/repo"
+    assert snapshot.items[2].content["outputLength"] == 5
 
 
 def test_claude_runtime_projects_sdk_history_system_blocks() -> None:
