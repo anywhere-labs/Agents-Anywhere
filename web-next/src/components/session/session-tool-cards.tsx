@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { Check, ChevronDown, Code2, Copy, FilePenLine, Hammer, Loader2, TerminalSquare, X } from "lucide-react"
+import { Check, ChevronDown, Code2, Copy, FilePenLine, Hammer, Loader2, TerminalSquare } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
@@ -53,15 +53,16 @@ export function ToolCard({
 }) {
   const tSession = useTranslations("dashboard.session")
   const kind = timelineToolKind(item)
-  const command = commandText(item.content.command)
+  const command = timelineToolCommand(item)
   const output =
     textOf(item.content.output) ||
     textOf(item.content.outputPreview) ||
     textOf(item.content.outputText) ||
     textOf(item.content.error)
   const changes = recordsOf(item.content.changes)
+  const displayOutput = changes.length > 0 ? null : output
   const title = timelineToolTitle(item, session, tSession)
-  const hasDetail = Boolean(command || output || changes.length > 0 || interaction)
+  const hasDetail = Boolean(command || displayOutput || changes.length > 0 || interaction)
   const shouldOpenForInteraction = Boolean(interaction)
   const [localOpen, setLocalOpen] = React.useState(shouldOpenForInteraction)
   const actualOpen = open ?? localOpen
@@ -107,7 +108,7 @@ export function ToolCard({
             token={token}
             session={session}
             command={command}
-            output={output}
+            output={displayOutput}
             changes={changes}
           />
           {interaction ? (
@@ -173,7 +174,6 @@ export function ToolMarkerRowContent({
       >
         {title}
       </MarkerContent>
-      {failed ? <X className="shrink-0 text-destructive" /> : null}
     </>
   )
 }
@@ -203,15 +203,53 @@ export function timelineToolTitle(
   if (item.type === "artifact") {
     return firstTextOf(item.content.path, item.content.filePath, item.content.file, item.content.uri) ?? kind
   }
+  const input = recordOf(item.content.input)
+  const command = timelineToolCommand(item)
+  const toolName = firstTextOf(item.content.toolName, item.content.name, item.content.tool, item.content.title)
+  const target = timelineToolTarget(item, session)
   return kind === "command"
-    ? tSession("toolRan", { command: commandText(item.content.command) || tSession("toolCommandFallback") })
+    ? tSession("toolRan", { command: command || tSession("toolCommandFallback") })
     : kind === "web_search"
-        ? tSession("toolSearched", { query: textOf(item.content.query) || tSession("toolWebFallback") })
+        ? tSession("toolSearched", { query: textOf(item.content.query) || textOf(input?.query) || tSession("toolWebFallback") })
         : kind === "mcp"
-          ? `${textOf(item.content.server) || tSession("toolMcpFallback")} / ${
-              textOf(item.content.tool) || tSession("toolToolFallback")
+          ? `${textOf(item.content.server) || textOf(input?.server) || tSession("toolMcpFallback")} / ${
+              textOf(item.content.tool) || textOf(input?.tool) || tSession("toolToolFallback")
             }`
-          : kind
+          : toolName
+            ? target ? `${toolName} ${target}` : toolName
+            : target || kind
+}
+
+function timelineToolCommand(item: TimelineItem): string | null {
+  const input = recordOf(item.content.input)
+  return commandText(item.content.command) || commandText(input?.command) || commandText(input?.cmd)
+}
+
+function recordOf(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null
+}
+
+function timelineToolTarget(item: TimelineItem, session: SessionView): string | null {
+  const input = recordOf(item.content.input)
+  const rawPath = firstTextOf(
+    item.content.path,
+    item.content.filePath,
+    item.content.file,
+    item.content.uri,
+    input?.file_path,
+    input?.notebook_path,
+    input?.path,
+  )
+  if (rawPath) return displayPathForSession(rawPath, session.cwd) ?? rawPath
+  return firstTextOf(
+    item.content.query,
+    input?.query,
+    item.content.url,
+    input?.url,
+    item.content.command,
+    input?.command,
+    input?.cmd,
+  )
 }
 
 export function ToolDetailPanel({
