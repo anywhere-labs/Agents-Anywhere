@@ -71,6 +71,7 @@ class RemoteTerminalController(
     private var connectorId: String? = null
     private var terminalId: String? = null
     private var streamUrl: String? = null
+    private var streamAuthorizationToken: String? = null
     private var reconnectScheduled = false
     private var reconnectAttempts = 0
     private var lastSeenSeq = 0L
@@ -121,6 +122,7 @@ class RemoteTerminalController(
                 connectorId = connection.connectorId
                 terminalId = connection.terminal.terminalId
                 streamUrl = connection.streamUrl
+                streamAuthorizationToken = connection.authorizationToken
                 lastSeenSeq = 0L
                 reconnectAttempts = 0
                 remoteTerminalGone = false
@@ -163,6 +165,7 @@ class RemoteTerminalController(
                 connectorId = connection.connectorId
                 terminalId = connection.terminal.terminalId
                 streamUrl = connection.streamUrl
+                streamAuthorizationToken = connection.authorizationToken
                 lastSeenSeq = 0L
                 reconnectAttempts = 0
                 remoteTerminalGone = false
@@ -314,6 +317,7 @@ class RemoteTerminalController(
         connectorId = null
         terminalId = null
         streamUrl = null
+        streamAuthorizationToken = null
         reconnectScheduled = false
         reconnectAttempts = 0
         remoteTerminalGone = false
@@ -365,6 +369,10 @@ class RemoteTerminalController(
                     diag("ws failure ${t::class.java.simpleName}: ${t.message} manual=$manuallyClosed terminal=$terminalId")
                     if (socket !== webSocket) return
                     socket = null
+                    if (response?.code == 401) {
+                        streamAuthorizationToken?.let(terminalController::notifyUnauthorized)
+                        return
+                    }
                     if (!manuallyClosed) {
                         scheduleReconnect()
                     }
@@ -511,6 +519,7 @@ class RemoteTerminalController(
         connectorId = null
         terminalId = null
         streamUrl = null
+        streamAuthorizationToken = null
         reconnectScheduled = false
         remoteTerminalGone = false
         cancelPendingRemoteResize()

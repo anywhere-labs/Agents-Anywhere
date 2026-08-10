@@ -171,6 +171,7 @@ class SessionsApi(
         client.streamSse(
             serverUrl = serverUrl,
             path = "/sessions/${sessionId.urlEncode()}/events?token=${authorizationToken.urlEncode()}",
+            authorizationToken = authorizationToken,
             onOpen = onOpen,
         ) { event ->
             onEvent(event.toRemoteSessionEvent())

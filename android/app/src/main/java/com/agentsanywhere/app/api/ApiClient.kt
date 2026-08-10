@@ -5,7 +5,9 @@ import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 
-class ApiClient {
+class ApiClient(
+    private val onUnauthorized: (accessToken: String) -> Unit = {},
+) {
     fun getJson(
         serverUrl: String,
         path: String,
@@ -82,6 +84,7 @@ class ApiClient {
     fun streamSse(
         serverUrl: String,
         path: String,
+        authorizationToken: String? = null,
         onOpen: () -> Unit = {},
         onEvent: (JSONObject) -> Unit,
     ) {
@@ -98,6 +101,7 @@ class ApiClient {
             val responseCode = connection.responseCode
             if (responseCode !in 200..299) {
                 val responseText = readResponseText(connection, responseCode)
+                notifyUnauthorized(responseCode, authorizationToken)
                 throw ApiException(
                     message = parseErrorMessage(responseText) ?: defaultErrorMessage(responseCode),
                     statusCode = responseCode,
@@ -169,6 +173,7 @@ class ApiClient {
                 val responseCode = connection.responseCode
                 val responseText = readResponseText(connection, responseCode)
                 if (responseCode !in 200..299) {
+                    notifyUnauthorized(responseCode, authorizationToken)
                     throw ApiException(
                         message = parseErrorMessage(responseText) ?: defaultErrorMessage(responseCode),
                         statusCode = responseCode,
@@ -221,6 +226,7 @@ class ApiClient {
                 val responseCode = connection.responseCode
                 val responseText = readResponseText(connection, responseCode)
                 if (responseCode !in 200..299) {
+                    notifyUnauthorized(responseCode, authorizationToken)
                     throw ApiException(
                         message = parseErrorMessage(responseText) ?: defaultErrorMessage(responseCode),
                         statusCode = responseCode,
@@ -236,6 +242,11 @@ class ApiClient {
         } catch (exc: IOException) {
             throw ApiException("Could not reach the server. Check the URL and network.", cause = exc)
         }
+    }
+
+    internal fun notifyUnauthorized(statusCode: Int, authorizationToken: String?) {
+        if (statusCode != 401 || authorizationToken.isNullOrBlank()) return
+        runCatching { onUnauthorized(authorizationToken) }
     }
 
     private fun readResponseText(connection: HttpURLConnection, responseCode: Int): String {
