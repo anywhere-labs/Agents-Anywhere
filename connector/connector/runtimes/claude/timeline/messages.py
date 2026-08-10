@@ -205,27 +205,13 @@ class ClaudeMessageProjector:
         )
         if block.block_type == "tool_result":
             call = self._tool_calls.get(item_id)
-            output = _result_text(block.tool_result)
             return ToolTimelineItem(
                 id=item_id,
                 type="tool",
                 status="failed" if block.is_error else "done",
                 role="tool",
                 turn_id=turn_id,
-                content=ToolResultContent(
-                    output=output,
-                    metadata={
-                        "toolUseId": block.tool_use_id,
-                        "toolName": call.tool_name if call else None,
-                        "input": call.tool_input if call else None,
-                        "result": block.tool_result,
-                        "outputText": output,
-                        "outputPreview": _preview_text(output),
-                        "outputLength": len(output),
-                        "isError": block.is_error,
-                        **({"error": output} if block.is_error else {}),
-                    },
-                ),
+                content=_tool_result_content(block, call),
                 source=source,
             ).to_platform_item(session_id=session.session_id, order_seq=order_seq)
 
@@ -442,10 +428,20 @@ def _tool_call_content(block: ClaudeToolBlock) -> Any:
         "input": block.tool_input,
     }
     if tool_name == "Bash":
+        command = _string(tool_input.get("command") or tool_input.get("cmd")) or ""
         return CommandToolContent(
-            command=_string(tool_input.get("command") or tool_input.get("cmd")) or "",
+            command=command,
             input=dict(tool_input),
-            metadata=common,
+            metadata={
+                **common,
+                "description": _string(tool_input.get("description")) or command,
+                "cwd": _string(tool_input.get("cwd")),
+                **(
+                    {"runInBackground": tool_input.get("run_in_background")}
+                    if isinstance(tool_input.get("run_in_background"), bool)
+                    else {}
+                ),
+            },
         )
     if tool_name in {"Edit", "Write", "MultiEdit", "NotebookEdit"}:
         return FileChangeToolContent(
@@ -462,6 +458,7 @@ def _tool_call_content(block: ClaudeToolBlock) -> Any:
                 **common,
                 "query": _string(tool_input.get("query")),
                 "url": _string(tool_input.get("url")),
+                "action": dict(tool_input),
             },
         )
     mcp_parts = _mcp_parts(tool_name)
@@ -474,12 +471,85 @@ def _tool_call_content(block: ClaudeToolBlock) -> Any:
                 **common,
                 "server": server,
                 "tool": tool,
+                "arguments": dict(tool_input),
             },
         )
     return ToolCallContent(
         title=tool_name,
         input=block.tool_input,
-        metadata=common,
+        metadata={
+            **common,
+            "name": tool_name,
+            "tool": tool_name,
+            "arguments": tool_input if isinstance(tool_input, Mapping) else block.tool_input,
+        },
+    )
+
+
+def _tool_result_content(
+    block: ClaudeToolBlock,
+    call: ClaudeToolBlock | None,
+) -> Any:
+    output = _result_text(block.tool_result)
+    result_metadata = {
+        "toolUseId": block.tool_use_id,
+        "toolName": call.tool_name if call else None,
+        "input": call.tool_input if call else None,
+        "result": block.tool_result,
+        "text": output,
+        "outputText": output,
+        "outputPreview": _preview_text(output),
+        "outputLength": len(output),
+        "isError": block.is_error,
+        **({"error": output} if block.is_error else {}),
+    }
+    if call is None:
+        return ToolResultContent(output=output, metadata=result_metadata)
+
+    call_content = _tool_call_content(call)
+    if isinstance(call_content, CommandToolContent):
+        return CommandToolContent(
+            title=call_content.title,
+            command=call_content.command,
+            input=call_content.input,
+            output=output,
+            exit_code=call_content.exit_code,
+            metadata={**call_content.metadata, **result_metadata},
+        )
+    if isinstance(call_content, FileChangeToolContent):
+        return FileChangeToolContent(
+            title=call_content.title,
+            command=call_content.command,
+            input=call_content.input,
+            output=output,
+            exit_code=call_content.exit_code,
+            metadata={**call_content.metadata, **result_metadata},
+        )
+    if isinstance(call_content, WebSearchToolContent):
+        return WebSearchToolContent(
+            title=call_content.title,
+            command=call_content.command,
+            input=call_content.input,
+            output=output,
+            exit_code=call_content.exit_code,
+            metadata={**call_content.metadata, **result_metadata},
+        )
+    if isinstance(call_content, McpToolContent):
+        return McpToolContent(
+            title=call_content.title,
+            command=call_content.command,
+            input=call_content.input,
+            output=output,
+            exit_code=call_content.exit_code,
+            metadata={**call_content.metadata, **result_metadata},
+        )
+    return ToolCallContent(
+        title=call_content.title,
+        command=call_content.command,
+        input=call_content.input,
+        output=output,
+        exit_code=call_content.exit_code,
+        metadata={**call_content.metadata, **result_metadata},
     )
 
 
@@ -498,6 +568,7 @@ def _file_changes(
         {
             "path": path,
             "action": action,
+            "kind": {"type": action},
             "toolName": tool_name,
             **({"diff": diff} if diff else {}),
         },

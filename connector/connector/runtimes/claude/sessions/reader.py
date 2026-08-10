@@ -321,7 +321,40 @@ def _history_items_from_messages(
                 native_item_id=native_id or f"history_{index}",
             )
         )
-    return _dedupe_history_items(items)
+    return _resequence_history_items(
+        _visible_history_items(_dedupe_history_items(items))
+    )
+
+
+def _visible_history_items(
+    items: tuple[RuntimeTimelineItem, ...],
+) -> tuple[RuntimeTimelineItem, ...]:
+    return tuple(item for item in items if _is_visible_history_item(item))
+
+
+def _is_visible_history_item(item: RuntimeTimelineItem) -> bool:
+    if item.type != "tool":
+        return True
+    content = item.content
+    if not isinstance(content, Mapping):
+        return False
+    if content.get("kind") != "file_change":
+        return False
+    has_call = isinstance(content.get("toolUseId"), str) and isinstance(
+        content.get("toolName"),
+        str,
+    )
+    has_result = item.status in {"done", "failed"} and any(
+        content.get(key) not in (None, "", [], {})
+        for key in ("result", "outputText", "outputPreview", "error")
+    )
+    return has_call and has_result
+
+
+def _resequence_history_items(
+    items: tuple[RuntimeTimelineItem, ...],
+) -> tuple[RuntimeTimelineItem, ...]:
+    return tuple(replace(item, order_seq=index) for index, item in enumerate(items, 1))
 
 
 def _dedupe_history_items(
