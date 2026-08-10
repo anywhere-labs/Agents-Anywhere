@@ -7,7 +7,9 @@ import com.agentsanywhere.app.api.SessionsApi
 import com.agentsanywhere.app.api.RemoteDevice
 import com.agentsanywhere.app.api.RemoteSession
 import com.agentsanywhere.app.feature.auth.AuthSessionStore
+import com.agentsanywhere.app.feature.devices.DeviceRuntimeList
 import com.agentsanywhere.app.feature.devices.toAgentDevice
+import com.agentsanywhere.app.feature.devices.toDeviceRuntimeList
 import com.agentsanywhere.app.model.AgentDevice
 import com.agentsanywhere.app.model.AgentSession
 import com.agentsanywhere.app.model.SessionStatus
@@ -130,6 +132,80 @@ class SessionsController(
                 if (error is ApiException) throw error
                 throw IllegalStateException(error.message ?: "Could not load this directory.", error)
             }
+        }
+    }
+
+    suspend fun listNewSessionRuntimes(
+        connectorId: String,
+    ): Result<DeviceRuntimeList> {
+        val auth = newSessionAuth() ?: return Result.failure(
+            IllegalStateException("Sign in again to load runtimes."),
+        )
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                devicesApi.listDeviceRuntimes(
+                    serverUrl = auth.serverUrl,
+                    authorizationToken = auth.accessToken,
+                    deviceId = connectorId,
+                ).toDeviceRuntimeList()
+            }.wrapNewSessionFailure("Could not load runtimes.")
+        }
+    }
+
+    suspend fun loadNewSessionRuntimeCapabilities(
+        connectorId: String,
+        runtime: String,
+    ): Result<NewSessionRuntimeCapabilities> {
+        val auth = newSessionAuth() ?: return Result.failure(
+            IllegalStateException("Sign in again to load runtime capabilities."),
+        )
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                devicesApi.getDeviceRuntimeCapabilities(
+                    serverUrl = auth.serverUrl,
+                    authorizationToken = auth.accessToken,
+                    deviceId = connectorId,
+                    runtime = runtime,
+                ).toNewSessionRuntimeCapabilities()
+            }.wrapNewSessionFailure("Could not load runtime capabilities.")
+        }
+    }
+
+    suspend fun loadNewSessionModelCatalog(
+        connectorId: String,
+        runtime: String,
+    ): Result<NewSessionModelCatalog> {
+        val auth = newSessionAuth() ?: return Result.failure(
+            IllegalStateException("Sign in again to load the model catalog."),
+        )
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                devicesApi.getDeviceRuntimeModelCatalog(
+                    serverUrl = auth.serverUrl,
+                    authorizationToken = auth.accessToken,
+                    deviceId = connectorId,
+                    runtime = runtime,
+                ).toNewSessionModelCatalog()
+            }.wrapNewSessionFailure("Could not load the model catalog.")
+        }
+    }
+
+    suspend fun loadNewSessionPermissionCatalog(
+        connectorId: String,
+        runtime: String,
+    ): Result<NewSessionPermissionCatalog> {
+        val auth = newSessionAuth() ?: return Result.failure(
+            IllegalStateException("Sign in again to load the permission catalog."),
+        )
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                devicesApi.getDeviceRuntimePermissionCatalog(
+                    serverUrl = auth.serverUrl,
+                    authorizationToken = auth.accessToken,
+                    deviceId = connectorId,
+                    runtime = runtime,
+                ).toNewSessionPermissionCatalog()
+            }.wrapNewSessionFailure("Could not load the permission catalog.")
         }
     }
 
@@ -396,4 +472,23 @@ class SessionsController(
             else -> "${days / 365}y"
         }
     }
+
+    private fun newSessionAuth(): NewSessionAuth? {
+        val serverUrl = sessionStore.readServerUrl()
+        val accessToken = sessionStore.readAccessToken()
+        if (serverUrl.isBlank() || accessToken.isBlank()) return null
+        return NewSessionAuth(serverUrl = serverUrl, accessToken = accessToken)
+    }
+
+    private fun <T> Result<T>.wrapNewSessionFailure(fallbackMessage: String): Result<T> {
+        return recoverCatching { error ->
+            if (error is ApiException) throw error
+            throw IllegalStateException(error.message ?: fallbackMessage, error)
+        }
+    }
+
+    private data class NewSessionAuth(
+        val serverUrl: String,
+        val accessToken: String,
+    )
 }

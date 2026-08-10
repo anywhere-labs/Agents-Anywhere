@@ -5,14 +5,6 @@ import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 
-private const val API_NAMESPACE = "/api/v2"
-
-internal fun apiPath(path: String): String {
-    if (path == API_NAMESPACE || path.startsWith("$API_NAMESPACE/")) return path
-    val normalized = if (path.startsWith("/")) path else "/$path"
-    return "$API_NAMESPACE$normalized"
-}
-
 class ApiClient {
     fun getJson(
         serverUrl: String,
@@ -39,6 +31,20 @@ class ApiClient {
             path = path,
             method = "POST",
             body = body,
+            authorizationToken = authorizationToken,
+        )
+    }
+
+    fun postJson(
+        serverUrl: String,
+        path: String,
+        authorizationToken: String? = null,
+    ): JSONObject {
+        return requestJson(
+            serverUrl = serverUrl,
+            path = path,
+            method = "POST",
+            body = null,
             authorizationToken = authorizationToken,
         )
     }
@@ -93,7 +99,7 @@ class ApiClient {
         onOpen: () -> Unit = {},
         onEvent: (JSONObject) -> Unit,
     ) {
-        val endpoint = URL("${serverUrl.trimEnd('/')}${apiPath(path)}")
+        val endpoint = URL(apiUrl(serverUrl, path))
         val connection = (endpoint.openConnection() as HttpURLConnection).apply {
             requestMethod = "GET"
             connectTimeout = 10_000
@@ -146,7 +152,7 @@ class ApiClient {
         authorizationToken: String? = null,
     ): JSONObject {
         return try {
-            val endpoint = URL("${serverUrl.trimEnd('/')}${apiPath(path)}")
+            val endpoint = URL(apiUrl(serverUrl, path))
             val boundary = "AA-${System.currentTimeMillis()}"
             val connection = (endpoint.openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
@@ -201,7 +207,7 @@ class ApiClient {
         authorizationToken: String?,
     ): JSONObject {
         return try {
-            val endpoint = URL("${serverUrl.trimEnd('/')}${apiPath(path)}")
+            val endpoint = URL(apiUrl(serverUrl, path))
             val bodyText = body?.toString()
 
             val connection = (endpoint.openConnection() as HttpURLConnection).apply {

@@ -6,6 +6,7 @@ import com.agentsanywhere.app.api.AuthApi
 import com.agentsanywhere.app.api.AuthConfigResponse
 import com.agentsanywhere.app.api.AuthMeResponse
 import com.agentsanywhere.app.api.MobileLoginStatusResponse
+import com.agentsanywhere.app.api.normalizeServerOrigin
 import com.agentsanywhere.app.model.MobileLoginQrPayload
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -395,35 +396,7 @@ class AuthController(
     }
 
     private fun normalizeServerUrl(serverUrl: String): String? {
-        val trimmed = serverUrl.trim().trimEnd('/')
-        if (trimmed.isBlank()) return null
-        if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) return trimmed
-        if (trimmed.contains("://")) return null
-
-        val host = trimmed.substringBefore('/').substringBefore(':').lowercase()
-        if (host.isBlank()) return null
-
-        val scheme = if (usesLocalNetworkHost(host) || trimmed.contains(':')) {
-            "http"
-        } else {
-            "https"
-        }
-        return "$scheme://$trimmed"
-    }
-
-    private fun usesLocalNetworkHost(host: String): Boolean {
-        if (host == "localhost" || host.endsWith(".local")) return true
-        val parts = host.split('.')
-        if (parts.size != 4) return false
-        val octets = parts.map { it.toIntOrNull() ?: return false }
-        return when {
-            octets.any { it !in 0..255 } -> false
-            octets[0] == 10 -> true
-            octets[0] == 127 -> true
-            octets[0] == 192 && octets[1] == 168 -> true
-            octets[0] == 172 && octets[1] in 16..31 -> true
-            else -> false
-        }
+        return normalizeServerOrigin(serverUrl)
     }
 
     companion object {

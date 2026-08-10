@@ -1,6 +1,5 @@
 package com.agentsanywhere.app.feature.sessions
 
-import com.agentsanywhere.app.model.AgentDevice
 import com.agentsanywhere.app.model.AgentSession
 
 data class NewSessionState(
@@ -15,11 +14,6 @@ data class NewSessionState(
     val isCreating: Boolean = false,
     val errorMessage: String? = null,
     val pathErrorMessage: String? = null,
-)
-
-data class NewSessionAgent(
-    val runtime: String,
-    val label: String,
 )
 
 data class NewSessionWorkspace(
@@ -40,12 +34,6 @@ data class NewSessionDirectory(
     val path: String,
     val entries: List<NewSessionPathEntry>,
 )
-
-fun AgentDevice.newSessionAgents(): List<NewSessionAgent> {
-    return attachedRuntimes
-        .map { runtime -> NewSessionAgent(runtime = runtime, label = runtime.runtimeLabel()) }
-        .sortedBy { it.label.lowercase() }
-}
 
 fun workspaceOptionsFor(
     sessions: List<AgentSession>,
