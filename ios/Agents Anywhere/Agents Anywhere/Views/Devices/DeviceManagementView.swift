@@ -5,6 +5,7 @@ struct DeviceManagementView: View {
     let connector: V2Connector
     let allSessions: [V2SessionMeta]
     let service: V2DeviceManagementService
+    let workspaceFilesService: V2WorkspaceFilesService
     let serverURL: URL
     let safeAreaInsets: EdgeInsets
     let onMenu: () -> Void
@@ -22,6 +23,7 @@ struct DeviceManagementView: View {
     @State private var isConfirmingDeletion = false
     @State private var credential: V2ConnectorRevokeResponse?
     @State private var runtimeConfiguration: RuntimeConfigurationPresentation?
+    @State private var selectedWorkspace: V2DeviceWorkspace?
     @State private var isSelectedArchiveActionRunning = false
 
     var body: some View {
@@ -43,6 +45,7 @@ struct DeviceManagementView: View {
 
                     DeviceWorkspaceSection(
                         workspaces: model.workspaces,
+                        onOpenWorkspace: { selectedWorkspace = $0 },
                         onNewSession: onNewSession
                     )
 
@@ -141,6 +144,15 @@ struct DeviceManagementView: View {
                 connectorToken: response.connectorToken,
                 serverURL: serverURL
             )
+        }
+        .sheet(item: $selectedWorkspace) { workspace in
+            WorkspaceFilesSheet(
+                connectorId: connector.id,
+                workspace: workspace,
+                service: workspaceFilesService
+            )
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
         }
     }
 

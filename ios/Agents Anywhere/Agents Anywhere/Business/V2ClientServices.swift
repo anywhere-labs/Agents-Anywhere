@@ -9,6 +9,7 @@ struct V2ClientServices {
     let interactions: V2RuntimeInteractionService
     let devicePairing: V2DevicePairingService
     let deviceManagement: V2DeviceManagementService
+    let workspaceFiles: V2WorkspaceFilesService
 
     init(api: V2APIClient) {
         account = V2AccountService(accountAPI: api.account)
@@ -27,5 +28,9 @@ struct V2ClientServices {
         interactions = V2RuntimeInteractionService(runtimeAPI: api.runtime)
         devicePairing = V2DevicePairingService(connectorAPI: api.connectors)
         deviceManagement = V2DeviceManagementService(connectorAPI: api.connectors)
+        workspaceFiles = V2WorkspaceFilesService(
+            connectorAPI: api.connectors,
+            serverURL: api.serverURL
+        )
     }
 }

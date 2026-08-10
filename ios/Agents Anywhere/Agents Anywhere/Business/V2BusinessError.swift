@@ -16,6 +16,9 @@ enum V2BusinessError: LocalizedError {
     case tooManyAttachments(maximum: Int)
     case emptyAttachment(name: String)
     case invalidPageSize
+    case workspaceFilesUnavailable(message: String)
+    case workspaceEntryNotPreviewable
+    case invalidWorkspacePreviewURL
 
     var errorDescription: String? {
         switch self {
@@ -49,6 +52,12 @@ enum V2BusinessError: LocalizedError {
             return "The attachment '\(name)' is empty."
         case .invalidPageSize:
             return String(localized: "The requested page size is outside the supported range.")
+        case let .workspaceFilesUnavailable(message):
+            return message
+        case .workspaceEntryNotPreviewable:
+            return String(localized: "This workspace item cannot be previewed.")
+        case .invalidWorkspacePreviewURL:
+            return String(localized: "The file preview URL is invalid.")
         }
     }
 }

@@ -25,6 +25,15 @@ protocol V2ConnectorAPIProtocol {
         connectorId: V2ConnectorID,
         request: V2ConnectorSessionArchiveRequest
     ) async throws -> V2ConnectorSessionArchiveResponse
+    func listWorkspaceFiles(
+        connectorId: V2ConnectorID,
+        request: V2WorkspaceFilesListRequest
+    ) async throws -> V2WorkspaceDirectoryResponse
+    func createWorkspaceFilePreviewToken(
+        connectorId: V2ConnectorID,
+        root: String,
+        request: V2WorkspaceFileReadRequest
+    ) async throws -> V2WorkspaceFilePreviewToken
 }
 
 struct V2ConnectorAPI: V2ConnectorAPIProtocol {
@@ -152,6 +161,32 @@ struct V2ConnectorAPI: V2ConnectorAPIProtocol {
         let request = HTTPRequest<V2ConnectorSessionArchiveRequest, V2ConnectorSessionArchiveResponse>(
             method: .post,
             path: "\(connectorPath(connectorId))/sessions/archive-all",
+            body: body
+        )
+        return try await transport.send(request)
+    }
+
+    func listWorkspaceFiles(
+        connectorId: V2ConnectorID,
+        request body: V2WorkspaceFilesListRequest
+    ) async throws -> V2WorkspaceDirectoryResponse {
+        let request = HTTPRequest<V2WorkspaceFilesListRequest, V2WorkspaceDirectoryResponse>(
+            method: .post,
+            path: "\(connectorPath(connectorId))/fs/list",
+            body: body
+        )
+        return try await transport.send(request)
+    }
+
+    func createWorkspaceFilePreviewToken(
+        connectorId: V2ConnectorID,
+        root: String,
+        request body: V2WorkspaceFileReadRequest
+    ) async throws -> V2WorkspaceFilePreviewToken {
+        let request = HTTPRequest<V2WorkspaceFileReadRequest, V2WorkspaceFilePreviewToken>(
+            method: .post,
+            path: "\(connectorPath(connectorId))/fs/preview-token",
+            queryItems: [URLQueryItem(name: "root", value: root)],
             body: body
         )
         return try await transport.send(request)

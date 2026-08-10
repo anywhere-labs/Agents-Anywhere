@@ -3,6 +3,7 @@ import UIKit
 
 struct DeviceWorkspaceSection: View {
     let workspaces: [V2DeviceWorkspace]
+    let onOpenWorkspace: (V2DeviceWorkspace) -> Void
     let onNewSession: (String?) -> Void
 
     @State private var showsAllWorkspaces = false
@@ -39,7 +40,8 @@ struct DeviceWorkspaceSection: View {
                     ForEach(visibleWorkspaces) { workspace in
                         DeviceWorkspaceRow(
                             workspace: workspace,
-                            onOpen: { onNewSession(workspace.path) }
+                            onOpen: { onOpenWorkspace(workspace) },
+                            onNewSession: { onNewSession(workspace.path) }
                         )
                     }
                 }
@@ -75,6 +77,7 @@ struct DeviceWorkspaceSection: View {
 private struct DeviceWorkspaceRow: View {
     let workspace: V2DeviceWorkspace
     let onOpen: () -> Void
+    let onNewSession: () -> Void
 
     var body: some View {
         Button(action: onOpen) {
@@ -108,7 +111,7 @@ private struct DeviceWorkspaceRow: View {
         }
         .buttonStyle(.plain)
         .contextMenu {
-            Button("New session here", systemImage: "square.and.pencil", action: onOpen)
+            Button("New session here", systemImage: "square.and.pencil", action: onNewSession)
             Button("Copy path", systemImage: "doc.on.doc") {
                 UIPasteboard.general.string = workspace.path
             }

@@ -490,6 +490,10 @@ final class AppState: ObservableObject {
         makeV2Services()?.deviceManagement
     }
 
+    var workspaceFilesService: V2WorkspaceFilesService? {
+        makeV2Services()?.workspaceFiles
+    }
+
     func updateSession(_ updated: V2SessionMeta) {
         if let index = sessions.firstIndex(where: { $0.id == updated.id }) {
             sessions[index] = updated

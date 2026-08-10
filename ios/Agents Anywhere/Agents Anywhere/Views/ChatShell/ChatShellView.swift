@@ -110,12 +110,14 @@ struct ChatShellView: View {
         if case let .device(connectorId) = selection,
            let connector = appState.connectors.first(where: { $0.id == connectorId }),
            let service = appState.deviceManagementService,
+           let workspaceFilesService = appState.workspaceFilesService,
            let serverURL = appState.serverURL
         {
             DeviceManagementView(
                 connector: connector,
                 allSessions: appState.sessions,
                 service: service,
+                workspaceFilesService: workspaceFilesService,
                 serverURL: serverURL,
                 safeAreaInsets: safeAreaInsets,
                 onMenu: toggleSidebar,
