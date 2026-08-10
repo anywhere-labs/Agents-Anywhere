@@ -9,14 +9,18 @@ from typing import Any
 from connector.runtime_protocol import (
     CommandToolContent,
     FileChangeToolContent,
+    GenericSystemContent,
     MarkdownMessageContent,
     MessageTimelineItem,
     McpToolContent,
+    ReasoningSystemContent,
     RuntimeTimelineItem,
+    SystemTimelineItem,
     TimelineSource,
     ToolCallContent,
     ToolResultContent,
     ToolTimelineItem,
+    UnknownSystemContent,
     WebSearchToolContent,
 )
 from connector.runtimes.claude.domain.session import ClaudeSession
@@ -30,6 +34,14 @@ class ClaudeToolBlock:
     tool_input: Any = None
     tool_result: Any = None
     is_error: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class ClaudeSystemBlock:
+    block_type: str
+    block_index: int
+    text: str | None = None
+    metadata: Mapping[str, Any] | None = None
 
 
 class ClaudeMessageProjector:
@@ -118,6 +130,52 @@ class ClaudeMessageProjector:
             items.append(self.tool_item(session=session, turn_id=turn_id, block=block))
         return tuple(items)
 
+    def system_items_for_message(
+        self,
+        session: ClaudeSession,
+        turn_id: str,
+        message: Any,
+        event: str,
+    ) -> tuple[RuntimeTimelineItem, ...]:
+        items: list[RuntimeTimelineItem] = []
+        native_message_id = message_id(message)
+        for block in message_system_blocks(message):
+            item_id = _stable_id(
+                "system",
+                session.session_id,
+                session.external_session_id,
+                turn_id,
+                native_message_id,
+                block.block_index,
+                block.block_type,
+            )
+            order_seq = self._order_by_id.get(item_id)
+            if order_seq is None:
+                order_seq = self._next_order_seq
+                self._next_order_seq += 1
+                self._order_by_id[item_id] = order_seq
+            content = _system_content(block)
+            items.append(
+                SystemTimelineItem(
+                    id=item_id,
+                    type="system",
+                    status="done",
+                    role="system",
+                    turn_id=turn_id,
+                    content=content,
+                    source=TimelineSource(
+                        runtime="claude",
+                        external_session_id=session.external_session_id,
+                        turn_id=turn_id,
+                        native_item_id=native_message_id,
+                        native_item_type=block.block_type,
+                        event=event,
+                        derived_key=block.block_type,
+                    ),
+                ).to_platform_item(session_id=session.session_id, order_seq=order_seq)
+            )
+        return tuple(items)
+
     def tool_item(
         self,
         session: ClaudeSession,
@@ -147,6 +205,7 @@ class ClaudeMessageProjector:
         )
         if block.block_type == "tool_result":
             call = self._tool_calls.get(item_id)
+            output = _result_text(block.tool_result)
             return ToolTimelineItem(
                 id=item_id,
                 type="tool",
@@ -154,13 +213,17 @@ class ClaudeMessageProjector:
                 role="tool",
                 turn_id=turn_id,
                 content=ToolResultContent(
-                    output=_result_text(block.tool_result),
+                    output=output,
                     metadata={
                         "toolUseId": block.tool_use_id,
                         "toolName": call.tool_name if call else None,
                         "input": call.tool_input if call else None,
                         "result": block.tool_result,
+                        "outputText": output,
+                        "outputPreview": _preview_text(output),
+                        "outputLength": len(output),
                         "isError": block.is_error,
+                        **({"error": output} if block.is_error else {}),
                     },
                 ),
                 source=source,
@@ -233,6 +296,32 @@ def message_tool_blocks(message: Any) -> tuple[ClaudeToolBlock, ...]:
     return tuple(blocks)
 
 
+def message_system_blocks(message: Any) -> tuple[ClaudeSystemBlock, ...]:
+    content = _message_content(message)
+    if not isinstance(content, list | tuple):
+        return ()
+    blocks: list[ClaudeSystemBlock] = []
+    for index, block in enumerate(content):
+        block_type = _block_type(block)
+        if block_type not in {
+            "thinking",
+            "reasoning",
+            "redacted_thinking",
+            "system",
+            "error",
+        }:
+            continue
+        blocks.append(
+            ClaudeSystemBlock(
+                block_type=block_type,
+                block_index=index,
+                text=_system_block_text(block),
+                metadata=_system_block_metadata(block),
+            )
+        )
+    return tuple(blocks)
+
+
 def message_session_id(message: Any) -> str | None:
     value = _extract(message, "session_id", "sessionId")
     return value if isinstance(value, str) and value else None
@@ -297,7 +386,51 @@ def _block_type(block: Any) -> str | None:
         return "tool_use"
     if "toolresult" in name or "tool_result" in name:
         return "tool_result"
+    if "thinking" in name or "reasoning" in name:
+        return "thinking"
+    if "system" in name:
+        return "system"
     return None
+
+
+def _system_content(block: ClaudeSystemBlock) -> Any:
+    metadata = {
+        "blockType": block.block_type,
+        **dict(block.metadata or {}),
+    }
+    if block.block_type in {"thinking", "reasoning", "redacted_thinking"}:
+        return ReasoningSystemContent(
+            text=block.text,
+            metadata=metadata,
+        )
+    if block.block_type == "system":
+        return GenericSystemContent(
+            text=block.text,
+            metadata=metadata,
+        )
+    return UnknownSystemContent(
+        text=block.text,
+        metadata=metadata,
+    )
+
+
+def _system_block_text(block: Any) -> str | None:
+    value = _extract(block, "thinking", "text", "content", "message")
+    if isinstance(value, str) and value:
+        return value
+    if isinstance(value, list | tuple):
+        return _content_text(value)
+    return None
+
+
+def _system_block_metadata(block: Any) -> Mapping[str, Any]:
+    if not isinstance(block, Mapping):
+        return {}
+    return {
+        key: value
+        for key, value in block.items()
+        if key not in {"type", "thinking", "text", "content", "message"}
+    }
 
 
 def _tool_call_content(block: ClaudeToolBlock) -> Any:
@@ -433,6 +566,10 @@ def _result_text(result: Any) -> str:
     if result is None:
         return ""
     return json.dumps(result, ensure_ascii=False, sort_keys=True, default=str)
+
+
+def _preview_text(value: str, limit: int = 4000) -> str:
+    return value[-limit:]
 
 
 def _string(value: Any) -> str | None:

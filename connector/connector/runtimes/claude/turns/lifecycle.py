@@ -165,7 +165,17 @@ class ClaudeTurnRunner:
                     await self.notifications.timeline_activity.timeline_item_upsert(
                         item
                     )
-                if message_role(message) != "assistant":
+                for item in self.timeline.system_items_for_message(
+                    session=session,
+                    turn_id=turn_id,
+                    message=message,
+                    event="claude.turn.system",
+                ):
+                    await self.notifications.timeline_activity.timeline_item_upsert(
+                        item
+                    )
+                role = message_role(message)
+                if role not in {"assistant", "system"}:
                     continue
                 text = message_text(message)
                 if not text:
@@ -174,16 +184,21 @@ class ClaudeTurnRunner:
                     self.timeline.message_item(
                         session=session,
                         turn_id=turn_id,
-                        role="assistant",
+                        role=role,
                         text=text,
-                        event="claude.turn.assistant",
+                        event=f"claude.turn.{role}",
                         native_item_id=message_id(message),
-                        item_id=stream_accumulator.final_item_id(session, turn_id),
-                        revision=stream_accumulator.next_final_revision(),
+                        item_id=stream_accumulator.final_item_id(session, turn_id)
+                        if role == "assistant"
+                        else None,
+                        revision=stream_accumulator.next_final_revision()
+                        if role == "assistant"
+                        else 1,
                     )
                 )
-                emitted_final_assistant_content = True
-                stream_accumulator.reset()
+                if role == "assistant":
+                    emitted_final_assistant_content = True
+                    stream_accumulator.reset()
 
             if result_error is not None:
                 self._release_active_turn(session, turn_id)

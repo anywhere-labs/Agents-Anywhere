@@ -301,7 +301,14 @@ def _history_items_from_messages(
             message=message,
         ):
             items.append(item)
-        if role not in {"user", "assistant"} or not text:
+        for item in projector.system_items_for_message(
+            session=session,
+            turn_id=turn_id,
+            message=message,
+            event="claude.history.system",
+        ):
+            items.append(item)
+        if role not in {"user", "assistant", "system"} or not text:
             continue
         items.append(
             projector.message_item(

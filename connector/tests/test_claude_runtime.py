@@ -331,6 +331,61 @@ async def _test_claude_runtime_projects_result_only_reply() -> None:
     assert host.session_state_updates[-1]["status"] == "idle"
 
 
+def test_claude_runtime_projects_live_system_messages() -> None:
+    asyncio.run(_test_claude_runtime_projects_live_system_messages())
+
+
+async def _test_claude_runtime_projects_live_system_messages() -> None:
+    host = _RecordingHost()
+    client = _FakeClaudeClient(
+        messages=[
+            SimpleNamespace(
+                type="assistant",
+                uuid="live_system_assistant",
+                session_id="claude_live_system",
+                message={
+                    "id": "msg_live_system",
+                    "role": "assistant",
+                    "content": [
+                        {"type": "thinking", "thinking": "live reasoning"},
+                        {"type": "text", "text": "answer"},
+                    ],
+                },
+            ),
+            SimpleNamespace(
+                type="system",
+                uuid="live_system_note",
+                session_id="claude_live_system",
+                message={"role": "system", "content": "live system note"},
+            ),
+            SimpleNamespace(type="result", session_id="claude_live_system"),
+        ]
+    )
+    runtime = _runtime(host=host, client=client)
+
+    result = await runtime.start_turn("sess_live_system", None, "hello")
+    task = runtime._sessions["sess_live_system"].active_task
+
+    assert result.ok is True
+    assert task is not None
+
+    await task
+
+    system_items = [
+        item for item in host.timeline_item_upserts if item.role == "system"
+    ]
+    assistant_items = [
+        item for item in host.timeline_item_upserts if item.role == "assistant"
+    ]
+
+    assert [item.type for item in system_items] == ["system", "message"]
+    assert system_items[0].content["kind"] == "reasoning"
+    assert system_items[0].content["text"] == "live reasoning"
+    assert system_items[0].source["event"] == "claude.turn.system"
+    assert system_items[1].content["text"] == "live system note"
+    assert assistant_items[0].content["text"] == "answer"
+
+
 def test_claude_runtime_lists_sessions_and_returns_local_snapshot() -> None:
     asyncio.run(_test_claude_runtime_lists_sessions_and_returns_local_snapshot())
 
@@ -561,6 +616,72 @@ async def _test_claude_runtime_projects_sdk_history_snapshot() -> None:
     assert snapshot.items[2].content["command"] == "pwd"
     assert snapshot.items[3].status == "done"
     assert snapshot.items[3].content["output"] == "/repo"
+    assert snapshot.items[3].content["outputText"] == "/repo"
+    assert snapshot.items[3].content["outputLength"] == 5
+
+
+def test_claude_runtime_projects_sdk_history_system_blocks() -> None:
+    asyncio.run(_test_claude_runtime_projects_sdk_history_system_blocks())
+
+
+async def _test_claude_runtime_projects_sdk_history_system_blocks() -> None:
+    sdk = _HistorySdk(
+        messages={
+            "claude_history_system": [
+                SimpleNamespace(
+                    type="user",
+                    uuid="history_system_user",
+                    session_id="claude_history_system",
+                    message={"role": "user", "content": "explain"},
+                ),
+                SimpleNamespace(
+                    type="assistant",
+                    uuid="history_system_assistant",
+                    session_id="claude_history_system",
+                    message={
+                        "id": "msg_history_system",
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "thinking",
+                                "thinking": "checking context",
+                            },
+                            {"type": "text", "text": "visible answer"},
+                        ],
+                    },
+                ),
+                SimpleNamespace(
+                    type="system",
+                    uuid="history_system_note",
+                    session_id="claude_history_system",
+                    message={"role": "system", "content": "system note"},
+                ),
+            ]
+        }
+    )
+    runtime = _runtime(sdk=sdk)
+
+    snapshot = await runtime.get_session_snapshot(
+        "sess_history_system",
+        "claude_history_system",
+    )
+
+    assert [item.type for item in snapshot.items] == [
+        "message",
+        "system",
+        "message",
+        "message",
+    ]
+    assert [item.role for item in snapshot.items] == [
+        "user",
+        "system",
+        "assistant",
+        "system",
+    ]
+    assert snapshot.items[1].content["kind"] == "reasoning"
+    assert snapshot.items[1].content["text"] == "checking context"
+    assert snapshot.items[2].content["text"] == "visible answer"
+    assert snapshot.items[3].content["text"] == "system note"
 
 
 def test_claude_runtime_prefers_sdk_history_over_local_partial_snapshot() -> None:
