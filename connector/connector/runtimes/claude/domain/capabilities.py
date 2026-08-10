@@ -66,6 +66,7 @@ def claude_session_capabilities(
 ) -> RuntimeCapabilitySet:
     session_id = context.session_id
     active = context.has_active_turn
+    capabilities = provider_config.claude_capabilities()
     return RuntimeCapabilitySet(
         runtime="claude",
         revision=context.revision,
@@ -112,6 +113,51 @@ def claude_session_capabilities(
                 connector_id=context.connector_id,
                 supported=True,
                 available=True,
+                metadata={"source": "claude.runtime"},
+            ),
+            RuntimeCapability(
+                capability_id=CAPABILITY_CATALOG_MODEL,
+                scope="session",
+                runtime="claude",
+                session_id=session_id,
+                connector_id=context.connector_id,
+                supported=capabilities.get("modelCatalog") is True,
+                available=capabilities.get("modelCatalog") is True,
+                unavailable_reason=(
+                    None
+                    if capabilities.get("modelCatalog") is True
+                    else "not_implemented"
+                ),
+                metadata={"source": "claude.runtime"},
+            ),
+            RuntimeCapability(
+                capability_id=CAPABILITY_CATALOG_EFFORT,
+                scope="session",
+                runtime="claude",
+                session_id=session_id,
+                connector_id=context.connector_id,
+                supported=capabilities.get("modelCatalog") is True,
+                available=capabilities.get("modelCatalog") is True,
+                unavailable_reason=(
+                    None
+                    if capabilities.get("modelCatalog") is True
+                    else "not_implemented"
+                ),
+                metadata={"source": "claude.runtime"},
+            ),
+            RuntimeCapability(
+                capability_id=CAPABILITY_RUNTIME_ATTACHMENT,
+                scope="session",
+                runtime="claude",
+                session_id=session_id,
+                connector_id=context.connector_id,
+                supported=capabilities.get("attachments") is True,
+                available=capabilities.get("attachments") is True,
+                unavailable_reason=(
+                    None
+                    if capabilities.get("attachments") is True
+                    else "not_implemented"
+                ),
                 metadata={"source": "claude.runtime"},
             ),
         ),
