@@ -209,7 +209,10 @@ http://127.0.0.1:5174
 启动 FastAPI Server 与 `web-next`。日志位于 `.local-dev/`，PostgreSQL 数据
 保存在 Docker volume 中。需要同时调试 Codex/Claude Connector 时，显式传入
 `--with-connector`；用 `./local-up.sh --help` 查看环境文件、跳过安装和
-Connector 配置选项。旧的 `./dev.sh` 会转发到同一入口。
+Connector 配置选项。Server 和 Web 默认监听 `0.0.0.0`；需要限制监听地址时
+使用 `--listen HOST`，仅传 `--listen` 等价于 `--listen 0.0.0.0`。旧的
+`./dev.sh` 会转发到同一入口。监听全部网络接口时，启动摘要会同时打印局域网
+访问地址；自动探测不适合当前网络环境时可设置 `AGENTS_ANYWHERE_LAN_HOST`。
 
 ## 首次使用流程
 

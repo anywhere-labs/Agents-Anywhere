@@ -5,7 +5,6 @@ struct RootView: View {
     @Environment(\.colorScheme) private var colorScheme
     @State private var showingEnterServer = false
     @State private var showingQRCodeLogin = false
-    @State private var showingSignOut = false
 
     var body: some View {
         Group {
@@ -19,9 +18,7 @@ struct RootView: View {
                     onQRCodeLogin: { showingQRCodeLogin = true },
                 )
             case .signedIn:
-                DashboardView {
-                    showingSignOut = true
-                }
+                ChatShellView()
             }
         }
         .sheet(isPresented: $showingEnterServer) {
@@ -36,14 +33,28 @@ struct RootView: View {
                 showingQRCodeLogin = false
             }
         }
-        .fullScreenCover(isPresented: $showingSignOut) {
-            SignOutSheet {
-                appState.showSignedOutRoute()
-                showingSignOut = false
-            }
+        .sheet(isPresented: serverUnavailableBinding) {
+            ServerUnavailableSheet(
+                isRetrying: appState.isRetryingServerConnection,
+                onReturnToLogin: appState.returnToLogin,
+                onRetry: retryServerConnection,
+            )
         }
         .tint(AppTheme.primaryText(colorScheme))
         .background(AppTheme.appBackground(colorScheme))
+    }
+
+    private var serverUnavailableBinding: Binding<Bool> {
+        Binding(
+            get: { appState.serverConnectionIssue != nil },
+            set: { _ in },
+        )
+    }
+
+    private func retryServerConnection() {
+        Task {
+            await appState.retryServerConnection()
+        }
     }
 }
 

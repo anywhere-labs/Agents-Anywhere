@@ -81,30 +81,17 @@ struct AuthBrandLockup: View {
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
-        VStack(spacing: 14) {
-            Image(colorScheme == .dark ? "login-logo-dark-mode" : "login-logo-light-mode")
-                .resizable()
-                .scaledToFit()
-                .frame(width: 76, height: 76)
-                .accessibilityHidden(true)
+        VStack(spacing: 18) {
+            AAWordmark(fontSize: 42)
+                .foregroundStyle(AppTheme.primaryText(colorScheme))
 
-            VStack(spacing: 7) {
-                Text(title)
-                    .font(.system(size: 36, weight: .bold))
-                    .foregroundStyle(AppTheme.primaryText(colorScheme))
-                    .minimumScaleFactor(0.74)
-                    .lineLimit(1)
-
-                Text("Connect this iPhone to your self-hosted workspace.")
-                    .font(.body)
-                    .foregroundStyle(AppTheme.secondaryText(colorScheme))
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+            Text("Connect this iPhone to your self-hosted workspace.")
+                .font(.body)
+                .foregroundStyle(AppTheme.secondaryText(colorScheme))
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
-
-    private var title: String { "Agents Anywhere" }
 }
 
 struct AuthPrimaryButton: View {

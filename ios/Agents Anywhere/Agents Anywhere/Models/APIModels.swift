@@ -181,7 +181,7 @@ struct SessionSummary: Decodable, Identifiable, Hashable {
     let runtimeSettingsOverride: JSONValue?
 }
 
-enum JSONValue: Codable, Hashable {
+nonisolated enum JSONValue: Codable, Hashable {
     case string(String)
     case number(Double)
     case bool(Bool)
@@ -224,7 +224,7 @@ enum JSONValue: Codable, Hashable {
         }
     }
 
-    var stringValue: String? {
+    nonisolated var stringValue: String? {
         switch self {
         case let .string(value):
             return value
@@ -237,7 +237,7 @@ enum JSONValue: Codable, Hashable {
         }
     }
 
-    var displayString: String {
+    nonisolated var displayString: String {
         switch self {
         case let .string(value):
             return value
@@ -260,7 +260,7 @@ enum JSONValue: Codable, Hashable {
         }
     }
 
-    subscript(key: String) -> JSONValue? {
+    nonisolated subscript(key: String) -> JSONValue? {
         if case let .object(object) = self {
             return object[key]
         }
