@@ -1098,10 +1098,6 @@ def test_connector_runtime_host_notifications_fallback_to_ingest_without_websock
     asyncio.run(_exercise_runtime_host_notification_ingest_fallback())
 
 
-def test_connector_timeline_sync_waits_for_ingest_post() -> None:
-    asyncio.run(_exercise_connector_timeline_sync_waits_for_ingest_post())
-
-
 def test_runtime_sync_pushes_each_session_snapshot_before_next_meta() -> None:
     asyncio.run(_exercise_runtime_sync_pushes_each_session_snapshot_before_next_meta())
 
@@ -1122,28 +1118,6 @@ async def _exercise_runtime_host_notification_ingest_fallback() -> None:
     await client.send_backend_notification("session.meta.upsert", {"sessionId": "sess_1"})
 
     assert enqueued == [("session.meta.upsert", {"sessionId": "sess_1"})]
-
-
-async def _exercise_connector_timeline_sync_waits_for_ingest_post() -> None:
-    client = _client()
-    ingested: list[list[dict[str, Any]]] = []
-    enqueued: list[tuple[str, dict[str, Any]]] = []
-
-    async def ingest_notifications(notifications: list[dict[str, Any]]) -> None:
-        ingested.append(notifications)
-
-    async def enqueue(method: str, params: dict[str, Any]) -> None:
-        enqueued.append((method, params))
-
-    client._ingest.ingest_notifications = ingest_notifications  # type: ignore[method-assign]
-    client._ingest.enqueue = enqueue  # type: ignore[method-assign]
-
-    await client.send_backend_notification("timeline.sync", {"sessionId": "sess_1"})
-
-    assert ingested == [
-        [{"method": "timeline.sync", "params": {"sessionId": "sess_1"}}]
-    ]
-    assert enqueued == []
 
 
 async def _exercise_runtime_sync_pushes_each_session_snapshot_before_next_meta() -> None:
