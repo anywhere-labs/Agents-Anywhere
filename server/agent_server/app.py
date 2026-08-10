@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import AsyncIterator
 
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -42,6 +42,20 @@ from agent_server.infra.timeline_broker import TimelineBroker
 
 
 CONNECTOR_PRESENCE_SWEEP_SECONDS = 5
+
+
+def _safe_static_path(candidate: Path, root: Path) -> bool:
+    """Reject any candidate that escapes the static root (LFI / path traversal).
+
+    Path traversal payloads like ``../``, ``%2e%2e%2f`` or absolute paths are
+    normalized by ``resolve()`` and then checked against the static root, so
+    only files physically under ``root`` are served.
+    """
+    try:
+        resolved = candidate.resolve(strict=False)
+        return resolved.is_relative_to(root.resolve())
+    except OSError:
+        return False
 
 
 async def _connector_presence_watchdog(app: FastAPI) -> None:
@@ -136,7 +150,11 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
             relative = path.strip("/")
             default_locale = os.environ.get("AGENT_SERVER_STATIC_DEFAULT_LOCALE", "en")
             if relative:
+                if ".." in relative.split("/"):
+                    raise HTTPException(status_code=404, detail="not found")
                 candidate = static_path / relative
+                if not _safe_static_path(candidate, static_path):
+                    raise HTTPException(status_code=404, detail="not found")
                 if candidate.is_dir() and (candidate / "index.html").is_file():
                     return FileResponse(candidate / "index.html")
                 if candidate.is_file():
