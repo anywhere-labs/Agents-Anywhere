@@ -53,6 +53,8 @@ struct ServerUnavailableSheet: View {
         .padding(.vertical, 28)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(AppTheme.appBackground(colorScheme))
+        .presentationDetents([.large])
+        .presentationDragIndicator(.hidden)
         .interactiveDismissDisabled()
     }
 }

@@ -49,7 +49,7 @@ struct AccountSettingsSheet: View {
                 Text(appState.accountError ?? "")
             }
         }
-        .fullScreenCover(isPresented: $isConfirmingSignOut) {
+        .sheet(isPresented: $isConfirmingSignOut) {
             SignOutConfirmationSheet(onSignOut: signOut)
         }
         .presentationDetents([.medium, .large])
@@ -129,6 +129,9 @@ private struct SignOutConfirmationSheet: View {
         } message: {
             Text(errorMessage)
         }
+        .presentationDetents([.large])
+        .presentationDragIndicator(.hidden)
+        .interactiveDismissDisabled()
     }
 
     /// Deletes credentials and closes the cover only after the signed-out route is active.

@@ -33,7 +33,7 @@ struct RootView: View {
                 showingQRCodeLogin = false
             }
         }
-        .fullScreenCover(isPresented: serverUnavailableBinding) {
+        .sheet(isPresented: serverUnavailableBinding) {
             ServerUnavailableSheet(
                 isRetrying: appState.isRetryingServerConnection,
                 onReturnToLogin: appState.returnToLogin,
