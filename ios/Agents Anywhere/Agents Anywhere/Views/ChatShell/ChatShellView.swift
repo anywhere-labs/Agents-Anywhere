@@ -38,11 +38,8 @@ struct ChatShellView: View {
                 onCopyDeviceId: copyDeviceId,
                 onCopySessionId: copySessionId
             )
-        } content: { _ in
-            ChatShellPlaceholderPage(
-                title: selectedContentTitle ?? "Agents Anywhere",
-                onOpenSidebar: openSidebar
-            )
+        } content: { safeAreaInsets in
+            mainContent(safeAreaInsets: safeAreaInsets)
         }
         .alert("Could not update session", isPresented: sessionActionErrorBinding) {
             Button("OK", role: .cancel) {
@@ -108,6 +105,37 @@ struct ChatShellView: View {
         )
     }
 
+    @ViewBuilder
+    private func mainContent(safeAreaInsets: EdgeInsets) -> some View {
+        if case let .device(connectorId) = selection,
+           let connector = appState.connectors.first(where: { $0.id == connectorId }),
+           let service = appState.deviceManagementService,
+           let workspaceFilesService = appState.workspaceFilesService,
+           let serverURL = appState.serverURL
+        {
+            DeviceManagementView(
+                connector: connector,
+                allSessions: appState.sessions,
+                service: service,
+                workspaceFilesService: workspaceFilesService,
+                serverURL: serverURL,
+                safeAreaInsets: safeAreaInsets,
+                onMenu: toggleSidebar,
+                onOpenSession: openSession,
+                onNewSession: { _ in startNewSession() },
+                onConnectorUpdated: appState.updateConnector,
+                onConnectorDeleted: removeConnector,
+                onSessionsUpdated: appState.updateSessions,
+                onSetSessionsArchived: appState.setSessionsArchived
+            )
+        } else {
+            ChatShellPlaceholderPage(
+                title: selectedContentTitle ?? "Agents Anywhere",
+                onOpenSidebar: openSidebar
+            )
+        }
+    }
+
     private func startNewSession() {
         selection = .newSession
         isSidebarOpen = false
@@ -121,6 +149,11 @@ struct ChatShellView: View {
     private func openSession(_ id: V2SessionID) {
         selection = .session(id)
         isSidebarOpen = false
+    }
+
+    private func removeConnector(_ id: V2ConnectorID) {
+        appState.removeConnector(connectorId: id)
+        selection = .newSession
     }
 
     private func renameSession(_ id: V2SessionID, title: String) {
@@ -150,6 +183,10 @@ struct ChatShellView: View {
 
     private func copySessionId(_ id: V2SessionID) {
         UIPasteboard.general.string = id
+    }
+
+    private func toggleSidebar() {
+        isSidebarOpen.toggle()
     }
 
     private func openSidebar() {
