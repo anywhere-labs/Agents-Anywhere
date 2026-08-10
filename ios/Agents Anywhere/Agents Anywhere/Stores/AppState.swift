@@ -482,7 +482,16 @@ final class AppState: ObservableObject {
     }
 
     func signOut(showSignedOutRoute: Bool = true) {
-        try? keychain.delete(account: tokenAccount)
+        do {
+            try signOutAndDeleteCredentials(showSignedOutRoute: showSignedOutRoute)
+        } catch {
+            authError = error.localizedDescription
+        }
+    }
+
+    /// Deletes the persisted access token before clearing all authenticated in-memory state.
+    func signOutAndDeleteCredentials(showSignedOutRoute: Bool = true) throws {
+        try keychain.delete(account: tokenAccount)
         me = nil
         serverURL = nil
         connectors = []

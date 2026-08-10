@@ -52,10 +52,9 @@ struct PairDeviceSheet: View {
                 }
         }
         .interactiveDismissDisabled(credential != nil && path.last != .agents)
-        .confirmationDialog(
+        .alert(
             "Device already created",
-            isPresented: $isConfirmingExit,
-            titleVisibility: .visible
+            isPresented: $isConfirmingExit
         ) {
             Button("Continue pairing", role: .cancel) {}
             Button("Close anyway", role: .destructive) {

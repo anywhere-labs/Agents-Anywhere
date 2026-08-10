@@ -48,16 +48,9 @@ struct AccountSettingsSheet: View {
             } message: {
                 Text(appState.accountError ?? "")
             }
-            .confirmationDialog(
-                "Sign out of this server?",
-                isPresented: $isConfirmingSignOut,
-                titleVisibility: .visible
-            ) {
-                Button("Sign out", role: .destructive, action: signOut)
-                Button("Cancel", role: .cancel) {}
-            } message: {
-                Text("You will need to connect to the server again to continue.")
-            }
+        }
+        .fullScreenCover(isPresented: $isConfirmingSignOut) {
+            SignOutConfirmationSheet(onSignOut: signOut)
         }
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
@@ -74,9 +67,79 @@ struct AccountSettingsSheet: View {
         )
     }
 
-    private func signOut() {
-        dismiss()
-        appState.signOut()
+    private func signOut() throws {
+        try appState.signOutAndDeleteCredentials()
+    }
+}
+
+private struct SignOutConfirmationSheet: View {
+    let onSignOut: () throws -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var errorMessage = ""
+    @State private var isShowingError = false
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 20) {
+                Spacer()
+
+                Image(systemName: "rectangle.portrait.and.arrow.forward")
+                    .font(.system(size: 42, weight: .medium))
+                    .foregroundStyle(.secondary)
+
+                Text("Sign out?")
+                    .font(.largeTitle.bold())
+
+                Text("Your saved credentials will be removed from this device. You will need to sign in again to reconnect.")
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 420)
+
+                Spacer()
+
+                Button(role: .destructive, action: confirmSignOut) {
+                    Label("Sign out", systemImage: "rectangle.portrait.and.arrow.forward")
+                        .font(.headline)
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.glassProminent)
+                .buttonBorderShape(.capsule)
+                .controlSize(.large)
+                .tint(.red)
+                .foregroundStyle(.white)
+
+                Button("Cancel", action: dismiss.callAsFunction)
+                    .buttonStyle(.glass)
+                    .buttonBorderShape(.capsule)
+                    .controlSize(.large)
+            }
+            .padding(24)
+            .navigationTitle("Sign out")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel", action: dismiss.callAsFunction)
+                }
+            }
+        }
+        .alert("Could not sign out", isPresented: $isShowingError) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(errorMessage)
+        }
+    }
+
+    /// Deletes credentials and closes the cover only after the signed-out route is active.
+    private func confirmSignOut() {
+        do {
+            try onSignOut()
+            dismiss()
+        } catch {
+            errorMessage = error.localizedDescription
+            isShowingError = true
+        }
     }
 }
 
