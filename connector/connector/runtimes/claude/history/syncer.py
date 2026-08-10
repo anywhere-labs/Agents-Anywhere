@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import Any
 
 from connector.logging import logger
 from connector.runtime_protocol import RuntimeConfig
@@ -59,7 +61,24 @@ class ClaudeHistorySyncer:
 
         cursor = cursor_for(info, messages)
         previous_cursor = await self.cursor_store.read(external_session_id)
+        logger.info(
+            "Claude history sync inspected session_id={} external_session_id={} messages={} previous_cursor={} cursor_match={} last_modified={} file_size={} last_message_uuid={}",
+            session_id,
+            external_session_id,
+            len(messages),
+            previous_cursor is not None,
+            previous_cursor == cursor,
+            cursor.last_modified,
+            cursor.file_size,
+            cursor.last_message_uuid,
+        )
         if previous_cursor == cursor:
+            logger.info(
+                "Claude history sync skipped unchanged cursor session_id={} external_session_id={} message_count={}",
+                session_id,
+                external_session_id,
+                len(messages),
+            )
             self.session_store.mark_synced(session_id, external_session_id)
             return True
 
@@ -70,6 +89,25 @@ class ClaudeHistorySyncer:
         )
         session = _history_session(session_id, external_session_id, info)
         items = _history_items_from_messages(session, sync_messages)
+        logger.info(
+            "Claude history sync projected session_id={} external_session_id={} complete={} total_messages={} sync_messages={} projected_items={} sample={}",
+            session_id,
+            external_session_id,
+            complete,
+            len(messages),
+            len(sync_messages),
+            len(items),
+            _message_sample(sync_messages),
+        )
+        if sync_messages and not items:
+            logger.warning(
+                "Claude history sync projected no timeline items session_id={} external_session_id={} total_messages={} sync_messages={} sample={}",
+                session_id,
+                external_session_id,
+                len(messages),
+                len(sync_messages),
+                _message_sample(sync_messages),
+            )
         await self.host.timeline_sync(
             session_id=session_id,
             runtime="claude",
@@ -128,6 +166,27 @@ class ClaudeHistorySyncer:
             directory=cwd,
         )
         return info, messages
+
+
+def _message_sample(messages: tuple[object, ...], limit: int = 5) -> list[dict[str, Any]]:
+    sample: list[dict[str, Any]] = []
+    for message in messages[:limit]:
+        nested = _attr(message, "message")
+        role = _attr(nested, "role") if isinstance(nested, Mapping) else None
+        sample.append(
+            {
+                "type": _attr(message, "type"),
+                "role": role,
+                "uuid": _attr(message, "uuid"),
+            }
+        )
+    return sample
+
+
+def _attr(item: object | Mapping[str, Any] | None, name: str) -> Any:
+    if isinstance(item, Mapping):
+        return item.get(name)
+    return getattr(item, name, None)
 
 
 def _history_session(
