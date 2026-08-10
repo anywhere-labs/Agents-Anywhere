@@ -4,7 +4,7 @@ struct AAWordmark: View {
     let fontSize: CGFloat
 
     var body: some View {
-        Text(verbatim: "Agents Anywhere")
+        Text(verbatim: "Agents Anywhere\u{2009}")
             .font(.custom("Caveat", fixedSize: fontSize).weight(.medium))
             .tracking(0)
             .lineLimit(1)
