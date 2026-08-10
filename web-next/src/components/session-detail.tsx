@@ -41,7 +41,6 @@ import {
   isCreatedFileChange,
   JsonBlock,
   timelineItemStatusIsActive,
-  timelineItemStatusIsFailure,
   ToolMarkerRowContent,
 } from "@/components/session/session-tool-cards"
 import { CAPABILITY, capabilityIsUsable } from "@/components/session/capabilities"
@@ -1719,7 +1718,6 @@ function ToolRunGroup({
 }
 
 function toolRunStatus(items: TimelineItem[]): TimelineItem["status"] {
-  if (items.some((item) => timelineItemStatusIsFailure(item.status))) return "failed"
   if (items.some((item) => timelineItemStatusIsActive(item.status))) return "running"
   return "done"
 }

@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { Check, ChevronDown, Code2, Copy, FilePenLine, Hammer, Loader2, TerminalSquare, X } from "lucide-react"
+import { Check, ChevronDown, Code2, Copy, FilePenLine, Hammer, Loader2, TerminalSquare } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
@@ -173,7 +173,6 @@ export function ToolMarkerRowContent({
       >
         {title}
       </MarkerContent>
-      {failed ? <X className="shrink-0 text-destructive" /> : null}
     </>
   )
 }
