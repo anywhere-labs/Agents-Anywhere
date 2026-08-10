@@ -10,6 +10,8 @@ struct PairDeviceSheet: View {
     @State private var pairedConnector: V2Connector?
     @State private var runtimes: [V2DeviceRuntime] = []
     @State private var discoveryError: String?
+    @State private var configurationError: String?
+    @State private var runtimeConfiguration: PairDeviceRuntimeConfiguration?
     @State private var isConfirmingExit = false
 
     var body: some View {
@@ -43,7 +45,9 @@ struct PairDeviceSheet: View {
                                 deviceName: pairedConnector.name,
                                 runtimes: runtimes,
                                 discoveryError: discoveryError,
+                                configurationError: configurationError,
                                 onRefresh: refreshRuntimes,
+                                onConfigure: presentRuntimeConfiguration,
                                 onDone: { dismiss() }
                             )
                             .navigationBarBackButtonHidden(true)
@@ -52,10 +56,9 @@ struct PairDeviceSheet: View {
                 }
         }
         .interactiveDismissDisabled(credential != nil && path.last != .agents)
-        .confirmationDialog(
+        .alert(
             "Device already created",
-            isPresented: $isConfirmingExit,
-            titleVisibility: .visible
+            isPresented: $isConfirmingExit
         ) {
             Button("Continue pairing", role: .cancel) {}
             Button("Close anyway", role: .destructive) {
@@ -63,6 +66,22 @@ struct PairDeviceSheet: View {
             }
         } message: {
             Text("This device has been created but pairing is not complete. You can remove it later from Devices.")
+        }
+        .sheet(item: $runtimeConfiguration) { presentation in
+            RuntimeConfigurationSheet(
+                runtime: presentation.runtime,
+                schema: presentation.schema,
+                startAfterSaving: true,
+                onSave: { config in
+                    try await configureAndStartRuntime(
+                        presentation.runtime,
+                        config: config
+                    )
+                }
+            )
+            .presentationDetents([.medium, .large])
+            .presentationContentInteraction(.resizes)
+            .presentationDragIndicator(.visible)
         }
     }
 
@@ -106,6 +125,36 @@ struct PairDeviceSheet: View {
         }
     }
 
+    private func presentRuntimeConfiguration(runtimeId: V2RuntimeID) {
+        guard let runtime = runtimes.first(where: { $0.id == runtimeId }) else { return }
+        do {
+            let schema = try appState.devicePairingRuntimeConfigSchema(runtime: runtime)
+            configurationError = nil
+            runtimeConfiguration = PairDeviceRuntimeConfiguration(runtime: runtime, schema: schema)
+        } catch {
+            configurationError = error.localizedDescription
+        }
+    }
+
+    /// Performs network I/O and replaces the paired runtime row with the server result.
+    private func configureAndStartRuntime(
+        _ runtime: V2DeviceRuntime,
+        config: [String: JSONValue]
+    ) async throws {
+        guard let pairedConnector else { throw V2BusinessError.pairingNotClaimed }
+        let updatedRuntime = try await appState.configureAndStartDevicePairingRuntime(
+            connectorId: pairedConnector.id,
+            runtimeId: runtime.id,
+            config: config
+        )
+        if let index = runtimes.firstIndex(where: { $0.id == updatedRuntime.id }) {
+            runtimes[index] = updatedRuntime
+        } else if updatedRuntime.present {
+            runtimes.append(updatedRuntime)
+        }
+        configurationError = nil
+    }
+
     private func requestDismiss() {
         if credential == nil || path.last == .agents {
             dismiss()
@@ -119,6 +168,13 @@ private enum PairDeviceRoute: Hashable {
     case code
     case connecting
     case agents
+}
+
+private struct PairDeviceRuntimeConfiguration: Identifiable {
+    let runtime: V2DeviceRuntime
+    let schema: V2RuntimeConfigSchema
+
+    var id: V2RuntimeID { runtime.id }
 }
 
 private enum PairDeviceStep: Int, CaseIterable {
@@ -355,7 +411,9 @@ private struct PairDeviceAgentsStep: View {
     let deviceName: String
     let runtimes: [V2DeviceRuntime]
     let discoveryError: String?
+    let configurationError: String?
     let onRefresh: () async -> Void
+    let onConfigure: (V2RuntimeID) -> Void
     let onDone: () -> Void
 
     @State private var isRefreshing = false
@@ -374,10 +432,14 @@ private struct PairDeviceAgentsStep: View {
                     .font(.title3.weight(.semibold))
                     .foregroundStyle(.green)
 
-                PairDeviceRuntimeList(runtimes: runtimes)
+                PairDeviceRuntimeList(runtimes: runtimes, onConfigure: onConfigure)
 
                 if let discoveryError {
                     PairDeviceInlineError(message: discoveryError)
+                }
+
+                if let configurationError {
+                    PairDeviceInlineError(message: configurationError)
                 }
 
                 if runtimes.isEmpty || discoveryError != nil {
@@ -405,6 +467,7 @@ private struct PairDeviceAgentsStep: View {
 
 private struct PairDeviceRuntimeList: View {
     let runtimes: [V2DeviceRuntime]
+    let onConfigure: (V2RuntimeID) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -419,10 +482,12 @@ private struct PairDeviceRuntimeList: View {
             } else {
                 ForEach(runtimes) { runtime in
                     PairDeviceRuntimeRow(
+                        runtimeId: runtime.id,
                         displayName: runtime.displayName,
                         configured: runtime.configured,
                         active: runtime.active,
-                        status: runtime.status
+                        status: runtime.status,
+                        onConfigure: onConfigure
                     )
                 }
             }
@@ -434,10 +499,12 @@ private struct PairDeviceRuntimeList: View {
 }
 
 private struct PairDeviceRuntimeRow: View {
+    let runtimeId: V2RuntimeID
     let displayName: String
     let configured: Bool
     let active: Bool
     let status: V2DeviceRuntimeStatus
+    let onConfigure: (V2RuntimeID) -> Void
 
     var body: some View {
         HStack(spacing: 12) {
@@ -451,6 +518,13 @@ private struct PairDeviceRuntimeRow: View {
                     .foregroundStyle(.secondary)
             }
             Spacer(minLength: 0)
+            if !configured {
+                Button("Configure & Start") {
+                    onConfigure(runtimeId)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
         }
     }
 

@@ -53,7 +53,9 @@ class CodexTurnActions:
         selections: Mapping[str, str | None] | None = None,
         attachments: tuple[RuntimeAttachment, ...] = (),
         client_message_id: str | None = None,
+        cwd: str | None = None,
     ) -> RuntimeOperationResult:
+        _ = cwd
         if self.client is None or external_session_id is None:
             raise RuntimeUnsupportedError("start_turn")
         await self.ensure_started()

@@ -20,6 +20,17 @@ def runtime_config(params: dict[str, Any]) -> dict[str, Any]:
     return config
 
 
+def optional_positive_int(params: dict[str, Any], key: str) -> int | None:
+    value = params.get(key)
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError(f"{key} must be an integer")
+    if value < 1:
+        raise ValueError(f"{key} must be positive")
+    return value
+
+
 def required_session_id(params: dict[str, Any]) -> str:
     session_id = params.get("sessionId")
     if not isinstance(session_id, str) or not session_id:
@@ -156,12 +167,14 @@ class RuntimeIdParams:
 class RuntimeConfigParams:
     runtime_id: str
     config: dict[str, Any]
+    config_revision: int | None = None
 
     @classmethod
     def parse(cls, params: dict[str, Any]) -> RuntimeConfigParams:
         return cls(
             runtime_id=required_runtime_id(params),
             config=runtime_config(params),
+            config_revision=optional_positive_int(params, "configRevision"),
         )
 
 
@@ -273,6 +286,7 @@ class TurnStartParams:
     session_id: str
     external_session_id: str | None
     content: str
+    cwd: str | None
     selections: dict[str, str | None]
     attachments: tuple[RuntimeAttachment, ...]
     client_message_id: str | None
@@ -283,6 +297,7 @@ class TurnStartParams:
             session_id=required_session_id(params),
             external_session_id=optional_string(params.get("externalSessionId")),
             content=required_content(params),
+            cwd=optional_string(params.get("cwd")),
             selections=runtime_selections(params),
             attachments=runtime_attachments(params),
             client_message_id=optional_string(params.get("clientMessageId")),

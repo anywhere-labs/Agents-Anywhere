@@ -508,7 +508,20 @@ def semantic_identity_keys(
     fallback_index: int,
 ) -> tuple[tuple[str, ...], ...]:
     if projection.raw_type == "contextCompaction":
-        return (("context-compaction", external_session_id),)
+        keys: list[tuple[str, ...]] = []
+        if projection.turn_id is not None:
+            keys.append(("context-compaction-turn", external_session_id, projection.turn_id))
+        if projection.native_id is not None:
+            keys.append(("context-compaction-native", external_session_id, projection.native_id))
+        if keys:
+            return tuple(keys)
+        return (
+            (
+                "context-compaction-derived",
+                external_session_id,
+                projection.derived_key(fallback_index),
+            ),
+        )
     role = projection.effective_role()
     if projection.raw_type not in {"agentMessage", "userMessage", "steeringUserMessage"}:
         return ()

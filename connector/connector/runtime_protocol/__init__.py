@@ -36,6 +36,7 @@ from connector.runtime_protocol.models import (
     RuntimeInventoryItem,
     RuntimeModelCatalog,
     RuntimeModelItem,
+    PreparedSessionTimelineSync as PreparedSessionTimelineSync,
     RuntimeOperationResult,
     RuntimePermissionCatalog,
     RuntimePermissionItem,

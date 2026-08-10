@@ -1,0 +1,40 @@
+import Foundation
+
+struct V2WorkspaceFilesListRequest: Encodable, Hashable {
+    let root: String
+    let path: String
+}
+
+struct V2WorkspaceFileReadRequest: Encodable, Hashable {
+    let path: String
+}
+
+struct V2WorkspaceDirectoryResponse: Decodable, Hashable {
+    let ok: Bool
+    let result: V2WorkspaceDirectory
+    let error: String?
+}
+
+struct V2WorkspaceDirectory: Decodable, Hashable {
+    let path: String
+    let entries: [V2WorkspaceEntry]
+    let truncated: Bool?
+}
+
+struct V2WorkspaceEntry: Decodable, Identifiable, Hashable {
+    let name: String
+    let path: String
+    let type: String
+    let size: Int?
+    let modifiedAt: String?
+
+    var id: String { path }
+    var isDirectory: Bool { type == "directory" }
+    var isFile: Bool { type == "file" }
+}
+
+struct V2WorkspaceFilePreviewToken: Decodable, Hashable {
+    let previewToken: String
+    let expiresAt: String
+    let serverTime: String
+}

@@ -19,39 +19,28 @@ struct ChatSidebarView: View {
     let onCopyDeviceId: (V2ConnectorID) -> Void
     let onCopySessionId: (V2SessionID) -> Void
 
+    @State private var isShowingPairing = false
+
     var body: some View {
-        ZStack(alignment: .bottomLeading) {
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 6) {
-                    ChatSidebarNewSessionButton(action: onNewSession)
-                    ChatSidebarDeviceSection(
-                        devices: devices,
-                        selectedDeviceId: selectedDeviceId,
-                        isLoading: isLoadingDevices,
-                        onOpen: onOpenDevice,
-                        onCopyId: onCopyDeviceId
-                    )
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 6) {
+                ChatSidebarDeviceSection(
+                    devices: devices,
+                    selectedDeviceId: selectedDeviceId,
+                    isLoading: isLoadingDevices,
+                    onOpen: onOpenDevice,
+                    onCopyId: onCopyDeviceId
+                )
+                ChatSidebarPairDeviceButton {
+                    isShowingPairing = true
+                }
 
-                    if !pinnedSessions.isEmpty {
-                        ChatSidebarSessionSection(
-                            title: "Pinned",
-                            sessions: pinnedSessions,
-                            selectedSessionId: selectedSessionId,
-                            emptyMessage: "No pinned sessions",
-                            onOpen: onOpenSession,
-                            onRename: onRenameSession,
-                            onTogglePinned: onToggleSessionPinned,
-                            onArchive: onArchiveSession,
-                            onCopyId: onCopySessionId
-                        )
-                    }
-
+                if !pinnedSessions.isEmpty {
                     ChatSidebarSessionSection(
-                        title: "Recent",
-                        sessions: recentSessions,
+                        title: "Pinned",
+                        sessions: pinnedSessions,
                         selectedSessionId: selectedSessionId,
-                        isLoading: isLoadingSessions,
-                        emptyMessage: "No sessions match",
+                        emptyMessage: "No pinned sessions",
                         onOpen: onOpenSession,
                         onRename: onRenameSession,
                         onTogglePinned: onToggleSessionPinned,
@@ -59,19 +48,40 @@ struct ChatSidebarView: View {
                         onCopyId: onCopySessionId
                     )
                 }
-                .padding(.leading, safeAreaInsets.leading + 14)
-                .padding(.trailing, safeAreaInsets.trailing + 14)
-                .padding(.top, 10)
-                .padding(.bottom, safeAreaInsets.bottom + 82)
-            }
-            .scrollIndicators(.hidden)
-            .scrollEdgeEffectStyle(.automatic, for: .bottom)
 
+                ChatSidebarSessionSection(
+                    title: "Recent",
+                    sessions: recentSessions,
+                    selectedSessionId: selectedSessionId,
+                    isLoading: isLoadingSessions,
+                    emptyMessage: "No sessions match",
+                    onOpen: onOpenSession,
+                    onRename: onRenameSession,
+                    onTogglePinned: onToggleSessionPinned,
+                    onArchive: onArchiveSession,
+                    onCopyId: onCopySessionId
+                )
+            }
+            .padding(.leading, safeAreaInsets.leading + 14)
+            .padding(.trailing, safeAreaInsets.trailing + 14)
+            .padding(.top, 10)
+            .padding(.bottom, safeAreaInsets.bottom + 82)
+        }
+        .scrollIndicators(.hidden)
+        .scrollEdgeEffectStyle(.soft, for: .bottom)
+        .overlay(alignment: .bottom) {
             if let account {
-                ChatSidebarBottomControls(account: account)
+                ChatSidebarBottomControls(
+                    account: account,
+                    onNewSession: onNewSession
+                )
                     .padding(.leading, safeAreaInsets.leading + 18)
+                    .padding(.trailing, safeAreaInsets.trailing + 18)
                     .padding(.bottom, max(safeAreaInsets.bottom, 12))
             }
+        }
+        .sheet(isPresented: $isShowingPairing) {
+            PairDeviceSheet()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
     }
@@ -91,13 +101,15 @@ struct ChatSidebarHeaderView: View {
                 Spacer(minLength: 8)
 
                 Button(action: toggleSearch) {
-                    Image(systemName: isSearching ? "xmark" : "magnifyingglass")
-                        .font(.body.weight(.semibold))
-                        .frame(width: 38, height: 38)
+                    Label(
+                        isSearching ? "Close search" : "Search sessions",
+                        systemImage: isSearching ? "xmark" : "magnifyingglass"
+                    )
+                    .labelStyle(.iconOnly)
                 }
                 .buttonStyle(.glass)
                 .buttonBorderShape(.circle)
-                .accessibilityLabel(isSearching ? "Close search" : "Search sessions")
+                .controlSize(.large)
             }
 
             if isSearching {
@@ -129,12 +141,12 @@ struct ChatSidebarHeaderView: View {
     }
 }
 
-private struct ChatSidebarNewSessionButton: View {
+private struct ChatSidebarPairDeviceButton: View {
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            Label("New session", systemImage: "plus")
+            Label("Pair device", systemImage: "plus")
                 .font(.body.weight(.semibold))
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 10)
@@ -398,12 +410,22 @@ private struct ChatSidebarEmptyRow: View {
 
 private struct ChatSidebarBottomControls: View {
     let account: ChatSidebarAccount
+    let onNewSession: () -> Void
 
     @State private var isShowingSettings = false
-    @State private var isShowingPairing = false
 
     var body: some View {
         HStack(spacing: 10) {
+            AppGlassButton(
+                "New session",
+                systemImage: "square.and.pencil",
+                style: .prominent,
+                maxWidth: nil,
+                action: onNewSession
+            )
+
+            Spacer(minLength: 12)
+
             Button {
                 isShowingSettings = true
             } label: {
@@ -412,23 +434,10 @@ private struct ChatSidebarBottomControls: View {
             .buttonStyle(.glass)
             .buttonBorderShape(.circle)
             .accessibilityLabel("Account")
-
-            Button {
-                isShowingPairing = true
-            } label: {
-                Image(systemName: "plus")
-                    .font(.body.weight(.semibold))
-                    .frame(width: 38, height: 38)
-            }
-            .buttonStyle(.glassProminent)
-            .buttonBorderShape(.circle)
-            .accessibilityLabel("Pair new device")
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .sheet(isPresented: $isShowingSettings) {
             AccountSettingsSheet()
-        }
-        .sheet(isPresented: $isShowingPairing) {
-            PairDeviceSheet()
         }
     }
 }

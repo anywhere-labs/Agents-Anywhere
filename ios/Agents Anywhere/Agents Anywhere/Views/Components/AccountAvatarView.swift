@@ -9,7 +9,6 @@ struct AccountAvatarView: View {
     var body: some View {
         avatarContent
             .frame(width: size, height: size)
-            .background(Color.accentColor, in: Circle())
             .clipShape(Circle())
     }
 
@@ -22,7 +21,7 @@ struct AccountAvatarView: View {
                     .resizable()
                     .scaledToFill()
             } else {
-                AccountAvatarFallback(character: fallbackCharacter)
+                AccountAvatarFallback(character: fallbackCharacter, size: size)
             }
         case let .remote(url):
             AsyncImage(url: url) { phase in
@@ -31,11 +30,11 @@ struct AccountAvatarView: View {
                         .resizable()
                         .scaledToFill()
                 } else {
-                    AccountAvatarFallback(character: fallbackCharacter)
+                    AccountAvatarFallback(character: fallbackCharacter, size: size)
                 }
             }
         case nil:
-            AccountAvatarFallback(character: fallbackCharacter)
+            AccountAvatarFallback(character: fallbackCharacter, size: size)
         }
     }
 
@@ -47,11 +46,13 @@ struct AccountAvatarView: View {
 
 private struct AccountAvatarFallback: View {
     let character: String
+    let size: CGFloat
 
     var body: some View {
         Text(character)
-            .font(.title3.weight(.semibold))
+            .font(.system(size: max(size * 0.38, 14), weight: .semibold, design: .rounded))
             .foregroundStyle(.white)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color(red: 0.12, green: 0.66, blue: 0.38))
     }
 }

@@ -1,66 +1,57 @@
-# Server and Data Migration
+# 服务端和数据迁移
 
-This document covers the Server contract and durable-state migration from
-`main` to v2.
+本文说明从 `main` 到 v2 的 Server 契约和持久化状态迁移。
 
-## State ownership
+## 状态归属
 
-v2 separates durable product state from live runtime facts:
+v2 把持久化产品状态和实时 runtime 事实分开：
 
-| State | Owner | Storage |
+| 状态 | 归属方 | 存储位置 |
 | --- | --- | --- |
-| Users, connectors, session metadata, timeline, file metadata, import archive | Server | PostgreSQL |
-| Runtime state, selections, notices, catalogs, effective runtime capabilities | Active runtime, projected through Connector | Live reads and pushes; not authoritative database state |
-| Connector presence, routed RPC, invalidations, WebSocket tickets, locks | Server coordination layer | Redis with finite lifetimes |
-| Connector runtime process, sync cursors, local credentials | Connector | Local process and atomic JSON files |
+| 用户、connectors、session metadata、timeline、file metadata、import archive | Server | PostgreSQL |
+| Runtime state、selections、notices、catalogs、实际 runtime capabilities | Active runtime，通过 Connector 投影出来 | 实时读取和推送；不是权威数据库状态 |
+| Connector presence、路由后的 RPC、失效通知、WebSocket tickets、locks | Server 协调层 | Redis，生命周期有限 |
+| Connector runtime 进程、sync cursors、本地 credentials | Connector | 本地进程和原子 JSON 文件 |
 
-Redis is disposable coordination state. Do not enable Redis persistence as a
-substitute for PostgreSQL backups.
+Redis 是可丢弃的协调状态。不要开启 Redis persistence 来替代 PostgreSQL 备份。
 
-## Environment changes
+## 环境变量变化
 
-| `main` setting | v2 setting | Notes |
+| `main` 配置 | v2 配置 | 说明 |
 | --- | --- | --- |
-| `AGENT_SERVER_DB=/path/agent-server.sqlite3` | `AGENT_SERVER_DB_URL=postgresql+asyncpg://...` | The v2 runtime rejects SQLite. |
-| none | `AGENT_SERVER_DB_BACKEND=postgres` | Optional assertion used by the Docker images. |
-| none | `AGENT_SERVER_REDIS_URL=redis://...` | Required for distributed production coordination. |
-| process-local defaults | `AGENT_SERVER_INSTANCE_ID` and Redis prefix/timeouts | Use a unique instance id when explicitly configured. |
-| local file directory beside SQLite | `AGENT_SERVER_FILES_BACKEND=local|s3` plus backend settings | Migrate the file payloads separately from database rows. |
+| `AGENT_SERVER_DB=/path/agent-server.sqlite3` | `AGENT_SERVER_DB_URL=postgresql+asyncpg://...` | v2 runtime 会拒绝 SQLite。 |
+| 无 | `AGENT_SERVER_DB_BACKEND=postgres` | Docker image 使用的可选断言。 |
+| 无 | `AGENT_SERVER_REDIS_URL=redis://...` | 分布式生产协调必需。 |
+| 进程本地默认值 | `AGENT_SERVER_INSTANCE_ID` 和 Redis prefix/timeouts | 显式配置时要使用唯一 instance id。 |
+| SQLite 旁边的本地文件目录 | `AGENT_SERVER_FILES_BACKEND=local|s3` 加后端配置 | 文件 payload 要和数据库行分开迁移。 |
 
-The Server origin remains the configured public origin. Clients must not put
-`/api/v2` into `AGENTS_ANYWHERE_API`, `NEXT_PUBLIC_AGENTS_ANYWHERE_API`, or
-Connector `serverUrl`; URL helpers append the namespace.
+Server origin 仍然是配置里的 public origin。客户端不要把 `/api/v2` 放进 `AGENTS_ANYWHERE_API`、`NEXT_PUBLIC_AGENTS_ANYWHERE_API` 或 Connector `serverUrl`；URL helper 会追加 namespace。
 
-## Database revision chain
+## 数据库 revision 链
 
-The current Server requires exact Alembic revision `v2_7` and reports product
-schema version `2.7`.
+当前 Server 要求精确的 Alembic revision `v2_7`，并报告产品 schema version `2.7`。
 
-| Revision | Migration purpose |
+| Revision | 迁移目的 |
 | --- | --- |
-| `v1_legacy` | Fingerprint and stamp the last supported unversioned v1 layout. |
-| `v2_0` | Create the strict v2 schema, migrate device runtimes, add selection columns, and map `waiting_approval`/`error` sessions to `blocked`. |
-| `v2_1` | Add Server-instance and connection fencing fields for Connector presence. |
-| `v2_2` | Migrate runtime settings and selections, and archive legacy rows in `legacy_import_archive`. |
-| `v2_3` | Remove approvals and legacy catalog/settings tables after archiving and conversion. |
-| `v2_4` | Widen protocol capability and catalog revisions to PostgreSQL `BIGINT`. |
-| `v2_5` | Introduce an intermediate durable `session_states` projection. |
-| `v2_6` | Remove `session_states`; runtime state and selections become live runtime facts. |
-| `v2_7` | Remove persisted notices; runtime notices become live runtime facts. |
+| `v1_legacy` | 为最后一个受支持的无版本 v1 布局打 fingerprint 和 stamp。 |
+| `v2_0` | 创建严格的 v2 schema，迁移 device runtimes，添加 selection columns，并把 `waiting_approval`/`error` session 映射为 `blocked`。 |
+| `v2_1` | 为 Connector presence 添加 Server instance 和 connection fencing 字段。 |
+| `v2_2` | 迁移 runtime settings 和 selections，并把 legacy rows 归档到 `legacy_import_archive`。 |
+| `v2_3` | 在归档和转换后移除 approvals 以及 legacy catalog/settings 表。 |
+| `v2_4` | 把 protocol capability 和 catalog revision 扩到 PostgreSQL `BIGINT`。 |
+| `v2_5` | 引入中间持久化 `session_states` 投影。 |
+| `v2_6` | 移除 `session_states`；runtime state 和 selections 变成实时 runtime 事实。 |
+| `v2_7` | 移除持久化 notices；runtime notices 变成实时 runtime 事实。 |
 
-The v2.3, v2.6, and v2.7 transitions are intentionally forward-only. Do not
-plan a database downgrade as the rollback mechanism.
+v2.3、v2.6 和 v2.7 迁移故意只支持向前。不要把数据库 downgrade 当成回滚方案。
 
-## Importing the v1 SQLite database
+## 导入 v1 SQLite 数据库
 
-The import tool opens the original SQLite file read-only, copies it through the
-SQLite backup API, upgrades only the copy, creates/upgrades the target
-PostgreSQL schema, imports in one transaction, and compares row counts and
-SHA-256 digests table by table.
+导入工具会以只读方式打开原始 SQLite 文件，通过 SQLite backup API 复制一份，只升级这份副本，创建或升级目标 PostgreSQL schema，在一个事务里完成导入，并逐表比较 row count 和 SHA-256 digest。
 
-### Rehearsal
+### 演练
 
-Create an empty disposable PostgreSQL database, then run from `server/`:
+先创建一个空的一次性 PostgreSQL 数据库，然后从 `server/` 运行：
 
 ```bash
 uv run python -m agent_server.infra.db.migrations rehearse-v1 \
@@ -69,13 +60,11 @@ uv run python -m agent_server.infra.db.migrations rehearse-v1 \
   --report migration-report.json
 ```
 
-The target must contain no product rows. Keep the report with the release
-artifacts and investigate every failure before scheduling cutover.
+目标数据库不能包含任何产品数据行。把报告和发布产物放在一起保存；安排正式切换前，必须调查每一个失败项。
 
-### Final import
+### 最终导入
 
-After stopping all v1 writers, run the same verified command against a newly
-created, empty production target and save a separate report:
+停止所有 v1 writer 后，对一个新建的空生产目标库运行同一条已经验证过的命令，并保存单独的报告：
 
 ```bash
 uv run python -m agent_server.infra.db.migrations rehearse-v1 \
@@ -84,28 +73,27 @@ uv run python -m agent_server.infra.db.migrations rehearse-v1 \
   --report final-migration-report.json
 ```
 
-Despite the command name, this operation writes the target database. Never aim
-it at a populated database.
+虽然命令名里有 `rehearse-v1`，但这个操作会写入目标数据库。永远不要把它指向一个已经有数据的数据库。
 
-For a new empty v2 installation, skip the legacy import and run:
+如果是全新的空 v2 安装，可以跳过 legacy import，运行：
 
 ```bash
 AGENT_SERVER_DB_URL=postgresql+asyncpg://agents:password@db/agents_production \
   uv run python -m agent_server.infra.db.migrations upgrade
 ```
 
-Verify before Server startup:
+启动 Server 前先验证：
 
 ```bash
 AGENT_SERVER_DB_URL=postgresql+asyncpg://agents:password@db/agents_production \
   uv run python -m agent_server.infra.db.migrations current --verbose
 ```
 
-Expected output includes `schemaVersion=2.7 revision=v2_7`.
+预期输出里应该包含 `schemaVersion=2.7 revision=v2_7`。
 
-## API namespace
+## API 命名空间
 
-All product HTTP, SSE, and WebSocket endpoints move under `/api/v2`:
+所有产品 HTTP、SSE 和 WebSocket endpoint 都迁到 `/api/v2` 下：
 
 | `main` | v2 |
 | --- | --- |
@@ -117,51 +105,42 @@ All product HTTP, SSE, and WebSocket endpoints move under `/api/v2`:
 | `/pairing/*` | `/api/v2/pairing/*` |
 | `/sessions/*` | `/api/v2/sessions/*` |
 
-Use the shared namespace helpers described in
-[API namespace](../../api/namespace.md). Do not concatenate `/api/v2` at every
-call site.
+使用 [API namespace](../../api/namespace.md) 中描述的共享 namespace helpers。不要在每个 call site 手动拼接 `/api/v2`。
 
-## Session API migration
+## 会话 API 迁移
 
-The combined `main` session API is split by ownership. Important replacements
-are:
+`main` 里合并在一起的 session API，在 v2 里按归属拆开。重要替换如下：
 
-| `main` route | v2 route |
+| `main` 路由 | v2 路由 |
 | --- | --- |
 | `PATCH /sessions/{id}` | `PATCH /api/v2/sessions/{id}/meta` |
-| `POST /sessions/{id}/read` | `POST /api/v2/sessions/read` with a direct id array |
-| `POST /sessions/bulk-archive` | `POST /api/v2/sessions/archive` or `/unarchive` with a direct id array |
-| `GET /sessions/{id}/state` | `/api/v2/sessions/{id}/meta`, `/timeline`, `/runtime/state`, or `/snapshot` according to ownership |
-| `GET/PATCH /sessions/{id}/runtime-settings` | Runtime config routes plus `/api/v2/sessions/{id}/runtime/selections` |
+| `POST /sessions/{id}/read` | `POST /api/v2/sessions/read`，body 是直接的 id array |
+| `POST /sessions/bulk-archive` | `POST /api/v2/sessions/archive` 或 `/unarchive`，body 是直接的 id array |
+| `GET /sessions/{id}/state` | 按归属改用 `/api/v2/sessions/{id}/meta`、`/timeline`、`/runtime/state` 或 `/snapshot` |
+| `GET/PATCH /sessions/{id}/runtime-settings` | Runtime config routes 加 `/api/v2/sessions/{id}/runtime/selections` |
 | `POST /sessions/{id}/messages` | `POST /api/v2/sessions/{id}/runtime/messages` |
 | `POST /sessions/{id}/interrupt` | `POST /api/v2/sessions/{id}/runtime/interrupt` |
 | `POST /approvals/{id}/resolve` | `POST /api/v2/sessions/{id}/runtime/notices/{noticeId}/respond` |
-| Frontend-built commands | `GET/POST /api/v2/sessions/{id}/runtime/commands` |
-| New blank session plus first message | `POST /api/v2/sessions/create-and-start` |
+| 前端构造的 commands | `GET/POST /api/v2/sessions/{id}/runtime/commands` |
+| 新建空 session 并发送第一条消息 | `POST /api/v2/sessions/create-and-start` |
 
-Message payloads carry content, attachments, and `clientMessageId`. They do not
-carry one-off model or permission fields. Selection changes go through
-`PATCH /runtime/selections` before an existing-session send. The runtime is the
-final validator.
+Message payload 只携带 content、attachments 和 `clientMessageId`。它们不携带一次性的 model 或 permission 字段。已有 session 发送消息前，selection 变化要先通过 `PATCH /runtime/selections`。runtime 是最终校验方。
 
-See [Session API current gap](../../api/session-api-current-gap.md) for the full
-route inventory and [Clients](./clients.md) for client behavior.
+完整 route inventory 见 [Session API current gap](../../api/session-api-current-gap.md)，客户端行为见 [客户端](./clients.md)。
 
-## Startup and readiness
+## 启动和 readiness
 
-The v2 Server does not mutate production schema during normal startup. Start a
-dedicated migrator first, then Server. Readiness must return HTTP 200:
+v2 Server 在正常启动时不会修改生产 schema。先启动专门的 migrator，再启动 Server。Readiness 必须返回 HTTP 200：
 
 ```bash
 curl --fail http://127.0.0.1:8000/api/v2/health/ready
 ```
 
-Confirm:
+确认：
 
-- database status is `ok` with schema version `2.7`;
-- Redis status is `ok` in the distributed deployment;
-- the Server instance id is present;
-- a stale or unversioned database produces 503 rather than serving traffic.
+- database status 是 `ok`，schema version 是 `2.7`；
+- 分布式部署中 Redis status 是 `ok`；
+- Server instance id 存在；
+- 陈旧或无版本数据库会返回 503，而不是继续服务流量。
 
-Also migrate the file-storage payloads and verify attachment downloads. The
-database import migrates metadata, not external/local file bytes.
+还要迁移 file-storage payload，并验证 attachment 下载。数据库导入只迁移 metadata，不迁移外部或本地文件字节。

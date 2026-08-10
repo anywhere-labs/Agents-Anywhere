@@ -45,7 +45,9 @@ final class AppState: ObservableObject {
     private let keychain = KeychainStore()
     private let serverDefaultsKey = "agentsAnywhere.serverURL"
     private let tokenAccount = "accessToken"
+    private let dashboardClientId = "ios-dashboard-\(UUID().uuidString)"
     private var lastDashboardRefreshAt: Date?
+    private var dashboardUpdatesTask: Task<Void, Never>?
 
     init() {
         Task { await restoreSession() }
@@ -134,6 +136,7 @@ final class AppState: ObservableObject {
             me = try await client.me(token: auth.accessToken)
             route = .signedIn
             await refreshDashboard()
+            startDashboardUpdates()
         } catch {
             authError = error.localizedDescription
         }
@@ -164,6 +167,7 @@ final class AppState: ObservableObject {
             if showSignedInRoute {
                 route = .signedIn
                 await refreshDashboard()
+                startDashboardUpdates()
             }
         } catch {
             authError = error.localizedDescription
@@ -182,6 +186,7 @@ final class AppState: ObservableObject {
             if showSignedInRoute {
                 route = .signedIn
                 await refreshDashboard()
+                startDashboardUpdates()
             }
         } catch {
             authError = error.localizedDescription
@@ -233,6 +238,7 @@ final class AppState: ObservableObject {
             if showSignedInRoute {
                 route = .signedIn
                 await refreshDashboard()
+                startDashboardUpdates()
             }
         } catch {
             authError = error.localizedDescription
@@ -275,6 +281,17 @@ final class AppState: ObservableObject {
         dashboardError = sessionsError ?? connectorsError
     }
 
+    /// Opens the dashboard WebSocket and continuously replaces the global Connector and Session projections.
+    func startDashboardUpdates() {
+        guard dashboardUpdatesTask == nil else { return }
+        guard let services = makeV2Services() else { return }
+
+        dashboardUpdatesTask = Task { [weak self] in
+            guard let self else { return }
+            await receiveDashboardUpdates(services: services)
+        }
+    }
+
     func renameSession(sessionId: V2SessionID, title: String) async -> Bool {
         sessionActionError = nil
         guard let services = makeV2Services() else {
@@ -308,6 +325,10 @@ final class AppState: ObservableObject {
     }
 
     func setSessionArchived(sessionId: V2SessionID, archived: Bool) async -> Bool {
+        await setSessionsArchived(sessionIds: [sessionId], archived: archived)
+    }
+
+    func setSessionsArchived(sessionIds: [V2SessionID], archived: Bool) async -> Bool {
         sessionActionError = nil
         guard let services = makeV2Services() else {
             sessionActionError = String(localized: "The signed-in server is unavailable.")
@@ -315,9 +336,9 @@ final class AppState: ObservableObject {
         }
         do {
             let updatedSessions = if archived {
-                try await services.dashboard.archive(sessionIds: [sessionId])
+                try await services.dashboard.archive(sessionIds: sessionIds)
             } else {
-                try await services.dashboard.unarchive(sessionIds: [sessionId])
+                try await services.dashboard.unarchive(sessionIds: sessionIds)
             }
             for updated in updatedSessions {
                 updateSession(updated)
@@ -465,6 +486,37 @@ final class AppState: ObservableObject {
         return try await services.devicePairing.discoverRuntimes(connectorId: connectorId)
     }
 
+    func devicePairingRuntimeConfigSchema(runtime: V2DeviceRuntime) throws -> V2RuntimeConfigSchema {
+        guard let services = makeV2Services() else {
+            throw V2BusinessError.signedInServerUnavailable
+        }
+        return try services.deviceManagement.configSchema(runtime: runtime)
+    }
+
+    /// Performs authenticated network I/O to save configuration and start a paired runtime.
+    func configureAndStartDevicePairingRuntime(
+        connectorId: V2ConnectorID,
+        runtimeId: V2RuntimeID,
+        config: [String: JSONValue]
+    ) async throws -> V2DeviceRuntime {
+        guard let services = makeV2Services() else {
+            throw V2BusinessError.signedInServerUnavailable
+        }
+        return try await services.deviceManagement.configureAndStartRuntime(
+            connectorId: connectorId,
+            runtimeId: runtimeId,
+            config: config
+        )
+    }
+
+    var deviceManagementService: V2DeviceManagementService? {
+        makeV2Services()?.deviceManagement
+    }
+
+    var workspaceFilesService: V2WorkspaceFilesService? {
+        makeV2Services()?.workspaceFiles
+    }
+
     func updateSession(_ updated: V2SessionMeta) {
         if let index = sessions.firstIndex(where: { $0.id == updated.id }) {
             sessions[index] = updated
@@ -473,7 +525,7 @@ final class AppState: ObservableObject {
         }
     }
 
-    private func updateConnector(_ updated: V2Connector) {
+    func updateConnector(_ updated: V2Connector) {
         if let index = connectors.firstIndex(where: { $0.id == updated.id }) {
             connectors[index] = updated
         } else {
@@ -481,8 +533,30 @@ final class AppState: ObservableObject {
         }
     }
 
+    func removeConnector(connectorId: V2ConnectorID) {
+        connectors.removeAll { $0.id == connectorId }
+        sessions.removeAll { $0.connectorId == connectorId }
+    }
+
+    func updateSessions(_ updated: [V2SessionMeta]) {
+        for session in updated {
+            updateSession(session)
+        }
+    }
+
     func signOut(showSignedOutRoute: Bool = true) {
-        try? keychain.delete(account: tokenAccount)
+        do {
+            try signOutAndDeleteCredentials(showSignedOutRoute: showSignedOutRoute)
+        } catch {
+            authError = error.localizedDescription
+        }
+    }
+
+    /// Deletes the persisted access token before clearing all authenticated in-memory state.
+    func signOutAndDeleteCredentials(showSignedOutRoute: Bool = true) throws {
+        dashboardUpdatesTask?.cancel()
+        dashboardUpdatesTask = nil
+        try keychain.delete(account: tokenAccount)
         me = nil
         serverURL = nil
         connectors = []
@@ -511,12 +585,16 @@ final class AppState: ObservableObject {
     func showSignedInRoute() async {
         route = .signedIn
         await refreshDashboard()
+        startDashboardUpdates()
     }
 
     func activateSignedInRoute() {
         serverConnectionIssue = nil
         route = .signedIn
-        Task { await refreshDashboard() }
+        Task {
+            await refreshDashboard()
+            startDashboardUpdates()
+        }
     }
 
     /// Performs authenticated network I/O and refreshes the initial signed-in state.
@@ -526,6 +604,43 @@ final class AppState: ObservableObject {
         serverConnectionIssue = nil
         route = .signedIn
         await refreshDashboard()
+        startDashboardUpdates()
+    }
+
+    /// Receives server-pushed dashboard snapshots and reconnects after transient failures.
+    private func receiveDashboardUpdates(services: V2ClientServices) async {
+        while !Task.isCancelled {
+            do {
+                let updates = try await services.dashboard.updates(clientId: dashboardClientId)
+                for try await snapshot in updates {
+                    if Task.isCancelled { return }
+                    applyDashboardSnapshot(snapshot)
+                }
+            } catch {
+                if Task.isCancelled { return }
+            }
+
+            do {
+                try await Task.sleep(for: .seconds(2))
+            } catch {
+                return
+            }
+        }
+    }
+
+    private func applyDashboardSnapshot(_ snapshot: V2DashboardSnapshot) {
+        guard snapshot.type == "dashboard.snapshot" else { return }
+        if connectors != snapshot.connectors {
+            connectors = snapshot.connectors
+        }
+        if sessions != snapshot.sessions {
+            sessions = snapshot.sessions
+        }
+        hasLoadedConnectors = true
+        hasLoadedSessions = true
+        connectorsError = nil
+        sessionsError = nil
+        dashboardError = nil
     }
 
     private func handleSessionRestoreFailure(_ error: Error) {

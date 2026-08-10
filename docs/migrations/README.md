@@ -1,16 +1,11 @@
-# Migration Documentation
+# 迁移文档
 
-This directory contains operator and client migration guides. Migration guides
-describe released or code-backed behavior transitions. Refactor plans and target
-architecture documents remain under `docs/runtime-protocol/` and `docs/api/`.
+这个目录包含运维侧和客户端侧的迁移指南。迁移指南只描述已经发布、或已经有代码支撑的行为变化。重构计划和目标架构文档仍然放在 `docs/runtime-protocol/` 和 `docs/api/` 下。
 
-## Active migration set
+## 当前迁移文档集
 
-- [Main to v2](./main-to-v2/README.md): coordinated migration from the current
-  `main` deployment model to the v2 Server, Connector, and client contracts.
-- [Event recovery v2](./event-recovery-v2.md): durable event recovery contract.
-- [Legacy storage v2.3](./legacy-storage-v2_3.md): historical v2.3 removal of
-  legacy Server storage. Later revisions are covered by the main-to-v2 guide.
+- [main 到 v2](./main-to-v2/README.md)：说明如何把当前 `main` 部署模型，整体迁移到 v2 的 Server、Connector 和客户端契约。
+- [事件恢复 v2](./event-recovery-v2.md)：说明持久化事件恢复契约。
+- [旧存储 v2.3](./legacy-storage-v2_3.md)：记录 v2.3 历史阶段如何移除旧的 Server 存储。后续版本的变化由 main-to-v2 指南覆盖。
 
-Start with the main-to-v2 overview. Its deployment and acceptance documents are
-the release gates; the component documents explain how to update code and data.
+阅读时先从 main-to-v2 总览开始。里面的部署文档和验收文档是发布门槛；各组件文档说明代码和数据应该怎么改。

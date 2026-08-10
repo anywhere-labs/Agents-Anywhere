@@ -18,6 +18,7 @@ ProtocolNoticeType = Literal["notification", "interaction"]
 ProtocolNoticeSeverity = Literal["info", "success", "warning", "error"]
 ProtocolInteractionStatus = Literal[
     "open",
+    "responding",
     "response_accepted",
     "resolving",
     "resolved",

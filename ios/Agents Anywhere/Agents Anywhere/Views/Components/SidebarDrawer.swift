@@ -168,10 +168,49 @@ private struct SidebarDrawerInteractive<
                         content: mainContent(safeAreaInsets),
                         close: closeFromOverlay
                     )
+
+#if !canImport(UIKit)
+                    if usesOpeningEdgeGestureRegion {
+                        Color.clear
+                            .frame(
+                                width: max(configuration.edgeActivationWidth, 0),
+                                height: screenSize.height
+                            )
+                            .contentShape(Rectangle())
+                            .highPriorityGesture(drawerGesture(revealWidth: revealWidth))
+                    }
+#endif
                 }
                 .frame(width: screenSize.width, height: screenSize.height)
                 .contentShape(Rectangle())
-                .simultaneousGesture(drawerGesture(revealWidth: revealWidth))
+#if canImport(UIKit)
+                .gesture(
+                    SidebarDrawerPanGesture(
+                        progress: progress,
+                        edgeActivationWidth: configuration.edgeActivationWidth,
+                        onBegan: beginDirectionalPan,
+                        onChanged: { translationX in
+                            updateDirectionalPan(
+                                translationX: translationX,
+                                revealWidth: revealWidth
+                            )
+                        },
+                        onEnded: { translationX, velocityX, cancelled in
+                            endDirectionalPan(
+                                translationX: translationX,
+                                velocityX: velocityX,
+                                revealWidth: revealWidth,
+                                cancelled: cancelled
+                            )
+                        }
+                    )
+                )
+#else
+                .simultaneousGesture(
+                    drawerGesture(revealWidth: revealWidth),
+                    isEnabled: !usesOpeningEdgeGestureRegion
+                )
+#endif
                 .onChange(of: isOpen) { _, newValue in
                     synchronizeProgress(with: newValue)
                 }
@@ -196,6 +235,50 @@ private struct SidebarDrawerInteractive<
 
     private var contentOverlayOpacity: CGFloat {
         configuration.contentOverlayOpacity.clamped(to: 0 ... 1) * progress
+    }
+
+    private var usesOpeningEdgeGestureRegion: Bool {
+        progress <= 0.001 || dragStartProgress.map { $0 <= 0.001 } == true
+    }
+
+    private func beginDirectionalPan() {
+        animationGeneration &+= 1
+        dragStartProgress = progress
+    }
+
+    private func updateDirectionalPan(translationX: CGFloat, revealWidth: CGFloat) {
+        guard let dragStartProgress else { return }
+
+        let nextProgress = dragStartProgress + (translationX / revealWidth)
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            progress = nextProgress.clamped(to: 0 ... 1)
+        }
+    }
+
+    private func endDirectionalPan(
+        translationX: CGFloat,
+        velocityX: CGFloat,
+        revealWidth: CGFloat,
+        cancelled: Bool
+    ) {
+        defer { resetDrag() }
+        guard let dragStartProgress else { return }
+
+        let projectedTranslation = translationX + (velocityX * 0.2)
+        let projectedProgress = dragStartProgress + (projectedTranslation / revealWidth)
+        let target = if cancelled {
+            progress >= 0.5 ? 1.0 : 0.0
+        } else {
+            projectedProgress >= 0.5 ? 1.0 : 0.0
+        }
+
+        settle(
+            to: target,
+            progressVelocity: velocityX / revealWidth,
+            feedback: !cancelled
+        )
     }
 
     private func drawerGesture(revealWidth: CGFloat) -> some Gesture {

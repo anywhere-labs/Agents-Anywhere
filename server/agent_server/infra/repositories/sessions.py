@@ -217,6 +217,22 @@ class SessionRepositoryMixin:
         external_session_id: str | None = None,
     ) -> str:
         async with self._engine.connect() as conn:
+            explicit = (
+                await conn.execute(
+                    select(
+                        sessions_t.c.id,
+                        sessions_t.c.origin,
+                        sessions_t.c.takeover,
+                    ).where(
+                        sessions_t.c.id == session_id,
+                        sessions_t.c.connector_id == connector_id,
+                    )
+                )
+            ).first()
+            if explicit is not None and (
+                explicit.takeover == 1 or explicit.origin == "platform"
+            ):
+                return str(explicit.id)
             if external_session_id:
                 row = (
                     await conn.execute(
@@ -231,17 +247,9 @@ class SessionRepositoryMixin:
                 ).first()
                 if row is not None:
                     return str(row.id)
-            row = (
-                await conn.execute(
-                    select(sessions_t.c.id).where(
-                        sessions_t.c.id == session_id,
-                        sessions_t.c.connector_id == connector_id,
-                    )
-                )
-            ).first()
-        if row is None:
+        if explicit is None:
             raise KeyError(session_id)
-        return str(row.id)
+        return str(explicit.id)
 
 
     async def list_sessions(self, *, user_id: str | None = None) -> list[SessionView]:

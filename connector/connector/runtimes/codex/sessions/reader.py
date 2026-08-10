@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import time
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from openai_codex.generated.v2_all import Thread
@@ -16,6 +16,7 @@ from connector.runtime_protocol import (
 )
 from connector.runtime_protocol.host import RuntimeHostClient
 from connector.runtime_protocol.models import (
+    PreparedSessionTimelineSync,
     RuntimeTimelineSnapshot,
     SessionMeta,
     SessionState,
@@ -49,6 +50,10 @@ class CodexSessionReader:
     list_permission_catalog: ListPermissionCatalog
     pending_messages: PendingClientMessageRegistry | None = None
     timeline: CodexTimelineAccumulator | None = None
+    _pending_sync_states: dict[str, tuple[str, dict[str, Any]]] = field(
+        default_factory=dict,
+        init=False,
+    )
 
     async def list_sessions(
         self,
@@ -112,7 +117,11 @@ class CodexSessionReader:
             "hidden": hidden,
             "session_id": session_id,
         }
-        await self.host.sync_state_write(sync_key, sync_state)
+        requires_timeline_sync = changed and not hidden
+        if requires_timeline_sync:
+            self._pending_sync_states[session_id] = (sync_key, sync_state)
+        else:
+            await self.host.sync_state_write(sync_key, sync_state)
         return SessionMeta(
             session_id=session_id,
             external_session_id=thread_id,
@@ -128,11 +137,30 @@ class CodexSessionReader:
                     "key": sync_key,
                     "marker": sync_marker,
                     "changed": changed,
-                    "requires_timeline_sync": changed and not hidden,
+                    "requires_timeline_sync": requires_timeline_sync,
                     "previous_marker": previous_marker,
                 },
             },
         )
+
+    async def prepare_session_timeline_sync(
+        self,
+        session_id: str,
+        external_session_id: str | None = None,
+    ) -> PreparedSessionTimelineSync:
+        snapshot = await self.get_session_snapshot(
+            session_id=session_id,
+            external_session_id=external_session_id,
+        )
+
+        async def commit() -> None:
+            pending = self._pending_sync_states.pop(session_id, None)
+            if pending is None:
+                return
+            sync_key, sync_state = pending
+            await self.host.sync_state_write(sync_key, sync_state)
+
+        return PreparedSessionTimelineSync(snapshot=snapshot, commit=commit)
 
     async def get_session_state(
         self,

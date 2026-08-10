@@ -1,17 +1,19 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from typing import Any
 
 from connector.runtime_protocol import (
     AgentRuntime,
     RuntimeAttachment,
+    RuntimeCapabilitySet,
     RuntimeConfig,
     RuntimeIdentity,
     RuntimeModelCatalog,
     RuntimeOperationResult,
     RuntimePermissionCatalog,
+    PreparedSessionTimelineSync,
     RuntimeSessionStateCache,
     RuntimeTimelineSnapshot,
     SessionMeta,
@@ -19,44 +21,82 @@ from connector.runtime_protocol import (
     SessionState,
 )
 from connector.runtime_protocol.host import RuntimeHostClient
-from connector.runtimes.claude import permissions as permission_catalogs
-from connector.runtimes.claude.ordering import RuntimeOrderAllocator
-from connector.runtimes.claude.runtime_session import ClaudeSession
-from connector.runtimes.claude.session_reader import ClaudeSessionReader
-from connector.runtimes.claude.turn_controller import ClaudeTurnController
-
-SdkLoader = Callable[[], Any]
-ClaudeClientFactory = Callable[[Any, Mapping[str, Any]], Any]
+from connector.runtimes.claude.catalogs.reader import ClaudeCatalogReader
+from connector.runtimes.claude.domain.capabilities import (
+    ClaudeCapabilityContext,
+    claude_runtime_capabilities,
+    claude_session_capabilities,
+)
+from connector.runtimes.claude.domain.session import ClaudeSession
+from connector.runtimes.claude.history.state import ClaudeHistoryCursorStore
+from connector.runtimes.claude.history.syncer import ClaudeHistorySyncer
+from connector.runtimes.claude.sdk.client import (
+    ClaudeClientFactory,
+    SdkLoader,
+)
+from connector.runtimes.claude.notifications.notices import ClaudeNoticeRegistry
+from connector.runtimes.claude.notifications.projector import ClaudeNotificationProjector
+from connector.runtimes.claude.sessions.cache import ClaudeSessionStore
+from connector.runtimes.claude.sessions.reader import ClaudeSessionReader
+from connector.runtimes.claude.timeline.messages import ClaudeMessageProjector
+from connector.runtimes.claude.turns.controller import ClaudeTurnController
 
 
 @dataclass(slots=True)
 class ClaudeRuntime(AgentRuntime):
     config: RuntimeConfig
     host: RuntimeHostClient
-    sdk_loader: SdkLoader
+    sdk_loader: SdkLoader | None = None
     client_factory: ClaudeClientFactory | None = None
     runtime_version: str = "native-0"
+    _sessions: dict[str, ClaudeSession] = field(default_factory=dict, init=False)
+    _session_states: RuntimeSessionStateCache = field(init=False)
+    _session_store: ClaudeSessionStore = field(init=False)
+    _session_reader: ClaudeSessionReader = field(init=False)
+    _history_syncer: ClaudeHistorySyncer = field(init=False)
+    _catalogs: ClaudeCatalogReader = field(init=False)
+    _timeline: ClaudeMessageProjector = field(init=False)
+    _notices: ClaudeNoticeRegistry = field(init=False)
+    _notifications: ClaudeNotificationProjector = field(init=False)
+    _turns: ClaudeTurnController = field(init=False)
 
     def __post_init__(self) -> None:
-        self._started = False
-        self._sdk: Any | None = None
-        self._sessions: dict[str, ClaudeSession] = {}
         self._session_states = RuntimeSessionStateCache("claude", self.host)
-        self._ordering = RuntimeOrderAllocator(start=1)
+        self._session_store = ClaudeSessionStore(self._sessions)
+        self._catalogs = ClaudeCatalogReader(config=self.config)
         self._session_reader = ClaudeSessionReader(
+            config=self.config,
+            host=self.host,
+            session_store=self._session_store,
+            sdk_loader=self.sdk_loader,
+        )
+        self._history_syncer = ClaudeHistorySyncer(
+            config=self.config,
+            host=self.host,
+            session_store=self._session_store,
+            sdk_loader=self.sdk_loader,
+            cursor_store=ClaudeHistoryCursorStore(self.host),
+        )
+        self._timeline = ClaudeMessageProjector()
+        self._notices = ClaudeNoticeRegistry()
+        self._notifications = ClaudeNotificationProjector(
             host=self.host,
             session_states=self._session_states,
-            ensure_started=self.start,
-            require_sdk=self._require_sdk,
+            session_store=self._session_store,
+            notices=self._notices,
         )
         self._turns = ClaudeTurnController(
             config=self.config,
             host=self.host,
-            sessions=self._sessions,
             session_states=self._session_states,
-            ordering=self._ordering,
-            ensure_started=self.start,
-            require_sdk=self._require_sdk,
+            session_store=self._session_store,
+            session_reader=self._session_reader,
+            history_syncer=self._history_syncer,
+            catalogs=self._catalogs,
+            timeline=self._timeline,
+            notices=self._notices,
+            notifications=self._notifications,
+            sdk_loader=self.sdk_loader,
             client_factory=self.client_factory,
         )
 
@@ -69,64 +109,50 @@ class ClaudeRuntime(AgentRuntime):
         )
 
     async def start(self) -> None:
-        if self._started:
-            return
-        self._sdk = self.sdk_loader()
-        self._started = True
+        return None
 
     async def stop(self) -> None:
-        await self._turns.stop_sessions()
-        self._started = False
+        await self._turns.stop()
 
     async def get_config(self) -> RuntimeConfig:
         return self.config
+
+    async def get_runtime_capabilities(self) -> RuntimeCapabilitySet:
+        return claude_runtime_capabilities(
+            ClaudeCapabilityContext(
+                connector_id=self.host.connector_id,
+                revision=self.config.revision,
+            )
+        )
 
     async def list_model_catalog(
         self,
         query: str | None = None,
         limit: int = 100,
     ) -> RuntimeModelCatalog:
-        _ = query
-        return RuntimeModelCatalog(
-            runtime="claude",
-            revision=self.config.revision,
-            models=()[:limit],
-        )
+        return await self._catalogs.list_model_catalog(query=query, limit=limit)
 
     async def list_permission_catalog(
         self,
         query: str | None = None,
         limit: int = 100,
     ) -> RuntimePermissionCatalog:
-        permissions = permission_catalogs.claude_permissions(
-            self.config.revision
-        ).permissions
-        if query:
-            lowered = query.casefold()
-            permissions = tuple(
-                item
-                for item in permissions
-                if lowered in item.id.casefold() or lowered in item.title.casefold()
-            )
-        return RuntimePermissionCatalog(
-            runtime="claude",
-            revision=self.config.revision,
-            permissions=permissions[:limit],
-        )
-
-    async def list_sessions(
-        self,
-        limit: int = 100,
-        cursor: str | None = None,
-        force: bool = False,
-    ) -> tuple[SessionMeta, ...]:
-        return await self._session_reader.list_sessions(limit, cursor, force)
+        return await self._catalogs.list_permission_catalog(query=query, limit=limit)
 
     async def get_session_state(
         self,
         session_id: str,
         external_session_id: str | None = None,
     ) -> SessionState | None:
+        state = self._session_states.get(session_id)
+        if state is not None:
+            return state
+        if external_session_id is not None:
+            state = self._session_states.get_by_external_session_id(
+                external_session_id
+            )
+            if state is not None:
+                return state
         return await self._session_reader.get_session_state(
             session_id,
             external_session_id,
@@ -138,13 +164,33 @@ class ClaudeRuntime(AgentRuntime):
         external_session_id: str | None = None,
     ) -> tuple[SessionNotice, ...]:
         _ = external_session_id
-        session = self._sessions.get(session_id)
-        if session is None:
-            return ()
-        return tuple(
-            pending.notice
-            for pending in session.pending_approvals.values()
-            if pending.notice.status in {"open", "responding"}
+        return self._notices.current_for_session(session_id)
+
+    async def get_session_capabilities(
+        self,
+        session_id: str,
+        external_session_id: str | None = None,
+    ) -> RuntimeCapabilitySet:
+        _ = external_session_id
+        return claude_session_capabilities(
+            ClaudeCapabilityContext(
+                connector_id=self.host.connector_id,
+                revision=self.config.revision,
+                session_id=session_id,
+                has_active_turn=self._turns.has_active_turn(session_id),
+            )
+        )
+
+    async def list_sessions(
+        self,
+        limit: int = 100,
+        cursor: str | None = None,
+        force: bool = False,
+    ) -> tuple[SessionMeta, ...]:
+        return await self._session_reader.list_sessions(
+            limit=limit,
+            cursor=cursor,
+            force=force,
         )
 
     async def get_session_snapshot(
@@ -154,9 +200,29 @@ class ClaudeRuntime(AgentRuntime):
         limit: int | None = None,
     ) -> RuntimeTimelineSnapshot:
         return await self._session_reader.get_session_snapshot(
-            session_id,
-            external_session_id,
-            limit,
+            session_id=session_id,
+            external_session_id=external_session_id,
+            limit=limit,
+        )
+
+    async def sync_session_timeline(
+        self,
+        session_id: str,
+        external_session_id: str | None = None,
+    ) -> bool:
+        return await self._history_syncer.sync_session_timeline(
+            session_id=session_id,
+            external_session_id=external_session_id,
+        )
+
+    async def prepare_session_timeline_sync(
+        self,
+        session_id: str,
+        external_session_id: str | None = None,
+    ) -> PreparedSessionTimelineSync | None:
+        return await self._history_syncer.prepare_session_timeline_sync(
+            session_id=session_id,
+            external_session_id=external_session_id,
         )
 
     async def create_and_start_session(
@@ -187,30 +253,28 @@ class ClaudeRuntime(AgentRuntime):
         selections: Mapping[str, str | None] | None = None,
         attachments: tuple[RuntimeAttachment, ...] = (),
         client_message_id: str | None = None,
+        cwd: str | None = None,
     ) -> RuntimeOperationResult:
-        _ = selections
         return await self._turns.start_turn(
             session_id=session_id,
             external_session_id=external_session_id,
             content=content,
+            selections=selections,
             attachments=attachments,
             client_message_id=client_message_id,
+            cwd=cwd,
         )
 
-    async def steer_turn(
+    async def update_session_selections(
         self,
         session_id: str,
         external_session_id: str | None,
-        content: str,
-        attachments: tuple[RuntimeAttachment, ...] = (),
-        client_message_id: str | None = None,
+        selections: Mapping[str, str | None],
     ) -> RuntimeOperationResult:
-        return await self._turns.steer_turn(
+        return await self._turns.update_session_selections(
             session_id=session_id,
             external_session_id=external_session_id,
-            content=content,
-            attachments=attachments,
-            client_message_id=client_message_id,
+            selections=selections,
         )
 
     async def interrupt_turn(
@@ -237,35 +301,4 @@ class ClaudeRuntime(AgentRuntime):
             notice_id=notice_id,
             action_id=action_id,
             input_data=input_data,
-        )
-
-    def _require_sdk(self) -> Any:
-        if self._sdk is None:
-            self._sdk = self.sdk_loader()
-        return self._sdk
-
-    def _session_for(
-        self,
-        session_id: str,
-        external_session_id: str | None,
-        cwd: str | None,
-    ) -> ClaudeSession:
-        return self._turns.session_for(session_id, external_session_id, cwd)
-
-    async def _set_session_state(
-        self,
-        session_id: str,
-        external_session_id: str | None,
-        status: str,
-        selections: Mapping[str, str | None] | None = None,
-        error: Mapping[str, Any] | None = None,
-        metadata: Mapping[str, Any] | None = None,
-    ) -> None:
-        await self._session_states.update(
-            session_id=session_id,
-            external_session_id=external_session_id,
-            status=status,  # type: ignore[arg-type]
-            selections=selections,
-            error=error,
-            metadata=metadata,
         )

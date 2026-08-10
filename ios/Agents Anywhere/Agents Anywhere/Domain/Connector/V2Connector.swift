@@ -29,3 +29,33 @@ struct V2ConnectorCreateResponse: Decodable, Hashable {
     let connectorToken: String
     let tokenPrefix: String
 }
+
+struct V2ConnectorUpdateRequest: Encodable, Hashable {
+    let name: String
+}
+
+struct V2ConnectorRevokeResponse: Decodable, Hashable, Identifiable {
+    let connector: V2Connector
+    let connectorToken: String
+    let tokenPrefix: String
+    let serverTime: String
+
+    var id: V2ConnectorID { connector.id }
+}
+
+enum V2ConnectorSessionArchiveScope: String, Encodable, Hashable {
+    case active
+    case archived
+    case all
+}
+
+struct V2ConnectorSessionArchiveRequest: Encodable, Hashable {
+    let archived: Bool
+    let scope: V2ConnectorSessionArchiveScope
+}
+
+struct V2ConnectorSessionArchiveResponse: Decodable, Hashable {
+    let sessions: [V2SessionMeta]
+    let affected: Int
+    let serverTime: String
+}

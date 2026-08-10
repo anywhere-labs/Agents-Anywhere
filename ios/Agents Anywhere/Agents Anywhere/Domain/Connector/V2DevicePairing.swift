@@ -51,3 +51,11 @@ struct V2DeviceRuntimeListResponse: Decodable, Hashable {
     let runtimes: [V2DeviceRuntime]
     let serverTime: String
 }
+
+struct V2RuntimeConfigUpdateRequest: Encodable, Hashable {
+    let config: [String: JSONValue]
+}
+
+struct V2RuntimeActiveUpdateRequest: Encodable, Hashable {
+    let active: Bool
+}

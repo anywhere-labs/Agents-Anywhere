@@ -15,6 +15,7 @@ from connector.runtime_protocol import (
     RuntimeProvider,
 )
 from connector.runtime_protocol.host import RuntimeHostClient
+from connector.runtimes.custom_models import normalize_custom_models
 from connector.runtimes.codex import provider_config
 from connector.runtimes.codex.runtime import CodexRuntime
 from connector.runtimes.codex.sdk.client import sdk_client_from_config
@@ -22,6 +23,7 @@ from connector.runtimes.codex.sdk.discovery import check_codex_sdk
 
 SdkChecker = Callable[[], dict[str, Any]]
 SdkClientFactory = Callable[[RuntimeConfig], Any]
+CODEX_CONFIG_SCHEMA_REVISION = 2
 
 
 class CodexProvider(RuntimeProvider):
@@ -72,14 +74,16 @@ class CodexProvider(RuntimeProvider):
         schema = provider_config.codex_config_schema()
         return RuntimeConfigSchema(
             runtime=self.runtime,
-            revision=1,
+            revision=CODEX_CONFIG_SCHEMA_REVISION,
             schema=schema,
             ui_schema={
-                "order": ["environment"],
+                "order": ["environment", "customModels"],
                 "environment": {"component": "keyValue"},
+                "customModels": {"component": "customModels"},
             },
             defaults={
                 "environment": {},
+                "customModels": [],
             },
         )
 
@@ -106,11 +110,12 @@ class CodexProvider(RuntimeProvider):
 
         normalized_values: dict[str, Any] = {
             "environment": dict(raw_values.get("environment") or {}),
+            "customModels": normalize_custom_models(raw_values.get("customModels")),
         }
 
         return RuntimeConfig(
             runtime=self.runtime,
-            revision=1,
+            revision=CODEX_CONFIG_SCHEMA_REVISION,
             values=normalized_values,
             schema=schema,
             ui_schema=(await self.get_config_schema()).ui_schema,

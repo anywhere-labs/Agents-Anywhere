@@ -809,7 +809,7 @@ async def _test_codex_runtime_thread_compacted_notification_upserts_timeline_ite
     assert host.state_updates[-1]["metadata"]["source"] == "codex.thread/compacted"
 
 
-def test_codex_compaction_snapshot_reuses_started_timeline_item() -> None:
+def test_codex_compaction_snapshot_uses_item_level_identity() -> None:
     accumulator = CodexTimelineAccumulator()
     started = accumulator.item_from_notification(
         session_id="sess_1",
@@ -835,9 +835,39 @@ def test_codex_compaction_snapshot_reuses_started_timeline_item() -> None:
     )
 
     assert len(snapshot_items) == 1
-    assert snapshot_items[0].id == started.id
+    assert snapshot_items[0].id == "compact_1"
+    assert snapshot_items[0].id != started.id
     assert snapshot_items[0].content["kind"] == "compact"
     assert snapshot_items[0].content["state"] == "completed"
+
+
+def test_codex_compaction_snapshot_allows_multiple_compaction_items() -> None:
+    accumulator = CodexTimelineAccumulator()
+
+    snapshot_items = accumulator.items_from_snapshot_projections(
+        session_id="sess_1",
+        external_session_id="thread_1",
+        projections=(
+            CodexTimelineProjection(
+                native_id="item-160",
+                raw_type="contextCompaction",
+                role="system",
+                turn_id="turn_1",
+            ),
+            CodexTimelineProjection(
+                native_id="item-259",
+                raw_type="contextCompaction",
+                role="system",
+                turn_id="turn_2",
+            ),
+        ),
+    )
+
+    assert [item.id for item in snapshot_items] == ["item-160", "item-259"]
+    assert [item.source["itemId"] for item in snapshot_items] == [
+        "item-160",
+        "item-259",
+    ]
 
 
 def test_codex_compaction_snapshot_skips_transcript_message_mirrors() -> None:
@@ -1272,6 +1302,137 @@ async def _test_codex_runtime_model_catalog_from_app_server() -> None:
     assert catalog.models[1].selection_id.startswith("sel_model_")
 
 
+def test_codex_runtime_model_catalog_includes_custom_models() -> None:
+    asyncio.run(_test_codex_runtime_model_catalog_includes_custom_models())
+
+
+async def _test_codex_runtime_model_catalog_includes_custom_models() -> None:
+    runtime = CodexRuntime(
+        config=RuntimeConfig(
+            runtime="codex",
+            revision=3,
+            values={
+                "environment": {},
+                "customModels": [
+                    {
+                        "modelId": "gpt-local-test",
+                        "displayName": "GPT Local Test",
+                    }
+                ],
+            },
+        ),
+        host=FakeHost(),
+        client=FakeCodexClient(),
+    )
+
+    catalog = await runtime.list_model_catalog(query="local")
+
+    assert catalog.revision > runtime.config.revision
+    assert [model.id for model in catalog.models] == ["gpt-local-test"]
+    assert catalog.models[0].title == "GPT Local Test"
+    assert catalog.models[0].selection_id is not None
+    assert catalog.models[0].selection_id.startswith("sel_model_")
+    assert catalog.models[0].metadata["custom"] is True
+
+
+def test_codex_runtime_applies_custom_model_selection_to_turn_start() -> None:
+    asyncio.run(_test_codex_runtime_applies_custom_model_selection_to_turn_start())
+
+
+async def _test_codex_runtime_applies_custom_model_selection_to_turn_start() -> None:
+    client = FakeCodexClient()
+    runtime = CodexRuntime(
+        config=RuntimeConfig(
+            runtime="codex",
+            revision=3,
+            values={
+                "environment": {},
+                "customModels": [
+                    {
+                        "modelId": "gpt-local-test",
+                        "displayName": "GPT Local Test",
+                    }
+                ],
+            },
+        ),
+        host=FakeHost(),
+        client=client,
+    )
+    model_selection = (await runtime.list_model_catalog(query="local")).models[
+        0
+    ].selection_id
+
+    result = await runtime.start_turn(
+        "sess_1",
+        "thread_1",
+        "hello",
+        selections={"model": model_selection},
+    )
+
+    assert result.ok is True
+    assert client.requests[-1] == (
+        "turn/start",
+        {
+            "threadId": "thread_1",
+            "input": [{"type": "text", "text": "hello", "text_elements": []}],
+            "model": "gpt-local-test",
+        },
+    )
+
+
+def test_codex_runtime_applies_custom_model_effort_to_turn_start() -> None:
+    asyncio.run(_test_codex_runtime_applies_custom_model_effort_to_turn_start())
+
+
+async def _test_codex_runtime_applies_custom_model_effort_to_turn_start() -> None:
+    client = FakeCodexClient()
+    runtime = CodexRuntime(
+        config=RuntimeConfig(
+            runtime="codex",
+            revision=3,
+            values={
+                "environment": {},
+                "customModels": [
+                    {
+                        "modelId": "gpt-local-test",
+                        "displayName": "GPT Local Test",
+                        "efforts": [
+                            {
+                                "effortId": "high",
+                                "displayName": "High",
+                            }
+                        ],
+                    }
+                ],
+            },
+        ),
+        host=FakeHost(),
+        client=client,
+    )
+    model = (await runtime.list_model_catalog(query="local")).models[0]
+
+    result = await runtime.start_turn(
+        "sess_1",
+        "thread_1",
+        "hello",
+        selections={"model": model.reasoning_items[0].selection_id},
+    )
+
+    assert model.selection_id is None
+    assert model.reasoning_items[0].id == "high"
+    assert model.reasoning_items[0].title == "High"
+    assert result.ok is True
+    assert client.requests[-1] == (
+        "turn/start",
+        {
+            "threadId": "thread_1",
+            "input": [{"type": "text", "text": "hello", "text_elements": []}],
+            "model": "gpt-local-test",
+            "effort": "high",
+        },
+    )
+
+
 def test_codex_runtime_model_catalog_query_and_limit() -> None:
     asyncio.run(_test_codex_runtime_model_catalog_query_and_limit())
 
@@ -1463,8 +1624,9 @@ async def _test_codex_runtime_lists_sessions_from_thread_list() -> None:
     assert sessions[1].metadata["local_state"] == "archived"
     assert sessions[1].metadata["hidden"] is True
     assert sessions[1].metadata["sync"]["requires_timeline_sync"] is False
-    assert host.sync_states["codex/session-sync/thread_1"]["session_id"] == (
-        stable_session_id("conn_test", "thread_1")
+    assert "codex/session-sync/thread_1" not in host.sync_states
+    assert host.sync_states["codex/session-sync/thread_archived"]["session_id"] == (
+        stable_session_id("conn_test", "thread_archived")
     )
 
 
@@ -1478,6 +1640,13 @@ async def _test_codex_runtime_session_sync_marker_skips_unchanged_timeline() -> 
     runtime = CodexRuntime(config=_config(), host=host, client=client)
 
     first = await runtime.list_sessions(limit=10)
+    prepared = await runtime.prepare_session_timeline_sync(
+        first[0].session_id,
+        first[0].external_session_id,
+    )
+    assert prepared is not None
+    assert prepared.commit is not None
+    await prepared.commit()
     second = await runtime.list_sessions(limit=10)
     restarted_runtime = CodexRuntime(config=_config(), host=host, client=client)
     after_restart = await restarted_runtime.list_sessions(limit=10)
@@ -1487,7 +1656,7 @@ async def _test_codex_runtime_session_sync_marker_skips_unchanged_timeline() -> 
     assert second[0].metadata["sync"]["requires_timeline_sync"] is False
     assert after_restart[0].session_id == first[0].session_id
     assert after_restart[0].metadata["sync"]["changed"] is False
-    assert all(request[0] != "thread/read" for request in client.requests)
+    assert [request[0] for request in client.requests].count("thread/read") == 1
 
 
 def test_codex_runtime_session_sync_force_requires_timeline() -> None:
@@ -1519,7 +1688,14 @@ async def _test_codex_runtime_session_sync_marker_allows_rename_only_meta_update
     host = FakeHost()
     runtime = CodexRuntime(config=_config(), host=host, client=client)
 
-    await runtime.list_sessions(limit=10)
+    first = await runtime.list_sessions(limit=10)
+    prepared = await runtime.prepare_session_timeline_sync(
+        first[0].session_id,
+        first[0].external_session_id,
+    )
+    assert prepared is not None
+    assert prepared.commit is not None
+    await prepared.commit()
     client.results["thread/list"] = {
         "threads": [
             {

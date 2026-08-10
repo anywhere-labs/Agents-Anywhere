@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping
+from dataclasses import replace
 from typing import Any
 
 from connector.logging import logger
@@ -82,11 +83,13 @@ class RuntimeSupervisor:
         self,
         runtime: str,
         values: Mapping[str, Any],
+        revision: int | None = None,
     ) -> RuntimeConfig:
         entry = self._entry(runtime)
         await self._set_entry(runtime, status="validating", error=None)
         try:
             config = await entry.provider.validate_config(values)
+            config = config_with_revision(config, revision)
         except Exception as exc:
             current = self._entry(runtime)
             await self._set_entry(
@@ -117,6 +120,7 @@ class RuntimeSupervisor:
         self,
         runtime: str,
         values: Mapping[str, Any],
+        revision: int | None = None,
     ) -> AgentRuntime:
         self._entry(runtime)
         async with self._locks[runtime]:
@@ -131,6 +135,7 @@ class RuntimeSupervisor:
             await self._set_entry(runtime, status="validating", error=None)
             try:
                 config = await entry.provider.validate_config(requested_values)
+                config = config_with_revision(config, revision)
             except Exception as exc:
                 current = self._entry(runtime)
                 await self._set_entry(
@@ -278,3 +283,12 @@ class RuntimeSupervisor:
                     runtime.identity.runtime,
                     exc.__class__.__name__,
                 )
+
+
+def config_with_revision(
+    config: RuntimeConfig,
+    revision: int | None,
+) -> RuntimeConfig:
+    if revision is None or revision == config.revision:
+        return config
+    return replace(config, revision=revision)

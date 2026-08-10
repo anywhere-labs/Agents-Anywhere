@@ -114,7 +114,9 @@ class CodexTurnController:
         selections: Mapping[str, str | None] | None = None,
         attachments: tuple[RuntimeAttachment, ...] = (),
         client_message_id: str | None = None,
+        cwd: str | None = None,
     ) -> RuntimeOperationResult:
+        _ = cwd
         return await self.actions.start_turn(
             session_id=session_id,
             external_session_id=external_session_id,

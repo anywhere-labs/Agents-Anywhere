@@ -1,6 +1,7 @@
 import Foundation
 
 struct V2APIClient {
+    let serverURL: URL
     let account: V2AccountAPI
     let connectors: V2ConnectorAPI
     let sessions: V2SessionAPI
@@ -13,6 +14,7 @@ struct V2APIClient {
         tokenProvider: any AuthTokenProvider,
         urlSession: URLSession = .shared
     ) {
+        self.serverURL = serverURL
         let transport = URLSessionHTTPTransport(
             serverURL: serverURL,
             urlSession: urlSession,

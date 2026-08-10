@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from typing import Any
 
 from agent_server.core.device_runtime import (
@@ -324,7 +325,11 @@ class DeviceRuntimeService:
             await self._manager.request(
                 runtime.connectorId,
                 "runtime.start",
-                {"runtimeId": runtime.runtimeId, "config": runtime.config},
+                {
+                    "runtimeId": runtime.runtimeId,
+                    "config": runtime.config,
+                    "configRevision": _config_revision(runtime),
+                },
                 timeout=90,
             )
         except ConnectorOfflineError as exc:
@@ -534,3 +539,14 @@ class DeviceRuntimeService:
             connector_id=connector_id,
             reason=reason,
         )
+
+
+def _config_revision(runtime: DeviceRuntimeView) -> int:
+    value = runtime.updatedAt
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return 1
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return max(1, int(parsed.timestamp() * 1000))

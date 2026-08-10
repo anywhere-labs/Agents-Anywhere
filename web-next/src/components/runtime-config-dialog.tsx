@@ -2,18 +2,18 @@
 
 import * as React from "react"
 import Ajv2020 from "ajv/dist/2020"
-import { Plus, RotateCcw, Trash2 } from "lucide-react"
+import { Plus, RotateCcw, Trash2, X } from "lucide-react"
 import { useTranslations } from "next-intl"
 
 import { Button } from "@/components/ui/button"
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
+  Drawer,
+  DrawerClose,
+  DrawerContent,
+  DrawerFooter,
+  DrawerHeader,
+  DrawerTitle,
+} from "@/components/ui/drawer"
 import {
   Field,
   FieldDescription,
@@ -41,6 +41,7 @@ type JsonSchema = {
   properties?: Record<string, JsonSchema>
   required?: string[]
   additionalProperties?: boolean | JsonSchema
+  items?: JsonSchema
   minimum?: number
   maximum?: number
   minLength?: number
@@ -63,6 +64,21 @@ type RuntimeConfigDialogProps = {
   submitLabel?: string
   onOpenChange: (open: boolean) => void
   onSave: (config: Record<string, unknown>) => Promise<void>
+}
+
+const RUNTIME_CONFIG_FIELD_COPY: Record<string, { titleKey: string; descriptionKey?: string }> = {
+  executablePath: {
+    titleKey: "runtimeConfigExecutablePath",
+    descriptionKey: "runtimeConfigExecutablePathDescription",
+  },
+  environment: {
+    titleKey: "runtimeConfigEnvironment",
+    descriptionKey: "runtimeConfigEnvironmentDescription",
+  },
+  customModels: {
+    titleKey: "runtimeConfigCustomModels",
+    descriptionKey: "runtimeConfigCustomModelsDescription",
+  },
 }
 
 export function RuntimeConfigDialog({
@@ -139,39 +155,53 @@ export function RuntimeConfigDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[min(42rem,calc(100dvh-2rem))] overflow-y-auto sm:max-w-lg">
-        <DialogHeader>
-          <DialogTitle>{t("runtimeConfigTitle", { name: runtimeName })}</DialogTitle>
-          <DialogDescription>{t("runtimeConfigDescription")}</DialogDescription>
-        </DialogHeader>
+    <Drawer open={open} onOpenChange={onOpenChange} direction="right">
+      <DrawerContent
+        className="data-[vaul-drawer-direction=right]:w-[min(42rem,calc(100vw-1rem))] data-[vaul-drawer-direction=right]:sm:max-w-2xl"
+      >
+        <DrawerHeader className="px-6 py-5 pr-16">
+          <DrawerTitle className="text-xl">{t("runtimeConfigTitle", { name: runtimeName })}</DrawerTitle>
+        </DrawerHeader>
+        <DrawerClose asChild>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            className="absolute right-8 top-8 bg-secondary"
+          >
+            <X />
+            <span className="sr-only">{tCommon("close")}</span>
+          </Button>
+        </DrawerClose>
 
-        {!typedSchema ? (
-          <FieldError>{t("runtimeSchemaUnavailable")}</FieldError>
-        ) : (
-          <FieldGroup className="py-2">
-            {fieldNames.map((key) => {
-              const field = properties[key]
-              if (!field) return null
-              const uiField = isRecord(uiSchema[key]) ? (uiSchema[key] as UiField) : {}
-              return (
-                <RuntimeConfigField
-                  key={`${key}:${resetKey}`}
-                  name={key}
-                  schema={field}
-                  ui={uiField}
-                  value={draft[key]}
-                  required={required.has(key)}
-                  error={errors[key]}
-                  onChange={(value) => patch(key, value)}
-                />
-              )
-            })}
-            {errors._root ? <FieldError>{errors._root}</FieldError> : null}
-          </FieldGroup>
-        )}
+        <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-5">
+          {!typedSchema ? (
+            <FieldError>{t("runtimeSchemaUnavailable")}</FieldError>
+          ) : (
+            <FieldGroup className="gap-6">
+              {fieldNames.map((key) => {
+                const field = properties[key]
+                if (!field) return null
+                const uiField = isRecord(uiSchema[key]) ? (uiSchema[key] as UiField) : {}
+                return (
+                  <RuntimeConfigField
+                    key={`${key}:${resetKey}`}
+                    name={key}
+                    schema={field}
+                    ui={uiField}
+                    value={draft[key]}
+                    required={required.has(key)}
+                    error={errors[key]}
+                    onChange={(value) => patch(key, value)}
+                  />
+                )
+              })}
+              {errors._root ? <FieldError>{errors._root}</FieldError> : null}
+            </FieldGroup>
+          )}
+        </div>
 
-        <DialogFooter className="gap-2 sm:justify-between">
+        <DrawerFooter className="px-6 pb-6 pt-4 sm:flex-row sm:items-center sm:justify-between">
           <Button type="button" variant="ghost" onClick={resetAll} disabled={saving || !schema}>
             <RotateCcw />
             {t("resetAllDefaults")}
@@ -184,9 +214,9 @@ export function RuntimeConfigDialog({
               {saving ? t("saving") : submitLabel ?? tCommon("save")}
             </Button>
           </div>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        </DrawerFooter>
+      </DrawerContent>
+    </Drawer>
   )
 }
 
@@ -207,10 +237,27 @@ function RuntimeConfigField({
   error?: string
   onChange: (value: unknown) => void
 }) {
-  const title = schema.title ?? name
-  const description = schema.description
+  const t = useTranslations("dashboard.device")
+  const copy = RUNTIME_CONFIG_FIELD_COPY[name]
+  const title = copy ? t(copy.titleKey) : schema.title ?? name
+  const description = copy?.descriptionKey ? t(copy.descriptionKey) : schema.description
   const inputId = `runtime-config-${name}`
   const effectiveValue = value === undefined ? schema.default : value
+
+  if (ui.component === "customModels") {
+    return (
+      <Field data-invalid={Boolean(error)}>
+        <FieldLabel>{title}{required ? " *" : ""}</FieldLabel>
+        {description ? <FieldDescription>{description}</FieldDescription> : null}
+        <CustomModelsEditor
+          value={Array.isArray(effectiveValue) ? effectiveValue : []}
+          onChange={onChange}
+          invalid={Boolean(error)}
+        />
+        <FieldError>{error}</FieldError>
+      </Field>
+    )
+  }
 
   if (ui.component === "keyValue" || (schema.type === "object" && isRecord(schema.additionalProperties))) {
     return (
@@ -338,6 +385,208 @@ function RuntimeConfigField({
 }
 
 type EnvironmentRow = { id: number; key: string; value: string; removed: boolean }
+
+type CustomEffortRow = { id: number; effortId: string; displayName: string }
+type CustomModelRow = {
+  id: number
+  modelId: string
+  displayName: string
+  efforts: CustomEffortRow[]
+}
+
+function CustomModelsEditor({
+  value,
+  onChange,
+  invalid,
+}: {
+  value: unknown[]
+  onChange: (value: unknown) => void
+  invalid: boolean
+}) {
+  const t = useTranslations("dashboard.device")
+  const nextId = React.useRef(1)
+  const [rows, setRows] = React.useState<CustomModelRow[]>(() =>
+    value
+      .filter(isRecord)
+      .map((item) => ({
+        id: nextId.current++,
+        modelId: typeof item.modelId === "string" ? item.modelId : "",
+        displayName: typeof item.displayName === "string" ? item.displayName : "",
+        efforts: Array.isArray(item.efforts)
+          ? item.efforts.filter(isRecord).map((effort) => ({
+            id: nextId.current++,
+            effortId: typeof effort.effortId === "string" ? effort.effortId : "",
+            displayName: typeof effort.displayName === "string" ? effort.displayName : "",
+          }))
+          : [],
+      })),
+  )
+
+  const update = (next: CustomModelRow[]) => {
+    setRows(next)
+    const customModels = next.flatMap((row) => {
+      const modelId = row.modelId.trim()
+      const displayName = row.displayName.trim()
+      const efforts = row.efforts.flatMap((effort) => {
+        const effortId = effort.effortId.trim()
+        const effortName = effort.displayName.trim()
+        if (!effortId && !effortName) return []
+        return [{ effortId, displayName: effortName }]
+      })
+      if (!modelId && !displayName && efforts.length === 0) return []
+      return efforts.length > 0
+        ? [{ modelId, displayName, efforts }]
+        : [{ modelId, displayName }]
+    })
+    onChange(customModels)
+  }
+
+  const addEffort = (modelId: number) => {
+    update(rows.map((row) => row.id === modelId
+      ? {
+        ...row,
+        efforts: [
+          ...row.efforts,
+          { id: nextId.current++, effortId: "", displayName: "" },
+        ],
+      }
+      : row))
+  }
+
+  const updateEffort = (
+    modelId: number,
+    effortId: number,
+    patch: Partial<Omit<CustomEffortRow, "id">>,
+  ) => {
+    update(rows.map((row) => row.id === modelId
+      ? {
+        ...row,
+        efforts: row.efforts.map((effort) => effort.id === effortId
+          ? { ...effort, ...patch }
+          : effort),
+      }
+      : row))
+  }
+
+  const removeEffort = (modelId: number, effortId: number) => {
+    update(rows.map((row) => row.id === modelId
+      ? {
+        ...row,
+        efforts: row.efforts.filter((effort) => effort.id !== effortId),
+      }
+      : row))
+  }
+
+  return (
+    <div className="flex flex-col gap-4 rounded-lg border border-border bg-muted/10 p-4">
+      {rows.length === 0 ? (
+        <p className="text-sm text-muted-foreground">{t("noCustomModels")}</p>
+      ) : rows.map((row) => (
+        <div
+          key={row.id}
+          className="flex flex-col gap-3 rounded-md border border-border/80 bg-background/40 p-3"
+        >
+          <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
+            <label className="flex min-w-0 flex-col gap-1.5">
+              <span className="text-xs font-medium text-muted-foreground">{t("customModelId")}</span>
+              <Input
+                value={row.modelId}
+                onChange={(event) => update(rows.map((item) => item.id === row.id ? { ...item, modelId: event.currentTarget.value } : item))}
+                placeholder="claude-sonnet-4-5"
+                spellCheck={false}
+                aria-label={t("customModelId")}
+                aria-invalid={invalid}
+              />
+            </label>
+            <label className="flex min-w-0 flex-col gap-1.5">
+              <span className="text-xs font-medium text-muted-foreground">{t("customModelDisplayName")}</span>
+              <Input
+                value={row.displayName}
+                onChange={(event) => update(rows.map((item) => item.id === row.id ? { ...item, displayName: event.currentTarget.value } : item))}
+                placeholder="Claude Sonnet 4.5"
+                spellCheck={false}
+                aria-label={t("customModelDisplayName")}
+                aria-invalid={invalid}
+              />
+            </label>
+            <Button
+              type="button"
+              size="icon"
+              variant="ghost"
+              className="self-end"
+              onClick={() => update(rows.filter((item) => item.id !== row.id))}
+              aria-label={t("removeCustomModel")}
+            >
+              <Trash2 />
+            </Button>
+          </div>
+          <div className="flex flex-col gap-3 rounded-md border border-border/70 bg-muted/10 p-3">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-sm font-medium text-foreground">{t("customModelEfforts")}</span>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                onClick={() => addEffort(row.id)}
+              >
+                <Plus data-icon="inline-start" />
+                {t("addCustomEffort")}
+              </Button>
+            </div>
+            {row.efforts.length === 0 ? (
+              <p className="text-sm text-muted-foreground">{t("noCustomEfforts")}</p>
+            ) : row.efforts.map((effort) => (
+              <div key={effort.id} className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
+                <label className="flex min-w-0 flex-col gap-1.5">
+                  <span className="text-xs font-medium text-muted-foreground">{t("customEffortId")}</span>
+                  <Input
+                    value={effort.effortId}
+                    onChange={(event) => updateEffort(row.id, effort.id, { effortId: event.currentTarget.value })}
+                    placeholder="high"
+                    spellCheck={false}
+                    aria-label={t("customEffortId")}
+                    aria-invalid={invalid}
+                  />
+                </label>
+                <label className="flex min-w-0 flex-col gap-1.5">
+                  <span className="text-xs font-medium text-muted-foreground">{t("customEffortDisplayName")}</span>
+                  <Input
+                    value={effort.displayName}
+                    onChange={(event) => updateEffort(row.id, effort.id, { displayName: event.currentTarget.value })}
+                    placeholder={t("customEffortDisplayName")}
+                    spellCheck={false}
+                    aria-label={t("customEffortDisplayName")}
+                    aria-invalid={invalid}
+                  />
+                </label>
+                <Button
+                  type="button"
+                  size="icon"
+                  variant="ghost"
+                  className="self-end"
+                  onClick={() => removeEffort(row.id, effort.id)}
+                  aria-label={t("removeCustomEffort")}
+                >
+                  <Trash2 />
+                </Button>
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        className="self-start"
+        onClick={() => update([...rows, { id: nextId.current++, modelId: "", displayName: "", efforts: [] }])}
+      >
+        <Plus data-icon="inline-start" />
+        {t("addCustomModel")}
+      </Button>
+    </div>
+  )
+}
 
 function EnvironmentEditor({
   value,

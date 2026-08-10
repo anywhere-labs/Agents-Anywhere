@@ -1,40 +1,36 @@
-# Deployment and Cutover
+# 部署和切换
 
-Use a blue/green migration. The v2 database chain is forward-only and the v2
-Connector performs a destructive local directory migration, so in-place
-rollback is not the safe default.
+使用 blue/green 迁移。v2 数据库链只支持向前，而且 v2 Connector 会执行会改动本地目录的迁移，所以原地 rollback 不是安全默认方案。
 
-## 1. Inventory
+## 1. 盘点
 
-Record before changing anything:
+修改任何东西之前先记录：
 
-- deployed `main` commit/image and every client version;
-- v1 SQLite path from `AGENT_SERVER_DB` and its file size/hash;
-- local or S3 file-storage configuration and object count;
-- Server secret, public origin, CORS, OAuth, and setup configuration names;
-- Connector ids, versions, hosts, config paths, and local data directories;
-- active runtimes per Connector, especially ACP-backed runtimes;
-- current session/timeline/user/connector row counts;
-- available maintenance window and rollback decision owner.
+- 已部署的 `main` commit/image 和每个客户端版本；
+- 从 `AGENT_SERVER_DB` 得到的 v1 SQLite 路径，以及它的文件大小/hash；
+- 本地或 S3 file-storage 配置和 object 数量；
+- Server secret、public origin、CORS、OAuth 和 setup configuration 的配置项名称；
+- Connector ids、versions、hosts、config paths 和本地 data directories；
+- 每个 Connector 的 active runtimes，特别是 ACP-backed runtimes；
+- 当前 session/timeline/user/connector row counts；
+- 可用 maintenance window 和 rollback decision owner。
 
-Do not record secret values in the migration report.
+不要在迁移报告里记录 secret values。
 
-## 2. Back up v1
+## 2. 备份 v1
 
-Stop or quiesce writes before the final backup. Preserve independently:
+最终备份前，先停止或静默写入。分别保留：
 
-1. the SQLite database;
-2. file-storage payloads;
-3. every Connector `~/.agent-server` directory or explicit config/data path;
-4. deployment configuration and image references.
+1. SQLite 数据库；
+2. file-storage payloads；
+3. 每个 Connector 的 `~/.agent-server` 目录，或显式 config/data path；
+4. 部署配置和镜像引用。
 
-Validate that the SQLite backup opens before relying on it. Keep the v1 Server
-and client artifacts runnable for the rollback window.
+依赖 SQLite 备份前，先验证它能正常打开。在 rollback window 内，保持 v1 Server 和客户端 artifacts 可运行。
 
-## 3. Rehearse
+## 3. 演练
 
-Provision disposable PostgreSQL 17 and Redis 8 instances. Run the import into an
-empty rehearsal database:
+准备一次性的 PostgreSQL 17 和 Redis 8 实例。把数据导入到空的演练数据库：
 
 ```bash
 cd server
@@ -45,30 +41,27 @@ uv run python -m agent_server.infra.db.migrations rehearse-v1 \
   --report migration-report.json
 ```
 
-Deploy v2 Server and Web against the rehearsal database, then upgrade at least
-one disposable or backed-up Connector host. Complete the acceptance checklist.
+把 v2 Server 和 Web 部署到演练数据库上，然后至少升级一个一次性或已备份的 Connector host。完成验收 checklist。
 
-Rehearsal is incomplete if production depends on an ACP runtime, an unmigrated
-mobile client, or a file backend that was not copied and verified.
+如果生产依赖 ACP runtime、未迁移的移动端客户端，或者还没有复制并验证的 file backend，那么演练就不完整。
 
-## 4. Prepare v2 infrastructure
+## 4. 准备 v2 基础设施
 
-The repository Compose deployment defines the intended order:
+仓库里的 Compose 部署定义了预期顺序：
 
 ```bash
 docker compose -f docker/docker-compose.postgres.yml up --build
 ```
 
-It starts PostgreSQL, non-persistent Redis, a one-shot migrator, then Server.
-For managed infrastructure, preserve the same ordering:
+它会依次启动 PostgreSQL、非持久化 Redis、一次性 migrator，然后启动 Server。托管基础设施也要保持同样顺序：
 
-1. PostgreSQL ready;
-2. Redis ready;
-3. migration job succeeds;
-4. Server starts and passes readiness;
-5. Web/client traffic is enabled.
+1. PostgreSQL ready；
+2. Redis ready；
+3. migration job 成功；
+4. Server 启动并通过 readiness；
+5. Web/client traffic 启用。
 
-Required Server variables include:
+必需的 Server 变量包括：
 
 ```text
 AGENT_SERVER_DB_URL
@@ -76,73 +69,58 @@ AGENT_SERVER_REDIS_URL
 AGENT_SERVER_SECRET
 ```
 
-Set pool, migration lock, file backend, public origin, and CORS variables for the
-target environment. Use variable names/statuses in release records, never secret
-values.
+为目标环境设置 pool、migration lock、file backend、public origin 和 CORS 变量。release record 里只记录变量名和状态，永远不要记录 secret values。
 
-## 5. Final data cutover
+## 5. 最终数据切换
 
-1. Disable v1 writes and stop all v1 Server instances.
-2. Take and identify the final SQLite and file-storage backups.
-3. Create a new empty production PostgreSQL database.
-4. Run the verified `rehearse-v1` import command against that empty target and
-   save the final report.
-5. Copy/verify file-storage payloads.
-6. Confirm `schemaVersion=2.7 revision=v2_7`.
-7. Start v2 Server and require `/api/v2/health/ready` to return 200.
-8. Start the matching v2 Web deployment.
+1. 禁用 v1 写入，并停止所有 v1 Server instances。
+2. 生成并标识最终 SQLite 和 file-storage backups。
+3. 创建一个新的空生产 PostgreSQL 数据库。
+4. 对这个空目标库运行已经验证过的 `rehearse-v1` 导入命令，并保存最终报告。
+5. 复制并验证 file-storage payloads。
+6. 确认 `schemaVersion=2.7 revision=v2_7`。
+7. 启动 v2 Server，并要求 `/api/v2/health/ready` 返回 200。
+8. 启动匹配的 v2 Web 部署。
 
-Do not start `main` against the PostgreSQL target and do not start v2 Server
-against the old SQLite file.
+不要让 `main` 指向 PostgreSQL 目标库，也不要让 v2 Server 指向旧 SQLite 文件。
 
-## 6. Connector cutover
+## 6. Connector 切换
 
-Upgrade Connectors in controlled batches:
+按受控批次升级 Connectors：
 
-1. Stop the old Connector.
-2. Confirm its legacy directory backup exists.
-3. Install the v2 package and start it once.
-4. Inspect the migrated `~/.agents-anywhere` directory.
-5. Confirm authentication and `/api/v2/connector/ws` connectivity.
-6. Run discovery and activate expected native runtimes.
-7. Verify one existing session sync and one new create-and-start flow.
-8. Verify attachments, interrupt, selections, notices, and commands according
-   to declared capabilities.
+1. 停止旧 Connector。
+2. 确认它的 legacy directory backup 存在。
+3. 安装 v2 package，并启动一次。
+4. 检查迁移后的 `~/.agents-anywhere` 目录。
+5. 确认 authentication 和 `/api/v2/connector/ws` connectivity。
+6. 运行 discovery，并激活预期的 native runtimes。
+7. 验证一个已有 session sync，以及一个新的 create-and-start flow。
+8. 根据 declared capabilities 验证 attachments、interrupt、selections、notices 和 commands。
 
-Do not upgrade a Connector that must provide an ACP runtime until a v2 provider
-exists or the workload has moved.
+如果某个 Connector 必须提供 ACP runtime，在 v2 provider 存在或 workload 已迁走之前，不要升级它。
 
-## 7. Client cutover
+## 7. 客户端切换
 
-Enable only clients that pass [Client migration](./clients.md). The v2 Web client
-should be deployed with Server. Gate mobile distribution separately until its
-removed-route inventory is empty.
+只启用通过 [客户端迁移](./clients.md) 的客户端。v2 Web 客户端应该和 Server 一起部署。移动端分发要单独 gate，直到它的 removed-route inventory 为空。
 
-Monitor:
+监控：
 
-- HTTP 404/405/422 counts under `/api/v2`;
-- Connector authentication/reconnect loops;
-- Redis availability and ticket/RPC routing errors;
-- database pool saturation and migration/readiness failures;
-- session refetch loops, duplicate timeline items, and optimistic-message leaks;
-- runtime discovery/capability mismatches;
-- attachment metadata and payload failures.
+- `/api/v2` 下的 HTTP 404/405/422 数量；
+- Connector authentication/reconnect loops；
+- Redis availability 和 ticket/RPC routing errors；
+- database pool saturation 和 migration/readiness failures；
+- session refetch loops、duplicate timeline items 和 optimistic-message leaks；
+- runtime discovery/capability mismatches；
+- attachment metadata 和 payload failures。
 
-## Rollback
+## 回滚
 
-Rollback means returning traffic to the preserved v1 environment, not
-downgrading the v2 database.
+回滚是把流量切回保留下来的 v1 环境，不是 downgrade v2 数据库。
 
-1. Stop v2 writes.
-2. Record the v2 database and file-storage state for diagnosis; do not destroy
-   it.
-3. Route users back to the stopped-at-cutover v1 Server, SQLite database, file
-   store, Web, Connectors, and compatible clients.
-4. Restore Connector legacy directories from backup where first v2 start moved
-   or deleted local files.
-5. Reconcile any writes accepted by v2 during the cutover window before a later
-   retry. There is no automatic reverse replication to v1.
+1. 停止 v2 写入。
+2. 记录 v2 database 和 file-storage 状态用于诊断；不要销毁它。
+3. 把用户流量切回切换时停止的 v1 Server、SQLite database、file store、Web、Connectors 和兼容客户端。
+4. 如果第一次 v2 启动移动或删除了本地文件，从备份恢复 Connector legacy directories。
+5. 后续重试前，处理切换窗口内 v2 已接受写入的对账问题。当前没有自动反向复制到 v1 的机制。
 
-If the business requires zero accepted-write loss during rollback, keep v2 in a
-read-only validation phase until the release decision. The current migration
-toolchain does not provide bidirectional replication.
+如果业务要求回滚时零 accepted-write loss，就让 v2 保持在只读验证阶段，直到做出发布决定。当前迁移工具链不提供双向复制。

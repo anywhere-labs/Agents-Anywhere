@@ -10,13 +10,20 @@ from connector.logging import logger
 from connector.runtime_protocol import (
     AgentRuntime,
     RuntimeHostClient,
+    RuntimeTimelineItem,
+    RuntimeTimelineSnapshot,
     RuntimeUnsupportedError,
     RuntimeSupervisor,
     RuntimeUnavailableError,
+    SessionMeta,
+    SessionNotice,
+    SessionState,
 )
-from connector.runtime_protocol.models import SessionMeta
+from connector.server.runtime_host import _drop_none, _timeline_item_payload
+from connector.server.runtime_rpc_payloads import session_notice_payload
 
 NotificationSender = Callable[[str, dict[str, Any]], Awaitable[None]]
+IngestNotificationSender = Callable[[list[dict[str, Any]]], Awaitable[None]]
 PreferencesReader = Callable[[], dict[str, Any]]
 
 
@@ -30,12 +37,14 @@ class RuntimeSyncRunner:
         host: RuntimeHostClient,
         preferences_reader: PreferencesReader,
         send_notification: NotificationSender,
+        ingest_notifications: IngestNotificationSender | None = None,
     ) -> None:
         self.config = config
         self.supervisor = supervisor
         self.host = host
         self.preferences_reader = preferences_reader
         self.send_notification = send_notification
+        self.ingest_notifications = ingest_notifications
         self._last_preferences: dict[str, Any] | None = None
 
     async def sync_existing_loop(self) -> None:
@@ -69,7 +78,16 @@ class RuntimeSyncRunner:
                     timeline_sync_count,
                 )
                 for session in sessions:
-                    await self.sync_existing_session(runtime, session)
+                    try:
+                        await self.sync_existing_session(runtime, session)
+                    except Exception:  # noqa: BLE001
+                        logger.exception(
+                            "existing session sync failed runtime={} session_id={} external_session_id={}",
+                            session.runtime,
+                            session.session_id,
+                            session.external_session_id,
+                        )
+                        continue
                 logger.info(
                     "existing session sync runtime completed runtime={} sessions={} elapsed_ms={:.1f}",
                     runtime_id,
@@ -100,16 +118,16 @@ class RuntimeSyncRunner:
         - when the runtime marks the session as changed, reads and pushes its
           timeline snapshot, current state, and active notices
         """
-        await self.host.session_meta_upsert(
-            session_id=session.session_id,
-            runtime=session.runtime,
-            external_session_id=session.external_session_id,
-            title=session.title,
-            cwd=session.cwd,
-            ordering_time=session.ordering_time,
-            metadata=session.metadata,
-        )
         if not session_requires_timeline_sync(session):
+            await self.host.session_meta_upsert(
+                session_id=session.session_id,
+                runtime=session.runtime,
+                external_session_id=session.external_session_id,
+                title=session.title,
+                cwd=session.cwd,
+                ordering_time=session.ordering_time,
+                metadata=session.metadata,
+            )
             return
         logger.info(
             "existing session timeline sync started runtime={} session_id={} external_session_id={}",
@@ -117,68 +135,82 @@ class RuntimeSyncRunner:
             session.session_id,
             session.external_session_id,
         )
-        read_started_at = time.monotonic()
-        snapshot = await runtime.get_session_snapshot(
+        read_elapsed_ms = 0.0
+        publish_elapsed_ms = 0.0
+        synced_items = 0
+        prepared = await runtime.prepare_session_timeline_sync(
             session.session_id,
             session.external_session_id,
         )
-        read_elapsed_ms = (time.monotonic() - read_started_at) * 1000
-        logger.info(
-            "existing session timeline sync read runtime={} session_id={} items={} complete={} elapsed_ms={:.1f}",
-            snapshot.runtime,
-            snapshot.session_id,
-            len(snapshot.items),
-            snapshot.complete,
-            read_elapsed_ms,
-        )
-        publish_started_at = time.monotonic()
-        await self.host.timeline_sync(
-            session_id=snapshot.session_id,
-            runtime=snapshot.runtime,
-            external_session_id=snapshot.external_session_id,
-            items=snapshot.items,
-            complete=snapshot.complete,
-            metadata=snapshot.metadata,
-        )
-        publish_elapsed_ms = (time.monotonic() - publish_started_at) * 1000
-        if publish_elapsed_ms >= 250 or len(snapshot.items) >= 100:
+        snapshot: RuntimeTimelineSnapshot | None = None
+        if prepared is not None:
+            snapshot = prepared.snapshot
+            synced_items = len(snapshot.items) if snapshot is not None else 0
+        else:
+            read_started_at = time.monotonic()
+            snapshot = await runtime.get_session_snapshot(
+                session.session_id,
+                session.external_session_id,
+            )
+            read_elapsed_ms = (time.monotonic() - read_started_at) * 1000
+            synced_items = len(snapshot.items)
             logger.info(
-                "existing session timeline sync published runtime={} session_id={} items={} elapsed_ms={:.1f}",
+                "existing session timeline sync read runtime={} session_id={} items={} complete={} elapsed_ms={:.1f}",
                 snapshot.runtime,
                 snapshot.session_id,
-                len(snapshot.items),
-                publish_elapsed_ms,
+                synced_items,
+                snapshot.complete,
+                read_elapsed_ms,
             )
         state = await runtime.get_session_state(
             session.session_id,
             session.external_session_id,
         )
-        if state is not None:
-            await self.host.session_state_update(
-                session_id=state.session_id,
-                runtime=state.runtime,
-                external_session_id=state.external_session_id,
-                status=state.status,
-                selections=state.selections,
-                status_reason=state.status_reason,
-                error=state.error,
-                metadata=state.metadata,
-            )
         notices = await runtime.get_session_notices(
             session.session_id,
             session.external_session_id,
         )
-        for notice in notices:
-            await self.host.notice_upsert(notice)
+        notifications = [_session_meta_notification(session)]
+        if snapshot is not None:
+            notifications.append(_timeline_sync_notification(snapshot))
+        if state is not None:
+            notifications.append(_session_state_notification(state))
+        notifications.extend(_notice_notification(notice) for notice in notices)
+        publish_started_at = time.monotonic()
+        await self._ingest_scanner_notifications(notifications)
+        publish_elapsed_ms = (time.monotonic() - publish_started_at) * 1000
+        if prepared is not None and prepared.commit is not None:
+            await prepared.commit()
+        if publish_elapsed_ms >= 250 or synced_items >= 100:
+            logger.info(
+                "existing session timeline sync published runtime={} session_id={} items={} elapsed_ms={:.1f}",
+                session.runtime,
+                session.session_id,
+                synced_items,
+                publish_elapsed_ms,
+            )
         logger.info(
             "existing session sync completed runtime={} session_id={} items={} notices={} read_elapsed_ms={:.1f} publish_elapsed_ms={:.1f}",
-            snapshot.runtime,
-            snapshot.session_id,
-            len(snapshot.items),
+            session.runtime,
+            session.session_id,
+            synced_items,
             len(notices),
             read_elapsed_ms,
             publish_elapsed_ms,
         )
+
+    async def _ingest_scanner_notifications(
+        self,
+        notifications: list[dict[str, Any]],
+    ) -> None:
+        if self.ingest_notifications is not None:
+            await self.ingest_notifications(notifications)
+            return
+        for notification in notifications:
+            await self.send_notification(
+                notification["method"],
+                notification["params"],
+            )
 
     async def push_runtime_catalogs(
         self,
@@ -238,3 +270,63 @@ def session_requires_timeline_sync(session: SessionMeta) -> bool:
     if not isinstance(sync, dict):
         return False
     return sync.get("requires_timeline_sync") is True
+
+
+def _session_meta_notification(session: SessionMeta) -> dict[str, Any]:
+    return {
+        "method": "session.meta.upsert",
+        "params": _drop_none(
+            {
+                "sessionId": session.session_id,
+                "runtime": session.runtime,
+                "externalSessionId": session.external_session_id,
+                "title": session.title,
+                "cwd": session.cwd,
+                "lastActivityAt": session.ordering_time,
+                "sourceObservedAt": session.ordering_time,
+                "metadata": dict(session.metadata),
+            }
+        ),
+    }
+
+
+def _timeline_sync_notification(snapshot: RuntimeTimelineSnapshot) -> dict[str, Any]:
+    return {
+        "method": "timeline.sync",
+        "params": _drop_none(
+            {
+                "sessionId": snapshot.session_id,
+                "runtime": snapshot.runtime,
+                "externalSessionId": snapshot.external_session_id,
+                "items": [_runtime_timeline_item_payload(item) for item in snapshot.items],
+                "complete": snapshot.complete,
+                "metadata": dict(snapshot.metadata),
+            }
+        ),
+    }
+
+
+def _runtime_timeline_item_payload(item: RuntimeTimelineItem) -> dict[str, Any]:
+    return _timeline_item_payload(item)
+
+
+def _session_state_notification(state: SessionState) -> dict[str, Any]:
+    return {
+        "method": "session.state.updated",
+        "params": _drop_none(
+            {
+                "sessionId": state.session_id,
+                "runtime": state.runtime,
+                "externalSessionId": state.external_session_id,
+                "status": state.status,
+                "statusReason": state.status_reason,
+                "error": dict(state.error) if state.error is not None else None,
+                "selections": dict(state.selections),
+                "metadata": dict(state.metadata),
+            }
+        ),
+    }
+
+
+def _notice_notification(notice: SessionNotice) -> dict[str, Any]:
+    return {"method": "notice.upsert", "params": session_notice_payload(notice)}

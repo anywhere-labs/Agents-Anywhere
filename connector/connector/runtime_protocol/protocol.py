@@ -16,6 +16,7 @@ from connector.runtime_protocol.models import (
     RuntimeOperationResult,
     RuntimePermissionCatalog,
     RuntimeTimelineSnapshot,
+    PreparedSessionTimelineSync,
     SessionMeta,
     SessionNotice,
     SessionState,
@@ -77,6 +78,27 @@ class AgentRuntime(ABC):
     ) -> RuntimeTimelineSnapshot:
         raise RuntimeUnsupportedError("get_session_snapshot")
 
+    async def sync_session_timeline(
+        self,
+        session_id: str,
+        external_session_id: str | None = None,
+    ) -> bool:
+        """Let runtimes override background scanner timeline sync.
+
+        Return True when the runtime published or intentionally skipped timeline
+        updates. Return False to let the connector publish get_session_snapshot().
+        """
+        _ = session_id, external_session_id
+        return False
+
+    async def prepare_session_timeline_sync(
+        self,
+        session_id: str,
+        external_session_id: str | None = None,
+    ) -> PreparedSessionTimelineSync | None:
+        _ = session_id, external_session_id
+        return None
+
     async def get_session_state(
         self,
         session_id: str,
@@ -127,7 +149,9 @@ class AgentRuntime(ABC):
         selections: Mapping[str, str | None] | None = None,
         attachments: tuple[RuntimeAttachment, ...] = (),
         client_message_id: str | None = None,
+        cwd: str | None = None,
     ) -> RuntimeOperationResult:
+        _ = cwd
         raise RuntimeUnsupportedError("start_turn")
 
     async def steer_turn(

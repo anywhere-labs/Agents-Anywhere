@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -234,6 +234,12 @@ class RuntimeTimelineSnapshot:
     items: tuple[RuntimeTimelineItem, ...]
     complete: bool = True
     metadata: Mapping[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class PreparedSessionTimelineSync:
+    snapshot: RuntimeTimelineSnapshot | None
+    commit: Callable[[], Awaitable[None]] | None = None
 
 
 @dataclass(frozen=True, slots=True)

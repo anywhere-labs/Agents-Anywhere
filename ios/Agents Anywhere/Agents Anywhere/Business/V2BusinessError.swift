@@ -11,9 +11,14 @@ enum V2BusinessError: LocalizedError {
     case invalidPairingCode
     case pairingNotClaimed
     case signedInServerUnavailable
+    case invalidRuntimeConfigSchema
+    case invalidRuntimeConfigField(title: String)
     case tooManyAttachments(maximum: Int)
     case emptyAttachment(name: String)
     case invalidPageSize
+    case workspaceFilesUnavailable(message: String)
+    case workspaceEntryNotPreviewable
+    case invalidWorkspacePreviewURL
 
     var errorDescription: String? {
         switch self {
@@ -37,12 +42,22 @@ enum V2BusinessError: LocalizedError {
             return String(localized: "The server did not accept this pairing request.")
         case .signedInServerUnavailable:
             return String(localized: "The signed-in server is unavailable.")
+        case .invalidRuntimeConfigSchema:
+            return String(localized: "The runtime configuration schema is unavailable or invalid.")
+        case let .invalidRuntimeConfigField(title):
+            return "Enter a valid value for \(title)."
         case let .tooManyAttachments(maximum):
             return "Attach no more than \(maximum) files."
         case let .emptyAttachment(name):
             return "The attachment '\(name)' is empty."
         case .invalidPageSize:
             return String(localized: "The requested page size is outside the supported range.")
+        case let .workspaceFilesUnavailable(message):
+            return message
+        case .workspaceEntryNotPreviewable:
+            return String(localized: "This workspace item cannot be previewed.")
+        case .invalidWorkspacePreviewURL:
+            return String(localized: "The file preview URL is invalid.")
         }
     }
 }
