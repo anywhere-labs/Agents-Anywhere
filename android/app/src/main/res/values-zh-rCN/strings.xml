@@ -99,6 +99,7 @@
     <string name="home_restore_failed">无法恢复会话。</string>
     <string name="home_session_renamed">会话已重命名。</string>
     <string name="home_rename_failed">无法重命名会话。</string>
+    <string name="home_title_required">标题不能为空。</string>
     <string name="home_rename">重命名</string>
     <string name="home_unarchive">取消归档</string>
     <string name="home_archive">归档</string>
@@ -185,6 +186,7 @@
     <string name="device_detail_delete_failed">无法删除设备。</string>
     <string name="device_detail_revoke_failed">无法撤销设备令牌。</string>
     <string name="device_detail_update_sessions_failed">无法更新会话。</string>
+    <string name="device_detail_sessions_not_found">%1$d 个会话已不存在，请刷新列表完成同步。</string>
     <string name="device_detail_archived_sessions_toast">已归档 %1$d 个会话。</string>
     <string name="device_detail_unarchived_sessions_toast">已取消归档 %1$d 个会话。</string>
     <string name="device_detail_not_found">未找到设备</string>

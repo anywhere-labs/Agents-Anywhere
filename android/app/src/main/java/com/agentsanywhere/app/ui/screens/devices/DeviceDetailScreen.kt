@@ -50,6 +50,7 @@ import com.agentsanywhere.app.feature.devices.DeviceRuntimeStatus
 import com.agentsanywhere.app.feature.devices.deviceDetailState
 import com.agentsanywhere.app.feature.devices.DeviceSetupCredential
 import com.agentsanywhere.app.feature.sessions.SessionsState
+import com.agentsanywhere.app.feature.sessions.SessionBatchUpdate
 import com.agentsanywhere.app.model.AgentDevice
 import com.agentsanywhere.app.model.AgentSession
 import com.agentsanywhere.app.navigation.AppDestination
@@ -87,7 +88,7 @@ fun DeviceDetailScreen(
     onSaveDeviceRuntimeConfig: suspend (String, String, Map<String, Any?>) -> Result<DeviceRuntime>,
     onSetDeviceRuntimeActive: suspend (String, String, Boolean) -> Result<DeviceRuntime>,
     onDeleteDeviceRuntimeConfig: suspend (String, String) -> Result<DeviceRuntime>,
-    onBulkSetSessionsArchived: suspend (List<String>, Boolean) -> Result<List<AgentSession>>,
+    onBulkSetSessionsArchived: suspend (List<String>, Boolean) -> Result<SessionBatchUpdate>,
     onArchiveAllDeviceSessions: suspend (String, Boolean, String) -> Result<List<AgentSession>>,
 ) {
     val context = LocalContext.current
@@ -372,14 +373,16 @@ fun DeviceDetailScreen(
                                 sessionBulkMessage = null
                                 scope.launch {
                                     onBulkSetSessionsArchived(selectedSessionIds.toList(), targetArchived)
-                                        .onSuccess { sessions ->
+                                        .onSuccess { update ->
                                             sessionSelectMode = false
                                             selectedSessionIds = emptySet()
-                                            sessionBulkMessage = null
+                                            sessionBulkMessage = update.notFound.takeIf { it.isNotEmpty() }?.let {
+                                                context.getString(R.string.device_detail_sessions_not_found, it.size)
+                                            }
                                             showToast(
                                                 context.getString(
                                                     if (targetArchived) R.string.device_detail_archived_sessions_toast else R.string.device_detail_unarchived_sessions_toast,
-                                                    sessions.size,
+                                                    update.sessions.size,
                                                 ),
                                             )
                                         }

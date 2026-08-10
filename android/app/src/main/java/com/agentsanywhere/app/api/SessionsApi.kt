@@ -46,7 +46,7 @@ class SessionsApi(
         title: String? = null,
         pinned: Boolean? = null,
         archived: Boolean? = null,
-    ): RemoteSession {
+    ): RemoteSessionResponse {
         val body = JSONObject().apply {
             title?.let { put("title", it) }
             pinned?.let { put("pinned", it) }
@@ -54,28 +54,72 @@ class SessionsApi(
         }
         return client.patchJson(
             serverUrl = serverUrl,
-            path = "/sessions/${sessionId.urlEncode()}",
+            path = "/sessions/${sessionId.urlEncode()}/meta",
             body = body,
             authorizationToken = authorizationToken,
-        ).getJSONObject("session").toRemoteSession()
+        ).toRemoteSessionResponse()
     }
 
-    fun bulkArchiveSessions(
+    fun getSessionMeta(
+        serverUrl: String,
+        authorizationToken: String,
+        sessionId: String,
+    ): RemoteSessionResponse {
+        return client.getJson(
+            serverUrl = serverUrl,
+            path = "/sessions/${sessionId.urlEncode()}/meta",
+            authorizationToken = authorizationToken,
+        ).toRemoteSessionResponse()
+    }
+
+    fun archiveSessions(
         serverUrl: String,
         authorizationToken: String,
         ids: List<String>,
-        archived: Boolean,
-    ): List<RemoteSession> {
-        val body = JSONObject().apply {
-            put("ids", JSONArray(ids))
-            put("archived", archived)
-        }
+    ): RemoteSessionsMutationResponse {
         return client.postJson(
             serverUrl = serverUrl,
-            path = "/sessions/bulk-archive",
-            body = body,
+            path = "/sessions/archive",
+            body = JSONArray(ids),
             authorizationToken = authorizationToken,
-        ).optJSONArray("sessions").toObjectList { toRemoteSession() }
+        ).toRemoteSessionsMutationResponse()
+    }
+
+    fun unarchiveSessions(
+        serverUrl: String,
+        authorizationToken: String,
+        ids: List<String>,
+    ): RemoteSessionsMutationResponse {
+        return client.postJson(
+            serverUrl = serverUrl,
+            path = "/sessions/unarchive",
+            body = JSONArray(ids),
+            authorizationToken = authorizationToken,
+        ).toRemoteSessionsMutationResponse()
+    }
+
+    fun markSessionsRead(
+        serverUrl: String,
+        authorizationToken: String,
+        ids: List<String>,
+    ): RemoteSessionsMutationResponse {
+        return client.postJson(
+            serverUrl = serverUrl,
+            path = "/sessions/read",
+            body = JSONArray(ids),
+            authorizationToken = authorizationToken,
+        ).toRemoteSessionsMutationResponse()
+    }
+
+    fun markSessionRead(
+        serverUrl: String,
+        authorizationToken: String,
+        sessionId: String,
+    ): RemoteSessionResponse {
+        val response = markSessionsRead(serverUrl, authorizationToken, listOf(sessionId))
+        val session = response.sessions.firstOrNull { it.id == sessionId }
+            ?: throw IllegalStateException("Session read response did not include this session.")
+        return RemoteSessionResponse(session = session, serverTime = response.serverTime)
     }
 
     fun archiveAllDeviceSessions(
@@ -291,16 +335,35 @@ class SessionsApi(
             status = optString("status", "idle"),
             takeover = optBoolean("takeover", false),
             pinned = optBoolean("pinned", false),
+            pinnedAt = optNullableString("pinnedAt"),
             archived = optBoolean("archived", false),
+            archivedAt = optNullableString("archivedAt"),
             unread = optBoolean("unread", false),
+            lastReadSeq = optInt("lastReadSeq", 0),
             lastSyncedAt = optNullableString("lastSyncedAt"),
             sourceObservedAt = optNullableString("sourceObservedAt"),
             lastActivityAt = optNullableString("lastActivityAt"),
             lastItemAt = optNullableString("lastItemAt"),
+            lastItemOrderSeq = optNullableInt("lastItemOrderSeq"),
             sortAt = optNullableString("sortAt"),
             updatedSeq = optInt("updatedSeq", 0),
             runtimeSettings = optJSONObject("runtimeSettings").toMap(),
             runtimeSettingsOverride = optJSONObject("runtimeSettingsOverride").toMap(),
+        )
+    }
+
+    private fun JSONObject.toRemoteSessionResponse(): RemoteSessionResponse {
+        return RemoteSessionResponse(
+            session = getJSONObject("session").toRemoteSession(),
+            serverTime = optNullableString("serverTime"),
+        )
+    }
+
+    private fun JSONObject.toRemoteSessionsMutationResponse(): RemoteSessionsMutationResponse {
+        return RemoteSessionsMutationResponse(
+            sessions = optJSONArray("sessions").toObjectList { toRemoteSession() },
+            notFound = optJSONArray("notFound").toStringList(),
+            serverTime = optNullableString("serverTime"),
         )
     }
 

@@ -99,6 +99,7 @@
     <string name="home_restore_failed">Could not restore session.</string>
     <string name="home_session_renamed">Session renamed.</string>
     <string name="home_rename_failed">Could not rename session.</string>
+    <string name="home_title_required">Title cannot be empty.</string>
     <string name="home_rename">Rename</string>
     <string name="home_unarchive">Unarchive</string>
     <string name="home_archive">Archive</string>
@@ -185,6 +186,7 @@
     <string name="device_detail_delete_failed">Could not delete device.</string>
     <string name="device_detail_revoke_failed">Could not revoke device token.</string>
     <string name="device_detail_update_sessions_failed">Could not update sessions.</string>
+    <string name="device_detail_sessions_not_found">%1$d sessions no longer exist. Refresh to reconcile the list.</string>
     <string name="device_detail_archived_sessions_toast">Archived %1$d sessions.</string>
     <string name="device_detail_unarchived_sessions_toast">Unarchived %1$d sessions.</string>
     <string name="device_detail_not_found">Device not found</string>

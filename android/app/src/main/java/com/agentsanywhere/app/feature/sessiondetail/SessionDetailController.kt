@@ -14,6 +14,7 @@ import com.agentsanywhere.app.api.SessionsApi
 import com.agentsanywhere.app.api.UploadFilePart
 import com.agentsanywhere.app.feature.auth.AuthSessionStore
 import com.agentsanywhere.app.feature.sessions.runtimeLabel
+import com.agentsanywhere.app.feature.sessions.mergeObservedSession
 import com.agentsanywhere.app.model.AgentDevice
 import com.agentsanywhere.app.model.AgentSession
 import com.agentsanywhere.app.model.SessionStatus
@@ -321,7 +322,7 @@ class SessionDetailController(
             currentMessages = keptOptimistic,
         )
         return current.copy(
-            session = delta.session ?: current.session,
+            session = delta.session?.let { mergeObservedSession(current.session, it) } ?: current.session,
             messages = messages,
             approvals = delta.approvals ?: current.approvals,
             nextSeq = max(current.nextSeq, delta.nextSeq),
@@ -344,7 +345,7 @@ class SessionDetailController(
             currentMessages = current.messages,
         )
         return current.copy(
-            session = older.session ?: current.session,
+            session = older.session?.let { mergeObservedSession(current.session, it) } ?: current.session,
             messages = messages,
             approvals = older.approvals,
             nextSeq = max(current.nextSeq, older.nextSeq),
@@ -781,12 +782,14 @@ class SessionDetailController(
             pinned = pinned,
             archived = archived,
             unread = unread,
+            lastReadSeq = lastReadSeq,
             takeover = takeover,
             connectorOnline = connectorStatus == "online",
             runtimeSettings = runtimeSettings,
             runtimeSettingsOverride = runtimeSettingsOverride,
             live = statusValue == SessionStatus.Running || statusValue == SessionStatus.WaitingApproval,
             sortKey = sortAt ?: lastActivityAt ?: lastItemAt ?: "",
+            updatedSeq = updatedSeq,
         )
     }
 

@@ -1,9 +1,15 @@
 package com.agentsanywhere.app.api
 
+import org.json.JSONArray
 import org.json.JSONObject
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.concurrent.TimeUnit
 
 class ApiClient {
     fun getJson(
@@ -15,7 +21,7 @@ class ApiClient {
             serverUrl = serverUrl,
             path = path,
             method = "GET",
-            body = null,
+            bodyText = null,
             authorizationToken = authorizationToken,
         )
     }
@@ -30,7 +36,22 @@ class ApiClient {
             serverUrl = serverUrl,
             path = path,
             method = "POST",
-            body = body,
+            bodyText = body.toString(),
+            authorizationToken = authorizationToken,
+        )
+    }
+
+    fun postJson(
+        serverUrl: String,
+        path: String,
+        body: JSONArray,
+        authorizationToken: String? = null,
+    ): JSONObject {
+        return requestJson(
+            serverUrl = serverUrl,
+            path = path,
+            method = "POST",
+            bodyText = body.toString(),
             authorizationToken = authorizationToken,
         )
     }
@@ -44,7 +65,7 @@ class ApiClient {
             serverUrl = serverUrl,
             path = path,
             method = "POST",
-            body = null,
+            bodyText = null,
             authorizationToken = authorizationToken,
         )
     }
@@ -59,7 +80,7 @@ class ApiClient {
             serverUrl = serverUrl,
             path = path,
             method = "PATCH",
-            body = body,
+            bodyText = body.toString(),
             authorizationToken = authorizationToken,
         )
     }
@@ -74,7 +95,7 @@ class ApiClient {
             serverUrl = serverUrl,
             path = path,
             method = "PUT",
-            body = body,
+            bodyText = body.toString(),
             authorizationToken = authorizationToken,
         )
     }
@@ -88,7 +109,7 @@ class ApiClient {
             serverUrl = serverUrl,
             path = path,
             method = "DELETE",
-            body = null,
+            bodyText = null,
             authorizationToken = authorizationToken,
         )
     }
@@ -203,53 +224,53 @@ class ApiClient {
         serverUrl: String,
         path: String,
         method: String,
-        body: JSONObject?,
+        bodyText: String?,
         authorizationToken: String?,
     ): JSONObject {
         return try {
-            val endpoint = URL(apiUrl(serverUrl, path))
-            val bodyText = body?.toString()
-
-            val connection = (endpoint.openConnection() as HttpURLConnection).apply {
-                requestMethod = method
-                connectTimeout = 10_000
-                readTimeout = 15_000
-                doOutput = bodyText != null
-                setRequestProperty("Accept", "application/json")
-                setRequestProperty("ngrok-skip-browser-warning", "true")
-                if (bodyText != null) {
-                    setRequestProperty("Content-Type", "application/json")
-                }
-                if (!authorizationToken.isNullOrBlank()) {
-                    setRequestProperty("Authorization", "Bearer $authorizationToken")
-                }
+            val requestBody = when {
+                bodyText != null -> bodyText.toRequestBody(JSON_MEDIA_TYPE)
+                method == "POST" || method == "PUT" || method == "PATCH" -> EMPTY_JSON_BODY
+                else -> null
             }
-
-            try {
-                if (bodyText != null) {
-                    connection.outputStream.use { output ->
-                        output.write(bodyText.toByteArray(Charsets.UTF_8))
+            val request = Request.Builder()
+                .url(apiUrl(serverUrl, path))
+                .header("Accept", "application/json")
+                .header("ngrok-skip-browser-warning", "true")
+                .method(method, requestBody)
+                .apply {
+                    if (!authorizationToken.isNullOrBlank()) {
+                        header("Authorization", "Bearer $authorizationToken")
                     }
                 }
+                .build()
 
-                val responseCode = connection.responseCode
-                val responseText = readResponseText(connection, responseCode)
-                if (responseCode !in 200..299) {
+            JSON_HTTP_CLIENT.newCall(request).execute().use { response ->
+                val responseText = response.body?.string().orEmpty()
+                if (!response.isSuccessful) {
                     throw ApiException(
-                        message = parseErrorMessage(responseText) ?: defaultErrorMessage(responseCode),
-                        statusCode = responseCode,
+                        message = parseErrorMessage(responseText) ?: defaultErrorMessage(response.code),
+                        statusCode = response.code,
                     )
                 }
-
                 if (responseText.isBlank()) JSONObject() else JSONObject(responseText)
-            } finally {
-                connection.disconnect()
             }
         } catch (exc: ApiException) {
             throw exc
+        } catch (exc: IllegalArgumentException) {
+            throw ApiException("The server URL is invalid.", cause = exc)
         } catch (exc: IOException) {
             throw ApiException("Could not reach the server. Check the URL and network.", cause = exc)
         }
+    }
+
+    private companion object {
+        val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
+        val EMPTY_JSON_BODY = ByteArray(0).toRequestBody(JSON_MEDIA_TYPE)
+        val JSON_HTTP_CLIENT: OkHttpClient = OkHttpClient.Builder()
+            .connectTimeout(10, TimeUnit.SECONDS)
+            .readTimeout(15, TimeUnit.SECONDS)
+            .build()
     }
 
     private fun readResponseText(connection: HttpURLConnection, responseCode: Int): String {
@@ -269,6 +290,9 @@ class ApiClient {
                 is JSONObject -> detail.optString("message")
                     .ifBlank { detail.optString("code") }
                     .takeIf { it.isNotBlank() }
+                is JSONArray -> detail.optJSONObject(0)
+                    ?.optString("msg")
+                    ?.takeIf { it.isNotBlank() }
                 else -> detail?.toString()?.takeIf { it.isNotBlank() }
             }
         }.getOrNull()

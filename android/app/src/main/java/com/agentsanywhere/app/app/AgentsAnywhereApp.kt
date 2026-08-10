@@ -1,6 +1,7 @@
 package com.agentsanywhere.app.app
 
 import android.net.Uri
+import android.widget.Toast
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -37,14 +38,18 @@ import com.agentsanywhere.app.feature.devices.DevicesController
 import com.agentsanywhere.app.feature.files.FilesController
 import com.agentsanywhere.app.feature.sessions.SessionsController
 import com.agentsanywhere.app.feature.sessions.SessionsState
+import com.agentsanywhere.app.feature.sessions.SessionBatchUpdate
 import com.agentsanywhere.app.feature.sessions.NewSessionDirectory
 import com.agentsanywhere.app.feature.sessions.NewSessionModelCatalog
 import com.agentsanywhere.app.feature.sessions.NewSessionPermissionCatalog
 import com.agentsanywhere.app.feature.sessions.NewSessionRuntimeCapabilities
+import com.agentsanywhere.app.feature.sessions.beginSessionRequest
+import com.agentsanywhere.app.feature.sessions.mergedWithRefresh
 import com.agentsanywhere.app.feature.sessions.withDeletedDevice
 import com.agentsanywhere.app.feature.sessions.withPatchedDevice
 import com.agentsanywhere.app.feature.sessions.withPatchedSession
 import com.agentsanywhere.app.feature.sessions.withPatchedSessions
+import com.agentsanywhere.app.feature.sessions.withMissingSessionsRemoved
 import com.agentsanywhere.app.feature.sessiondetail.SessionDetailController
 import com.agentsanywhere.app.feature.terminal.RemoteTerminalPool
 import com.agentsanywhere.app.feature.terminal.TerminalController
@@ -162,6 +167,8 @@ fun AgentsAnywhereApp(
     var isRefreshingSessions by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     suspend fun refreshSessions(showInitialLoading: Boolean, showRefreshIndicator: Boolean) {
+        val request = sessionsState.beginSessionRequest()
+        sessionsState = request.state
         if (showRefreshIndicator) {
             isRefreshingSessions = true
         } else if (showInitialLoading && !sessionsState.hasLoaded && sessionsState.sessions.isEmpty() && sessionsState.devices.isEmpty()) {
@@ -171,7 +178,7 @@ fun AgentsAnywhereApp(
         try {
             sessionsController.loadSessions()
                 .onSuccess { loadedState ->
-                    sessionsState = loadedState
+                    sessionsState = sessionsState.mergedWithRefresh(loadedState, request.generation)
                 }
                 .onFailure { error ->
                     val hasAnyCachedData = sessionsState.sessions.isNotEmpty() || sessionsState.devices.isNotEmpty()
@@ -300,6 +307,23 @@ fun AgentsAnywhereApp(
         onOpenSession = { session ->
             selectedSessionId = session.id
             destinationName = AppDestination.SessionDetail.name
+            if (session.unread) {
+                val request = sessionsState.beginSessionRequest(listOf(session.id))
+                sessionsState = request.state
+                scope.launch {
+                    sessionsController.markSessionRead(session.id, sessionsState.devices)
+                        .onSuccess { updated ->
+                            sessionsState = sessionsState.withPatchedSession(updated, request.generation)
+                        }
+                        .onFailure { error ->
+                            Toast.makeText(
+                                context,
+                                error.message ?: "Could not mark this session as read.",
+                                Toast.LENGTH_SHORT,
+                            ).show()
+                        }
+                }
+            }
         },
         onOpenDevice = { device ->
             deviceDetailReturnDestinationName = destinationName
@@ -414,9 +438,13 @@ fun AgentsAnywhereApp(
             if (!hasAuthSession) {
                 Result.failure(IllegalStateException("Sign in again to update sessions."))
             } else {
+                val request = sessionsState.beginSessionRequest(ids)
+                sessionsState = request.state
                 sessionsController.bulkSetSessionsArchived(ids, archived, sessionsState.devices)
-                    .onSuccess { sessions ->
-                        sessionsState = sessionsState.withPatchedSessions(sessions)
+                    .onSuccess { update ->
+                        sessionsState = sessionsState
+                            .withPatchedSessions(update.sessions, request.generation)
+                            .withMissingSessionsRemoved(update.notFound, request.generation)
                     }
             }
         },
@@ -424,9 +452,20 @@ fun AgentsAnywhereApp(
             if (!hasAuthSession) {
                 Result.failure(IllegalStateException("Sign in again to update sessions."))
             } else {
+                val targetIds = (sessionsState.sessions + sessionsState.archivedSessions)
+                    .filter { session ->
+                        session.connectorId == connectorId && when (scope) {
+                            "active" -> !session.archived
+                            "archived" -> session.archived
+                            else -> true
+                        }
+                    }
+                    .map { it.id }
+                val request = sessionsState.beginSessionRequest(targetIds)
+                sessionsState = request.state
                 sessionsController.archiveAllDeviceSessions(connectorId, archived, scope, sessionsState.devices)
                     .onSuccess { sessions ->
-                        sessionsState = sessionsState.withPatchedSessions(sessions)
+                        sessionsState = sessionsState.withPatchedSessions(sessions, request.generation)
                     }
             }
         },
@@ -434,9 +473,11 @@ fun AgentsAnywhereApp(
             if (!hasAuthSession) {
                 Result.failure(IllegalStateException("Sign in again to update this session."))
             } else {
+                val request = sessionsState.beginSessionRequest(listOf(sessionId))
+                sessionsState = request.state
                 sessionsController.renameSession(sessionId, title, sessionsState.devices)
                     .onSuccess { session ->
-                        sessionsState = sessionsState.withPatchedSession(session)
+                        sessionsState = sessionsState.withPatchedSession(session, request.generation)
                     }
             }
         },
@@ -444,9 +485,11 @@ fun AgentsAnywhereApp(
             if (!hasAuthSession) {
                 Result.failure(IllegalStateException("Sign in again to update this session."))
             } else {
+                val request = sessionsState.beginSessionRequest(listOf(sessionId))
+                sessionsState = request.state
                 sessionsController.setSessionPinned(sessionId, pinned, sessionsState.devices)
                     .onSuccess { session ->
-                        sessionsState = sessionsState.withPatchedSession(session)
+                        sessionsState = sessionsState.withPatchedSession(session, request.generation)
                     }
             }
         },
@@ -454,9 +497,11 @@ fun AgentsAnywhereApp(
             if (!hasAuthSession) {
                 Result.failure(IllegalStateException("Sign in again to update this session."))
             } else {
+                val request = sessionsState.beginSessionRequest(listOf(sessionId))
+                sessionsState = request.state
                 sessionsController.setSessionArchived(sessionId, archived, sessionsState.devices)
                     .onSuccess { session ->
-                        sessionsState = sessionsState.withPatchedSession(session)
+                        sessionsState = sessionsState.withPatchedSession(session, request.generation)
                     }
             }
         },
@@ -471,7 +516,8 @@ fun AgentsAnywhereApp(
                     cwd = cwd,
                     devices = sessionsState.devices,
                 ).onSuccess { session ->
-                    sessionsState = sessionsState.withPatchedSession(session)
+                    val completion = sessionsState.beginSessionRequest(listOf(session.id))
+                    sessionsState = completion.state.withPatchedSession(session, completion.generation)
                 }
             }
         },
@@ -556,7 +602,7 @@ private fun AgentsAnywhereNavHost(
     onSaveDeviceRuntimeConfig: suspend (String, String, Map<String, Any?>) -> Result<DeviceRuntime>,
     onSetDeviceRuntimeActive: suspend (String, String, Boolean) -> Result<DeviceRuntime>,
     onDeleteDeviceRuntimeConfig: suspend (String, String) -> Result<DeviceRuntime>,
-    onBulkSetSessionsArchived: suspend (List<String>, Boolean) -> Result<List<AgentSession>>,
+    onBulkSetSessionsArchived: suspend (List<String>, Boolean) -> Result<SessionBatchUpdate>,
     onArchiveAllDeviceSessions: suspend (String, Boolean, String) -> Result<List<AgentSession>>,
     onRenameSession: suspend (String, String) -> Result<com.agentsanywhere.app.model.AgentSession>,
     onSetSessionPinned: suspend (String, Boolean) -> Result<com.agentsanywhere.app.model.AgentSession>,
