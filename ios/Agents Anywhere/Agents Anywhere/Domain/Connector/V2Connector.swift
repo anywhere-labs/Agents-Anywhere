@@ -34,11 +34,13 @@ struct V2ConnectorUpdateRequest: Encodable, Hashable {
     let name: String
 }
 
-struct V2ConnectorRevokeResponse: Decodable, Hashable {
+struct V2ConnectorRevokeResponse: Decodable, Hashable, Identifiable {
     let connector: V2Connector
     let connectorToken: String
     let tokenPrefix: String
     let serverTime: String
+
+    var id: V2ConnectorID { connector.id }
 }
 
 enum V2ConnectorSessionArchiveScope: String, Encodable, Hashable {

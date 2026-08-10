@@ -39,12 +39,7 @@ struct ChatShellView: View {
                 onCopySessionId: copySessionId
             )
         } content: { safeAreaInsets in
-            ChatSurfaceView(
-                conversationTitle: selectedContentTitle,
-                safeAreaInsets: safeAreaInsets,
-                onMenu: toggleSidebar,
-                onNewChat: startNewSession
-            )
+            mainContent(safeAreaInsets: safeAreaInsets)
         }
         .alert("Could not update session", isPresented: sessionActionErrorBinding) {
             Button("OK", role: .cancel) {
@@ -56,7 +51,9 @@ struct ChatShellView: View {
     }
 
     private var sidebarDevices: [ChatSidebarDevice] {
-        appState.connectors.map(ChatSidebarDevice.init)
+        appState.connectors.map { connector in
+            ChatSidebarDevice(connector: connector)
+        }
     }
 
     private var sidebarAccount: ChatSidebarAccount? {
@@ -71,7 +68,9 @@ struct ChatShellView: View {
             .filter { session in
                 query.isEmpty || session.title?.localizedStandardContains(query) == true
             }
-            .map(ChatSidebarSession.init)
+            .map { session in
+                ChatSidebarSession(session: session)
+            }
     }
 
     private var selectedDeviceId: V2ConnectorID? {
@@ -106,6 +105,37 @@ struct ChatShellView: View {
         )
     }
 
+    @ViewBuilder
+    private func mainContent(safeAreaInsets: EdgeInsets) -> some View {
+        if case let .device(connectorId) = selection,
+           let connector = appState.connectors.first(where: { $0.id == connectorId }),
+           let service = appState.deviceManagementService,
+           let serverURL = appState.serverURL
+        {
+            DeviceManagementView(
+                connector: connector,
+                allSessions: appState.sessions,
+                service: service,
+                serverURL: serverURL,
+                safeAreaInsets: safeAreaInsets,
+                onMenu: toggleSidebar,
+                onOpenSession: openSession,
+                onNewSession: { _ in startNewSession() },
+                onConnectorUpdated: appState.updateConnector,
+                onConnectorDeleted: removeConnector,
+                onSessionsUpdated: appState.updateSessions,
+                onSetSessionsArchived: appState.setSessionsArchived
+            )
+        } else {
+            ChatSurfaceView(
+                conversationTitle: selectedContentTitle,
+                safeAreaInsets: safeAreaInsets,
+                onMenu: toggleSidebar,
+                onNewChat: startNewSession
+            )
+        }
+    }
+
     private func startNewSession() {
         selection = .newSession
         isSidebarOpen = false
@@ -119,6 +149,11 @@ struct ChatShellView: View {
     private func openSession(_ id: V2SessionID) {
         selection = .session(id)
         isSidebarOpen = false
+    }
+
+    private func removeConnector(_ id: V2ConnectorID) {
+        appState.removeConnector(connectorId: id)
+        selection = .newSession
     }
 
     private func renameSession(_ id: V2SessionID, title: String) {

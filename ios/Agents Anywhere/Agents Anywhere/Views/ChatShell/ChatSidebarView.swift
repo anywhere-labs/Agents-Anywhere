@@ -101,13 +101,15 @@ struct ChatSidebarHeaderView: View {
                 Spacer(minLength: 8)
 
                 Button(action: toggleSearch) {
-                    Image(systemName: isSearching ? "xmark" : "magnifyingglass")
-                        .font(.body.weight(.semibold))
-                        .frame(width: 38, height: 38)
+                    Label(
+                        isSearching ? "Close search" : "Search sessions",
+                        systemImage: isSearching ? "xmark" : "magnifyingglass"
+                    )
+                    .labelStyle(.iconOnly)
                 }
                 .buttonStyle(.glass)
                 .buttonBorderShape(.circle)
-                .accessibilityLabel(isSearching ? "Close search" : "Search sessions")
+                .controlSize(.large)
             }
 
             if isSearching {

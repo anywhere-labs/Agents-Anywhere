@@ -325,6 +325,10 @@ final class AppState: ObservableObject {
     }
 
     func setSessionArchived(sessionId: V2SessionID, archived: Bool) async -> Bool {
+        await setSessionsArchived(sessionIds: [sessionId], archived: archived)
+    }
+
+    func setSessionsArchived(sessionIds: [V2SessionID], archived: Bool) async -> Bool {
         sessionActionError = nil
         guard let services = makeV2Services() else {
             sessionActionError = String(localized: "The signed-in server is unavailable.")
@@ -332,9 +336,9 @@ final class AppState: ObservableObject {
         }
         do {
             let updatedSessions = if archived {
-                try await services.dashboard.archive(sessionIds: [sessionId])
+                try await services.dashboard.archive(sessionIds: sessionIds)
             } else {
-                try await services.dashboard.unarchive(sessionIds: [sessionId])
+                try await services.dashboard.unarchive(sessionIds: sessionIds)
             }
             for updated in updatedSessions {
                 updateSession(updated)
@@ -482,6 +486,10 @@ final class AppState: ObservableObject {
         return try await services.devicePairing.discoverRuntimes(connectorId: connectorId)
     }
 
+    var deviceManagementService: V2DeviceManagementService? {
+        makeV2Services()?.deviceManagement
+    }
+
     func updateSession(_ updated: V2SessionMeta) {
         if let index = sessions.firstIndex(where: { $0.id == updated.id }) {
             sessions[index] = updated
@@ -490,11 +498,22 @@ final class AppState: ObservableObject {
         }
     }
 
-    private func updateConnector(_ updated: V2Connector) {
+    func updateConnector(_ updated: V2Connector) {
         if let index = connectors.firstIndex(where: { $0.id == updated.id }) {
             connectors[index] = updated
         } else {
             connectors.insert(updated, at: 0)
+        }
+    }
+
+    func removeConnector(connectorId: V2ConnectorID) {
+        connectors.removeAll { $0.id == connectorId }
+        sessions.removeAll { $0.connectorId == connectorId }
+    }
+
+    func updateSessions(_ updated: [V2SessionMeta]) {
+        for session in updated {
+            updateSession(session)
         }
     }
 

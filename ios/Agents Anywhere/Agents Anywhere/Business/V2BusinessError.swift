@@ -12,6 +12,7 @@ enum V2BusinessError: LocalizedError {
     case pairingNotClaimed
     case signedInServerUnavailable
     case invalidRuntimeConfigSchema
+    case invalidRuntimeConfigField(title: String)
     case tooManyAttachments(maximum: Int)
     case emptyAttachment(name: String)
     case invalidPageSize
@@ -40,6 +41,8 @@ enum V2BusinessError: LocalizedError {
             return String(localized: "The signed-in server is unavailable.")
         case .invalidRuntimeConfigSchema:
             return String(localized: "The runtime configuration schema is unavailable or invalid.")
+        case let .invalidRuntimeConfigField(title):
+            return "Enter a valid value for \(title)."
         case let .tooManyAttachments(maximum):
             return "Attach no more than \(maximum) files."
         case let .emptyAttachment(name):
