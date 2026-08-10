@@ -13,16 +13,31 @@ data class RemoteSession(
     val status: String,
     val takeover: Boolean,
     val pinned: Boolean,
+    val pinnedAt: String?,
     val archived: Boolean,
+    val archivedAt: String?,
     val unread: Boolean,
+    val lastReadSeq: Int,
     val lastSyncedAt: String?,
     val sourceObservedAt: String?,
     val lastActivityAt: String?,
     val lastItemAt: String?,
+    val lastItemOrderSeq: Int?,
     val sortAt: String?,
     val updatedSeq: Int,
     val runtimeSettings: Map<String, Any?>,
     val runtimeSettingsOverride: Map<String, Any?>,
+)
+
+data class RemoteSessionResponse(
+    val session: RemoteSession,
+    val serverTime: String?,
+)
+
+data class RemoteSessionsMutationResponse(
+    val sessions: List<RemoteSession>,
+    val notFound: List<String>,
+    val serverTime: String?,
 )
 
 data class RemoteRuntimeConfigSchema(

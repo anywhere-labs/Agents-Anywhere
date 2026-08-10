@@ -1,15 +1,11 @@
 package com.agentsanywhere.app.ui.screens.devices
 
-import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -17,15 +13,19 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -34,28 +34,29 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.agentsanywhere.app.R
-import com.agentsanywhere.app.feature.devices.DeviceDetailAgent
-import com.agentsanywhere.app.feature.sessiondetail.RuntimeConfigField
-import com.agentsanywhere.app.feature.sessiondetail.RuntimeConfigOption
-import com.agentsanywhere.app.feature.sessiondetail.RuntimeSettingsState
+import com.agentsanywhere.app.feature.devices.DeviceRuntime
+import com.agentsanywhere.app.feature.devices.DeviceRuntimeConfigDraft
+import com.agentsanywhere.app.feature.devices.RuntimeConfigValidationError
+import com.agentsanywhere.app.feature.devices.RuntimeEnvironmentVariable
+import com.agentsanywhere.app.feature.devices.toConfigDraft
 import com.agentsanywhere.app.model.AgentDevice
 import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 import com.agentsanywhere.app.ui.designsystem.noRippleClickable
-import com.agentsanywhere.app.ui.screens.sessiondetail.localizedRuntimeOptionDescription
-import com.agentsanywhere.app.ui.screens.sessiondetail.localizedRuntimeOptionLabel
 import com.composables.icons.lucide.Lucide
+import com.composables.icons.lucide.Trash2
 import com.composables.icons.lucide.X
 import kotlinx.coroutines.launch
 
@@ -63,64 +64,42 @@ import kotlinx.coroutines.launch
 @Composable
 internal fun DeviceAgentSettingsSheet(
     device: AgentDevice,
-    agent: DeviceDetailAgent,
+    runtime: DeviceRuntime,
     onDismiss: () -> Unit,
-    onLoadSettings: suspend (String, String) -> Result<RuntimeSettingsState>,
-    onPatchSettings: suspend (String, String, Map<String, Any?>) -> Result<RuntimeSettingsState>,
+    onSaveConfig: suspend (String, String, Map<String, Any?>) -> Result<DeviceRuntime>,
 ) {
     val colors = LocalAAColors.current
     val context = LocalContext.current
     val darkMode = colors.canvas == Color(0xFF09090B)
-    val palette = agentSettingsPalette(darkMode)
     val bodyMaxHeight = (LocalConfiguration.current.screenHeightDp * 0.58f).dp
     val scope = rememberCoroutineScope()
-    var state by remember(device.id, agent.runtime) {
-        mutableStateOf(RuntimeSettingsState(isLoading = true))
+    var draft by remember(device.id, runtime.id, runtime.updatedAt) {
+        mutableStateOf(runtime.toConfigDraft())
     }
-    var savingKey by remember(device.id, agent.runtime) { mutableStateOf<String?>(null) }
-    var savingValue by remember(device.id, agent.runtime) { mutableStateOf<String?>(null) }
-    var saveError by remember(device.id, agent.runtime) { mutableStateOf<String?>(null) }
+    var saving by remember(device.id, runtime.id) { mutableStateOf(false) }
+    var saveError by remember(device.id, runtime.id) { mutableStateOf<String?>(null) }
+    val validationError = draft.validationError()
 
-    LaunchedEffect(device.id, agent.runtime) {
-        state = RuntimeSettingsState(isLoading = true)
+    fun save() {
+        if (saving || validationError != null) return
+        saving = true
         saveError = null
-        onLoadSettings(device.id, agent.runtime)
-            .onSuccess { state = it }
-            .onFailure { error ->
-                state = RuntimeSettingsState(
-                    isLoading = false,
-                    errorMessage = error.message ?: context.getString(R.string.agent_settings_load_failed),
-                )
-            }
-    }
-
-    fun patch(key: String, value: String?) {
-        if (savingKey != null) return
-        val currentSchema = state.schema
-        savingKey = key
-        savingValue = value
-        saveError = null
-        state = state.copy(savingKey = key)
         scope.launch {
-            onPatchSettings(device.id, agent.runtime, mapOf(key to value))
-                .onSuccess { next ->
-                    state = next.copy(schema = currentSchema ?: next.schema, savingKey = null)
-                }
+            onSaveConfig(device.id, runtime.id, draft.toConfig())
+                .onSuccess { onDismiss() }
                 .onFailure { error ->
                     saveError = error.message ?: context.getString(R.string.agent_settings_save_failed)
-                    state = state.copy(savingKey = null)
                 }
-            savingKey = null
-            savingValue = null
+            saving = false
         }
     }
 
     ModalBottomSheet(
-        onDismissRequest = onDismiss,
+        onDismissRequest = { if (!saving) onDismiss() },
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
-        containerColor = palette.sheet,
-        contentColor = palette.title,
+        containerColor = if (darkMode) Color(0xFF18181B) else Color(0xFFFDFCFB),
+        contentColor = colors.ink,
         dragHandle = null,
         scrimColor = if (darkMode) Color(0x99000000) else Color(0x66000000),
     ) {
@@ -131,26 +110,35 @@ internal fun DeviceAgentSettingsSheet(
                 .padding(start = 22.dp, end = 22.dp, top = 10.dp, bottom = 20.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            AgentSettingsHandle(palette.handle)
-            Row(
+            Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(44.dp),
+                    .height(14.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .width(40.dp)
+                        .height(4.dp)
+                        .clip(CircleShape)
+                        .background(if (darkMode) Color(0xFF3F3F46) else Color(0xFFD8D5CF)),
+                )
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = stringResource(R.string.agent_settings_title),
-                        color = palette.title,
+                        color = colors.ink,
                         fontSize = 20.sp,
                         fontWeight = FontWeight.ExtraBold,
-                        lineHeight = 24.sp,
-                        maxLines = 1,
                     )
                     Text(
-                        text = agent.label,
-                        color = palette.secondaryText,
+                        text = runtime.displayName,
+                        color = colors.muted,
                         fontSize = 12.sp,
                         fontWeight = FontWeight.SemiBold,
                         maxLines = 1,
@@ -164,475 +152,274 @@ internal fun DeviceAgentSettingsSheet(
                     onClick = onDismiss,
                 )
             }
-            when {
-                state.isLoading -> AgentSettingsLoading(palette)
-                state.errorMessage != null && state.schema == null -> {
-                    AgentSettingsMessage(state.errorMessage.orEmpty(), palette)
-                }
-                else -> {
-                    AgentSettingsBody(
-                        state = state,
-                        palette = palette,
-                        savingKey = savingKey,
-                        savingValue = savingValue,
-                        saveError = saveError,
-                        modifier = Modifier.heightIn(max = bodyMaxHeight),
-                        onPatch = ::patch,
-                    )
-                    SheetTextButton(
-                        label = if (savingKey == null) stringResource(R.string.common_done) else stringResource(R.string.common_saving),
-                        enabled = savingKey == null,
-                        primary = true,
-                        modifier = Modifier.fillMaxWidth(),
-                        onClick = onDismiss,
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = bodyMaxHeight)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                if (draft.fieldOrder.isEmpty()) {
+                    Text(
+                        text = stringResource(R.string.agent_settings_none),
+                        color = colors.muted,
+                        fontSize = 13.sp,
                     )
                 }
+                draft.fieldOrder.forEach { field ->
+                    when (field) {
+                        "executablePath" -> if (draft.supportsExecutablePath) {
+                            RuntimePathField(
+                                value = draft.executablePath,
+                                enabled = !saving,
+                                onValueChange = { draft = draft.copy(executablePath = it) },
+                            )
+                        }
+                        "environment" -> if (draft.supportsEnvironment) {
+                            RuntimeEnvironmentFields(
+                                variables = draft.environment,
+                                enabled = !saving,
+                                onVariablesChange = { draft = draft.copy(environment = it) },
+                            )
+                        }
+                    }
+                }
+                validationError?.let { RuntimeConfigError(validationErrorMessage(it)) }
+                saveError?.let { RuntimeConfigError(it) }
             }
-        }
-    }
-}
-@Composable
-private fun AgentSettingsBody(
-    state: RuntimeSettingsState,
-    palette: AgentSettingsPalette,
-    savingKey: String?,
-    savingValue: String?,
-    saveError: String?,
-    modifier: Modifier = Modifier,
-    onPatch: (String, String?) -> Unit,
-) {
-    val permissionField = state.mobileAgentField("permissionMode")
-    val modelField = state.mobileAgentField("model")
-    val effortField = state.filteredEffortField()
-    val fieldsCount = listOfNotNull(permissionField, modelField, effortField).size
-
-    if (fieldsCount == 0) {
-        AgentSettingsMessage(stringResource(R.string.agent_settings_none), palette)
-    } else {
-        Column(
-            modifier = modifier
-                .fillMaxWidth()
-                .verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            permissionField?.let { field ->
-                AgentSettingsSectionLabel(stringResource(R.string.agent_settings_default_permission_mode), palette)
-                AgentSettingsOptionList(
-                    state = state,
-                    field = field,
-                    savingKey = savingKey,
-                    savingValue = savingValue,
-                    palette = palette,
-                    onPatch = onPatch,
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(9.dp),
+            ) {
+                SheetTextButton(
+                    label = stringResource(R.string.common_cancel),
+                    enabled = !saving,
+                    primary = false,
+                    modifier = Modifier.weight(1f),
+                    onClick = onDismiss,
+                )
+                SheetTextButton(
+                    label = if (saving) {
+                        stringResource(R.string.agent_settings_saving)
+                    } else {
+                        stringResource(R.string.agent_settings_save)
+                    },
+                    enabled = !saving && validationError == null,
+                    primary = true,
+                    modifier = Modifier.weight(1f),
+                    onClick = ::save,
                 )
             }
-            if (permissionField != null && (modelField != null || effortField != null)) {
-                AgentSettingsDivider(palette.divider)
-            }
-            modelField?.let { field ->
-                AgentSettingsSectionLabel(stringResource(R.string.agent_settings_default_model), palette)
-                AgentSettingsOptionList(
-                    state = state,
-                    field = field,
-                    savingKey = savingKey,
-                    savingValue = savingValue,
-                    palette = palette,
-                    onPatch = onPatch,
-                )
-            }
-            if (modelField != null && effortField != null) AgentSettingsDivider(palette.divider)
-            effortField?.let { field ->
-                AgentSettingsSectionLabel(stringResource(R.string.agent_settings_default_effort), palette)
-                AgentSettingsSegments(
-                    field = field,
-                    selected = state.value(field.key, field),
-                    savingValue = if (savingKey == field.key) savingValue else null,
-                    enabled = savingKey == null,
-                    palette = palette,
-                    onPatch = onPatch,
-                )
-            }
-            saveError?.let { AgentSettingsError(it, palette) }
         }
     }
 }
 
 @Composable
-private fun AgentSettingsOptionList(
-    state: RuntimeSettingsState,
-    field: RuntimeConfigField,
-    savingKey: String?,
-    savingValue: String?,
-    palette: AgentSettingsPalette,
-    onPatch: (String, String?) -> Unit,
+private fun RuntimePathField(
+    value: String,
+    enabled: Boolean,
+    onValueChange: (String) -> Unit,
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
-        field.options.forEach { option ->
-            val selected = state.value(field.key, field) == option.value
-            val busy = savingKey == field.key && savingValue == option.value
-            AgentSettingsOptionRow(
-                title = localizedRuntimeOptionLabel(field, option),
-                subtitle = localizedRuntimeOptionDescription(field, option),
-                selected = selected,
-                busy = busy,
-                enabled = savingKey == null || selected || busy,
-                palette = palette,
-                onClick = { onPatch(field.key, option.value) },
+    RuntimeFieldLabel(
+        title = stringResource(R.string.agent_settings_executable_path),
+        description = stringResource(R.string.agent_settings_executable_path_description),
+    )
+    RuntimeTextInput(
+        value = value,
+        placeholder = stringResource(R.string.agent_settings_executable_path_placeholder),
+        enabled = enabled,
+        monospace = true,
+        onValueChange = onValueChange,
+    )
+}
+
+@Composable
+private fun RuntimeEnvironmentFields(
+    variables: List<RuntimeEnvironmentVariable>,
+    enabled: Boolean,
+    onVariablesChange: (List<RuntimeEnvironmentVariable>) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        RuntimeFieldLabel(
+            title = stringResource(R.string.agent_settings_environment),
+            description = stringResource(R.string.agent_settings_environment_description),
+        )
+        variables.forEachIndexed { index, variable ->
+            EnvironmentVariableEditor(
+                variable = variable,
+                enabled = enabled,
+                onChange = { updated ->
+                    onVariablesChange(variables.mapIndexed { currentIndex, current ->
+                        if (currentIndex == index) updated else current
+                    })
+                },
+                onDelete = { onVariablesChange(variables.filterIndexed { currentIndex, _ -> currentIndex != index }) },
             )
         }
+        SheetTextButton(
+            label = stringResource(R.string.agent_settings_add_variable),
+            enabled = enabled,
+            primary = false,
+            modifier = Modifier.fillMaxWidth(),
+            onClick = { onVariablesChange(variables + RuntimeEnvironmentVariable("", "")) },
+        )
     }
 }
 
 @Composable
-private fun AgentSettingsOptionRow(
-    title: String,
-    subtitle: String?,
-    selected: Boolean,
-    busy: Boolean,
+private fun EnvironmentVariableEditor(
+    variable: RuntimeEnvironmentVariable,
     enabled: Boolean,
-    palette: AgentSettingsPalette,
-    onClick: () -> Unit,
+    onChange: (RuntimeEnvironmentVariable) -> Unit,
+    onDelete: () -> Unit,
 ) {
-    Row(
+    val colors = LocalAAColors.current
+    Column(
         modifier = Modifier
             .fillMaxWidth()
-            .height(50.dp)
-            .clip(RoundedCornerShape(13.dp))
-            .background(if (selected) palette.selectedRow else Color.Transparent)
-            .noRippleClickable(enabled = enabled, onClick = onClick)
-            .padding(horizontal = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        Column(
-            modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(3.dp),
-        ) {
-            Text(
-                text = title,
-                color = if (selected) palette.selectedText else palette.primaryText,
-                fontSize = 14.sp,
-                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            subtitle?.takeIf { it.isNotBlank() }?.let {
-                Text(
-                    text = it,
-                    color = if (selected) palette.selectedSubtitle else palette.secondaryText,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Medium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-        }
-        when {
-            busy -> CircularProgressIndicator(
-                color = palette.check,
-                strokeWidth = 1.8.dp,
-                modifier = Modifier.size(16.dp),
-            )
-            selected -> CheckGlyph(palette.check)
-            else -> CircleGlyph(palette.circle)
-        }
-    }
-}
-
-@Composable
-private fun AgentSettingsSegments(
-    field: RuntimeConfigField,
-    selected: String,
-    savingValue: String?,
-    enabled: Boolean,
-    palette: AgentSettingsPalette,
-    onPatch: (String, String?) -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(42.dp)
             .clip(RoundedCornerShape(14.dp))
-            .background(palette.segmentTrack)
-            .padding(4.dp),
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
+            .background(colors.subtle)
+            .padding(10.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        field.options.forEach { option ->
-            val on = selected == option.value
-            val saving = savingValue == option.value
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            RuntimeTextInput(
+                value = variable.key,
+                placeholder = stringResource(R.string.agent_settings_environment_name),
+                enabled = enabled,
+                monospace = true,
+                modifier = Modifier.weight(1f),
+                onValueChange = { onChange(variable.copy(key = it)) },
+            )
             Box(
                 modifier = Modifier
-                    .weight(1f)
-                    .fillMaxHeight()
-                    .shadow(
-                        if (on) 3.dp else 0.dp,
-                        RoundedCornerShape(12.dp),
-                        ambientColor = palette.segmentShadow,
-                        spotColor = palette.segmentShadow,
-                    )
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(if (on) palette.segmentSelected else Color.Transparent)
-                    .noRippleClickable(enabled = enabled || on) { onPatch(field.key, option.value) },
+                    .size(42.dp)
+                    .clip(CircleShape)
+                    .background(colors.errorText.copy(alpha = 0.1f))
+                    .noRippleClickable(enabled = enabled, onClick = onDelete),
                 contentAlignment = Alignment.Center,
             ) {
-                if (saving) {
-                    CircularProgressIndicator(
-                        color = palette.segmentSelectedText,
-                        strokeWidth = 1.7.dp,
-                        modifier = Modifier.size(15.dp),
-                    )
-                } else {
-                    Text(
-                        text = localizedRuntimeOptionLabel(field, option),
-                        color = if (on) palette.segmentSelectedText else palette.segmentText,
-                        fontSize = 12.sp,
-                        fontWeight = if (on) FontWeight.Bold else FontWeight.Medium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
+                Icon(
+                    imageVector = Lucide.Trash2,
+                    contentDescription = stringResource(R.string.common_delete),
+                    tint = colors.errorText.copy(alpha = if (enabled) 1f else 0.4f),
+                    modifier = Modifier.size(17.dp),
+                )
             }
+        }
+        RuntimeTextInput(
+            value = variable.value,
+            placeholder = stringResource(R.string.agent_settings_environment_value),
+            enabled = enabled && !variable.removeInheritedValue,
+            monospace = true,
+            onValueChange = { onChange(variable.copy(value = it)) },
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Text(
+                text = stringResource(R.string.agent_settings_environment_unset),
+                color = colors.muted,
+                fontSize = 12.5.sp,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Switch(
+                checked = variable.removeInheritedValue,
+                onCheckedChange = { onChange(variable.copy(removeInheritedValue = it)) },
+                enabled = enabled,
+            )
         }
     }
 }
 
 @Composable
-private fun AgentSettingsLoading(palette: AgentSettingsPalette) {
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(220.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        CircularProgressIndicator(
-            color = palette.primaryText,
-            strokeWidth = 2.dp,
-            modifier = Modifier.size(24.dp),
-        )
-    }
-}
-
-@Composable
-private fun AgentSettingsMessage(message: String, palette: AgentSettingsPalette) {
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(180.dp),
-        contentAlignment = Alignment.Center,
-    ) {
+private fun RuntimeFieldLabel(title: String, description: String) {
+    val colors = LocalAAColors.current
+    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
         Text(
-            text = message,
-            color = palette.secondaryText,
-            fontSize = 13.sp,
-            fontWeight = FontWeight.Medium,
-            lineHeight = 18.sp,
+            text = title,
+            color = colors.ink,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Bold,
+        )
+        Text(
+            text = description,
+            color = colors.muted,
+            fontSize = 12.sp,
+            lineHeight = 16.sp,
         )
     }
 }
 
 @Composable
-private fun AgentSettingsError(message: String, palette: AgentSettingsPalette) {
-    Row(
-        modifier = Modifier
+private fun RuntimeTextInput(
+    value: String,
+    placeholder: String,
+    enabled: Boolean,
+    monospace: Boolean,
+    modifier: Modifier = Modifier,
+    onValueChange: (String) -> Unit,
+) {
+    val colors = LocalAAColors.current
+    BasicTextField(
+        value = value,
+        onValueChange = onValueChange,
+        enabled = enabled,
+        singleLine = true,
+        textStyle = TextStyle(
+            color = colors.ink.copy(alpha = if (enabled) 1f else 0.45f),
+            fontSize = 13.5.sp,
+            fontWeight = FontWeight.Medium,
+            fontFamily = if (monospace) FontFamily.Monospace else FontFamily.Default,
+        ),
+        cursorBrush = SolidColor(colors.ink),
+        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+        modifier = modifier
             .fillMaxWidth()
             .height(44.dp)
-            .clip(RoundedCornerShape(10.dp))
-            .background(palette.errorSurface)
-            .border(1.dp, palette.errorBorder, RoundedCornerShape(10.dp))
-            .padding(horizontal = 11.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(9.dp),
-    ) {
-        Box(
-            modifier = Modifier
-                .size(7.dp)
-                .clip(CircleShape)
-                .background(palette.errorText),
-        )
-        Text(
-            text = message,
-            modifier = Modifier.weight(1f),
-            color = palette.errorText,
-            fontSize = 12.5.sp,
-            fontWeight = FontWeight.SemiBold,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-        )
-    }
+            .clip(RoundedCornerShape(12.dp))
+            .background(colors.raisedSurface)
+            .border(1.dp, colors.border, RoundedCornerShape(12.dp))
+            .padding(horizontal = 12.dp),
+        decorationBox = { inner ->
+            Box(contentAlignment = Alignment.CenterStart) {
+                if (value.isEmpty()) {
+                    Text(
+                        text = placeholder,
+                        color = colors.faint,
+                        fontSize = 13.sp,
+                        fontFamily = if (monospace) FontFamily.Monospace else FontFamily.Default,
+                    )
+                }
+                inner()
+            }
+        },
+    )
 }
 
 @Composable
-private fun AgentSettingsHandle(color: Color) {
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(12.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Box(
-            modifier = Modifier
-                .width(42.dp)
-                .height(5.dp)
-                .clip(CircleShape)
-                .background(color),
-        )
-    }
+private fun validationErrorMessage(error: RuntimeConfigValidationError): String {
+    return stringResource(
+        when (error) {
+            RuntimeConfigValidationError.BlankName -> R.string.agent_settings_environment_blank_name
+            RuntimeConfigValidationError.InvalidName -> R.string.agent_settings_environment_invalid_name
+            RuntimeConfigValidationError.DuplicateName -> R.string.agent_settings_environment_duplicate_name
+        },
+    )
 }
 
 @Composable
-private fun AgentSettingsSectionLabel(text: String, palette: AgentSettingsPalette) {
+private fun RuntimeConfigError(message: String) {
     Text(
-        text = text,
-        color = palette.section,
-        fontSize = 11.2.sp,
-        fontWeight = FontWeight.ExtraBold,
-        maxLines = 1,
+        text = message,
+        color = LocalAAColors.current.errorText,
+        fontSize = 12.5.sp,
+        fontWeight = FontWeight.SemiBold,
+        lineHeight = 17.sp,
     )
-}
-
-@Composable
-private fun AgentSettingsDivider(color: Color) {
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(1.dp)
-            .background(color),
-    )
-}
-
-@Composable
-private fun CheckGlyph(color: Color) = Canvas(modifier = Modifier.size(18.dp)) {
-    drawLine(
-        color,
-        Offset(size.width * 0.25f, size.height * 0.52f),
-        Offset(size.width * 0.43f, size.height * 0.68f),
-        strokeWidth = 2.dp.toPx(),
-        cap = StrokeCap.Round,
-    )
-    drawLine(
-        color,
-        Offset(size.width * 0.43f, size.height * 0.68f),
-        Offset(size.width * 0.76f, size.height * 0.32f),
-        strokeWidth = 2.dp.toPx(),
-        cap = StrokeCap.Round,
-    )
-}
-
-@Composable
-private fun CircleGlyph(color: Color) = Canvas(modifier = Modifier.size(10.dp)) {
-    drawCircle(
-        color = color,
-        radius = size.minDimension * 0.38f,
-        style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.2.dp.toPx()),
-    )
-}
-
-private fun RuntimeSettingsState.mobileAgentField(key: String): RuntimeConfigField? {
-    return schema?.fields
-        ?.filter { !it.hidden && it.type == "enum" && visible(it) }
-        ?.firstOrNull { it.key == key && it.options.isNotEmpty() }
-}
-
-private fun RuntimeSettingsState.filteredEffortField(): RuntimeConfigField? {
-    val field = mobileAgentField("effort") ?: return null
-    val modelField = mobileAgentField("model")
-    val modelEfforts = modelField?.effortsForModel(settings["model"])
-    if (modelEfforts != null) {
-        return field.copy(options = modelEfforts).takeIf { it.options.isNotEmpty() }
-    }
-    return field
-}
-
-private fun RuntimeSettingsState.visible(field: RuntimeConfigField): Boolean {
-    if (field.visibleWhen.isEmpty()) return true
-    return field.visibleWhen.all { (key, expected) -> settings[key]?.toString() == expected?.toString() }
-}
-
-private fun RuntimeSettingsState.value(key: String, field: RuntimeConfigField): String {
-    return (settings[key] as? String)
-        ?: field.options.firstOrNull { it.value.isNotBlank() }?.value
-        ?: ""
-}
-private fun RuntimeConfigField.effortsForModel(model: Any?): List<RuntimeConfigOption>? {
-    val modelKey = model as? String
-    val selected = if (!modelKey.isNullOrBlank()) {
-        options.firstOrNull { it.value == modelKey }
-    } else {
-        options.firstOrNull()
-    }
-    selected?.efforts?.let { return it }
-    return if (options.any { it.efforts != null }) emptyList() else null
-}
-
-private data class AgentSettingsPalette(
-    val sheet: Color,
-    val handle: Color,
-    val title: Color,
-    val primaryText: Color,
-    val secondaryText: Color,
-    val section: Color,
-    val selectedRow: Color,
-    val selectedText: Color,
-    val selectedSubtitle: Color,
-    val check: Color,
-    val circle: Color,
-    val divider: Color,
-    val segmentTrack: Color,
-    val segmentSelected: Color,
-    val segmentText: Color,
-    val segmentSelectedText: Color,
-    val segmentShadow: Color,
-    val errorSurface: Color,
-    val errorBorder: Color,
-    val errorText: Color,
-)
-
-private fun agentSettingsPalette(darkMode: Boolean): AgentSettingsPalette {
-    return if (darkMode) {
-        AgentSettingsPalette(
-            sheet = Color(0xFF18181B),
-            handle = Color(0xFF3F3F46),
-            title = Color(0xFFFAFAFA),
-            primaryText = Color(0xFFA1A1AA),
-            secondaryText = Color(0xFF71717A),
-            section = Color(0xFF71717A),
-            selectedRow = Color(0xFF27272A),
-            selectedText = Color(0xFFFAFAFA),
-            selectedSubtitle = Color(0xFF71717A),
-            check = Color(0xFFFAFAFA),
-            circle = Color(0xFF71717A),
-            divider = Color(0xFF27272A),
-            segmentTrack = Color(0xFF09090B),
-            segmentSelected = Color(0xFF27272A),
-            segmentText = Color(0xFFA1A1AA),
-            segmentSelectedText = Color(0xFFFAFAFA),
-            segmentShadow = Color(0x66000000),
-            errorSurface = Color(0xFF2A1418),
-            errorBorder = Color(0xFF4A1C24),
-            errorText = Color(0xFFF87171),
-        )
-    } else {
-        AgentSettingsPalette(
-            sheet = Color(0xFFFFFEFC),
-            handle = Color(0xFFD5D2CC),
-            title = Color(0xFF242520),
-            primaryText = Color(0xFF34342F),
-            secondaryText = Color(0xFF918E87),
-            section = Color(0xFF8B877F),
-            selectedRow = Color(0xFFF6F4EF),
-            selectedText = Color(0xFF2F302D),
-            selectedSubtitle = Color(0xFF706D66),
-            check = Color(0xFF2F302D),
-            circle = Color(0xFFD6D2CB),
-            divider = Color(0xFFE8E5DE),
-            segmentTrack = Color(0xFFF5F3EE),
-            segmentSelected = Color.White,
-            segmentText = Color(0xFF8B877F),
-            segmentSelectedText = Color(0xFF34342F),
-            segmentShadow = Color(0x10000000),
-            errorSurface = Color(0xFFFFF5F5),
-            errorBorder = Color(0xFFF0D7D7),
-            errorText = Color(0xFFB94848),
-        )
-    }
 }

@@ -3,16 +3,7 @@ package com.agentsanywhere.app.feature.devices
 import com.agentsanywhere.app.api.ApiException
 import com.agentsanywhere.app.api.DevicesApi
 import com.agentsanywhere.app.api.RemoteDevice
-import com.agentsanywhere.app.api.RemoteRuntimeConfigField
-import com.agentsanywhere.app.api.RemoteRuntimeConfigOption
-import com.agentsanywhere.app.api.RemoteRuntimeConfigSchema
-import com.agentsanywhere.app.api.RemoteRuntimeSettings
-import com.agentsanywhere.app.api.SessionsApi
 import com.agentsanywhere.app.feature.auth.AuthSessionStore
-import com.agentsanywhere.app.feature.sessiondetail.RuntimeConfigField
-import com.agentsanywhere.app.feature.sessiondetail.RuntimeConfigOption
-import com.agentsanywhere.app.feature.sessiondetail.RuntimeConfigSchema
-import com.agentsanywhere.app.feature.sessiondetail.RuntimeSettingsState
 import com.agentsanywhere.app.model.AgentDevice
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -20,7 +11,6 @@ import kotlinx.coroutines.withContext
 class DevicesController(
     private val devicesApi: DevicesApi,
     private val sessionStore: AuthSessionStore,
-    private val sessionsApi: SessionsApi = SessionsApi(),
 ) {
     suspend fun renameDevice(
         connectorId: String,
@@ -137,107 +127,112 @@ class DevicesController(
         }
     }
 
-    suspend fun deleteDeviceAgent(
+    suspend fun listDeviceRuntimes(
         connectorId: String,
-        runtime: String,
-    ): Result<List<String>> {
+    ): Result<DeviceRuntimeList> {
         val auth = authSession()
-            ?: return Result.failure(IllegalStateException("Sign in again to remove this agent."))
+            ?: return Result.failure(IllegalStateException("Sign in again to load runtimes."))
 
         return withContext(Dispatchers.IO) {
             runCatching {
-                devicesApi.deleteDeviceRuntime(
+                devicesApi.listDeviceRuntimes(
                     serverUrl = auth.serverUrl,
                     authorizationToken = auth.accessToken,
                     deviceId = connectorId,
-                    runtime = runtime,
-                )
+                ).toDeviceRuntimeList()
             }.recoverCatching { error ->
                 if (error is ApiException) throw error
-                throw IllegalStateException(error.message ?: "Could not remove agent.", error)
+                throw IllegalStateException(error.message ?: "Could not load runtimes.", error)
             }
         }
     }
 
-    suspend fun scanDeviceAgent(
+    suspend fun discoverDeviceRuntimes(
         connectorId: String,
-        runtime: String,
-        path: String,
-    ): Result<DeviceAgentScanResult> {
+    ): Result<DeviceRuntimeList> {
         val auth = authSession()
-            ?: return Result.failure(IllegalStateException("Sign in again to add this agent."))
+            ?: return Result.failure(IllegalStateException("Sign in again to discover runtimes."))
 
         return withContext(Dispatchers.IO) {
             runCatching {
-                val scan = devicesApi.scanDeviceRuntime(
+                devicesApi.discoverDeviceRuntimes(
                     serverUrl = auth.serverUrl,
                     authorizationToken = auth.accessToken,
                     deviceId = connectorId,
-                    runtime = runtime,
-                    path = path.trim().ifBlank { null },
-                )
-                DeviceAgentScanResult(
-                    attachedRuntimes = scan.attachedRuntimes,
-                    runtime = scan.scannedRuntime,
-                    report = scan.report,
-                )
+                ).toDeviceRuntimeList()
             }.recoverCatching { error ->
                 if (error is ApiException) throw error
-                throw IllegalStateException(error.message ?: "Could not scan agent.", error)
+                throw IllegalStateException(error.message ?: "Could not discover runtimes.", error)
             }
         }
     }
 
-    suspend fun loadDeviceAgentSettings(
+    suspend fun saveDeviceRuntimeConfig(
         connectorId: String,
         runtime: String,
-    ): Result<RuntimeSettingsState> {
+        config: Map<String, Any?>,
+    ): Result<DeviceRuntime> {
         val auth = authSession()
-            ?: return Result.failure(IllegalStateException("Sign in again to load agent settings."))
+            ?: return Result.failure(IllegalStateException("Sign in again to save runtime configuration."))
 
         return withContext(Dispatchers.IO) {
             runCatching {
-                val schema = sessionsApi.getRuntimeConfigSchema(
-                    serverUrl = auth.serverUrl,
-                    authorizationToken = auth.accessToken,
-                    runtime = runtime,
-                )
-                devicesApi.getDeviceAgentSettings(
+                devicesApi.putDeviceRuntimeConfig(
                     serverUrl = auth.serverUrl,
                     authorizationToken = auth.accessToken,
                     deviceId = connectorId,
                     runtime = runtime,
-                ).toRuntimeSettingsState(schema)
+                    config = config,
+                ).toDeviceRuntime()
             }.recoverCatching { error ->
                 if (error is ApiException) throw error
-                throw IllegalStateException(error.message ?: "Could not load agent settings.", error)
+                throw IllegalStateException(error.message ?: "Could not save runtime configuration.", error)
             }
         }
     }
 
-    suspend fun patchDeviceAgentSettings(
+    suspend fun setDeviceRuntimeActive(
         connectorId: String,
         runtime: String,
-        settings: Map<String, Any?>,
-    ): Result<RuntimeSettingsState> {
+        active: Boolean,
+    ): Result<DeviceRuntime> {
         val auth = authSession()
-            ?: return Result.failure(IllegalStateException("Sign in again to save agent settings."))
-        if (settings.isEmpty()) {
-            return Result.failure(IllegalArgumentException("No supported settings to save."))
-        }
+            ?: return Result.failure(IllegalStateException("Sign in again to update this runtime."))
 
         return withContext(Dispatchers.IO) {
             runCatching {
-                devicesApi.patchDeviceAgentSettings(
+                devicesApi.setDeviceRuntimeActive(
                     serverUrl = auth.serverUrl,
                     authorizationToken = auth.accessToken,
                     deviceId = connectorId,
                     runtime = runtime,
-                    settings = settings,
-                ).toRuntimeSettingsState(schema = null)
+                    active = active,
+                ).toDeviceRuntime()
             }.recoverCatching { error ->
                 if (error is ApiException) throw error
-                throw IllegalStateException(error.message ?: "Could not save agent settings.", error)
+                throw IllegalStateException(error.message ?: "Could not update runtime state.", error)
+            }
+        }
+    }
+
+    suspend fun deleteDeviceRuntimeConfig(
+        connectorId: String,
+        runtime: String,
+    ): Result<DeviceRuntime> {
+        val auth = authSession()
+            ?: return Result.failure(IllegalStateException("Sign in again to delete runtime configuration."))
+
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                devicesApi.deleteDeviceRuntimeConfig(
+                    serverUrl = auth.serverUrl,
+                    authorizationToken = auth.accessToken,
+                    deviceId = connectorId,
+                    runtime = runtime,
+                ).toDeviceRuntime()
+            }.recoverCatching { error ->
+                if (error is ApiException) throw error
+                throw IllegalStateException(error.message ?: "Could not delete runtime configuration.", error)
             }
         }
     }
@@ -257,60 +252,12 @@ class DevicesController(
         val accessToken: String,
     )
 
-    private fun RemoteRuntimeSettings.toRuntimeSettingsState(
-        schema: RemoteRuntimeConfigSchema?,
-    ): RuntimeSettingsState {
-        return RuntimeSettingsState(
-            schema = schema?.toRuntimeConfigSchema(),
-            settings = settings,
-            overrideSettings = runtimeSettingsOverride,
-            isLoading = false,
-            savingKey = null,
-            errorMessage = null,
-        )
-    }
-
-    private fun RemoteRuntimeConfigSchema.toRuntimeConfigSchema(): RuntimeConfigSchema {
-        return RuntimeConfigSchema(
-            runtime = runtime,
-            schemaVersion = schemaVersion,
-            fields = fields.map { it.toRuntimeConfigField() },
-        )
-    }
-
-    private fun RemoteRuntimeConfigField.toRuntimeConfigField(): RuntimeConfigField {
-        return RuntimeConfigField(
-            key = key,
-            label = label,
-            type = type,
-            description = description,
-            options = options.map { it.toRuntimeConfigOption() },
-            visibleWhen = visibleWhen,
-            allowSessionOverride = allowSessionOverride,
-            hidden = hidden,
-        )
-    }
-
-    private fun RemoteRuntimeConfigOption.toRuntimeConfigOption(): RuntimeConfigOption {
-        return RuntimeConfigOption(
-            value = value,
-            label = label,
-            description = description,
-            efforts = efforts?.map { it.toRuntimeConfigOption() },
-        )
-    }
 }
 
 data class DeviceSetupCredential(
     val device: AgentDevice,
     val serverUrl: String,
     val connectorToken: String,
-)
-
-data class DeviceAgentScanResult(
-    val attachedRuntimes: List<String>,
-    val runtime: String,
-    val report: Map<String, Any?>,
 )
 
 fun RemoteDevice.toAgentDevice(): AgentDevice {

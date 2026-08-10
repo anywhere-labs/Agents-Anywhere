@@ -26,14 +26,14 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.agentsanywhere.app.R
-import com.agentsanywhere.app.feature.devices.DeviceDetailAgent
+import com.agentsanywhere.app.feature.devices.DeviceRuntime
 import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 import com.agentsanywhere.app.ui.designsystem.noRippleClickable
 
 internal sealed interface DeviceConfirmAction {
     data object DeleteDevice : DeviceConfirmAction
     data class RevokeDevice(val deviceName: String) : DeviceConfirmAction
-    data class DeleteAgent(val agent: DeviceDetailAgent) : DeviceConfirmAction
+    data class DeleteRuntimeConfig(val runtime: DeviceRuntime) : DeviceConfirmAction
     data class ArchiveAllSessions(
         val deviceName: String,
         val archived: Boolean,
@@ -76,15 +76,22 @@ internal fun DeviceConfirmDialog(
             body = stringResource(R.string.device_confirm_revoke_body, action.deviceName)
             confirmLabel = if (busy) stringResource(R.string.device_confirm_revoking) else stringResource(R.string.common_revoke)
         }
-        is DeviceConfirmAction.DeleteAgent -> {
+        is DeviceConfirmAction.DeleteRuntimeConfig -> {
             danger = true
-            val label = action.agent.label
-            title = stringResource(R.string.device_confirm_remove_agent_title, label)
-            body = stringResource(R.string.device_confirm_remove_agent_body, label)
+            val label = action.runtime.displayName
+            title = stringResource(R.string.device_confirm_delete_runtime_config_title, label)
+            body = stringResource(
+                if (action.runtime.active) {
+                    R.string.device_confirm_delete_active_runtime_config_body
+                } else {
+                    R.string.device_confirm_delete_runtime_config_body
+                },
+                label,
+            )
             confirmLabel = when {
-                busy -> stringResource(R.string.device_confirm_removing)
-                errorMessage != null -> stringResource(R.string.device_confirm_retry_remove)
-                else -> stringResource(R.string.device_confirm_remove_agent)
+                busy -> stringResource(R.string.device_confirm_deleting)
+                errorMessage != null -> stringResource(R.string.device_confirm_retry_delete)
+                else -> stringResource(R.string.device_confirm_delete_runtime_config)
             }
         }
         is DeviceConfirmAction.ArchiveAllSessions -> {

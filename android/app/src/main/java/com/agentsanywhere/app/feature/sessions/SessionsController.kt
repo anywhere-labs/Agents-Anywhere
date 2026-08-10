@@ -6,8 +6,11 @@ import com.agentsanywhere.app.api.FilesApi
 import com.agentsanywhere.app.api.SessionsApi
 import com.agentsanywhere.app.api.RemoteDevice
 import com.agentsanywhere.app.api.RemoteSession
+import com.agentsanywhere.app.api.RemoteSessionsMutationResponse
 import com.agentsanywhere.app.feature.auth.AuthSessionStore
+import com.agentsanywhere.app.feature.devices.DeviceRuntimeList
 import com.agentsanywhere.app.feature.devices.toAgentDevice
+import com.agentsanywhere.app.feature.devices.toDeviceRuntimeList
 import com.agentsanywhere.app.model.AgentDevice
 import com.agentsanywhere.app.model.AgentSession
 import com.agentsanywhere.app.model.SessionStatus
@@ -133,6 +136,80 @@ class SessionsController(
         }
     }
 
+    suspend fun listNewSessionRuntimes(
+        connectorId: String,
+    ): Result<DeviceRuntimeList> {
+        val auth = newSessionAuth() ?: return Result.failure(
+            IllegalStateException("Sign in again to load runtimes."),
+        )
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                devicesApi.listDeviceRuntimes(
+                    serverUrl = auth.serverUrl,
+                    authorizationToken = auth.accessToken,
+                    deviceId = connectorId,
+                ).toDeviceRuntimeList()
+            }.wrapNewSessionFailure("Could not load runtimes.")
+        }
+    }
+
+    suspend fun loadNewSessionRuntimeCapabilities(
+        connectorId: String,
+        runtime: String,
+    ): Result<NewSessionRuntimeCapabilities> {
+        val auth = newSessionAuth() ?: return Result.failure(
+            IllegalStateException("Sign in again to load runtime capabilities."),
+        )
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                devicesApi.getDeviceRuntimeCapabilities(
+                    serverUrl = auth.serverUrl,
+                    authorizationToken = auth.accessToken,
+                    deviceId = connectorId,
+                    runtime = runtime,
+                ).toNewSessionRuntimeCapabilities()
+            }.wrapNewSessionFailure("Could not load runtime capabilities.")
+        }
+    }
+
+    suspend fun loadNewSessionModelCatalog(
+        connectorId: String,
+        runtime: String,
+    ): Result<NewSessionModelCatalog> {
+        val auth = newSessionAuth() ?: return Result.failure(
+            IllegalStateException("Sign in again to load the model catalog."),
+        )
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                devicesApi.getDeviceRuntimeModelCatalog(
+                    serverUrl = auth.serverUrl,
+                    authorizationToken = auth.accessToken,
+                    deviceId = connectorId,
+                    runtime = runtime,
+                ).toNewSessionModelCatalog()
+            }.wrapNewSessionFailure("Could not load the model catalog.")
+        }
+    }
+
+    suspend fun loadNewSessionPermissionCatalog(
+        connectorId: String,
+        runtime: String,
+    ): Result<NewSessionPermissionCatalog> {
+        val auth = newSessionAuth() ?: return Result.failure(
+            IllegalStateException("Sign in again to load the permission catalog."),
+        )
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                devicesApi.getDeviceRuntimePermissionCatalog(
+                    serverUrl = auth.serverUrl,
+                    authorizationToken = auth.accessToken,
+                    deviceId = connectorId,
+                    runtime = runtime,
+                ).toNewSessionPermissionCatalog()
+            }.wrapNewSessionFailure("Could not load the permission catalog.")
+        }
+    }
+
     suspend fun setSessionPinned(
         sessionId: String,
         pinned: Boolean,
@@ -161,28 +238,59 @@ class SessionsController(
         )
     }
 
+    suspend fun loadSessionMeta(
+        sessionId: String,
+        devices: List<AgentDevice>,
+    ): Result<AgentSession> {
+        val auth = newSessionAuth()
+            ?: return Result.failure(IllegalStateException("Sign in again to load this session."))
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                sessionsApi.getSessionMeta(
+                    serverUrl = auth.serverUrl,
+                    authorizationToken = auth.accessToken,
+                    sessionId = sessionId,
+                ).session.toAgentSession(devices.associateBy { it.id })
+            }.wrapNewSessionFailure("Could not load this session.")
+        }
+    }
+
+    suspend fun markSessionRead(
+        sessionId: String,
+        devices: List<AgentDevice>,
+    ): Result<AgentSession> {
+        val auth = newSessionAuth()
+            ?: return Result.failure(IllegalStateException("Sign in again to update this session."))
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                sessionsApi.markSessionRead(
+                    serverUrl = auth.serverUrl,
+                    authorizationToken = auth.accessToken,
+                    sessionId = sessionId,
+                ).session.toAgentSession(devices.associateBy { it.id })
+            }.wrapNewSessionFailure("Could not mark this session as read.")
+        }
+    }
+
+    suspend fun markSessionsRead(
+        ids: List<String>,
+        devices: List<AgentDevice>,
+    ): Result<SessionBatchUpdate> {
+        return mutateSessions(ids, devices, "Could not mark sessions as read.") { serverUrl, accessToken, normalized ->
+            sessionsApi.markSessionsRead(serverUrl, accessToken, normalized)
+        }
+    }
+
     suspend fun bulkSetSessionsArchived(
         ids: List<String>,
         archived: Boolean,
         devices: List<AgentDevice>,
-    ): Result<List<AgentSession>> {
-        val serverUrl = sessionStore.readServerUrl()
-        val accessToken = sessionStore.readAccessToken()
-        if (serverUrl.isBlank() || accessToken.isBlank()) {
-            return Result.failure(IllegalStateException("Sign in again to update sessions."))
-        }
-
-        return withContext(Dispatchers.IO) {
-            runCatching {
-                sessionsApi.bulkArchiveSessions(
-                    serverUrl = serverUrl,
-                    authorizationToken = accessToken,
-                    ids = ids,
-                    archived = archived,
-                ).map { it.toAgentSession(devices.associateBy { device -> device.id }) }
-            }.recoverCatching { error ->
-                if (error is ApiException) throw error
-                throw IllegalStateException(error.message ?: "Could not update sessions.", error)
+    ): Result<SessionBatchUpdate> {
+        return mutateSessions(ids, devices, "Could not update sessions.") { serverUrl, accessToken, normalized ->
+            if (archived) {
+                sessionsApi.archiveSessions(serverUrl, accessToken, normalized)
+            } else {
+                sessionsApi.unarchiveSessions(serverUrl, accessToken, normalized)
             }
         }
     }
@@ -237,7 +345,7 @@ class SessionsController(
                     title = title,
                     pinned = pinned,
                     archived = archived,
-                ).toAgentSession(devices.associateBy { it.id })
+                ).session.toAgentSession(devices.associateBy { it.id })
             }.recoverCatching { error ->
                 if (error is ApiException) throw error
                 throw IllegalStateException(error.message ?: "Could not update this session.", error)
@@ -304,13 +412,44 @@ class SessionsController(
             pinned = pinned,
             archived = archived,
             unread = unread,
+            lastReadSeq = lastReadSeq,
             takeover = takeover,
             connectorOnline = connectorStatus == "online",
             runtimeSettings = runtimeSettings,
             runtimeSettingsOverride = runtimeSettingsOverride,
             live = statusValue == SessionStatus.Running || statusValue == SessionStatus.WaitingApproval,
             sortKey = sortAt ?: lastActivityAt ?: lastItemAt ?: "",
+            updatedSeq = updatedSeq,
         )
+    }
+
+    private suspend fun mutateSessions(
+        ids: List<String>,
+        devices: List<AgentDevice>,
+        fallbackMessage: String,
+        request: (String, String, List<String>) -> RemoteSessionsMutationResponse,
+    ): Result<SessionBatchUpdate> {
+        val normalized = try {
+            validatedSessionMutationIds(ids)
+        } catch (error: IllegalArgumentException) {
+            return Result.failure(error)
+        }
+        if (normalized.isEmpty()) {
+            return Result.success(SessionBatchUpdate(emptyList(), emptyList(), null))
+        }
+        val auth = newSessionAuth()
+            ?: return Result.failure(IllegalStateException("Sign in again to update sessions."))
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                val response = request(auth.serverUrl, auth.accessToken, normalized)
+                val devicesById = devices.associateBy { it.id }
+                SessionBatchUpdate(
+                    sessions = response.sessions.map { it.toAgentSession(devicesById) },
+                    notFound = response.notFound,
+                    serverTime = response.serverTime,
+                )
+            }.wrapNewSessionFailure(fallbackMessage)
+        }
     }
 
     private fun sessionComparator(): Comparator<RemoteSession> {
@@ -396,4 +535,37 @@ class SessionsController(
             else -> "${days / 365}y"
         }
     }
+
+    private fun newSessionAuth(): NewSessionAuth? {
+        val serverUrl = sessionStore.readServerUrl()
+        val accessToken = sessionStore.readAccessToken()
+        if (serverUrl.isBlank() || accessToken.isBlank()) return null
+        return NewSessionAuth(serverUrl = serverUrl, accessToken = accessToken)
+    }
+
+    private fun <T> Result<T>.wrapNewSessionFailure(fallbackMessage: String): Result<T> {
+        return recoverCatching { error ->
+            if (error is ApiException) throw error
+            throw IllegalStateException(error.message ?: fallbackMessage, error)
+        }
+    }
+
+    private data class NewSessionAuth(
+        val serverUrl: String,
+        val accessToken: String,
+    )
 }
+
+internal fun normalizeSessionIds(ids: List<String>): List<String> {
+    return ids.distinct()
+}
+
+internal fun validatedSessionMutationIds(ids: List<String>): List<String> {
+    val normalized = normalizeSessionIds(ids)
+    require(normalized.size <= MAX_SESSION_MUTATION_IDS) {
+        "At most $MAX_SESSION_MUTATION_IDS sessions can be updated at once."
+    }
+    return normalized
+}
+
+private const val MAX_SESSION_MUTATION_IDS = 200

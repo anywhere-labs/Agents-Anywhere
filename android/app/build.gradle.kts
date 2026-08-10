@@ -81,5 +81,10 @@ dependencies {
     implementation(libs.termux.terminal.view)
     coreLibraryDesugaring(libs.desugar.jdk.libs)
     testImplementation(libs.junit)
+    testImplementation("org.json:json:20240303")
     debugImplementation(libs.androidx.compose.ui.tooling)
+}
+
+tasks.named("check") {
+    dependsOn(rootProject.tasks.named("checkLegacyRoutes"))
 }

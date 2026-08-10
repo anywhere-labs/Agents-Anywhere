@@ -70,6 +70,8 @@ import com.agentsanywhere.app.feature.sessiondetail.SessionDetailController
 import com.agentsanywhere.app.feature.sessiondetail.SessionDetailState
 import com.agentsanywhere.app.feature.sessiondetail.SessionStreamEvent
 import com.agentsanywhere.app.feature.sessiondetail.TimelineApproval
+import com.agentsanywhere.app.feature.sessions.mergeAuthoritativeSessionMetadata
+import com.agentsanywhere.app.feature.sessions.mergeObservedSession
 import com.agentsanywhere.app.feature.terminal.RemoteTerminalForegroundService
 import com.agentsanywhere.app.feature.terminal.RemoteTerminalPool
 import com.agentsanywhere.app.model.AgentDevice
@@ -372,7 +374,7 @@ fun SessionDetailScreen(
                 .onSuccess { loaded ->
                     if (!appVisible) return@onSuccess
                     state = state.copy(
-                        session = loaded.session ?: state.session,
+                        session = loaded.session?.let { mergeObservedSession(state.session, it) } ?: state.session,
                         messages = loaded.messages,
                         approvals = loaded.approvals,
                         nextSeq = max(state.nextSeq, loaded.nextSeq),
@@ -636,9 +638,10 @@ fun SessionDetailScreen(
 
     LaunchedEffect(sessionId, initialSession) {
         val session = initialSession
+        val current = state.session
         if (session != null && session.id == sessionId) {
             state = state.copy(
-                session = session,
+                session = mergeAuthoritativeSessionMetadata(current, session),
                 runtimeSettings = state.runtimeSettings.copy(
                     settings = session.runtimeSettings,
                     overrideSettings = session.runtimeSettingsOverride,

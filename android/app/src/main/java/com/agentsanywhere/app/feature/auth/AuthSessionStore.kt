@@ -3,6 +3,7 @@ package com.agentsanywhere.app.feature.auth
 import android.content.Context
 import com.agentsanywhere.app.api.AuthResponse
 import com.agentsanywhere.app.api.MobileLoginExchangeResponse
+import com.agentsanywhere.app.api.normalizeServerOrigin
 
 class AuthSessionStore(context: Context) {
     private val preferences = context.applicationContext.getSharedPreferences(
@@ -11,7 +12,8 @@ class AuthSessionStore(context: Context) {
     )
 
     fun readServerUrl(): String {
-        return preferences.getString(KEY_SERVER_URL, "").orEmpty()
+        val stored = preferences.getString(KEY_SERVER_URL, "").orEmpty()
+        return normalizeServerOrigin(stored).orEmpty()
     }
 
     fun readAccessToken(): String {
@@ -32,13 +34,13 @@ class AuthSessionStore(context: Context) {
 
     fun saveServerUrl(serverUrl: String) {
         preferences.edit()
-            .putString(KEY_SERVER_URL, serverUrl)
+            .putString(KEY_SERVER_URL, serverUrl.asServerOrigin())
             .apply()
     }
 
     fun saveAuthSession(serverUrl: String, auth: AuthResponse) {
         preferences.edit()
-            .putString(KEY_SERVER_URL, serverUrl)
+            .putString(KEY_SERVER_URL, serverUrl.asServerOrigin())
             .putString(KEY_ACCESS_TOKEN, auth.accessToken)
             .putString(KEY_TOKEN_TYPE, auth.tokenType)
             .putString(KEY_USER_ID, auth.userId)
@@ -48,7 +50,7 @@ class AuthSessionStore(context: Context) {
 
     fun saveMobileAuthSession(serverUrl: String, exchange: MobileLoginExchangeResponse) {
         preferences.edit()
-            .putString(KEY_SERVER_URL, serverUrl)
+            .putString(KEY_SERVER_URL, serverUrl.asServerOrigin())
             .putString(KEY_ACCESS_TOKEN, exchange.auth.accessToken)
             .putString(KEY_TOKEN_TYPE, exchange.auth.tokenType)
             .putString(KEY_USER_ID, exchange.auth.userId)
@@ -64,6 +66,12 @@ class AuthSessionStore(context: Context) {
             .clear()
             .putString(KEY_SERVER_URL, serverUrl)
             .apply()
+    }
+
+    private fun String.asServerOrigin(): String {
+        return requireNotNull(normalizeServerOrigin(this)) {
+            "Server URL must be an HTTP(S) origin."
+        }
     }
 
     companion object {

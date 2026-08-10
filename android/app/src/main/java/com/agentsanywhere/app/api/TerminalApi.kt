@@ -69,9 +69,11 @@ class TerminalApi(
         terminalId: String,
         fromSeq: Long = 0,
     ): String {
-        return serverUrl.toWebSocketBase() +
-            apiPath("/connectors/${deviceId.urlEncode()}/terminals-v2/${terminalId.urlEncode()}/stream") +
-            "?fromSeq=$fromSeq&token=${authorizationToken.urlEncode()}"
+        return webSocketApiUrl(
+            serverUrl = serverUrl,
+            path = "/connectors/${deviceId.urlEncode()}/terminals-v2/${terminalId.urlEncode()}/stream" +
+                "?fromSeq=$fromSeq&token=${authorizationToken.urlEncode()}",
+        )
     }
 
     private fun JSONObject.toRemoteTerminal(): RemoteTerminal {
@@ -91,12 +93,4 @@ class TerminalApi(
         )
     }
 
-    private fun String.toWebSocketBase(): String {
-        val base = trimEnd('/')
-        return when {
-            base.startsWith("https://") -> "wss://" + base.removePrefix("https://")
-            base.startsWith("http://") -> "ws://" + base.removePrefix("http://")
-            else -> base
-        }
-    }
 }

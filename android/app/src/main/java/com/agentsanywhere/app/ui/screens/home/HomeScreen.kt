@@ -152,6 +152,8 @@ fun HomeScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     var actionMenu by remember { mutableStateOf<HomeSessionActionMenu?>(null) }
     var renamingSession by remember { mutableStateOf<AgentSession?>(null) }
+    var renameErrorMessage by remember { mutableStateOf<String?>(null) }
+    var renameBusy by remember { mutableStateOf(false) }
     var profileOpen by remember { mutableStateOf(false) }
 
     fun showToast(message: String, isError: Boolean = false) {
@@ -197,6 +199,7 @@ fun HomeScreen(
                     onDismiss = { actionMenu = null },
                     onRename = {
                         actionMenu = null
+                        renameErrorMessage = null
                         renamingSession = menu.session
                     },
                     onTogglePinned = {
@@ -255,15 +258,30 @@ fun HomeScreen(
     renamingSession?.let { session ->
         HomeRenameSessionDialog(
             session = session,
-            onDismiss = { renamingSession = null },
+            errorMessage = renameErrorMessage,
+            busy = renameBusy,
+            onDismiss = {
+                if (!renameBusy) {
+                    renamingSession = null
+                    renameErrorMessage = null
+                }
+            },
             onSave = { title ->
-                scope.launch {
-                    onRenameSession(session.id, title)
-                        .onSuccess {
-                            renamingSession = null
-                            showToast(context.getString(R.string.home_session_renamed))
-                        }
-                        .onFailure { showToast(it.message ?: context.getString(R.string.home_rename_failed), isError = true) }
+                if (!renameBusy) {
+                    renameBusy = true
+                    renameErrorMessage = null
+                    scope.launch {
+                        onRenameSession(session.id, title)
+                            .onSuccess {
+                                renamingSession = null
+                                renameErrorMessage = null
+                                showToast(context.getString(R.string.home_session_renamed))
+                            }
+                            .onFailure {
+                                renameErrorMessage = it.message ?: context.getString(R.string.home_rename_failed)
+                            }
+                        renameBusy = false
+                    }
                 }
             },
         )
@@ -477,6 +495,8 @@ private fun HomeSessionActionMenuRow(
 @Composable
 private fun HomeRenameSessionDialog(
     session: AgentSession,
+    errorMessage: String?,
+    busy: Boolean,
     onDismiss: () -> Unit,
     onSave: (String) -> Unit,
 ) {
@@ -487,11 +507,16 @@ private fun HomeRenameSessionDialog(
     val fieldColor = if (darkMode) Color(0xFF09090B) else Color(0xFFF7F7F7)
     val secondaryButton = if (darkMode) Color(0xFF27272A) else Color(0xFFF3F3F3)
     var name by remember(session.id) { mutableStateOf(session.title) }
-    val trimmed = name.trim()
-    val canSave = trimmed.isNotEmpty() && trimmed != session.title.trim()
+    var fieldError by remember(session.id, errorMessage) { mutableStateOf(errorMessage) }
+    val titleRequired = stringResource(R.string.home_title_required)
+    val canSave = name != session.title && !busy
 
     fun submit() {
-        if (canSave) onSave(trimmed)
+        when {
+            busy || name == session.title -> Unit
+            name.isEmpty() -> fieldError = titleRequired
+            else -> onSave(name)
+        }
     }
 
     Dialog(
@@ -538,7 +563,10 @@ private fun HomeRenameSessionDialog(
                                     override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
                                     override fun afterTextChanged(s: Editable?) {
                                         val next = s?.toString().orEmpty()
-                                        if (next != name) name = next
+                                        if (next != name) {
+                                            name = next
+                                            fieldError = null
+                                        }
                                     }
                                 },
                             )
@@ -555,6 +583,14 @@ private fun HomeRenameSessionDialog(
                         }
                     },
                     modifier = Modifier.weight(1f),
+                )
+            }
+            fieldError?.let { message ->
+                Text(
+                    text = message,
+                    color = colors.errorText,
+                    fontSize = 13.sp,
+                    lineHeight = 17.sp,
                 )
             }
             Row(
