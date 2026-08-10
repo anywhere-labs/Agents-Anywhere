@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import os
 import sys
 from collections.abc import Mapping
 from typing import Any
 
 from jsonschema import Draft202012Validator
 
+from connector.launch import launch_target
 from connector.runtime_protocol import (
     AgentRuntime,
     RuntimeConfig,
@@ -15,8 +17,11 @@ from connector.runtime_protocol import (
     RuntimeProvider,
 )
 from connector.runtime_protocol.host import RuntimeHostClient
+from connector.runtimes.custom_models import normalize_custom_models
 from connector.runtimes.claude import discovery, provider_config
 from connector.runtimes.claude.runtime import ClaudeRuntime
+
+CLAUDE_CONFIG_SCHEMA_REVISION = 2
 
 
 class ClaudeProvider(RuntimeProvider):
@@ -40,15 +45,18 @@ class ClaudeProvider(RuntimeProvider):
         self._sdk_loader = sdk_loader or discovery.load_claude_sdk
         self._command_checker = command_checker or discovery.check_claude_target
         self._discovered_sdk: dict[str, Any] | None = None
-        self._discovered_target: discovery.LaunchTarget | None = None
+        self._discovered_target = None
 
     async def discover(self) -> RuntimeInventoryItem:
-        sdk = discovery.check_sdk(self._sdk_loader)
-        target = discovery.discover_claude_target(self._command_checker, {})
+        sdk = discovery.check_claude_sdk(self._sdk_loader)
         self._discovered_sdk = sdk
-        self._discovered_target = target
+        environment = provider_config.merge_environment({})
+        self._discovered_target = discovery.discover_claude_target(
+            self._command_checker,
+            environment,
+        )
         available = bool(sdk.get("available"))
-        reason = None if available else "claude-agent-sdk is not installed"
+        reason = None if available else sdk.get("reason") or "claude-agent-sdk unavailable"
         return RuntimeInventoryItem(
             runtime=self.runtime,
             runtime_type=self.runtime_type,
@@ -60,25 +68,23 @@ class ClaudeProvider(RuntimeProvider):
             config_schema=await self.get_config_schema(),
             metadata={
                 "sdk": sdk,
-                "cli": discovery.target_metadata(target),
+                "launchTarget": discovery.target_metadata(self._discovered_target),
                 "platform": sys.platform,
             },
         )
 
     async def get_config_schema(self) -> RuntimeConfigSchema:
-        schema = provider_config.claude_config_schema(self._discovered_target)
+        schema = provider_config.claude_config_schema()
         return RuntimeConfigSchema(
             runtime=self.runtime,
-            revision=1,
+            revision=CLAUDE_CONFIG_SCHEMA_REVISION,
             schema=schema,
             ui_schema={
-                "order": ["executablePath", "environment"],
-                "executablePath": {"component": "path"},
+                "order": ["executablePath", "environment", "customModels"],
                 "environment": {"component": "keyValue"},
+                "customModels": {"component": "customModels"},
             },
-            defaults={
-                "environment": {},
-            },
+            defaults={"environment": {}, "customModels": []},
         )
 
     async def validate_config(
@@ -86,9 +92,9 @@ class ClaudeProvider(RuntimeProvider):
         values: Mapping[str, Any],
     ) -> RuntimeConfig:
         raw_values = dict(values)
-        schema_obj = await self.get_config_schema()
+        schema = (await self.get_config_schema()).schema
         errors = sorted(
-            Draft202012Validator(schema_obj.schema).iter_errors(raw_values),
+            Draft202012Validator(schema).iter_errors(raw_values),
             key=lambda error: list(error.absolute_path),
         )
         if errors:
@@ -96,30 +102,44 @@ class ClaudeProvider(RuntimeProvider):
             raise RuntimeInvalidRequestError(
                 f"claude config is invalid at {path or '/'}: {errors[0].message}"
             )
+
         environment = provider_config.merge_environment(raw_values.get("environment"))
-        sdk = self._discovered_sdk or discovery.check_sdk(self._sdk_loader)
+        sdk = self._discovered_sdk or discovery.check_claude_sdk(self._sdk_loader)
         if not sdk.get("available"):
-            raise RuntimeInvalidRequestError("claude-agent-sdk is not available")
-        target = discovery.resolve_target(
-            raw_values=raw_values,
-            environment=environment,
-            discovered_target=self._discovered_target,
-            command_checker=self._command_checker,
-        )
+            raise RuntimeInvalidRequestError("Claude Agent SDK is not available")
+
+        executable_path = raw_values.get("executablePath")
+        launch_metadata = discovery.target_metadata(self._discovered_target)
+        if isinstance(executable_path, str) and executable_path:
+            target = launch_target(
+                "configured",
+                os.path.expandvars(os.path.expanduser(executable_path)),
+            )
+            result = self._command_checker(target, environment)
+            if result.get("status") != "ok":
+                raise RuntimeInvalidRequestError(
+                    "Claude executable validation failed: "
+                    f"{result.get('reason') or result.get('status')}"
+                )
+            launch_metadata = discovery.target_metadata(target)
+
         normalized_values: dict[str, Any] = {
             "environment": dict(raw_values.get("environment") or {}),
+            "customModels": normalize_custom_models(raw_values.get("customModels")),
         }
-        if target is not None:
-            normalized_values["executablePath"] = target.path
+        if isinstance(executable_path, str) and executable_path:
+            normalized_values["executablePath"] = executable_path
+
+        config_schema = await self.get_config_schema()
         return RuntimeConfig(
             runtime=self.runtime,
-            revision=1,
+            revision=CLAUDE_CONFIG_SCHEMA_REVISION,
             values=normalized_values,
-            schema=schema_obj.schema,
-            ui_schema=schema_obj.ui_schema,
+            schema=schema,
+            ui_schema=config_schema.ui_schema,
             metadata={
                 "sdk": sdk,
-                "cli": discovery.target_metadata(target),
+                "launchTarget": launch_metadata,
                 "platform": sys.platform,
             },
         )
@@ -129,4 +149,11 @@ class ClaudeProvider(RuntimeProvider):
         config: RuntimeConfig,
         host: RuntimeHostClient,
     ) -> AgentRuntime:
-        return ClaudeRuntime(config=config, host=host, sdk_loader=self._sdk_loader)
+        sdk = config.metadata.get("sdk") if isinstance(config.metadata, dict) else None
+        if isinstance(sdk, dict) and not sdk.get("available", True):
+            raise RuntimeInvalidRequestError("Claude Agent SDK is not available")
+        return ClaudeRuntime(
+            config=config,
+            host=host,
+            sdk_loader=self._sdk_loader,
+        )

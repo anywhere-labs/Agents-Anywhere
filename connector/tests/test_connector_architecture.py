@@ -383,3 +383,73 @@ def test_codex_turn_controller_is_operation_facade() -> None:
     assert "start_thread(" in session_start_source
     assert "session_meta_upsert(" in session_start_source
     assert "session_states.update(" in selections_source
+
+
+def test_claude_runtime_keeps_turn_and_sdk_work_in_collaborators() -> None:
+    runtime_source = (
+        CONNECTOR_PACKAGE / "runtimes" / "claude" / "runtime.py"
+    ).read_text(encoding="utf-8")
+
+    for token in (
+        "load_sdk(",
+        "new_sdk_client(",
+        "receive_response_messages(",
+        "query_client(",
+        "materialize_claude_attachments(",
+        "asyncio.create_task(",
+        "session_states.update(",
+        "_set_session_state",
+        "host.timeline_item_upsert(",
+        "host.timeline_sync(",
+        "host.notice_upsert(",
+    ):
+        assert token not in runtime_source
+
+
+def test_claude_notifications_are_split_by_side_effect_role() -> None:
+    notifications_dir = CONNECTOR_PACKAGE / "runtimes" / "claude" / "notifications"
+    projector_source = (notifications_dir / "projector.py").read_text(encoding="utf-8")
+    session_state_source = (notifications_dir / "session_state.py").read_text(
+        encoding="utf-8"
+    )
+    timeline_activity_source = (notifications_dir / "timeline_activity.py").read_text(
+        encoding="utf-8"
+    )
+    notices_source = (notifications_dir / "notices.py").read_text(encoding="utf-8")
+
+    assert notifications_dir.is_dir()
+    assert "class ClaudeNotificationProjector" in projector_source
+    assert "timeline_sync(" not in projector_source
+    assert "timeline_item_upsert(" not in projector_source
+    assert "notice_upsert(" not in projector_source
+    assert "session_states.update(" in session_state_source
+    assert "timeline_sync(" in timeline_activity_source
+    assert "timeline_item_upsert(" in timeline_activity_source
+    assert "notice_upsert(" in notices_source
+
+
+def test_claude_turn_controller_is_operation_facade() -> None:
+    turns_dir = CONNECTOR_PACKAGE / "runtimes" / "claude" / "turns"
+    controller_source = (turns_dir / "controller.py").read_text(encoding="utf-8")
+    actions_source = (turns_dir / "actions.py").read_text(encoding="utf-8")
+    lifecycle_source = (turns_dir / "lifecycle.py").read_text(encoding="utf-8")
+    interactions_source = (turns_dir / "interactions.py").read_text(encoding="utf-8")
+    selections_source = (turns_dir / "selections.py").read_text(encoding="utf-8")
+    session_start_source = (turns_dir / "session_start.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert "load_sdk(" not in controller_source
+    assert "session_states.update(" not in controller_source
+    assert "_set_session_state" not in controller_source
+    assert "ClaudeTurnActionHandler" in controller_source
+    assert "ClaudeTurnRunner" in controller_source
+    assert "ClaudeInteractionController" in controller_source
+    assert "ClaudeSelectionController" in controller_source
+    assert "ClaudeSessionStartHandler" in controller_source
+    assert "asyncio.create_task(" in actions_source
+    assert "load_sdk(" in lifecycle_source
+    assert "receive_response_messages(" in lifecycle_source
+    assert "request_tool_approval(" in interactions_source
+    assert "effective_claude_selections(" in selections_source
+    assert "session_meta_upsert(" in session_start_source

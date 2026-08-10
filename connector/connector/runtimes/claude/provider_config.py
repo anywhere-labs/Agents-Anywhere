@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+import os
 from typing import Any
 
-from connector.launch import LaunchTarget
 from connector.runtime_protocol import RuntimeInvalidRequestError
+from connector.runtimes.custom_models import custom_models_schema
 
 PROTECTED_ENV_PREFIXES = ("AGENT_CONNECTOR_", "AGENT_SERVER_")
 PROTECTED_ENV_NAMES = {
@@ -17,30 +17,28 @@ PROTECTED_ENV_NAMES = {
 }
 
 
-def claude_config_schema(target: LaunchTarget | None) -> dict[str, Any]:
-    executable: dict[str, Any] = {
-        "type": "string",
-        "minLength": 1,
-        "title": "Claude executable path",
-        "description": "Optional path to the Claude Code CLI used by claude-agent-sdk.",
-    }
-    if target is not None:
-        executable["default"] = target.path
+def claude_config_schema() -> dict[str, Any]:
     return {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
         "properties": {
-            "executablePath": executable,
+            "executablePath": {
+                "type": "string",
+                "title": "Claude executable path",
+                "description": "Optional path to the Claude Code executable.",
+                "minLength": 1,
+            },
             "environment": {
                 "type": "object",
                 "title": "Environment variables",
-                "description": "Override inherited variables with strings, or remove them with null.",
+                "description": "Environment overrides for the Claude runtime.",
                 "propertyNames": {"pattern": "^[^=\\u0000]+$"},
                 "additionalProperties": {
                     "anyOf": [{"type": "string"}, {"type": "null"}],
                 },
                 "default": {},
             },
+            "customModels": custom_models_schema(),
         },
         "additionalProperties": False,
     }
@@ -48,7 +46,7 @@ def claude_config_schema(target: LaunchTarget | None) -> dict[str, Any]:
 
 def claude_capabilities() -> dict[str, bool]:
     return {
-        "modelCatalog": False,
+        "modelCatalog": True,
         "permissionCatalog": True,
         "sessionDiscovery": True,
         "sessionSnapshot": True,
@@ -56,7 +54,7 @@ def claude_capabilities() -> dict[str, bool]:
         "sessionNotices": True,
         "createAndStartSession": True,
         "startTurn": True,
-        "steerTurn": True,
+        "steerTurn": False,
         "interruptTurn": True,
         "commands": False,
         "interactions": True,
@@ -67,24 +65,28 @@ def claude_capabilities() -> dict[str, bool]:
 
 def merge_environment(raw: Any) -> dict[str, str]:
     if raw is None:
-        return {}
-    if not isinstance(raw, Mapping):
+        overrides: dict[str, Any] = {}
+    elif isinstance(raw, dict):
+        overrides = raw
+    else:
         raise RuntimeInvalidRequestError("environment must be an object")
-    environment: dict[str, str] = {}
-    for key, value in raw.items():
-        if not isinstance(key, str) or not key:
-            raise RuntimeInvalidRequestError("environment keys must be non-empty strings")
-        if key in PROTECTED_ENV_NAMES or any(
-            key.startswith(prefix) for prefix in PROTECTED_ENV_PREFIXES
-        ):
+
+    environment = dict(os.environ)
+    for key, value in overrides.items():
+        if not isinstance(key, str) or not key or "=" in key or "\x00" in key:
             raise RuntimeInvalidRequestError(
-                f"environment variable {key} is managed by the connector"
+                "environment contains an invalid variable name"
+            )
+        if key in PROTECTED_ENV_NAMES or key.startswith(PROTECTED_ENV_PREFIXES):
+            raise RuntimeInvalidRequestError(
+                f"environment variable {key!r} is managed by the connector"
             )
         if value is None:
+            environment.pop(key, None)
             continue
-        if not isinstance(value, str):
+        if not isinstance(value, str) or "\x00" in value:
             raise RuntimeInvalidRequestError(
-                f"environment variable {key} must be a string or null"
+                f"environment variable {key!r} must be a string or null"
             )
         environment[key] = value
     return environment

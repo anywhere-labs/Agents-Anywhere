@@ -1,89 +1,88 @@
-# v2 Migration Acceptance Checklist
+# v2 迁移验收 Checklist
 
-Every required item must be evidenced for the release candidate. Mark an item
-not applicable only with an owner and reason.
+每个必需项都必须为 release candidate 提供证据。只有写清 owner 和原因时，才能把某一项标记为不适用。
 
-## Baseline and artifacts
+## 基线和 artifacts
 
-- [ ] `main` source commit, v2 source commit, images, and client builds are recorded.
-- [ ] The release diff was refreshed after the baseline commits in the overview.
-- [ ] The migration reports contain no secret values.
-- [ ] The v1 SQLite, file storage, Connector data, and deployment configuration backups were restored in a rehearsal.
+- [ ] 已记录 `main` source commit、v2 source commit、images 和 client builds。
+- [ ] 总览中的 baseline commits 之后，已经刷新过 release diff。
+- [ ] 迁移报告不包含 secret values。
+- [ ] 已在演练中恢复过 v1 SQLite、文件存储、Connector 数据和部署配置备份。
 
-## Data and infrastructure
+## 数据和基础设施
 
-- [ ] A disposable v1-to-v2 import completed with matching table row counts and SHA-256 digests.
-- [ ] The final PostgreSQL target is new/empty before import.
-- [ ] The final migration report is retained.
-- [ ] Database revision is exactly `v2_7` and schema version is `2.7`.
-- [ ] File payload counts and representative downloads match migrated metadata.
-- [ ] Redis persistence is disabled and Redis is treated as ephemeral coordination.
-- [ ] PostgreSQL and file-storage backup/restore procedures are tested.
-- [ ] `/api/v2/health/ready` returns 200 with database and Redis checks `ok`.
-- [ ] Starting Server against a stale schema fails readiness/startup as expected.
+- [ ] 一次性 v1-to-v2 导入已完成，table row counts 和 SHA-256 digests 匹配。
+- [ ] 最终 PostgreSQL 目标库在导入前是新建且为空。
+- [ ] 最终迁移报告已保留。
+- [ ] Database revision 精确为 `v2_7`，schema version 为 `2.7`。
+- [ ] File payload 数量和代表性下载结果与迁移后的 metadata 匹配。
+- [ ] Redis persistence 已禁用，并且 Redis 被视为临时协调层。
+- [ ] PostgreSQL 和 file-storage backup/restore 流程已测试。
+- [ ] `/api/v2/health/ready` 返回 200，database 和 Redis checks 都是 `ok`。
+- [ ] Server 指向陈旧 schema 启动时，会按预期 readiness/startup 失败。
 
-## Server API
+## 服务端 API
 
-- [ ] All product HTTP, SSE, and WebSocket routes use `/api/v2`.
-- [ ] Configured Server URLs remain origins without `/api/v2`.
-- [ ] Session create-and-start binds the first runtime events to the allocated platform session id.
-- [ ] Existing-session messages omit model/permission fields.
-- [ ] Model/permission changes use runtime selections.
-- [ ] Commands do not fall back to normal messages on failure.
-- [ ] Runtime notices respond through the session runtime notice route.
-- [ ] Snapshot is used only for initial hydration or explicit recovery.
-- [ ] Dashboard and session WebSocket tickets are single-use and scoped.
+- [ ] 所有产品 HTTP、SSE 和 WebSocket routes 都使用 `/api/v2`。
+- [ ] 配置中的 Server URLs 仍然只是 origin，不包含 `/api/v2`。
+- [ ] Session create-and-start 会把第一批 runtime events 绑定到已分配的 platform session id。
+- [ ] 已有 session 的 messages 不包含 model/permission 字段。
+- [ ] Model/permission 变化使用 runtime selections。
+- [ ] Commands 失败时不会 fallback 成普通 message。
+- [ ] Runtime notices 通过 session runtime notice route 响应。
+- [ ] Snapshot 只用于初始 hydration 或显式恢复。
+- [ ] Dashboard 和 session WebSocket tickets 都是 single-use 且有 scope。
 
-## Connector and runtimes
+## 连接器和运行时
 
-- [ ] A backed-up legacy Connector directory migrates to `~/.agents-anywhere` as documented.
-- [ ] Obsolete SQLite sync state removal is accepted and resync succeeds.
-- [ ] Connector config uses `statePath`/`AGENT_CONNECTOR_STATE_FILE` where overridden.
-- [ ] Connector auth, ingest, WebSocket, attachment, transfer, and relay URLs use v2 helpers.
-- [ ] Codex runs through the official SDK path without active app-server/IPC fallback.
-- [ ] Claude reports its actual supported/unsupported capabilities.
-- [ ] No active code imports `connector/_reference`.
-- [ ] Runtime state, catalogs, notices, commands, and capabilities recover after Connector restart.
-- [ ] Headless Connector start and shutdown are verified on every supported OS.
+- [ ] 已备份的 legacy Connector directory 按文档迁移到了 `~/.agents-anywhere`。
+- [ ] 已接受废弃 SQLite sync state 被移除，并且 resync 成功。
+- [ ] 如果有 override，Connector config 使用 `statePath`/`AGENT_CONNECTOR_STATE_FILE`。
+- [ ] Connector auth、ingest、WebSocket、attachment、transfer 和 relay URL 都使用 v2 helpers。
+- [ ] Codex 通过官方 SDK 路径运行，没有 active app-server/IPC fallback。
+- [ ] Claude 会报告真实的 supported/unsupported capabilities。
+- [ ] 没有 active code import `connector/_reference`。
+- [ ] Connector 重启后，runtime state、catalogs、notices、commands 和 capabilities 能恢复。
+- [ ] 每个支持的 OS 上都验证过 headless Connector 启动和关闭。
 
-## Runtime coverage decision
+## 运行时覆盖决策
 
-- [ ] Production runtime inventory contains only v2-supported providers; or each unsupported dependency has an approved migration/blocker.
-- [ ] Gemini ACP dependency is resolved.
-- [ ] Cursor ACP dependency is resolved.
-- [ ] Grok Build ACP dependency is resolved.
-- [ ] CodeBuddy ACP dependency is resolved.
+- [ ] 生产 runtime inventory 只包含 v2-supported providers；或者每个 unsupported dependency 都有已批准的迁移方案或 blocker。
+- [ ] Gemini ACP 依赖已解决。
+- [ ] Cursor ACP 依赖已解决。
+- [ ] Grok Build ACP 依赖已解决。
+- [ ] CodeBuddy ACP 依赖已解决。
 
-## Web
+## 网页端
 
-- [ ] `yarn typecheck` passes.
-- [ ] `yarn protocol:check` passes with no stale generated files.
-- [ ] Dashboard uses ticketed WebSocket snapshots without normal list polling.
-- [ ] Session UI uses live runtime state and effective capabilities for actions.
-- [ ] Selector reads are live and command filtering is client-side.
-- [ ] Optimistic messages reconcile by `clientMessageId` without duplicates.
-- [ ] Text, attachment-only, reasoning, tool, file-change, compact, and error timeline items render.
+- [ ] `yarn typecheck` 通过。
+- [ ] `yarn protocol:check` 通过，并且没有 stale generated files。
+- [ ] Dashboard 使用带 ticket 的 WebSocket snapshots，而不是正常列表轮询。
+- [ ] Session UI 使用 live runtime state 和 effective capabilities 来决定 actions。
+- [ ] Selector reads 是 live 的，command filtering 在客户端本地完成。
+- [ ] Optimistic messages 通过 `clientMessageId` 对齐，不产生重复项。
+- [ ] Text、attachment-only、reasoning、tool、file-change、compact 和 error timeline items 都能渲染。
 
 ## Android
 
-- [ ] Removed session routes (`/{id}`, `/state`, `/runtime-settings`, `/messages`, `/interrupt`, `/bulk-archive`) have no call sites.
-- [ ] Removed runtime-management routes (`runtime-capabilities`, `agents/*/settings`) have no call sites.
-- [ ] HTTP, SSE, WebSocket, attachment, and terminal URLs all use the v2 namespace once.
-- [ ] Session live state, capabilities, notices, commands, and recovery are integration-tested.
+- [ ] 已移除的 session routes（`/{id}`、`/state`、`/runtime-settings`、`/messages`、`/interrupt`、`/bulk-archive`）没有 call sites。
+- [ ] 已移除的 runtime-management routes（`runtime-capabilities`、`agents/*/settings`）没有 call sites。
+- [ ] HTTP、SSE、WebSocket、attachment 和 terminal URLs 都只应用一次 v2 namespace。
+- [ ] Session live state、capabilities、notices、commands 和 recovery 已做 integration test。
 
 ## iOS
 
-- [ ] Removed session routes (`/{id}`, `/{id}/read`, `/state`, `/runtime-settings`, `/messages`, `/interrupt`) have no call sites.
-- [ ] Removed runtime-management/config routes have no call sites.
-- [ ] HTTP, SSE, attachment, and direct URLs all use the v2 namespace once.
-- [ ] Session live state, capabilities, notices, commands, and recovery are integration-tested.
+- [ ] 已移除的 session routes（`/{id}`、`/{id}/read`、`/state`、`/runtime-settings`、`/messages`、`/interrupt`）没有 call sites。
+- [ ] 已移除的 runtime-management/config routes 没有 call sites。
+- [ ] HTTP、SSE、attachment 和 direct URLs 都只应用一次 v2 namespace。
+- [ ] Session live state、capabilities、notices、commands 和 recovery 已做 integration test。
 
-## Cutover and rollback
+## 切换和回滚
 
-- [ ] The maintenance/write-freeze procedure has an owner and tested duration.
-- [ ] Server/Web are cut over together and Connector upgrades are batched.
-- [ ] Monitoring covers removed-route traffic, Connector reconnects, Redis, database pools, recovery loops, and attachment failures.
-- [ ] The rollback decision point and owner are recorded.
-- [ ] The v1 stack remains runnable for the rollback window.
-- [ ] Everyone understands that rollback returns to v1 backups; it does not downgrade the v2 database.
-- [ ] Any writes accepted by v2 during the rollback window have an explicit reconciliation plan.
+- [ ] Maintenance/write-freeze 流程有 owner，并且持续时间已测试。
+- [ ] Server/Web 一起 cut over，Connector 分批升级。
+- [ ] Monitoring 覆盖 removed-route traffic、Connector reconnects、Redis、database pools、recovery loops 和 attachment failures。
+- [ ] Rollback decision point 和 owner 已记录。
+- [ ] v1 stack 在 rollback window 内仍然可运行。
+- [ ] 所有人都理解 rollback 是回到 v1 backups，不是 downgrade v2 database。
+- [ ] Cutover window 内 v2 接受的任何写入，都有明确 reconciliation plan。

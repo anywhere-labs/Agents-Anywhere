@@ -63,6 +63,7 @@ async def dispatch_turn_start(
         parsed.selections,
         parsed.attachments,
         parsed.client_message_id,
+        cwd=parsed.cwd,
     )
     return operation_result_payload(result)
 

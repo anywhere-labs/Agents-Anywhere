@@ -123,3 +123,19 @@ def test_connector_notice_interaction_shape() -> None:
     assert dumped["type"] == "interaction"
     assert dumped["blocking"] == {"scope": "session", "targetId": "sess_1"}
     assert dumped["actions"][0]["actionId"] == "allow_once"
+
+
+def test_connector_notice_allows_runtime_responding_status() -> None:
+    notice = ProtocolNotice(
+        noticeId="notice_responding",
+        type="interaction",
+        sessionId="sess_1",
+        source=ProtocolNoticeSource(runtime="claude", component="claude"),
+        title="Approval response in progress",
+        interactionType="approval",
+        status="responding",
+    )
+
+    dumped = notice.model_dump(mode="json")
+
+    assert dumped["status"] == "responding"

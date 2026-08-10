@@ -5555,6 +5555,134 @@ def test_connector_ingest_archives_local_hidden_session_meta(tmp_path):
     assert state.json()["session"]["archivedAt"] is not None
 
 
+def test_connector_ingest_ordered_meta_then_timeline_creates_session_before_items(tmp_path):
+    client = make_client(tmp_path)
+    _, access_token, _, headers = create_connector_and_session(client)
+
+    response = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={
+            "notifications": [
+                {
+                    "method": "session.meta.upsert",
+                    "params": {
+                        "sessionId": "sess_scanner_ordered",
+                        "runtime": "codex",
+                        "externalSessionId": "thr_scanner_ordered",
+                        "title": "Scanner ordered",
+                        "cwd": "/repo",
+                    },
+                },
+                {
+                    "method": "timeline.sync",
+                    "params": {
+                        "sessionId": "sess_scanner_ordered",
+                        "runtime": "codex",
+                        "externalSessionId": "thr_scanner_ordered",
+                        "complete": True,
+                        "items": [
+                            {
+                                "id": "tl_scanner_ordered_user",
+                                "sessionId": "sess_scanner_ordered",
+                                "type": "message",
+                                "status": "done",
+                                "role": "user",
+                                "content": {
+                                    "kind": "markdown",
+                                    "text": "scanner history",
+                                    "format": "markdown",
+                                },
+                                "source": {
+                                    "runtime": "codex",
+                                    "sessionId": "thr_scanner_ordered",
+                                    "itemId": "item_scanner_ordered_user",
+                                    "event": "thread/read",
+                                },
+                                "orderSeq": 1,
+                                "revision": 1,
+                                "contentHash": "sha256:scanner-ordered-user",
+                            }
+                        ],
+                    },
+                },
+            ],
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["accepted"] == 2
+    state = session_view_for_assertions(client, "sess_scanner_ordered", headers)
+    assert state["session"]["externalSessionId"] == "thr_scanner_ordered"
+    assert [item["id"] for item in state["items"]] == ["tl_scanner_ordered_user"]
+
+
+def test_connector_ingest_prefers_explicit_platform_session_over_external_match(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, access_token, _, headers = create_connector_and_session(client)
+
+    async def _seed_sessions() -> tuple[str, str]:
+        platform = await client.app.state.store.create_session(
+            connector_id=connector_id,
+            user_id=ADMIN_USER,
+            runtime="claude",
+            external_session_id=None,
+            title="Platform Claude",
+            cwd="/repo",
+        )
+        imported = await client.app.state.store.upsert_connector_session(
+            connector_id=connector_id,
+            session_id="sess_claude_imported",
+            runtime="claude",
+            external_session_id="claude_external_race",
+            title="Imported Claude",
+            cwd="/repo",
+        )
+        return platform.id, imported.id
+
+    platform_session_id, imported_session_id = asyncio.run(_seed_sessions())
+
+    response = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={
+            "notifications": [
+                {
+                    "method": "timeline.itemUpsert",
+                    "params": {
+                        "sessionId": platform_session_id,
+                        "item": {
+                            "id": "assistant_live",
+                            "sessionId": platform_session_id,
+                            "type": "message",
+                            "status": "done",
+                            "role": "assistant",
+                            "content": {
+                                "kind": "markdown",
+                                "text": "live answer",
+                            },
+                            "orderSeq": 1,
+                            "revision": 1,
+                            "contentHash": "sha256:assistant-live",
+                            "source": {
+                                "runtime": "claude",
+                                "sessionId": "claude_external_race",
+                                "event": "claude.turn.result",
+                            },
+                        },
+                    },
+                }
+            ]
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    platform_state = session_view_for_assertions(client, platform_session_id, headers)
+    imported_state = session_view_for_assertions(client, imported_session_id, headers)
+    assert [item["id"] for item in platform_state["items"]] == ["assistant_live"]
+    assert imported_state["items"] == []
+
+
 def test_connector_ingest_does_not_overwrite_platform_archive_state(tmp_path):
     client = make_client(tmp_path)
     _, access_token, session_id, headers = create_connector_and_session(client)
@@ -5996,6 +6124,7 @@ def test_claude_timeline_sync_replaces_existing_timeline(tmp_path):
                 "method": "timeline.sync",
                 "params": {
                     "sessionId": session_id,
+                    "complete": True,
                     "items": [
                         {
                             "id": "turn_history:turn-start",
@@ -6083,6 +6212,82 @@ def test_claude_timeline_sync_replaces_existing_timeline(tmp_path):
         assert "claude_msg_history_answer" in item_ids
 
 
+def test_claude_timeline_sync_without_complete_merges_existing_timeline(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, access_token, _, headers = create_connector_and_session(client)
+    fake_rpc = FakeLocalRpc()
+    client.app.state.rpc = fake_rpc
+    session_id = _create_claude_session(client, connector_id, headers, fake_rpc)
+
+    response = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={
+            "notifications": [
+                {
+                    "method": "timeline.itemUpsert",
+                    "params": {
+                        "sessionId": session_id,
+                        "item": {
+                            "id": "claude_live_answer",
+                            "sessionId": session_id,
+                            "turnId": "turn_live",
+                            "type": "message",
+                            "status": "done",
+                            "role": "assistant",
+                            "content": {"text": "live"},
+                            "source": {
+                                "runtime": "claude",
+                                "sessionId": "claude_session_1",
+                                "turnId": "turn_live",
+                                "itemId": "msg_live",
+                                "itemType": "assistant",
+                            },
+                            "orderSeq": 1,
+                            "revision": 1,
+                            "contentHash": "sha256:live",
+                        },
+                    },
+                },
+                {
+                    "method": "timeline.sync",
+                    "params": {
+                        "sessionId": session_id,
+                        "items": [
+                            {
+                                "id": "claude_history_answer",
+                                "sessionId": session_id,
+                                "turnId": "turn_history",
+                                "type": "message",
+                                "status": "done",
+                                "role": "assistant",
+                                "content": {"text": "history"},
+                                "source": {
+                                    "runtime": "claude",
+                                    "sessionId": "claude_session_1",
+                                    "turnId": "turn_history",
+                                    "itemId": "msg_history",
+                                    "itemType": "assistant",
+                                },
+                                "orderSeq": 2,
+                                "revision": 1,
+                                "contentHash": "sha256:history",
+                            }
+                        ],
+                    },
+                },
+            ]
+        },
+    )
+    assert response.status_code == 200, response.text
+
+    state = session_view_for_assertions(client, session_id, headers)
+    assert {item["id"] for item in state["items"]} == {
+        "claude_live_answer",
+        "claude_history_answer",
+    }
+
+
 def test_claude_empty_timeline_sync_clears_existing_timeline(tmp_path):
     client = make_client(tmp_path)
     connector_id, access_token, _, headers = create_connector_and_session(client)
@@ -6124,6 +6329,7 @@ def test_claude_empty_timeline_sync_clears_existing_timeline(tmp_path):
                     "method": "timeline.sync",
                     "params": {
                         "sessionId": session_id,
+                        "complete": True,
                         "items": [],
                     },
                 },

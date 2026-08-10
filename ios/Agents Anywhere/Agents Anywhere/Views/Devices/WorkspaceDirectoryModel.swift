@@ -46,4 +46,3 @@ final class WorkspaceDirectoryModel {
         return left.name.localizedStandardCompare(right.name) == .orderedAscending
     }
 }
-

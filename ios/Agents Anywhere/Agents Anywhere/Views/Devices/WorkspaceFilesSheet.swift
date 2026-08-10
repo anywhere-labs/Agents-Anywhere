@@ -222,4 +222,3 @@ private struct WorkspaceWebPreviewSheet: View {
         WebView(url: url)
     }
 }
-

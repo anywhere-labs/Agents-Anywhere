@@ -113,12 +113,18 @@ class RuntimeRpcHandler:
         if method == "runtime.validateConfig":
             parsed = RuntimeConfigParams.parse(params)
             await self.agent_runtime_supervisor.validate_config(
-                parsed.runtime_id, parsed.config
+                parsed.runtime_id,
+                parsed.config,
+                revision=parsed.config_revision,
             )
             return {"runtimeId": parsed.runtime_id, "valid": True}
         if method == "runtime.start":
             parsed = RuntimeConfigParams.parse(params)
-            await self.agent_runtime_supervisor.start(parsed.runtime_id, parsed.config)
+            await self.agent_runtime_supervisor.start(
+                parsed.runtime_id,
+                parsed.config,
+                revision=parsed.config_revision,
+            )
             return {"runtimeId": parsed.runtime_id, "status": "running"}
         if method == "runtime.stop":
             parsed = RuntimeIdParams.parse(params)

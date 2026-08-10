@@ -339,6 +339,32 @@
         "fullAccess": {
           "label": "Full access",
           "description": "Allow unrestricted internet access and access to any file on this computer."
+        },
+        "claude": {
+          "default": {
+            "label": "Ask permissions",
+            "description": "Use Claude Code's default prompts for risky tools."
+          },
+          "acceptEdits": {
+            "label": "Accept edits",
+            "description": "Automatically accept file edits; still ask for other risky tools."
+          },
+          "plan": {
+            "label": "Plan mode",
+            "description": "Allow planning without executing writes or commands."
+          },
+          "auto": {
+            "label": "Auto mode",
+            "description": "Use Claude Code's automatic classifier for risky actions."
+          },
+          "dontAsk": {
+            "label": "Don't ask",
+            "description": "Deny unapproved tools instead of asking for permission."
+          },
+          "bypassPermissions": {
+            "label": "Bypass permissions",
+            "description": "Skip permission prompts and allow unrestricted tool use."
+          }
         }
       },
       "selectionSettings": "Settings",
@@ -446,9 +472,15 @@
       "activateRuntime": "Activate {name}",
       "deactivateRuntime": "Deactivate {name}",
       "runtimeConfigTitle": "Configure {name}",
-      "runtimeConfigDescription": "These settings control how the connector starts this runtime. Model and permission choices are configured when creating a session.",
+      "runtimeConfigDescription": "Runtime configuration.",
       "runtimeSchemaUnavailable": "This runtime did not provide a configuration schema.",
       "runtimeConfigInvalid": "The configuration is invalid.",
+      "runtimeConfigExecutablePath": "Claude executable path (optional)",
+      "runtimeConfigExecutablePathDescription": "Optional. Fill this only when Claude Code is not available on the default PATH.",
+      "runtimeConfigEnvironment": "Environment variables (optional)",
+      "runtimeConfigEnvironmentDescription": "Environment variables added or overridden when this runtime starts.",
+      "runtimeConfigCustomModels": "Custom models (optional)",
+      "runtimeConfigCustomModelsDescription": "Add models to show in the model picker, plus the reasoning efforts available for each model.",
       "resetAllDefaults": "Reset all defaults",
       "noEnvironmentOverrides": "No environment overrides.",
       "environmentName": "Variable name",
@@ -457,6 +489,17 @@
       "unset": "Unset",
       "removeEnvironmentVariable": "Remove environment variable",
       "addEnvironmentVariable": "Add variable",
+      "noCustomModels": "No custom models.",
+      "customModelId": "Model ID",
+      "customModelDisplayName": "Display name",
+      "removeCustomModel": "Remove custom model",
+      "addCustomModel": "Add custom model",
+      "customModelEfforts": "Efforts",
+      "noCustomEfforts": "No efforts configured.",
+      "customEffortId": "Effort ID",
+      "customEffortDisplayName": "Effort name",
+      "removeCustomEffort": "Remove effort",
+      "addCustomEffort": "Add effort",
       "saving": "Saving…",
       "runtimeConfigSaved": "{name} configuration saved.",
       "runtimeConfiguredAndStarted": "{name} configured and started.",

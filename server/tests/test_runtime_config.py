@@ -174,6 +174,16 @@ def _runtime_url(connector_id: str) -> str:
     return f"/connectors/{connector_id}/runtimes/codex"
 
 
+def _assert_runtime_start_config_revision(
+    params: dict[str, Any],
+    config: dict[str, Any],
+) -> None:
+    assert params["runtimeId"] == "codex"
+    assert params["config"] == config
+    assert isinstance(params["configRevision"], int)
+    assert params["configRevision"] > 0
+
+
 def test_inventory_exposes_runtime_owned_dynamic_schema(tmp_path):
     client, _, connector_id, headers = _make_client(tmp_path)
 
@@ -318,6 +328,7 @@ def test_activation_and_deactivation_drive_connector_lifecycle(tmp_path):
     assert deactivated.json()["active"] is False
     assert deactivated.json()["status"] == "stopped"
     assert [request[1] for request in rpc.requests] == ["runtime.start", "runtime.stop"]
+    _assert_runtime_start_config_revision(rpc.requests[0][2], {})
 
 
 def test_removed_agent_catalog_route_does_not_start_runtime(tmp_path):
@@ -510,6 +521,10 @@ def test_editing_active_config_restarts_runtime(tmp_path):
         "runtime.stop",
         "runtime.start",
     ]
+    _assert_runtime_start_config_revision(
+        rpc.requests[-1][2],
+        {"executablePath": "/new/codex"},
+    )
 
 
 def test_start_failure_remains_configured_active_and_visible_as_error(tmp_path):

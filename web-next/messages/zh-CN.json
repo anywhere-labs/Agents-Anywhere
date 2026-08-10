@@ -339,6 +339,32 @@
         "fullAccess": {
           "label": "完全访问权限",
           "description": "可不受限制地访问互联网和您电脑上的任何文件"
+        },
+        "claude": {
+          "default": {
+            "label": "询问权限",
+            "description": "使用 Claude Code 默认的高风险工具确认方式。"
+          },
+          "acceptEdits": {
+            "label": "接受编辑",
+            "description": "自动接受文件编辑；其他高风险工具仍会询问。"
+          },
+          "plan": {
+            "label": "计划模式",
+            "description": "允许规划，但不执行写入或命令。"
+          },
+          "auto": {
+            "label": "自动模式",
+            "description": "使用 Claude Code 的自动分类器判断高风险操作。"
+          },
+          "dontAsk": {
+            "label": "不询问",
+            "description": "拒绝未获批准的工具，不再弹出权限确认。"
+          },
+          "bypassPermissions": {
+            "label": "完全访问权限",
+            "description": "跳过权限确认，允许不受限制地使用工具。"
+          }
         }
       },
       "selectionSettings": "设置",
@@ -446,9 +472,15 @@
       "activateRuntime": "激活 {name}",
       "deactivateRuntime": "停用 {name}",
       "runtimeConfigTitle": "配置 {name}",
-      "runtimeConfigDescription": "这些设置决定 Connector 如何启动 Runtime。模型和权限在新建会话时选择。",
+      "runtimeConfigDescription": "Runtime 配置。",
       "runtimeSchemaUnavailable": "这个 Runtime 没有提供配置 Schema。",
       "runtimeConfigInvalid": "配置内容不合法。",
+      "runtimeConfigExecutablePath": "Claude 可执行文件路径（可选）",
+      "runtimeConfigExecutablePathDescription": "可选。只有 Claude Code 不在默认 PATH 时才需要填写。",
+      "runtimeConfigEnvironment": "环境变量（可选）",
+      "runtimeConfigEnvironmentDescription": "启动这个 Runtime 时追加或覆盖的环境变量。",
+      "runtimeConfigCustomModels": "自定义模型（可选）",
+      "runtimeConfigCustomModelsDescription": "手动添加要显示在模型选择器里的模型，以及每个模型可用的推理强度。",
       "resetAllDefaults": "全部恢复默认值",
       "noEnvironmentOverrides": "没有环境变量覆盖。",
       "environmentName": "变量名",
@@ -457,6 +489,17 @@
       "unset": "移除继承",
       "removeEnvironmentVariable": "删除环境变量",
       "addEnvironmentVariable": "添加变量",
+      "noCustomModels": "还没有自定义模型。",
+      "customModelId": "模型 ID",
+      "customModelDisplayName": "展示名称",
+      "removeCustomModel": "删除自定义模型",
+      "addCustomModel": "添加自定义模型",
+      "customModelEfforts": "推理强度",
+      "noCustomEfforts": "未设置推理强度。",
+      "customEffortId": "强度 ID",
+      "customEffortDisplayName": "强度名称",
+      "removeCustomEffort": "删除推理强度",
+      "addCustomEffort": "添加强度",
       "saving": "保存中…",
       "runtimeConfigSaved": "已保存 {name} 的配置。",
       "runtimeConfiguredAndStarted": "已配置并启动 {name}。",

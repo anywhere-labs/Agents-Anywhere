@@ -38,4 +38,3 @@ struct V2WorkspaceFilePreviewToken: Decodable, Hashable {
     let expiresAt: String
     let serverTime: String
 }
-
