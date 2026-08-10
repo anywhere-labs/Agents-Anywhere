@@ -78,7 +78,16 @@ class RuntimeSyncRunner:
                     timeline_sync_count,
                 )
                 for session in sessions:
-                    await self.sync_existing_session(runtime, session)
+                    try:
+                        await self.sync_existing_session(runtime, session)
+                    except Exception:  # noqa: BLE001
+                        logger.exception(
+                            "existing session sync failed runtime={} session_id={} external_session_id={}",
+                            session.runtime,
+                            session.session_id,
+                            session.external_session_id,
+                        )
+                        continue
                 logger.info(
                     "existing session sync runtime completed runtime={} sessions={} elapsed_ms={:.1f}",
                     runtime_id,

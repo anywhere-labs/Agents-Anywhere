@@ -809,7 +809,7 @@ async def _test_codex_runtime_thread_compacted_notification_upserts_timeline_ite
     assert host.state_updates[-1]["metadata"]["source"] == "codex.thread/compacted"
 
 
-def test_codex_compaction_snapshot_reuses_started_timeline_item() -> None:
+def test_codex_compaction_snapshot_uses_item_level_identity() -> None:
     accumulator = CodexTimelineAccumulator()
     started = accumulator.item_from_notification(
         session_id="sess_1",
@@ -835,9 +835,39 @@ def test_codex_compaction_snapshot_reuses_started_timeline_item() -> None:
     )
 
     assert len(snapshot_items) == 1
-    assert snapshot_items[0].id == started.id
+    assert snapshot_items[0].id == "compact_1"
+    assert snapshot_items[0].id != started.id
     assert snapshot_items[0].content["kind"] == "compact"
     assert snapshot_items[0].content["state"] == "completed"
+
+
+def test_codex_compaction_snapshot_allows_multiple_compaction_items() -> None:
+    accumulator = CodexTimelineAccumulator()
+
+    snapshot_items = accumulator.items_from_snapshot_projections(
+        session_id="sess_1",
+        external_session_id="thread_1",
+        projections=(
+            CodexTimelineProjection(
+                native_id="item-160",
+                raw_type="contextCompaction",
+                role="system",
+                turn_id="turn_1",
+            ),
+            CodexTimelineProjection(
+                native_id="item-259",
+                raw_type="contextCompaction",
+                role="system",
+                turn_id="turn_2",
+            ),
+        ),
+    )
+
+    assert [item.id for item in snapshot_items] == ["item-160", "item-259"]
+    assert [item.source["itemId"] for item in snapshot_items] == [
+        "item-160",
+        "item-259",
+    ]
 
 
 def test_codex_compaction_snapshot_skips_transcript_message_mirrors() -> None:

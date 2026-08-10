@@ -1107,6 +1107,10 @@ def test_runtime_sync_uses_runtime_timeline_hook_when_available() -> None:
     asyncio.run(_exercise_runtime_sync_uses_runtime_timeline_hook_when_available())
 
 
+def test_runtime_sync_continues_after_single_session_ingest_failure() -> None:
+    asyncio.run(_exercise_runtime_sync_continues_after_single_session_ingest_failure())
+
+
 async def _exercise_runtime_host_notification_ingest_fallback() -> None:
     client = _client()
     enqueued: list[tuple[str, dict[str, Any]]] = []
@@ -1318,6 +1322,78 @@ async def _exercise_runtime_sync_uses_runtime_timeline_hook_when_available() -> 
         "session.state.updated",
         "notice.upsert",
     ]
+
+
+async def _exercise_runtime_sync_continues_after_single_session_ingest_failure() -> None:
+    class IsolatedFailureRuntime(FakeAgentRuntime):
+        async def list_sessions(
+            self,
+            limit: int = 100,
+            cursor: str | None = None,
+            force: bool = False,
+        ) -> tuple[SessionMeta, ...]:
+            self.calls.append(
+                (
+                    "session.discover",
+                    {"limit": limit, "cursor": cursor, "force": force},
+                )
+            )
+            return (
+                SessionMeta(
+                    session_id="sess_fails",
+                    external_session_id="thr_fails",
+                    runtime=self.runtime_id,
+                    metadata={"sync": {"requires_timeline_sync": True}},
+                ),
+                SessionMeta(
+                    session_id="sess_succeeds",
+                    external_session_id="thr_succeeds",
+                    runtime=self.runtime_id,
+                    metadata={"sync": {"requires_timeline_sync": True}},
+                ),
+            )
+
+        async def prepare_session_timeline_sync(
+            self,
+            session_id: str,
+            external_session_id: str | None = None,
+        ) -> PreparedSessionTimelineSync | None:
+            _ = external_session_id
+            self.calls.append(("session.prepareTimeline", {"sessionId": session_id}))
+
+            async def commit() -> None:
+                self.calls.append(("session.commitTimeline", {"sessionId": session_id}))
+
+            return PreparedSessionTimelineSync(snapshot=None, commit=commit)
+
+    runtime = IsolatedFailureRuntime()
+    host = RecordingRuntimeHost()
+    ingested_sessions: list[str] = []
+
+    async def ingest_notifications(notifications: list[dict[str, Any]]) -> None:
+        session_id = notifications[0]["params"]["sessionId"]
+        ingested_sessions.append(session_id)
+        if session_id == "sess_fails":
+            raise RuntimeError("ingest failed")
+
+    runner = RuntimeSyncRunner(
+        config=ConnectorConfig(
+            server_url="http://127.0.0.1:8000",
+            connector_id="conn_1",
+            connector_token="token",
+        ),
+        supervisor=FakeRuntimeSupervisor(runtime),  # type: ignore[arg-type]
+        host=host,
+        preferences_reader=dict,
+        send_notification=unused_notification_sender,
+        ingest_notifications=ingest_notifications,
+    )
+
+    await runner.sync_existing_once()
+
+    assert ingested_sessions == ["sess_fails", "sess_succeeds"]
+    assert ("session.commitTimeline", {"sessionId": "sess_fails"}) not in runtime.calls
+    assert ("session.commitTimeline", {"sessionId": "sess_succeeds"}) in runtime.calls
 
 
 def test_connector_refreshes_expiring_access_token_before_ingest() -> None:
