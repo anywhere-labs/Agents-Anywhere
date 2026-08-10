@@ -45,7 +45,9 @@ final class AppState: ObservableObject {
     private let keychain = KeychainStore()
     private let serverDefaultsKey = "agentsAnywhere.serverURL"
     private let tokenAccount = "accessToken"
+    private let dashboardClientId = "ios-dashboard-\(UUID().uuidString)"
     private var lastDashboardRefreshAt: Date?
+    private var dashboardUpdatesTask: Task<Void, Never>?
 
     init() {
         Task { await restoreSession() }
@@ -134,6 +136,7 @@ final class AppState: ObservableObject {
             me = try await client.me(token: auth.accessToken)
             route = .signedIn
             await refreshDashboard()
+            startDashboardUpdates()
         } catch {
             authError = error.localizedDescription
         }
@@ -164,6 +167,7 @@ final class AppState: ObservableObject {
             if showSignedInRoute {
                 route = .signedIn
                 await refreshDashboard()
+                startDashboardUpdates()
             }
         } catch {
             authError = error.localizedDescription
@@ -182,6 +186,7 @@ final class AppState: ObservableObject {
             if showSignedInRoute {
                 route = .signedIn
                 await refreshDashboard()
+                startDashboardUpdates()
             }
         } catch {
             authError = error.localizedDescription
@@ -233,6 +238,7 @@ final class AppState: ObservableObject {
             if showSignedInRoute {
                 route = .signedIn
                 await refreshDashboard()
+                startDashboardUpdates()
             }
         } catch {
             authError = error.localizedDescription
@@ -273,6 +279,17 @@ final class AppState: ObservableObject {
             connectorsError = message
         }
         dashboardError = sessionsError ?? connectorsError
+    }
+
+    /// Opens the dashboard WebSocket and continuously replaces the global Connector and Session projections.
+    func startDashboardUpdates() {
+        guard dashboardUpdatesTask == nil else { return }
+        guard let services = makeV2Services() else { return }
+
+        dashboardUpdatesTask = Task { [weak self] in
+            guard let self else { return }
+            await receiveDashboardUpdates(services: services)
+        }
     }
 
     func renameSession(sessionId: V2SessionID, title: String) async -> Bool {
@@ -491,6 +508,8 @@ final class AppState: ObservableObject {
 
     /// Deletes the persisted access token before clearing all authenticated in-memory state.
     func signOutAndDeleteCredentials(showSignedOutRoute: Bool = true) throws {
+        dashboardUpdatesTask?.cancel()
+        dashboardUpdatesTask = nil
         try keychain.delete(account: tokenAccount)
         me = nil
         serverURL = nil
@@ -520,12 +539,16 @@ final class AppState: ObservableObject {
     func showSignedInRoute() async {
         route = .signedIn
         await refreshDashboard()
+        startDashboardUpdates()
     }
 
     func activateSignedInRoute() {
         serverConnectionIssue = nil
         route = .signedIn
-        Task { await refreshDashboard() }
+        Task {
+            await refreshDashboard()
+            startDashboardUpdates()
+        }
     }
 
     /// Performs authenticated network I/O and refreshes the initial signed-in state.
@@ -535,6 +558,43 @@ final class AppState: ObservableObject {
         serverConnectionIssue = nil
         route = .signedIn
         await refreshDashboard()
+        startDashboardUpdates()
+    }
+
+    /// Receives server-pushed dashboard snapshots and reconnects after transient failures.
+    private func receiveDashboardUpdates(services: V2ClientServices) async {
+        while !Task.isCancelled {
+            do {
+                let updates = try await services.dashboard.updates(clientId: dashboardClientId)
+                for try await snapshot in updates {
+                    if Task.isCancelled { return }
+                    applyDashboardSnapshot(snapshot)
+                }
+            } catch {
+                if Task.isCancelled { return }
+            }
+
+            do {
+                try await Task.sleep(for: .seconds(2))
+            } catch {
+                return
+            }
+        }
+    }
+
+    private func applyDashboardSnapshot(_ snapshot: V2DashboardSnapshot) {
+        guard snapshot.type == "dashboard.snapshot" else { return }
+        if connectors != snapshot.connectors {
+            connectors = snapshot.connectors
+        }
+        if sessions != snapshot.sessions {
+            sessions = snapshot.sessions
+        }
+        hasLoadedConnectors = true
+        hasLoadedSessions = true
+        connectorsError = nil
+        sessionsError = nil
+        dashboardError = nil
     }
 
     private func handleSessionRestoreFailure(_ error: Error) {
