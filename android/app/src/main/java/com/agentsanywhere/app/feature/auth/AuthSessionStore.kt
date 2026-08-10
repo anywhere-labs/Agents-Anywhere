@@ -58,7 +58,19 @@ class AuthSessionStore(context: Context) {
             .apply()
     }
 
+    @Synchronized
     fun clearAuthSession() {
+        clearAuthSessionKeepingServerUrl()
+    }
+
+    @Synchronized
+    fun clearAuthSessionIfTokenMatches(accessToken: String): Boolean {
+        if (accessToken.isBlank() || readAccessToken() != accessToken) return false
+        clearAuthSessionKeepingServerUrl()
+        return true
+    }
+
+    private fun clearAuthSessionKeepingServerUrl() {
         val serverUrl = readServerUrl()
         preferences.edit()
             .clear()
