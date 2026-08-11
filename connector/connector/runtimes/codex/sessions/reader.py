@@ -241,14 +241,16 @@ class CodexSessionReader:
             projections = await asyncer.asyncify(
                 codex_timeline.timeline_projections_from_sdk_thread
             )(thread=result.thread, limit=limit)
-            items = self.timeline.items_from_snapshot_projections(
+            items = await asyncer.asyncify(
+                self.timeline.items_from_snapshot_projections
+            )(
                 session_id=session_id,
                 external_session_id=external_session_id,
                 projections=projections,
             )
         elif self.timeline is not None:
             thread = dict(result.thread)
-            items = self.timeline.items_from_thread_snapshot(
+            items = await asyncer.asyncify(self.timeline.items_from_thread_snapshot)(
                 session_id=session_id,
                 external_session_id=external_session_id,
                 thread=thread,
@@ -256,7 +258,9 @@ class CodexSessionReader:
             )
         else:
             thread = dict(result.thread)
-            items = codex_timeline.timeline_items_from_thread(
+            items = await asyncer.asyncify(
+                codex_timeline.timeline_items_from_thread
+            )(
                 session_id=session_id,
                 external_session_id=external_session_id,
                 thread=thread,
