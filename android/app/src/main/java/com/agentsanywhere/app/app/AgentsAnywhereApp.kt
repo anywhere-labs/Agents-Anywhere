@@ -1,5 +1,8 @@
 package com.agentsanywhere.app.app
 
+import android.content.Context
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.net.Uri
 import android.widget.Toast
 import androidx.compose.animation.AnimatedContent
@@ -12,6 +15,7 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -22,6 +26,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.agentsanywhere.app.api.ApiClient
 import com.agentsanywhere.app.api.AuthApi
 import com.agentsanywhere.app.api.DevicesApi
 import com.agentsanywhere.app.api.FilesApi
@@ -82,6 +90,8 @@ import com.agentsanywhere.app.ui.screens.home.HomeTab
 import com.agentsanywhere.app.ui.screens.home.HomeScreen
 import com.agentsanywhere.app.ui.screens.home.NewSessionScreen
 import com.agentsanywhere.app.ui.screens.terminal.TerminalScreen
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -112,41 +122,47 @@ fun AgentsAnywhereApp(
     var selectedDeviceId by rememberSaveable { mutableStateOf<String?>(null) }
     var deviceDetailReturnDestinationName by rememberSaveable { mutableStateOf(AppDestination.Devices.name) }
     var selectedHomeTabName by rememberSaveable { mutableStateOf(HomeTab.Active.name) }
-    val authController = remember(context, sessionStore) {
+    val unauthorizedTokens = remember { Channel<String>(capacity = Channel.UNLIMITED) }
+    val apiClient = remember(unauthorizedTokens) {
+        ApiClient(onUnauthorized = { accessToken ->
+            unauthorizedTokens.trySend(accessToken)
+        })
+    }
+    val authController = remember(context, sessionStore, apiClient) {
         AuthController(
-            api = AuthApi(),
+            api = AuthApi(apiClient),
             sessionStore = sessionStore,
         )
     }
-    val sessionsController = remember(context, sessionStore) {
+    val sessionsController = remember(context, sessionStore, apiClient) {
         SessionsController(
-            sessionsApi = SessionsApi(),
-            devicesApi = DevicesApi(),
-            filesApi = FilesApi(),
+            sessionsApi = SessionsApi(apiClient),
+            devicesApi = DevicesApi(apiClient),
+            filesApi = FilesApi(apiClient),
             sessionStore = sessionStore,
         )
     }
-    val devicesController = remember(context, sessionStore) {
+    val devicesController = remember(context, sessionStore, apiClient) {
         DevicesController(
-            devicesApi = DevicesApi(),
+            devicesApi = DevicesApi(apiClient),
             sessionStore = sessionStore,
         )
     }
-    val sessionDetailController = remember(context, sessionStore) {
+    val sessionDetailController = remember(context, sessionStore, apiClient) {
         SessionDetailController(
-            sessionsApi = SessionsApi(),
+            sessionsApi = SessionsApi(apiClient),
             sessionStore = sessionStore,
         )
     }
-    val filesController = remember(context, sessionStore) {
+    val filesController = remember(context, sessionStore, apiClient) {
         FilesController(
-            filesApi = FilesApi(),
+            filesApi = FilesApi(apiClient),
             sessionStore = sessionStore,
         )
     }
-    val terminalController = remember(context, sessionStore) {
+    val terminalController = remember(context, sessionStore, apiClient) {
         TerminalController(
-            terminalApi = TerminalApi(),
+            terminalApi = TerminalApi(apiClient),
             sessionStore = sessionStore,
         )
     }
@@ -166,6 +182,62 @@ fun AgentsAnywhereApp(
     }
     var isRefreshingSessions by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+    val lifecycleOwner = LocalLifecycleOwner.current
+    fun clearSessionAndReturnToLogin(expectedToken: String? = null) {
+        val didClearSession = if (expectedToken == null) {
+            authController.signOut()
+            true
+        } else {
+            sessionStore.clearAuthSessionIfTokenMatches(expectedToken)
+        }
+        if (!didClearSession) return
+
+        remoteTerminalPool.disposeLocal()
+        sessionsState = SessionsState()
+        isRefreshingSessions = false
+        selectedSessionId = null
+        selectedDeviceId = null
+        pendingMobileLoginQr = null
+        oauthFlow = null
+        oauthErrorMessage = null
+        destinationName = AppDestination.LoginMethods.name
+    }
+
+    LaunchedEffect(unauthorizedTokens) {
+        for (accessToken in unauthorizedTokens) {
+            clearSessionAndReturnToLogin(expectedToken = accessToken)
+        }
+    }
+
+    DisposableEffect(lifecycleOwner, hasAuthSession, authController, context) {
+        if (!hasAuthSession) {
+            return@DisposableEffect onDispose {}
+        }
+
+        var validationJob: Job? = null
+        fun validateSessionIfOnline() {
+            if (!context.hasUsableNetwork() || validationJob?.isActive == true) return
+            validationJob = scope.launch {
+                authController.me()
+            }
+        }
+
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_START) {
+                validateSessionIfOnline()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        if (lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
+            validateSessionIfOnline()
+        }
+
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            validationJob?.cancel()
+        }
+    }
+
     suspend fun refreshSessions(showInitialLoading: Boolean, showRefreshIndicator: Boolean) {
         val request = sessionsState.beginSessionRequest()
         sessionsState = request.state
@@ -340,12 +412,7 @@ fun AgentsAnywhereApp(
         onClearAvatar = { authController.clearAvatar() },
         onChangePassword = { password -> authController.changePassword(password) },
         onSignOut = {
-            remoteTerminalPool.disposeLocal()
-            authController.signOut()
-            sessionsState = SessionsState()
-            selectedSessionId = null
-            selectedDeviceId = null
-            destinationName = AppDestination.LoginMethods.name
+            clearSessionAndReturnToLogin()
         },
         onRenameDevice = { connectorId, name ->
             if (!hasAuthSession) {
@@ -783,6 +850,13 @@ private fun AgentsAnywhereNavHost(
             onClaimDevicePairCode = onClaimDevicePairCode,
         )
     }
+}
+
+private fun Context.hasUsableNetwork(): Boolean {
+    val connectivityManager = getSystemService(ConnectivityManager::class.java)
+    val activeNetwork = connectivityManager.activeNetwork ?: return false
+    val capabilities = connectivityManager.getNetworkCapabilities(activeNetwork) ?: return false
+    return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
 }
 
 @Preview(showBackground = true, widthDp = 390, heightDp = 844)

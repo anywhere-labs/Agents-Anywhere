@@ -60,7 +60,19 @@ class AuthSessionStore(context: Context) {
             .apply()
     }
 
+    @Synchronized
     fun clearAuthSession() {
+        clearAuthSessionKeepingServerUrl()
+    }
+
+    @Synchronized
+    fun clearAuthSessionIfTokenMatches(accessToken: String): Boolean {
+        if (!shouldClearAuthSession(readAccessToken(), accessToken)) return false
+        clearAuthSessionKeepingServerUrl()
+        return true
+    }
+
+    private fun clearAuthSessionKeepingServerUrl() {
         val serverUrl = readServerUrl()
         preferences.edit()
             .clear()
@@ -83,4 +95,8 @@ class AuthSessionStore(context: Context) {
         private const val KEY_REFRESH_TOKEN = "refresh_token"
         private const val KEY_REFRESH_EXPIRES_AT = "refresh_expires_at"
     }
+}
+
+internal fun shouldClearAuthSession(currentAccessToken: String, unauthorizedAccessToken: String): Boolean {
+    return unauthorizedAccessToken.isNotBlank() && currentAccessToken == unauthorizedAccessToken
 }
