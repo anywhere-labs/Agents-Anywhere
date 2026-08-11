@@ -56,7 +56,7 @@ class CodexTimelineAccumulator:
         if projection is None:
             return None
         projection = self._attach_client_message_id(
-            session_id, external_session_id, projection
+            session_id, external_session_id, projection, fallback_index=0
         )
         projection = self.stabilize_projection_identity(
             external_session_id=external_session_id,
@@ -126,7 +126,7 @@ class CodexTimelineAccumulator:
                 raw["turnId"] = turn_id
             projection = codex_timeline.timeline_projection_from_raw(raw)
             projection = self._attach_client_message_id(
-                session_id, external_session_id, projection
+                session_id, external_session_id, projection, fallback_index=index
             )
             projection = self.stabilize_projection_identity(
                 external_session_id=external_session_id,
@@ -181,7 +181,7 @@ class CodexTimelineAccumulator:
         items: list[RuntimeTimelineItem] = []
         for index, projection in enumerate(projections):
             projection = self._attach_client_message_id(
-                session_id, external_session_id, projection
+                session_id, external_session_id, projection, fallback_index=index
             )
             projection = self.stabilize_projection_identity(
                 external_session_id=external_session_id,
@@ -231,13 +231,10 @@ class CodexTimelineAccumulator:
         snapshot_items = compact_filtered_thread_snapshot_items(raw_items)
         for index, raw_item in enumerate(limit_snapshot_items(snapshot_items, limit)):
             raw = dict(raw_item)
-            if self._pending_messages is not None:
-                self._pending_messages.attach_to_raw_item(
-                    session_id=session_id,
-                    external_session_id=external_session_id,
-                    raw=raw,
-                )
             projection = codex_timeline.timeline_projection_from_raw(raw)
+            projection = self._attach_client_message_id(
+                session_id, external_session_id, projection, fallback_index=index
+            )
             projection = self.stabilize_projection_identity(
                 external_session_id=external_session_id,
                 projection=projection,
@@ -286,7 +283,7 @@ class CodexTimelineAccumulator:
         items: list[RuntimeTimelineItem] = []
         for index, projection in enumerate(projections):
             projection = self._attach_client_message_id(
-                session_id, external_session_id, projection
+                session_id, external_session_id, projection, fallback_index=index
             )
             projection = self.stabilize_projection_identity(
                 external_session_id=external_session_id,
@@ -323,6 +320,9 @@ class CodexTimelineAccumulator:
             fallback_index=fallback_index,
         )
         if not semantic_keys:
+            return projection
+        if projection.platform_id is not None:
+            self.record_semantic_identity(semantic_keys, projection.platform_id)
             return projection
         if projection.explicit_derived_key is not None:
             for semantic_key in semantic_keys:
@@ -384,13 +384,32 @@ class CodexTimelineAccumulator:
             fallback_index=fallback_index,
             event=event,
         )
-        return codex_item.to_platform_item(session_id=session_id, order_seq=order_seq)
+        platform_item = codex_item.to_platform_item(
+            session_id=session_id,
+            order_seq=order_seq,
+        )
+        if self._pending_messages is not None:
+            self._pending_messages.record_platform_item(
+                session_id=session_id,
+                external_session_id=external_session_id,
+                platform_item_id=platform_item.id,
+                native_item_id=projection.native_id,
+                client_message_id=projection.client_message_id,
+                derived_key=projection.derived_key(fallback_index),
+                raw_type=projection.raw_type,
+                role=projection.effective_role(),
+                turn_id=projection.turn_id,
+                text=projection.pending_message_text(),
+                attachments=projection.attachments,
+            )
+        return platform_item
 
     def _attach_client_message_id(
         self,
         session_id: str,
         external_session_id: str,
         projection: codex_timeline.CodexTimelineProjection,
+        fallback_index: int,
     ) -> codex_timeline.CodexTimelineProjection:
         if self._pending_messages is None:
             return projection
@@ -398,6 +417,8 @@ class CodexTimelineAccumulator:
             session_id=session_id,
             external_session_id=external_session_id,
             native_item_id=projection.native_id,
+            client_message_id=projection.client_message_id,
+            derived_key=projection.derived_key(fallback_index),
             raw_type=projection.raw_type,
             role=projection.effective_role(),
             text=projection.pending_message_text(),
@@ -405,11 +426,14 @@ class CodexTimelineAccumulator:
         )
         if match is None:
             return projection
-        return projection.with_pending_message(
+        projection = projection.with_pending_message(
             client_message_id=match.client_message_id,
             text=match.text,
             attachments=match.attachments,
         )
+        if match.platform_item_id is not None:
+            projection = projection.with_platform_id(match.platform_item_id)
+        return projection
 
     def event_delta(self, event: CodexSdkEvent) -> str:
         return (

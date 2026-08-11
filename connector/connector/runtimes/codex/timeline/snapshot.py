@@ -24,6 +24,7 @@ def timeline_items_from_thread(
                 session_id=session_id,
                 external_session_id=external_session_id,
                 raw=raw,
+                fallback_index=index,
             )
         codex_item = timeline_item_from_projection(
             timeline_projection_from_raw(raw),

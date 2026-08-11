@@ -31,6 +31,7 @@ from openai_codex.models import (
     TurnCompletedNotification,
 )
 
+from connector.core.json_kv import JsonKeyValueStore
 from connector.runtime_protocol import (
     CAPABILITY_CATALOG_MODEL,
     CAPABILITY_RUNTIME_ATTACHMENT,
@@ -3861,6 +3862,113 @@ async def _test_codex_runtime_preserves_pending_user_attachments_after_codex_ech
 
     item = host.timeline_item_upserts[-1]
     assert item.id == "item_user_file"
+    assert item.source["clientMessageId"] == "cm_file_1"
+    assert item.content == {
+        "kind": "markdown",
+        "text": "read this",
+        "format": "markdown",
+        "attachments": [
+            {
+                "fileId": "file_1",
+                "name": "note.txt",
+                "mediaType": "text/plain",
+                "size": 16,
+            }
+        ],
+    }
+
+
+def test_codex_runtime_persists_client_message_binding_for_snapshot_echo(
+    tmp_path: Path,
+) -> None:
+    asyncio.run(
+        _test_codex_runtime_persists_client_message_binding_for_snapshot_echo(tmp_path)
+    )
+
+
+async def _test_codex_runtime_persists_client_message_binding_for_snapshot_echo(
+    tmp_path: Path,
+) -> None:
+    client = FakeCodexClient()
+    host = FakeHost()
+    kv_store = JsonKeyValueStore(tmp_path / "connector-kv.json")
+    runtime = CodexRuntime(
+        config=_config(),
+        host=host,
+        client=client,
+        client_message_kv=kv_store,
+    )
+
+    host.attachments["file_1"] = RuntimeAttachmentContent(
+        file_id="file_1",
+        name="note.txt",
+        media_type="text/plain",
+        content=b"hello attachment",
+    )
+    await runtime.start_turn(
+        "sess_1",
+        "thread_1",
+        "read this",
+        attachments=(
+            RuntimeAttachment(
+                file_id="file_1",
+                name="note.txt",
+                media_type="text/plain",
+                size=16,
+            ),
+        ),
+        client_message_id="cm_file_1",
+    )
+    await runtime._handle_notification(
+        {
+            "method": "item/completed",
+            "params": {
+                "platformSessionId": "sess_1",
+                "threadId": "thread_1",
+                "turnId": "turn_new",
+                "item": {
+                    "id": "live_user_item",
+                    "type": "userMessage",
+                    "clientMessageId": "cm_file_1",
+                    "text": "read this\n\nAttached file: note.txt\nPath: /tmp/note.txt\nFile content:\nhello attachment",
+                    "status": "completed",
+                },
+            },
+        }
+    )
+
+    restarted_host = FakeHost()
+    restarted_client = FakeCodexClient()
+    restarted_client.results["thread/read"] = {
+        "thread": {
+            "id": "thread_1",
+            "items": [
+                {
+                    "id": "item-1",
+                    "type": "userMessage",
+                    "clientMessageId": "cm_file_1",
+                    "text": "read this\n\n[Attached file: note.txt (text/plain, 16 bytes) at /tmp/file_1-note.txt]",
+                    "status": "completed",
+                },
+            ],
+        }
+    }
+    restarted_runtime = CodexRuntime(
+        config=_config(),
+        host=restarted_host,
+        client=restarted_client,
+        client_message_kv=kv_store,
+    )
+
+    snapshot = await restarted_runtime.get_session_snapshot(
+        "sess_1",
+        external_session_id="thread_1",
+    )
+
+    assert len(snapshot.items) == 1
+    item = snapshot.items[0]
+    assert item.id == "live_user_item"
+    assert item.source["itemId"] == "item-1"
     assert item.source["clientMessageId"] == "cm_file_1"
     assert item.content == {
         "kind": "markdown",

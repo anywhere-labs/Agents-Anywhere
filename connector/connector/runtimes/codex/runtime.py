@@ -4,8 +4,10 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from connector.core.json_kv import JsonKeyValueStore
 from connector.runtime_protocol import (
     AgentRuntime,
+    PreparedSessionTimelineSync,
     RuntimeAttachment,
     RuntimeCapabilitySet,
     RuntimeCommand,
@@ -15,7 +17,6 @@ from connector.runtime_protocol import (
     RuntimeModelCatalog,
     RuntimeOperationResult,
     RuntimePermissionCatalog,
-    PreparedSessionTimelineSync,
     RuntimeSessionStateCache,
     RuntimeTimelineSnapshot,
     SessionMeta,
@@ -50,6 +51,7 @@ class CodexRuntime(AgentRuntime):
     config: RuntimeConfig
     host: RuntimeHostClient
     client: CodexRuntimeClient | None = None
+    client_message_kv: JsonKeyValueStore | None = None
     runtime_version: str = "native-0"
 
     def __post_init__(self) -> None:
@@ -60,7 +62,10 @@ class CodexRuntime(AgentRuntime):
             on_state_updated=self.publish_session_capabilities_for_state,
         )
         self._notices = CodexNoticeRegistry()
-        self._pending_messages = PendingClientMessageRegistry()
+        self._pending_messages = PendingClientMessageRegistry(
+            connector_id=self.host.connector_id,
+            kv_store=self.client_message_kv,
+        )
         self._timeline = CodexTimelineAccumulator(
             pending_messages=self._pending_messages,
         )

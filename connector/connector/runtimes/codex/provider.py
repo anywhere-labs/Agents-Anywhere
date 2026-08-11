@@ -6,6 +6,7 @@ from typing import Any
 
 from jsonschema import Draft202012Validator
 
+from connector.core.json_kv import JsonKeyValueStore
 from connector.runtime_protocol import (
     AgentRuntime,
     RuntimeConfig,
@@ -161,4 +162,9 @@ class CodexProvider(RuntimeProvider):
         if isinstance(sdk, dict) and not sdk.get("available", True):
             raise RuntimeInvalidRequestError("Codex SDK is not available")
         client = self._sdk_client_factory(config)
-        return CodexRuntime(config=config, host=host, client=client)
+        return CodexRuntime(
+            config=config,
+            host=host,
+            client=client,
+            client_message_kv=JsonKeyValueStore.default(),
+        )
