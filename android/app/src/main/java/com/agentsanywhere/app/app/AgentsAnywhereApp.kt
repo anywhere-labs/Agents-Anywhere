@@ -48,6 +48,8 @@ import com.agentsanywhere.app.feature.sessions.SessionsController
 import com.agentsanywhere.app.feature.sessions.SessionsState
 import com.agentsanywhere.app.feature.sessions.SessionBatchUpdate
 import com.agentsanywhere.app.feature.sessions.NewSessionDirectory
+import com.agentsanywhere.app.feature.sessions.NewSessionCreateDraft
+import com.agentsanywhere.app.feature.sessions.NewSessionCreateOutcome
 import com.agentsanywhere.app.feature.sessions.NewSessionModelCatalog
 import com.agentsanywhere.app.feature.sessions.NewSessionPermissionCatalog
 import com.agentsanywhere.app.feature.sessions.NewSessionRuntimeCapabilities
@@ -572,20 +574,27 @@ fun AgentsAnywhereApp(
                     }
             }
         },
-        onCreateSession = { title, connectorId, runtime, cwd ->
+        onCreateSession = { draft ->
             if (!hasAuthSession) {
-                Result.failure(IllegalStateException("Sign in again to create a session."))
+                NewSessionCreateOutcome.Failed(IllegalStateException("Sign in again to create a session."))
             } else {
-                sessionsController.createSession(
-                    title = title,
-                    connectorId = connectorId,
-                    runtime = runtime,
-                    cwd = cwd,
+                val refresh = sessionsState.beginSessionRequest()
+                sessionsState = refresh.state
+                val outcome = sessionsController.createAndStartSession(
+                    draft = draft,
                     devices = sessionsState.devices,
-                ).onSuccess { session ->
-                    val completion = sessionsState.beginSessionRequest(listOf(session.id))
-                    sessionsState = completion.state.withPatchedSession(session, completion.generation)
+                )
+                val refreshedState = when (outcome) {
+                    is NewSessionCreateOutcome.Created -> outcome.refreshedState
+                    is NewSessionCreateOutcome.Failed -> outcome.refreshedState
                 }
+                if (refreshedState != null) {
+                    sessionsState = sessionsState.mergedWithRefresh(refreshedState, refresh.generation)
+                }
+                if (outcome is NewSessionCreateOutcome.Created) {
+                    sessionsState = sessionsState.withPatchedSession(outcome.session, refresh.generation)
+                }
+                outcome
             }
         },
         onListDirectory = { connectorId, root, path ->
@@ -674,7 +683,7 @@ private fun AgentsAnywhereNavHost(
     onRenameSession: suspend (String, String) -> Result<com.agentsanywhere.app.model.AgentSession>,
     onSetSessionPinned: suspend (String, Boolean) -> Result<com.agentsanywhere.app.model.AgentSession>,
     onSetSessionArchived: suspend (String, Boolean) -> Result<com.agentsanywhere.app.model.AgentSession>,
-    onCreateSession: suspend (String, String, String, String) -> Result<com.agentsanywhere.app.model.AgentSession>,
+    onCreateSession: suspend (NewSessionCreateDraft) -> NewSessionCreateOutcome,
     onListDirectory: suspend (String, String, String) -> Result<NewSessionDirectory>,
     onListNewSessionRuntimes: suspend (String) -> Result<DeviceRuntimeList>,
     onLoadNewSessionRuntimeCapabilities: suspend (String, String) -> Result<NewSessionRuntimeCapabilities>,

@@ -4,5 +4,3 @@ notice|approval-resolve|app/src/main/java/com/agentsanywhere/app/api/SessionsApi
 runtime|root-agent-route|app/src/main/java/com/agentsanywhere/app/api/SessionsApi.kt|1
 session|session-interrupt|app/src/main/java/com/agentsanywhere/app/api/SessionsApi.kt|1
 session|session-messages|app/src/main/java/com/agentsanywhere/app/api/SessionsApi.kt|1
-session|session-runtime-settings|app/src/main/java/com/agentsanywhere/app/api/SessionsApi.kt|2
-session|session-state|app/src/main/java/com/agentsanywhere/app/api/SessionsApi.kt|1

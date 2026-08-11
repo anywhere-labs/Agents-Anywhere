@@ -2,29 +2,23 @@ package com.agentsanywhere.app.feature.sessiondetail
 
 import com.agentsanywhere.app.api.ApiException
 import com.agentsanywhere.app.api.RemoteApproval
-import com.agentsanywhere.app.api.RemoteRuntimeConfigField
-import com.agentsanywhere.app.api.RemoteRuntimeConfigOption
-import com.agentsanywhere.app.api.RemoteRuntimeConfigSchema
-import com.agentsanywhere.app.api.RemoteRuntimeSettings
+import com.agentsanywhere.app.api.RemoteRuntimeCapability
+import com.agentsanywhere.app.api.RemoteRuntimeCapabilitySet
+import com.agentsanywhere.app.api.RemoteRuntimeNotice
 import com.agentsanywhere.app.api.RemoteSession
-import com.agentsanywhere.app.api.RemoteSessionEvent
+import com.agentsanywhere.app.api.RemoteSessionRuntimeState
 import com.agentsanywhere.app.api.RemoteTimelineItem
 import com.agentsanywhere.app.api.RemoteUploadedAttachment
 import com.agentsanywhere.app.api.SessionsApi
 import com.agentsanywhere.app.api.UploadFilePart
-import com.agentsanywhere.app.feature.auth.AuthSessionStore
+import com.agentsanywhere.app.feature.auth.AuthSessionReader
 import com.agentsanywhere.app.feature.sessions.runtimeLabel
-import com.agentsanywhere.app.feature.sessions.mergeObservedSession
 import com.agentsanywhere.app.model.AgentDevice
 import com.agentsanywhere.app.model.AgentSession
 import com.agentsanywhere.app.model.SessionStatus
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.channels.awaitClose
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -35,7 +29,7 @@ private const val TIMELINE_PAGE_LIMIT = 100
 
 class SessionDetailController(
     private val sessionsApi: SessionsApi,
-    private val sessionStore: AuthSessionStore,
+    private val sessionStore: AuthSessionReader,
 ) {
     private val optimisticLock = Any()
     private val optimisticMessagesBySession = mutableMapOf<String, List<TimelineMessage>>()
@@ -44,35 +38,59 @@ class SessionDetailController(
         sessionId: String,
         devices: List<AgentDevice>,
         currentState: SessionDetailState? = null,
+    ): Result<SessionDetailState> = loadInitialSnapshot(sessionId, devices, currentState)
+
+    suspend fun loadInitialSnapshot(
+        sessionId: String,
+        devices: List<AgentDevice>,
+        currentState: SessionDetailState? = null,
     ): Result<SessionDetailState> {
         return withContext(Dispatchers.IO) {
             runCatching {
                 val auth = authSession()
-                val page = sessionsApi.getSessionState(
+                val snapshot = sessionsApi.getSessionSnapshot(
                     serverUrl = auth.serverUrl,
                     authorizationToken = auth.accessToken,
                     sessionId = sessionId,
-                    mode = "latest",
                     limit = INITIAL_TIMELINE_LIMIT,
                 )
-                val items = page.items
-                val realMessages = items.flatMap { it.toTimelineMessages() }
+                val realMessages = snapshot.timeline.items.flatMap { it.toTimelineMessages() }
                 val messages = mergeOptimistic(
                     sessionId = sessionId,
                     realMessages = realMessages,
                     currentMessages = currentState?.messages.orEmpty(),
                 )
                 SessionDetailState(
-                    session = page.session.toAgentSession(devices.associateBy { it.id }),
-                    messages = messages,
-                    approvals = page.approvals.map { it.toTimelineApproval() },
-                    nextSeq = page.nextSeq,
-                    hasMore = page.hasMore,
-                    isLoading = false,
-                    loadingOlder = false,
-                    errorMessage = null,
+                    meta = SessionMeta(
+                        session = snapshot.session.toAgentSession(devices.associateBy { it.id }),
+                        serverTime = snapshot.serverTime,
+                    ),
+                    timeline = SessionTimelineState(
+                        messages = messages,
+                        nextSeq = snapshot.timeline.nextSeq,
+                        hasMore = snapshot.timeline.hasMore,
+                        eventCursor = snapshot.eventCursor,
+                    ),
+                    runtime = snapshot.state.toSessionRuntimeState(snapshot.serverTime),
+                    capabilities = snapshot.effectiveCapabilities.toEffectiveCapabilities(
+                        connectorId = snapshot.session.connectorId,
+                        serverTime = snapshot.serverTime,
+                    ),
+                    runtimeCapabilities = snapshot.runtimeCapabilities.toRuntimeCapabilities(),
+                    notices = RuntimeNotices(
+                        notices = mergeRuntimeNotices(emptyList(), snapshot.notices, replace = true),
+                        serverTime = snapshot.serverTime,
+                        isLoaded = true,
+                    ),
+                    catalogs = RuntimeCatalogs(
+                        model = snapshot.catalogs.model,
+                        permission = snapshot.catalogs.permission,
+                        unknown = snapshot.catalogs.unknown,
+                        isLoaded = true,
+                    ),
+                    approvals = snapshot.approvals.map { it.toTimelineApproval() },
+                    initialized = true,
                     actionError = currentState?.actionError,
-                    sseConnected = currentState?.sseConnected ?: false,
                     takeoverInFlight = currentState?.takeoverInFlight ?: false,
                     sending = currentState?.sending ?: messages.hasPendingOptimisticSend(),
                     interrupting = currentState?.interrupting ?: false,
@@ -84,72 +102,144 @@ class SessionDetailController(
         }
     }
 
+    suspend fun refreshDomains(
+        sessionId: String,
+        devices: List<AgentDevice>,
+        current: SessionDetailState,
+    ): SessionDetailState = withContext(Dispatchers.IO) {
+        val auth = authSession()
+        coroutineScope {
+            val metaRequest = async {
+                runCatching { sessionsApi.getSessionMeta(auth.serverUrl, auth.accessToken, sessionId) }
+            }
+            val timelineRequest = async {
+                runCatching {
+                    sessionsApi.getSessionTimelineChanges(
+                        auth.serverUrl,
+                        auth.accessToken,
+                        sessionId,
+                        afterSeq = current.timeline.nextSeq,
+                        limit = TIMELINE_PAGE_LIMIT,
+                    )
+                }
+            }
+            val runtimeRequest = async {
+                runCatching { sessionsApi.getSessionRuntimeState(auth.serverUrl, auth.accessToken, sessionId) }
+            }
+            val capabilitiesRequest = async {
+                runCatching { sessionsApi.getSessionRuntimeCapabilities(auth.serverUrl, auth.accessToken, sessionId) }
+            }
+            val noticesRequest = async {
+                runCatching { sessionsApi.getSessionRuntimeNotices(auth.serverUrl, auth.accessToken, sessionId) }
+            }
+
+            var next = current
+            metaRequest.await().fold(
+                onSuccess = { response ->
+                    next = next.applyMetaObservation(
+                        response.session.toAgentSession(devices.associateBy { it.id }),
+                        response.serverTime,
+                    )
+                },
+                onFailure = { error ->
+                    next = next.copy(
+                        meta = next.meta.copy(isLoading = false, errorMessage = error.userMessage()),
+                    )
+                },
+            )
+            timelineRequest.await().fold(
+                onSuccess = { page ->
+                    val incoming = page.items.flatMap { it.toTimelineMessages() }
+                    val realMessages = mergeTimelineMessages(
+                        current = next.messages.filterNot { it.optimistic },
+                        incoming = incoming,
+                    )
+                    next = next.copy(
+                        timeline = next.timeline.copy(
+                            messages = mergeOptimistic(sessionId, realMessages, next.messages),
+                            nextSeq = max(next.timeline.nextSeq, page.nextSeq),
+                            eventCursor = "seq:${max(next.timeline.nextSeq, page.nextSeq)}",
+                            isLoading = false,
+                            errorMessage = null,
+                        ),
+                    )
+                },
+                onFailure = { error ->
+                    next = next.copy(
+                        timeline = next.timeline.copy(isLoading = false, errorMessage = error.userMessage()),
+                    )
+                },
+            )
+            runtimeRequest.await().fold(
+                onSuccess = { response ->
+                    val observed = response.state.toSessionRuntimeState(response.serverTime)
+                    next = next.applyRuntimeObservation(observed)
+                },
+                onFailure = { error ->
+                    next = next.copy(
+                        runtime = next.runtime.copy(isLoading = false, errorMessage = error.userMessage()),
+                    )
+                },
+            )
+            capabilitiesRequest.await().fold(
+                onSuccess = { response ->
+                    val observed = response.capabilitySet.toEffectiveCapabilities(
+                        connectorId = response.connectorId,
+                        serverTime = response.serverTime,
+                    )
+                    next = next.applyCapabilitiesObservation(observed)
+                },
+                onFailure = { error ->
+                    next = next.copy(
+                        capabilities = next.capabilities.copy(
+                            isLoading = false,
+                            errorMessage = error.userMessage(),
+                        ),
+                    )
+                },
+            )
+            noticesRequest.await().fold(
+                onSuccess = { response ->
+                    next = next.applyNoticeObservation(
+                        incoming = response.notices,
+                        serverTime = response.serverTime,
+                        replace = true,
+                    )
+                },
+                onFailure = { error ->
+                    next = next.copy(
+                        notices = next.notices.copy(isLoading = false, errorMessage = error.userMessage()),
+                    )
+                },
+            )
+            next.copy(initialized = true)
+        }
+    }
+
     suspend fun loadOlder(
         sessionId: String,
         beforeOrderSeq: Int,
-        devices: List<AgentDevice>,
-    ): Result<SessionDetailState> {
+    ): Result<SessionTimelineState> {
         return withContext(Dispatchers.IO) {
             runCatching {
                 val auth = authSession()
-                val page = sessionsApi.getSessionState(
+                val page = sessionsApi.getSessionTimelineHistory(
                     serverUrl = auth.serverUrl,
                     authorizationToken = auth.accessToken,
                     sessionId = sessionId,
                     beforeOrderSeq = beforeOrderSeq,
-                    mode = "before",
                     limit = TIMELINE_PAGE_LIMIT,
                 )
-                SessionDetailState(
-                    session = page.session.toAgentSession(devices.associateBy { it.id }),
+                SessionTimelineState(
                     messages = page.items.flatMap { it.toTimelineMessages() },
-                    approvals = page.approvals.map { it.toTimelineApproval() },
                     nextSeq = page.nextSeq,
                     hasMore = page.hasMore,
-                    isLoading = false,
-                    loadingOlder = false,
-                    errorMessage = null,
                 )
             }.recoverCatching { error ->
                 if (error is ApiException) throw error
                 throw IllegalStateException(error.message ?: "Could not load older messages.", error)
             }
         }
-    }
-
-    fun streamEvents(sessionId: String, devices: List<AgentDevice>): Flow<SessionStreamEvent> = callbackFlow {
-        val auth = runCatching { authSession() }
-            .getOrElse {
-                trySend(SessionStreamEvent.Failed(it.message ?: "Sign in again to load this session."))
-                close(it)
-                return@callbackFlow
-            }
-        val devicesById = devices.associateBy { it.id }
-        val job = launch(Dispatchers.IO) {
-            while (isActive) {
-                try {
-                    sessionsApi.streamSessionEvents(
-                        serverUrl = auth.serverUrl,
-                        authorizationToken = auth.accessToken,
-                        sessionId = sessionId,
-                        onOpen = { trySend(SessionStreamEvent.Connected) },
-                    ) { event ->
-                        trySend(SessionStreamEvent.Delta(event.toDelta(devicesById)))
-                    }
-                } catch (error: ApiException) {
-                    if (!isActive) break
-                    trySend(SessionStreamEvent.Failed(error.message ?: "Session stream failed."))
-                    if (error.statusCode == 401 || error.statusCode == 404) break
-                } catch (error: Exception) {
-                    if (!isActive) break
-                    trySend(SessionStreamEvent.Failed(error.message ?: "Session stream failed."))
-                } finally {
-                    if (isActive) trySend(SessionStreamEvent.Disconnected)
-                }
-                delay(1_000)
-            }
-        }
-        awaitClose { job.cancel() }
     }
 
     suspend fun sendMessage(
@@ -226,48 +316,6 @@ class SessionDetailController(
         }
     }
 
-    suspend fun loadRuntimeSettings(
-        sessionId: String,
-        runtime: String,
-    ): Result<RuntimeSettingsState> {
-        return withContext(Dispatchers.IO) {
-            runCatching {
-                val auth = authSession()
-                val schema = sessionsApi.getRuntimeConfigSchema(
-                    serverUrl = auth.serverUrl,
-                    authorizationToken = auth.accessToken,
-                    runtime = runtime,
-                )
-                val settings = sessionsApi.getSessionRuntimeSettings(
-                    serverUrl = auth.serverUrl,
-                    authorizationToken = auth.accessToken,
-                    sessionId = sessionId,
-                )
-                settings.toRuntimeSettingsState(schema)
-            }
-        }
-    }
-
-    suspend fun patchRuntimeSettings(
-        sessionId: String,
-        patch: Map<String, Any?>,
-    ): Result<RuntimeSettingsPatchResult> {
-        return withContext(Dispatchers.IO) {
-            runCatching {
-                val auth = authSession()
-                val settings = sessionsApi.patchSessionRuntimeSettings(
-                    serverUrl = auth.serverUrl,
-                    authorizationToken = auth.accessToken,
-                    sessionId = sessionId,
-                    settings = patch,
-                )
-                RuntimeSettingsPatchResult(
-                    settings = settings.toRuntimeSettingsState(schema = null),
-                )
-            }
-        }
-    }
-
     fun attachmentImageRequest(
         sessionId: String,
         attachment: TimelineAttachment,
@@ -306,52 +354,28 @@ class SessionDetailController(
         }
     }
 
-    fun applyDelta(
-        sessionId: String,
-        current: SessionDetailState,
-        delta: SessionDetailDelta,
-    ): SessionDetailState {
-        if (delta.refetch) return current
-        val keptReal = current.messages.filter { message ->
-            !message.optimistic && message.sourceItemId !in delta.replaceSourceItemIds
-        }
-        val keptOptimistic = current.messages.filter { it.optimistic }
-        val messages = mergeOptimistic(
-            sessionId = sessionId,
-            realMessages = keptReal + delta.messages,
-            currentMessages = keptOptimistic,
-        )
-        return current.copy(
-            session = delta.session?.let { mergeObservedSession(current.session, it) } ?: current.session,
-            messages = messages,
-            approvals = delta.approvals ?: current.approvals,
-            nextSeq = max(current.nextSeq, delta.nextSeq),
-            isLoading = false,
-            loadingOlder = false,
-            errorMessage = null,
-        )
-    }
-
     fun applyOlder(
         sessionId: String,
         current: SessionDetailState,
-        older: SessionDetailState,
+        older: SessionTimelineState,
     ): SessionDetailState {
-        val realMessages = (older.messages + current.messages.filterNot { it.optimistic })
-            .distinctBy { it.id }
+        val realMessages = mergeTimelineMessages(
+            current = current.messages.filterNot { it.optimistic },
+            incoming = older.messages,
+        )
         val messages = mergeOptimistic(
             sessionId = sessionId,
             realMessages = realMessages,
             currentMessages = current.messages,
         )
         return current.copy(
-            session = older.session?.let { mergeObservedSession(current.session, it) } ?: current.session,
-            messages = messages,
-            approvals = older.approvals,
-            nextSeq = max(current.nextSeq, older.nextSeq),
-            hasMore = older.hasMore,
-            loadingOlder = false,
-            errorMessage = null,
+            timeline = current.timeline.copy(
+                messages = messages,
+                nextSeq = max(current.nextSeq, older.nextSeq),
+                hasMore = older.hasMore,
+                loadingOlder = false,
+                historyErrorMessage = null,
+            ),
         )
     }
 
@@ -378,10 +402,12 @@ class SessionDetailController(
         )
         upsertOptimisticMessage(sessionId, message)
         return state.copy(
-            messages = mergeOptimistic(
-                sessionId = sessionId,
-                realMessages = state.messages,
-                currentMessages = state.messages + message,
+            timeline = state.timeline.copy(
+                messages = mergeOptimistic(
+                    sessionId = sessionId,
+                    realMessages = state.messages,
+                    currentMessages = state.messages + message,
+                ),
             ),
             sending = true,
             actionError = null,
@@ -413,10 +439,12 @@ class SessionDetailController(
             messages = updatedMessages.filter { it.optimistic },
         )
         return state.copy(
-            messages = mergeOptimistic(
-                sessionId = sessionId,
-                realMessages = state.messages,
-                currentMessages = updatedMessages,
+            timeline = state.timeline.copy(
+                messages = mergeOptimistic(
+                    sessionId = sessionId,
+                    realMessages = state.messages,
+                    currentMessages = updatedMessages,
+                ),
             ),
             sending = false,
             actionError = if (status == "failed") state.actionError else null,
@@ -432,59 +460,8 @@ class SessionDetailController(
         return ApiAuth(serverUrl = serverUrl, accessToken = accessToken)
     }
 
-    private fun RemoteSessionEvent.toDelta(devicesById: Map<String, AgentDevice>): SessionDetailDelta {
-        val sourceIds = items.map { it.id }.toSet()
-        return SessionDetailDelta(
-            session = session?.toAgentSession(devicesById),
-            messages = items.flatMap { it.toTimelineMessages() },
-            replaceSourceItemIds = sourceIds,
-            approvals = approvals?.map { it.toTimelineApproval() },
-            nextSeq = nextSeq,
-            refetch = refetch,
-        )
-    }
-
-    private fun RemoteRuntimeSettings.toRuntimeSettingsState(
-        schema: RemoteRuntimeConfigSchema?,
-    ): RuntimeSettingsState {
-        return RuntimeSettingsState(
-            schema = schema?.toRuntimeConfigSchema(),
-            settings = settings,
-            overrideSettings = runtimeSettingsOverride,
-            isLoading = false,
-            savingKey = null,
-            errorMessage = null,
-        )
-    }
-
-    private fun RemoteRuntimeConfigSchema.toRuntimeConfigSchema(): RuntimeConfigSchema {
-        return RuntimeConfigSchema(
-            runtime = runtime,
-            schemaVersion = schemaVersion,
-            fields = fields.map { it.toRuntimeConfigField() },
-        )
-    }
-
-    private fun RemoteRuntimeConfigField.toRuntimeConfigField(): RuntimeConfigField {
-        return RuntimeConfigField(
-            key = key,
-            label = label,
-            type = type,
-            description = description,
-            options = options.map { it.toRuntimeConfigOption() },
-            visibleWhen = visibleWhen,
-            allowSessionOverride = allowSessionOverride,
-            hidden = hidden,
-        )
-    }
-
-    private fun RemoteRuntimeConfigOption.toRuntimeConfigOption(): RuntimeConfigOption {
-        return RuntimeConfigOption(
-            value = value,
-            label = label,
-            description = description,
-            efforts = efforts?.map { it.toRuntimeConfigOption() },
-        )
+    private fun Throwable.userMessage(): String {
+        return message ?: "Could not refresh this session."
     }
 
     private fun RemoteApproval.toTimelineApproval(): TimelineApproval {
@@ -625,6 +602,7 @@ class SessionDetailController(
             type = type,
             badge = status.statusLabel(),
             orderSeq = orderSeq,
+            revision = revision,
             updatedSeq = updatedSeq,
             clientMessageId = source.text("clientMessageId"),
             turnId = turnId,
@@ -649,6 +627,7 @@ class SessionDetailController(
                 title = "Reasoning",
                 badge = status.statusLabel(),
                 orderSeq = orderSeq,
+                revision = revision,
                 updatedSeq = updatedSeq,
                 clientMessageId = source.text("clientMessageId"),
                 turnId = turnId,
@@ -667,6 +646,7 @@ class SessionDetailController(
             title = kind,
             badge = status.statusLabel(),
             orderSeq = orderSeq,
+            revision = revision,
             updatedSeq = updatedSeq,
             clientMessageId = source.text("clientMessageId"),
             turnId = turnId,
@@ -692,6 +672,7 @@ class SessionDetailController(
             detail = command,
             body = listOf(output, exit).filter { it.isNotBlank() }.joinToString("\n"),
             orderSeq = orderSeq,
+            revision = revision,
             updatedSeq = updatedSeq,
             clientMessageId = source.text("clientMessageId"),
             turnId = turnId,
@@ -722,6 +703,7 @@ class SessionDetailController(
             detail = targetPath,
             body = change.text("diff").orEmpty(),
             orderSeq = orderSeq,
+            revision = revision,
             updatedSeq = updatedSeq,
             clientMessageId = source.text("clientMessageId"),
             turnId = turnId,
@@ -742,6 +724,7 @@ class SessionDetailController(
             subtitle = subtitle,
             badge = status.statusLabel(),
             orderSeq = orderSeq,
+            revision = revision,
             updatedSeq = updatedSeq,
             clientMessageId = source.text("clientMessageId"),
             turnId = turnId,
@@ -785,8 +768,6 @@ class SessionDetailController(
             lastReadSeq = lastReadSeq,
             takeover = takeover,
             connectorOnline = connectorStatus == "online",
-            runtimeSettings = runtimeSettings,
-            runtimeSettingsOverride = runtimeSettingsOverride,
             live = statusValue == SessionStatus.Running || statusValue == SessionStatus.WaitingApproval,
             sortKey = sortAt ?: lastActivityAt ?: lastItemAt ?: "",
             updatedSeq = updatedSeq,
@@ -880,11 +861,191 @@ class SessionDetailController(
     }
 }
 
+internal fun mergeTimelineMessages(
+    current: List<TimelineMessage>,
+    incoming: List<TimelineMessage>,
+): List<TimelineMessage> {
+    val currentBySource = current.filterNot { it.optimistic }.groupBy { it.sourceItemId }
+    val incomingBySource = incoming.filterNot { it.optimistic }.groupBy { it.sourceItemId }
+    val sourceIds = currentBySource.keys + incomingBySource.keys
+    return sourceIds.flatMap { sourceId ->
+        val currentGroup = currentBySource[sourceId].orEmpty()
+        val incomingGroup = incomingBySource[sourceId].orEmpty()
+        if (incomingGroup.isEmpty()) return@flatMap currentGroup
+        if (currentGroup.isEmpty()) return@flatMap incomingGroup
+        val currentRevision = currentGroup.maxOf { it.revision }
+        val incomingRevision = incomingGroup.maxOf { it.revision }
+        val currentUpdatedSeq = currentGroup.maxOf { it.updatedSeq }
+        val incomingUpdatedSeq = incomingGroup.maxOf { it.updatedSeq }
+        if (incomingRevision > currentRevision || incomingUpdatedSeq >= currentUpdatedSeq) {
+            incomingGroup
+        } else {
+            currentGroup
+        }
+    }.sortedWith(
+        compareBy<TimelineMessage> { it.orderSeq }
+            .thenBy { it.updatedSeq }
+            .thenBy { it.id },
+    )
+}
+
+internal fun mergeRuntimeNotices(
+    current: List<RuntimeNotice>,
+    incoming: List<RemoteRuntimeNotice>,
+    replace: Boolean,
+): List<RuntimeNotice> {
+    val currentById = current.associateBy { it.noticeId }
+    val incomingById = incoming.map { it.toRuntimeNotice() }.associateBy { it.noticeId }
+    val noticeIds = if (replace) incomingById.keys else currentById.keys + incomingById.keys
+    return noticeIds.mapNotNull { noticeId ->
+        val existing = currentById[noticeId]
+        val observed = incomingById[noticeId]
+        when {
+            observed == null -> existing
+            existing == null -> observed
+            observed.revision > existing.revision -> observed
+            observed.updatedSeq >= existing.updatedSeq -> observed
+            else -> existing
+        }
+    }.sortedWith(compareBy<RuntimeNotice> { it.updatedSeq }.thenBy { it.noticeId })
+}
+
+private fun RemoteRuntimeNotice.toRuntimeNotice(): RuntimeNotice {
+    return RuntimeNotice(
+        noticeId = noticeId,
+        type = type,
+        sessionId = sessionId,
+        title = title,
+        message = message,
+        severity = severity,
+        status = status,
+        responseRequired = responseRequired,
+        revision = revision,
+        updatedSeq = updatedSeq,
+        source = source,
+        actions = actions,
+        context = context,
+        metadata = metadata,
+    )
+}
+
+internal fun RemoteSessionRuntimeState?.toSessionRuntimeState(serverTime: String?): SessionRuntimeState {
+    if (this == null) {
+        return SessionRuntimeState(
+            serverTime = serverTime,
+            isLoaded = true,
+        )
+    }
+    return SessionRuntimeState(
+        sessionId = sessionId,
+        runtime = runtime,
+        externalSessionId = externalSessionId,
+        status = when (status) {
+            "idle" -> SessionRuntimeStatus.Idle
+            "running" -> SessionRuntimeStatus.Running
+            "waiting_approval" -> SessionRuntimeStatus.WaitingApproval
+            "error" -> SessionRuntimeStatus.Error
+            else -> SessionRuntimeStatus.Unknown
+        },
+        selections = selections,
+        statusReason = statusReason,
+        error = error,
+        metadata = metadata,
+        updatedSeq = updatedSeq,
+        createdAt = createdAt,
+        updatedAt = updatedAt,
+        serverTime = serverTime,
+        isLoaded = true,
+    )
+}
+
+internal fun RemoteRuntimeCapabilitySet.toEffectiveCapabilities(
+    connectorId: String?,
+    serverTime: String?,
+): EffectiveCapabilities {
+    return EffectiveCapabilities(
+        revision = revision,
+        capabilities = capabilities.map { it.toEffectiveCapability() },
+        connectorId = connectorId,
+        serverTime = serverTime,
+        isLoaded = true,
+    )
+}
+
+internal fun RemoteRuntimeCapabilitySet.toRuntimeCapabilities(): RuntimeCapabilities {
+    return RuntimeCapabilities(
+        revision = revision,
+        capabilities = capabilities.map { it.toEffectiveCapability() },
+        isLoaded = true,
+    )
+}
+
+private fun RemoteRuntimeCapability.toEffectiveCapability(): EffectiveCapability {
+    return EffectiveCapability(
+        capabilityId = capabilityId,
+        version = version,
+        scope = scope,
+        runtime = runtime,
+        sessionId = sessionId,
+        supported = supported,
+        available = available,
+        allowed = allowed,
+        unavailableReason = unavailableReason,
+        parameters = parameters,
+    )
+}
+
+internal fun SessionDetailState.applyMetaObservation(
+    session: AgentSession,
+    serverTime: String?,
+): SessionDetailState {
+    return copy(
+        meta = meta.copy(
+            session = session,
+            serverTime = serverTime,
+            isLoading = false,
+            errorMessage = null,
+        ),
+    )
+}
+
+internal fun SessionDetailState.applyRuntimeObservation(
+    observed: SessionRuntimeState,
+): SessionDetailState {
+    val nextRuntime = if (!runtime.isLoaded || observed.updatedSeq >= runtime.updatedSeq) {
+        observed
+    } else {
+        runtime.copy(isLoading = false, errorMessage = null)
+    }
+    return copy(runtime = nextRuntime)
+}
+
+internal fun SessionDetailState.applyCapabilitiesObservation(
+    observed: EffectiveCapabilities,
+): SessionDetailState {
+    val nextCapabilities = if (!capabilities.isLoaded || observed.revision >= capabilities.revision) {
+        observed
+    } else {
+        capabilities.copy(isLoading = false, errorMessage = null)
+    }
+    return copy(capabilities = nextCapabilities)
+}
+
+internal fun SessionDetailState.applyNoticeObservation(
+    incoming: List<RemoteRuntimeNotice>,
+    serverTime: String?,
+    replace: Boolean,
+): SessionDetailState {
+    return copy(
+        notices = RuntimeNotices(
+            notices = mergeRuntimeNotices(notices.notices, incoming, replace),
+            serverTime = serverTime,
+            isLoaded = true,
+        ),
+    )
+}
+
 data class SendMessageResult(
     val turnId: String?,
     val attachments: List<TimelineAttachment>,
-)
-
-data class RuntimeSettingsPatchResult(
-    val settings: RuntimeSettingsState,
 )

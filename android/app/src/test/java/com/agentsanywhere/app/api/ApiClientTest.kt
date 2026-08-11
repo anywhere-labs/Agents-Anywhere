@@ -51,11 +51,12 @@ class ApiClientTest {
     }
 
     @Test
-    fun `query authenticated sse 401 notifies unauthorized listener`() {
+    fun `authenticated sse sends bearer header and 401 notifies unauthorized listener`() {
         val notifiedTokens = mutableListOf<String>()
         val client = ApiClient(onUnauthorized = notifiedTokens::add)
+        val observedAuthorization = AtomicReference<String?>()
 
-        val error = withHttpResponse(401) { serverUrl ->
+        val error = withHttpResponse(401, observedAuthorization) { serverUrl ->
             client.streamSse(
                 serverUrl = serverUrl,
                 path = "/events?token=expired-stream-token",
@@ -65,6 +66,7 @@ class ApiClientTest {
         }
 
         assertApiException(error, 401)
+        assertEquals("Bearer expired-stream-token", observedAuthorization.get())
         assertEquals(listOf("expired-stream-token"), notifiedTokens)
     }
 
@@ -103,6 +105,7 @@ class ApiClientTest {
 
     private fun withHttpResponse(
         statusCode: Int,
+        observedAuthorization: AtomicReference<String?>? = null,
         request: (serverUrl: String) -> Unit,
     ): Throwable? {
         val body = "{\"detail\":\"invalid user access token\"}"
@@ -112,7 +115,13 @@ class ApiClientTest {
                 runCatching {
                     serverSocket.accept().use { socket ->
                         val reader = socket.getInputStream().bufferedReader()
-                        while (!reader.readLine().isNullOrEmpty()) Unit
+                        while (true) {
+                            val line = reader.readLine() ?: break
+                            if (line.isEmpty()) break
+                            if (line.startsWith("Authorization:", ignoreCase = true)) {
+                                observedAuthorization?.set(line.substringAfter(':').trim())
+                            }
+                        }
                         socket.getOutputStream().bufferedWriter().use { writer ->
                             writer.write("HTTP/1.1 $statusCode Unauthorized\r\n")
                             writer.write("Content-Type: application/json\r\n")

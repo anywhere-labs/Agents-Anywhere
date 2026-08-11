@@ -20,8 +20,6 @@ data class AgentSession(
     val lastReadSeq: Int,
     val takeover: Boolean,
     val connectorOnline: Boolean,
-    val runtimeSettings: Map<String, Any?> = emptyMap(),
-    val runtimeSettingsOverride: Map<String, Any?> = emptyMap(),
     val live: Boolean,
     val sortKey: String,
     val updatedSeq: Int,

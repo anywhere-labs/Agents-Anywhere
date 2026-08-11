@@ -17,26 +17,73 @@ class SessionsApi(
         ).optJSONArray("sessions").toObjectList { toRemoteSession() }
     }
 
-    fun createSession(
+    fun bindSession(
         serverUrl: String,
         authorizationToken: String,
         connectorId: String,
         runtime: String,
+        externalSessionId: String,
         title: String?,
         cwd: String?,
-    ): RemoteSession {
+        selections: Map<String, String> = emptyMap(),
+    ): RemoteSessionCreateResponse {
         val body = JSONObject().apply {
             put("connectorId", connectorId)
             put("runtime", runtime)
+            put("externalSessionId", externalSessionId)
             title?.takeIf { it.isNotBlank() }?.let { put("title", it) }
             cwd?.takeIf { it.isNotBlank() }?.let { put("cwd", it) }
+            selections.filterValues(String::isNotBlank).takeIf { it.isNotEmpty() }?.let {
+                put("selections", JSONObject(it))
+            }
         }
         return client.postJson(
             serverUrl = serverUrl,
             path = "/sessions",
             body = body,
             authorizationToken = authorizationToken,
-        ).getJSONObject("session").toRemoteSession()
+        ).toRemoteSessionCreateResponse()
+    }
+
+    fun createAndStartSession(
+        serverUrl: String,
+        authorizationToken: String,
+        request: RemoteSessionCreateAndStartRequest,
+    ): RemoteSessionCreateResponse {
+        val body = JSONObject().apply {
+            put("connectorId", request.connectorId)
+            put("runtime", request.runtime)
+            put("content", request.content)
+            request.title?.takeIf(String::isNotBlank)?.let { put("title", it) }
+            request.cwd?.takeIf(String::isNotBlank)?.let { put("cwd", it) }
+            request.selections.filterValues(String::isNotBlank).takeIf { it.isNotEmpty() }?.let {
+                put("selections", JSONObject(it))
+            }
+            request.attachments.takeIf { it.isNotEmpty() }?.let { attachments ->
+                put(
+                    "attachments",
+                    JSONArray(
+                        attachments.map { attachment ->
+                            JSONObject()
+                                .put("fileId", attachment.fileId)
+                                .put("name", attachment.name)
+                                .put("mediaType", attachment.mediaType)
+                                .put("size", attachment.size)
+                                .put("sha256", attachment.sha256)
+                                .put("contentBase64", attachment.contentBase64)
+                        },
+                    ),
+                )
+            }
+            request.clientMessageId?.takeIf(String::isNotBlank)?.let { put("clientMessageId", it) }
+        }
+        return client.postJson(
+            serverUrl = serverUrl,
+            path = "/sessions/create-and-start",
+            body = body,
+            authorizationToken = authorizationToken,
+            readTimeoutSeconds = CREATE_AND_START_READ_TIMEOUT_SECONDS,
+        ).toRemoteSessionCreateResponse()
     }
 
     fun patchSession(
@@ -153,56 +200,96 @@ class SessionsApi(
         ).getJSONObject("schema").toRemoteRuntimeConfigSchema()
     }
 
-    fun getSessionRuntimeSettings(
+    fun getSessionTimelineLatest(
         serverUrl: String,
         authorizationToken: String,
         sessionId: String,
-    ): RemoteRuntimeSettings {
+        limit: Int = 100,
+    ): RemoteSessionTimelinePage {
         return client.getJson(
             serverUrl = serverUrl,
-            path = "/sessions/${sessionId.urlEncode()}/runtime-settings",
+            path = "/sessions/${sessionId.urlEncode()}/timeline?mode=latest&limit=$limit",
             authorizationToken = authorizationToken,
-        ).toRemoteRuntimeSettings()
+        ).toRemoteSessionTimelinePage()
     }
 
-    fun patchSessionRuntimeSettings(
+    fun getSessionTimelineHistory(
         serverUrl: String,
         authorizationToken: String,
         sessionId: String,
-        settings: Map<String, Any?>,
-    ): RemoteRuntimeSettings {
-        val body = JSONObject().put("settings", settings.toJsonObject())
-        return client.patchJson(
+        beforeOrderSeq: Int,
+        limit: Int = 100,
+    ): RemoteSessionTimelinePage {
+        return client.getJson(
             serverUrl = serverUrl,
-            path = "/sessions/${sessionId.urlEncode()}/runtime-settings",
-            body = body,
+            path = "/sessions/${sessionId.urlEncode()}/timeline" +
+                "?mode=history&beforeOrderSeq=$beforeOrderSeq&limit=$limit",
             authorizationToken = authorizationToken,
-        ).toRemoteRuntimeSettings()
+        ).toRemoteSessionTimelinePage()
     }
 
-    fun getSessionState(
+    fun getSessionTimelineChanges(
         serverUrl: String,
         authorizationToken: String,
         sessionId: String,
         afterSeq: Int = 0,
-        beforeOrderSeq: Int? = null,
-        mode: String = "since",
-        limit: Int = 500,
-    ): RemoteSessionState {
-        val query = buildList {
-            add("mode=${mode.urlEncode()}")
-            add("limit=$limit")
-            when (mode) {
-                "before" -> beforeOrderSeq?.let { add("beforeOrderSeq=$it") }
-                "latest" -> Unit
-                else -> add("afterSeq=$afterSeq")
-            }
-        }.joinToString("&")
+        limit: Int = 100,
+    ): RemoteSessionTimelinePage {
         return client.getJson(
             serverUrl = serverUrl,
-            path = "/sessions/${sessionId.urlEncode()}/state?$query",
+            path = "/sessions/${sessionId.urlEncode()}/timeline" +
+                "?mode=changes&afterSeq=$afterSeq&limit=$limit",
             authorizationToken = authorizationToken,
-        ).toRemoteSessionState()
+        ).toRemoteSessionTimelinePage()
+    }
+
+    fun getSessionSnapshot(
+        serverUrl: String,
+        authorizationToken: String,
+        sessionId: String,
+        limit: Int = 100,
+    ): RemoteSessionSnapshot {
+        return client.getJson(
+            serverUrl = serverUrl,
+            path = "/sessions/${sessionId.urlEncode()}/snapshot?limit=$limit",
+            authorizationToken = authorizationToken,
+        ).toRemoteSessionSnapshot()
+    }
+
+    fun getSessionRuntimeState(
+        serverUrl: String,
+        authorizationToken: String,
+        sessionId: String,
+    ): RemoteSessionRuntimeStateResponse {
+        return client.getJson(
+            serverUrl = serverUrl,
+            path = "/sessions/${sessionId.urlEncode()}/runtime/state",
+            authorizationToken = authorizationToken,
+        ).toRemoteSessionRuntimeStateResponse()
+    }
+
+    fun getSessionRuntimeCapabilities(
+        serverUrl: String,
+        authorizationToken: String,
+        sessionId: String,
+    ): RemoteRuntimeCapabilities {
+        return client.getJson(
+            serverUrl = serverUrl,
+            path = "/sessions/${sessionId.urlEncode()}/runtime/capabilities",
+            authorizationToken = authorizationToken,
+        ).toRemoteRuntimeCapabilities()
+    }
+
+    fun getSessionRuntimeNotices(
+        serverUrl: String,
+        authorizationToken: String,
+        sessionId: String,
+    ): RemoteRuntimeNoticeListResponse {
+        return client.getJson(
+            serverUrl = serverUrl,
+            path = "/sessions/${sessionId.urlEncode()}/runtime/notices",
+            authorizationToken = authorizationToken,
+        ).toRemoteRuntimeNoticeListResponse()
     }
 
     fun streamSessionEvents(
@@ -348,8 +435,6 @@ class SessionsApi(
             lastItemOrderSeq = optNullableInt("lastItemOrderSeq"),
             sortAt = optNullableString("sortAt"),
             updatedSeq = optInt("updatedSeq", 0),
-            runtimeSettings = optJSONObject("runtimeSettings").toMap(),
-            runtimeSettingsOverride = optJSONObject("runtimeSettingsOverride").toMap(),
         )
     }
 
@@ -357,6 +442,14 @@ class SessionsApi(
         return RemoteSessionResponse(
             session = getJSONObject("session").toRemoteSession(),
             serverTime = optNullableString("serverTime"),
+        )
+    }
+
+    private fun JSONObject.toRemoteSessionCreateResponse(): RemoteSessionCreateResponse {
+        return RemoteSessionCreateResponse(
+            session = getJSONObject("session").toRemoteSession(),
+            connectorResult = opt("connectorResult").takeUnless { it == JSONObject.NULL },
+            attachments = optJSONArray("attachments").toObjectList { toRemoteUploadedAttachment() },
         )
     }
 
@@ -368,13 +461,175 @@ class SessionsApi(
         )
     }
 
-    private fun JSONObject.toRemoteSessionState(): RemoteSessionState {
-        return RemoteSessionState(
-            session = getJSONObject("session").toRemoteSession(),
+    private fun JSONObject.toRemoteSessionTimelinePage(): RemoteSessionTimelinePage {
+        return RemoteSessionTimelinePage(
+            sessionId = optString("sessionId", ""),
             items = optJSONArray("items").toObjectList { toRemoteTimelineItem() },
-            approvals = optJSONArray("approvals").toObjectList { toRemoteApproval() },
             nextSeq = optInt("nextSeq", 0),
             hasMore = optBoolean("hasMore", false),
+            serverTime = optNullableString("serverTime"),
+        )
+    }
+
+    private fun JSONObject.toRemoteSessionSnapshot(): RemoteSessionSnapshot {
+        val timeline = optJSONObject("timeline") ?: JSONObject()
+        val catalogs = optJSONObject("catalogs") ?: JSONObject()
+        val knownCatalogKeys = setOf("model", "permission")
+        return RemoteSessionSnapshot(
+            session = getJSONObject("session").toRemoteSession(),
+            state = optJSONObject("state")?.toRemoteSessionRuntimeState(),
+            timeline = RemoteSessionTimelineSnapshot(
+                items = timeline.optJSONArray("items").toObjectList { toRemoteTimelineItem() },
+                nextSeq = timeline.optInt("nextSeq", 0),
+                hasMore = timeline.optBoolean("hasMore", false),
+            ),
+            approvals = optJSONArray("approvals").toObjectList { toRemoteApproval() },
+            notices = optJSONArray("notices").toObjectList { toRemoteRuntimeNotice() },
+            effectiveCapabilities = optJSONObject("effectiveCapabilities").toRemoteRuntimeCapabilitySet(),
+            runtimeCapabilities = optJSONObject("runtimeCapabilities").toRemoteRuntimeCapabilitySet(),
+            catalogs = RemoteSessionRuntimeCatalogs(
+                model = catalogs.optJSONObject("model")?.toRemoteRuntimeModelCatalog(),
+                permission = catalogs.optJSONObject("permission")?.toRemoteRuntimePermissionCatalog(),
+                unknown = catalogs.toMap().filterKeys { it !in knownCatalogKeys },
+            ),
+            eventCursor = optString("eventCursor", "seq:0"),
+            serverTime = optNullableString("serverTime"),
+        )
+    }
+
+    private fun JSONObject.toRemoteSessionRuntimeStateResponse(): RemoteSessionRuntimeStateResponse {
+        return RemoteSessionRuntimeStateResponse(
+            state = getJSONObject("state").toRemoteSessionRuntimeState(),
+            serverTime = optNullableString("serverTime"),
+        )
+    }
+
+    private fun JSONObject.toRemoteSessionRuntimeState(): RemoteSessionRuntimeState {
+        return RemoteSessionRuntimeState(
+            sessionId = optString("sessionId", ""),
+            runtime = optString("runtime", ""),
+            externalSessionId = optNullableString("externalSessionId"),
+            status = optString("status", "unknown").ifBlank { "unknown" },
+            selections = optJSONObject("selections").toMap().mapValues { (_, value) -> value as? String },
+            statusReason = optNullableString("statusReason"),
+            error = optJSONObject("error")?.toMap(),
+            metadata = optJSONObject("metadata").toMap(),
+            updatedSeq = optInt("updatedSeq", 0),
+            createdAt = optNullableString("createdAt"),
+            updatedAt = optNullableString("updatedAt"),
+        )
+    }
+
+    private fun JSONObject.toRemoteRuntimeCapabilities(): RemoteRuntimeCapabilities {
+        return RemoteRuntimeCapabilities(
+            connectorId = optString("connectorId", ""),
+            capabilitySet = optJSONObject("capabilitySet").toRemoteRuntimeCapabilitySet(),
+            serverTime = optNullableString("serverTime"),
+        )
+    }
+
+    private fun JSONObject?.toRemoteRuntimeCapabilitySet(): RemoteRuntimeCapabilitySet {
+        return RemoteRuntimeCapabilitySet(
+            revision = this?.optLong("revision", 0L) ?: 0L,
+            capabilities = this?.optJSONArray("capabilities")
+                .toObjectList { toRemoteRuntimeCapability() },
+        )
+    }
+
+    private fun JSONObject.toRemoteRuntimeCapability(): RemoteRuntimeCapability {
+        return RemoteRuntimeCapability(
+            capabilityId = optString("capabilityId", ""),
+            version = optString("version", "1").ifBlank { "1" },
+            scope = optString("scope", "runtime").ifBlank { "runtime" },
+            runtime = optNullableString("runtime"),
+            sessionId = optNullableString("sessionId"),
+            supported = optBoolean("supported", true),
+            available = optBoolean("available", true),
+            allowed = optBoolean("allowed", true),
+            unavailableReason = optNullableString("unavailableReason"),
+            parameters = optJSONObject("parameters").toMap(),
+        )
+    }
+
+    private fun JSONObject.toRemoteRuntimeModelCatalog(): RemoteRuntimeModelCatalog {
+        return RemoteRuntimeModelCatalog(
+            runtime = optString("runtime", ""),
+            revision = optLong("revision", 0L),
+            models = optJSONArray("models").toObjectList { toRemoteRuntimeModel() },
+        )
+    }
+
+    private fun JSONObject.toRemoteRuntimeModel(): RemoteRuntimeModel {
+        return RemoteRuntimeModel(
+            id = optString("id", ""),
+            selectionId = optNullableString("selectionId"),
+            displayName = optString("displayName", ""),
+            description = optNullableString("description"),
+            default = optBoolean("default", false),
+            reasoningItems = optJSONArray("reasoningItems").toObjectList { toRemoteRuntimeReasoning() },
+            metadata = optJSONObject("metadata").toMap(),
+        )
+    }
+
+    private fun JSONObject.toRemoteRuntimeReasoning(): RemoteRuntimeReasoning {
+        return RemoteRuntimeReasoning(
+            id = optString("id", ""),
+            selectionId = optString("selectionId", ""),
+            fullModelId = optNullableString("fullModelId"),
+            displayName = optString("displayName", ""),
+            description = optNullableString("description"),
+            default = optBoolean("default", false),
+            metadata = optJSONObject("metadata").toMap(),
+        )
+    }
+
+    private fun JSONObject.toRemoteRuntimePermissionCatalog(): RemoteRuntimePermissionCatalog {
+        return RemoteRuntimePermissionCatalog(
+            runtime = optString("runtime", ""),
+            revision = optLong("revision", 0L),
+            permissions = optJSONArray("permissions").toObjectList { toRemoteRuntimePermission() },
+        )
+    }
+
+    private fun JSONObject.toRemoteRuntimePermission(): RemoteRuntimePermission {
+        return RemoteRuntimePermission(
+            id = optString("id", ""),
+            selectionId = optString("selectionId", ""),
+            displayName = optString("displayName", ""),
+            description = optNullableString("description"),
+            default = optBoolean("default", false),
+            metadata = optJSONObject("metadata").toMap(),
+        )
+    }
+
+    private fun JSONObject.toRemoteRuntimeNoticeListResponse(): RemoteRuntimeNoticeListResponse {
+        return RemoteRuntimeNoticeListResponse(
+            notices = optJSONArray("notices").toObjectList { toRemoteRuntimeNotice() },
+            serverTime = optNullableString("serverTime"),
+        )
+    }
+
+    private fun JSONObject.toRemoteRuntimeNotice(): RemoteRuntimeNotice {
+        return RemoteRuntimeNotice(
+            noticeId = optString("noticeId", ""),
+            type = optString("type", "unknown"),
+            sessionId = optString("sessionId", ""),
+            source = optJSONObject("source").toMap(),
+            title = optString("title", ""),
+            message = optNullableString("message"),
+            severity = optString("severity", "info"),
+            status = optString("status", "open"),
+            interactionType = optNullableString("interactionType"),
+            blocking = optJSONObject("blocking")?.toMap(),
+            responseRequired = optBoolean("responseRequired", false),
+            actions = optJSONArray("actions").toObjectList { toMap() },
+            context = optJSONObject("context").toMap(),
+            metadata = optJSONObject("metadata").toMap(),
+            expiresAt = optNullableString("expiresAt"),
+            revision = optInt("revision", 1),
+            updatedSeq = optInt("updatedSeq", 0),
+            createdAt = optNullableString("createdAt"),
+            resolvedAt = optNullableString("resolvedAt"),
         )
     }
 
@@ -412,15 +667,6 @@ class SessionsApi(
         )
     }
 
-    private fun JSONObject.toRemoteRuntimeSettings(): RemoteRuntimeSettings {
-        return RemoteRuntimeSettings(
-            runtime = optString("runtime", ""),
-            settings = (optJSONObject("runtimeSettings") ?: optJSONObject("settings")).toMap(),
-            runtimeSettingsOverride = optJSONObject("runtimeSettingsOverride").toMap(),
-            schemaVersion = optInt("schemaVersion", 0),
-        )
-    }
-
     private fun JSONObject.toRemoteTimelineItem(): RemoteTimelineItem {
         val content = optJSONObject("content") ?: JSONObject()
         return RemoteTimelineItem(
@@ -437,8 +683,10 @@ class SessionsApi(
             content = content,
             source = optJSONObject("source") ?: JSONObject(),
             orderSeq = optInt("orderSeq", 0),
+            revision = optInt("revision", 1),
             updatedSeq = optInt("updatedSeq", 0),
             createdAt = optString("createdAt", ""),
+            updatedAt = optNullableString("updatedAt"),
         )
     }
 
@@ -487,7 +735,12 @@ class SessionsApi(
             name = optString("name", "attachment"),
             mediaType = optString("mediaType", ""),
             size = optLong("size", 0L),
+            sha256 = optNullableString("sha256"),
         )
+    }
+
+    private companion object {
+        const val CREATE_AND_START_READ_TIMEOUT_SECONDS = 75L
     }
 
 }

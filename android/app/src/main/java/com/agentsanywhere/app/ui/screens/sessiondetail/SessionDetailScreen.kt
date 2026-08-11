@@ -67,16 +67,16 @@ import com.agentsanywhere.app.R
 import com.agentsanywhere.app.api.UploadFilePart
 import com.agentsanywhere.app.feature.files.FilesController
 import com.agentsanywhere.app.feature.sessiondetail.SessionDetailController
+import com.agentsanywhere.app.feature.sessiondetail.SessionMeta
 import com.agentsanywhere.app.feature.sessiondetail.SessionDetailState
-import com.agentsanywhere.app.feature.sessiondetail.SessionStreamEvent
+import com.agentsanywhere.app.feature.sessiondetail.SessionRuntimeStatus
+import com.agentsanywhere.app.feature.sessiondetail.SessionTimelineState
 import com.agentsanywhere.app.feature.sessiondetail.TimelineApproval
 import com.agentsanywhere.app.feature.sessions.mergeAuthoritativeSessionMetadata
-import com.agentsanywhere.app.feature.sessions.mergeObservedSession
 import com.agentsanywhere.app.feature.terminal.RemoteTerminalForegroundService
 import com.agentsanywhere.app.feature.terminal.RemoteTerminalPool
 import com.agentsanywhere.app.model.AgentDevice
 import com.agentsanywhere.app.model.AgentSession
-import com.agentsanywhere.app.model.SessionStatus
 import com.agentsanywhere.app.navigation.AppDestination
 import com.agentsanywhere.app.ui.designsystem.AAToastHost
 import com.agentsanywhere.app.ui.designsystem.AAToastVisuals
@@ -85,12 +85,10 @@ import com.agentsanywhere.app.ui.designsystem.ScreenScaffold
 import com.agentsanywhere.app.ui.designsystem.noRippleClickable
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
-import kotlin.math.max
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -131,14 +129,12 @@ fun SessionDetailScreen(
     var previewImage by remember(sessionId) { mutableStateOf<AttachmentPreview?>(null) }
     var showCamera by remember(sessionId) { mutableStateOf(false) }
     var showDeviceOffline by remember(sessionId) { mutableStateOf(false) }
-    var showRuntimeSettings by remember(sessionId) { mutableStateOf(false) }
     var pendingOpenFilePath by remember(sessionId) { mutableStateOf<String?>(null) }
     var terminalVerticalDragActive by remember(sessionId) { mutableStateOf(false) }
     var composerHeightPx by remember { mutableStateOf(0) }
     var readOnlyComposerTapCount by remember(sessionId) { mutableStateOf(0) }
     val refetchInFlight = remember(sessionId) { AtomicBoolean(false) }
     val olderInFlight = remember(sessionId) { AtomicBoolean(false) }
-    val streamOpen = remember(sessionId) { AtomicBoolean(false) }
     val remoteTerminal = remember(sessionId, terminalPool) { terminalPool.forSession(sessionId) }
 
     var appVisible by remember(lifecycleOwner) {
@@ -147,9 +143,11 @@ fun SessionDetailScreen(
     var state by remember(sessionId) {
         mutableStateOf(
             SessionDetailState(
-                session = initialSession?.takeIf { it.id == sessionId },
-                messages = emptyList(),
-                isLoading = sessionId != null,
+                meta = SessionMeta(
+                    session = initialSession?.takeIf { it.id == sessionId },
+                    isLoading = sessionId != null,
+                ),
+                timeline = SessionTimelineState(isLoading = sessionId != null),
             ),
         )
     }
@@ -364,33 +362,77 @@ fun SessionDetailScreen(
         }
     }
 
-    suspend fun refetch(showLoading: Boolean) {
+    suspend fun loadInitialSnapshot() {
         val id = sessionId ?: return
         if (!appVisible) return
         if (!refetchInFlight.compareAndSet(false, true)) return
-        if (showLoading) state = state.copy(isLoading = true, loadingOlder = false, errorMessage = null)
+        state = state.copy(
+            meta = state.meta.copy(isLoading = true, errorMessage = null),
+            timeline = state.timeline.copy(isLoading = true, loadingOlder = false, errorMessage = null),
+            runtime = state.runtime.copy(isLoading = true, errorMessage = null),
+            capabilities = state.capabilities.copy(isLoading = true, errorMessage = null),
+            notices = state.notices.copy(isLoading = true, errorMessage = null),
+        )
         try {
-            controller.load(id, devices, state)
+            controller.loadInitialSnapshot(id, devices, state)
                 .onSuccess { loaded ->
                     if (!appVisible) return@onSuccess
-                    state = state.copy(
-                        session = loaded.session?.let { mergeObservedSession(state.session, it) } ?: state.session,
-                        messages = loaded.messages,
-                        approvals = loaded.approvals,
-                        nextSeq = max(state.nextSeq, loaded.nextSeq),
-                        hasMore = loaded.hasMore,
-                        isLoading = false,
-                        loadingOlder = false,
-                        errorMessage = null,
-                    )
+                    state = loaded
                     state.session?.let(onSessionChanged)
                 }
                 .onFailure { error ->
                     if (appVisible) {
+                        val message = error.message ?: context.getString(R.string.session_load_messages_failed)
                         state = state.copy(
-                            isLoading = false,
-                            loadingOlder = false,
-                            errorMessage = error.message ?: context.getString(R.string.session_load_messages_failed),
+                            meta = state.meta.copy(isLoading = false, errorMessage = message),
+                            timeline = state.timeline.copy(
+                                isLoading = false,
+                                loadingOlder = false,
+                                errorMessage = message,
+                            ),
+                            runtime = state.runtime.copy(isLoading = false, errorMessage = message),
+                            capabilities = state.capabilities.copy(isLoading = false, errorMessage = message),
+                            notices = state.notices.copy(isLoading = false, errorMessage = message),
+                        )
+                    }
+                }
+        } finally {
+            refetchInFlight.set(false)
+        }
+    }
+
+    suspend fun refreshDomains(showLoading: Boolean) {
+        val id = sessionId ?: return
+        if (!appVisible || !state.initialized) return
+        if (!refetchInFlight.compareAndSet(false, true)) return
+        if (showLoading) {
+            state = state.copy(
+                meta = state.meta.copy(isLoading = true, errorMessage = null),
+                timeline = state.timeline.copy(isLoading = true, errorMessage = null),
+                runtime = state.runtime.copy(isLoading = true, errorMessage = null),
+                capabilities = state.capabilities.copy(isLoading = true, errorMessage = null),
+                notices = state.notices.copy(isLoading = true, errorMessage = null),
+            )
+        }
+        try {
+            runCatching { controller.refreshDomains(id, devices, state) }
+                .onSuccess { refreshed ->
+                    if (!appVisible) return@onSuccess
+                    val hadNewMessages = refreshed.timeline.messages.size > state.timeline.messages.size ||
+                        refreshed.timeline.nextSeq > state.timeline.nextSeq
+                    state = refreshed
+                    state.session?.let(onSessionChanged)
+                    if (hadNewMessages) streamLatestRequest += 1
+                }
+                .onFailure { error ->
+                    if (appVisible) {
+                        val message = error.message ?: context.getString(R.string.session_load_messages_failed)
+                        state = state.copy(
+                            meta = state.meta.copy(isLoading = false, errorMessage = message),
+                            timeline = state.timeline.copy(isLoading = false, errorMessage = message),
+                            runtime = state.runtime.copy(isLoading = false, errorMessage = message),
+                            capabilities = state.capabilities.copy(isLoading = false, errorMessage = message),
+                            notices = state.notices.copy(isLoading = false, errorMessage = message),
                         )
                     }
                 }
@@ -401,28 +443,38 @@ fun SessionDetailScreen(
 
     fun loadOlderMessages() {
         val id = sessionId ?: return
-        if (!appVisible || !state.hasMore || state.loadingOlder) return
+        if (!appVisible || !state.hasMore || state.timeline.loadingOlder) return
         if (!olderInFlight.compareAndSet(false, true)) return
         val beforeOrderSeq = state.messages
             .filterNot { it.optimistic }
             .minOfOrNull { it.orderSeq }
         if (beforeOrderSeq == null || beforeOrderSeq <= 1) {
             olderInFlight.set(false)
-            state = state.copy(hasMore = false, loadingOlder = false)
+            state = state.copy(
+                timeline = state.timeline.copy(hasMore = false, loadingOlder = false),
+            )
             return
         }
-        state = state.copy(loadingOlder = true, actionError = null)
+        state = state.copy(
+            timeline = state.timeline.copy(loadingOlder = true, historyErrorMessage = null),
+            actionError = null,
+        )
         scope.launch {
             try {
-                controller.loadOlder(id, beforeOrderSeq, devices)
+                controller.loadOlder(id, beforeOrderSeq)
                     .onSuccess { older ->
                         if (!appVisible) return@onSuccess
                         state = controller.applyOlder(id, state, older)
-                        state.session?.let(onSessionChanged)
                     }
                     .onFailure { error ->
                         val message = error.message ?: context.getString(R.string.session_load_messages_failed)
-                        state = state.copy(loadingOlder = false, actionError = message)
+                        state = state.copy(
+                            timeline = state.timeline.copy(
+                                loadingOlder = false,
+                                historyErrorMessage = message,
+                            ),
+                            actionError = message,
+                        )
                         showError(message)
                     }
             } finally {
@@ -484,7 +536,7 @@ fun SessionDetailScreen(
     fun sendDraft() {
         val text = draft.trim()
         if (text.isEmpty() && attachments.isEmpty()) return
-        if (state.session?.status == SessionStatus.Error) {
+        if (state.runtime.status == SessionRuntimeStatus.Error) {
             pendingErrorSend = text
             return
         }
@@ -498,71 +550,13 @@ fun SessionDetailScreen(
         scope.launch {
             controller.setTakeover(id, enabled, devices)
                 .onSuccess { session ->
-                    state = state.copy(session = session, takeoverInFlight = false)
+                    state = state.withSession(session).copy(takeoverInFlight = false)
                     onSessionChanged(session)
+                    refreshDomains(showLoading = false)
                 }
                 .onFailure { error ->
                     val message = error.message ?: context.getString(R.string.session_takeover_update_failed)
                     state = state.copy(takeoverInFlight = false, actionError = message)
-                    showError(message)
-                }
-        }
-    }
-
-    fun loadRuntimeSettings() {
-        val id = sessionId ?: return
-        val runtime = state.session?.runtime ?: return
-        if (state.runtimeSettings.isLoading || state.runtimeSettings.schema != null) return
-        state = state.copy(
-            runtimeSettings = state.runtimeSettings.copy(isLoading = true, errorMessage = null),
-        )
-        scope.launch {
-            controller.loadRuntimeSettings(id, runtime)
-                .onSuccess { runtimeState ->
-                    state = state.copy(runtimeSettings = runtimeState)
-                }
-                .onFailure { error ->
-                    val message = error.message ?: context.getString(R.string.session_runtime_load_failed)
-                    state = state.copy(
-                        runtimeSettings = state.runtimeSettings.copy(
-                            isLoading = false,
-                            errorMessage = message,
-                        ),
-                    )
-                    showError(message)
-                }
-        }
-    }
-
-    fun patchRuntimeSetting(key: String, value: String?) {
-        val id = sessionId ?: return
-        if (state.runtimeSettings.savingKey != null) return
-        state = state.copy(
-            runtimeSettings = state.runtimeSettings.copy(savingKey = key, errorMessage = null),
-        )
-        scope.launch {
-            controller.patchRuntimeSettings(id, mapOf(key to value))
-                .onSuccess { result ->
-                    val currentSchema = state.runtimeSettings.schema
-                    val nextRuntimeSettings = result.settings.copy(schema = currentSchema)
-                    val nextSession = state.session?.copy(
-                        runtimeSettings = nextRuntimeSettings.settings,
-                        runtimeSettingsOverride = nextRuntimeSettings.overrideSettings,
-                    )
-                    state = state.copy(
-                        session = nextSession ?: state.session,
-                        runtimeSettings = nextRuntimeSettings,
-                    )
-                    nextSession?.let(onSessionChanged)
-                }
-                .onFailure { error ->
-                    val message = error.message ?: context.getString(R.string.session_runtime_save_failed)
-                    state = state.copy(
-                        runtimeSettings = state.runtimeSettings.copy(
-                            savingKey = null,
-                            errorMessage = message,
-                        ),
-                    )
                     showError(message)
                 }
         }
@@ -579,7 +573,7 @@ fun SessionDetailScreen(
                     val message = error.message ?: context.getString(R.string.session_interrupt_failed)
                     if (message.contains("no active turn", ignoreCase = true)) {
                         state = state.copy(actionError = null)
-                        refetch(showLoading = false)
+                        refreshDomains(showLoading = false)
                     } else {
                         state = state.copy(interrupting = false, actionError = message)
                         showError(message)
@@ -629,7 +623,6 @@ fun SessionDetailScreen(
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose {
-            streamOpen.set(false)
             refetchInFlight.set(false)
             olderInFlight.set(false)
             lifecycleOwner.lifecycle.removeObserver(observer)
@@ -641,63 +634,28 @@ fun SessionDetailScreen(
         val current = state.session
         if (session != null && session.id == sessionId) {
             state = state.copy(
-                session = mergeAuthoritativeSessionMetadata(current, session),
-                runtimeSettings = state.runtimeSettings.copy(
-                    settings = session.runtimeSettings,
-                    overrideSettings = session.runtimeSettingsOverride,
+                meta = state.meta.copy(
+                    session = mergeAuthoritativeSessionMetadata(current, session),
                 ),
             )
         }
     }
 
-    LaunchedEffect(showRuntimeSettings, sessionId, state.session?.runtime) {
-        if (showRuntimeSettings) loadRuntimeSettings()
+    LaunchedEffect(sessionId, appVisible) {
+        if (sessionId == null || !appVisible) return@LaunchedEffect
+        if (!state.initialized) loadInitialSnapshot()
     }
 
-    LaunchedEffect(sessionId, appVisible, devices) {
-        if (sessionId == null || !appVisible) return@LaunchedEffect
-        refetch(showLoading = state.messages.isEmpty())
+    LaunchedEffect(sessionId, appVisible, devices, state.initialized) {
+        if (sessionId == null || !appVisible || !state.initialized) return@LaunchedEffect
         while (true) {
             delay(3_000)
-            if (!streamOpen.get()) refetch(showLoading = false)
+            refreshDomains(showLoading = false)
         }
     }
 
-    LaunchedEffect(sessionId, appVisible, devices) {
-        val id = sessionId
-        if (id == null || !appVisible) return@LaunchedEffect
-        controller.streamEvents(id, devices).collect { event ->
-            when (event) {
-                SessionStreamEvent.Connected -> {
-                    streamOpen.set(true)
-                    state = state.copy(sseConnected = true)
-                }
-                SessionStreamEvent.Disconnected -> {
-                    streamOpen.set(false)
-                    state = state.copy(sseConnected = false)
-                }
-                is SessionStreamEvent.Failed -> {
-                    streamOpen.set(false)
-                    state = state.copy(sseConnected = false)
-                    if (state.messages.isEmpty()) {
-                        state = state.copy(isLoading = false, errorMessage = event.message)
-                    }
-                }
-                is SessionStreamEvent.Delta -> {
-                    if (event.value.refetch) {
-                        refetch(showLoading = false)
-                    } else {
-                        state = controller.applyDelta(id, state, event.value)
-                        state.session?.let(onSessionChanged)
-                        if (event.value.messages.isNotEmpty()) streamLatestRequest += 1
-                    }
-                }
-            }
-        }
-    }
-
-    val serverBusy = state.session?.status == SessionStatus.Running ||
-        state.session?.status == SessionStatus.WaitingApproval
+    val serverBusy = state.runtime.status == SessionRuntimeStatus.Running ||
+        state.runtime.status == SessionRuntimeStatus.WaitingApproval
     LaunchedEffect(state.interrupting, serverBusy) {
         if (state.interrupting && !serverBusy) state = state.copy(interrupting = false)
     }
@@ -709,29 +667,47 @@ fun SessionDetailScreen(
     }
     val connectorOnline = state.session?.connectorOnline == true
     val takeoverEnabled = state.session?.takeover == true
-    val inputEnabled = takeoverEnabled && connectorOnline
+    val runtimeId = state.runtime.runtime ?: state.session?.runtime
+    val canUseSendMessage = state.capabilities.isUsable("session.send_message", runtimeId)
+    val canUseInterrupt = state.capabilities.isUsable("session.interrupt", runtimeId)
+    val canResolveApproval = state.capabilities.isUsable("session.interaction.approval", runtimeId)
+    val canUseAttachments = state.capabilities.isUsable("runtime.attachment", runtimeId)
+    val runtimeFactsFresh = state.runtime.isLoaded && state.runtime.errorMessage == null
+    val capabilityFactsFresh = state.capabilities.isLoaded && state.capabilities.errorMessage == null
+    val inputEnabled = takeoverEnabled && connectorOnline && runtimeFactsFresh &&
+        capabilityFactsFresh && canUseSendMessage
     val attachmentsReady = attachments.all { it.uploadState == AttachmentUploadState.Uploaded }
     val canSend = inputEnabled &&
         !state.sending &&
         attachmentsReady &&
+        (attachments.isEmpty() || canUseAttachments) &&
         (draft.isNotBlank() || attachments.isNotEmpty()) &&
-        (state.session?.status == SessionStatus.Idle || state.session?.status == SessionStatus.Error)
+        (state.runtime.status == SessionRuntimeStatus.Idle || state.runtime.status == SessionRuntimeStatus.Error)
     val agentLabel = state.session?.runtimeLabel?.takeIf { it.isNotBlank() }
         ?: context.getString(R.string.session_agent_fallback)
     val workingLabel = when {
         state.interrupting -> context.getString(R.string.session_agent_interrupting, agentLabel)
         state.sending ||
-            state.session?.status == SessionStatus.Running ||
+            state.runtime.status == SessionRuntimeStatus.Running ||
             state.messages.any { it.optimistic && it.status == "running" } -> {
             context.getString(R.string.session_agent_working, agentLabel)
         }
         else -> null
     }
-    val showInterrupt = inputEnabled && (serverBusy || state.interrupting)
+    val showInterrupt = takeoverEnabled && connectorOnline && canUseInterrupt &&
+        (serverBusy || state.interrupting)
     val replyTarget = state.session?.runtimeLabel?.takeIf { it.isNotBlank() }
         ?: stringResource(R.string.session_agent_fallback)
     val placeholder = when {
         state.session != null && !connectorOnline -> stringResource(R.string.session_device_offline_placeholder)
+        state.runtime.errorMessage != null -> state.runtime.errorMessage.orEmpty()
+        state.runtime.status == SessionRuntimeStatus.Unknown -> stringResource(R.string.session_runtime_state_unknown)
+        state.runtime.status == SessionRuntimeStatus.Error -> {
+            state.runtime.statusReason
+                ?: state.runtime.error?.get("message")?.toString()
+                ?: stringResource(R.string.session_runtime_state_error)
+        }
+        !canUseSendMessage -> stringResource(R.string.session_send_unavailable)
         takeoverEnabled -> stringResource(R.string.session_reply_to, replyTarget)
         else -> stringResource(R.string.session_read_only_placeholder)
     }
@@ -773,8 +749,12 @@ fun SessionDetailScreen(
                     ) {
                         when {
                             sessionId == null -> EmptyDetailMessage(stringResource(R.string.session_open_from_list))
-                            state.isLoading && state.messages.isEmpty() -> SessionDetailLoadingState(darkMode = darkMode)
-                            state.errorMessage != null && state.messages.isEmpty() -> EmptyDetailMessage(state.errorMessage.orEmpty())
+                            state.timeline.isLoading && state.messages.isEmpty() -> {
+                                SessionDetailLoadingState(darkMode = darkMode)
+                            }
+                            state.timeline.errorMessage != null && state.messages.isEmpty() -> {
+                                EmptyDetailMessage(state.timeline.errorMessage.orEmpty())
+                            }
                             state.messages.isEmpty() -> SessionWelcomeMessage(darkMode = darkMode)
                             else -> MessageList(
                                 messages = state.messages,
@@ -785,7 +765,7 @@ fun SessionDetailScreen(
                                 streamLatestRequest = streamLatestRequest,
                                 workingLabel = workingLabel,
                                 hasMore = state.hasMore,
-                                loadingOlder = state.loadingOlder,
+                                loadingOlder = state.timeline.loadingOlder,
                                 onLoadOlder = { loadOlderMessages() },
                                 onPreviewAttachment = { previewImage = AttachmentPreview.Remote(it) },
                                 onCopyMessage = ::copyMessageText,
@@ -803,6 +783,7 @@ fun SessionDetailScreen(
                             takeoverEnabled = takeoverEnabled,
                             takeoverBusy = state.takeoverInFlight || !connectorOnline,
                             inputEnabled = inputEnabled,
+                            attachmentsEnabled = inputEnabled && canUseAttachments,
                             canSend = canSend,
                             showInterrupt = showInterrupt,
                             interrupting = state.interrupting,
@@ -830,7 +811,15 @@ fun SessionDetailScreen(
                         SessionDetailHeader(
                             title = state.session?.title ?: stringResource(R.string.session_title_fallback),
                             darkMode = darkMode,
-                            onLeftClick = { showRuntimeSettings = true },
+                            onLeftClick = {
+                                scope.launch {
+                                    if (state.initialized) {
+                                        refreshDomains(showLoading = false)
+                                    } else {
+                                        loadInitialSnapshot()
+                                    }
+                                }
+                            },
                             onRightClick = { scope.launch { pagerState.animateScrollToPage(1) } },
                             modifier = Modifier.align(Alignment.TopCenter),
                         )
@@ -870,21 +859,6 @@ fun SessionDetailScreen(
         }
     }
 
-    if (showRuntimeSettings) {
-        val session = state.session
-        if (session == null) {
-            showRuntimeSettings = false
-        } else {
-            SessionRuntimeSettingsSheet(
-                session = session,
-                state = state.runtimeSettings,
-                darkMode = darkMode,
-                onDismiss = { showRuntimeSettings = false },
-                onPatch = ::patchRuntimeSetting,
-            )
-        }
-    }
-
     takeoverConfirm?.let { enabled ->
         TakeoverConfirmDialog(
             enabled = enabled,
@@ -913,7 +887,7 @@ fun SessionDetailScreen(
         )
     }
 
-    pendingApproval?.let { approval ->
+    pendingApproval?.takeIf { canResolveApproval }?.let { approval ->
         ApprovalDialog(
             approval = approval,
             onDismiss = {},

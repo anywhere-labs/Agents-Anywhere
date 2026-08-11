@@ -5,18 +5,18 @@ import com.agentsanywhere.app.api.AuthResponse
 import com.agentsanywhere.app.api.MobileLoginExchangeResponse
 import com.agentsanywhere.app.api.normalizeServerOrigin
 
-class AuthSessionStore(context: Context) {
+class AuthSessionStore(context: Context) : AuthSessionReader {
     private val preferences = context.applicationContext.getSharedPreferences(
         "agents_anywhere_auth",
         Context.MODE_PRIVATE,
     )
 
-    fun readServerUrl(): String {
+    override fun readServerUrl(): String {
         val stored = preferences.getString(KEY_SERVER_URL, "").orEmpty()
         return normalizeServerOrigin(stored).orEmpty()
     }
 
-    fun readAccessToken(): String {
+    override fun readAccessToken(): String {
         return preferences.getString(KEY_ACCESS_TOKEN, "").orEmpty()
     }
 
@@ -95,6 +95,12 @@ class AuthSessionStore(context: Context) {
         private const val KEY_REFRESH_TOKEN = "refresh_token"
         private const val KEY_REFRESH_EXPIRES_AT = "refresh_expires_at"
     }
+}
+
+interface AuthSessionReader {
+    fun readServerUrl(): String
+
+    fun readAccessToken(): String
 }
 
 internal fun shouldClearAuthSession(currentAccessToken: String, unauthorizedAccessToken: String): Boolean {

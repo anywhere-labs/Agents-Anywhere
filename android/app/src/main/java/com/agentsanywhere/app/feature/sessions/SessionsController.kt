@@ -3,9 +3,11 @@ package com.agentsanywhere.app.feature.sessions
 import com.agentsanywhere.app.api.ApiException
 import com.agentsanywhere.app.api.DevicesApi
 import com.agentsanywhere.app.api.FilesApi
+import com.agentsanywhere.app.api.RemoteInlineAttachmentRef
 import com.agentsanywhere.app.api.SessionsApi
 import com.agentsanywhere.app.api.RemoteDevice
 import com.agentsanywhere.app.api.RemoteSession
+import com.agentsanywhere.app.api.RemoteSessionCreateAndStartRequest
 import com.agentsanywhere.app.api.RemoteSessionsMutationResponse
 import com.agentsanywhere.app.feature.auth.AuthSessionStore
 import com.agentsanywhere.app.feature.devices.DeviceRuntimeList
@@ -15,10 +17,14 @@ import com.agentsanywhere.app.model.AgentDevice
 import com.agentsanywhere.app.model.AgentSession
 import com.agentsanywhere.app.model.SessionStatus
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.withContext
 import java.time.Duration
 import java.time.Instant
 import java.time.format.DateTimeParseException
+import java.io.IOException
+import java.security.MessageDigest
+import java.util.Base64
 
 class SessionsController(
     private val sessionsApi: SessionsApi,
@@ -65,33 +71,86 @@ class SessionsController(
         )
     }
 
-    suspend fun createSession(
-        title: String,
-        connectorId: String,
-        runtime: String,
-        cwd: String,
+    suspend fun createAndStartSession(
+        draft: NewSessionCreateDraft,
         devices: List<AgentDevice>,
-    ): Result<AgentSession> {
+    ): NewSessionCreateOutcome {
+        validateNewSessionDraft(draft)?.let { error ->
+            return NewSessionCreateOutcome.Failed(IllegalArgumentException(error))
+        }
         val serverUrl = sessionStore.readServerUrl()
         val accessToken = sessionStore.readAccessToken()
         if (serverUrl.isBlank() || accessToken.isBlank()) {
-            return Result.failure(IllegalStateException("Sign in again to create a session."))
+            return NewSessionCreateOutcome.Failed(IllegalStateException("Sign in again to create a session."))
         }
 
         return withContext(Dispatchers.IO) {
-            runCatching {
-                sessionsApi.createSession(
+            try {
+                val response = sessionsApi.createAndStartSession(
                     serverUrl = serverUrl,
                     authorizationToken = accessToken,
-                    connectorId = connectorId,
-                    runtime = runtime,
-                    title = title.trim().takeIf { it.isNotBlank() },
-                    cwd = cwd.trim().takeIf { it.isNotBlank() },
-                ).toAgentSession(devices.associateBy { it.id })
-            }.recoverCatching { error ->
-                if (error is ApiException) throw error
-                throw IllegalStateException(error.message ?: "Could not create session.", error)
+                    request = RemoteSessionCreateAndStartRequest(
+                        connectorId = draft.connectorId,
+                        runtime = draft.runtime,
+                        title = draft.title?.trim()?.takeIf(String::isNotBlank),
+                        cwd = draft.cwd?.trim()?.takeIf(String::isNotBlank),
+                        content = draft.content.trim(),
+                        selections = draft.selections.toMap(),
+                        attachments = draft.attachments.map(NewSessionAttachmentPart::toInlineAttachmentRef),
+                        clientMessageId = draft.clientMessageId,
+                    ),
+                )
+                NewSessionCreateOutcome.Created(
+                    session = response.session.toAgentSession(devices.associateBy { it.id }),
+                )
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                if (error.mayHaveUnknownCreateOutcome()) {
+                    reconcileCreateAfterNetworkFailure(
+                        draft = draft,
+                        serverUrl = serverUrl,
+                        accessToken = accessToken,
+                        originalError = error,
+                    )
+                } else {
+                    NewSessionCreateOutcome.Failed(error.asCreateFailure())
+                }
             }
+        }
+    }
+
+    private fun reconcileCreateAfterNetworkFailure(
+        draft: NewSessionCreateDraft,
+        serverUrl: String,
+        accessToken: String,
+        originalError: Throwable,
+    ): NewSessionCreateOutcome {
+        val refreshedState = runCatching {
+            toState(
+                remoteSessions = sessionsApi.listSessions(serverUrl, accessToken),
+                remoteDevices = devicesApi.listDevices(serverUrl, accessToken),
+            )
+        }.getOrNull()
+        val candidates = refreshedState?.newCreateCandidates(draft).orEmpty()
+        return when {
+            candidates.size == 1 -> NewSessionCreateOutcome.Created(
+                session = candidates.single(),
+                recoveredAfterNetworkFailure = true,
+                refreshedState = refreshedState,
+            )
+            refreshedState != null && candidates.isEmpty() -> NewSessionCreateOutcome.Failed(
+                error = originalError.asCreateFailure(),
+                outcomeUnknown = false,
+                refreshedState = refreshedState,
+            )
+            else -> NewSessionCreateOutcome.Failed(
+                error = NewSessionCreateResultUnknownException(
+                    "The create request ended before its result could be confirmed. Return to Sessions and refresh before trying again.",
+                ),
+                outcomeUnknown = true,
+                refreshedState = refreshedState,
+            )
         }
     }
 
@@ -415,8 +474,6 @@ class SessionsController(
             lastReadSeq = lastReadSeq,
             takeover = takeover,
             connectorOnline = connectorStatus == "online",
-            runtimeSettings = runtimeSettings,
-            runtimeSettingsOverride = runtimeSettingsOverride,
             live = statusValue == SessionStatus.Running || statusValue == SessionStatus.WaitingApproval,
             sortKey = sortAt ?: lastActivityAt ?: lastItemAt ?: "",
             updatedSeq = updatedSeq,
@@ -555,6 +612,47 @@ class SessionsController(
         val accessToken: String,
     )
 }
+
+internal fun validateNewSessionDraft(draft: NewSessionCreateDraft): String? {
+    if (draft.connectorId.isBlank()) return "Choose a connector before starting."
+    if (draft.runtime !in setOf("codex", "claude")) return "Choose a supported runtime before starting."
+    if (draft.content.isBlank() && draft.attachments.isEmpty()) return "Enter a message or attach a file before starting."
+    if (draft.clientMessageId.isBlank()) return "The client message ID is missing."
+    if (draft.attachments.size > MAX_CREATE_ATTACHMENTS) return "You can attach up to $MAX_CREATE_ATTACHMENTS files."
+    draft.attachments.firstOrNull { it.name.isBlank() }?.let { return "An attachment name is missing." }
+    draft.attachments.firstOrNull { it.bytes.isEmpty() }?.let { return "Attachments cannot be empty." }
+    draft.attachments.firstOrNull { it.bytes.size > MAX_CREATE_ATTACHMENT_BYTES }?.let {
+        return "Attachment ${it.name} is too large."
+    }
+    return null
+}
+
+internal fun NewSessionAttachmentPart.toInlineAttachmentRef(): RemoteInlineAttachmentRef {
+    val digest = MessageDigest.getInstance("SHA-256").digest(bytes)
+    val sha256 = digest.joinToString(separator = "") { byte -> "%02x".format(byte) }
+    return RemoteInlineAttachmentRef(
+        fileId = sha256,
+        name = name,
+        mediaType = mediaType.ifBlank { "application/octet-stream" },
+        size = bytes.size.toLong(),
+        sha256 = sha256,
+        contentBase64 = Base64.getEncoder().encodeToString(bytes),
+    )
+}
+
+private fun Throwable.mayHaveUnknownCreateOutcome(): Boolean {
+    if (this !is ApiException || statusCode != null) return false
+    return generateSequence<Throwable>(this) { it.cause }.any { it is IOException }
+}
+
+private fun Throwable.asCreateFailure(): Throwable {
+    return if (this is ApiException) this else {
+        IllegalStateException(message ?: "Could not create and start this session.", this)
+    }
+}
+
+private const val MAX_CREATE_ATTACHMENTS = 10
+private const val MAX_CREATE_ATTACHMENT_BYTES = 25 * 1024 * 1024
 
 internal fun normalizeSessionIds(ids: List<String>): List<String> {
     return ids.distinct()

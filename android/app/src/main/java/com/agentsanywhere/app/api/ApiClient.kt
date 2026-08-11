@@ -33,6 +33,7 @@ class ApiClient(
         path: String,
         body: JSONObject,
         authorizationToken: String? = null,
+        readTimeoutSeconds: Long? = null,
     ): JSONObject {
         return requestJson(
             serverUrl = serverUrl,
@@ -40,6 +41,7 @@ class ApiClient(
             method = "POST",
             bodyText = body.toString(),
             authorizationToken = authorizationToken,
+            readTimeoutSeconds = readTimeoutSeconds,
         )
     }
 
@@ -131,6 +133,9 @@ class ApiClient(
             setRequestProperty("Accept", "text/event-stream")
             setRequestProperty("Cache-Control", "no-cache")
             setRequestProperty("ngrok-skip-browser-warning", "true")
+            if (!authorizationToken.isNullOrBlank()) {
+                setRequestProperty("Authorization", "Bearer $authorizationToken")
+            }
         }
         try {
             val responseCode = connection.responseCode
@@ -231,6 +236,7 @@ class ApiClient(
         method: String,
         bodyText: String?,
         authorizationToken: String?,
+        readTimeoutSeconds: Long? = null,
     ): JSONObject {
         return try {
             val requestBody = when {
@@ -250,7 +256,14 @@ class ApiClient(
                 }
                 .build()
 
-            JSON_HTTP_CLIENT.newCall(request).execute().use { response ->
+            val httpClient = if (readTimeoutSeconds == null) {
+                JSON_HTTP_CLIENT
+            } else {
+                JSON_HTTP_CLIENT.newBuilder()
+                    .readTimeout(readTimeoutSeconds, TimeUnit.SECONDS)
+                    .build()
+            }
+            httpClient.newCall(request).execute().use { response ->
                 val responseText = response.body?.string().orEmpty()
                 if (!response.isSuccessful) {
                     notifyUnauthorized(response.code, authorizationToken)

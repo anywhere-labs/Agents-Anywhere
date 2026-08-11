@@ -25,8 +25,6 @@ data class RemoteSession(
     val lastItemOrderSeq: Int?,
     val sortAt: String?,
     val updatedSeq: Int,
-    val runtimeSettings: Map<String, Any?>,
-    val runtimeSettingsOverride: Map<String, Any?>,
 )
 
 data class RemoteSessionResponse(
@@ -38,6 +36,32 @@ data class RemoteSessionsMutationResponse(
     val sessions: List<RemoteSession>,
     val notFound: List<String>,
     val serverTime: String?,
+)
+
+data class RemoteSessionCreateAndStartRequest(
+    val connectorId: String,
+    val runtime: String,
+    val title: String?,
+    val cwd: String?,
+    val content: String,
+    val selections: Map<String, String>,
+    val attachments: List<RemoteInlineAttachmentRef>,
+    val clientMessageId: String?,
+)
+
+data class RemoteInlineAttachmentRef(
+    val fileId: String,
+    val name: String,
+    val mediaType: String,
+    val size: Long,
+    val sha256: String,
+    val contentBase64: String,
+)
+
+data class RemoteSessionCreateResponse(
+    val session: RemoteSession,
+    val connectorResult: Any?,
+    val attachments: List<RemoteUploadedAttachment>,
 )
 
 data class RemoteRuntimeConfigSchema(
@@ -64,19 +88,83 @@ data class RemoteRuntimeConfigOption(
     val efforts: List<RemoteRuntimeConfigOption>?,
 )
 
-data class RemoteRuntimeSettings(
-    val runtime: String,
-    val settings: Map<String, Any?>,
-    val runtimeSettingsOverride: Map<String, Any?>,
-    val schemaVersion: Int,
-)
-
-data class RemoteSessionState(
-    val session: RemoteSession,
+data class RemoteSessionTimelinePage(
+    val sessionId: String,
     val items: List<RemoteTimelineItem>,
-    val approvals: List<RemoteApproval>,
     val nextSeq: Int,
     val hasMore: Boolean,
+    val serverTime: String?,
+)
+
+data class RemoteSessionRuntimeStateResponse(
+    val state: RemoteSessionRuntimeState,
+    val serverTime: String?,
+)
+
+data class RemoteSessionRuntimeState(
+    val sessionId: String,
+    val runtime: String,
+    val externalSessionId: String?,
+    val status: String,
+    val selections: Map<String, String?>,
+    val statusReason: String?,
+    val error: Map<String, Any?>?,
+    val metadata: Map<String, Any?>,
+    val updatedSeq: Int,
+    val createdAt: String?,
+    val updatedAt: String?,
+)
+
+data class RemoteRuntimeNoticeListResponse(
+    val notices: List<RemoteRuntimeNotice>,
+    val serverTime: String?,
+)
+
+data class RemoteRuntimeNotice(
+    val noticeId: String,
+    val type: String,
+    val sessionId: String,
+    val source: Map<String, Any?>,
+    val title: String,
+    val message: String?,
+    val severity: String,
+    val status: String,
+    val interactionType: String?,
+    val blocking: Map<String, Any?>?,
+    val responseRequired: Boolean,
+    val actions: List<Map<String, Any?>>,
+    val context: Map<String, Any?>,
+    val metadata: Map<String, Any?>,
+    val expiresAt: String?,
+    val revision: Int,
+    val updatedSeq: Int,
+    val createdAt: String?,
+    val resolvedAt: String?,
+)
+
+data class RemoteSessionSnapshot(
+    val session: RemoteSession,
+    val state: RemoteSessionRuntimeState?,
+    val timeline: RemoteSessionTimelineSnapshot,
+    val approvals: List<RemoteApproval>,
+    val notices: List<RemoteRuntimeNotice>,
+    val effectiveCapabilities: RemoteRuntimeCapabilitySet,
+    val runtimeCapabilities: RemoteRuntimeCapabilitySet,
+    val catalogs: RemoteSessionRuntimeCatalogs,
+    val eventCursor: String,
+    val serverTime: String?,
+)
+
+data class RemoteSessionTimelineSnapshot(
+    val items: List<RemoteTimelineItem>,
+    val nextSeq: Int,
+    val hasMore: Boolean,
+)
+
+data class RemoteSessionRuntimeCatalogs(
+    val model: RemoteRuntimeModelCatalog?,
+    val permission: RemoteRuntimePermissionCatalog?,
+    val unknown: Map<String, Any?>,
 )
 
 data class RemoteTimelineItem(
@@ -90,8 +178,10 @@ data class RemoteTimelineItem(
     val content: JSONObject,
     val source: JSONObject,
     val orderSeq: Int,
+    val revision: Int,
     val updatedSeq: Int,
     val createdAt: String,
+    val updatedAt: String?,
 )
 
 data class RemoteApproval(
@@ -127,4 +217,5 @@ data class RemoteUploadedAttachment(
     val name: String,
     val mediaType: String,
     val size: Long,
+    val sha256: String? = null,
 )

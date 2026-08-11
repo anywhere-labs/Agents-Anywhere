@@ -90,6 +90,7 @@ internal fun MessageComposer(
     takeoverEnabled: Boolean,
     takeoverBusy: Boolean,
     inputEnabled: Boolean,
+    attachmentsEnabled: Boolean,
     canSend: Boolean,
     showInterrupt: Boolean,
     interrupting: Boolean,
@@ -191,12 +192,12 @@ internal fun MessageComposer(
                 darkMode = darkMode,
                 takeoverEnabled = takeoverEnabled,
                 takeoverBusy = takeoverBusy,
-                inputEnabled = inputEnabled,
+                attachmentsEnabled = attachmentsEnabled,
                 canSend = canSend,
                 showInterrupt = showInterrupt,
                 interrupting = interrupting,
                 onToggleTakeover = onToggleTakeover,
-                onOpenAttachMenu = { if (inputEnabled) showAttachMenu = true },
+                onOpenAttachMenu = { if (attachmentsEnabled) showAttachMenu = true },
                 onSend = onSend,
                 onInterrupt = onInterrupt,
             )
@@ -421,7 +422,7 @@ private fun ComposerActions(
     darkMode: Boolean,
     takeoverEnabled: Boolean,
     takeoverBusy: Boolean,
-    inputEnabled: Boolean,
+    attachmentsEnabled: Boolean,
     canSend: Boolean,
     showInterrupt: Boolean,
     interrupting: Boolean,
@@ -489,7 +490,9 @@ private fun ComposerActions(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Box(
-                modifier = plusModifier.then(if (inputEnabled) Modifier.noRippleClickable(onClick = onOpenAttachMenu) else Modifier),
+                modifier = plusModifier.then(
+                    if (attachmentsEnabled) Modifier.noRippleClickable(onClick = onOpenAttachMenu) else Modifier,
+                ),
                 contentAlignment = Alignment.Center,
             ) {
                 PlusMiniGlyph(icon)
