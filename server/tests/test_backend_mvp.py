@@ -2575,6 +2575,64 @@ def test_timeline_sync_removes_snapshot_reasoning_duplicate_after_live_item(tmp_
     assert [item["id"] for item in reasoning_items] == ["tl_live_reasoning"]
 
 
+def test_complete_timeline_sync_dedupes_duplicate_item_ids(tmp_path):
+    client = make_client(tmp_path)
+    _, access_token, session_id, headers = create_connector_and_session(client)
+
+    base_item = {
+        "id": "item-316",
+        "sessionId": session_id,
+        "turnId": "turn_1",
+        "type": "message",
+        "status": "done",
+        "role": "assistant",
+        "source": {
+            "runtime": "codex",
+            "sessionId": "thr_1",
+            "turnId": "turn_1",
+            "itemId": "item-316",
+            "itemType": "agentMessage",
+        },
+        "orderSeq": 316,
+        "revision": 1,
+    }
+
+    response = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={
+            "notifications": [
+                {
+                    "method": "timeline.sync",
+                    "params": {
+                        "sessionId": session_id,
+                        "complete": True,
+                        "items": [
+                            {
+                                **base_item,
+                                "content": {"text": "partial", "format": "markdown"},
+                                "contentHash": "sha256:partial",
+                            },
+                            {
+                                **base_item,
+                                "content": {"text": "complete answer", "format": "markdown"},
+                                "contentHash": "sha256:complete",
+                                "revision": 2,
+                            },
+                        ],
+                    },
+                }
+            ]
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    state = session_view_for_assertions(client, session_id, headers)
+    messages = [item for item in state["items"] if item["id"] == "item-316"]
+    assert len(messages) == 1
+    assert messages[0]["content"]["text"] == "complete answer"
+
+
 def test_sessions_sort_by_latest_timeline_item_not_session_update(tmp_path):
     client = make_client(tmp_path)
     connector_id, access_token, first_session_id, headers = create_connector_and_session(client)

@@ -195,10 +195,20 @@ class TimelineRepositoryMixin:
                     session_id,
                     mark_read=mark_read_on_change,
                 )
-                normalized = [
-                    _timeline_item_from_input(item, updated_seq=updated_seq, now=now)
-                    for item in items
-                ]
+                normalized_by_id: dict[str, TimelineItem] = {}
+                for item in items:
+                    normalized_item = _timeline_item_from_input(
+                        item,
+                        updated_seq=updated_seq,
+                        now=now,
+                    )
+                    existing_item = normalized_by_id.get(normalized_item.id)
+                    if existing_item is None:
+                        normalized_by_id[normalized_item.id] = normalized_item
+                        continue
+                    if not _should_keep_existing_timeline_item(existing_item, item):
+                        normalized_by_id[normalized_item.id] = normalized_item
+                normalized = _dedupe_legacy_history_items(list(normalized_by_id.values()))
             await self.timeline.replace(session_id, normalized)
         return normalized
 
