@@ -526,7 +526,7 @@ def semantic_identity_keys(
     if projection.raw_type not in {"agentMessage", "userMessage", "steeringUserMessage"}:
         return ()
     keys: list[tuple[str, ...]] = []
-    if projection.client_message_id is not None and role == "user":
+    if projection.client_message_id is not None and role == "user" and projection.native_id is None:
         keys.append(
             (
                 "client-message",
@@ -561,7 +561,7 @@ def semantic_identity_keys(
             )
         )
     text = normalized_timeline_text(projection)
-    if text and projection.turn_id:
+    if text and projection.turn_id and projection.native_id is None:
         text_digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
         keys.append(
             (

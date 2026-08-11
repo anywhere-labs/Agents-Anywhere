@@ -10,11 +10,11 @@ def timeline_item_id(
     index: int,
 ) -> str:
     client_message_id = client_message_id_from_raw(raw)
-    if client_message_id and _is_user_message(raw):
-        return f"codex_client_{_safe_component(client_message_id)}"
     native_id = native_item_id(raw)
     if native_id is not None:
         return native_id
+    if client_message_id and _is_user_message(raw):
+        return client_message_id
     return f"codex_{external_session_id}_{derived_key(raw, index)}"
 
 
@@ -27,10 +27,10 @@ def timeline_item_id_from_values(
     external_session_id: str,
     index: int,
 ) -> str:
-    if client_message_id and is_user_message_values(raw_type=raw_type, role=role):
-        return f"codex_client_{_safe_component(client_message_id)}"
     if native_id is not None:
         return native_id
+    if client_message_id and is_user_message_values(raw_type=raw_type, role=role):
+        return client_message_id
     return (
         f"codex_{external_session_id}_"
         f"{derived_key_from_values(raw_type=raw_type, role=role, turn_id=turn_id, index=index)}"

@@ -153,6 +153,36 @@ def test_codex_timeline_item_maps_native_type_to_platform_parent_type() -> None:
     }
 
 
+def test_codex_user_message_native_id_beats_client_message_id() -> None:
+    accumulator = CodexTimelineAccumulator()
+
+    items = accumulator.items_from_snapshot_projections(
+        session_id="sess_1",
+        external_session_id="thread_1",
+        projections=(
+            CodexTimelineProjection(
+                native_id="item_user_1",
+                raw_type="userMessage",
+                role="user",
+                turn_id="turn_1",
+                text="same prompt",
+                client_message_id="cm_1",
+            ),
+            CodexTimelineProjection(
+                native_id="item_user_2",
+                raw_type="userMessage",
+                role="user",
+                turn_id="turn_1",
+                text="same prompt",
+                client_message_id="cm_2",
+            ),
+        ),
+    )
+
+    assert [item.id for item in items] == ["item_user_1", "item_user_2"]
+    assert [item.source["clientMessageId"] for item in items] == ["cm_1", "cm_2"]
+
+
 def test_codex_timeline_native_item_classes_are_explicitly_mapped() -> None:
     assert codex_timeline_item_class("agentMessage") is CodexAgentMessageItem
     assert codex_timeline_item_class("userMessage") is CodexUserMessageItem
@@ -1107,7 +1137,7 @@ def test_codex_timeline_uses_typed_sdk_user_client_id_for_identity() -> None:
         event=event,
     )
 
-    assert items[0].id == "codex_client_msg_client_1"
+    assert items[0].id == "item_user"
     assert items[0].source["itemId"] == "item_user"
     assert items[0].source["clientMessageId"] == "msg_client_1"
 
@@ -2339,7 +2369,7 @@ async def _test_codex_snapshot_keeps_late_user_client_message_identity() -> None
     )
 
     assert host.timeline_item_upserts[-1].id == "live_user"
-    assert snapshot.items[0].id == "codex_client_msg_late"
+    assert snapshot.items[0].id == "item-1"
     assert snapshot.items[0].source["itemId"] == "item-1"
     assert snapshot.items[0].source["clientMessageId"] == "msg_late"
 
@@ -3678,6 +3708,7 @@ async def _test_codex_runtime_tags_completed_user_echo_with_client_message_id() 
                     "id": "turn_new",
                     "items": [
                         {
+                            "id": "item_user",
                             "type": "userMessage",
                             "text": "hello from web",
                             "status": "completed",
@@ -3689,7 +3720,7 @@ async def _test_codex_runtime_tags_completed_user_echo_with_client_message_id() 
     )
 
     item = host.timeline_syncs[-1]["items"][0]
-    assert item.id == "codex_client_cm_web_1"
+    assert item.id == "item_user"
     assert item.source["clientMessageId"] == "cm_web_1"
     assert item.source["derivedKey"].startswith("userMessage-")
 
@@ -3735,8 +3766,8 @@ async def _test_codex_runtime_remembers_completed_user_echo_client_message_id() 
 
     first = host.timeline_syncs[-2]["items"][0]
     second = host.timeline_syncs[-1]["items"][0]
-    assert first.id == "codex_client_cm_web_1"
-    assert second.id == "codex_client_cm_web_1"
+    assert first.id == "item_user"
+    assert second.id == "item_user"
     assert first.source["clientMessageId"] == "cm_web_1"
     assert second.source["clientMessageId"] == "cm_web_1"
 
@@ -3764,6 +3795,7 @@ async def _test_codex_runtime_tags_live_user_echo_with_client_message_id() -> No
                 "threadId": "thread_1",
                 "turnId": "turn_new",
                 "item": {
+                    "id": "item_live_user",
                     "type": "userMessage",
                     "text": "live hello",
                 },
@@ -3772,7 +3804,7 @@ async def _test_codex_runtime_tags_live_user_echo_with_client_message_id() -> No
     )
 
     item = host.timeline_item_upserts[-1]
-    assert item.id == "codex_client_cm_live_1"
+    assert item.id == "item_live_user"
     assert item.source["clientMessageId"] == "cm_live_1"
     assert item.role == "user"
     assert item.content == {"kind": "markdown", "text": "live hello", "format": "markdown"}
@@ -3827,7 +3859,7 @@ async def _test_codex_runtime_preserves_pending_user_attachments_after_codex_ech
     )
 
     item = host.timeline_item_upserts[-1]
-    assert item.id == "codex_client_cm_file_1"
+    assert item.id == "item_user_file"
     assert item.source["clientMessageId"] == "cm_file_1"
     assert item.content == {
         "kind": "markdown",
@@ -3868,6 +3900,7 @@ async def _test_codex_runtime_tags_live_steer_echo_with_client_message_id() -> N
                 "threadId": "thread_1",
                 "turnId": "turn_new",
                 "item": {
+                    "id": "item_steer_user",
                     "type": "steeringUserMessage",
                     "text": "more context",
                 },
@@ -3876,7 +3909,7 @@ async def _test_codex_runtime_tags_live_steer_echo_with_client_message_id() -> N
     )
 
     item = host.timeline_item_upserts[-1]
-    assert item.id == "codex_client_cm_steer_1"
+    assert item.id == "item_steer_user"
     assert item.source["clientMessageId"] == "cm_steer_1"
     assert item.source["rawType"] == "steeringUserMessage"
     assert item.role == "user"
