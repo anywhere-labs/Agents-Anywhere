@@ -2,14 +2,21 @@ from __future__ import annotations
 
 from typing import Any
 
+from loguru import logger
+
 from agent_server.core.models import (
     ConnectorIngestRequest,
+    ConnectorIngestRejectedNotification,
     ConnectorIngestResponse,
+    ConnectorNotification,
     SessionRuntimeState,
 )
 from agent_server.core.utc import utc_now
 from agent_server.infra.timeline_broker import TimelineBroker
-from agent_server.services.connector_notifications import ConnectorNotificationService
+from agent_server.services.connector_notifications import (
+    ConnectorNotificationService,
+    NotificationValidationError,
+)
 from agent_server.services.connector_presence import ConnectorPresencePort
 from agent_server.services.dashboard_events import publish_dashboard_changed
 from agent_server.services.device_runtimes import (
@@ -23,6 +30,26 @@ from agent_server.services.effective_capabilities import (
 from agent_server.services.ingest_effects import IngestEffect
 from agent_server.services.repository_ports import ConnectorIngestRepository
 from agent_server.services.session_runtime_state_cache import SessionRuntimeStateCache
+
+
+INGEST_REJECTION_MESSAGE_MAX_LENGTH = 500
+
+
+def ingest_rejection_from_exception(
+    index: int,
+    notification: ConnectorNotification,
+    error: Exception,
+) -> ConnectorIngestRejectedNotification:
+    message = str(error) or type(error).__name__
+    if len(message) > INGEST_REJECTION_MESSAGE_MAX_LENGTH:
+        message = f"{message[:INGEST_REJECTION_MESSAGE_MAX_LENGTH].rstrip()}..."
+    return ConnectorIngestRejectedNotification(
+        index=index,
+        method=notification.method,
+        code="notification_failed",
+        message=message,
+        errorType=type(error).__name__,
+    )
 
 
 class ConnectorIngestService:
@@ -50,24 +77,41 @@ class ConnectorIngestService:
     ) -> ConnectorIngestResponse:
         await self._store.record_connector_activity(connector_id)
         effects = []
+        accepted = 0
+        rejected: list[ConnectorIngestRejectedNotification] = []
         protocol_capabilities_changed = False
         runtime_scoped_capabilities_changed = False
         saw_runtime_inventory = False
-        for notification in payload.notifications:
-            if notification.method == "runtime.inventoryUpdated":
-                await self._device_runtimes.ingest_inventory(
-                    connector_id, notification.params
+        for index, notification in enumerate(payload.notifications):
+            try:
+                effect = await self.apply_ingest_notification(
+                    connector_id,
+                    notification,
                 )
+            except NotificationValidationError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                rejected.append(
+                    ingest_rejection_from_exception(
+                        index,
+                        notification,
+                        exc,
+                    )
+                )
+                logger.exception(
+                    "connector ingest notification rejected connector_id={} index={} method={} error_type={}",
+                    connector_id,
+                    index,
+                    notification.method,
+                    type(exc).__name__,
+                )
+                continue
+            accepted += 1
+            if notification.method == "runtime.inventoryUpdated":
                 saw_runtime_inventory = True
                 continue
             if notification.method == "runtime.statusChanged":
-                await self._apply_runtime_status(connector_id, notification.params)
                 continue
-            effect = await self._notifications.apply(
-                connector_id=connector_id,
-                method=notification.method,
-                params=notification.params,
-            )
             effects.append(effect)
             if notification.method == "protocol.capabilitiesUpdated":
                 protocol_capabilities_changed = (
@@ -115,7 +159,36 @@ class ConnectorIngestService:
 
             asyncio.create_task(self._device_runtimes.reconcile_active(connector_id))
         return ConnectorIngestResponse(
-            accepted=len(payload.notifications), serverTime=utc_now()
+            accepted=accepted,
+            rejected=rejected,
+            serverTime=utc_now(),
+        )
+
+    async def apply_ingest_notification(
+        self,
+        connector_id: str,
+        notification: ConnectorNotification,
+    ) -> IngestEffect:
+        """Apply one connector ingest notification.
+
+        Side effects:
+        - may write connector/runtime/session/timeline state
+        - may update runtime inventory rows
+        - does not publish session WebSocket effects; caller owns publication
+        """
+        if notification.method == "runtime.inventoryUpdated":
+            await self._device_runtimes.ingest_inventory(
+                connector_id,
+                notification.params,
+            )
+            return IngestEffect()
+        if notification.method == "runtime.statusChanged":
+            await self._apply_runtime_status(connector_id, notification.params)
+            return IngestEffect()
+        return await self._notifications.apply(
+            connector_id=connector_id,
+            method=notification.method,
+            params=notification.params,
         )
 
     async def handle_notification_message(

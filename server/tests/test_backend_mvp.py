@@ -2706,6 +2706,82 @@ def test_incomplete_timeline_sync_upserts_without_removing_existing_items(tmp_pa
     assert [item["id"] for item in messages] == ["item-1", "item-2"]
 
 
+def test_connector_ingest_rejects_bad_notification_without_500(tmp_path):
+    client = make_client(tmp_path)
+    _, access_token, session_id, headers = create_connector_and_session(client)
+
+    first = {
+        "id": "item-ok-1",
+        "sessionId": session_id,
+        "turnId": "turn_1",
+        "type": "message",
+        "status": "done",
+        "role": "assistant",
+        "content": {"text": "first", "format": "markdown"},
+        "source": {
+            "runtime": "codex",
+            "sessionId": "thr_1",
+            "turnId": "turn_1",
+            "itemId": "item-ok-1",
+            "itemType": "agentMessage",
+        },
+        "orderSeq": 1,
+        "revision": 1,
+        "contentHash": "sha256:first-ok",
+    }
+    second = {
+        **first,
+        "id": "item-ok-2",
+        "content": {"text": "second", "format": "markdown"},
+        "source": {**first["source"], "itemId": "item-ok-2"},
+        "orderSeq": 2,
+        "contentHash": "sha256:second-ok",
+    }
+
+    response = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={
+            "notifications": [
+                {
+                    "method": "timeline.itemUpsert",
+                    "params": {"sessionId": session_id, "item": first},
+                },
+                {
+                    "method": "timeline.itemUpsert",
+                    "params": {
+                        "sessionId": session_id,
+                        "item": {
+                            "id": "item-bad",
+                            "sessionId": session_id,
+                            "content": {"text": "bad", "format": "markdown"},
+                        },
+                    },
+                },
+                {
+                    "method": "timeline.itemUpsert",
+                    "params": {"sessionId": session_id, "item": second},
+                },
+            ]
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["accepted"] == 2
+    assert len(body["rejected"]) == 1
+    assert body["rejected"][0]["index"] == 1
+    assert body["rejected"][0]["method"] == "timeline.itemUpsert"
+    assert body["rejected"][0]["errorType"] == "ValidationError"
+    state = session_view_for_assertions(client, session_id, headers)
+    messages = [
+        item
+        for item in state["items"]
+        if item["id"] in {"item-ok-1", "item-ok-2", "item-bad"}
+    ]
+    assert [item["id"] for item in messages] == ["item-ok-1", "item-ok-2"]
+
+
 def test_sessions_sort_by_latest_timeline_item_not_session_update(tmp_path):
     client = make_client(tmp_path)
     connector_id, access_token, first_session_id, headers = create_connector_and_session(client)

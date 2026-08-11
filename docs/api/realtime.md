@@ -225,6 +225,33 @@ explicit bulk sync and disconnected WebSocket fallback; it must still compute
 changed timeline items and publish session WebSocket events for frontend
 convergence.
 
+`POST /api/v2/connector/ingest` isolates notification failures inside a batch.
+One malformed or conflicting notification must not produce HTTP 500 or prevent
+later notifications in the same request from being applied. The response
+includes:
+
+```json
+{
+  "accepted": 2,
+  "rejected": [
+    {
+      "index": 1,
+      "method": "timeline.itemUpsert",
+      "code": "notification_failed",
+      "message": "...",
+      "errorType": "ValidationError"
+    }
+  ],
+  "serverTime": "..."
+}
+```
+
+`accepted` counts successfully applied notifications. `rejected` reports
+per-notification failures using the original zero-based batch index. Explicit
+protocol violations that are intentionally unsupported may still return HTTP
+400; unexpected processing failures should be logged and reported through
+`rejected` instead of surfacing as HTTP 500.
+
 The target semantic connector notification methods are:
 
 ```text

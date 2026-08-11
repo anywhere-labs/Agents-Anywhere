@@ -474,8 +474,17 @@ class ConnectorIngestRequest(BaseModel):
     notifications: list[ConnectorNotification] = Field(min_length=1)
 
 
+class ConnectorIngestRejectedNotification(BaseModel):
+    index: int
+    method: str
+    code: str
+    message: str
+    errorType: str | None = None
+
+
 class ConnectorIngestResponse(BaseModel):
     accepted: int
+    rejected: list[ConnectorIngestRejectedNotification] = Field(default_factory=list)
     serverTime: str
 
 
