@@ -155,10 +155,18 @@ def _mobile_login_token_hash(token: str) -> str:
 def _dedupe_legacy_history_items(items: list[TimelineItem]) -> list[TimelineItem]:
     live_keys = {_live_duplicate_key(item) for item in items}
     live_keys.discard(None)
+    live_client_message_ids = {
+        client_message_id
+        for item in items
+        if _timeline_source_event(item) != "thread/read"
+        and (client_message_id := _timeline_source_client_message_id(item)) is not None
+    }
     canonical_keys = {_canonical_duplicate_key(item) for item in items}
     canonical_keys.discard(None)
     result: list[TimelineItem] = []
     for item in items:
+        if _is_thread_read_echo(item, live_client_message_ids):
+            continue
         snapshot_key = _snapshot_duplicate_key(item)
         if snapshot_key is not None and snapshot_key in live_keys:
             continue
@@ -322,6 +330,23 @@ def _should_keep_existing_timeline_item(existing: TimelineItem, incoming: Timeli
 def _timeline_source_client_message_id(item: TimelineItem | TimelineItemIn) -> str | None:
     value = item.source.clientMessageId
     return value if isinstance(value, str) and value else None
+
+
+def _timeline_source_event(item: TimelineItem | TimelineItemIn) -> str | None:
+    value = item.source.event
+    return value if isinstance(value, str) and value else None
+
+
+def _is_thread_read_echo(
+    item: TimelineItem,
+    live_client_message_ids: set[str],
+) -> bool:
+    if _timeline_source_event(item) != "thread/read":
+        return False
+    client_message_id = _timeline_source_client_message_id(item)
+    if client_message_id is None:
+        return False
+    return client_message_id in live_client_message_ids
 
 
 def _content_completeness_score(content: Any) -> int:
