@@ -8,6 +8,7 @@ import sys
 from collections.abc import Mapping
 from typing import Any, Self
 
+import httpx
 import pytest
 from websockets.exceptions import ConnectionClosedError
 from websockets.frames import Close
@@ -65,6 +66,7 @@ from connector.runtimes.codex.provider import CodexProvider
 from connector.server.auth import ConnectorAuthenticationError
 from connector.server.capabilities import protocol_capabilities_from_inventory
 from connector.server.client import BackendRpcClient
+from connector.server.errors import ConnectorNetworkError
 from connector.server.ingest import coalesce_timeline_item_upserts
 from connector.server.rpc import (
     RPC_LOG_REDACTED,
@@ -397,7 +399,7 @@ class FakeAgentRuntime(AgentRuntime):
             session_id=session_id,
             runtime=self.runtime_id,
             external_session_id=external_session_id,
-            status="running",
+            status="idle",
             selections={"model": "sel_model_state"},
             metadata={"source": "fake"},
         )
@@ -1107,6 +1109,10 @@ def test_runtime_sync_uses_runtime_timeline_hook_when_available() -> None:
     asyncio.run(_exercise_runtime_sync_uses_runtime_timeline_hook_when_available())
 
 
+def test_runtime_sync_skips_active_session_timeline_reads() -> None:
+    asyncio.run(_exercise_runtime_sync_skips_active_session_timeline_reads())
+
+
 def test_runtime_sync_continues_after_single_session_ingest_failure() -> None:
     asyncio.run(_exercise_runtime_sync_continues_after_single_session_ingest_failure())
 
@@ -1206,8 +1212,8 @@ async def _exercise_runtime_sync_pushes_each_session_snapshot_before_next_meta()
         "runtime.modelCatalog",
         "runtime.permissionCatalog",
         "session.discover",
-        "session.sync",
         "session.state",
+        "session.sync",
         "session.notices",
     ]
     sync_call = next(call for call in runtime.calls if call[0] == "session.sync")
@@ -1312,8 +1318,8 @@ async def _exercise_runtime_sync_uses_runtime_timeline_hook_when_available() -> 
         "runtime.modelCatalog",
         "runtime.permissionCatalog",
         "session.discover",
-        "session.prepareTimeline",
         "session.state",
+        "session.prepareTimeline",
         "session.notices",
         "session.commitTimeline",
     ]
@@ -1321,6 +1327,98 @@ async def _exercise_runtime_sync_uses_runtime_timeline_hook_when_available() -> 
         "session.meta.upsert",
         "session.state.updated",
         "notice.upsert",
+    ]
+
+
+async def _exercise_runtime_sync_skips_active_session_timeline_reads() -> None:
+    class ActiveRuntime(FakeAgentRuntime):
+        async def list_sessions(
+            self,
+            limit: int = 100,
+            cursor: str | None = None,
+            force: bool = False,
+        ) -> tuple[SessionMeta, ...]:
+            self.calls.append(
+                (
+                    "session.discover",
+                    {"limit": limit, "cursor": cursor, "force": force},
+                )
+            )
+            return (
+                SessionMeta(
+                    session_id="sess_running",
+                    external_session_id="thr_running",
+                    runtime=self.runtime_id,
+                    title="Running",
+                    metadata={"sync": {"requires_timeline_sync": True}},
+                ),
+            )
+
+        async def get_session_state(
+            self,
+            session_id: str,
+            external_session_id: str | None = None,
+        ) -> SessionState:
+            self.calls.append(
+                (
+                    "session.state",
+                    {
+                        "sessionId": session_id,
+                        "externalSessionId": external_session_id,
+                    },
+                )
+            )
+            return SessionState(
+                session_id=session_id,
+                external_session_id=external_session_id,
+                runtime=self.runtime_id,
+                status="running",
+            )
+
+    runtime = ActiveRuntime()
+    host = RecordingRuntimeHost()
+    ingested_batches: list[list[dict[str, Any]]] = []
+
+    async def ingest_notifications(notifications: list[dict[str, Any]]) -> None:
+        ingested_batches.append(list(notifications))
+        for notification in notifications:
+            params = notification["params"]
+            session_id = params.get("sessionId")
+            if notification["method"] == "session.meta.upsert":
+                host.events.append(("meta", session_id))
+            elif notification["method"] == "session.state.updated":
+                host.events.append(("state", session_id))
+
+    runner = RuntimeSyncRunner(
+        config=ConnectorConfig(
+            server_url="http://127.0.0.1:8000",
+            connector_id="conn_1",
+            connector_token="token",
+        ),
+        supervisor=FakeRuntimeSupervisor(runtime),  # type: ignore[arg-type]
+        host=host,
+        preferences_reader=dict,
+        send_notification=unused_notification_sender,
+        ingest_notifications=ingest_notifications,
+    )
+
+    await runner.sync_existing_once()
+
+    assert host.events == [
+        ("model_catalog", "codex"),
+        ("permission_catalog", "codex"),
+        ("meta", "sess_running"),
+        ("state", "sess_running"),
+    ]
+    assert [call[0] for call in runtime.calls] == [
+        "runtime.modelCatalog",
+        "runtime.permissionCatalog",
+        "session.discover",
+        "session.state",
+    ]
+    assert [notification["method"] for notification in ingested_batches[0]] == [
+        "session.meta.upsert",
+        "session.state.updated",
     ]
 
 
@@ -1402,6 +1500,10 @@ def test_connector_refreshes_expiring_access_token_before_ingest() -> None:
 
 def test_connector_reauths_and_retries_ingest_on_401() -> None:
     asyncio.run(_exercise_ingest_reauth_on_401())
+
+
+def test_connector_ingest_network_error_is_explicit() -> None:
+    asyncio.run(_exercise_ingest_network_error_is_explicit())
 
 
 def test_connector_runtime_dispatches_local_fs_and_shell(tmp_path) -> None:
@@ -2100,6 +2202,31 @@ async def _exercise_ingest_reauth_on_401() -> None:
     await client.ingest_notifications([{"method": "terminal.output", "params": {}}])
 
     assert used_tokens == ["Bearer expired", "Bearer fresh"]
+
+
+async def _exercise_ingest_network_error_is_explicit() -> None:
+    client = _client()
+
+    async def authenticate() -> str:
+        client._auth._access_token = "token"  # type: ignore[attr-defined]
+        client._auth._access_token_expires_at = 10_000_000_000  # type: ignore[attr-defined]
+        return "token"
+
+    client._auth.authenticate = authenticate  # type: ignore[method-assign]
+
+    class FailingHttpClient:
+        async def aclose(self) -> None:
+            return None
+
+        async def post(self, *args: Any, **kwargs: Any) -> Any:
+            request = httpx.Request("POST", "http://127.0.0.1:8000/api/v2/connector/ingest")
+            raise httpx.ConnectError("connection refused", request=request)
+
+    client._http_client = FailingHttpClient()  # type: ignore[assignment]
+    await client.ensure_access_token(force=True)
+
+    with pytest.raises(ConnectorNetworkError, match="backend ingest request failed"):
+        await client.ingest_notifications([{"method": "terminal.output", "params": {}}])
 
 
 async def _exercise_local_ops(tmp_path) -> None:

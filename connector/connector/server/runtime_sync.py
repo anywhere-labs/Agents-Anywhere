@@ -10,21 +10,26 @@ from connector.logging import logger
 from connector.runtime_protocol import (
     AgentRuntime,
     RuntimeHostClient,
+    RuntimeStatus,
+    RuntimeSupervisor,
     RuntimeTimelineItem,
     RuntimeTimelineSnapshot,
-    RuntimeUnsupportedError,
-    RuntimeSupervisor,
     RuntimeUnavailableError,
+    RuntimeUnsupportedError,
     SessionMeta,
     SessionNotice,
     SessionState,
 )
+from connector.server.errors import ConnectorNetworkError
 from connector.server.runtime_host import _drop_none, _timeline_item_payload
 from connector.server.runtime_rpc_payloads import session_notice_payload
 
 NotificationSender = Callable[[str, dict[str, Any]], Awaitable[None]]
 IngestNotificationSender = Callable[[list[dict[str, Any]]], Awaitable[None]]
 PreferencesReader = Callable[[], dict[str, Any]]
+ACTIVE_SESSION_SYNC_SKIP_STATUSES: frozenset[RuntimeStatus] = frozenset(
+    {"waiting", "pending", "running", "stopping"}
+)
 
 
 class RuntimeSyncRunner:
@@ -80,6 +85,15 @@ class RuntimeSyncRunner:
                 for session in sessions:
                     try:
                         await self.sync_existing_session(runtime, session)
+                    except ConnectorNetworkError as exc:
+                        logger.warning(
+                            "existing session sync network failure runtime={} session_id={} external_session_id={} error={}",
+                            session.runtime,
+                            session.session_id,
+                            session.external_session_id,
+                            exc,
+                        )
+                        continue
                     except Exception:  # noqa: BLE001
                         logger.exception(
                             "existing session sync failed runtime={} session_id={} external_session_id={}",
@@ -101,6 +115,12 @@ class RuntimeSyncRunner:
                         runtime_id,
                     )
                 continue
+            except ConnectorNetworkError as exc:
+                logger.warning(
+                    "existing {} session sync network failure error={}",
+                    runtime_id,
+                    exc,
+                )
             except TimeoutError:
                 logger.warning("existing {} session sync timed out", runtime_id)
             except Exception:  # noqa: BLE001
@@ -138,6 +158,24 @@ class RuntimeSyncRunner:
         read_elapsed_ms = 0.0
         publish_elapsed_ms = 0.0
         synced_items = 0
+        state = await runtime.get_session_state(
+            session.session_id,
+            session.external_session_id,
+        )
+        if state is not None and state.status in ACTIVE_SESSION_SYNC_SKIP_STATUSES:
+            await self._ingest_scanner_notifications(
+                [
+                    _session_meta_notification(session),
+                    _session_state_notification(state),
+                ]
+            )
+            logger.info(
+                "existing session timeline sync skipped active session runtime={} session_id={} status={}",
+                session.runtime,
+                session.session_id,
+                state.status,
+            )
+            return
         prepared = await runtime.prepare_session_timeline_sync(
             session.session_id,
             session.external_session_id,
@@ -162,10 +200,6 @@ class RuntimeSyncRunner:
                 snapshot.complete,
                 read_elapsed_ms,
             )
-        state = await runtime.get_session_state(
-            session.session_id,
-            session.external_session_id,
-        )
         notices = await runtime.get_session_notices(
             session.session_id,
             session.external_session_id,

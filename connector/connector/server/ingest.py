@@ -8,6 +8,7 @@ import httpx
 
 from connector.logging import logger
 from connector.server.auth import ConnectorAuthenticationError
+from connector.server.errors import ConnectorNetworkError
 from connector.server.urls import api_v2_url
 
 # HTTP ingest owns explicit bulk sync and disconnected WebSocket fallback.
@@ -76,6 +77,12 @@ class ConnectorIngestClient:
                 batch.append(item)
             try:
                 await self.post_batch(batch)
+            except ConnectorNetworkError as exc:
+                logger.warning(
+                    "connector ingest flush failed due to network error; dropped {} notifications error={}",
+                    len(batch),
+                    exc,
+                )
             except Exception:  # noqa: BLE001
                 logger.exception("connector ingest flush failed (dropped {} notifications)", len(batch))
 
@@ -91,11 +98,21 @@ class ConnectorIngestClient:
         if client is None:
             client = self._http_client_factory(60)
         try:
-            response = await self._post_ingest_batch(client, access_token, notifications)
+            try:
+                response = await self._post_ingest_batch(client, access_token, notifications)
+            except httpx.RequestError as exc:
+                raise ConnectorNetworkError(
+                    f"backend ingest request failed: {exc}"
+                ) from exc
             if getattr(response, "status_code", None) == 401:
                 logger.warning("connector ingest token rejected; refreshing access token and retrying")
                 access_token = await self._access_token_provider(True)
-                response = await self._post_ingest_batch(client, access_token, notifications)
+                try:
+                    response = await self._post_ingest_batch(client, access_token, notifications)
+                except httpx.RequestError as exc:
+                    raise ConnectorNetworkError(
+                        f"backend ingest retry failed: {exc}"
+                    ) from exc
                 if getattr(response, "status_code", None) == 401:
                     raise ConnectorAuthenticationError("connector credential no longer valid")
             response.raise_for_status()

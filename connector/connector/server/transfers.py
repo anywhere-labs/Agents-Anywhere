@@ -8,6 +8,7 @@ import httpx
 
 from connector.logging import logger
 from connector.server.auth import ConnectorAuthenticationError
+from connector.server.errors import ConnectorNetworkError
 from connector.server.urls import api_v2_url
 
 AccessTokenProvider = Callable[..., Any]
@@ -25,15 +26,7 @@ async def download_attachment(
     access_token = await access_token_provider()
     timeout = httpx.Timeout(300.0, connect=30.0)
     async with http_client_factory(timeout) as client:
-        response = await client.get(
-            api_v2_url(
-                server_url,
-                f"/connector/sessions/{session_id}/attachments/{file_id}/content",
-            ),
-            headers={"Authorization": f"Bearer {access_token}"},
-        )
-        if getattr(response, "status_code", None) == 401:
-            access_token = await access_token_provider(force=True)
+        try:
             response = await client.get(
                 api_v2_url(
                     server_url,
@@ -41,6 +34,24 @@ async def download_attachment(
                 ),
                 headers={"Authorization": f"Bearer {access_token}"},
             )
+        except httpx.RequestError as exc:
+            raise ConnectorNetworkError(
+                f"attachment download failed file_id={file_id}: {exc}"
+            ) from exc
+        if getattr(response, "status_code", None) == 401:
+            access_token = await access_token_provider(force=True)
+            try:
+                response = await client.get(
+                    api_v2_url(
+                        server_url,
+                        f"/connector/sessions/{session_id}/attachments/{file_id}/content",
+                    ),
+                    headers={"Authorization": f"Bearer {access_token}"},
+                )
+            except httpx.RequestError as exc:
+                raise ConnectorNetworkError(
+                    f"attachment download retry failed file_id={file_id}: {exc}"
+                ) from exc
             if getattr(response, "status_code", None) == 401:
                 raise ConnectorAuthenticationError(
                     "connector credential no longer valid"
@@ -82,21 +93,31 @@ async def upload_prepared_download(
     headers = {"Authorization": f"Bearer {access_token}"}
     params_query = {"token": token}
     async with http_client_factory(timeout) as client:
-        response = await client.put(
-            target,
-            params=params_query,
-            headers=headers,
-            content=file_chunks(path),
-        )
-        if getattr(response, "status_code", None) == 401:
-            access_token = await access_token_provider(force=True)
-            headers = {"Authorization": f"Bearer {access_token}"}
+        try:
             response = await client.put(
                 target,
                 params=params_query,
                 headers=headers,
                 content=file_chunks(path),
             )
+        except httpx.RequestError as exc:
+            raise ConnectorNetworkError(
+                f"prepared download upload failed transfer_id={transfer_id}: {exc}"
+            ) from exc
+        if getattr(response, "status_code", None) == 401:
+            access_token = await access_token_provider(force=True)
+            headers = {"Authorization": f"Bearer {access_token}"}
+            try:
+                response = await client.put(
+                    target,
+                    params=params_query,
+                    headers=headers,
+                    content=file_chunks(path),
+                )
+            except httpx.RequestError as exc:
+                raise ConnectorNetworkError(
+                    f"prepared download upload retry failed transfer_id={transfer_id}: {exc}"
+                ) from exc
             if getattr(response, "status_code", None) == 401:
                 raise ConnectorAuthenticationError(
                     "connector credential no longer valid"

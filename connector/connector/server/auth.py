@@ -7,6 +7,7 @@ from collections.abc import Callable
 import httpx
 
 from connector.core.config import ConnectorConfig
+from connector.server.errors import ConnectorNetworkError
 from connector.server.urls import api_v2_url
 
 ACCESS_TOKEN_REFRESH_SKEW_SECONDS = 60.0
@@ -42,12 +43,17 @@ class ConnectorAuthenticator:
         if client is None:
             client = self._http_client_factory(30)
         try:
-            response = await client.post(
-                api_v2_url(self._config.server_url, "/connector/auth"),
-                headers={
-                    "Authorization": f"Connector {self._config.connector_id}:{self._config.connector_token}",
-                },
-            )
+            try:
+                response = await client.post(
+                    api_v2_url(self._config.server_url, "/connector/auth"),
+                    headers={
+                        "Authorization": f"Connector {self._config.connector_id}:{self._config.connector_token}",
+                    },
+                )
+            except httpx.RequestError as exc:
+                raise ConnectorNetworkError(
+                    f"backend authentication request failed: {exc}"
+                ) from exc
             if response.status_code == 401:
                 raise ConnectorAuthenticationError("invalid connector credential")
             response.raise_for_status()

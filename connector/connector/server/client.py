@@ -26,6 +26,7 @@ from connector.runtimes import default_runtime_providers
 from connector.server.auth import ConnectorAuthenticationError, ConnectorAuthenticator
 from connector.server.capabilities import protocol_capabilities_from_inventory
 from connector.server.dispatch import ConnectorRequestDispatcher
+from connector.server.errors import ConnectorNetworkError
 from connector.server.ingest import ConnectorIngestClient
 from connector.server.rpc import ConnectorRpcChannel, ConnectorWebSocketFrameTooLarge
 from connector.server.runtime_host import ConnectorRuntimeHost
@@ -140,6 +141,20 @@ class BackendRpcClient:
                         "backend websocket closed code={} reason={!r}; reconnecting in {}s",
                         close_code,
                         close_reason,
+                        self.config.reconnect_seconds,
+                    )
+                    await asyncio.sleep(self.config.reconnect_seconds)
+                except ConnectorNetworkError as exc:
+                    logger.warning(
+                        "connector backend network unavailable error={}; reconnecting in {}s",
+                        exc,
+                        self.config.reconnect_seconds,
+                    )
+                    await asyncio.sleep(self.config.reconnect_seconds)
+                except OSError as exc:
+                    logger.warning(
+                        "connector backend connection failed error={}; reconnecting in {}s",
+                        exc,
                         self.config.reconnect_seconds,
                     )
                     await asyncio.sleep(self.config.reconnect_seconds)
