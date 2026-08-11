@@ -226,7 +226,7 @@ class CodexSessionReader:
                 external_session_id=external_session_id,
                 runtime="codex",
                 items=(),
-                complete=True,
+                complete=False,
                 metadata={"source": "codex.runtime.basic"},
             )
         await self.ensure_started()

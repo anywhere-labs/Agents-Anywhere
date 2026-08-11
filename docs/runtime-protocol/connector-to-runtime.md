@@ -330,7 +330,7 @@ class RuntimeTimelineSnapshot:
     external_session_id: str | None
     runtime: str
     items: tuple[RuntimeTimelineItem, ...]
-    complete: bool = True
+    complete: bool = False
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
 

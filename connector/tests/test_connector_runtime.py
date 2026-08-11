@@ -817,7 +817,7 @@ class RecordingRuntimeHost(RuntimeHostClient):
         runtime: str,
         items: tuple[RuntimeTimelineItem, ...],
         external_session_id: str | None = None,
-        complete: bool = True,
+        complete: bool = False,
         metadata: Mapping[str, Any] | None = None,
     ) -> None:
         self.events.append(("timeline", session_id))

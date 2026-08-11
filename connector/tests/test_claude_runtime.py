@@ -898,7 +898,7 @@ async def _test_claude_runtime_scanner_syncs_full_history_without_cursor() -> No
     assert handled is True
     assert len(host.timeline_syncs) == 1
     sync = host.timeline_syncs[0]
-    assert sync["complete"] is True
+    assert sync["complete"] is False
     assert sync["metadata"]["source"] == "claude.history.sync"
     assert [item.role for item in sync["items"]] == ["user", "assistant"]
     assert (
@@ -1856,7 +1856,7 @@ class _RecordingHost(RuntimeHostClient):
         runtime: str,
         items: tuple[RuntimeTimelineItem, ...],
         external_session_id: str | None = None,
-        complete: bool = True,
+        complete: bool = False,
         metadata: dict[str, Any] | None = None,
     ) -> None:
         self.timeline_syncs.append(

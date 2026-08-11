@@ -2633,6 +2633,79 @@ def test_complete_timeline_sync_dedupes_duplicate_item_ids(tmp_path):
     assert messages[0]["content"]["text"] == "complete answer"
 
 
+def test_incomplete_timeline_sync_upserts_without_removing_existing_items(tmp_path):
+    client = make_client(tmp_path)
+    _, access_token, session_id, headers = create_connector_and_session(client)
+
+    first = {
+        "id": "item-1",
+        "sessionId": session_id,
+        "turnId": "turn_1",
+        "type": "message",
+        "status": "done",
+        "role": "assistant",
+        "content": {"text": "existing", "format": "markdown"},
+        "source": {
+            "runtime": "codex",
+            "sessionId": "thr_1",
+            "turnId": "turn_1",
+            "itemId": "item-1",
+            "itemType": "agentMessage",
+        },
+        "orderSeq": 1,
+        "revision": 1,
+        "contentHash": "sha256:first",
+    }
+    second = {
+        **first,
+        "id": "item-2",
+        "content": {"text": "upserted", "format": "markdown"},
+        "source": {**first["source"], "itemId": "item-2"},
+        "orderSeq": 2,
+        "contentHash": "sha256:second",
+    }
+
+    initial = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={
+            "notifications": [
+                {
+                    "method": "timeline.sync",
+                    "params": {
+                        "sessionId": session_id,
+                        "complete": False,
+                        "items": [first],
+                    },
+                }
+            ]
+        },
+    )
+    assert initial.status_code == 200, initial.text
+
+    update = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={
+            "notifications": [
+                {
+                    "method": "timeline.sync",
+                    "params": {
+                        "sessionId": session_id,
+                        "complete": False,
+                        "items": [second],
+                    },
+                }
+            ]
+        },
+    )
+    assert update.status_code == 200, update.text
+
+    state = session_view_for_assertions(client, session_id, headers)
+    messages = [item for item in state["items"] if item["id"] in {"item-1", "item-2"}]
+    assert [item["id"] for item in messages] == ["item-1", "item-2"]
+
+
 def test_sessions_sort_by_latest_timeline_item_not_session_update(tmp_path):
     client = make_client(tmp_path)
     connector_id, access_token, first_session_id, headers = create_connector_and_session(client)

@@ -597,7 +597,7 @@ class FakeHost(RuntimeHostClient):
         runtime: str,
         items: tuple[Any, ...],
         external_session_id: str | None = None,
-        complete: bool = True,
+        complete: bool = False,
         metadata: Mapping[str, Any] | None = None,
     ) -> None:
         self.timeline_syncs.append(
@@ -2458,7 +2458,7 @@ async def _test_codex_runtime_returns_empty_snapshot_without_external_session() 
     snapshot = await runtime.get_session_snapshot("sess_1")
 
     assert snapshot.items == ()
-    assert snapshot.complete is True
+    assert snapshot.complete is False
 
 
 def test_codex_runtime_starts_existing_turn_and_reports_running_state() -> None:

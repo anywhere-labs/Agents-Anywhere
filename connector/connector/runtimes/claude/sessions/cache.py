@@ -136,7 +136,7 @@ class ClaudeSessionStore:
                 external_session_id=external_session_id,
                 runtime="claude",
                 items=(),
-                complete=True,
+                complete=False,
                 metadata={"source": "claude.session.local"},
             )
         items = tuple(
@@ -150,7 +150,7 @@ class ClaudeSessionStore:
             external_session_id=session.external_session_id,
             runtime="claude",
             items=items,
-            complete=True,
+            complete=False,
             metadata={
                 "source": "claude.session.local",
                 "marker": str(session.timeline_revision),

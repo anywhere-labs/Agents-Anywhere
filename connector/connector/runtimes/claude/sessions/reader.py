@@ -115,9 +115,7 @@ class ClaudeSessionReader:
             external_session_id=external_session_id,
             limit=limit,
         )
-        if history_snapshot.complete and (
-            history_snapshot.items or local_session is None or not local_snapshot.items
-        ):
+        if history_snapshot.items or local_session is None or not local_snapshot.items:
             self.session_store.mark_synced(session_id, external_session_id)
             return history_snapshot
         if local_snapshot.items:
@@ -258,7 +256,7 @@ class ClaudeSessionReader:
             external_session_id=external_session_id,
             runtime="claude",
             items=items,
-            complete=True,
+            complete=False,
             metadata={
                 "source": "claude.session.history",
                 "messageCount": len(messages),

@@ -92,11 +92,10 @@ class ClaudeHistorySyncer:
             self.session_store.mark_synced(session_id, external_session_id)
             return PreparedSessionTimelineSync(snapshot=None)
 
-        complete = previous_cursor is None
-        sync_messages = messages if complete else messages_after_cursor(
-            messages,
-            previous_cursor,
-        )
+        if previous_cursor is None:
+            sync_messages = messages
+        else:
+            sync_messages = messages_after_cursor(messages, previous_cursor)
         session = _history_session(session_id, external_session_id, info)
         items = _history_items_from_messages(session, sync_messages)
         snapshot = RuntimeTimelineSnapshot(
@@ -104,7 +103,7 @@ class ClaudeHistorySyncer:
             runtime="claude",
             external_session_id=external_session_id,
             items=items,
-            complete=complete,
+            complete=False,
             metadata={
                 "source": "claude.history.sync",
                 "messageCount": len(messages),
