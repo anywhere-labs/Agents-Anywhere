@@ -1867,6 +1867,7 @@ async def _test_codex_runtime_reads_session_snapshot() -> None:
 
     assert snapshot.runtime == "codex"
     assert snapshot.external_session_id == "thread_1"
+    assert snapshot.complete is False
     assert [item.id for item in snapshot.items] == ["item_user", "item_assistant"]
     assert snapshot.items[0].content_hash.startswith("sha256:")
     assert snapshot.items[0].role == "user"

@@ -280,7 +280,7 @@ class CodexSessionReader:
             external_session_id=external_session_id,
             runtime="codex",
             items=items,
-            complete=True,
+            complete=False,
             metadata={"source": "codex.thread/read"},
         )
 
