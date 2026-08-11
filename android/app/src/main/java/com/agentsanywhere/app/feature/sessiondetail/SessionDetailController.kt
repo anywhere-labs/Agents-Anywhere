@@ -1,10 +1,11 @@
 package com.agentsanywhere.app.feature.sessiondetail
 
 import com.agentsanywhere.app.api.ApiException
-import com.agentsanywhere.app.api.RemoteApproval
 import com.agentsanywhere.app.api.RemoteRuntimeCapability
 import com.agentsanywhere.app.api.RemoteRuntimeCapabilitySet
+import com.agentsanywhere.app.api.RemoteRuntimeModelCatalog
 import com.agentsanywhere.app.api.RemoteRuntimeNotice
+import com.agentsanywhere.app.api.RemoteRuntimePermissionCatalog
 import com.agentsanywhere.app.api.RemoteSession
 import com.agentsanywhere.app.api.RemoteSessionRuntimeState
 import com.agentsanywhere.app.api.RemoteTimelineItem
@@ -82,18 +83,18 @@ class SessionDetailController(
                         serverTime = snapshot.serverTime,
                         isLoaded = true,
                     ),
-                    catalogs = RuntimeCatalogs(
-                        model = snapshot.catalogs.model,
-                        permission = snapshot.catalogs.permission,
-                        unknown = snapshot.catalogs.unknown,
-                        isLoaded = true,
-                    ),
-                    approvals = snapshot.approvals.map { it.toTimelineApproval() },
+                    // Snapshot catalogs are compatibility data. Existing-session selectors
+                    // always use the live session-scoped catalog endpoints.
+                    catalogs = currentState?.catalogs ?: RuntimeCatalogs(),
+                    commands = currentState?.commands ?: RuntimeCommands(),
                     initialized = true,
                     actionError = currentState?.actionError,
                     takeoverInFlight = currentState?.takeoverInFlight ?: false,
                     sending = currentState?.sending ?: messages.hasPendingOptimisticSend(),
                     interrupting = currentState?.interrupting ?: false,
+                    selectionUpdating = currentState?.selectionUpdating ?: false,
+                    commandExecuting = currentState?.commandExecuting ?: false,
+                    respondingNoticeIds = currentState?.respondingNoticeIds.orEmpty(),
                 )
             }.recoverCatching { error ->
                 if (error is ApiException) throw error
@@ -249,6 +250,41 @@ class SessionDetailController(
         attachments: List<UploadFilePart> = emptyList(),
         uploadedAttachments: List<TimelineAttachment> = emptyList(),
     ): Result<SendMessageResult> {
+        return performMessageAction(
+            sessionId = sessionId,
+            content = content,
+            clientMessageId = clientMessageId,
+            attachments = attachments,
+            uploadedAttachments = uploadedAttachments,
+            steer = false,
+        )
+    }
+
+    suspend fun steer(
+        sessionId: String,
+        content: String,
+        clientMessageId: String,
+        attachments: List<UploadFilePart> = emptyList(),
+        uploadedAttachments: List<TimelineAttachment> = emptyList(),
+    ): Result<SendMessageResult> {
+        return performMessageAction(
+            sessionId = sessionId,
+            content = content,
+            clientMessageId = clientMessageId,
+            attachments = attachments,
+            uploadedAttachments = uploadedAttachments,
+            steer = true,
+        )
+    }
+
+    private suspend fun performMessageAction(
+        sessionId: String,
+        content: String,
+        clientMessageId: String,
+        attachments: List<UploadFilePart>,
+        uploadedAttachments: List<TimelineAttachment>,
+        steer: Boolean,
+    ): Result<SendMessageResult> {
         return withContext(Dispatchers.IO) {
             runCatching {
                 val auth = authSession()
@@ -264,16 +300,28 @@ class SessionDetailController(
                         files = attachments,
                     ).map { it.toTimelineAttachment() }
                 }
-                sessionsApi.sendSessionMessage(
-                    serverUrl = auth.serverUrl,
-                    authorizationToken = auth.accessToken,
-                    sessionId = sessionId,
-                    content = content.ifBlank { ATTACHMENT_ONLY_PROMPT },
-                    clientMessageId = clientMessageId,
-                    attachments = uploaded.map { it.toRemoteUploadedAttachment() },
-                ).let { response ->
+                val response = if (steer) {
+                    sessionsApi.steerSession(
+                        serverUrl = auth.serverUrl,
+                        authorizationToken = auth.accessToken,
+                        sessionId = sessionId,
+                        content = content.ifBlank { ATTACHMENT_ONLY_PROMPT },
+                        clientMessageId = clientMessageId,
+                        attachments = uploaded.map { it.toRemoteUploadedAttachment() },
+                    )
+                } else {
+                    sessionsApi.sendSessionMessage(
+                        serverUrl = auth.serverUrl,
+                        authorizationToken = auth.accessToken,
+                        sessionId = sessionId,
+                        content = content.ifBlank { ATTACHMENT_ONLY_PROMPT },
+                        clientMessageId = clientMessageId,
+                        attachments = uploaded.map { it.toRemoteUploadedAttachment() },
+                    )
+                }
+                response.let {
                     SendMessageResult(
-                        turnId = response.turnId,
+                        turnId = it.turnId,
                         attachments = uploaded,
                     )
                 }
@@ -344,11 +392,111 @@ class SessionDetailController(
         }
     }
 
-    suspend fun resolveApproval(approvalId: String, status: String): Result<Unit> {
+    suspend fun loadSessionModelCatalog(sessionId: String): Result<RemoteRuntimeModelCatalog> {
         return withContext(Dispatchers.IO) {
             runCatching {
                 val auth = authSession()
-                sessionsApi.resolveApproval(auth.serverUrl, auth.accessToken, approvalId, status)
+                sessionsApi.getSessionRuntimeModelCatalog(
+                    auth.serverUrl,
+                    auth.accessToken,
+                    sessionId,
+                ).catalog
+            }
+        }
+    }
+
+    suspend fun loadSessionPermissionCatalog(sessionId: String): Result<RemoteRuntimePermissionCatalog> {
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                val auth = authSession()
+                sessionsApi.getSessionRuntimePermissionCatalog(
+                    auth.serverUrl,
+                    auth.accessToken,
+                    sessionId,
+                ).catalog
+            }
+        }
+    }
+
+    suspend fun updateSelections(
+        sessionId: String,
+        selections: Map<String, String?>,
+    ): Result<SessionRuntimeState?> {
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                val auth = authSession()
+                val response = sessionsApi.patchSessionRuntimeSelections(
+                    auth.serverUrl,
+                    auth.accessToken,
+                    sessionId,
+                    selections,
+                )
+                if (!response.ok) throw IllegalStateException("Runtime rejected the selection update.")
+                response.state?.toSessionRuntimeState(response.serverTime)
+            }
+        }
+    }
+
+    suspend fun loadCommands(sessionId: String): Result<List<RuntimeCommand>> {
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                val auth = authSession()
+                sessionsApi.getSessionRuntimeCommands(
+                    auth.serverUrl,
+                    auth.accessToken,
+                    sessionId,
+                ).commands.map { it.toRuntimeCommand() }
+            }
+        }
+    }
+
+    suspend fun executeCommand(
+        sessionId: String,
+        command: String,
+        args: List<String>,
+        raw: String,
+    ): Result<CommandExecutionResult> {
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                val auth = authSession()
+                val response = sessionsApi.executeSessionRuntimeCommand(
+                    auth.serverUrl,
+                    auth.accessToken,
+                    sessionId,
+                    command,
+                    args,
+                    raw,
+                )
+                if (!response.ok) {
+                    throw IllegalStateException(response.message ?: response.code ?: "Command failed.")
+                }
+                CommandExecutionResult(
+                    command = response.command,
+                    code = response.code,
+                    message = response.message,
+                    result = response.result,
+                )
+            }
+        }
+    }
+
+    suspend fun respondNotice(
+        sessionId: String,
+        noticeId: String,
+        actionId: String,
+        input: Map<String, Any?>?,
+    ): Result<Unit> {
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                val auth = authSession()
+                sessionsApi.respondRuntimeNotice(
+                    auth.serverUrl,
+                    auth.accessToken,
+                    sessionId,
+                    noticeId,
+                    actionId,
+                    input,
+                )
                 Unit
             }
         }
@@ -462,18 +610,6 @@ class SessionDetailController(
 
     private fun Throwable.userMessage(): String {
         return message ?: "Could not refresh this session."
-    }
-
-    private fun RemoteApproval.toTimelineApproval(): TimelineApproval {
-        return TimelineApproval(
-            id = id,
-            title = title,
-            description = description,
-            kind = kind,
-            status = status,
-            choices = choices,
-            updatedSeq = updatedSeq,
-        )
     }
 
     private fun mergeOptimistic(
@@ -919,13 +1055,19 @@ private fun RemoteRuntimeNotice.toRuntimeNotice(): RuntimeNotice {
         message = message,
         severity = severity,
         status = status,
+        interactionType = interactionType,
+        blocking = blocking?.let { RuntimeNoticeBlocking(scope = it.scope, targetId = it.targetId) },
         responseRequired = responseRequired,
         revision = revision,
         updatedSeq = updatedSeq,
         source = source,
-        actions = actions,
+        actions = actions.map { it.toRuntimeNoticeAction() },
         context = context,
         metadata = metadata,
+        expiresAt = expiresAt,
+        createdAt = createdAt,
+        updatedAt = updatedAt,
+        resolvedAt = resolvedAt,
     )
 }
 
@@ -1048,4 +1190,11 @@ internal fun SessionDetailState.applyNoticeObservation(
 data class SendMessageResult(
     val turnId: String?,
     val attachments: List<TimelineAttachment>,
+)
+
+data class CommandExecutionResult(
+    val command: String,
+    val code: String?,
+    val message: String?,
+    val result: Any?,
 )

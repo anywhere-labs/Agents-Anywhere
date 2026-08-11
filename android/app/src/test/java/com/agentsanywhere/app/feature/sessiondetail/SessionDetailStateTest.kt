@@ -2,12 +2,18 @@ package com.agentsanywhere.app.feature.sessiondetail
 
 import com.agentsanywhere.app.api.RemoteRuntimeCapability
 import com.agentsanywhere.app.api.RemoteRuntimeCapabilitySet
+import com.agentsanywhere.app.api.RemoteRuntimeModel
+import com.agentsanywhere.app.api.RemoteRuntimeModelCatalog
 import com.agentsanywhere.app.api.RemoteRuntimeNotice
+import com.agentsanywhere.app.api.RemoteRuntimePermission
+import com.agentsanywhere.app.api.RemoteRuntimePermissionCatalog
+import com.agentsanywhere.app.api.RemoteRuntimeReasoning
 import com.agentsanywhere.app.api.RemoteSessionRuntimeState
 import com.agentsanywhere.app.model.AgentSession
 import com.agentsanywhere.app.model.SessionStatus
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -128,6 +134,158 @@ class SessionDetailStateTest {
         assertEquals(4, afterStaleNotice.notices.notices.single().revision)
     }
 
+    @Test
+    fun messageActionUsesEffectiveCapabilitiesAndNeverFallsBackAcrossActions() {
+        val send = effectiveCapabilities(SESSION_SEND_MESSAGE_CAPABILITY)
+        val steer = effectiveCapabilities(SESSION_STEER_CAPABILITY)
+        val both = effectiveCapabilities(SESSION_SEND_MESSAGE_CAPABILITY, SESSION_STEER_CAPABILITY)
+
+        assertEquals(RuntimeMessageAction.Send, send.messageAction("codex", SessionRuntimeStatus.Idle))
+        assertEquals(RuntimeMessageAction.Steer, steer.messageAction("codex", SessionRuntimeStatus.Running))
+        assertEquals(RuntimeMessageAction.Send, both.messageAction("codex", SessionRuntimeStatus.Idle))
+        assertEquals(RuntimeMessageAction.Steer, both.messageAction("codex", SessionRuntimeStatus.Running))
+        assertNull(EffectiveCapabilities(isLoaded = true).messageAction("codex", SessionRuntimeStatus.Idle))
+    }
+
+    @Test
+    fun liveCatalogSelectionUsesHintThenDefaultThenFirstValidSelection() {
+        val model = RemoteRuntimeModelCatalog(
+            runtime = "codex",
+            revision = 3,
+            models = listOf(
+                RemoteRuntimeModel(
+                    id = "model-a",
+                    selectionId = "model:a",
+                    displayName = "Model A",
+                    description = null,
+                    default = false,
+                    reasoningItems = emptyList(),
+                    metadata = emptyMap(),
+                ),
+                RemoteRuntimeModel(
+                    id = "model-b",
+                    selectionId = null,
+                    displayName = "Model B",
+                    description = null,
+                    default = true,
+                    reasoningItems = listOf(
+                        RemoteRuntimeReasoning(
+                            id = "high",
+                            selectionId = "model:b:high",
+                            fullModelId = null,
+                            displayName = "High",
+                            description = null,
+                            default = true,
+                            metadata = emptyMap(),
+                        ),
+                    ),
+                    metadata = emptyMap(),
+                ),
+            ),
+        ).selectionOptions()
+        val permission = RemoteRuntimePermissionCatalog(
+            runtime = "codex",
+            revision = 2,
+            permissions = listOf(
+                RemoteRuntimePermission(
+                    id = "read",
+                    selectionId = "permission:read",
+                    displayName = "Read",
+                    description = null,
+                    default = false,
+                    metadata = emptyMap(),
+                ),
+            ),
+        ).selectionOptions()
+
+        assertEquals("model:a", model.validatedSelection("model:a"))
+        assertEquals("model:b:high", model.validatedSelection("missing"))
+        assertEquals("permission:read", permission.validatedSelection(null))
+        assertNull(emptyList<RuntimeSelectionOption>().validatedSelection("missing"))
+    }
+
+    @Test
+    fun commandsFuzzyMatchAliasesAndNoticeInputIsValidatedAndTyped() {
+        val command = RuntimeCommand(
+            id = "compact",
+            title = "Compact context",
+            description = "Reduce history",
+            aliases = listOf("shrink"),
+            category = "context",
+            scope = "session",
+            enabled = false,
+            disabledReason = "runtime_busy",
+            acceptsArgs = true,
+            argsSchema = null,
+            metadata = emptyMap(),
+        )
+        assertTrue(command.matches("compact"))
+        assertTrue(command.matches("shrink context"))
+        assertFalse(command.matches("unknown"))
+        assertFalse(command.enabled)
+
+        val action = RuntimeNoticeAction(
+            actionId = "submit",
+            label = "Submit",
+            style = "primary",
+            input = RuntimeNoticeActionInput(
+                required = true,
+                schema = mapOf(
+                    "required" to listOf("count", "confirmed"),
+                    "properties" to mapOf(
+                        "count" to mapOf("title" to "Count", "type" to "integer"),
+                        "confirmed" to mapOf("title" to "Confirmed", "type" to "boolean"),
+                    ),
+                ),
+                uiSchema = null,
+            ),
+            unknown = mapOf("future" to true),
+        )
+        assertTrue(action.coerceInput(mapOf("count" to "2", "confirmed" to "yes")).isSuccess)
+        assertEquals(2L, action.coerceInput(mapOf("count" to "2", "confirmed" to "yes")).getOrThrow()?.get("count"))
+        assertEquals(true, action.coerceInput(mapOf("count" to "2", "confirmed" to "yes")).getOrThrow()?.get("confirmed"))
+        assertTrue(action.coerceInput(mapOf("count" to "bad", "confirmed" to "yes")).isFailure)
+        assertTrue(action.coerceInput(mapOf("count" to "2")).isFailure)
+    }
+
+    @Test
+    fun catalogAndCommandRequestKeysDropLateResponsesAndFailuresKeepStaleData() {
+        val originalModel = RemoteRuntimeModelCatalog("codex", 1, emptyList())
+        val newerModel = RemoteRuntimeModelCatalog("codex", 2, emptyList())
+        val firstCatalogRequest = RuntimeCatalogs(model = originalModel).beginModel("session-a")
+        val firstKey = firstCatalogRequest.requestKey!!
+        val secondCatalogRequest = firstCatalogRequest.beginPermission("session-b")
+        assertEquals(originalModel, secondCatalogRequest.applyModel(firstKey, newerModel).model)
+
+        val activeModelRequest = RuntimeCatalogs(model = originalModel).beginModel("session-a")
+        val failedCatalog = activeModelRequest.failModel(activeModelRequest.requestKey!!, "offline")
+        assertEquals(originalModel, failedCatalog.model)
+        assertTrue(failedCatalog.modelStale)
+        assertEquals("offline", failedCatalog.modelErrorMessage)
+
+        val oldCommand = RuntimeCommand(
+            id = "old",
+            title = "Old",
+            description = null,
+            aliases = emptyList(),
+            category = null,
+            scope = "session",
+            enabled = true,
+            disabledReason = null,
+            acceptsArgs = false,
+            argsSchema = null,
+            metadata = emptyMap(),
+        )
+        val firstCommands = RuntimeCommands(commands = listOf(oldCommand), isLoaded = true).begin("session-a")
+        val staleKey = firstCommands.requestKey!!
+        val latestCommands = firstCommands.begin("session-b")
+        assertEquals(listOf(oldCommand), latestCommands.apply(staleKey, emptyList()).commands)
+        val failedCommands = latestCommands.fail(latestCommands.requestKey!!, "offline")
+        assertEquals(listOf(oldCommand), failedCommands.commands)
+        assertTrue(failedCommands.stale)
+        assertEquals("offline", failedCommands.errorMessage)
+    }
+
     private fun remoteRuntimeState(status: String, updatedSeq: Int): RemoteSessionRuntimeState {
         return RemoteSessionRuntimeState(
             sessionId = "session",
@@ -166,6 +324,27 @@ class SessionDetailStateTest {
                     parameters = emptyMap(),
                 ),
             ),
+        )
+    }
+
+    private fun effectiveCapabilities(vararg ids: String): EffectiveCapabilities {
+        return EffectiveCapabilities(
+            revision = 1,
+            capabilities = ids.map { id ->
+                EffectiveCapability(
+                    capabilityId = id,
+                    version = "1",
+                    scope = "session",
+                    runtime = "codex",
+                    sessionId = "session",
+                    supported = true,
+                    available = true,
+                    allowed = true,
+                    unavailableReason = null,
+                    parameters = emptyMap(),
+                )
+            },
+            isLoaded = true,
         )
     }
 

@@ -328,6 +328,158 @@ class SessionsApiTest {
     }
 
     @Test
+    fun runtimeActionsCatalogsCommandsAndNoticeResponseUseExactV2Contracts() {
+        val selectionResponse = JSONObject()
+            .put("ok", true)
+            .put("state", JSONObject(runtimeStateResponse("idle")).getJSONObject("state"))
+            .put("connectorResult", JSONObject().put("accepted", true))
+            .put("serverTime", "2026-08-10T00:00:10Z")
+            .toString()
+        val commandListResponse = JSONObject()
+            .put(
+                "commands",
+                listOf(
+                    JSONObject()
+                        .put("id", "compact")
+                        .put("title", "Compact context")
+                        .put("description", "Reduce context")
+                        .put("aliases", listOf("shrink"))
+                        .put("category", "context")
+                        .put("scope", "session")
+                        .put("enabled", false)
+                        .put("disabledReason", "runtime_busy")
+                        .put("acceptsArgs", true)
+                        .put("argsSchema", JSONObject().put("type", "array"))
+                        .put("metadata", JSONObject().put("future", true))
+                        .put("futureField", true),
+                ),
+            )
+            .put("serverTime", "2026-08-10T00:00:11Z")
+            .toString()
+        val commandResponse = JSONObject()
+            .put("command", "compact")
+            .put("ok", true)
+            .put("code", JSONObject.NULL)
+            .put("message", "accepted")
+            .put("result", JSONObject().put("operationId", "op-1"))
+            .put("serverTime", "2026-08-10T00:00:12Z")
+            .toString()
+        val rpcResponse = JSONObject()
+            .put("ok", true)
+            .put("result", JSONObject().put("turnId", "turn-1"))
+            .toString()
+        val responses = ArrayDeque(
+            listOf(
+                TestResponse(body = modelCatalogResponse()),
+                TestResponse(body = permissionCatalogResponse()),
+                TestResponse(body = selectionResponse),
+                TestResponse(body = commandListResponse),
+                TestResponse(body = commandResponse),
+                TestResponse(body = rpcResponse),
+                TestResponse(body = rpcResponse),
+                TestResponse(body = rpcResponse),
+                TestResponse(body = rpcResponse),
+            ),
+        )
+        withJsonServer(responses) { serverUrl, requests ->
+            val api = SessionsApi()
+            val model = api.getSessionRuntimeModelCatalog(serverUrl, "token", "session/one")
+            val permission = api.getSessionRuntimePermissionCatalog(serverUrl, "token", "session/one")
+            val selection = api.patchSessionRuntimeSelections(
+                serverUrl,
+                "token",
+                "session/one",
+                linkedMapOf("model" to "model-reasoning", "permission" to null, "future" to "kept"),
+            )
+            val commands = api.getSessionRuntimeCommands(serverUrl, "token", "session/one")
+            val command = api.executeSessionRuntimeCommand(
+                serverUrl,
+                "token",
+                "session/one",
+                command = "compact",
+                args = listOf("now"),
+                raw = "/compact now",
+            )
+            val message = api.sendSessionMessage(
+                serverUrl,
+                "token",
+                "session/one",
+                content = "message",
+                clientMessageId = "client-message",
+                attachments = listOf(RemoteUploadedAttachment("file/one", "one.txt", "text/plain", 3)),
+            )
+            val steer = api.steerSession(
+                serverUrl,
+                "token",
+                "session/one",
+                content = "steer",
+                clientMessageId = "client-steer",
+            )
+            api.interruptSession(serverUrl, "token", "session/one")
+            api.respondRuntimeNotice(
+                serverUrl,
+                "token",
+                "session/one",
+                "notice/one",
+                "approve",
+                mapOf("reason" to "safe", "count" to 2),
+            )
+
+            assertRequest(requests[0], "GET", "/api/v2/sessions/session%2Fone/runtime/catalogs/model", "")
+            assertRequest(requests[1], "GET", "/api/v2/sessions/session%2Fone/runtime/catalogs/permission", "")
+            assertEquals("PATCH", requests[2].method)
+            assertEquals("/api/v2/sessions/session%2Fone/runtime/selections", requests[2].path)
+            val selections = JSONObject(requests[2].body).getJSONObject("selections")
+            assertEquals("model-reasoning", selections.getString("model"))
+            assertTrue(selections.isNull("permission"))
+            assertEquals("kept", selections.getString("future"))
+            assertRequest(requests[3], "GET", "/api/v2/sessions/session%2Fone/runtime/commands", "")
+            assertEquals("POST", requests[4].method)
+            assertEquals("/api/v2/sessions/session%2Fone/runtime/commands", requests[4].path)
+            val commandBody = JSONObject(requests[4].body)
+            assertEquals("compact", commandBody.getString("command"))
+            assertEquals(listOf("now"), commandBody.getJSONArray("args").toStringList())
+            assertEquals("/compact now", commandBody.getString("raw"))
+            assertEquals("/api/v2/sessions/session%2Fone/runtime/messages", requests[5].path)
+            val messageBody = JSONObject(requests[5].body)
+            assertEquals(setOf("content", "clientMessageId", "attachments"), messageBody.keys().asSequence().toSet())
+            assertEquals("file/one", messageBody.getJSONArray("attachments").getJSONObject(0).getString("fileId"))
+            assertRequest(
+                requests[6],
+                "POST",
+                "/api/v2/sessions/session%2Fone/runtime/steer",
+                "{\"content\":\"steer\",\"clientMessageId\":\"client-steer\"}",
+            )
+            assertRequest(requests[7], "POST", "/api/v2/sessions/session%2Fone/runtime/interrupt", "{}")
+            assertEquals("POST", requests[8].method)
+            assertEquals(
+                "/api/v2/sessions/session%2Fone/runtime/notices/notice%2Fone/respond",
+                requests[8].path,
+            )
+            val noticeBody = JSONObject(requests[8].body)
+            assertEquals("approve", noticeBody.getString("actionId"))
+            assertEquals("safe", noticeBody.getJSONObject("input").getString("reason"))
+            assertEquals(2, noticeBody.getJSONObject("input").getInt("count"))
+            requests.forEach {
+                assertEquals("Bearer token", it.authorization)
+                assertEquals(1, Regex("/api/v2").findAll(it.target).count())
+            }
+
+            assertEquals("model-reasoning", model.catalog.models.single().reasoningItems.single().selectionId)
+            assertEquals("permission-selection", permission.catalog.permissions.single().selectionId)
+            assertTrue(selection.ok)
+            assertNull(selection.state?.selections?.get("permission"))
+            assertEquals("compact", commands.commands.single().id)
+            assertFalse(commands.commands.single().enabled)
+            assertEquals(listOf("shrink"), commands.commands.single().aliases)
+            assertTrue(command.ok)
+            assertEquals("op-1", (command.result as JSONObject).getString("operationId"))
+            assertEquals("turn-1", message.turnId)
+            assertEquals("turn-1", steer.turnId)
+        }
+    }
+
+    @Test
     fun authNotFoundValidationAndNetworkFailuresRemainErrors() {
         listOf(401, 404, 422).forEach { status ->
             withJsonServer(
@@ -540,7 +692,7 @@ class SessionsApiTest {
                 listOf(
                     JSONObject()
                         .put("noticeId", "notice-1")
-                        .put("type", "approval")
+                        .put("type", "interaction")
                         .put("sessionId", "session/one")
                         .put("source", JSONObject().put("runtime", "codex"))
                         .put("title", "Approve")
@@ -548,18 +700,104 @@ class SessionsApiTest {
                         .put("severity", "warning")
                         .put("status", "open")
                         .put("interactionType", "approval")
-                        .put("blocking", JSONObject().put("composer", true))
+                        .put("blocking", JSONObject().put("scope", "session").put("targetId", "session/one"))
                         .put("responseRequired", true)
-                        .put("actions", listOf(JSONObject().put("actionId", "approve").put("label", "Approve")))
+                        .put(
+                            "actions",
+                            listOf(
+                                JSONObject()
+                                    .put("actionId", "approve")
+                                    .put("label", "Approve")
+                                    .put("style", "primary")
+                                    .put(
+                                        "input",
+                                        JSONObject()
+                                            .put("required", true)
+                                            .put(
+                                                "schema",
+                                                JSONObject()
+                                                    .put("type", "object")
+                                                    .put(
+                                                        "properties",
+                                                        JSONObject().put(
+                                                            "reason",
+                                                            JSONObject().put("type", "string"),
+                                                        ),
+                                                    )
+                                                    .put("required", listOf("reason")),
+                                            ),
+                                    )
+                                    .put("futureAction", true),
+                            ),
+                        )
                         .put("context", JSONObject().put("path", "/workspace"))
                         .put("metadata", JSONObject().put("future", true))
                         .put("revision", 2)
                         .put("updatedSeq", 13)
                         .put("createdAt", "2026-08-10T00:00:01Z")
+                        .put("updatedAt", "2026-08-10T00:00:02Z")
                         .put("futureField", true),
                 ),
             )
             .put("serverTime", "2026-08-10T00:00:05Z")
+            .toString()
+    }
+
+    private fun modelCatalogResponse(): String {
+        return JSONObject()
+            .put(
+                "catalog",
+                JSONObject()
+                    .put("runtime", "codex")
+                    .put("revision", 8)
+                    .put(
+                        "models",
+                        listOf(
+                            JSONObject()
+                                .put("id", "model")
+                                .put("selectionId", "model-selection")
+                                .put("displayName", "Model")
+                                .put("description", "Model description")
+                                .put("default", true)
+                                .put(
+                                    "reasoningItems",
+                                    listOf(
+                                        JSONObject()
+                                            .put("id", "high")
+                                            .put("selectionId", "model-reasoning")
+                                            .put("displayName", "High")
+                                            .put("default", true)
+                                            .put("metadata", JSONObject()),
+                                    ),
+                                )
+                                .put("metadata", JSONObject()),
+                        ),
+                    ),
+            )
+            .put("serverTime", "2026-08-10T00:00:08Z")
+            .toString()
+    }
+
+    private fun permissionCatalogResponse(): String {
+        return JSONObject()
+            .put(
+                "catalog",
+                JSONObject()
+                    .put("runtime", "codex")
+                    .put("revision", 9)
+                    .put(
+                        "permissions",
+                        listOf(
+                            JSONObject()
+                                .put("id", "permission")
+                                .put("selectionId", "permission-selection")
+                                .put("displayName", "Permission")
+                                .put("default", true)
+                                .put("metadata", JSONObject()),
+                        ),
+                    ),
+            )
+            .put("serverTime", "2026-08-10T00:00:09Z")
             .toString()
     }
 

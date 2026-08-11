@@ -440,18 +440,14 @@ private fun ComposerActions(
         darkMode -> Color(0xFFA1A1AA)
         else -> Color(0xFF3A3935)
     }
-    val canPressSend = canSend || (showInterrupt && !interrupting)
+    val canPressSend = canSend
     val sendSurface = when {
-        showInterrupt && darkMode -> Color.White
-        showInterrupt -> Color(0xFF09090B)
         canSend && darkMode -> Color(0xFFFAFAFA)
         canSend -> Color(0xFF2B2B2B)
         darkMode -> Color(0xFF3F3F46)
         else -> Color(0xFFE2E0DC)
     }
     val sendIcon = when {
-        showInterrupt && darkMode -> Color(0xFF09090B)
-        showInterrupt -> Color.White
         canSend && darkMode -> Color(0xFF09090B)
         canSend -> Color.White
         darkMode -> Color(0xFF71717A)
@@ -514,34 +510,47 @@ private fun ComposerActions(
                 )
             }
         }
-        Box(
-            modifier = Modifier
-                .size(34.dp)
-                .clip(CircleShape)
-                .background(sendSurface)
-                .then(
-                    if (canPressSend) {
-                        Modifier.noRippleClickable(onClick = if (showInterrupt) onInterrupt else onSend)
-                    } else {
-                        Modifier
-                    },
-                ),
-            contentAlignment = Alignment.Center,
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            if (showInterrupt && interrupting) {
-                CircularProgressIndicator(
-                    color = sendIcon,
-                    strokeWidth = 2.dp,
-                    modifier = Modifier.size(17.dp),
-                )
-            } else if (showInterrupt) {
+            if (showInterrupt) {
                 Box(
                     modifier = Modifier
-                        .size(10.dp)
-                        .clip(RoundedCornerShape(2.dp))
-                        .background(sendIcon),
-                )
-            } else {
+                        .size(34.dp)
+                        .clip(CircleShape)
+                        .background(if (darkMode) Color.White else Color(0xFF09090B))
+                        .then(
+                            if (!interrupting) Modifier.noRippleClickable(onClick = onInterrupt) else Modifier,
+                        ),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    if (interrupting) {
+                        CircularProgressIndicator(
+                            color = if (darkMode) Color(0xFF09090B) else Color.White,
+                            strokeWidth = 2.dp,
+                            modifier = Modifier.size(17.dp),
+                        )
+                    } else {
+                        Box(
+                            modifier = Modifier
+                                .size(10.dp)
+                                .clip(RoundedCornerShape(2.dp))
+                                .background(if (darkMode) Color(0xFF09090B) else Color.White),
+                        )
+                    }
+                }
+            }
+            Box(
+                modifier = Modifier
+                    .size(34.dp)
+                    .clip(CircleShape)
+                    .background(sendSurface)
+                    .then(
+                        if (canPressSend) Modifier.noRippleClickable(onClick = onSend) else Modifier,
+                    ),
+                contentAlignment = Alignment.Center,
+            ) {
                 ArrowUpGlyph(sendIcon)
             }
         }

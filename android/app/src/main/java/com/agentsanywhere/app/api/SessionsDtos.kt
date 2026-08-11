@@ -64,30 +64,6 @@ data class RemoteSessionCreateResponse(
     val attachments: List<RemoteUploadedAttachment>,
 )
 
-data class RemoteRuntimeConfigSchema(
-    val runtime: String,
-    val schemaVersion: Int,
-    val fields: List<RemoteRuntimeConfigField>,
-)
-
-data class RemoteRuntimeConfigField(
-    val key: String,
-    val label: String,
-    val type: String,
-    val description: String?,
-    val options: List<RemoteRuntimeConfigOption>,
-    val visibleWhen: Map<String, Any?>,
-    val allowSessionOverride: Boolean,
-    val hidden: Boolean,
-)
-
-data class RemoteRuntimeConfigOption(
-    val value: String,
-    val label: String,
-    val description: String?,
-    val efforts: List<RemoteRuntimeConfigOption>?,
-)
-
 data class RemoteSessionTimelinePage(
     val sessionId: String,
     val items: List<RemoteTimelineItem>,
@@ -112,7 +88,7 @@ data class RemoteSessionRuntimeState(
     val metadata: Map<String, Any?>,
     val updatedSeq: Int,
     val createdAt: String?,
-    val updatedAt: String?,
+    val updatedAt: String? = null,
 )
 
 data class RemoteRuntimeNoticeListResponse(
@@ -130,23 +106,42 @@ data class RemoteRuntimeNotice(
     val severity: String,
     val status: String,
     val interactionType: String?,
-    val blocking: Map<String, Any?>?,
+    val blocking: RemoteRuntimeNoticeBlocking?,
     val responseRequired: Boolean,
-    val actions: List<Map<String, Any?>>,
+    val actions: List<RemoteRuntimeNoticeAction>,
     val context: Map<String, Any?>,
     val metadata: Map<String, Any?>,
     val expiresAt: String?,
     val revision: Int,
     val updatedSeq: Int,
     val createdAt: String?,
+    val updatedAt: String? = null,
     val resolvedAt: String?,
+)
+
+data class RemoteRuntimeNoticeBlocking(
+    val scope: String,
+    val targetId: String,
+)
+
+data class RemoteRuntimeNoticeAction(
+    val actionId: String,
+    val label: String,
+    val style: String,
+    val input: RemoteRuntimeNoticeActionInput,
+    val unknown: Map<String, Any?>,
+)
+
+data class RemoteRuntimeNoticeActionInput(
+    val required: Boolean,
+    val schema: Map<String, Any?>?,
+    val uiSchema: Map<String, Any?>?,
 )
 
 data class RemoteSessionSnapshot(
     val session: RemoteSession,
     val state: RemoteSessionRuntimeState?,
     val timeline: RemoteSessionTimelineSnapshot,
-    val approvals: List<RemoteApproval>,
     val notices: List<RemoteRuntimeNotice>,
     val effectiveCapabilities: RemoteRuntimeCapabilitySet,
     val runtimeCapabilities: RemoteRuntimeCapabilitySet,
@@ -184,32 +179,45 @@ data class RemoteTimelineItem(
     val updatedAt: String?,
 )
 
-data class RemoteApproval(
-    val id: String,
-    val sessionId: String,
-    val turnId: String?,
-    val status: String,
-    val kind: String,
-    val targetItemId: String?,
-    val title: String,
-    val description: String?,
-    val choices: List<String>,
-    val updatedSeq: Int,
-    val createdAt: String,
-)
-
-data class RemoteSessionEvent(
-    val sessionId: String,
-    val items: List<RemoteTimelineItem>,
-    val approvals: List<RemoteApproval>?,
-    val session: RemoteSession?,
-    val nextSeq: Int,
-    val refetch: Boolean,
-)
-
 data class RemoteRpcResponse(
     val ok: Boolean,
     val turnId: String?,
+)
+
+data class RemoteSessionSelectionPatchResponse(
+    val ok: Boolean,
+    val state: RemoteSessionRuntimeState?,
+    val connectorResult: Map<String, Any?>?,
+    val serverTime: String?,
+)
+
+data class RemoteSessionCommandListResponse(
+    val commands: List<RemoteSessionCommand>,
+    val serverTime: String?,
+)
+
+data class RemoteSessionCommand(
+    val id: String,
+    val title: String,
+    val description: String?,
+    val aliases: List<String>,
+    val category: String?,
+    val scope: String,
+    val enabled: Boolean,
+    val disabledReason: String?,
+    val acceptsArgs: Boolean,
+    val argsSchema: Map<String, Any?>?,
+    val metadata: Map<String, Any?>,
+)
+
+data class RemoteSessionCommandResponse(
+    val command: String,
+    val ok: Boolean,
+    val code: String?,
+    val message: String?,
+    val result: Any?,
+    val session: RemoteSession?,
+    val serverTime: String?,
 )
 
 data class RemoteUploadedAttachment(
