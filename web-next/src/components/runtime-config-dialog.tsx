@@ -478,7 +478,7 @@ function CustomModelsEditor({
   }
 
   return (
-    <div className="flex flex-col gap-4 rounded-lg border border-border bg-muted/10 p-4">
+    <div className="flex flex-col gap-4 rounded-2xl border border-border bg-muted/10 p-4">
       {rows.length === 0 ? (
         <p className="text-sm text-muted-foreground">{t("noCustomModels")}</p>
       ) : rows.map((row) => (
