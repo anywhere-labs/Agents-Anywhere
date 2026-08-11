@@ -4,6 +4,7 @@ import os
 from typing import Any
 
 from connector.runtime_protocol import RuntimeInvalidRequestError
+from connector.runtimes.codex.sdk.binary import codex_runtime_binary_mode
 from connector.runtimes.custom_models import custom_models_schema
 
 PROTECTED_ENV_PREFIXES = ("AGENT_CONNECTOR_", "AGENT_SERVER_")
@@ -31,6 +32,17 @@ def codex_config_schema() -> dict[str, Any]:
                     "anyOf": [{"type": "string"}, {"type": "null"}],
                 },
                 "default": {},
+            },
+            "runtimeBinaryMode": {
+                "type": "string",
+                "title": "Codex runtime binary",
+                "description": (
+                    "prefer_system uses the codex executable found from the user's "
+                    "login shell PATH, falling back to the SDK bundled binary. "
+                    "sdk_bundled forces the SDK bundled binary."
+                ),
+                "enum": ["prefer_system", "sdk_bundled"],
+                "default": "prefer_system",
             },
             "customModels": custom_models_schema(),
         },
@@ -84,3 +96,10 @@ def merge_environment(raw: Any) -> dict[str, str]:
             )
         environment[key] = value
     return environment
+
+
+def normalize_runtime_binary_mode(raw: Any) -> str:
+    try:
+        return codex_runtime_binary_mode(raw)
+    except ValueError as exc:
+        raise RuntimeInvalidRequestError(str(exc)) from exc

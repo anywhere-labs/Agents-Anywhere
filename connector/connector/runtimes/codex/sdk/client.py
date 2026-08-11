@@ -28,6 +28,11 @@ from openai_codex.generated.v2_all import (
 from connector.logging import logger
 from connector.runtime_protocol import RuntimeConfig, RuntimeInvalidRequestError
 from connector.runtimes.codex.runtime_helpers import soft_codex_unavailable_reason
+from connector.runtimes.codex.sdk.binary import (
+    codex_runtime_binary_mode,
+    codex_runtime_environment,
+    select_codex_runtime_binary,
+)
 from connector.runtimes.codex.sdk.events import CodexSdkEvent
 from connector.runtimes.codex.sdk.runtime_client import (
     CodexCompactResult,
@@ -148,7 +153,7 @@ class CodexSdkClient:
             task.result()
         except asyncio.CancelledError:
             logger.debug("codex sdk global notification task cancelled")
-        except Exception:
+        except Exception:  # noqa: BLE001
             logger.exception("codex sdk global notification task failed")
 
     async def stream_global_notifications(self, next_notification: Any) -> None:
@@ -654,10 +659,26 @@ def _sdk_config(sdk: Any, config: RuntimeConfig) -> Any:
     if not callable(config_cls):
         return None
     values = config.values
-    environment = values.get("environment")
+    environment_overrides = values.get("environment")
+    mode = codex_runtime_binary_mode(values.get("runtimeBinaryMode"))
+    runtime_environment, shell_path = codex_runtime_environment(
+        environment_overrides if isinstance(environment_overrides, Mapping) else None
+    )
+    binary_selection = select_codex_runtime_binary(
+        mode,
+        runtime_environment,
+        shell_path,
+    )
+    logger.info(
+        "codex sdk runtime binary selected mode={} source={} codex_bin={} login_shell={}",
+        binary_selection.mode,
+        binary_selection.source,
+        binary_selection.codex_bin,
+        binary_selection.login_shell,
+    )
     return config_cls(
-        codex_bin=None,
-        env=dict(environment) if isinstance(environment, dict) else None,
+        codex_bin=binary_selection.codex_bin,
+        env=runtime_environment,
         client_name="agents_anywhere_connector",
         client_title="Agents Anywhere Connector",
     )

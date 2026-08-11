@@ -2,9 +2,28 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping
+from pathlib import Path
 from types import SimpleNamespace, TracebackType
 from typing import Any, Self
 
+import pytest
+from connector.runtime_protocol import RuntimeConfig
+from connector.runtimes.codex.sdk import client as codex_sdk_client
+from connector.runtimes.codex.sdk.binary import LoginShellPathResult
+from connector.runtimes.codex.sdk.client import (
+    CodexSdkClient,
+    _create_sdk_client,
+    _sdk_config,
+)
+from connector.runtimes.codex.sdk.events import CodexSdkEvent
+from connector.runtimes.codex.sdk.runtime_client import (
+    CodexInterruptTurnRequest,
+    CodexStartThreadRequest,
+    CodexStartTurnRequest,
+    CodexSteerTurnRequest,
+    CodexTurnInputAttachment,
+)
+from connector.runtimes.codex.sdk.shapes import sdk_approval_mode, thread_read_result
 from openai_codex.generated.v2_all import (
     AgentMessageThreadItem,
     ContextCompactedNotification,
@@ -22,22 +41,6 @@ from openai_codex.models import (
     Notification,
     TurnCompletedNotification,
 )
-
-from connector.runtime_protocol import RuntimeConfig
-from connector.runtimes.codex.sdk.client import (
-    CodexSdkClient,
-    _create_sdk_client,
-    _sdk_config,
-)
-from connector.runtimes.codex.sdk.events import CodexSdkEvent
-from connector.runtimes.codex.sdk.runtime_client import (
-    CodexInterruptTurnRequest,
-    CodexStartThreadRequest,
-    CodexStartTurnRequest,
-    CodexSteerTurnRequest,
-    CodexTurnInputAttachment,
-)
-from connector.runtimes.codex.sdk.shapes import sdk_approval_mode, thread_read_result
 
 
 def test_codex_sdk_client_delegates_runtime_protocol_methods() -> None:
@@ -111,6 +114,7 @@ def test_create_sdk_client_prefers_async_codex_sdk_entrypoint() -> None:
         runtime="codex",
         revision=1,
         values={
+            "runtimeBinaryMode": "sdk_bundled",
             "environment": {"EXAMPLE": "1"},
         },
     )
@@ -121,7 +125,48 @@ def test_create_sdk_client_prefers_async_codex_sdk_entrypoint() -> None:
     assert isinstance(client, _FakeAsyncCodex)
     assert isinstance(client.config, _FakeCodexConfig)
     assert client.config.codex_bin is None
-    assert client.config.env == {"EXAMPLE": "1"}
+    assert client.config.env is not None
+    assert client.config.env["EXAMPLE"] == "1"
+
+
+def test_create_sdk_client_prefers_login_shell_codex_binary(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    codex_bin = tmp_path / "codex"
+    codex_bin.write_text("#!/bin/sh\n", encoding="utf-8")
+    codex_bin.chmod(0o755)
+
+    def runtime_environment(
+        environment_overrides: Mapping[str, object] | None,
+    ) -> tuple[dict[str, str], LoginShellPathResult]:
+        assert environment_overrides == {"EXAMPLE": "1"}
+        return (
+            {"PATH": str(tmp_path), "EXAMPLE": "1"},
+            LoginShellPathResult(shell="/bin/zsh", path=str(tmp_path)),
+        )
+
+    monkeypatch.setattr(
+        codex_sdk_client,
+        "codex_runtime_environment",
+        runtime_environment,
+    )
+    config = RuntimeConfig(
+        runtime="codex",
+        revision=1,
+        values={
+            "runtimeBinaryMode": "prefer_system",
+            "environment": {"EXAMPLE": "1"},
+        },
+    )
+    sdk = _FakeAsyncCodexSdkModule()
+
+    client = _create_sdk_client(sdk, config)
+
+    assert isinstance(client, _FakeAsyncCodex)
+    assert isinstance(client.config, _FakeCodexConfig)
+    assert client.config.codex_bin == str(codex_bin)
+    assert client.config.env == {"PATH": str(tmp_path), "EXAMPLE": "1"}
 
 
 def test_codex_sdk_client_adapts_async_codex_thread_turn_flow() -> None:

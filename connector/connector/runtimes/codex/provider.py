@@ -15,11 +15,16 @@ from connector.runtime_protocol import (
     RuntimeProvider,
 )
 from connector.runtime_protocol.host import RuntimeHostClient
-from connector.runtimes.custom_models import normalize_custom_models
 from connector.runtimes.codex import provider_config
 from connector.runtimes.codex.runtime import CodexRuntime
+from connector.runtimes.codex.sdk.binary import (
+    codex_runtime_environment,
+    runtime_binary_metadata,
+    select_codex_runtime_binary,
+)
 from connector.runtimes.codex.sdk.client import sdk_client_from_config
 from connector.runtimes.codex.sdk.discovery import check_codex_sdk
+from connector.runtimes.custom_models import normalize_custom_models
 
 SdkChecker = Callable[[], dict[str, Any]]
 SdkClientFactory = Callable[[RuntimeConfig], Any]
@@ -52,6 +57,12 @@ class CodexProvider(RuntimeProvider):
         sdk = self._sdk_checker()
         self._discovered_sdk = sdk
         available = bool(sdk.get("available"))
+        runtime_environment, shell_path = codex_runtime_environment(None)
+        binary_selection = select_codex_runtime_binary(
+            "prefer_system",
+            runtime_environment,
+            shell_path,
+        )
         reason = None
         if not available:
             reason = "Codex SDK is unavailable"
@@ -66,6 +77,7 @@ class CodexProvider(RuntimeProvider):
             config_schema=await self.get_config_schema(),
             metadata={
                 "sdk": sdk,
+                "runtimeBinary": runtime_binary_metadata(binary_selection),
                 "platform": sys.platform,
             },
         )
@@ -77,11 +89,13 @@ class CodexProvider(RuntimeProvider):
             revision=CODEX_CONFIG_SCHEMA_REVISION,
             schema=schema,
             ui_schema={
-                "order": ["environment", "customModels"],
+                "order": ["runtimeBinaryMode", "environment", "customModels"],
+                "runtimeBinaryMode": {"component": "select"},
                 "environment": {"component": "keyValue"},
                 "customModels": {"component": "customModels"},
             },
             defaults={
+                "runtimeBinaryMode": "prefer_system",
                 "environment": {},
                 "customModels": [],
             },
@@ -107,8 +121,20 @@ class CodexProvider(RuntimeProvider):
         if not sdk.get("available"):
             raise RuntimeInvalidRequestError("Codex SDK is not available")
         provider_config.merge_environment(raw_values.get("environment"))
+        binary_mode = provider_config.normalize_runtime_binary_mode(
+            raw_values.get("runtimeBinaryMode")
+        )
+        runtime_environment, shell_path = codex_runtime_environment(
+            raw_values.get("environment")
+        )
+        binary_selection = select_codex_runtime_binary(
+            binary_mode,
+            runtime_environment,
+            shell_path,
+        )
 
         normalized_values: dict[str, Any] = {
+            "runtimeBinaryMode": binary_mode,
             "environment": dict(raw_values.get("environment") or {}),
             "customModels": normalize_custom_models(raw_values.get("customModels")),
         }
@@ -121,6 +147,7 @@ class CodexProvider(RuntimeProvider):
             ui_schema=(await self.get_config_schema()).ui_schema,
             metadata={
                 "sdk": sdk,
+                "runtimeBinary": runtime_binary_metadata(binary_selection),
                 "platform": sys.platform,
             },
         )

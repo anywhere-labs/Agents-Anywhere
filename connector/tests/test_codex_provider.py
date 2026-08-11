@@ -5,7 +5,6 @@ from collections.abc import Mapping
 from typing import Any
 
 import pytest
-
 from connector.runtime_protocol import RuntimeConfig, RuntimeInvalidRequestError
 from connector.runtimes.codex.provider import CodexProvider
 from connector.runtimes.codex.runtime import CodexRuntime
@@ -37,6 +36,7 @@ async def _test_codex_provider_requires_sdk_for_runnable_surface() -> None:
     assert item.capabilities["commands"] is False
     assert item.capabilities["ipc"] is False
     assert item.metadata["sdk"]["available"] is False
+    assert item.metadata["runtimeBinary"]["mode"] == "prefer_system"
     assert "appServer" not in item.metadata
     assert item.reason == "Codex SDK is unavailable"
 
@@ -53,6 +53,7 @@ async def _test_codex_provider_treats_sdk_as_only_active_surface() -> None:
     assert item.available is True
     assert item.configured is True
     assert item.metadata["sdk"]["available"] is True
+    assert item.metadata["runtimeBinary"]["mode"] == "prefer_system"
     assert "appServer" not in item.metadata
     assert item.reason is None
 
@@ -66,10 +67,22 @@ async def _test_codex_provider_schema_exposes_no_ipc_or_app_server_switches() ->
 
     schema = await provider.get_config_schema()
 
-    assert schema.defaults == {"environment": {}, "customModels": []}
-    assert schema.ui_schema["order"] == ["environment", "customModels"]
+    assert schema.defaults == {
+        "runtimeBinaryMode": "prefer_system",
+        "environment": {},
+        "customModels": [],
+    }
+    assert schema.ui_schema["order"] == [
+        "runtimeBinaryMode",
+        "environment",
+        "customModels",
+    ]
     assert schema.ui_schema["customModels"]["component"] == "customModels"
-    assert set(schema.schema["properties"]) == {"customModels", "environment"}
+    assert set(schema.schema["properties"]) == {
+        "customModels",
+        "environment",
+        "runtimeBinaryMode",
+    }
     assert "sdkMode" not in schema.schema["properties"]
     assert "ipcEnabled" not in schema.schema["properties"]
     assert "executablePath" not in schema.schema["properties"]
@@ -102,6 +115,7 @@ async def _test_codex_provider_validates_sdk_config() -> None:
 
     assert config.runtime == "codex"
     assert config.values == {
+        "runtimeBinaryMode": "prefer_system",
         "environment": {"EXAMPLE": "1"},
         "customModels": [
             {
@@ -117,6 +131,7 @@ async def _test_codex_provider_validates_sdk_config() -> None:
         ],
     }
     assert config.metadata["sdk"]["available"] is True
+    assert config.metadata["runtimeBinary"]["mode"] == "prefer_system"
     assert "launchTarget" not in config.metadata
 
 
@@ -144,6 +159,8 @@ async def _test_codex_provider_rejects_legacy_config_fields() -> None:
         await provider.validate_config({"ipcEnabled": True})
     with pytest.raises(RuntimeInvalidRequestError, match="Additional properties"):
         await provider.validate_config({"executablePath": "/opt/codex"})
+    with pytest.raises(RuntimeInvalidRequestError, match="runtimeBinaryMode"):
+        await provider.validate_config({"runtimeBinaryMode": "app-server"})
 
 
 def test_codex_provider_rejects_duplicate_custom_models() -> None:
