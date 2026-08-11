@@ -42,6 +42,7 @@ class TerminalController(
                     connectorId = session.connectorId,
                     terminal = terminal,
                     streamUrl = terminalApi.streamUrl(auth.serverUrl, auth.accessToken, session.connectorId, terminal.terminalId),
+                    authorizationToken = auth.accessToken,
                 )
             }.recoverCatching { error ->
                 if (error is ApiException) throw error
@@ -78,6 +79,7 @@ class TerminalController(
                     connectorId = connectorId,
                     terminal = terminal,
                     streamUrl = terminalApi.streamUrl(auth.serverUrl, auth.accessToken, connectorId, terminal.terminalId),
+                    authorizationToken = auth.accessToken,
                 )
             }.recoverCatching { error ->
                 if (error is ApiException) throw error
@@ -132,6 +134,10 @@ class TerminalController(
         return ApiAuth(serverUrl = serverUrl, accessToken = accessToken)
     }
 
+    internal fun notifyUnauthorized(authorizationToken: String) {
+        terminalApi.notifyUnauthorized(authorizationToken)
+    }
+
     private data class ApiAuth(
         val serverUrl: String,
         val accessToken: String,
@@ -161,4 +167,5 @@ data class WorkspaceTerminalConnection(
     val connectorId: String,
     val terminal: RemoteTerminal,
     val streamUrl: String,
+    val authorizationToken: String,
 )

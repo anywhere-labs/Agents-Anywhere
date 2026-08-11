@@ -50,11 +50,7 @@ internal fun SessionDetailHeader(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         HeaderImageButton(
-            resId = if (darkMode) {
-                R.drawable.ic_session_runtime_settings_dark
-            } else {
-                R.drawable.ic_session_runtime_settings_light
-            },
+            resId = if (darkMode) R.drawable.ic_session_refresh_dark else R.drawable.ic_session_refresh_light,
             darkMode = darkMode,
             onClick = onLeftClick,
         )

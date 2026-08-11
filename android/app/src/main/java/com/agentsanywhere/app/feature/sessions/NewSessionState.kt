@@ -35,6 +35,90 @@ data class NewSessionDirectory(
     val entries: List<NewSessionPathEntry>,
 )
 
+data class NewSessionAttachmentPart(
+    val name: String,
+    val mediaType: String,
+    val bytes: ByteArray,
+)
+
+data class NewSessionCreateDraft(
+    val connectorId: String,
+    val runtime: String,
+    val title: String?,
+    val cwd: String?,
+    val content: String,
+    val selections: NewSessionSelections,
+    val attachments: List<NewSessionAttachmentPart>,
+    val clientMessageId: String,
+    val knownSessionIds: Set<String>,
+)
+
+sealed interface NewSessionCreateOutcome {
+    data class Created(
+        val session: AgentSession,
+        val recoveredAfterNetworkFailure: Boolean = false,
+        val refreshedState: SessionsState? = null,
+    ) : NewSessionCreateOutcome
+
+    data class Failed(
+        val error: Throwable,
+        val outcomeUnknown: Boolean = false,
+        val refreshedState: SessionsState? = null,
+    ) : NewSessionCreateOutcome
+}
+
+class NewSessionCreateResultUnknownException(message: String) : IllegalStateException(message)
+
+data class NewSessionSubmissionState(
+    val inFlight: Boolean = false,
+    val clientMessageId: String? = null,
+    val outcomeUnknown: Boolean = false,
+    val errorMessage: String? = null,
+) {
+    fun begin(newClientMessageId: () -> String): NewSessionSubmissionStart? {
+        if (inFlight || outcomeUnknown) return null
+        val messageId = clientMessageId?.takeIf(String::isNotBlank) ?: newClientMessageId()
+        return NewSessionSubmissionStart(
+            state = copy(
+                inFlight = true,
+                clientMessageId = messageId,
+                errorMessage = null,
+            ),
+            clientMessageId = messageId,
+        )
+    }
+
+    fun fail(message: String, outcomeUnknown: Boolean): NewSessionSubmissionState {
+        return copy(
+            inFlight = false,
+            outcomeUnknown = outcomeUnknown,
+            errorMessage = message,
+        )
+    }
+
+    fun interrupted(message: String): NewSessionSubmissionState {
+        if (!inFlight) return this
+        return fail(message, outcomeUnknown = true)
+    }
+}
+
+data class NewSessionSubmissionStart(
+    val state: NewSessionSubmissionState,
+    val clientMessageId: String,
+)
+
+internal fun SessionsState.newCreateCandidates(draft: NewSessionCreateDraft): List<AgentSession> {
+    val expectedTitle = draft.title?.trim().orEmpty()
+    val expectedCwd = draft.cwd?.trim().orEmpty()
+    return (sessions + archivedSessions).filter { session ->
+        session.id !in draft.knownSessionIds &&
+            session.connectorId == draft.connectorId &&
+            session.runtime == draft.runtime &&
+            (expectedTitle.isEmpty() || session.title == expectedTitle) &&
+            (session.cwd?.trim().orEmpty() == expectedCwd)
+    }
+}
+
 fun workspaceOptionsFor(
     sessions: List<AgentSession>,
     deviceId: String?,

@@ -76,6 +76,10 @@ class TerminalApi(
         )
     }
 
+    internal fun notifyUnauthorized(authorizationToken: String) {
+        client.notifyUnauthorized(statusCode = 401, authorizationToken = authorizationToken)
+    }
+
     private fun JSONObject.toRemoteTerminal(): RemoteTerminal {
         return RemoteTerminal(
             terminalId = getString("terminalId"),

@@ -11,7 +11,9 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.util.concurrent.TimeUnit
 
-class ApiClient {
+class ApiClient(
+    private val onUnauthorized: (accessToken: String) -> Unit = {},
+) {
     fun getJson(
         serverUrl: String,
         path: String,
@@ -31,6 +33,7 @@ class ApiClient {
         path: String,
         body: JSONObject,
         authorizationToken: String? = null,
+        readTimeoutSeconds: Long? = null,
     ): JSONObject {
         return requestJson(
             serverUrl = serverUrl,
@@ -38,6 +41,7 @@ class ApiClient {
             method = "POST",
             bodyText = body.toString(),
             authorizationToken = authorizationToken,
+            readTimeoutSeconds = readTimeoutSeconds,
         )
     }
 
@@ -117,6 +121,7 @@ class ApiClient {
     fun streamSse(
         serverUrl: String,
         path: String,
+        authorizationToken: String? = null,
         onOpen: () -> Unit = {},
         onEvent: (JSONObject) -> Unit,
     ) {
@@ -128,11 +133,15 @@ class ApiClient {
             setRequestProperty("Accept", "text/event-stream")
             setRequestProperty("Cache-Control", "no-cache")
             setRequestProperty("ngrok-skip-browser-warning", "true")
+            if (!authorizationToken.isNullOrBlank()) {
+                setRequestProperty("Authorization", "Bearer $authorizationToken")
+            }
         }
         try {
             val responseCode = connection.responseCode
             if (responseCode !in 200..299) {
                 val responseText = readResponseText(connection, responseCode)
+                notifyUnauthorized(responseCode, authorizationToken)
                 throw ApiException(
                     message = parseErrorMessage(responseText) ?: defaultErrorMessage(responseCode),
                     statusCode = responseCode,
@@ -204,6 +213,7 @@ class ApiClient {
                 val responseCode = connection.responseCode
                 val responseText = readResponseText(connection, responseCode)
                 if (responseCode !in 200..299) {
+                    notifyUnauthorized(responseCode, authorizationToken)
                     throw ApiException(
                         message = parseErrorMessage(responseText) ?: defaultErrorMessage(responseCode),
                         statusCode = responseCode,
@@ -226,6 +236,7 @@ class ApiClient {
         method: String,
         bodyText: String?,
         authorizationToken: String?,
+        readTimeoutSeconds: Long? = null,
     ): JSONObject {
         return try {
             val requestBody = when {
@@ -245,9 +256,17 @@ class ApiClient {
                 }
                 .build()
 
-            JSON_HTTP_CLIENT.newCall(request).execute().use { response ->
+            val httpClient = if (readTimeoutSeconds == null) {
+                JSON_HTTP_CLIENT
+            } else {
+                JSON_HTTP_CLIENT.newBuilder()
+                    .readTimeout(readTimeoutSeconds, TimeUnit.SECONDS)
+                    .build()
+            }
+            httpClient.newCall(request).execute().use { response ->
                 val responseText = response.body?.string().orEmpty()
                 if (!response.isSuccessful) {
+                    notifyUnauthorized(response.code, authorizationToken)
                     throw ApiException(
                         message = parseErrorMessage(responseText) ?: defaultErrorMessage(response.code),
                         statusCode = response.code,
@@ -262,6 +281,11 @@ class ApiClient {
         } catch (exc: IOException) {
             throw ApiException("Could not reach the server. Check the URL and network.", cause = exc)
         }
+    }
+
+    internal fun notifyUnauthorized(statusCode: Int, authorizationToken: String?) {
+        if (!shouldNotifyUnauthorized(statusCode, authorizationToken)) return
+        runCatching { onUnauthorized(authorizationToken.orEmpty()) }
     }
 
     private companion object {
@@ -309,6 +333,10 @@ class ApiClient {
     private fun String.httpQuoted(): String {
         return replace("\\", "\\\\").replace("\"", "\\\"").replace("\r", "").replace("\n", "")
     }
+}
+
+internal fun shouldNotifyUnauthorized(statusCode: Int, authorizationToken: String?): Boolean {
+    return statusCode == 401 && !authorizationToken.isNullOrBlank()
 }
 
 data class UploadFilePart(
