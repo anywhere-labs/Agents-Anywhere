@@ -4,6 +4,7 @@ import asyncio
 import json
 import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any, Protocol
 
 from connector.logging import logger
@@ -44,6 +45,15 @@ class WebSocketSender(Protocol):
     async def send(self, payload: str) -> None: ...
 
 
+@dataclass(slots=True)
+class _QueuedSend:
+    encoded: str
+    frame_type: str | None
+    method: str | None
+    request_id: str | int | None
+    future: asyncio.Future[None]
+
+
 class ConnectorWebSocketFrameTooLarge(RuntimeError):
     def __init__(
         self,
@@ -73,15 +83,26 @@ class ConnectorRpcChannel:
 
     def __init__(self) -> None:
         self._ws: WebSocketSender | None = None
-        self._send_lock = asyncio.Lock()
+        self._send_queue: asyncio.Queue[_QueuedSend] | None = None
+        self._send_worker_task: asyncio.Task[None] | None = None
         self._request_tasks: set[asyncio.Task[None]] = set()
         self._request_semaphore = asyncio.Semaphore(8)
 
     def set_connection(self, ws: WebSocketSender) -> None:
+        if self._send_worker_task is not None:
+            self._send_worker_task.cancel()
         self._ws = ws
+        self._send_queue = asyncio.Queue()
+        self._send_worker_task = asyncio.create_task(
+            self._send_worker_loop(self._send_queue)
+        )
 
     def clear_connection(self) -> None:
         self._ws = None
+        if self._send_worker_task is not None:
+            self._send_worker_task.cancel()
+            self._send_worker_task = None
+        self._send_queue = None
 
     @property
     def connected(self) -> bool:
@@ -186,7 +207,7 @@ class ConnectorRpcChannel:
             task.result()
         except asyncio.CancelledError:
             pass
-        except Exception:
+        except Exception:  # noqa: BLE001
             logger.exception("connector rpc request task failed")
 
     async def send_notification(self, method: str, params: dict[str, Any]) -> None:
@@ -227,7 +248,8 @@ class ConnectorRpcChannel:
         payload: dict[str, Any],
         max_frame_bytes: int | None = None,
     ) -> None:
-        if self._ws is None:
+        queue = self._send_queue
+        if self._ws is None or queue is None:
             raise RuntimeError("backend websocket is not connected")
         frame_type = payload.get("type")
         method = payload.get("method")
@@ -252,24 +274,66 @@ class ConnectorRpcChannel:
                 encoded_bytes=encoded_bytes,
                 max_frame_bytes=max_frame_bytes,
             )
+        send_future: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+        await queue.put(
+            _QueuedSend(
+                encoded=encoded,
+                frame_type=str(frame_type) if frame_type is not None else None,
+                method=str(method) if method is not None else None,
+                request_id=str(request_id) if request_id is not None else None,
+                future=send_future,
+            )
+        )
         wait_started_at = time.monotonic()
-        async with self._send_lock:
-            wait_elapsed_ms = (time.monotonic() - wait_started_at) * 1000
-            send_started_at = time.monotonic()
-            await self._ws.send(encoded)
-            send_elapsed_ms = (time.monotonic() - send_started_at) * 1000
-        total_elapsed_ms = encode_elapsed_ms + wait_elapsed_ms + send_elapsed_ms
+        await send_future
+        wait_elapsed_ms = (time.monotonic() - wait_started_at) * 1000
+        total_elapsed_ms = encode_elapsed_ms + wait_elapsed_ms
         if encoded_bytes >= 512 * 1024 or total_elapsed_ms >= 250:
             logger.info(
-                "connector websocket frame sent type={} method={} request_id={} bytes={} encode_elapsed_ms={:.1f} wait_elapsed_ms={:.1f} send_elapsed_ms={:.1f}",
+                "connector websocket frame sent type={} method={} request_id={} bytes={} encode_elapsed_ms={:.1f} wait_elapsed_ms={:.1f}",
                 frame_type,
                 method,
                 request_id,
                 encoded_bytes,
                 encode_elapsed_ms,
                 wait_elapsed_ms,
-                send_elapsed_ms,
             )
+
+    async def _send_worker_loop(self, queue: asyncio.Queue[_QueuedSend]) -> None:
+        try:
+            while True:
+                item = await queue.get()
+                try:
+                    ws = self._ws
+                    if ws is None:
+                        raise RuntimeError("backend websocket is not connected")
+                    await ws.send(item.encoded)
+                    if not item.future.done():
+                        item.future.set_result(None)
+                except Exception as exc:  # noqa: BLE001
+                    if not item.future.done():
+                        item.future.set_exception(exc)
+                    self._fail_pending_send_queue(queue, exc)
+                    return
+                finally:
+                    queue.task_done()
+        except asyncio.CancelledError as exc:
+            self._fail_pending_send_queue(queue, exc)
+            raise
+
+    def _fail_pending_send_queue(
+        self,
+        queue: asyncio.Queue[_QueuedSend],
+        exc: BaseException,
+    ) -> None:
+        while True:
+            try:
+                item = queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            if not item.future.done():
+                item.future.set_exception(exc)
+            queue.task_done()
 
 
 def sanitize_rpc_log_value(value: Any) -> Any:
