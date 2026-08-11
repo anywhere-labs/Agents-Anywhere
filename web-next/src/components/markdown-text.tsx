@@ -189,6 +189,7 @@ type MarkdownAstNode = {
 function remarkGitDirectiveBadges() {
   return (tree: MarkdownAstNode) => {
     replaceGitDirectivesInTextChildren(tree)
+    mergeAdjacentGitDirectiveNodes(tree)
   }
 }
 
@@ -257,6 +258,116 @@ function gitDirectiveNode(directives: GitDirective[]): MarkdownAstNode {
       },
     },
   }
+}
+
+function mergeAdjacentGitDirectiveNodes(node: MarkdownAstNode) {
+  if (!node.children) return
+
+  for (const child of node.children) mergeAdjacentGitDirectiveNodes(child)
+  node.children = mergeInlineGitDirectiveNodes(node.children)
+  node.children = mergeGitDirectiveOnlyParagraphs(node.children)
+}
+
+function mergeInlineGitDirectiveNodes(children: MarkdownAstNode[]): MarkdownAstNode[] {
+  const merged: MarkdownAstNode[] = []
+  let pendingDirectives: GitDirective[] = []
+  let pendingSeparators: MarkdownAstNode[] = []
+
+  const flushDirectives = () => {
+    if (pendingDirectives.length === 0) return
+    merged.push(gitDirectiveNode(pendingDirectives))
+    pendingDirectives = []
+    pendingSeparators = []
+  }
+
+  const flushSeparators = () => {
+    if (pendingSeparators.length === 0) return
+    merged.push(...pendingSeparators)
+    pendingSeparators = []
+  }
+
+  for (const child of children) {
+    const directives = gitDirectivesFromNode(child)
+    if (directives) {
+      pendingDirectives.push(...directives)
+      pendingSeparators = []
+      continue
+    }
+
+    if (pendingDirectives.length > 0 && isGitDirectiveSeparator(child)) {
+      pendingSeparators.push(child)
+      continue
+    }
+
+    flushDirectives()
+    flushSeparators()
+    merged.push(child)
+  }
+
+  flushDirectives()
+  flushSeparators()
+  return merged
+}
+
+function mergeGitDirectiveOnlyParagraphs(children: MarkdownAstNode[]): MarkdownAstNode[] {
+  const merged: MarkdownAstNode[] = []
+  let pendingDirectives: GitDirective[] = []
+
+  const flushDirectives = () => {
+    if (pendingDirectives.length === 0) return
+    merged.push({
+      type: "paragraph",
+      children: [gitDirectiveNode(pendingDirectives)],
+    })
+    pendingDirectives = []
+  }
+
+  for (const child of children) {
+    const directives = gitDirectivesFromDirectiveOnlyParagraph(child)
+    if (directives) {
+      pendingDirectives.push(...directives)
+      continue
+    }
+
+    flushDirectives()
+    merged.push(child)
+  }
+
+  flushDirectives()
+  return merged
+}
+
+function gitDirectivesFromDirectiveOnlyParagraph(
+  node: MarkdownAstNode,
+): GitDirective[] | null {
+  if (node.type !== "paragraph" || !node.children) return null
+
+  const directives: GitDirective[] = []
+  for (const child of node.children) {
+    const childDirectives = gitDirectivesFromNode(child)
+    if (childDirectives) {
+      directives.push(...childDirectives)
+      continue
+    }
+    if (isGitDirectiveSeparator(child)) continue
+    return null
+  }
+
+  return directives.length > 0 ? directives : null
+}
+
+function gitDirectivesFromNode(node: MarkdownAstNode): GitDirective[] | null {
+  const actions = node.data?.hProperties?.["data-git-actions"]
+  if (node.type !== "gitDirective" || typeof actions !== "string") return null
+
+  const directives = parseGitDirectives(actions)
+  return directives.length > 0 ? directives : null
+}
+
+function isGitDirectiveSeparator(node: MarkdownAstNode): boolean {
+  if (node.type === "break" || node.type === "html" && node.value === "\n") return true
+  if (node.type !== "text") return false
+  return !node.value || node.value.trim().length === 0
 }
 
 function serializeGitDirectives(directives: GitDirective[]): string {
