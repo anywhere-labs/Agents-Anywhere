@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 
 import pytest
 
@@ -45,7 +46,7 @@ def test_connector_rpc_send_queue_preserves_order() -> None:
         )
         await websocket.first_send_started.wait()
         task_2 = asyncio.create_task(
-            channel.send_notification("timeline.itemUpsert", {"seq": 2})
+            channel.send_response("req-1", ok=True, result={"seq": 2})
         )
         await asyncio.sleep(0)
         task_3 = asyncio.create_task(
@@ -56,11 +57,16 @@ def test_connector_rpc_send_queue_preserves_order() -> None:
         return websocket.sent
 
     sent = asyncio.run(exercise())
+    parsed = [json.loads(payload) for payload in sent]
 
-    assert [payload.count('"seq"') for payload in sent] == [1, 1, 1]
-    assert sent[0].find('"seq": 1') != -1
-    assert sent[1].find('"seq": 2') != -1
-    assert sent[2].find('"seq": 3') != -1
+    assert [payload["type"] for payload in parsed] == [
+        "notification",
+        "response",
+        "notification",
+    ]
+    assert parsed[0]["params"]["seq"] == 1
+    assert parsed[1]["id"] == "req-1"
+    assert parsed[2]["params"]["seq"] == 3
 
 
 def test_connector_rpc_rejects_oversized_notification_before_send() -> None:
