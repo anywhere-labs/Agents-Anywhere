@@ -212,22 +212,6 @@ function optimisticMessageMatchesSession(
   )
 }
 
-function mergePendingOptimisticSessions(
-  sessions: SessionView[],
-  optimisticMessages: OptimisticSessionMessage[],
-  aliases: Record<string, string>,
-): SessionView[] {
-  const byId = new Map(sessions.map((session) => [session.id, session]))
-  for (const message of optimisticMessages) {
-    if (!message.session) continue
-    const mapped = mapSession(message.session)
-    const canonicalId = resolveSessionAlias(mapped.id, aliases)
-    if (byId.has(canonicalId)) continue
-    byId.set(canonicalId, mapped.id === canonicalId ? mapped : { ...mapped, id: canonicalId })
-  }
-  return sortSessionViews(Array.from(byId.values()))
-}
-
 function isDashboardSnapshotMessage(value: unknown): value is DashboardSnapshotMessage {
   if (!value || typeof value !== "object") return false
   const message = value as Partial<DashboardSnapshotMessage>
@@ -416,11 +400,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
 
   const applyDashboardSnapshot = React.useCallback((message: DashboardSnapshotMessage) => {
     const nextConnectors = message.connectors.map(mapConnector)
-    const nextSessions = mergePendingOptimisticSessions(
-      message.sessions.map(mapSession),
-      optimisticMessagesRef.current,
-      sessionAliasesRef.current,
-    )
+    const nextSessions = sortSessionViews(message.sessions.map(mapSession))
     setConnectors((current) => sameStableValue(current, nextConnectors) ? current : nextConnectors)
     setSessions((current) => sameStableValue(current, nextSessions) ? current : nextSessions)
     setIsLoading(false)
@@ -438,11 +418,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
           dashboardApi.listSessions(authSession.accessToken),
         ])
         const nextConnectors = connRes.connectors.map(mapConnector)
-        const nextSessions = mergePendingOptimisticSessions(
-          sessRes.sessions.map(mapSession),
-          optimisticMessagesRef.current,
-          sessionAliasesRef.current,
-        )
+        const nextSessions = sortSessionViews(sessRes.sessions.map(mapSession))
         setConnectors((current) => sameStableValue(current, nextConnectors) ? current : nextConnectors)
         setSessions((current) => sameStableValue(current, nextSessions) ? current : nextSessions)
         return
@@ -451,11 +427,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
         listMockConnectors("mock-token"),
         listMockSessions("mock-token"),
       ])
-      const nextSessions = mergePendingOptimisticSessions(
-        sessRes.sessions,
-        optimisticMessagesRef.current,
-        sessionAliasesRef.current,
-      )
+      const nextSessions = sortSessionViews(sessRes.sessions)
       setConnectors((current) => sameStableValue(current, connRes.connectors) ? current : connRes.connectors)
       setSessions((current) => sameStableValue(current, nextSessions) ? current : nextSessions)
     } finally {
@@ -691,65 +663,6 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     setFirstDevicePromptOpen(true)
   }, [connectors.length, isLoading, route.page, routeReady])
 
-  // ── Session optimistic patch helpers ──────────────────────
-
-  const togglePinSession = React.useCallback(async (id: string) => {
-    setSessions((prev) =>
-      prev.map((s) => (s.id === id ? { ...s, pinned: !s.pinned } : s)),
-    )
-    const targetSession = sessions.find((s) => s.id === id)
-    if (targetSession) {
-      if (authSession?.accessToken) {
-        await dashboardApi.patchSession(authSession.accessToken, id, { pinned: !targetSession.pinned })
-      } else {
-        await patchMockSession("mock-token", id, { pinned: !targetSession.pinned })
-      }
-    }
-  }, [authSession?.accessToken, sessions])
-
-  const toggleArchiveSession = React.useCallback(async (id: string) => {
-    setSessions((prev) =>
-      prev.map((s) => (s.id === id ? { ...s, archived: !s.archived } : s)),
-    )
-    const targetSession = sessions.find((s) => s.id === id)
-    if (targetSession) {
-      if (authSession?.accessToken) {
-        await dashboardApi.patchSession(authSession.accessToken, id, { archived: !targetSession.archived })
-      } else {
-        await patchMockSession("mock-token", id, { archived: !targetSession.archived })
-      }
-    }
-  }, [authSession?.accessToken, sessions])
-
-  const renameSession = React.useCallback(async (id: string, title: string) => {
-    const nextTitle = title.trim()
-    if (!nextTitle) return false
-
-    const targetSession = sessions.find((s) => s.id === id)
-    if (!targetSession) return false
-    if (targetSession.title === nextTitle) return true
-
-    setSessions((prev) =>
-      prev.map((s) => (s.id === id ? { ...s, title: nextTitle } : s)),
-    )
-
-    try {
-      if (authSession?.accessToken) {
-        const response = await dashboardApi.patchSession(authSession.accessToken, id, { title: nextTitle })
-        const mapped = mapSession(response.session)
-        setSessions((prev) => sortSessionViews(prev.map((s) => (s.id === id ? mapped : s))))
-      } else {
-        await patchMockSession("mock-token", id, { title: nextTitle })
-      }
-      return true
-    } catch {
-      setSessions((prev) =>
-        prev.map((s) => (s.id === id ? { ...s, title: targetSession.title } : s)),
-      )
-      return false
-    }
-  }, [authSession?.accessToken, sessions])
-
   const upsertSession = React.useCallback((session: RealSessionView) => {
     const mapped = mapSession(session)
     setSessions((prev) => {
@@ -760,6 +673,56 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       return sortSessionViews(next)
     })
   }, [])
+
+  // ── Session mutation helpers ──────────────────────────────
+
+  const togglePinSession = React.useCallback(async (id: string) => {
+    const targetSession = sessions.find((s) => s.id === id)
+    if (!targetSession) return
+
+    if (authSession?.accessToken) {
+      const response = await dashboardApi.patchSession(authSession.accessToken, id, { pinned: !targetSession.pinned })
+      upsertSession(response.session)
+    } else {
+      const response = await patchMockSession("mock-token", id, { pinned: !targetSession.pinned })
+      setSessions((prev) => sortSessionViews(prev.map((s) => (s.id === id ? response.session : s))))
+    }
+  }, [authSession?.accessToken, sessions, upsertSession])
+
+  const toggleArchiveSession = React.useCallback(async (id: string) => {
+    const targetSession = sessions.find((s) => s.id === id)
+    if (!targetSession) return
+
+    if (authSession?.accessToken) {
+      const response = await dashboardApi.patchSession(authSession.accessToken, id, { archived: !targetSession.archived })
+      upsertSession(response.session)
+    } else {
+      const response = await patchMockSession("mock-token", id, { archived: !targetSession.archived })
+      setSessions((prev) => sortSessionViews(prev.map((s) => (s.id === id ? response.session : s))))
+    }
+  }, [authSession?.accessToken, sessions, upsertSession])
+
+  const renameSession = React.useCallback(async (id: string, title: string) => {
+    const nextTitle = title.trim()
+    if (!nextTitle) return false
+
+    const targetSession = sessions.find((s) => s.id === id)
+    if (!targetSession) return false
+    if (targetSession.title === nextTitle) return true
+
+    try {
+      if (authSession?.accessToken) {
+        const response = await dashboardApi.patchSession(authSession.accessToken, id, { title: nextTitle })
+        upsertSession(response.session)
+      } else {
+        const response = await patchMockSession("mock-token", id, { title: nextTitle })
+        setSessions((prev) => sortSessionViews(prev.map((s) => (s.id === id ? response.session : s))))
+      }
+      return true
+    } catch {
+      return false
+    }
+  }, [authSession?.accessToken, sessions, upsertSession])
 
   const addOptimisticMessage = React.useCallback((message: OptimisticSessionMessage) => {
     setOptimisticMessages((prev) => {
@@ -774,16 +737,6 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       optimisticMessagesRef.current = next
       return next
     })
-    if (message.session) {
-      const mapped = mapSession(message.session)
-      setSessions((prev) => {
-        const index = prev.findIndex((item) => item.id === mapped.id)
-        if (index === -1) return sortSessionViews([mapped, ...prev])
-        const next = [...prev]
-        next[index] = mapped
-        return sortSessionViews(next)
-      })
-    }
   }, [])
 
   const bindOptimisticSession = React.useCallback((localSessionId: string, session: RealSessionView, attachments: AttachmentRef[] = []) => {
