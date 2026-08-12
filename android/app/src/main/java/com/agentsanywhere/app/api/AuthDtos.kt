@@ -26,14 +26,12 @@ data class AuthConfigResponse(
     val serverTime: String,
 )
 
-data class OAuthStartResponse(
-    val authorizeUrl: String,
-    val serverTime: String,
-)
-
-data class OAuthFinalizeResponse(
-    val auth: AuthResponse,
-    val serverTime: String,
+data class OAuthTokenResponse(
+    val accessToken: String,
+    val tokenType: String,
+    val expiresIn: Int,
+    val scope: String,
+    val refreshToken: String?,
 )
 
 data class MobileLoginStatusResponse(

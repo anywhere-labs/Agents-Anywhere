@@ -39,8 +39,8 @@ import com.agentsanywhere.app.api.SessionsApi
 import com.agentsanywhere.app.api.TerminalApi
 import com.agentsanywhere.app.feature.auth.AuthController
 import com.agentsanywhere.app.feature.auth.AuthSessionStore
-import com.agentsanywhere.app.feature.auth.OAuthCallbackResult
-import com.agentsanywhere.app.feature.auth.OAuthFlowState
+import com.agentsanywhere.app.feature.auth.WebLoginState
+import com.agentsanywhere.app.feature.auth.WebLoginViewModel
 import com.agentsanywhere.app.feature.devices.DeviceRuntime
 import com.agentsanywhere.app.feature.devices.DeviceRuntimeList
 import com.agentsanywhere.app.feature.devices.DeviceSetupCredential
@@ -70,24 +70,16 @@ import com.agentsanywhere.app.feature.sessiondetail.SessionDetailController
 import com.agentsanywhere.app.feature.terminal.RemoteTerminalPool
 import com.agentsanywhere.app.feature.terminal.TerminalController
 import com.agentsanywhere.app.model.MobileLoginQrPayload
-import com.agentsanywhere.app.feature.auth.OAuthPendingStatus
 import com.agentsanywhere.app.model.AgentDevice
 import com.agentsanywhere.app.model.AgentSession
 import com.agentsanywhere.app.navigation.AppDestination
 import com.agentsanywhere.app.ui.designsystem.AgentsAnywhereTheme
 import com.agentsanywhere.app.ui.designsystem.AALanguageMode
 import com.agentsanywhere.app.ui.designsystem.LocalAAColors
-import com.agentsanywhere.app.ui.screens.auth.CreateAccountScreen
 import com.agentsanywhere.app.ui.screens.auth.LoginMethodsScreen
-import com.agentsanywhere.app.ui.screens.auth.OAuthCreateAccountScreen
-import com.agentsanywhere.app.ui.screens.auth.OAuthLinkExistingAccountScreen
-import com.agentsanywhere.app.ui.screens.auth.OAuthRegistrationClosedErrorScreen
-import com.agentsanywhere.app.ui.screens.auth.OAuthRegistrationClosedScreen
-import com.agentsanywhere.app.ui.screens.auth.OAuthSetupScreen
-import com.agentsanywhere.app.ui.screens.auth.PasswordLoginScreen
 import com.agentsanywhere.app.ui.screens.auth.QrLoginScreen
 import com.agentsanywhere.app.ui.screens.auth.QrWaitingScreen
-import com.agentsanywhere.app.ui.screens.auth.ServerSetupScreen
+import com.agentsanywhere.app.ui.screens.auth.WebLoginHostScreen
 import com.agentsanywhere.app.ui.screens.devices.DeviceDetailScreen
 import com.agentsanywhere.app.ui.screens.devices.DevicesScreen
 import com.agentsanywhere.app.ui.screens.devices.PairNewDeviceSheetHost
@@ -111,6 +103,7 @@ fun AgentsAnywhereApp(
     onLanguageModeChange: (String) -> Unit = {},
     oauthCallbackUri: Uri? = null,
     onOAuthCallbackConsumed: () -> Unit = {},
+    webLoginViewModel: WebLoginViewModel,
 ) {
     val context = LocalContext.current
     val sessionStore = remember(context) { AuthSessionStore(context) }
@@ -124,8 +117,6 @@ fun AgentsAnywhereApp(
         )
     }
     var pendingMobileLoginQr by remember { mutableStateOf<MobileLoginQrPayload?>(null) }
-    var oauthFlow by remember { mutableStateOf<OAuthFlowState?>(null) }
-    var oauthErrorMessage by remember { mutableStateOf<String?>(null) }
     var selectedSessionId by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedDeviceId by rememberSaveable { mutableStateOf<String?>(null) }
     var deviceDetailReturnDestinationName by rememberSaveable { mutableStateOf(AppDestination.Devices.name) }
@@ -247,8 +238,7 @@ fun AgentsAnywhereApp(
         selectedSessionId = null
         selectedDeviceId = null
         pendingMobileLoginQr = null
-        oauthFlow = null
-        oauthErrorMessage = null
+        webLoginViewModel.resetForSignedOutEntry()
         destinationName = AppDestination.LoginMethods.name
     }
 
@@ -325,8 +315,7 @@ fun AgentsAnywhereApp(
             pendingMobileLoginQr = null
         }
         if (destination == AppDestination.LoginMethods) {
-            oauthFlow = null
-            oauthErrorMessage = null
+            webLoginViewModel.returnToServerEntry()
         }
         destinationName = destination.name
     }
@@ -372,50 +361,10 @@ fun AgentsAnywhereApp(
 
     LaunchedEffect(oauthCallbackUri) {
         val uri = oauthCallbackUri ?: return@LaunchedEffect
-        when (val result = authController.parseOAuthCallback(uri)) {
-            is OAuthCallbackResult.Pending -> {
-                val serverUrl = authController.savedServerUrl()
-                oauthErrorMessage = null
-                oauthFlow = OAuthFlowState(serverUrl = serverUrl, pending = result.pending)
-                when (result.pending.status) {
-                    OAuthPendingStatus.Authenticated -> {
-                        authController.finalizeAuthenticatedOAuth(
-                            serverUrl = serverUrl,
-                            pendingToken = result.pending.pendingToken,
-                        ).onSuccess {
-                            oauthFlow = null
-                            destinationName = AppDestination.Sessions.name
-                        }.onFailure { error ->
-                            oauthFlow = null
-                            oauthErrorMessage = error.message ?: "OAuth sign-in failed."
-                            destinationName = AppDestination.OAuthSetup.name
-                        }
-                    }
-                    OAuthPendingStatus.NeedsPassword -> {
-                        destinationName = AppDestination.OAuthLinkExisting.name
-                    }
-                    OAuthPendingStatus.NeedsRegistration -> {
-                        authController.authConfig(serverUrl)
-                            .onSuccess { config ->
-                                destinationName = if (config.oauthRegistrationOpen) {
-                                    AppDestination.OAuthCreateAccount.name
-                                } else {
-                                    AppDestination.OAuthRegistrationClosed.name
-                                }
-                            }
-                            .onFailure { error ->
-                                oauthErrorMessage = error.message ?: "Could not check auth configuration."
-                                destinationName = AppDestination.OAuthSetup.name
-                            }
-                    }
-                }
-            }
-            is OAuthCallbackResult.Error -> {
-                oauthFlow = null
-                oauthErrorMessage = result.message
-                destinationName = AppDestination.OAuthSetup.name
-            }
-            null -> Unit
+        if (currentDestination == AppDestination.ServerSetup &&
+            webLoginViewModel.state is WebLoginState.WebLogin
+        ) {
+            webLoginViewModel.handleCallback(uri.toString())
         }
         onOAuthCallbackConsumed()
     }
@@ -438,8 +387,7 @@ fun AgentsAnywhereApp(
         filesController = filesController,
         remoteTerminalPool = remoteTerminalPool,
         pendingMobileLoginQr = pendingMobileLoginQr,
-        oauthFlow = oauthFlow,
-        oauthErrorMessage = oauthErrorMessage,
+        webLoginViewModel = webLoginViewModel,
         navigate = navigate,
         onRefreshSessions = {
             if (!hasAuthSession || isRefreshingSessions) return@AgentsAnywhereNavHost
@@ -699,12 +647,6 @@ fun AgentsAnywhereApp(
             pendingMobileLoginQr = payload
             destinationName = AppDestination.QrWaiting.name
         },
-        onOAuthPendingReceived = { flow, destination ->
-            oauthFlow = flow
-            oauthErrorMessage = null
-            destinationName = destination.name
-        },
-        onOAuthErrorConsumed = { oauthErrorMessage = null },
     )
 }
 
@@ -727,8 +669,7 @@ private fun AgentsAnywhereNavHost(
     filesController: FilesController,
     remoteTerminalPool: RemoteTerminalPool,
     pendingMobileLoginQr: MobileLoginQrPayload?,
-    oauthFlow: OAuthFlowState?,
-    oauthErrorMessage: String?,
+    webLoginViewModel: WebLoginViewModel,
     navigate: (AppDestination) -> Unit,
     onRefreshSessions: () -> Unit,
     onOpenSession: (AgentSession) -> Unit,
@@ -764,8 +705,6 @@ private fun AgentsAnywhereNavHost(
     onLoadNewSessionPermissionCatalog: suspend (String, String) -> Result<NewSessionPermissionCatalog>,
     onSessionChanged: (AgentSession) -> Unit,
     onMobileLoginQrRequested: (MobileLoginQrPayload) -> Unit,
-    onOAuthPendingReceived: (OAuthFlowState, AppDestination) -> Unit,
-    onOAuthErrorConsumed: () -> Unit,
 ) {
     val context = LocalContext.current
     val colors = LocalAAColors.current
@@ -801,28 +740,7 @@ private fun AgentsAnywhereNavHost(
         ) { destination ->
             when (destination) {
                 AppDestination.LoginMethods -> LoginMethodsScreen(navigate)
-                AppDestination.ServerSetup -> ServerSetupScreen(navigate)
-                AppDestination.PasswordLogin -> PasswordLoginScreen(navigate)
-                AppDestination.CreateAccount -> CreateAccountScreen(navigate)
-                AppDestination.OAuthSetup -> OAuthSetupScreen(
-                    navigate = navigate,
-                    errorMessage = oauthErrorMessage,
-                    onErrorConsumed = onOAuthErrorConsumed,
-                )
-                AppDestination.OAuthLinkExisting -> OAuthLinkExistingAccountScreen(
-                    navigate = navigate,
-                    flowState = oauthFlow,
-                )
-                AppDestination.OAuthRegistrationClosed -> OAuthRegistrationClosedScreen(navigate)
-                AppDestination.OAuthCreateAccount -> OAuthCreateAccountScreen(
-                    navigate = navigate,
-                    flowState = oauthFlow,
-                    onOAuthPendingReceived = onOAuthPendingReceived,
-                )
-                AppDestination.OAuthRegistrationClosedError -> OAuthRegistrationClosedErrorScreen(
-                    navigate = navigate,
-                    flowState = oauthFlow,
-                )
+                AppDestination.ServerSetup -> WebLoginHostScreen(webLoginViewModel, navigate)
                 AppDestination.QrLogin -> QrLoginScreen(
                     navigate = navigate,
                     onMobileLoginQrRequested = onMobileLoginQrRequested,
@@ -949,6 +867,7 @@ private fun Context.hasUsableNetwork(): Boolean {
 @Composable
 private fun AgentsAnywhereAppPreview() {
     AgentsAnywhereTheme {
-        AgentsAnywhereApp()
+        val context = LocalContext.current
+        AgentsAnywhereApp(webLoginViewModel = WebLoginViewModel(context.applicationContext as android.app.Application))
     }
 }
