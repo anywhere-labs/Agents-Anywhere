@@ -16,8 +16,8 @@ from agent_server.core.models import (
     SessionRuntimeState,
     SessionSelectionPatchRequest,
     SessionStatus,
+    SessionSteerRequest,
     SessionView,
-    SteerTurnRequest,
 )
 from agent_server.core.utc import utc_now
 from agent_server.infra.connector_rpc import (
@@ -267,7 +267,7 @@ class SessionRunService:
         try:
             result = await self._manager.request(
                 session.connectorId,
-                "turn.start",
+                "session.send_message",
                 params,
             )
         except ConnectorOfflineError as exc:
@@ -364,7 +364,7 @@ class SessionRunService:
     async def steer_session(
         self,
         session_id: str,
-        payload: SteerTurnRequest,
+        payload: SessionSteerRequest,
         *,
         user_id: str,
     ) -> RpcResponsePayload:
@@ -410,7 +410,7 @@ class SessionRunService:
         try:
             result = await self._manager.request(
                 session.connectorId,
-                "turn.steer",
+                "session.steer",
                 params,
             )
         except ConnectorOfflineError as exc:

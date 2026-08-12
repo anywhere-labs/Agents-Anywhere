@@ -1458,11 +1458,9 @@ def ingest_pending_command_approval(client: TestClient, access_token: str, sessi
                                 "runtime": "codex",
                                 "requestId": "42",
                                 "sessionId": "thr_1",
-                                "turnId": "turn_1",
                                 "itemId": "call_1",
                                 "method": "item/commandExecution/requestApproval",
                             },
-                            "turnId": "turn_1",
                             "targetItemId": "tl_tool",
                             "kind": "command",
                             "payload": {"command": "pwd"},
@@ -1477,7 +1475,6 @@ def ingest_pending_command_approval(client: TestClient, access_token: str, sessi
                         "item": {
                             "id": "tl_tool",
                             "sessionId": session_id,
-                            "turnId": "turn_1",
                             "type": "tool",
                             "status": "waiting_approval",
                             "role": "tool",
@@ -1489,7 +1486,6 @@ def ingest_pending_command_approval(client: TestClient, access_token: str, sessi
                             "source": {
                                 "runtime": "codex",
                                 "sessionId": "thr_1",
-                                "turnId": "turn_1",
                                 "itemId": "call_1",
                                 "itemType": "commandExecution",
                             },
@@ -2312,30 +2308,28 @@ def test_session_state_update_drives_runtime_status_independently_from_timeline(
         )
         assert state["session"]["status"] == "running"
 
-        turn_start = {
-            "id": "tl_turn_start",
+        tool_item = {
+            "id": "tl_tool",
             "sessionId": session_id,
-            "turnId": "turn_1",
-            "type": "turn.start",
+            "type": "tool",
             "status": "running",
-            "role": None,
-            "content": {"title": None, "inputSummary": None},
+            "role": "tool",
+            "content": {"kind": "command", "command": "pytest"},
             "source": {
                 "runtime": "codex",
                 "sessionId": "thr_1",
-                "turnId": "turn_1",
-                "event": "turn/started",
-                "derivedKey": "turn-start",
+                "itemId": "tool_1",
+                "itemType": "commandExecution",
             },
             "orderSeq": 1,
             "revision": 1,
-            "contentHash": "sha256:start",
+            "contentHash": "sha256:tool-running",
         }
         ws.send_json(
             {
                 "type": "notification",
                 "method": "timeline.itemUpsert",
-                "params": {"sessionId": session_id, "item": turn_start},
+                "params": {"sessionId": session_id, "item": tool_item},
             }
         )
         state = wait_for_state(
@@ -2343,7 +2337,7 @@ def test_session_state_update_drives_runtime_status_independently_from_timeline(
             session_id,
             headers,
             lambda body: (
-                any(item["type"] == "turn.start" for item in body["items"])
+                any(item["id"] == "tl_tool" for item in body["items"])
                 and body["session"]["status"] == "running"
             ),
         )
@@ -2356,18 +2350,11 @@ def test_session_state_update_drives_runtime_status_independently_from_timeline(
                 "params": {
                     "sessionId": session_id,
                     "item": {
-                        **turn_start,
-                        "id": "tl_turn_end",
-                        "type": "turn.end",
+                        **tool_item,
                         "status": "done",
-                        "content": {"result": "completed"},
-                        "source": {
-                            **turn_start["source"],
-                            "event": "turn/completed",
-                            "derivedKey": "turn-end",
-                        },
-                        "orderSeq": 2,
-                        "contentHash": "sha256:end",
+                        "content": {"kind": "command", "command": "pytest", "exitCode": 0},
+                        "revision": 2,
+                        "contentHash": "sha256:tool-done",
                     },
                 },
             }
@@ -2391,7 +2378,7 @@ def test_session_state_update_drives_runtime_status_independently_from_timeline(
             session_id,
             headers,
             lambda body: (
-                any(item["type"] == "turn.end" for item in body["items"])
+                any(item["id"] == "tl_tool" and item["status"] == "done" for item in body["items"])
                 and body["session"]["status"] == "idle"
             ),
         )
@@ -3871,7 +3858,7 @@ def test_send_message_rejects_model_selection_id(tmp_path):
     )
 
     assert response.status_code == 422
-    assert not any(method == "turn.start" for _, method, _, _ in fake_rpc.requests)
+    assert not any(method == "session.send_message" for _, method, _, _ in fake_rpc.requests)
 
 
 def test_patch_session_selections_routes_to_runtime_and_reads_live_state(tmp_path):
@@ -3933,7 +3920,9 @@ def test_patch_session_selections_routes_to_runtime_and_reads_live_state(tmp_pat
     )
 
     assert sent.status_code == 200, sent.text
-    turn_start = next(request for request in fake_rpc.requests if request[1] == "turn.start")
+    turn_start = next(
+        request for request in fake_rpc.requests if request[1] == "session.send_message"
+    )
     params = turn_start[2]
     assert "selections" not in params
     assert "modelSelectionId" not in params
@@ -4020,7 +4009,7 @@ def test_send_message_forwards_client_message_id_to_connector(tmp_path):
     )
 
     assert response.status_code == 200, response.text
-    params = wait_for_rpc_method(fake_rpc, "turn.start")[2]
+    params = wait_for_rpc_method(fake_rpc, "session.send_message")[2]
     assert params["clientMessageId"] == "opt_abc"
 
 
@@ -4049,7 +4038,7 @@ def test_stored_execution_error_notice_does_not_override_runtime_send_capability
     )
 
     assert response.status_code == 200, response.text
-    turn_start_params = wait_for_rpc_method(fake_rpc, "turn.start")[2]
+    turn_start_params = wait_for_rpc_method(fake_rpc, "session.send_message")[2]
     assert turn_start_params["content"] == "try again"
     assert asyncio.run(
         client.app.state.store.get_notice(notice.noticeId)
@@ -4086,7 +4075,7 @@ def test_send_message_forwards_uploaded_attachment_metadata_to_connector(tmp_pat
     )
 
     assert response.status_code == 200, response.text
-    params = wait_for_rpc_method(fake_rpc, "turn.start")[2]
+    params = wait_for_rpc_method(fake_rpc, "session.send_message")[2]
     assert params["attachments"] == [
         {
             "fileId": attachment["fileId"],
@@ -4209,7 +4198,7 @@ def test_send_message_omits_unspecified_overrides(tmp_path):
     )
 
     assert response.status_code == 200
-    params = wait_for_rpc_method(fake_rpc, "turn.start")[2]
+    params = wait_for_rpc_method(fake_rpc, "session.send_message")[2]
     for key in ("permissionMode", "model", "effort", "approvalPolicy", "sandboxPolicy"):
         assert key not in params
 
@@ -4260,42 +4249,6 @@ def _create_claude_session(client, connector_id, headers, fake_rpc):
     return session_id
 
 
-def _ingest_open_turn(client, access_token, session_id, turn_id="turn_1"):
-    """Push a turn.start event for timeline-focused tests."""
-    response = client.post(
-        "/connector/ingest",
-        headers={"Authorization": f"Bearer {access_token}"},
-        json={
-            "notifications": [
-                {
-                    "method": "timeline.itemUpsert",
-                    "params": {
-                        "sessionId": session_id,
-                        "item": {
-                            "id": f"tl_{turn_id}_start",
-                            "sessionId": session_id,
-                            "turnId": turn_id,
-                            "type": "turn.start",
-                            "status": "running",
-                            "content": {},
-                            "source": {
-                                "runtime": "claude",
-                                "turnId": turn_id,
-                                "event": "turn/started",
-                                "derivedKey": "turn-start",
-                            },
-                            "orderSeq": 1,
-                            "revision": 1,
-                            "contentHash": "sha256:open-turn",
-                        },
-                    },
-                }
-            ]
-        },
-    )
-    assert response.status_code == 200, response.text
-
-
 def test_send_message_carries_runtime_for_codex_session(tmp_path):
     client = make_client(tmp_path)
     connector_id, _, session_id, headers = create_connector_and_session(client)
@@ -4310,7 +4263,7 @@ def test_send_message_carries_runtime_for_codex_session(tmp_path):
         json={"content": "hi"},
     )
     assert response.status_code == 200
-    params = wait_for_rpc_method(fake_rpc, "turn.start")[2]
+    params = wait_for_rpc_method(fake_rpc, "session.send_message")[2]
     assert params["runtime"] == "codex"
 
 
@@ -4327,7 +4280,7 @@ def test_send_message_carries_runtime_for_claude_session(tmp_path):
         json={"content": "hi"},
     )
     assert response.status_code == 200, response.text
-    params = wait_for_rpc_method(fake_rpc, "turn.start")[2]
+    params = wait_for_rpc_method(fake_rpc, "session.send_message")[2]
     assert params["runtime"] == "claude"
     assert params["cwd"] == "/repo"
 
@@ -4374,7 +4327,7 @@ def test_steer_routes_running_codex_session_without_turn_id(tmp_path):
     )
 
     assert response.status_code == 200, response.text
-    params = wait_for_rpc_method(fake_rpc, "turn.steer")[2]
+    params = wait_for_rpc_method(fake_rpc, "session.steer")[2]
     external_session_id = asyncio.run(
         client.app.state.store.get_session(session_id)
     ).externalSessionId
@@ -4411,7 +4364,7 @@ def test_steer_rejects_idle_session_and_turn_overrides(tmp_path):
     assert idle_response.status_code == 409
     assert idle_response.json()["detail"] == "session is not running"
     assert override_response.status_code == 422
-    assert not any(method == "turn.steer" for _, method, _, _ in fake_rpc.requests)
+    assert not any(method == "session.steer" for _, method, _, _ in fake_rpc.requests)
 
 
 def test_interrupt_not_found_result_clears_stale_active_run(tmp_path):
@@ -4477,7 +4430,7 @@ def test_interrupt_cancels_blocking_interactions(tmp_path):
     assert runtime_notice_events[0]["payload"]["notice"]["status"] == "cancelled"
 
 
-def test_timeline_turn_events_do_not_own_active_run(tmp_path):
+def test_timeline_items_do_not_own_active_run(tmp_path):
     client = make_client(tmp_path)
     connector_id, access_token, _, headers = create_connector_and_session(client)
     fake_rpc = FakeLocalRpc()
@@ -4489,7 +4442,6 @@ def test_timeline_turn_events_do_not_own_active_run(tmp_path):
         headers=headers,
         json={"content": "hi"},
     ).raise_for_status()
-    _ingest_open_turn(client, access_token, session_id, turn_id="turn_active_1")
     active = asyncio.run(client.app.state.store.get_active_run(session_id))
     assert active is not None
     assert "turnId" not in active
@@ -4504,21 +4456,20 @@ def test_timeline_turn_events_do_not_own_active_run(tmp_path):
                     "params": {
                         "sessionId": session_id,
                         "item": {
-                            "id": "tl_turn_active_1_end",
+                            "id": "tl_message_complete",
                             "sessionId": session_id,
-                            "turnId": "turn_active_1",
-                            "type": "turn.end",
+                            "type": "message",
                             "status": "done",
-                            "content": {"result": "ok"},
+                            "role": "assistant",
+                            "content": {"text": "ok"},
                             "source": {
                                 "runtime": "claude",
-                                "turnId": "turn_active_1",
-                                "event": "turn/completed",
-                                "derivedKey": "turn-end",
+                                "event": "message/completed",
+                                "derivedKey": "message-complete",
                             },
-                            "orderSeq": 2,
+                            "orderSeq": 1,
                             "revision": 1,
-                            "contentHash": "sha256:turn-end",
+                            "contentHash": "sha256:message-complete",
                         },
                     },
                 }
@@ -4803,11 +4754,10 @@ def test_timeline_sync_tags_only_latest_active_run_message_and_keeps_run(tmp_pat
         json={"content": "same text", "clientMessageId": "opt_latest"},
     ).raise_for_status()
 
-    def user_item(item_id: str, turn_id: str, order_seq: int):
+    def user_item(item_id: str, order_seq: int):
         return {
             "id": item_id,
             "sessionId": session_id,
-            "turnId": turn_id,
             "type": "message",
             "status": "done",
             "role": "user",
@@ -4815,7 +4765,6 @@ def test_timeline_sync_tags_only_latest_active_run_message_and_keeps_run(tmp_pat
             "source": {
                 "runtime": "codex",
                 "sessionId": "thread-demo",
-                "turnId": turn_id,
                 "itemId": f"source-{item_id}",
                 "itemType": "userMessage",
                 "event": "ipc/thread-stream-state-changed",
@@ -4826,25 +4775,8 @@ def test_timeline_sync_tags_only_latest_active_run_message_and_keeps_run(tmp_pat
         }
 
     items = [
-        user_item("tl_old_user", "turn_old", 1),
-        {
-            "id": "tl_old_end",
-            "sessionId": session_id,
-            "turnId": "turn_old",
-            "type": "turn.end",
-            "status": "done",
-            "content": {"result": "completed"},
-            "source": {
-                "runtime": "codex",
-                "sessionId": "thread-demo",
-                "turnId": "turn_old",
-                "derivedKey": "turn-end",
-            },
-            "orderSeq": 2,
-            "revision": 1,
-            "contentHash": "sha256:old-end",
-        },
-        user_item("tl_new_user", "turn_new", 3),
+        user_item("tl_old_user", 1),
+        user_item("tl_new_user", 2),
     ]
     response = client.post(
         "/connector/ingest",
@@ -5394,8 +5326,6 @@ def test_interrupt_does_not_persist_runtime_status(tmp_path):
     fake_rpc = FakeLocalRpc()
     client.app.state.rpc = fake_rpc
     session_id = _create_claude_session(client, connector_id, headers, fake_rpc)
-    _ingest_open_turn(client, access_token, session_id, turn_id="turn_claude_1")
-
     response = client.post(f"/sessions/{session_id}/runtime/interrupt", headers=headers)
 
     assert response.status_code == 200, response.text
@@ -5975,42 +5905,6 @@ def test_connector_http_ingest_accepts_state_update_before_external_id(tmp_path)
                         "sessionId": "sess_codex_out_of_order",
                         "items": [
                             {
-                                "id": "tl_out_of_order_start",
-                                "sessionId": "sess_codex_out_of_order",
-                                "turnId": "turn_historical",
-                                "type": "turn.start",
-                                "status": "done",
-                                "role": None,
-                                "content": {},
-                                "source": {
-                                    "runtime": "codex",
-                                    "sessionId": "thr_later",
-                                    "turnId": "turn_historical",
-                                    "derivedKey": "turn-start",
-                                },
-                                "orderSeq": 1,
-                                "revision": 1,
-                                "contentHash": "sha256:out-of-order-start",
-                            },
-                            {
-                                "id": "tl_out_of_order_end",
-                                "sessionId": "sess_codex_out_of_order",
-                                "turnId": "turn_historical",
-                                "type": "turn.end",
-                                "status": "done",
-                                "role": None,
-                                "content": {"result": "completed"},
-                                "source": {
-                                    "runtime": "codex",
-                                    "sessionId": "thr_later",
-                                    "turnId": "turn_historical",
-                                    "derivedKey": "turn-end",
-                                },
-                                "orderSeq": 2,
-                                "revision": 1,
-                                "contentHash": "sha256:out-of-order-end",
-                            },
-                            {
                                 "id": "tl_out_of_order",
                                 "sessionId": "sess_codex_out_of_order",
                                 "type": "message",
@@ -6023,7 +5917,7 @@ def test_connector_http_ingest_accepts_state_update_before_external_id(tmp_path)
                                     "itemId": "item_later",
                                     "itemType": "agentMessage",
                                 },
-                                "orderSeq": 3,
+                                "orderSeq": 1,
                                 "revision": 1,
                                 "contentHash": "sha256:out-of-order",
                             }
@@ -6356,26 +6250,6 @@ def test_claude_timeline_sync_replaces_existing_timeline(tmp_path):
                     "complete": True,
                     "items": [
                         {
-                            "id": "turn_history:turn-start",
-                            "sessionId": session_id,
-                            "turnId": "turn_history",
-                            "type": "turn.start",
-                            "status": "running",
-                            "role": None,
-                            "content": {},
-                            "source": {
-                                "runtime": "claude",
-                                "sessionId": "claude_session_1",
-                                "turnId": "turn_history",
-                                "itemId": "turn_history:turn-start",
-                                "itemType": "turn.start",
-                                "derivedKey": "turn-start",
-                            },
-                            "orderSeq": 1,
-                            "revision": 1,
-                            "contentHash": "sha256:history-start",
-                        },
-                        {
                             "id": "claude_msg_history_user",
                             "sessionId": session_id,
                             "turnId": "turn_history",
@@ -6392,7 +6266,7 @@ def test_claude_timeline_sync_replaces_existing_timeline(tmp_path):
                                 "derivedKey": "message",
                                 "clientMessageId": "opt_1",
                             },
-                            "orderSeq": 2,
+                            "orderSeq": 1,
                             "revision": 1,
                             "contentHash": "sha256:history-user",
                         },
@@ -6412,7 +6286,7 @@ def test_claude_timeline_sync_replaces_existing_timeline(tmp_path):
                                 "itemType": "text",
                                 "derivedKey": "message",
                             },
-                            "orderSeq": 3,
+                            "orderSeq": 2,
                             "revision": 1,
                             "contentHash": "sha256:history-message",
                         },
@@ -6427,7 +6301,6 @@ def test_claude_timeline_sync_replaces_existing_timeline(tmp_path):
             headers,
             lambda items: {item["id"] for item in items}
             == {
-                "turn_history:turn-start",
                 "claude_msg_history_user",
                 "claude_msg_history_answer",
             },
@@ -6436,7 +6309,6 @@ def test_claude_timeline_sync_replaces_existing_timeline(tmp_path):
         assert "claude_msg_live_partial" not in item_ids
         assert "turn_live:user" not in item_ids
         assert "claude_tool_live" not in item_ids
-        assert "turn_history:turn-start" in item_ids
         assert "claude_msg_history_user" in item_ids
         assert "claude_msg_history_answer" in item_ids
 
@@ -6694,21 +6566,19 @@ def test_timeline_sync_completed_at_drift_does_not_rearm_unread(tmp_path):
     client = make_client(tmp_path)
     _, access_token, session_id, headers = create_connector_and_session(client)
     item = {
-        "id": "tl_turn_end",
+        "id": "tl_session_complete",
         "sessionId": session_id,
-        "turnId": "turn_1",
-        "type": "turn.end",
+        "type": "system",
         "status": "done",
-        "content": {"result": "completed"},
+        "content": {"kind": "runtime", "result": "completed"},
         "source": {
             "runtime": "codex",
             "sessionId": "thr_1",
-            "turnId": "turn_1",
-            "derivedKey": "turn-end",
+            "derivedKey": "session-complete",
         },
         "orderSeq": 1,
         "revision": 1,
-        "contentHash": "sha256:turn-end",
+        "contentHash": "sha256:session-complete",
         "completedAt": "2026-06-08T00:00:00Z",
     }
 
@@ -7964,7 +7834,7 @@ def test_session_stays_blocked_until_all_blocking_interactions_resolve(tmp_path)
     assert [notice["interactionType"] for notice in snapshot["notices"]] == ["approval"]
 
 
-def test_interrupted_turn_closes_pending_approval_tool_item(tmp_path):
+def test_runtime_interruption_closes_pending_approval_tool_item(tmp_path):
     client = make_client(tmp_path)
     _, access_token, session_id, headers = create_connector_and_session(client)
     ingest_pending_command_approval(client, access_token, session_id)
@@ -7975,30 +7845,70 @@ def test_interrupted_turn_closes_pending_approval_tool_item(tmp_path):
         json={
             "notifications": [
                 {
+                    "method": "notice.upsert",
+                    "params": {
+                        "noticeId": "notice_approval_appr_1",
+                        "type": "interaction",
+                        "sessionId": session_id,
+                        "source": {
+                            "runtime": "codex",
+                            "component": "codex",
+                            "approvalId": "appr_1",
+                            "timelineItemId": "tl_tool",
+                        },
+                        "title": "Codex wants to run a command",
+                        "message": "pwd",
+                        "severity": "warning",
+                        "status": "cancelled",
+                        "interactionType": "approval",
+                        "blocking": None,
+                        "responseRequired": False,
+                        "actions": [],
+                        "context": {
+                            "approvalId": "appr_1",
+                            "approvalStatus": "cancelled",
+                            "targetItemId": "tl_tool",
+                        },
+                    },
+                },
+                {
                     "method": "timeline.itemUpsert",
                     "params": {
                         "sessionId": session_id,
                         "item": {
-                            "id": "tl_turn_end",
+                            "id": "tl_tool",
                             "sessionId": session_id,
-                            "turnId": "turn_1",
-                            "type": "turn.end",
-                            "status": "interrupted",
-                            "role": None,
-                            "content": {"result": "interrupted", "error": None},
+                            "type": "tool",
+                            "status": "cancelled",
+                            "role": "tool",
+                            "content": {
+                                "kind": "command",
+                                "command": "pwd",
+                                "approval": {"id": "appr_1", "status": "cancelled"},
+                            },
                             "source": {
                                 "runtime": "codex",
                                 "sessionId": "thr_1",
-                                "turnId": "turn_1",
-                                "event": "turn/completed",
-                                "derivedKey": "turn-end",
+                                "itemId": "call_1",
+                                "itemType": "commandExecution",
                             },
-                            "orderSeq": 2,
-                            "revision": 1,
-                            "contentHash": "sha256:interrupted",
+                            "orderSeq": 1,
+                            "revision": 2,
+                            "contentHash": "sha256:cancelled-tool",
                         },
                     },
-                }
+                },
+                {
+                    "method": "session.state.updated",
+                    "params": {
+                        "sessionId": session_id,
+                        "runtime": "codex",
+                        "externalSessionId": "thr_1",
+                        "status": "idle",
+                        "selections": {},
+                        "metadata": {},
+                    },
+                },
             ],
         },
     )
@@ -8563,11 +8473,15 @@ async def _exercise_rpc_manager():
     await manager.register("conn_1", websocket)  # type: ignore[arg-type]
 
     request_task = asyncio.create_task(
-        manager.request("conn_1", "turn.start", {"sessionId": "sess_1", "content": "hi"})
+        manager.request(
+            "conn_1",
+            "session.send_message",
+            {"sessionId": "sess_1", "content": "hi"},
+        )
     )
     sent = await asyncio.wait_for(websocket.sent.get(), timeout=1)
     assert sent["type"] == "request"
-    assert sent["method"] == "turn.start"
+    assert sent["method"] == "session.send_message"
     assert sent["params"] == {"sessionId": "sess_1", "content": "hi"}
 
     manager.resolve_response(
@@ -8576,10 +8490,10 @@ async def _exercise_rpc_manager():
             "id": sent["id"],
             "type": "response",
             "ok": True,
-            "result": {"turnId": "turn_1"},
+            "result": {"accepted": True},
         },
     )
-    assert await asyncio.wait_for(request_task, timeout=1) == {"turnId": "turn_1"}
+    assert await asyncio.wait_for(request_task, timeout=1) == {"accepted": True}
 
 
 def _create_extra_session(

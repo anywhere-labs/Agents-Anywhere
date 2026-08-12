@@ -25,9 +25,6 @@ from agent_server.core.protocol import (
 from agent_server.services.connector_realtime import ConnectorRealtimeService
 from agent_server.services.ingest_effects import IngestEffect
 from agent_server.services.repository_ports import ConnectorNotificationRepository
-from agent_server.services.timeline_effects import (
-    close_waiting_approval_items_for_finished_turn,
-)
 
 TIMELINE_SYNC_PUSH_LIMIT = 100
 
@@ -62,6 +59,7 @@ class ConnectorNotificationService:
         method: str,
         params: dict[str, Any],
     ) -> IngestEffect:
+        params = _without_runtime_turn_ids(params)
         if method == "approval.requested":
             raise NotificationValidationError(
                 "unsupported_notification",
@@ -400,15 +398,6 @@ class TimelineNotificationHandler:
                 items=items,
                 mark_read_on_change=True,
             )
-        for item in items:
-            if item.type != "turn.end":
-                continue
-            await close_waiting_approval_items_for_finished_turn(
-                self._store,
-                session_id,
-                item,
-                mark_read_on_change=True,
-            )
         changed_items = (
             stored_items
             if replace_snapshot
@@ -447,13 +436,6 @@ class TimelineNotificationHandler:
             item=item,
             mark_read_on_change=True,
         )
-        if item.type == "turn.end":
-            await close_waiting_approval_items_for_finished_turn(
-                self._store,
-                session_id,
-                item,
-                mark_read_on_change=True,
-            )
         affects_run_state = _timeline_item_affects_run_state(item)
         return IngestEffect(
             session_id=session_id,
@@ -804,15 +786,25 @@ def _timeline_item_failed(item: TimelineItemIn) -> bool:
 
 
 def _timeline_item_affects_run_state(item: TimelineItemIn) -> bool:
-    if item.type in {"turn.start", "turn.end"}:
-        return True
     return _timeline_item_is_active_work(item)
 
 
 def _timeline_item_is_active_work(item: TimelineItemIn) -> bool:
-    if item.type == "turn.start":
-        return False
     return item.status in {"pending", "running", "waiting_approval"}
+
+
+def _without_runtime_turn_ids(value: Any) -> Any:
+    """Keep legacy Connector turn identifiers outside Server business handlers."""
+
+    if isinstance(value, dict):
+        return {
+            key: _without_runtime_turn_ids(item)
+            for key, item in value.items()
+            if key not in {"turnId", "turn_id"}
+        }
+    if isinstance(value, list):
+        return [_without_runtime_turn_ids(item) for item in value]
+    return value
 
 
 async def _tag_active_run_user_messages(

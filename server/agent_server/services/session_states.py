@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from agent_server.core.models import SessionStatus, SessionView
 from agent_server.core.session_states import (
     SessionStateFacts,
-    can_start_turn,
+    can_send_session_message,
     derive_session_status,
     require_session_transition,
 )
@@ -22,8 +22,8 @@ class SessionStateDecision:
     facts: SessionStateFacts
 
     @property
-    def can_start_turn(self) -> bool:
-        return can_start_turn(self.session.status)
+    def can_send_message(self) -> bool:
+        return can_send_session_message(self.session.status)
 
 class SessionStateService:
     def __init__(self, store: SessionStateRepository) -> None:

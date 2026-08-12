@@ -99,18 +99,6 @@
           "title": "Title",
           "type": "string"
         },
-        "turnId": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Turnid"
-        },
         "updatedSeq": {
           "title": "Updatedseq",
           "type": "integer"
@@ -186,18 +174,6 @@
           ],
           "default": null,
           "title": "Sessionid"
-        },
-        "turnId": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Turnid"
         }
       },
       "required": [
@@ -1086,25 +1062,12 @@
           "title": "Status",
           "type": "string"
         },
-        "turnId": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Turnid"
-        },
         "type": {
           "enum": [
-            "turn.start",
-            "turn.end",
             "message",
             "tool",
             "artifact",
+            "marker",
             "system"
           ],
           "title": "Type",
@@ -1225,18 +1188,6 @@
           ],
           "default": null,
           "title": "Sessionid"
-        },
-        "turnId": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Turnid"
         }
       },
       "required": [

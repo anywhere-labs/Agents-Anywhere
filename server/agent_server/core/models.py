@@ -18,8 +18,6 @@ SessionStatus = Literal[
     "blocked",
 ]
 TimelineType = Literal[
-    "turn.start",
-    "turn.end",
     "message",
     "tool",
     "artifact",
@@ -203,13 +201,13 @@ class AdminUserListResponse(BaseModel):
 
 
 class DashboardIntensitySettings(BaseModel):
-    basis: Literal["turns"] = "turns"
+    basis: Literal["messages"] = "messages"
     lightMax: int = Field(default=10, ge=0)
     mediumMax: int = Field(default=50, ge=0)
 
 
 class DashboardHistogramSettings(BaseModel):
-    turns: list[int] = Field(default_factory=lambda: [0, 5, 20, 100])
+    messages: list[int] = Field(default_factory=lambda: [0, 5, 20, 100])
     sessions: list[int] = Field(default_factory=lambda: [0, 1, 5, 20])
 
 
@@ -237,9 +235,9 @@ class DashboardSummary(BaseModel):
     activeUsers: int = 0
     wau: int = 0
     mau: int = 0
-    totalTurns: int = 0
+    totalMessages: int = 0
     activeSessions: int = 0
-    avgTurnsPerActiveUser: float = 0
+    avgMessagesPerActiveUser: float = 0
     avgActiveSessionsPerActiveUser: float = 0
     totalDevices: int = 0
     avgDevicesPerUser: float = 0
@@ -253,9 +251,9 @@ class DashboardSeriesPoint(BaseModel):
     activeUsers: int = 0
     wau: int = 0
     mau: int = 0
-    totalTurns: int = 0
+    totalMessages: int = 0
     activeSessions: int = 0
-    avgTurnsPerActiveUser: float = 0
+    avgMessagesPerActiveUser: float = 0
     avgActiveSessionsPerActiveUser: float = 0
     totalDevices: int = 0
     avgDevicesPerUser: float = 0
@@ -286,7 +284,7 @@ class DashboardOverviewResponse(BaseModel):
     range: DashboardRange
     summary: DashboardSummary
     series: list[DashboardSeriesPoint]
-    turnHistogram: list[DashboardHistogramBucket]
+    messageHistogram: list[DashboardHistogramBucket]
     sessionHistogram: list[DashboardHistogramBucket]
     userSegments: list[DashboardUserSegmentItem]
     deviceBreakdown: list[DashboardBreakdownItem]
@@ -662,7 +660,6 @@ class SessionResponse(BaseModel):
 class TimelineSource(BaseModel):
     runtime: RuntimeName | Literal["platform"]
     sessionId: str | None = None
-    turnId: str | None = None
     itemId: str | None = None
     itemType: str | None = None
     event: str | None = None
@@ -673,7 +670,6 @@ class TimelineSource(BaseModel):
 class TimelineItemIn(BaseModel):
     id: str
     sessionId: str
-    turnId: str | None = None
     type: TimelineType
     status: TimelineStatus
     role: TimelineRole | None = None
@@ -697,7 +693,6 @@ class ApprovalSource(BaseModel):
     runtime: RuntimeName
     requestId: str | int
     sessionId: str | None = None
-    turnId: str | None = None
     itemId: str | None = None
     method: str | None = None
 
@@ -705,7 +700,6 @@ class ApprovalSource(BaseModel):
 class ApprovalIn(BaseModel):
     id: str
     sessionId: str
-    turnId: str | None = None
     status: ApprovalStatus = "pending"
     kind: ApprovalKind = "unknown"
     targetItemId: str | None = None
@@ -863,7 +857,7 @@ class SessionCommandResponse(BaseModel):
     serverTime: str
 
 
-class SteerTurnRequest(BaseModel):
+class SessionSteerRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     content: str

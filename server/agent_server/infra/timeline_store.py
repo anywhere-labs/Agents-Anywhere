@@ -8,9 +8,9 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
+from agent_server.core.models import TimelineItem
 from agent_server.infra.db import timeline_items
 from agent_server.infra.db.engine import SQLITE_BACKEND
-from agent_server.core.models import TimelineItem
 
 
 def _json_dumps(value: Any) -> str:
@@ -172,7 +172,6 @@ class SqlTimelineStore:
             "type": item.type,
             "status": item.status,
             "role": item.role,
-            "turn_id": item.turnId,
             "order_seq": item.orderSeq,
             "updated_seq": item.updatedSeq,
             "item_time": _item_time(item),

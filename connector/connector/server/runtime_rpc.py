@@ -37,8 +37,8 @@ from connector.server.runtime_turn_rpc import (
     dispatch_session_create,
     dispatch_session_interrupt,
     dispatch_session_selections_update,
-    dispatch_turn_start,
-    dispatch_turn_steer,
+    dispatch_session_send_message,
+    dispatch_session_steer,
 )
 
 BackgroundScheduler = Callable[[Any], None]
@@ -68,8 +68,8 @@ class RuntimeRpcHandler:
         "session.commands",
         "session.command.execute",
         "interaction.respond",
-        "turn.start",
-        "turn.steer",
+        "session.send_message",
+        "session.steer",
         "session.interrupt",
     }
 
@@ -204,13 +204,13 @@ class RuntimeRpcHandler:
                 self._resolve_agent_runtime(params),
                 params,
             )
-        if method == "turn.start":
-            return await dispatch_turn_start(
+        if method == "session.send_message":
+            return await dispatch_session_send_message(
                 self._resolve_agent_runtime(params),
                 params,
             )
-        if method == "turn.steer":
-            return await dispatch_turn_steer(
+        if method == "session.steer":
+            return await dispatch_session_steer(
                 self._resolve_agent_runtime(params),
                 params,
             )

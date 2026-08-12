@@ -183,7 +183,7 @@ def _dedupe_source_items(items: list[TimelineItem]) -> list[TimelineItem]:
 
 def _dedupe_native_source_items(items: list[TimelineItem]) -> list[TimelineItem]:
     result: list[TimelineItem] = []
-    indexes: dict[tuple[str, str, str, str, str], int] = {}
+    indexes: dict[tuple[str, str, str, str], int] = {}
     for item in items:
         key = _source_item_duplicate_key(item)
         if key is None:
@@ -219,11 +219,10 @@ def _drop_empty_assistant_started_items(items: list[TimelineItem]) -> list[Timel
 
 def _source_item_duplicate_key(
     item: TimelineItem,
-) -> tuple[str, str, str, str, str] | None:
+) -> tuple[str, str, str, str] | None:
     source = item.source
     if (
         not source.sessionId
-        or not source.turnId
         or not source.itemId
         or not source.itemType
     ):
@@ -231,7 +230,6 @@ def _source_item_duplicate_key(
     return (
         source.runtime,
         source.sessionId,
-        source.turnId,
         source.itemId,
         source.itemType,
     )
@@ -239,7 +237,7 @@ def _source_item_duplicate_key(
 
 def _non_empty_assistant_derived_key(
     item: TimelineItem,
-) -> tuple[str, str, str, str, str] | None:
+) -> tuple[str, str, str, str] | None:
     key = _assistant_derived_key(item)
     if key is None:
         return None
@@ -252,7 +250,7 @@ def _non_empty_assistant_derived_key(
 
 def _empty_assistant_started_derived_key(
     item: TimelineItem,
-) -> tuple[str, str, str, str, str] | None:
+) -> tuple[str, str, str, str] | None:
     key = _assistant_derived_key(item)
     if key is None:
         return None
@@ -265,7 +263,7 @@ def _empty_assistant_started_derived_key(
 
 def _assistant_derived_key(
     item: TimelineItem,
-) -> tuple[str, str, str, str, str] | None:
+) -> tuple[str, str, str, str] | None:
     source = item.source
     if (
         not source.sessionId
@@ -278,7 +276,6 @@ def _assistant_derived_key(
     return (
         source.runtime,
         source.sessionId,
-        str(item.turnId or ""),
         item.type,
         source.derivedKey,
     )
@@ -412,49 +409,71 @@ def _timeline_item_from_input(
     return TimelineItem.model_validate(data)
 
 
-def _canonical_duplicate_key(item: TimelineItem) -> tuple[str, str | None, str, str] | None:
+def _canonical_duplicate_key(item: TimelineItem) -> tuple[str, str, str, str] | None:
     derived_key = item.source.derivedKey
     if not derived_key or derived_key.startswith("history-"):
         return None
-    if item.type not in {"message", "turn.start", "turn.end"}:
+    if item.type != "message" or not item.source.sessionId:
         return None
-    return (item.type, item.turnId, derived_key, _json_dumps(item.content))
+    return (item.source.sessionId, item.type, derived_key, _json_dumps(item.content))
 
 
-def _live_duplicate_key(item: TimelineItem) -> tuple[str, str | None, str, str] | None:
+def _live_duplicate_key(item: TimelineItem) -> tuple[str, str, str, str, str] | None:
     if item.type != "message":
         return _live_reasoning_duplicate_key(item)
     source_item_id = item.source.itemId
-    if not source_item_id or source_item_id.startswith("item-"):
+    if not source_item_id or source_item_id.startswith("item-") or not item.source.sessionId:
         return None
-    return (item.type, item.turnId, str(item.role or ""), _json_dumps(item.content))
+    return (
+        item.source.sessionId,
+        item.type,
+        str(item.role or ""),
+        str(item.source.derivedKey or ""),
+        _json_dumps(item.content),
+    )
 
 
-def _snapshot_duplicate_key(item: TimelineItem) -> tuple[str, str | None, str, str] | None:
+def _snapshot_duplicate_key(item: TimelineItem) -> tuple[str, str, str, str, str] | None:
     if item.type != "message":
         return _snapshot_reasoning_duplicate_key(item)
     source_item_id = item.source.itemId
-    if not source_item_id or not source_item_id.startswith("item-"):
+    if not source_item_id or not source_item_id.startswith("item-") or not item.source.sessionId:
         return None
-    return (item.type, item.turnId, str(item.role or ""), _json_dumps(item.content))
+    return (
+        item.source.sessionId,
+        item.type,
+        str(item.role or ""),
+        str(item.source.derivedKey or ""),
+        _json_dumps(item.content),
+    )
 
 
-def _live_reasoning_duplicate_key(item: TimelineItem) -> tuple[str, str | None, str, str] | None:
+def _live_reasoning_duplicate_key(item: TimelineItem) -> tuple[str, str, str, str] | None:
     if not _is_reasoning_timeline_item(item):
         return None
     source_item_id = item.source.itemId
-    if not source_item_id or source_item_id.startswith("item-"):
+    if not source_item_id or source_item_id.startswith("item-") or not item.source.sessionId:
         return None
-    return (item.type, item.turnId, "reasoning", _json_dumps(item.content))
+    return (
+        item.source.sessionId,
+        item.type,
+        "reasoning",
+        _json_dumps(item.content),
+    )
 
 
-def _snapshot_reasoning_duplicate_key(item: TimelineItem) -> tuple[str, str | None, str, str] | None:
+def _snapshot_reasoning_duplicate_key(item: TimelineItem) -> tuple[str, str, str, str] | None:
     if not _is_reasoning_timeline_item(item):
         return None
     source_item_id = item.source.itemId
-    if not source_item_id or not source_item_id.startswith("item-"):
+    if not source_item_id or not source_item_id.startswith("item-") or not item.source.sessionId:
         return None
-    return (item.type, item.turnId, "reasoning", _json_dumps(item.content))
+    return (
+        item.source.sessionId,
+        item.type,
+        "reasoning",
+        _json_dumps(item.content),
+    )
 
 
 def _is_reasoning_timeline_item(item: TimelineItem) -> bool:
@@ -464,13 +483,18 @@ def _is_reasoning_timeline_item(item: TimelineItem) -> bool:
     return isinstance(content, dict) and content.get("kind") == "reasoning"
 
 
-def _legacy_duplicate_key(item: TimelineItem) -> tuple[str, str | None, str, str] | None:
+def _legacy_duplicate_key(item: TimelineItem) -> tuple[str, str, str, str] | None:
     derived_key = item.source.derivedKey
     if not derived_key or not derived_key.startswith("history-"):
         return None
-    if item.type not in {"message", "turn.start", "turn.end"}:
+    if item.type != "message" or not item.source.sessionId:
         return None
-    return (item.type, item.turnId, derived_key.removeprefix("history-"), _json_dumps(item.content))
+    return (
+        item.source.sessionId,
+        item.type,
+        derived_key.removeprefix("history-"),
+        _json_dumps(item.content),
+    )
 
 
 __all__ = [name for name in globals() if not name.startswith("__")]

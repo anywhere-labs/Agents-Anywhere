@@ -45,8 +45,8 @@ from agent_server.core.models import (
     SessionRuntimeStateResponse,
     SessionSelectionPatchRequest,
     SessionSelectionPatchResponse,
+    SessionSteerRequest,
     SessionView,
-    SteerTurnRequest,
     TakeoverResponse,
 )
 from agent_server.core.protocol import (
@@ -1032,7 +1032,7 @@ async def interrupt_session(
 @router.post("/{session_id}/runtime/steer", response_model=RpcResponsePayload)
 async def steer_session(
     session_id: str,
-    payload: SteerTurnRequest,
+    payload: SessionSteerRequest,
     user_id: str = Depends(current_user_id),
     run_service: SessionRunService = Depends(get_session_run_service),
     db: Store = Depends(get_store),

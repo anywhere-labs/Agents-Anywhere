@@ -51,7 +51,7 @@ async def dispatch_session_selections_update(
     return operation_result_payload(result)
 
 
-async def dispatch_turn_start(
+async def dispatch_session_send_message(
     runtime: AgentRuntime,
     params: dict[str, Any],
 ) -> dict[str, Any]:
@@ -68,7 +68,7 @@ async def dispatch_turn_start(
     return operation_result_payload(result)
 
 
-async def dispatch_turn_steer(
+async def dispatch_session_steer(
     runtime: AgentRuntime,
     params: dict[str, Any],
 ) -> dict[str, Any]:

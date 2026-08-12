@@ -47,7 +47,6 @@ export function TimelineEntry({
   onToolOpenChange?: (open: boolean) => void
   onRespondInteraction: (noticeId: string, actionId: string) => void
 }) {
-  if (item.type === "turn.start" || item.type === "turn.end") return null
   let entry: React.ReactNode
   if (item.type === "message") {
     entry = <MessageCard token={token} session={session} item={item} />

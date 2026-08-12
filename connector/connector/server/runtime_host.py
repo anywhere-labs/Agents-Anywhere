@@ -19,6 +19,7 @@ from connector.server.runtime_rpc_payloads import (
     capability_set_payload,
     model_catalog_payload,
     permission_catalog_payload,
+    server_payload_without_turn_data,
     session_notice_payload,
 )
 from connector.server.sync_state import RuntimeSyncState, SyncStateStore
@@ -67,7 +68,7 @@ class ConnectorRuntimeHost(RuntimeHostClient):
             "sourceObservedAt": ordering_time,
             "metadata": dict(metadata or {}),
         }
-        await self._notifier("session.meta.upsert", _drop_none(payload))
+        await self._notify_server("session.meta.upsert", _drop_none(payload))
 
     async def session_state_update(
         self,
@@ -91,7 +92,7 @@ class ConnectorRuntimeHost(RuntimeHostClient):
             "selections": selection_values,
             "metadata": dict(metadata or {}),
         }
-        await self._notifier("session.state.updated", _drop_none(payload))
+        await self._notify_server("session.state.updated", _drop_none(payload))
 
     async def runtime_capabilities_update(
         self,
@@ -103,7 +104,7 @@ class ConnectorRuntimeHost(RuntimeHostClient):
         - sends `runtime.capability.updated` through the backend notifier
         """
 
-        await self._notifier(
+        await self._notify_server(
             "runtime.capability.updated",
             capability_set_payload(capabilities),
         )
@@ -118,7 +119,7 @@ class ConnectorRuntimeHost(RuntimeHostClient):
         - sends `runtime.capability.updated` through the backend notifier
         """
 
-        await self._notifier(
+        await self._notify_server(
             "runtime.capability.updated",
             capability_set_payload(capabilities),
         )
@@ -133,7 +134,7 @@ class ConnectorRuntimeHost(RuntimeHostClient):
         - sends `runtime.catalog.updated` through the backend notifier
         """
 
-        await self._notifier(
+        await self._notify_server(
             "runtime.catalog.updated",
             {
                 "catalogType": "model",
@@ -151,7 +152,7 @@ class ConnectorRuntimeHost(RuntimeHostClient):
         - sends `runtime.catalog.updated` through the backend notifier
         """
 
-        await self._notifier(
+        await self._notify_server(
             "runtime.catalog.updated",
             {
                 "catalogType": "permission",
@@ -168,23 +169,26 @@ class ConnectorRuntimeHost(RuntimeHostClient):
         complete: bool = False,
         metadata: Mapping[str, Any] | None = None,
     ) -> None:
+        server_items = tuple(
+            item for item in items if item.type not in {"turn.start", "turn.end"}
+        )
         payload: dict[str, Any] = {
             "sessionId": session_id,
             "runtime": runtime,
             "externalSessionId": external_session_id,
-            "items": [_timeline_item_payload(item) for item in items],
+            "items": [_timeline_item_payload(item) for item in server_items],
             "complete": complete,
             "metadata": dict(metadata or {}),
         }
         started_at = time.monotonic()
-        await self._notifier("timeline.sync", _drop_none(payload))
+        await self._notify_server("timeline.sync", _drop_none(payload))
         elapsed_ms = (time.monotonic() - started_at) * 1000
-        if elapsed_ms >= 250 or len(items) >= 100:
+        if elapsed_ms >= 250 or len(server_items) >= 100:
             logger.info(
                 "runtime host timeline sync notified runtime={} session_id={} items={} complete={} elapsed_ms={:.1f}",
                 runtime,
                 session_id,
-                len(items),
+                len(server_items),
                 complete,
                 elapsed_ms,
             )
@@ -193,7 +197,9 @@ class ConnectorRuntimeHost(RuntimeHostClient):
         self,
         item: RuntimeTimelineItem,
     ) -> None:
-        await self._notifier(
+        if item.type in {"turn.start", "turn.end"}:
+            return
+        await self._notify_server(
             "timeline.itemUpsert",
             {
                 "sessionId": item.session_id,
@@ -205,7 +211,7 @@ class ConnectorRuntimeHost(RuntimeHostClient):
         self,
         notice: SessionNotice,
     ) -> None:
-        await self._notifier(
+        await self._notify_server(
             "notice.upsert",
             session_notice_payload(notice),
         )
@@ -219,7 +225,7 @@ class ConnectorRuntimeHost(RuntimeHostClient):
         external_session_id: str | None = None,
         details: Mapping[str, Any] | None = None,
     ) -> None:
-        await self._notifier(
+        await self._notify_server(
             "runtime.error",
             _drop_none(
                 {
@@ -232,6 +238,11 @@ class ConnectorRuntimeHost(RuntimeHostClient):
                 }
             ),
         )
+
+    async def _notify_server(self, method: str, payload: Mapping[str, Any]) -> None:
+        """Send a notification after enforcing the Server session-only boundary."""
+
+        await self._notifier(method, server_payload_without_turn_data(payload))
 
     async def attachment_download(
         self,
@@ -293,7 +304,6 @@ def _timeline_item_payload(item: RuntimeTimelineItem) -> dict[str, Any]:
         {
             "id": item.id,
             "sessionId": item.session_id,
-            "turnId": item.turn_id,
             "type": item.type,
             "status": item.status,
             "role": item.role,
@@ -312,7 +322,6 @@ def _timeline_source_payload(item: RuntimeTimelineItem) -> dict[str, Any]:
         {
             "runtime": source.get("runtime"),
             "sessionId": source.get("sessionId") or source.get("threadId"),
-            "turnId": source.get("turnId") or item.turn_id,
             "itemId": source.get("itemId") or item.id,
             "itemType": source.get("itemType") or source.get("rawType"),
             "event": source.get("event"),

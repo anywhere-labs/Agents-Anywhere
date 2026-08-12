@@ -56,7 +56,7 @@ class ClaudeSdkChatDriver:
             await connect()
         return {"sessionId": session_id}
 
-    async def start_turn(self, params: dict[str, Any]) -> dict[str, Any]:
+    async def send_message(self, params: dict[str, Any]) -> dict[str, Any]:
         client = self._clients.get(_required(params, "sessionId"))
         if client is None:
             client = self._client(params)
@@ -65,7 +65,7 @@ class ClaudeSdkChatDriver:
         if not callable(query):
             raise ClaudeSdkUnavailableError("ClaudeSDKClient does not expose query()")
         await query(_required(params, "content"))
-        return {"turnId": params.get("turnId")}
+        return {"accepted": True}
 
     async def interrupt(self, params: dict[str, Any]) -> dict[str, Any]:
         client = self._clients.get(_required(params, "sessionId"))

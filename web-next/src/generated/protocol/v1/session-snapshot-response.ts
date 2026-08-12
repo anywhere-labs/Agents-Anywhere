@@ -16,11 +16,9 @@ export type Method = string | null
 export type Requestid = string | number
 export type Runtime = "codex" | "claude" | "opencode" | "acp"
 export type Sessionid1 = string | null
-export type Turnid = string | null
 export type Status = "pending" | "approved" | "approved_for_session" | "rejected" | "cancelled" | "expired"
 export type Targetitemid = string | null
 export type Title = string
-export type Turnid1 = string | null
 export type Updatedseq = number
 export type Approvals = Approval[]
 export type Allowed = boolean
@@ -118,10 +116,8 @@ export type Itemid1 = string | null
 export type Itemtype = string | null
 export type Runtime5 = ("codex" | "claude" | "opencode" | "acp") | "platform"
 export type Sessionid6 = string | null
-export type Turnid2 = string | null
 export type Status4 = "pending" | "running" | "waiting_approval" | "done" | "failed" | "cancelled" | "interrupted"
-export type Turnid3 = string | null
-export type Type1 = "turn.start" | "turn.end" | "message" | "tool" | "artifact" | "system"
+export type Type1 = "message" | "tool" | "artifact" | "marker" | "system"
 export type Updatedat1 = string
 export type Updatedseq3 = number
 export type Items = TimelineItem[]
@@ -153,7 +149,6 @@ export interface Approval {
   status?: Status
   targetItemId?: Targetitemid
   title: Title
-  turnId?: Turnid1
   updatedSeq: Updatedseq
   [k: string]: unknown
 }
@@ -166,7 +161,6 @@ export interface ApprovalSource {
   requestId: Requestid
   runtime: Runtime
   sessionId?: Sessionid1
-  turnId?: Turnid
   [k: string]: unknown
 }
 export interface Catalogs {
@@ -309,7 +303,6 @@ export interface TimelineItem {
   sessionId: Sessionid5
   source: TimelineSource
   status: Status4
-  turnId?: Turnid3
   type: Type1
   updatedAt: Updatedat1
   updatedSeq: Updatedseq3
@@ -326,6 +319,5 @@ export interface TimelineSource {
   itemType?: Itemtype
   runtime: Runtime5
   sessionId?: Sessionid6
-  turnId?: Turnid2
   [k: string]: unknown
 }

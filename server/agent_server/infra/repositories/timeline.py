@@ -11,7 +11,6 @@ class TimelineRepositoryMixin:
                     select(timeline_items_t.c.id)
                     .where(
                         timeline_items_t.c.session_id == session_id,
-                        timeline_items_t.c.type != "turn.start",
                         timeline_items_t.c.status.in_(
                             ("pending", "running", "waiting_approval")
                         ),
@@ -220,16 +219,7 @@ class TimelineRepositoryMixin:
             now = utc_now()
             existing = await self.timeline.read_one(session_id, item.id)
             unchanged = existing is not None and _timeline_item_unchanged(existing, item)
-            needs_order_rebase = False
-            if existing is not None:
-                async with self._engine.connect() as conn:
-                    needs_order_rebase = await self._timeline_item_needs_turn_order_rebase(
-                        conn,
-                        session_id,
-                        item,
-                        existing,
-                    )
-            if unchanged and not needs_order_rebase and source_observed_at is None:
+            if unchanged and source_observed_at is None:
                 # No-op fast path: no DB write, no seq bump, no status refresh.
                 return existing
             async with self._engine.begin() as conn:
@@ -239,7 +229,7 @@ class TimelineRepositoryMixin:
                         .where(sessions_t.c.id == session_id)
                         .values(source_observed_at=source_observed_at)
                     )
-                if unchanged and not needs_order_rebase:
+                if unchanged:
                     result = existing
                 else:
                     updated_seq = await self._bump_session(
@@ -252,7 +242,6 @@ class TimelineRepositoryMixin:
                         session_id,
                         item,
                         existing,
-                        rebase_existing=needs_order_rebase,
                     )
                     result = _timeline_item_from_input(
                         item,
@@ -354,46 +343,10 @@ class TimelineRepositoryMixin:
         session_id: str,
         item: TimelineItemIn,
         existing: TimelineItem | None,
-        *,
-        rebase_existing: bool,
     ) -> int:
-        if existing is not None and not rebase_existing:
+        if existing is not None:
             return existing.orderSeq
         return await self._next_live_order_seq(conn, session_id)
-
-
-    async def _timeline_item_needs_turn_order_rebase(
-        self,
-        conn: AsyncConnection,
-        session_id: str,
-        item: TimelineItemIn,
-        existing: TimelineItem,
-    ) -> bool:
-        if not item.turnId or item.type == "turn.start":
-            return False
-        turn_start_order_seq = await self._turn_start_order_seq(conn, session_id, item.turnId)
-        return turn_start_order_seq is not None and existing.orderSeq <= turn_start_order_seq
-
-
-    async def _turn_start_order_seq(
-        self,
-        conn: AsyncConnection,
-        session_id: str,
-        turn_id: str,
-    ) -> int | None:
-        row = (
-            await conn.execute(
-                select(timeline_items_t.c.order_seq)
-                .where(
-                    timeline_items_t.c.session_id == session_id,
-                    timeline_items_t.c.turn_id == turn_id,
-                    timeline_items_t.c.type == "turn.start",
-                )
-                .order_by(timeline_items_t.c.order_seq.asc())
-                .limit(1)
-            )
-        ).first()
-        return int(row[0]) if row is not None else None
 
 
     @asynccontextmanager

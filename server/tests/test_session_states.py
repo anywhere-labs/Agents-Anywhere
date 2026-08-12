@@ -9,7 +9,7 @@ from agent_server.core.models import Notice, SessionStatus, SessionView
 from agent_server.core.session_states import (
     SessionStateDomainError,
     SessionStateFacts,
-    can_start_turn,
+    can_send_session_message,
     derive_session_status,
     require_session_transition,
 )
@@ -97,10 +97,10 @@ def test_session_transition_rejects_idle_to_stopping() -> None:
 
 
 def test_session_queries_centralize_start_rule() -> None:
-    assert can_start_turn("idle") is True
-    assert can_start_turn("blocked") is False
-    assert can_start_turn("waiting_approval") is False
-    assert can_start_turn("error") is False
+    assert can_send_session_message("idle") is True
+    assert can_send_session_message("blocked") is False
+    assert can_send_session_message("waiting_approval") is False
+    assert can_send_session_message("error") is False
 
 
 def test_session_state_service_reconciles_with_compare_and_set() -> None:

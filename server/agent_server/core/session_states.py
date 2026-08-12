@@ -66,5 +66,5 @@ def require_session_transition(
         )
 
 
-def can_start_turn(status: SessionStatus) -> bool:
+def can_send_session_message(status: SessionStatus) -> bool:
     return status == "idle"

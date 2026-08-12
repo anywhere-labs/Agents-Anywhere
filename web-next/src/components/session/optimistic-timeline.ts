@@ -120,7 +120,6 @@ export function buildOptimisticUserMessage({
   return {
     id: `${OPTIMISTIC_ITEM_PREFIX}${clientMessageId}`,
     sessionId,
-    turnId: null,
     type: "message",
     status: "pending",
     role: "user",
