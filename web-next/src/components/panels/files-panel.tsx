@@ -20,7 +20,6 @@ import { Separator } from "@/components/ui/separator"
 import { useWorkspace } from "@/components/workspace-context"
 import { dashboardApi } from "@/features/dashboard/api"
 import type { FsEntry } from "@/features/dashboard/types"
-import { localeFromPathname, readStoredLocale } from "@/i18n/client-locale"
 import { copyText } from "@/lib/clipboard"
 import { downloadBlob } from "@/lib/download"
 import { cn } from "@/lib/utils"
@@ -411,23 +410,18 @@ export function openNativeFilePreviewWindow({
     truncated: string
   }
 }) {
-  const locale = previewLocale()
   const search = new URLSearchParams({
     connectorId: connectorId ?? "",
     root,
     path: file.path,
     name: file.name,
   })
-  const child = window.open(`/${locale}#/preview?${search.toString()}`, "_blank", "width=980,height=720,resizable=yes,scrollbars=yes")
+  const child = window.open(`/#/preview?${search.toString()}`, "_blank", "width=980,height=720,resizable=yes,scrollbars=yes")
   if (!child) {
     onBlocked?.()
     return
   }
   child.focus()
-}
-
-function previewLocale() {
-  return localeFromPathname(window.location.pathname) ?? readStoredLocale() ?? "en"
 }
 
 function parentOf(rawPath: string): string {
