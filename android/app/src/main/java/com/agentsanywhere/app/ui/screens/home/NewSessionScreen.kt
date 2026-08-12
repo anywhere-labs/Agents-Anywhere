@@ -1,6 +1,12 @@
 package com.agentsanywhere.app.ui.screens.home
 
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.provider.OpenableColumns
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
@@ -20,6 +26,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -29,6 +36,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -44,6 +52,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -79,11 +88,15 @@ import com.agentsanywhere.app.feature.devices.DeviceRuntime
 import com.agentsanywhere.app.feature.devices.DeviceRuntimeList
 import com.agentsanywhere.app.feature.devices.DeviceRuntimeStatus
 import com.agentsanywhere.app.feature.sessions.NewSessionDirectory
+import com.agentsanywhere.app.feature.sessions.NewSessionAttachmentPart
+import com.agentsanywhere.app.feature.sessions.NewSessionCreateDraft
+import com.agentsanywhere.app.feature.sessions.NewSessionCreateOutcome
 import com.agentsanywhere.app.feature.sessions.NewSessionModelCatalog
 import com.agentsanywhere.app.feature.sessions.NewSessionPathEntry
 import com.agentsanywhere.app.feature.sessions.NewSessionPermissionCatalog
 import com.agentsanywhere.app.feature.sessions.NewSessionRuntimeCapabilities
 import com.agentsanywhere.app.feature.sessions.NewSessionRuntimeSelectionState
+import com.agentsanywhere.app.feature.sessions.NewSessionSubmissionState
 import com.agentsanywhere.app.feature.sessions.SessionsState
 import com.agentsanywhere.app.feature.sessions.MODEL_CATALOG_CAPABILITY
 import com.agentsanywhere.app.feature.sessions.PERMISSION_CATALOG_CAPABILITY
@@ -111,13 +124,16 @@ import com.composables.icons.lucide.Pencil
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.util.UUID
 
 @Composable
 fun NewSessionScreen(
     navigate: (AppDestination) -> Unit,
     sessionsState: SessionsState,
-    onCreateSession: suspend (String, String, String, String) -> Result<AgentSession>,
+    onCreateSession: suspend (NewSessionCreateDraft) -> NewSessionCreateOutcome,
     onListDirectory: suspend (String, String, String) -> Result<NewSessionDirectory>,
     onListRuntimes: suspend (String) -> Result<DeviceRuntimeList>,
     onLoadRuntimeCapabilities: suspend (String, String) -> Result<NewSessionRuntimeCapabilities>,
@@ -146,12 +162,24 @@ fun NewSessionScreen(
     var pathEntries by remember { mutableStateOf<List<NewSessionPathEntry>>(emptyList()) }
     var pathLoading by remember { mutableStateOf(false) }
     var pathError by remember { mutableStateOf<String?>(null) }
-    var createError by remember { mutableStateOf<String?>(null) }
-    var creating by remember { mutableStateOf(false) }
+    var prompt by rememberSaveable { mutableStateOf("") }
+    var pendingAttachments by rememberSaveable(stateSaver = NewSessionPendingAttachmentsSaver) {
+        mutableStateOf(emptyList())
+    }
+    var submissionState by rememberSaveable(stateSaver = NewSessionSubmissionStateSaver) {
+        mutableStateOf(NewSessionSubmissionState())
+    }
     var sheet by remember { mutableStateOf<NewSessionSheet?>(null) }
     var workspaceListExpanded by rememberSaveable { mutableStateOf(true) }
+    val creating = submissionState.inFlight
 
-    BackHandler { navigate(AppDestination.Sessions) }
+    LaunchedEffect(Unit) {
+        submissionState = submissionState.interrupted(
+            context.getString(R.string.new_session_create_interrupted),
+        )
+    }
+
+    BackHandler(enabled = !creating) { navigate(AppDestination.Sessions) }
 
     LaunchedEffect(devices) {
         if (devices.none { it.id == selectedDeviceId }) {
@@ -344,8 +372,48 @@ fun NewSessionScreen(
         selectedRuntime != null &&
         runtimeSelection.readyForCreate &&
         effectiveWorkspacePath.isNotBlank() &&
+        (prompt.isNotBlank() || pendingAttachments.isNotEmpty()) &&
         !creating &&
+        !submissionState.outcomeUnknown &&
         (!choosePath || (!pathLoading && canUseCurrentPath))
+
+    val filePicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenMultipleDocuments(),
+    ) { uris ->
+        if (uris.isEmpty()) return@rememberLauncherForActivityResult
+        uris.forEach { uri ->
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+        }
+        val remaining = MAX_NEW_SESSION_ATTACHMENTS - pendingAttachments.size
+        if (remaining <= 0) {
+            submissionState = submissionState.fail(
+                context.getString(R.string.new_session_attachment_limit, MAX_NEW_SESSION_ATTACHMENTS),
+                outcomeUnknown = false,
+            )
+            return@rememberLauncherForActivityResult
+        }
+        val selected = uris.mapNotNull(context::newSessionPendingAttachment)
+        if (selected.size > remaining) {
+            submissionState = submissionState.fail(
+                context.getString(R.string.new_session_attachment_limit, MAX_NEW_SESSION_ATTACHMENTS),
+                outcomeUnknown = false,
+            )
+        }
+        val accepted = selected.filter { attachment ->
+            if (attachment.size > MAX_NEW_SESSION_ATTACHMENT_BYTES) {
+                submissionState = submissionState.fail(
+                    context.getString(R.string.new_session_attachment_too_large, attachment.name),
+                    outcomeUnknown = false,
+                )
+                false
+            } else {
+                true
+            }
+        }.take(remaining)
+        pendingAttachments = pendingAttachments + accepted
+    }
 
     fun submitTitle() {
         title = title.trim().ifBlank { defaultTitle }
@@ -357,18 +425,57 @@ fun NewSessionScreen(
         val device = selectedDevice ?: return
         val runtime = selectedRuntime ?: return
         if (!canStart) return
+        val start = submissionState.begin { "msg_${UUID.randomUUID()}" } ?: return
+        submissionState = start.state
+        val frozenTitle = title.trim().takeIf(String::isNotBlank)
+        val frozenCwd = effectiveWorkspacePath.trim().takeIf(String::isNotBlank)
+        val frozenContent = prompt.trim()
+        val frozenSelections = runtimeSelection.selections
+        val frozenAttachments = pendingAttachments.toList()
+        val frozenRequestKey = runtimeSelection.requestKey
+        val knownSessionIds = (sessionsState.sessions + sessionsState.archivedSessions).mapTo(mutableSetOf()) { it.id }
         scope.launch {
-            creating = true
-            createError = null
-            onCreateSession(title, device.id, runtime.id, effectiveWorkspacePath)
-                .onSuccess { session ->
-                    creating = false
-                    onOpenSession(session)
+            val attachments = try {
+                withContext(Dispatchers.IO) {
+                    frozenAttachments.map { context.readNewSessionAttachment(it) }
                 }
-                .onFailure { error ->
-                    creating = false
-                    createError = error.message ?: context.getString(R.string.new_session_create_failed)
+            } catch (error: Exception) {
+                submissionState = submissionState.fail(
+                    error.message ?: context.getString(R.string.new_session_attachment_read_failed),
+                    outcomeUnknown = false,
+                )
+                return@launch
+            }
+            if (runtimeSelection.requestKey != frozenRequestKey || !runtimeSelection.readyForCreate) {
+                submissionState = submissionState.fail(
+                    context.getString(R.string.new_session_runtime_changed),
+                    outcomeUnknown = false,
+                )
+                return@launch
+            }
+            when (
+                val outcome = onCreateSession(
+                    NewSessionCreateDraft(
+                        connectorId = device.id,
+                        runtime = runtime.id,
+                        title = frozenTitle,
+                        cwd = frozenCwd,
+                        content = frozenContent,
+                        selections = frozenSelections,
+                        attachments = attachments,
+                        clientMessageId = start.clientMessageId,
+                        knownSessionIds = knownSessionIds,
+                    ),
+                )
+            ) {
+                is NewSessionCreateOutcome.Created -> onOpenSession(outcome.session)
+                is NewSessionCreateOutcome.Failed -> {
+                    submissionState = submissionState.fail(
+                        outcome.error.message ?: context.getString(R.string.new_session_create_failed),
+                        outcomeUnknown = outcome.outcomeUnknown,
+                    )
                 }
+            }
         }
     }
 
@@ -383,7 +490,7 @@ fun NewSessionScreen(
                 focusRequester = focusRequester,
                 onTitleChange = { title = it },
                 onSubmitTitle = ::submitTitle,
-                onClose = { navigate(AppDestination.Sessions) },
+                onClose = { if (!creating) navigate(AppDestination.Sessions) },
                 onEditToggle = {
                     if (editingTitle) submitTitle() else editingTitle = true
                 },
@@ -407,6 +514,7 @@ fun NewSessionScreen(
                         icon = Lucide.Monitor,
                         darkMode = darkMode,
                         modifier = Modifier.weight(1f),
+                        enabled = !creating,
                         onClick = { sheet = NewSessionSheet.Device },
                     )
                     RuntimeSelectPill(
@@ -415,7 +523,7 @@ fun NewSessionScreen(
                         icon = Lucide.Bot,
                         darkMode = darkMode,
                         modifier = Modifier.weight(1f),
-                        enabled = selectedDevice != null,
+                        enabled = selectedDevice != null && !creating,
                         onClick = {
                             sheet = NewSessionSheet.Agent
                             selectedDevice?.id?.let { connectorId ->
@@ -566,6 +674,25 @@ fun NewSessionScreen(
                     .padding(start = 18.dp, end = 18.dp, bottom = 10.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
+                NewSessionPromptComposer(
+                    prompt = prompt,
+                    attachments = pendingAttachments,
+                    darkMode = darkMode,
+                    enabled = !creating && !submissionState.outcomeUnknown,
+                    onPromptChange = { prompt = it },
+                    onAttach = {
+                        runCatching { filePicker.launch(arrayOf("*/*")) }
+                            .onFailure {
+                                submissionState = submissionState.fail(
+                                    context.getString(R.string.new_session_attachment_picker_failed),
+                                    outcomeUnknown = false,
+                                )
+                            }
+                    },
+                    onRemoveAttachment = { attachment ->
+                        pendingAttachments = pendingAttachments.filterNot { it.uri == attachment.uri }
+                    },
+                )
                 val runtimeError = when {
                     devices.isEmpty() -> stringResource(R.string.new_session_no_online_agent)
                     runtimeSelection.runtimesErrorMessage != null -> runtimeSelection.runtimesErrorMessage
@@ -580,7 +707,7 @@ fun NewSessionScreen(
                     runtimeSelection.permissionCatalog.errorMessage != null -> runtimeSelection.permissionCatalog.errorMessage
                     else -> null
                 }
-                val error = createError ?: runtimeError
+                val error = submissionState.errorMessage ?: runtimeError
                 error?.let {
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
@@ -595,7 +722,7 @@ fun NewSessionScreen(
                             lineHeight = 17.sp,
                             modifier = Modifier.weight(1f),
                         )
-                        if (createError == null && selectedDevice != null) {
+                        if (submissionState.errorMessage == null && selectedDevice != null) {
                             Text(
                                 text = stringResource(R.string.common_retry),
                                 color = colors.primaryAction,
@@ -1613,6 +1740,199 @@ private fun SheetEmptyText(message: String, darkMode: Boolean) {
         modifier = Modifier.padding(horizontal = 4.dp, vertical = 16.dp),
     )
 }
+
+@Composable
+private fun NewSessionPromptComposer(
+    prompt: String,
+    attachments: List<NewSessionPendingAttachment>,
+    darkMode: Boolean,
+    enabled: Boolean,
+    onPromptChange: (String) -> Unit,
+    onAttach: () -> Unit,
+    onRemoveAttachment: (NewSessionPendingAttachment) -> Unit,
+) {
+    val ink = if (darkMode) Color(0xFFEDEDEF) else Color(0xFF252622)
+    val muted = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF777777)
+    val surface = if (darkMode) Color(0xFF18181B) else Color.White
+    val border = if (darkMode) Color(0xFF27272A) else Color(0xFFE9E6E1)
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(18.dp))
+            .background(surface)
+            .border(1.dp, border, RoundedCornerShape(18.dp))
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(9.dp),
+    ) {
+        if (attachments.isNotEmpty()) {
+            Row(
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                attachments.forEach { attachment ->
+                    Row(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(if (darkMode) Color(0xFF27272A) else Color(0xFFF3F1ED))
+                            .padding(start = 10.dp, top = 7.dp, end = 8.dp, bottom = 7.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text(
+                            text = attachment.name,
+                            color = ink,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.width(120.dp),
+                        )
+                        Box(
+                            modifier = Modifier
+                                .size(18.dp)
+                                .noRippleClickable(enabled = enabled) { onRemoveAttachment(attachment) },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            CloseGlyph(color = muted)
+                        }
+                    }
+                }
+            }
+        }
+        BasicTextField(
+            value = prompt,
+            onValueChange = onPromptChange,
+            enabled = enabled,
+            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp, max = 104.dp),
+            textStyle = TextStyle(
+                color = ink,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Medium,
+                lineHeight = 20.sp,
+            ),
+            cursorBrush = SolidColor(ink),
+            maxLines = 5,
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Default),
+            decorationBox = { inner ->
+                Box(contentAlignment = Alignment.TopStart) {
+                    if (prompt.isEmpty()) {
+                        Text(
+                            text = stringResource(R.string.new_session_message_placeholder),
+                            color = muted,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Medium,
+                        )
+                    }
+                    inner()
+                }
+            },
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = stringResource(R.string.new_session_attach_files),
+                color = if (enabled) LocalAAColors.current.primaryAction else muted,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.noRippleClickable(enabled = enabled, onClick = onAttach),
+            )
+            Spacer(modifier = Modifier.weight(1f))
+            Text(
+                text = "${attachments.size}/$MAX_NEW_SESSION_ATTACHMENTS",
+                color = muted,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+            )
+        }
+    }
+}
+
+private data class NewSessionPendingAttachment(
+    val uri: String,
+    val name: String,
+    val mediaType: String,
+    val size: Long,
+)
+
+private fun Context.newSessionPendingAttachment(uri: Uri): NewSessionPendingAttachment? {
+    val resolver = contentResolver
+    var name = uri.lastPathSegment?.substringAfterLast('/').orEmpty().ifBlank { "attachment" }
+    var size = 0L
+    resolver.query(uri, null, null, null, null)?.use { cursor ->
+        if (cursor.moveToFirst()) {
+            val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+            val sizeIndex = cursor.getColumnIndex(OpenableColumns.SIZE)
+            if (nameIndex >= 0 && !cursor.isNull(nameIndex)) name = cursor.getString(nameIndex)
+            if (sizeIndex >= 0 && !cursor.isNull(sizeIndex)) size = cursor.getLong(sizeIndex)
+        }
+    }
+    if (name.isBlank()) return null
+    return NewSessionPendingAttachment(
+        uri = uri.toString(),
+        name = name,
+        mediaType = resolver.getType(uri).orEmpty(),
+        size = size,
+    )
+}
+
+private fun Context.readNewSessionAttachment(attachment: NewSessionPendingAttachment): NewSessionAttachmentPart {
+    val bytes = contentResolver.openInputStream(Uri.parse(attachment.uri))?.use { it.readBytes() }
+        ?: throw IllegalStateException(getString(R.string.new_session_attachment_read_failed))
+    if (bytes.isEmpty()) {
+        throw IllegalStateException(getString(R.string.new_session_attachment_empty, attachment.name))
+    }
+    if (bytes.size > MAX_NEW_SESSION_ATTACHMENT_BYTES) {
+        throw IllegalStateException(getString(R.string.new_session_attachment_too_large, attachment.name))
+    }
+    return NewSessionAttachmentPart(
+        name = attachment.name,
+        mediaType = attachment.mediaType,
+        bytes = bytes,
+    )
+}
+
+private val NewSessionPendingAttachmentsSaver = listSaver<List<NewSessionPendingAttachment>, Any>(
+    save = { attachments ->
+        attachments.flatMap { attachment ->
+            listOf(attachment.uri, attachment.name, attachment.mediaType, attachment.size)
+        }
+    },
+    restore = { values ->
+        values.chunked(4).mapNotNull { attachment ->
+            if (attachment.size != 4) return@mapNotNull null
+            NewSessionPendingAttachment(
+                uri = attachment[0] as String,
+                name = attachment[1] as String,
+                mediaType = attachment[2] as String,
+                size = attachment[3] as Long,
+            )
+        }
+    },
+)
+
+private val NewSessionSubmissionStateSaver = listSaver<NewSessionSubmissionState, Any>(
+    save = { state ->
+        listOf(
+            state.inFlight,
+            state.clientMessageId.orEmpty(),
+            state.outcomeUnknown,
+            state.errorMessage.orEmpty(),
+        )
+    },
+    restore = { values ->
+        NewSessionSubmissionState(
+            inFlight = values[0] as Boolean,
+            clientMessageId = (values[1] as String).takeIf(String::isNotBlank),
+            outcomeUnknown = values[2] as Boolean,
+            errorMessage = (values[3] as String).takeIf(String::isNotBlank),
+        )
+    },
+)
+
+private const val MAX_NEW_SESSION_ATTACHMENTS = 10
+private const val MAX_NEW_SESSION_ATTACHMENT_BYTES = 25 * 1024 * 1024
 
 private enum class NewSessionSheet {
     Device,

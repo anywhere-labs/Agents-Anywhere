@@ -130,16 +130,25 @@ abstract class LegacyRoutesTask : DefaultTask() {
                 segments == listOf("", "sessions", "bulk-archive")
             },
             LegacyRouteRule("session", "session-state") { segments ->
-                segments.getOrNull(1) == "sessions" && "state" in segments.drop(2)
+                segments.size == 4 &&
+                    segments[1] == "sessions" &&
+                    segments[2].firstOrNull() == '$' &&
+                    segments[3] == "state"
             },
             LegacyRouteRule("session", "session-runtime-settings") { segments ->
                 segments.getOrNull(1) == "sessions" && "runtime-settings" in segments.drop(2)
             },
             LegacyRouteRule("session", "session-messages") { segments ->
-                segments.getOrNull(1) == "sessions" && "messages" in segments.drop(2)
+                segments.size == 4 &&
+                    segments[1] == "sessions" &&
+                    segments[2].firstOrNull() == '$' &&
+                    segments[3] == "messages"
             },
             LegacyRouteRule("session", "session-interrupt") { segments ->
-                segments.getOrNull(1) == "sessions" && "interrupt" in segments.drop(2)
+                segments.size == 4 &&
+                    segments[1] == "sessions" &&
+                    segments[2].firstOrNull() == '$' &&
+                    segments[3] == "interrupt"
             },
             LegacyRouteRule("notice", "approval-resolve") { segments ->
                 segments.getOrNull(1) == "approvals" && segments.lastOrNull() == "resolve"
