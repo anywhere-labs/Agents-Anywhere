@@ -33,6 +33,10 @@ from connector.runtimes.codex.sdk.binary import (
     select_codex_runtime_binary,
 )
 from connector.runtimes.codex.sdk.events import CodexSdkEvent
+from connector.runtimes.codex.sdk.model_gateway import (
+    CODEX_MODEL_GATEWAY_PROVIDER_ID,
+    codex_model_gateway_config,
+)
 from connector.runtimes.codex.sdk.runtime_client import (
     CodexCompactResult,
     CodexInterruptTurnRequest,
@@ -63,6 +67,7 @@ from connector.runtimes.codex.sdk.shapes import (
     turn_action_result,
     turn_ref,
 )
+from connector.runtimes.model_gateway import ModelGateway, model_gateway_from_config
 
 CodexApprovalSettings = tuple[AskForApproval | None, ApprovalsReviewer | None]
 CODEX_SDK_APPROVAL_REQUEST_METHODS = {
@@ -79,9 +84,15 @@ class CodexSdkClient:
     SDK-specific discovery here lets `CodexRuntime` stay protocol-oriented.
     """
 
-    def __init__(self, client: Any, sdk: Any | None = None) -> None:
+    def __init__(
+        self,
+        client: Any,
+        sdk: Any | None = None,
+        model_gateway: ModelGateway | None = None,
+    ) -> None:
         self._client = client
         self._sdk = sdk
+        self._model_gateway = model_gateway
         self._handler: NotificationHandler | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._pending_approval_responses: dict[str, asyncio.Future[Mapping[str, Any]]] = {}
@@ -206,7 +217,7 @@ class CodexSdkClient:
         low_level_client = codex_low_level_client(self._client)
         if low_level_client is not None:
             started = await low_level_client.thread_start(
-                codex_thread_start_params(request)
+                codex_thread_start_params(request, self._model_gateway)
             )
             thread_id = id_of(started.thread)
             thread = codex_async_thread(self._sdk, self._client, thread_id)
@@ -217,6 +228,10 @@ class CodexSdkClient:
             return CodexThreadResult(
                 thread_id=thread_id,
                 payload={"id": thread_id} if thread_id is not None else {},
+            )
+        if self._model_gateway is not None:
+            raise RuntimeInvalidRequestError(
+                "Codex low-level client is required for model gateway configuration"
             )
         if codex_request_requires_low_level_approval(request):
             raise RuntimeInvalidRequestError(
@@ -355,7 +370,7 @@ class CodexSdkClient:
             return
         resumed = await thread_resume(
             request.thread_id,
-            codex_thread_resume_params(request),
+            codex_thread_resume_params(request, self._model_gateway),
         )
         thread_id = id_of(resumed.thread)
         thread = codex_async_thread(self._sdk, self._client, thread_id)
@@ -625,7 +640,12 @@ class CodexSdkClient:
 def sdk_client_from_config(config: RuntimeConfig) -> CodexRuntimeClient:
     sdk = _load_codex_sdk()
     client = _create_sdk_client(sdk, config)
-    return CodexSdkClient(client, sdk=sdk)
+    model_gateway = model_gateway_from_config(config.values.get("modelGateway"))
+    return CodexSdkClient(
+        client,
+        sdk=sdk,
+        model_gateway=model_gateway,
+    )
 
 
 def _load_codex_sdk() -> Any:
@@ -770,7 +790,10 @@ def codex_low_level_turn_start_required_message(
     return "Codex low-level client is required for explicit approval settings"
 
 
-def codex_thread_start_params(request: CodexStartThreadRequest) -> ThreadStartParams:
+def codex_thread_start_params(
+    request: CodexStartThreadRequest,
+    model_gateway: ModelGateway | None = None,
+) -> ThreadStartParams:
     approval_policy, approvals_reviewer = codex_approval_settings(
         request.approval_policy,
         request.approvals_reviewer,
@@ -780,13 +803,24 @@ def codex_thread_start_params(request: CodexStartThreadRequest) -> ThreadStartPa
         approvalsReviewer=approvals_reviewer,
         cwd=request.cwd,
         ephemeral=request.ephemeral,
+        config=(
+            codex_model_gateway_config(model_gateway)
+            if model_gateway is not None
+            else None
+        ),
         model=request.model,
+        modelProvider=(
+            CODEX_MODEL_GATEWAY_PROVIDER_ID
+            if model_gateway is not None
+            else None
+        ),
         sandbox=codex_thread_sandbox_mode(request.sandbox),
     )
 
 
 def codex_thread_resume_params(
     request: CodexResumeThreadRequest | CodexStartTurnRequest,
+    model_gateway: ModelGateway | None = None,
 ) -> ThreadResumeParams:
     approval_policy, approvals_reviewer = codex_approval_settings(
         request.approval_policy,
@@ -795,7 +829,17 @@ def codex_thread_resume_params(
     return ThreadResumeParams(
         approvalPolicy=approval_policy,
         approvalsReviewer=approvals_reviewer,
+        config=(
+            codex_model_gateway_config(model_gateway)
+            if model_gateway is not None
+            else None
+        ),
         model=request.model,
+        modelProvider=(
+            CODEX_MODEL_GATEWAY_PROVIDER_ID
+            if model_gateway is not None
+            else None
+        ),
         sandbox=codex_thread_sandbox_mode(request.sandbox),
         threadId=request.thread_id,
     )

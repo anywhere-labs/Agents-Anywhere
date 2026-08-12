@@ -7,6 +7,7 @@ from typing import Any
 from connector.runtime_protocol import RuntimeInvalidRequestError
 from connector.runtimes.codex.sdk.binary import CodexRuntimeBinaryMode
 from connector.runtimes.custom_models import custom_models_schema
+from connector.runtimes.model_gateway import model_gateway_schema
 
 PROTECTED_ENV_PREFIXES = ("AGENT_CONNECTOR_", "AGENT_SERVER_")
 PROTECTED_ENV_NAMES = {
@@ -77,6 +78,7 @@ def codex_config_schema() -> dict[str, Any]:
                     }
                 },
             },
+            "modelGateway": model_gateway_schema(),
             "customModels": custom_models_schema(),
         },
         "additionalProperties": False,
