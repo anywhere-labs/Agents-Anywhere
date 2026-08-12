@@ -6,7 +6,9 @@ import com.agentsanywhere.app.api.RemoteRuntimeModelCatalog
 import com.agentsanywhere.app.api.RemoteRuntimePermissionCatalog
 import com.agentsanywhere.app.api.SessionsApi
 import com.agentsanywhere.app.api.UploadFilePart
+import com.agentsanywhere.app.api.isSupportedV2NativeRuntime
 import com.agentsanywhere.app.feature.auth.AuthSessionReader
+import com.agentsanywhere.app.feature.sessions.toAgentSession
 import com.agentsanywhere.app.model.AgentDevice
 import com.agentsanywhere.app.model.AgentSession
 import kotlinx.coroutines.Dispatchers
@@ -45,6 +47,9 @@ class SessionDetailController(
                     sessionId = sessionId,
                     limit = INITIAL_TIMELINE_LIMIT,
                 )
+                check(snapshot.session.runtime.isSupportedV2NativeRuntime()) {
+                    "This runtime is not supported by Android v2."
+                }
                 val projection = mergeRemoteTimelineItems(
                     currentOrdering = emptyList(),
                     currentMessages = emptyList(),
@@ -81,8 +86,6 @@ class SessionDetailController(
                         isLoaded = true,
                         eventSequence = snapshot.eventCursor.removePrefix("seq:").toLongOrNull() ?: 0L,
                     ),
-                    // Snapshot catalogs are compatibility data. Existing-session selectors
-                    // always use the live session-scoped catalog endpoints.
                     catalogs = currentState?.catalogs ?: RuntimeCatalogs(),
                     commands = currentState?.commands ?: RuntimeCommands(),
                     realtime = (currentState?.realtime ?: SessionRealtimeState()).copy(

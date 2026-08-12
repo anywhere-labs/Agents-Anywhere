@@ -216,20 +216,9 @@ class DevicesApi(
             deviceOs = optNullableString("deviceOs"),
             status = optString("status", "offline"),
             lastSeenAt = optNullableString("lastSeenAt"),
-            attachedRuntimes = optJSONObject("runtimeCapabilities").attachedRuntimes(),
             createdAt = optNullableString("createdAt"),
             updatedAt = optNullableString("updatedAt"),
         )
-    }
-
-    private fun JSONObject?.attachedRuntimes(): List<String> {
-        return this
-            ?.optJSONObject("attached")
-            ?.keys()
-            ?.asSequence()
-            ?.toList()
-            .orEmpty()
-            .supportedV2NativeRuntimes()
     }
 
     private fun JSONObject.toRemoteDeviceRuntimeList(

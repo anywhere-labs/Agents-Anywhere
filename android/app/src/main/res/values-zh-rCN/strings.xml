@@ -132,8 +132,6 @@
     <string name="devices_online">在线</string>
     <string name="devices_offline">离线</string>
     <string name="devices_no_online">暂无在线设备</string>
-    <string name="devices_agent_count_one">%1$d 个 agent</string>
-    <string name="devices_agent_count_other">%1$d 个 agent</string>
     <string name="devices_seen_offline">离线</string>
     <string name="devices_seen_minutes_ago">%1$d 分钟前</string>
     <string name="devices_seen_hours_ago">%1$d 小时前</string>
@@ -279,8 +277,8 @@
     <string name="new_session_empty_directory">这个目录是空的。</string>
     <string name="new_session_choose_device">选择设备</string>
     <string name="new_session_choose_agent">选择 agent</string>
-    <string name="new_session_no_online_agents">没有可用的在线设备。</string>
-    <string name="new_session_no_attached_agents">这台设备还没有关联 agent。</string>
+    <string name="new_session_no_online_agents">没有具备可用运行时的在线设备。</string>
+    <string name="new_session_no_attached_agents">这台设备没有可用的运行时。</string>
     <string name="new_session_home_directory">主目录</string>
     <string name="new_session_model">模型</string>
     <string name="new_session_reasoning">推理强度</string>
@@ -328,8 +326,6 @@
     <string name="session_wait_uploads">请等待附件上传完成。</string>
     <string name="session_send_failed">消息发送失败。</string>
     <string name="session_takeover_update_failed">无法更新接管状态。</string>
-    <string name="session_runtime_load_failed">无法加载运行时设置。</string>
-    <string name="session_runtime_save_failed">无法保存运行时设置。</string>
     <string name="session_runtime_state_unknown">运行时状态不可用，请刷新后重试。</string>
     <string name="session_runtime_state_error">运行时报告了错误。</string>
     <string name="session_send_unavailable">当前运行时状态下不可发送消息。</string>

@@ -28,6 +28,7 @@ abstract class LegacyRoutesTask : DefaultTask() {
 
     @TaskAction
     fun run() {
+        verifyRuleProbes()
         val findings = scanRoutes()
         if (!checkBaseline.get()) {
             report(findings)
@@ -96,6 +97,19 @@ abstract class LegacyRoutesTask : DefaultTask() {
                 }
             }
             .toList()
+    }
+
+    private fun verifyRuleProbes() {
+        val rules = rules()
+        LEGACY_ROUTE_PROBES.forEach { (route, expectedRuleId) ->
+            val segments = route.substringBefore('?').split('/')
+            val matching = rules.filter { rule -> rule.matches(segments) }.map { it.id }
+            if (expectedRuleId !in matching) {
+                throw GradleException(
+                    "Legacy route rule probe failed: $route was not detected as $expectedRuleId.",
+                )
+            }
+        }
     }
 
     private fun report(findings: List<LegacyRouteFinding>) {
@@ -182,6 +196,18 @@ abstract class LegacyRoutesTask : DefaultTask() {
 
     companion object {
         private val ROUTE_LITERAL = Regex("\"(/[^\"]*)\"")
+        private val LEGACY_ROUTE_PROBES = mapOf(
+            "/sessions/\${sessionId}" to "session-meta-root",
+            "/sessions/bulk-archive" to "session-bulk-archive",
+            "/sessions/\${sessionId}/state" to "session-state",
+            "/sessions/\${sessionId}/runtime-settings" to "session-runtime-settings",
+            "/sessions/\${sessionId}/messages" to "session-messages",
+            "/sessions/\${sessionId}/interrupt" to "session-interrupt",
+            "/approvals/\${approvalId}/resolve" to "approval-resolve",
+            "/connectors/\${connectorId}/runtime-capabilities/scan" to "connector-runtime-capabilities",
+            "/connectors/\${connectorId}/agents/\${runtime}/settings" to "connector-agent-settings",
+            "/agents/\${runtime}/config-schema" to "root-agent-route",
+        )
     }
 }
 
@@ -235,6 +261,52 @@ abstract class RealtimeLifecycleTask : DefaultTask() {
     }
 }
 
+abstract class AndroidV2ReleaseGateTask : DefaultTask() {
+    @get:InputDirectory
+    @get:PathSensitive(PathSensitivity.RELATIVE)
+    abstract val sourceRoot: DirectoryProperty
+
+    @get:InputFile
+    @get:PathSensitive(PathSensitivity.RELATIVE)
+    abstract val baselineFile: RegularFileProperty
+
+    @TaskAction
+    fun run() {
+        val debtEntries = baselineFile.get().asFile.readLines()
+            .map(String::trim)
+            .filter { line -> line.isNotEmpty() && !line.startsWith('#') }
+        val sources = sourceRoot.get().asFile.walkTopDown()
+            .filter { file -> file.isFile && file.extension == "kt" }
+            .associate { file -> file.relativeTo(sourceRoot.get().asFile).invariantSeparatorsPath to file.readText() }
+        val violations = buildList {
+            if (debtEntries.isNotEmpty()) {
+                add("legacy route baseline contains ${debtEntries.size} debt entries")
+            }
+            sources.forEach { (path, source) ->
+                ACP_RUNTIME_LITERAL.find(source)?.let { add("$path: ACP-specific production runtime") }
+                source.lineSequence().forEachIndexed { index, line ->
+                    val namespaceCount = NAMESPACE.findAll(line).count()
+                    if (namespaceCount > 1) add("$path:${index + 1}: repeated /api/v2 namespace")
+                }
+            }
+        }
+        if (violations.isNotEmpty()) {
+            throw GradleException(
+                buildString {
+                    appendLine("Android v2 release gate failed:")
+                    violations.sorted().forEach { appendLine("  - $it") }
+                },
+            )
+        }
+        logger.lifecycle("Android v2 release gate passed: zero legacy debt, no ACP UI, single namespaces.")
+    }
+
+    companion object {
+        private val ACP_RUNTIME_LITERAL = Regex("[\\\"'](?:ACP|acp)[\\\"']")
+        private val NAMESPACE = Regex("/api/v2")
+    }
+}
+
 val legacyRouteSourceRoot = layout.projectDirectory.dir("app/src/main/java")
 val legacyRouteBaseline = layout.projectDirectory.file("config/legacy-routes-baseline.txt")
 
@@ -260,6 +332,13 @@ val checkRealtimeLifecycle by tasks.registering(RealtimeLifecycleTask::class) {
     sourceRoot.set(legacyRouteSourceRoot)
 }
 
+val checkAndroidV2ReleaseGate by tasks.registering(AndroidV2ReleaseGateTask::class) {
+    group = "verification"
+    description = "Checks Android v2 release invariants after migration cleanup."
+    sourceRoot.set(legacyRouteSourceRoot)
+    baselineFile.set(legacyRouteBaseline)
+}
+
 checkLegacyRoutes {
-    dependsOn(checkRealtimeLifecycle)
+    dependsOn(checkRealtimeLifecycle, checkAndroidV2ReleaseGate)
 }

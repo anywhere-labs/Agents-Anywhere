@@ -220,37 +220,6 @@ fun SessionsState.withDeletedDevice(deviceId: String): SessionsState {
     )
 }
 
-fun SessionsState.withDeletedDeviceAgent(
-    deviceId: String,
-    runtime: String,
-    attachedRuntimes: List<String>,
-): SessionsState {
-    return copy(
-        devices = devices.map { device ->
-            if (device.id == deviceId) device.copy(attachedRuntimes = attachedRuntimes) else device
-        },
-        sessions = sessions.filterNot { it.connectorId == deviceId && it.runtime == runtime },
-        archivedSessions = archivedSessions.filterNot { it.connectorId == deviceId && it.runtime == runtime },
-        isLoading = false,
-        errorMessage = null,
-        hasLoaded = true,
-    )
-}
-
-fun SessionsState.withDeviceAgents(
-    deviceId: String,
-    attachedRuntimes: List<String>,
-): SessionsState {
-    return copy(
-        devices = devices.map { device ->
-            if (device.id == deviceId) device.copy(attachedRuntimes = attachedRuntimes) else device
-        },
-        isLoading = false,
-        errorMessage = null,
-        hasLoaded = true,
-    )
-}
-
 private fun AgentSession.withDeviceInfo(device: AgentDevice): AgentSession {
     if (connectorId != device.id) return this
     val parts = metaLabel

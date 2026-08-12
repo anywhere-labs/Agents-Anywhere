@@ -60,8 +60,6 @@ data class RemoteInlineAttachmentRef(
 
 data class RemoteSessionCreateResponse(
     val session: RemoteSession,
-    val connectorResult: Any?,
-    val attachments: List<RemoteUploadedAttachment>,
 )
 
 data class RemoteSessionTimelinePage(
@@ -145,7 +143,6 @@ data class RemoteSessionSnapshot(
     val notices: List<RemoteRuntimeNotice>,
     val effectiveCapabilities: RemoteRuntimeCapabilitySet,
     val runtimeCapabilities: RemoteRuntimeCapabilitySet,
-    val catalogs: RemoteSessionRuntimeCatalogs,
     val eventCursor: String,
     val serverTime: String?,
 )
@@ -154,12 +151,6 @@ data class RemoteSessionTimelineSnapshot(
     val items: List<RemoteTimelineItem>,
     val nextSeq: Int,
     val hasMore: Boolean,
-)
-
-data class RemoteSessionRuntimeCatalogs(
-    val model: RemoteRuntimeModelCatalog?,
-    val permission: RemoteRuntimePermissionCatalog?,
-    val unknown: Map<String, Any?>,
 )
 
 data class RemoteTimelineItem(

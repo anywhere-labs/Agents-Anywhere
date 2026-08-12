@@ -1,5 +1,12 @@
 package com.agentsanywhere.app.feature.sessions
 
+import com.agentsanywhere.app.api.DevicesApi
+import com.agentsanywhere.app.api.FilesApi
+import com.agentsanywhere.app.api.RemoteDashboardSnapshot
+import com.agentsanywhere.app.api.RemoteDevice
+import com.agentsanywhere.app.api.RemoteSession
+import com.agentsanywhere.app.api.SessionsApi
+import com.agentsanywhere.app.feature.auth.AuthSessionReader
 import com.agentsanywhere.app.model.AgentDevice
 import com.agentsanywhere.app.model.AgentSession
 import com.agentsanywhere.app.model.SessionStatus
@@ -9,6 +16,33 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class DashboardSnapshotStateTest {
+    @Test
+    fun dashboardSnapshotExposesOnlySupportedV2Sessions() {
+        val controller = SessionsController(
+            sessionsApi = SessionsApi(),
+            devicesApi = DevicesApi(),
+            filesApi = FilesApi(),
+            sessionStore = object : AuthSessionReader {
+                override fun readServerUrl(): String = ""
+                override fun readAccessToken(): String = ""
+            },
+        )
+        val snapshot = RemoteDashboardSnapshot(
+            devices = listOf(remoteDevice()),
+            sessions = listOf(
+                remoteSession("codex", "codex"),
+                remoteSession("claude", "claude"),
+                remoteSession("acp", "acp"),
+                remoteSession("unknown", "future-provider"),
+            ),
+            serverTime = "now",
+        )
+
+        val state = controller.dashboardSnapshotState(snapshot)
+
+        assertEquals(listOf("claude", "codex"), state.sessions.map { it.id }.sorted())
+    }
+
     @Test
     fun dashboardSnapshotReplacesCollectionsButPreservesNewerLocalMutation() {
         val current = SessionsState(
@@ -40,6 +74,41 @@ class DashboardSnapshotStateTest {
     }
 
     private fun device(id: String) = AgentDevice(id, id, subtitle = "", online = true)
+
+    private fun remoteDevice() = RemoteDevice(
+        id = "connector",
+        name = "Device",
+        deviceOs = null,
+        status = "online",
+        lastSeenAt = null,
+        createdAt = "now",
+        updatedAt = "now",
+    )
+
+    private fun remoteSession(id: String, runtime: String) = RemoteSession(
+        id = id,
+        connectorId = "connector",
+        connectorStatus = "online",
+        runtime = runtime,
+        externalSessionId = null,
+        title = id,
+        cwd = null,
+        status = "idle",
+        takeover = false,
+        pinned = false,
+        pinnedAt = null,
+        archived = false,
+        archivedAt = null,
+        unread = false,
+        lastReadSeq = 0,
+        lastSyncedAt = null,
+        sourceObservedAt = null,
+        lastActivityAt = null,
+        lastItemAt = null,
+        lastItemOrderSeq = null,
+        sortAt = null,
+        updatedSeq = 0,
+    )
 
     private fun session(
         id: String,

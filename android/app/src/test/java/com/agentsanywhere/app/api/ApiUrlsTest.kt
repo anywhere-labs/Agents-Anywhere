@@ -47,14 +47,6 @@ class ApiUrlsTest {
             ),
         )
         assertEquals(
-            "https://server.example.com/api/v2/sessions/session%2F1/attachments/file%2F1",
-            SessionsApi().attachmentDownloadUrl(
-                serverUrl = "https://server.example.com/api/v2",
-                sessionId = "session/1",
-                fileId = "file/1",
-            ),
-        )
-        assertEquals(
             "wss://server.example.com/api/v2/connectors/device-1/terminals-v2/terminal-1/stream" +
                 "?fromSeq=12&token=access%20token",
             TerminalApi().streamUrl(

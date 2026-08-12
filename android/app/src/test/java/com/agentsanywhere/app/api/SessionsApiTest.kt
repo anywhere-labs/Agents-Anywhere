@@ -81,9 +81,6 @@ class SessionsApiTest {
             assertEquals("aGVsbG8=", attachment.getString("contentBase64"))
 
             assertEquals("created-session", created.session.id)
-            assertEquals("turn-1", (created.connectorResult as JSONObject).getString("turnId"))
-            assertEquals(listOf("stored-file"), created.attachments.map { it.fileId })
-            assertEquals("stored-sha", created.attachments.single().sha256)
         }
     }
 
@@ -248,7 +245,6 @@ class SessionsApiTest {
     fun detailReadsUseV2OwnedRoutesAndParseCompleteResponses() {
         val responses = ArrayDeque(
             listOf(
-                TestResponse(body = timelineResponse(hasMore = true)),
                 TestResponse(body = timelineResponse(hasMore = false)),
                 TestResponse(body = timelineResponse(hasMore = false)),
                 TestResponse(body = snapshotResponse()),
@@ -260,7 +256,6 @@ class SessionsApiTest {
         withJsonServer(responses) { serverUrl, requests ->
             val api = SessionsApi()
 
-            val latest = api.getSessionTimelineLatest(serverUrl, "token", "session/one", limit = 25)
             val history = api.getSessionTimelineHistory(
                 serverUrl,
                 "token",
@@ -281,21 +276,17 @@ class SessionsApiTest {
             val notices = api.getSessionRuntimeNotices(serverUrl, "token", "session/one")
 
             assertEquals(
-                "/api/v2/sessions/session%2Fone/timeline?mode=latest&limit=25",
+                "/api/v2/sessions/session%2Fone/timeline?mode=history&beforeOrderSeq=41&limit=20",
                 requests[0].target,
             )
             assertEquals(
-                "/api/v2/sessions/session%2Fone/timeline?mode=history&beforeOrderSeq=41&limit=20",
+                "/api/v2/sessions/session%2Fone/timeline?mode=changes&afterSeq=11&limit=30",
                 requests[1].target,
             )
-            assertEquals(
-                "/api/v2/sessions/session%2Fone/timeline?mode=changes&afterSeq=11&limit=30",
-                requests[2].target,
-            )
-            assertEquals("/api/v2/sessions/session%2Fone/snapshot?limit=50", requests[3].target)
-            assertEquals("/api/v2/sessions/session%2Fone/runtime/state", requests[4].target)
-            assertEquals("/api/v2/sessions/session%2Fone/runtime/capabilities", requests[5].target)
-            assertEquals("/api/v2/sessions/session%2Fone/runtime/notices", requests[6].target)
+            assertEquals("/api/v2/sessions/session%2Fone/snapshot?limit=50", requests[2].target)
+            assertEquals("/api/v2/sessions/session%2Fone/runtime/state", requests[3].target)
+            assertEquals("/api/v2/sessions/session%2Fone/runtime/capabilities", requests[4].target)
+            assertEquals("/api/v2/sessions/session%2Fone/runtime/notices", requests[5].target)
             requests.forEach {
                 assertEquals("GET", it.method)
                 assertEquals("Bearer token", it.authorization)
@@ -303,10 +294,9 @@ class SessionsApiTest {
                 assertEquals(1, Regex("/api/v2").findAll(it.target).count())
             }
 
-            assertEquals("session/one", latest.sessionId)
-            assertTrue(latest.hasMore)
-            assertEquals(3, latest.items.single().revision)
-            assertEquals("2026-08-10T00:00:02Z", latest.items.single().updatedAt)
+            assertEquals("session/one", history.sessionId)
+            assertEquals(3, history.items.single().revision)
+            assertEquals("2026-08-10T00:00:02Z", history.items.single().updatedAt)
             assertFalse(history.hasMore)
             assertEquals(12, changes.nextSeq)
 
@@ -315,9 +305,6 @@ class SessionsApiTest {
             assertNull(snapshot.state?.selections?.get("permission"))
             assertEquals(4L, snapshot.effectiveCapabilities.revision)
             assertEquals("future.capability", snapshot.effectiveCapabilities.capabilities.last().capabilityId)
-            assertEquals("model-selection", snapshot.catalogs.model?.models?.single()?.selectionId)
-            assertEquals("permission-selection", snapshot.catalogs.permission?.permissions?.single()?.selectionId)
-            assertTrue(snapshot.catalogs.unknown.containsKey("futureCatalog"))
             assertEquals("notice-1", snapshot.notices.single().noticeId)
             assertEquals("seq:12", snapshot.eventCursor)
 

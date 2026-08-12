@@ -190,19 +190,6 @@ class SessionsApi(
         ).optJSONArray("sessions").toObjectList { toRemoteSession() }
     }
 
-    fun getSessionTimelineLatest(
-        serverUrl: String,
-        authorizationToken: String,
-        sessionId: String,
-        limit: Int = 100,
-    ): RemoteSessionTimelinePage {
-        return client.getJson(
-            serverUrl = serverUrl,
-            path = "/sessions/${sessionId.urlEncode()}/timeline?mode=latest&limit=$limit",
-            authorizationToken = authorizationToken,
-        ).toRemoteSessionTimelinePage()
-    }
-
     fun getSessionTimelineHistory(
         serverUrl: String,
         authorizationToken: String,
@@ -439,17 +426,6 @@ class SessionsApi(
         )
     }
 
-    fun attachmentDownloadUrl(
-        serverUrl: String,
-        sessionId: String,
-        fileId: String,
-    ): String {
-        return apiUrl(
-            serverUrl = serverUrl,
-            path = "/sessions/${sessionId.urlEncode()}/attachments/${fileId.urlEncode()}",
-        )
-    }
-
     fun downloadSessionAttachment(
         serverUrl: String,
         authorizationToken: String,
@@ -620,8 +596,6 @@ class SessionsApi(
     private fun JSONObject.toRemoteSessionCreateResponse(): RemoteSessionCreateResponse {
         return RemoteSessionCreateResponse(
             session = getJSONObject("session").toRemoteSession(),
-            connectorResult = opt("connectorResult").takeUnless { it == JSONObject.NULL },
-            attachments = optJSONArray("attachments").toObjectList { toRemoteUploadedAttachment() },
         )
     }
 
@@ -645,8 +619,6 @@ class SessionsApi(
 
     private fun JSONObject.toRemoteSessionSnapshot(): RemoteSessionSnapshot {
         val timeline = optJSONObject("timeline") ?: JSONObject()
-        val catalogs = optJSONObject("catalogs") ?: JSONObject()
-        val knownCatalogKeys = setOf("model", "permission")
         return RemoteSessionSnapshot(
             session = getJSONObject("session").toRemoteSession(),
             state = optJSONObject("state")?.toRemoteSessionRuntimeState(),
@@ -658,11 +630,6 @@ class SessionsApi(
             notices = optJSONArray("notices").toObjectList { toRemoteRuntimeNotice() },
             effectiveCapabilities = optJSONObject("effectiveCapabilities").toRemoteRuntimeCapabilitySet(),
             runtimeCapabilities = optJSONObject("runtimeCapabilities").toRemoteRuntimeCapabilitySet(),
-            catalogs = RemoteSessionRuntimeCatalogs(
-                model = catalogs.optJSONObject("model")?.toRemoteRuntimeModelCatalog(),
-                permission = catalogs.optJSONObject("permission")?.toRemoteRuntimePermissionCatalog(),
-                unknown = catalogs.toMap().filterKeys { it !in knownCatalogKeys },
-            ),
             eventCursor = optString("eventCursor", "seq:0"),
             serverTime = optNullableString("serverTime"),
         )

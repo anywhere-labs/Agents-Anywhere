@@ -3,65 +3,7 @@ package com.agentsanywhere.app.feature.sessiondetail
 import com.agentsanywhere.app.api.RemoteRuntimeCapability
 import com.agentsanywhere.app.api.RemoteRuntimeCapabilitySet
 import com.agentsanywhere.app.api.RemoteRuntimeNotice
-import com.agentsanywhere.app.api.RemoteSession
 import com.agentsanywhere.app.api.RemoteSessionRuntimeState
-import com.agentsanywhere.app.feature.sessions.runtimeLabel
-import com.agentsanywhere.app.model.AgentDevice
-import com.agentsanywhere.app.model.AgentSession
-import com.agentsanywhere.app.model.SessionStatus
-
-internal fun RemoteSession.toAgentSession(devicesById: Map<String, AgentDevice>): AgentSession {
-    val statusValue = status.toSessionStatus()
-    val runtimeText = runtime.runtimeLabel()
-    val deviceName = devicesById[connectorId]?.name ?: connectorId.take(8).ifBlank { "Device" }
-    val workspace = cwd?.trim()?.trimEnd('/')?.substringAfterLast('/').orEmpty()
-    return AgentSession(
-        id = id,
-        connectorId = connectorId,
-        deviceName = deviceName,
-        title = title?.takeIf { it.isNotBlank() }
-            ?: externalSessionId?.takeIf { it.isNotBlank() }
-            ?: "Untitled session",
-        summary = cwd.orEmpty(),
-        cwd = cwd,
-        workspaceLabel = workspace,
-        runtime = runtime,
-        runtimeLabel = runtimeText,
-        status = statusValue,
-        statusLabel = statusValue.statusLabel(),
-        updatedAtLabel = "",
-        metaLabel = listOf(runtimeText, deviceName, workspace)
-            .filter { it.isNotBlank() }
-            .joinToString("  ·  "),
-        pinned = pinned,
-        archived = archived,
-        unread = unread,
-        lastReadSeq = lastReadSeq,
-        takeover = takeover,
-        connectorOnline = connectorStatus == "online",
-        live = statusValue == SessionStatus.Running || statusValue == SessionStatus.WaitingApproval,
-        sortKey = sortAt ?: lastActivityAt ?: lastItemAt ?: "",
-        updatedSeq = updatedSeq,
-    )
-}
-
-private fun String.toSessionStatus(): SessionStatus {
-    return when (this) {
-        "running" -> SessionStatus.Running
-        "waiting_approval" -> SessionStatus.WaitingApproval
-        "error" -> SessionStatus.Error
-        else -> SessionStatus.Idle
-    }
-}
-
-private fun SessionStatus.statusLabel(): String {
-    return when (this) {
-        SessionStatus.Idle -> "Idle"
-        SessionStatus.Running -> "Running"
-        SessionStatus.WaitingApproval -> "Approval"
-        SessionStatus.Error -> "Error"
-    }
-}
 
 internal fun mergeRuntimeNotices(
     current: List<RuntimeNotice>,

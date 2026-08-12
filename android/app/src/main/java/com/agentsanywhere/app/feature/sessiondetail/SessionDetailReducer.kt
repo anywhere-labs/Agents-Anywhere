@@ -2,6 +2,8 @@ package com.agentsanywhere.app.feature.sessiondetail
 
 import com.agentsanywhere.app.api.RemoteRuntimeNotice
 import com.agentsanywhere.app.api.RemoteSessionEventEnvelope
+import com.agentsanywhere.app.api.isSupportedV2NativeRuntime
+import com.agentsanywhere.app.feature.sessions.toAgentSession
 import com.agentsanywhere.app.model.AgentDevice
 import com.agentsanywhere.app.model.AgentSession
 
@@ -17,6 +19,7 @@ internal fun reduceRealtimeEvent(
     when (event.type) {
         "session.subscribed" -> Unit
         "session.meta.updated" -> event.payload.session?.let { session ->
+            if (!session.runtime.isSupportedV2NativeRuntime()) return@let
             val observed = session.toAgentSession(devices.associateBy { it.id })
             val existing = next.session
             if (existing == null || observed.updatedSeq >= existing.updatedSeq) {
