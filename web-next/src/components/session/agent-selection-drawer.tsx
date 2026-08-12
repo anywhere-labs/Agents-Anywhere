@@ -51,12 +51,13 @@ export function AgentSelectionDrawer({
         <Button
           type="button"
           variant="ghost"
-          size="sm"
+          size="icon"
           disabled={disabled}
-          className="h-8 gap-1.5 rounded-xl px-2.5 text-muted-foreground"
+          className="rounded-xl text-muted-foreground"
+          aria-label={buttonLabel}
+          title={buttonLabel}
         >
-          <Monitor className="size-3.5" />
-          <span className="text-foreground">{buttonLabel}</span>
+          <Monitor />
         </Button>
       </DrawerTrigger>
       <DrawerContent>

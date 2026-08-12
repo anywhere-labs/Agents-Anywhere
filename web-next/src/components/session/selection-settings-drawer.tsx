@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { Check, Settings2 } from "lucide-react"
+import { Check, ChevronDown, ChevronRight, Settings2 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -63,9 +63,15 @@ export function SelectionSettingsDrawer({
   onModelChange: (modelId: string, reasoningId: string) => void
 }) {
   const [open, setOpen] = React.useState(false)
+  const [expandedModelId, setExpandedModelId] = React.useState<string | null>(null)
+
+  const setDrawerOpen = (nextOpen: boolean) => {
+    setOpen(nextOpen)
+    if (!nextOpen) setExpandedModelId(null)
+  }
 
   return (
-    <Drawer open={open} onOpenChange={setOpen} direction="bottom">
+    <Drawer open={open} onOpenChange={setDrawerOpen} direction="bottom">
       <DrawerTrigger asChild>
         <Button
           type="button"
@@ -84,6 +90,58 @@ export function SelectionSettingsDrawer({
           {description ? <DrawerDescription>{description}</DrawerDescription> : null}
         </DrawerHeader>
         <div className="flex max-h-[58vh] flex-col gap-5 overflow-y-auto px-4 pb-4">
+          {modelItems.length > 0 ? (
+            <SelectionSection title={modelLabel}>
+              {modelItems.map((model) => {
+                const hasReasoning = model.reasoningItems.length > 0
+                const expanded = expandedModelId === model.id
+                return (
+                  <div key={model.id} className="flex flex-col gap-1">
+                    <SelectionRow
+                      selected={selectedModel === model.id}
+                      label={model.label}
+                      disabled={modelDisabled}
+                      trailing={hasReasoning
+                        ? expanded
+                          ? <ChevronDown className="size-4" />
+                          : <ChevronRight className="size-4" />
+                        : null}
+                      onClick={() => {
+                        if (hasReasoning) {
+                          setExpandedModelId(expanded ? null : model.id)
+                          return
+                        }
+                        onModelChange(model.id, "")
+                        setDrawerOpen(false)
+                      }}
+                    />
+                    {expanded ? (
+                      <div className="ml-7 flex flex-col gap-1 border-l border-border pl-2">
+                        <p className="px-3 py-1 text-xs font-medium text-muted-foreground">
+                          {reasoningLabel}
+                        </p>
+                        {model.reasoningItems.map((reasoning) => (
+                          <SelectionRow
+                            key={reasoning.id}
+                            selected={selectedModel === model.id && selectedReasoning === reasoning.id}
+                            label={reasoning.label}
+                            disabled={modelDisabled || reasoningDisabled}
+                            onClick={() => {
+                              onModelChange(model.id, reasoning.id)
+                              setDrawerOpen(false)
+                            }}
+                          />
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                )
+              })}
+            </SelectionSection>
+          ) : null}
+
+          {permissionItems.length > 0 && modelItems.length > 0 ? <Separator /> : null}
+
           {permissionItems.length > 0 ? (
             <SelectionSection title={permissionLabel}>
               {permissionItems.map((item) => (
@@ -95,48 +153,9 @@ export function SelectionSettingsDrawer({
                   disabled={permissionDisabled}
                   onClick={() => {
                     onPermissionChange(item.id)
-                    setOpen(false)
+                    setDrawerOpen(false)
                   }}
                 />
-              ))}
-            </SelectionSection>
-          ) : null}
-
-          {permissionItems.length > 0 && modelItems.length > 0 ? <Separator /> : null}
-
-          {modelItems.length > 0 ? (
-            <SelectionSection title={modelLabel}>
-              {modelItems.map((model) => (
-                <div key={model.id} className="flex flex-col gap-1">
-                  {model.reasoningItems.length === 0 ? (
-                    <SelectionRow
-                      selected={selectedModel === model.id}
-                      label={model.label}
-                      disabled={modelDisabled}
-                      onClick={() => {
-                        onModelChange(model.id, "")
-                        setOpen(false)
-                      }}
-                    />
-                  ) : (
-                    <>
-                      <p className="px-3 pt-2 text-xs font-medium text-muted-foreground">{model.label}</p>
-                      {model.reasoningItems.map((reasoning) => (
-                        <SelectionRow
-                          key={reasoning.id}
-                          selected={selectedModel === model.id && selectedReasoning === reasoning.id}
-                          label={`${reasoning.label} · ${model.label}`}
-                          helper={reasoningLabel}
-                          disabled={modelDisabled || reasoningDisabled}
-                          onClick={() => {
-                            onModelChange(model.id, reasoning.id)
-                            setOpen(false)
-                          }}
-                        />
-                      ))}
-                    </>
-                  )}
-                </div>
               ))}
             </SelectionSection>
           ) : null}
@@ -146,10 +165,18 @@ export function SelectionSettingsDrawer({
   )
 }
 
-function SelectionSection({ title, children }: { title: string; children: React.ReactNode }) {
+function SelectionSection({
+  title,
+  children,
+}: {
+  title: string
+  children: React.ReactNode
+}) {
   return (
     <section className="flex flex-col gap-2">
-      <h3 className="px-1 text-sm font-medium text-foreground">{title}</h3>
+      <div className="flex min-h-7 items-center justify-between gap-2 px-1">
+        <h3 className="text-sm font-medium text-foreground">{title}</h3>
+      </div>
       <div className="flex flex-col gap-1">{children}</div>
     </section>
   )
@@ -159,12 +186,14 @@ function SelectionRow({
   selected,
   label,
   helper,
+  trailing,
   disabled = false,
   onClick,
 }: {
   selected: boolean
   label: string
   helper?: string
+  trailing?: React.ReactNode
   disabled?: boolean
   onClick: () => void
 }) {
@@ -184,6 +213,7 @@ function SelectionRow({
         <span className="block truncate font-medium">{label}</span>
         {helper ? <span className="block truncate text-xs opacity-70">{helper}</span> : null}
       </span>
+      {trailing ? <span className="shrink-0 text-muted-foreground">{trailing}</span> : null}
     </button>
   )
 }
