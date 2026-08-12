@@ -27,6 +27,7 @@ from openai_codex.generated.v2_all import (
 from openai_codex.models import (
     AgentMessageDeltaNotification,
     CommandExecutionOutputDeltaNotification,
+    ItemCompletedNotification,
     Notification,
     ReasoningTextDeltaNotification,
     TurnCompletedNotification,
@@ -114,9 +115,6 @@ from connector.runtimes.codex.timeline.projection import (
     CodexTimelineProjection,
     timeline_item_from_projection,
     timeline_projection_from_raw,
-)
-from connector.runtimes.codex.timeline.typed_events import (
-    timeline_projections_from_sdk_turn_event,
 )
 
 
@@ -817,48 +815,44 @@ def test_codex_sdk_event_normalizes_typed_interrupted_turn_completion() -> None:
     assert event.event_type == "turn/interrupted"
 
 
-def test_codex_timeline_projects_context_compaction_thread_item() -> None:
+def test_codex_timeline_projects_context_compaction_item_event() -> None:
     event = CodexSdkEvent.from_value(
         Notification(
-            method="turn/completed",
-            payload=TurnCompletedNotification(
+            method="item/completed",
+            payload=ItemCompletedNotification(
+                completedAtMs=1,
                 threadId="thread_1",
-                turn=Turn(
-                    id="turn_done",
-                    status=TurnStatus.completed,
-                    items=[
-                        ThreadItem(
-                            root=ContextCompactionThreadItem(
-                                id="compact_1",
-                                type="contextCompaction",
-                            )
-                        )
-                    ],
-                    completedAt=None,
-                    durationMs=None,
-                    error=None,
-                    itemsView=None,
-                    startedAt=None,
+                turnId="turn_done",
+                item=ThreadItem(
+                    root=ContextCompactionThreadItem(
+                        id="compact_1",
+                        type="contextCompaction",
+                    )
                 ),
             ),
         ),
     )
+    accumulator = CodexTimelineAccumulator()
+    platform_item = accumulator.item_from_event(
+        session_id="sess_1",
+        external_session_id="thread_1",
+        event=event,
+    )
 
-    projections = timeline_projections_from_sdk_turn_event(event)
-
-    assert projections is not None
-    assert len(projections) == 1
-    assert projections[0].raw_type == "contextCompaction"
+    assert platform_item is not None
+    assert platform_item.source["rawType"] == "contextCompaction"
     item = timeline_item_from_projection(
-        projection=projections[0],
+        projection=CodexTimelineProjection(
+            native_id="compact_1",
+            raw_type="contextCompaction",
+            turn_id="turn_done",
+        ),
         external_session_id="thread_1",
         fallback_index=0,
-        event="turn/completed",
+        event="item/completed",
     )
-    platform_item = item.to_platform_item(session_id="sess_1", order_seq=0)
     assert isinstance(item, CodexContextCompactionItem)
     assert platform_item.content["kind"] == "compact"
-    assert platform_item.source["rawType"] == "contextCompaction"
 
 
 def test_codex_runtime_thread_compacted_notification_upserts_timeline_item() -> None:
@@ -1006,7 +1000,7 @@ def test_codex_compaction_snapshot_skips_transcript_message_mirrors() -> None:
     assert [item.id for item in snapshot_items] == [
         "context_compaction_thread_1",
         "file_1",
-        turn_position_item_id("sess_1", "turn_after_compact", 0),
+        turn_position_item_id("thread_1", "turn_after_compact", 0),
     ]
 
 
@@ -1032,7 +1026,12 @@ def test_codex_timeline_projects_typed_sdk_delta_without_params_dict() -> None:
     )
 
     assert item is not None
-    assert item.id == turn_position_item_id("sess_1", "turn_1", 0)
+    assert item.id == turn_position_item_id(
+        "thread_1",
+        "turn_1",
+        0,
+        lane="tool:commandExecution",
+    )
     assert item.source["itemId"] == "item_command"
     assert item.type == "tool"
     assert item.status == "running"
@@ -1084,7 +1083,12 @@ def test_codex_timeline_accumulates_typed_reasoning_delta() -> None:
 
     assert first is not None
     assert second is not None
-    assert first.id == turn_position_item_id("sess_1", "turn_1", 0)
+    assert first.id == turn_position_item_id(
+        "thread_1",
+        "turn_1",
+        0,
+        lane="reasoning",
+    )
     assert second.id == first.id
     assert second.type == "system"
     assert second.status == "running"
@@ -1095,7 +1099,7 @@ def test_codex_timeline_accumulates_typed_reasoning_delta() -> None:
     }
 
 
-def test_codex_timeline_projects_typed_sdk_turn_without_params_dict() -> None:
+def test_codex_terminal_turn_does_not_project_timeline_items() -> None:
     event = CodexSdkEvent.from_value(
         Notification(
             method="turn/completed",
@@ -1124,144 +1128,113 @@ def test_codex_timeline_projects_typed_sdk_turn_without_params_dict() -> None:
             ),
         ),
     )
-    event_without_params = replace(event, params={})
     accumulator = CodexTimelineAccumulator()
 
-    items = accumulator.items_from_turn_event(
+    item = accumulator.item_from_event(
         session_id="sess_1",
         external_session_id="thread_1",
-        event=event_without_params,
+        event=event,
     )
 
-    assert len(items) == 2
-    message_item = items[0]
-    turn_end = items[1]
-    assert message_item.id == turn_position_item_id("sess_1", "turn_done", 0)
-    assert message_item.source["itemId"] == "item_agent"
-    assert message_item.type == "message"
-    assert message_item.content == {
-        "kind": "markdown",
-        "text": "hello",
-        "format": "markdown",
-    }
-    assert turn_end.id == "codex_turn_end_turn_done"
-    assert turn_end.turn_id == "turn_done"
-    assert turn_end.type == "turn.end"
-    assert turn_end.status == "done"
+    assert item is None
 
 
 def test_codex_timeline_uses_typed_sdk_user_client_id_for_identity() -> None:
     event = CodexSdkEvent.from_value(
         Notification(
-            method="turn/completed",
-            payload=TurnCompletedNotification(
+            method="item/completed",
+            payload=ItemCompletedNotification(
+                completedAtMs=1,
                 threadId="thread_1",
-                turn=Turn(
-                    id="turn_done",
-                    status=TurnStatus.completed,
-                    items=[
-                        ThreadItem(
-                            root=UserMessageThreadItem(
-                                id="item_user",
-                                type="userMessage",
-                                clientId="msg_client_1",
-                                content=[
-                                    UserInput(
-                                        root=TextUserInput(
-                                            type="text",
-                                            text="hello from web",
-                                        )
-                                    )
-                                ],
+                turnId="turn_done",
+                item=ThreadItem(
+                    root=UserMessageThreadItem(
+                        id="item_user",
+                        type="userMessage",
+                        clientId="msg_client_1",
+                        content=[
+                            UserInput(
+                                root=TextUserInput(
+                                    type="text",
+                                    text="hello from web",
+                                )
                             )
-                        )
-                    ],
-                    completedAt=None,
-                    durationMs=None,
-                    error=None,
-                    itemsView=None,
-                    startedAt=None,
+                        ],
+                    )
                 ),
             ),
         ),
     )
     accumulator = CodexTimelineAccumulator()
 
-    items = accumulator.items_from_turn_event(
+    item = accumulator.item_from_event(
         session_id="sess_1",
         external_session_id="thread_1",
         event=event,
     )
 
-    assert items[0].id == "item_user"
-    assert items[0].source["itemId"] == "item_user"
-    assert items[0].source["clientMessageId"] == "msg_client_1"
+    assert item is not None
+    assert item.id == "item_user"
+    assert item.source["itemId"] == "item_user"
+    assert item.source["clientMessageId"] == "msg_client_1"
 
 
 def test_codex_timeline_omits_attachment_inputs_from_user_message_text() -> None:
     event = CodexSdkEvent.from_value(
         Notification(
-            method="turn/completed",
-            payload=TurnCompletedNotification(
+            method="item/completed",
+            payload=ItemCompletedNotification(
+                completedAtMs=1,
                 threadId="thread_1",
-                turn=Turn(
-                    id="turn_done",
-                    status=TurnStatus.completed,
-                    items=[
-                        ThreadItem(
-                            root=UserMessageThreadItem(
-                                id="item_user",
-                                type="userMessage",
-                                clientId="msg_client_1",
-                                content=[
-                                    UserInput(
-                                        root=TextUserInput(
-                                            type="text",
-                                            text="这个图里有什么",
-                                        )
-                                    ),
-                                    UserInput(
-                                        root=LocalImageUserInput(
-                                            type="localImage",
-                                            path="/tmp/image.png",
-                                        )
-                                    ),
-                                    UserInput(
-                                        root=MentionUserInput(
-                                            type="mention",
-                                            name="image.png",
-                                            path="/tmp/image.png",
-                                        )
-                                    ),
-                                    UserInput(
-                                        root=TextUserInput(
-                                            type="text",
-                                            text="Attached file: image.png at /tmp/image.png",
-                                        )
-                                    ),
-                                ],
-                            )
-                        )
-                    ],
-                    completedAt=None,
-                    durationMs=None,
-                    error=None,
-                    itemsView=None,
-                    startedAt=None,
+                turnId="turn_done",
+                item=ThreadItem(
+                    root=UserMessageThreadItem(
+                        id="item_user",
+                        type="userMessage",
+                        clientId="msg_client_1",
+                        content=[
+                            UserInput(
+                                root=TextUserInput(
+                                    type="text",
+                                    text="这个图里有什么",
+                                )
+                            ),
+                            UserInput(
+                                root=LocalImageUserInput(
+                                    type="localImage",
+                                    path="/tmp/image.png",
+                                )
+                            ),
+                            UserInput(
+                                root=MentionUserInput(
+                                    type="mention",
+                                    name="image.png",
+                                    path="/tmp/image.png",
+                                )
+                            ),
+                            UserInput(
+                                root=TextUserInput(
+                                    type="text",
+                                    text="Attached file: image.png at /tmp/image.png",
+                                )
+                            ),
+                        ],
+                    )
                 ),
             ),
         ),
     )
     accumulator = CodexTimelineAccumulator()
 
-    items = accumulator.items_from_turn_event(
+    item = accumulator.item_from_event(
         session_id="sess_1",
         external_session_id="thread_1",
         event=event,
     )
 
-    assert items[0].content["text"] == "这个图里有什么"
-    assert items[0].content["attachments"] == [
+    assert item is not None
+    assert item.content["text"] == "这个图里有什么"
+    assert item.content["attachments"] == [
         {
             "fileId": "image.png",
             "path": "/tmp/image.png",
@@ -1982,7 +1955,7 @@ async def _test_codex_runtime_reads_typed_sdk_snapshot_with_parent_turn_id() -> 
 
     assert [item.id for item in snapshot.items] == [
         "item_user",
-        turn_position_item_id("sess_1", "turn_sdk", 0),
+        turn_position_item_id("thread_1", "turn_sdk", 0),
     ]
     assert [item.turn_id for item in snapshot.items] == ["turn_sdk", "turn_sdk"]
     assert snapshot.items[0].source["itemId"] == "item_user"
@@ -2038,9 +2011,11 @@ async def _test_codex_runtime_default_snapshot_reads_more_than_hundred_items() -
     )
 
     assert len(snapshot.items) == 101
-    assert snapshot.items[0].id == turn_position_item_id("sess_1", "turn_many", 0)
+    assert snapshot.items[0].id == turn_position_item_id(
+        "thread_1", "turn_many", 0
+    )
     assert snapshot.items[-1].id == turn_position_item_id(
-        "sess_1", "turn_many", 100
+        "thread_1", "turn_many", 100
     )
     assert snapshot.items[0].source["itemId"] == "item_0"
     assert snapshot.items[-1].source["itemId"] == "item_100"
@@ -2096,7 +2071,7 @@ async def _test_codex_runtime_typed_snapshot_preserves_messages_after_compaction
     assert [item.id for item in snapshot.items] == [
         "item_compact",
         "item_user",
-        turn_position_item_id("sess_1", "turn_compacted", 0),
+        turn_position_item_id("thread_1", "turn_compacted", 0),
     ]
     assert [item.turn_id for item in snapshot.items] == [
         "turn_compacted",
@@ -2162,8 +2137,12 @@ async def _test_codex_runtime_reads_typed_tool_items_from_snapshot() -> None:
     )
 
     assert [item.id for item in snapshot.items] == [
-        turn_position_item_id("sess_1", "turn_tools", 0),
-        turn_position_item_id("sess_1", "turn_tools", 1),
+        turn_position_item_id(
+            "thread_1", "turn_tools", 0, lane="tool:mcpToolCall"
+        ),
+        turn_position_item_id(
+            "thread_1", "turn_tools", 0, lane="tool:webSearch"
+        ),
     ]
     assert [item.type for item in snapshot.items] == ["tool", "tool"]
     assert [item.turn_id for item in snapshot.items] == ["turn_tools", "turn_tools"]
@@ -2238,7 +2217,9 @@ async def _test_codex_runtime_reads_typed_dynamic_tool_item_from_snapshot() -> N
 
     assert len(snapshot.items) == 1
     item = snapshot.items[0]
-    assert item.id == turn_position_item_id("sess_1", "turn_dynamic", 0)
+    assert item.id == turn_position_item_id(
+        "thread_1", "turn_dynamic", 0, lane="tool:dynamicToolCall"
+    )
     assert item.type == "tool"
     assert item.turn_id == "turn_dynamic"
     assert item.source["itemId"] == "dyn_1"
@@ -2309,7 +2290,9 @@ async def _test_codex_runtime_reads_typed_collab_agent_item_from_snapshot() -> N
 
     assert len(snapshot.items) == 1
     item = snapshot.items[0]
-    assert item.id == turn_position_item_id("sess_1", "turn_collab", 0)
+    assert item.id == turn_position_item_id(
+        "thread_1", "turn_collab", 0, lane="tool:collabAgentToolCall"
+    )
     assert item.type == "tool"
     assert item.turn_id == "turn_collab"
     assert item.source["itemId"] == "collab_1"
@@ -2383,7 +2366,7 @@ async def _test_codex_snapshot_keeps_assistant_native_identity_without_turn_id()
     )
 
     assert host.timeline_item_upserts[-1].id == turn_position_item_id(
-        "sess_1", "turn_1", 0
+        "thread_1", "turn_1", 0
     )
     assert snapshot.items[0].id == "item-2"
     assert snapshot.items[0].source["itemId"] == "item-2"
@@ -2505,6 +2488,125 @@ def test_codex_turn_position_identity_distinguishes_repeated_assistant_messages(
     ]
     assert live_ids == snapshot_assistant_ids
     assert len(set(live_ids)) == 2
+
+
+def test_codex_turn_lane_identity_matches_normalized_history() -> None:
+    accumulator = CodexTimelineAccumulator()
+    accumulator.begin_turn("thread_1", "turn_1")
+    live_raw_items = (
+        {
+            "id": "reasoning_1",
+            "type": "reasoning",
+            "status": "completed",
+            "text": "plan",
+        },
+        {
+            "id": "commentary_1",
+            "type": "agentMessage",
+            "status": "completed",
+            "text": "working",
+        },
+        {
+            "id": "tool_1",
+            "type": "commandExecution",
+            "status": "completed",
+            "command": "pwd",
+            "aggregatedOutput": "/repo",
+        },
+        {
+            "id": "reasoning_2",
+            "type": "reasoning",
+            "status": "completed",
+            "text": "check",
+        },
+        {
+            "id": "reasoning_3",
+            "type": "reasoning",
+            "status": "completed",
+            "text": "finish",
+        },
+        {
+            "id": "final_1",
+            "type": "agentMessage",
+            "status": "completed",
+            "text": "done",
+        },
+    )
+    live_items = tuple(
+        accumulator.item_from_notification(
+            session_id="sess_1",
+            external_session_id="thread_1",
+            method="item/completed",
+            params={
+                "threadId": "thread_1",
+                "turnId": "turn_1",
+                "item": raw_item,
+            },
+        )
+        for raw_item in live_raw_items
+    )
+    snapshot_items = accumulator.items_from_thread_snapshot(
+        session_id="sess_scanner",
+        external_session_id="thread_1",
+        thread={
+            "turns": [
+                {
+                    "id": "turn_1",
+                    "items": [
+                        {
+                            "id": "item-1",
+                            "type": "userMessage",
+                            "status": "completed",
+                            "text": "question",
+                        },
+                        {
+                            "id": "item-2",
+                            "type": "reasoning",
+                            "status": "completed",
+                            "text": "plan",
+                        },
+                        {
+                            "id": "item-3",
+                            "type": "agentMessage",
+                            "status": "completed",
+                            "text": "working",
+                        },
+                        {
+                            "id": "item-4",
+                            "type": "reasoning",
+                            "status": "completed",
+                            "text": "check\nfinish",
+                        },
+                        {
+                            "id": "item-5",
+                            "type": "agentMessage",
+                            "status": "completed",
+                            "text": "done",
+                        },
+                    ],
+                }
+            ]
+        },
+        limit=None,
+    )
+
+    assert all(item is not None for item in live_items)
+    live_by_text = {
+        item.content.get("text"): item
+        for item in live_items
+        if item is not None and item.type in {"message", "system"}
+    }
+    snapshot_by_text = {
+        item.content.get("text"): item
+        for item in snapshot_items
+        if item.type in {"message", "system"}
+    }
+    assert live_by_text["working"].id == snapshot_by_text["working"].id
+    assert live_by_text["done"].id == snapshot_by_text["done"].id
+    assert live_by_text["plan"].id == snapshot_by_text["plan"].id
+    assert live_by_text["check\nfinish"].id == snapshot_by_text["check\nfinish"].id
+    assert live_by_text["done"].session_id == "sess_1"
+    assert snapshot_by_text["done"].session_id == "sess_scanner"
 
 
 def test_codex_turn_position_tracking_is_released_at_turn_end() -> None:
@@ -3308,7 +3410,7 @@ async def _test_codex_runtime_agent_message_delta_upserts_timeline_item() -> Non
 
     assert len(host.timeline_item_upserts) == 2
     first, second = host.timeline_item_upserts
-    assert first.id == turn_position_item_id("sess_1", "turn_1", 0)
+    assert first.id == turn_position_item_id("thread_1", "turn_1", 0)
     assert first.order_seq == second.order_seq
     assert second.type == "message"
     assert second.role == "assistant"
@@ -3354,10 +3456,10 @@ async def _test_codex_runtime_agent_message_native_id_overrides_text_identity() 
     )
 
     assert host.timeline_item_upserts[-2].id == turn_position_item_id(
-        "sess_1", "turn_1", 0
+        "thread_1", "turn_1", 0
     )
     assert host.timeline_item_upserts[-1].id == turn_position_item_id(
-        "sess_1", "turn_1", 1
+        "thread_1", "turn_1", 1
     )
     assert host.timeline_item_upserts[-1].source["itemId"] == "msg_new"
 
@@ -3513,8 +3615,8 @@ def test_codex_accumulator_preserves_multiple_native_agent_messages() -> None:
 
     assert first is not None
     assert second is not None
-    assert first.id == turn_position_item_id("sess_1", "turn_1", 0)
-    assert second.id == turn_position_item_id("sess_1", "turn_1", 1)
+    assert first.id == turn_position_item_id("thread_1", "turn_1", 0)
+    assert second.id == turn_position_item_id("thread_1", "turn_1", 1)
     assert first.id != second.id
     assert first.content["text"] == "first"
     assert second.content["text"] == "second"
@@ -3778,11 +3880,11 @@ async def _test_codex_runtime_reduces_runtime_and_unknown_items_safely() -> None
     assert unknown_item.source["rawType"] == "mysteryNativeType"
 
 
-def test_codex_runtime_completed_turn_syncs_timeline_snapshot() -> None:
-    asyncio.run(_test_codex_runtime_completed_turn_syncs_timeline_snapshot())
+def test_codex_runtime_completed_turn_only_finishes_lifecycle() -> None:
+    asyncio.run(_test_codex_runtime_completed_turn_only_finishes_lifecycle())
 
 
-async def _test_codex_runtime_completed_turn_syncs_timeline_snapshot() -> None:
+async def _test_codex_runtime_completed_turn_only_finishes_lifecycle() -> None:
     client = FakeCodexClient()
     host = FakeHost()
     runtime = CodexRuntime(config=_config(), host=host, client=client)
@@ -3815,23 +3917,8 @@ async def _test_codex_runtime_completed_turn_syncs_timeline_snapshot() -> None:
         }
     )
 
-    assert len(host.timeline_syncs) == 1
-    sync = host.timeline_syncs[0]
-    assert sync["session_id"] == "sess_1"
-    assert sync["external_session_id"] == "thread_1"
-    assert sync["complete"] is False
-    assert [item.id for item in sync["items"]] == [
-        "item_user",
-        turn_position_item_id("sess_1", "turn_done", 0),
-        "codex_turn_end_turn_done",
-    ]
-    assert [item.role for item in sync["items"]] == ["user", "assistant", "system"]
-    assert [item.type for item in sync["items"]] == [
-        "message",
-        "message",
-        "turn.end",
-    ]
-    assert [item.status for item in sync["items"]] == ["done", "done", "done"]
+    assert host.timeline_syncs == []
+    assert host.timeline_item_upserts == []
     assert host.state_updates[-1]["status"] == "idle"
 
 
@@ -3971,29 +4058,36 @@ async def _test_codex_runtime_tags_completed_user_echo_with_client_message_id() 
     )
     await runtime._handle_notification(
         {
-            "method": "turn/completed",
+            "method": "item/completed",
             "params": {
                 "platformSessionId": "sess_1",
                 "threadId": "thread_1",
-                "turn": {
-                    "id": "turn_new",
-                    "items": [
-                        {
-                            "id": "item_user",
-                            "type": "userMessage",
-                            "text": "hello from web",
-                            "status": "completed",
-                        },
-                    ],
+                "turnId": "turn_new",
+                "item": {
+                    "id": "item_user",
+                    "type": "userMessage",
+                    "text": "hello from web",
+                    "status": "completed",
                 },
             },
         }
     )
+    await runtime._handle_notification(
+        {
+            "method": "turn/completed",
+            "params": {
+                "platformSessionId": "sess_1",
+                "threadId": "thread_1",
+                "turnId": "turn_new",
+            },
+        }
+    )
 
-    item = host.timeline_syncs[-1]["items"][0]
+    item = host.timeline_item_upserts[-1]
     assert item.id == "item_user"
     assert item.source["clientMessageId"] == "cm_web_1"
     assert item.source["derivedKey"].startswith("userMessage-")
+    assert host.timeline_syncs == []
 
 
 def test_codex_runtime_remembers_completed_user_echo_client_message_id() -> None:
@@ -4014,20 +4108,16 @@ async def _test_codex_runtime_remembers_completed_user_echo_client_message_id() 
         client_message_id="cm_web_1",
     )
     notification = {
-        "method": "turn/completed",
+        "method": "item/completed",
         "params": {
             "platformSessionId": "sess_1",
             "threadId": "thread_1",
-            "turn": {
-                "id": "turn_new",
-                "items": [
-                    {
-                        "id": "item_user",
-                        "type": "userMessage",
-                        "text": "hello from web",
-                        "status": "completed",
-                    },
-                ],
+            "turnId": "turn_new",
+            "item": {
+                "id": "item_user",
+                "type": "userMessage",
+                "text": "hello from web",
+                "status": "completed",
             },
         },
     }
@@ -4035,12 +4125,12 @@ async def _test_codex_runtime_remembers_completed_user_echo_client_message_id() 
     await runtime._handle_notification(notification)
     await runtime._handle_notification(notification)
 
-    first = host.timeline_syncs[-2]["items"][0]
-    second = host.timeline_syncs[-1]["items"][0]
+    first, second = host.timeline_item_upserts[-2:]
     assert first.id == "item_user"
     assert second.id == "item_user"
     assert first.source["clientMessageId"] == "cm_web_1"
     assert second.source["clientMessageId"] == "cm_web_1"
+    assert host.timeline_syncs == []
 
 
 def test_codex_runtime_tags_live_user_echo_with_client_message_id() -> None:

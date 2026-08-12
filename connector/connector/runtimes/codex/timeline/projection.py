@@ -21,6 +21,7 @@ from connector.runtimes.codex.timeline.identity import (
     explicit_derived_key,
     native_item_id,
     timeline_item_id_from_values,
+    turn_item_lane,
     uses_turn_position_identity,
 )
 from connector.runtimes.codex.timeline.items import (
@@ -132,7 +133,8 @@ class CodexTimelineProjection:
             and self.turn_position is not None
             and uses_turn_position_identity(self.raw_type, self.effective_role())
         ):
-            return f"turn-item-{self.turn_id}-{self.turn_position}"
+            lane = turn_item_lane(self.raw_type, self.effective_role())
+            return f"turn-item-v2-{self.turn_id}-{lane}-{self.turn_position}"
         return derived_key_from_values(
             raw_type=self.raw_type,
             role=self.effective_role(),
