@@ -26,6 +26,18 @@ def claude_config_schema() -> dict[str, Any]:
                 "type": "string",
                 "title": "Claude executable path",
                 "description": "Optional path to the Claude Code executable.",
+                "metadata": {
+                    "i18n": {
+                        "labelKey": (
+                            "dashboard.device.runtimeConfigFields."
+                            "claudeExecutablePath.label"
+                        ),
+                        "descriptionKey": (
+                            "dashboard.device.runtimeConfigFields."
+                            "claudeExecutablePath.description"
+                        ),
+                    }
+                },
                 "minLength": 1,
             },
             "environment": {

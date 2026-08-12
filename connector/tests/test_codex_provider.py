@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -68,24 +69,57 @@ async def _test_codex_provider_schema_exposes_no_ipc_or_app_server_switches() ->
     schema = await provider.get_config_schema()
 
     assert schema.defaults == {
-        "runtimeBinaryMode": "prefer_system",
+        "useSystemCodex": True,
         "environment": {},
         "customModels": [],
     }
     assert schema.ui_schema["order"] == [
-        "runtimeBinaryMode",
+        "useSystemCodex",
+        "codexExecutablePath",
         "environment",
         "customModels",
     ]
     assert schema.ui_schema["customModels"]["component"] == "customModels"
     assert set(schema.schema["properties"]) == {
+        "codexExecutablePath",
         "customModels",
         "environment",
-        "runtimeBinaryMode",
+        "useSystemCodex",
+    }
+    assert schema.schema["properties"]["useSystemCodex"] == {
+        "type": "boolean",
+        "title": "Use System Codex",
+        "description": (
+            "Use the Codex executable found in the user's login shell PATH. "
+            "If it is unavailable, fall back to the bundled Codex executable. "
+            "Turn this off to always use the bundled Codex executable."
+        ),
+        "metadata": {
+            "i18n": {
+                "labelKey": (
+                    "dashboard.device.runtimeConfigFields.useSystemCodex.label"
+                ),
+                "descriptionKey": (
+                    "dashboard.device.runtimeConfigFields.useSystemCodex.description"
+                ),
+            }
+        },
+        "default": True,
     }
     assert "sdkMode" not in schema.schema["properties"]
     assert "ipcEnabled" not in schema.schema["properties"]
     assert "executablePath" not in schema.schema["properties"]
+    assert schema.ui_schema["codexExecutablePath"]["component"] == "path"
+    assert schema.schema["properties"]["codexExecutablePath"]["metadata"] == {
+        "i18n": {
+            "labelKey": (
+                "dashboard.device.runtimeConfigFields.codexExecutablePath.label"
+            ),
+            "descriptionKey": (
+                "dashboard.device.runtimeConfigFields.codexExecutablePath.description"
+            ),
+        }
+    }
 
 
 def test_codex_provider_validates_sdk_config() -> None:
@@ -115,7 +149,7 @@ async def _test_codex_provider_validates_sdk_config() -> None:
 
     assert config.runtime == "codex"
     assert config.values == {
-        "runtimeBinaryMode": "prefer_system",
+        "useSystemCodex": True,
         "environment": {"EXAMPLE": "1"},
         "customModels": [
             {
@@ -133,6 +167,69 @@ async def _test_codex_provider_validates_sdk_config() -> None:
     assert config.metadata["sdk"]["available"] is True
     assert config.metadata["runtimeBinary"]["mode"] == "prefer_system"
     assert "launchTarget" not in config.metadata
+
+
+def test_codex_provider_can_force_bundled_codex() -> None:
+    asyncio.run(_test_codex_provider_can_force_bundled_codex())
+
+
+async def _test_codex_provider_can_force_bundled_codex() -> None:
+    provider = CodexProvider(sdk_checker=_available_sdk)
+
+    config = await provider.validate_config({"useSystemCodex": False})
+
+    assert config.values["useSystemCodex"] is False
+    assert config.metadata["runtimeBinary"]["mode"] == "sdk_bundled"
+    assert config.metadata["runtimeBinary"]["source"] == "sdk_bundled"
+
+
+def test_codex_provider_uses_configured_executable_path(tmp_path: Path) -> None:
+    asyncio.run(_test_codex_provider_uses_configured_executable_path(tmp_path))
+
+
+async def _test_codex_provider_uses_configured_executable_path(
+    tmp_path: Path,
+) -> None:
+    codex_bin = tmp_path / "codex-custom"
+    codex_bin.write_text("#!/bin/sh\n", encoding="utf-8")
+    codex_bin.chmod(0o755)
+    provider = CodexProvider(sdk_checker=_available_sdk)
+
+    config = await provider.validate_config(
+        {
+            "useSystemCodex": False,
+            "codexExecutablePath": f"  {codex_bin}  ",
+        }
+    )
+
+    assert config.values["codexExecutablePath"] == str(codex_bin)
+    assert config.metadata["runtimeBinary"]["source"] == "configured"
+    assert config.metadata["runtimeBinary"]["codexBin"] == str(codex_bin)
+
+
+def test_codex_provider_ignores_empty_executable_path() -> None:
+    asyncio.run(_test_codex_provider_ignores_empty_executable_path())
+
+
+async def _test_codex_provider_ignores_empty_executable_path() -> None:
+    provider = CodexProvider(sdk_checker=_available_sdk)
+
+    config = await provider.validate_config({"codexExecutablePath": "   "})
+
+    assert "codexExecutablePath" not in config.values
+
+
+def test_codex_provider_rejects_non_executable_path(tmp_path: Path) -> None:
+    asyncio.run(_test_codex_provider_rejects_non_executable_path(tmp_path))
+
+
+async def _test_codex_provider_rejects_non_executable_path(tmp_path: Path) -> None:
+    codex_bin = tmp_path / "codex-custom"
+    codex_bin.write_text("not executable\n", encoding="utf-8")
+    provider = CodexProvider(sdk_checker=_available_sdk)
+
+    with pytest.raises(RuntimeInvalidRequestError, match="executable file"):
+        await provider.validate_config({"codexExecutablePath": str(codex_bin)})
 
 
 def test_codex_provider_rejects_missing_sdk() -> None:
@@ -159,8 +256,8 @@ async def _test_codex_provider_rejects_legacy_config_fields() -> None:
         await provider.validate_config({"ipcEnabled": True})
     with pytest.raises(RuntimeInvalidRequestError, match="Additional properties"):
         await provider.validate_config({"executablePath": "/opt/codex"})
-    with pytest.raises(RuntimeInvalidRequestError, match="runtimeBinaryMode"):
-        await provider.validate_config({"runtimeBinaryMode": "app-server"})
+    with pytest.raises(RuntimeInvalidRequestError, match="Additional properties"):
+        await provider.validate_config({"runtimeBinaryMode": "prefer_system"})
 
 
 def test_codex_provider_rejects_duplicate_custom_models() -> None:

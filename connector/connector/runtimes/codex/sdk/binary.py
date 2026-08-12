@@ -11,7 +11,7 @@ from typing import Literal
 from connector.logging import logger
 
 CodexRuntimeBinaryMode = Literal["prefer_system", "sdk_bundled"]
-CodexRuntimeBinarySource = Literal["system", "sdk_bundled"]
+CodexRuntimeBinarySource = Literal["configured", "system", "sdk_bundled"]
 
 LOGIN_SHELL_PATH_MARKER = "__AGENTS_ANYWHERE_PATH__"
 
@@ -31,16 +31,6 @@ class CodexRuntimeBinarySelection:
     login_shell: str | None
     login_shell_path: str | None
     reason: str | None = None
-
-
-def codex_runtime_binary_mode(value: object) -> CodexRuntimeBinaryMode:
-    if value is None:
-        return "prefer_system"
-    if value == "prefer_system":
-        return "prefer_system"
-    if value == "sdk_bundled":
-        return "sdk_bundled"
-    raise ValueError("runtimeBinaryMode must be prefer_system or sdk_bundled")
 
 
 def default_login_shell() -> str | None:
@@ -131,7 +121,19 @@ def select_codex_runtime_binary(
     mode: CodexRuntimeBinaryMode,
     environment: Mapping[str, str],
     shell_path: LoginShellPathResult,
+    *,
+    configured_path: str | None = None,
 ) -> CodexRuntimeBinarySelection:
+    if configured_path is not None:
+        return CodexRuntimeBinarySelection(
+            mode=mode,
+            source="configured",
+            codex_bin=configured_path,
+            login_shell=shell_path.shell,
+            login_shell_path=shell_path.path,
+            reason="configured by codexExecutablePath",
+        )
+
     if mode == "sdk_bundled":
         return CodexRuntimeBinarySelection(
             mode=mode,
@@ -139,7 +141,7 @@ def select_codex_runtime_binary(
             codex_bin=None,
             login_shell=shell_path.shell,
             login_shell_path=shell_path.path,
-            reason="forced by runtimeBinaryMode",
+            reason="system Codex disabled by useSystemCodex",
         )
 
     system_codex = find_executable_on_path("codex", environment.get("PATH"))

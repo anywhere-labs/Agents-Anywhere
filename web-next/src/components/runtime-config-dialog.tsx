@@ -66,18 +66,14 @@ type RuntimeConfigDialogProps = {
   onSave: (config: Record<string, unknown>) => Promise<void>
 }
 
-const RUNTIME_CONFIG_FIELD_COPY: Record<string, { titleKey: string; descriptionKey?: string }> = {
-  executablePath: {
-    titleKey: "runtimeConfigExecutablePath",
-    descriptionKey: "runtimeConfigExecutablePathDescription",
-  },
-  environment: {
-    titleKey: "runtimeConfigEnvironment",
-    descriptionKey: "runtimeConfigEnvironmentDescription",
+const RUNTIME_CONFIG_COMPONENT_COPY: Record<string, { titleKey: string; descriptionKey?: string }> = {
+  keyValue: {
+    titleKey: "runtimeConfigComponents.keyValue.label",
+    descriptionKey: "runtimeConfigComponents.keyValue.description",
   },
   customModels: {
-    titleKey: "runtimeConfigCustomModels",
-    descriptionKey: "runtimeConfigCustomModelsDescription",
+    titleKey: "runtimeConfigComponents.customModels.label",
+    descriptionKey: "runtimeConfigComponents.customModels.description",
   },
 }
 
@@ -238,9 +234,13 @@ function RuntimeConfigField({
   onChange: (value: unknown) => void
 }) {
   const t = useTranslations("dashboard.device")
-  const copy = RUNTIME_CONFIG_FIELD_COPY[name]
-  const title = copy ? t(copy.titleKey) : schema.title ?? name
-  const description = copy?.descriptionKey ? t(copy.descriptionKey) : schema.description
+  const tRoot = useTranslations()
+  const component = runtimeConfigComponent(schema, ui)
+  const componentCopy = RUNTIME_CONFIG_COMPONENT_COPY[component ?? ""]
+  const title = schemaI18nText(tRoot, schema, "labelKey")
+    ?? (componentCopy ? t(componentCopy.titleKey) : schema.title ?? name)
+  const description = schemaI18nText(tRoot, schema, "descriptionKey")
+    ?? (componentCopy?.descriptionKey ? t(componentCopy.descriptionKey) : schema.description)
   const inputId = `runtime-config-${name}`
   const effectiveValue = value === undefined ? schema.default : value
 
@@ -382,6 +382,31 @@ function RuntimeConfigField({
       <FieldError>{error}</FieldError>
     </Field>
   )
+}
+
+function runtimeConfigComponent(schema: JsonSchema, ui: UiField): string | undefined {
+  if (typeof ui.component === "string" && ui.component) return ui.component
+  if (schema.type === "object" && isRecord(schema.additionalProperties)) return "keyValue"
+  return undefined
+}
+
+function schemaI18nText(
+  translate: (key: string) => string,
+  schema: JsonSchema,
+  field: "labelKey" | "descriptionKey",
+): string | undefined {
+  const metadata = schema.metadata
+  if (!isRecord(metadata)) return undefined
+  const i18n = metadata.i18n
+  if (!isRecord(i18n)) return undefined
+  const key = i18n[field]
+  if (typeof key !== "string" || !key) return undefined
+  try {
+    const translated = translate(key)
+    return translated === key ? undefined : translated
+  } catch {
+    return undefined
+  }
 }
 
 type EnvironmentRow = { id: number; key: string; value: string; removed: boolean }

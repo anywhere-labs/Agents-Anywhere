@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import Any
 
 from connector.runtime_protocol import RuntimeInvalidRequestError
-from connector.runtimes.codex.sdk.binary import codex_runtime_binary_mode
+from connector.runtimes.codex.sdk.binary import CodexRuntimeBinaryMode
 from connector.runtimes.custom_models import custom_models_schema
 
 PROTECTED_ENV_PREFIXES = ("AGENT_CONNECTOR_", "AGENT_SERVER_")
@@ -33,16 +34,48 @@ def codex_config_schema() -> dict[str, Any]:
                 },
                 "default": {},
             },
-            "runtimeBinaryMode": {
-                "type": "string",
-                "title": "Codex runtime binary",
+            "useSystemCodex": {
+                "type": "boolean",
+                "title": "Use System Codex",
                 "description": (
-                    "prefer_system uses the codex executable found from the user's "
-                    "login shell PATH, falling back to the SDK bundled binary. "
-                    "sdk_bundled forces the SDK bundled binary."
+                    "Use the Codex executable found in the user's login shell PATH. "
+                    "If it is unavailable, fall back to the bundled Codex executable. "
+                    "Turn this off to always use the bundled Codex executable."
                 ),
-                "enum": ["prefer_system", "sdk_bundled"],
-                "default": "prefer_system",
+                "metadata": {
+                    "i18n": {
+                        "labelKey": (
+                            "dashboard.device.runtimeConfigFields."
+                            "useSystemCodex.label"
+                        ),
+                        "descriptionKey": (
+                            "dashboard.device.runtimeConfigFields."
+                            "useSystemCodex.description"
+                        ),
+                    }
+                },
+                "default": True,
+            },
+            "codexExecutablePath": {
+                "type": "string",
+                "title": "Codex executable path",
+                "description": (
+                    "Optional path to a Codex executable. When set, this executable "
+                    "is always used and the Use System Codex setting is ignored. "
+                    "Leave this empty to use the automatic binary selection."
+                ),
+                "metadata": {
+                    "i18n": {
+                        "labelKey": (
+                            "dashboard.device.runtimeConfigFields."
+                            "codexExecutablePath.label"
+                        ),
+                        "descriptionKey": (
+                            "dashboard.device.runtimeConfigFields."
+                            "codexExecutablePath.description"
+                        ),
+                    }
+                },
             },
             "customModels": custom_models_schema(),
         },
@@ -98,8 +131,38 @@ def merge_environment(raw: Any) -> dict[str, str]:
     return environment
 
 
-def normalize_runtime_binary_mode(raw: Any) -> str:
-    try:
-        return codex_runtime_binary_mode(raw)
-    except ValueError as exc:
-        raise RuntimeInvalidRequestError(str(exc)) from exc
+def runtime_binary_mode_for_system_preference(
+    use_system_codex: bool,
+) -> CodexRuntimeBinaryMode:
+    return "prefer_system" if use_system_codex else "sdk_bundled"
+
+
+def normalize_system_codex_preference(
+    use_system_codex: Any,
+) -> bool:
+    if isinstance(use_system_codex, bool):
+        return use_system_codex
+    if use_system_codex is None:
+        return True
+    raise RuntimeInvalidRequestError("useSystemCodex must be a boolean")
+
+
+def normalize_codex_executable_path(raw: Any) -> str | None:
+    if raw is None:
+        return None
+    if not isinstance(raw, str):
+        raise RuntimeInvalidRequestError("codexExecutablePath must be a string")
+    path = raw.strip()
+    if not path:
+        return None
+    return os.path.expandvars(str(Path(path).expanduser()))
+
+
+def validate_codex_executable_path(path: str | None) -> None:
+    if path is None:
+        return
+    candidate = Path(path)
+    if not candidate.is_file() or not os.access(candidate, os.X_OK):
+        raise RuntimeInvalidRequestError(
+            "codexExecutablePath must point to an executable file"
+        )
