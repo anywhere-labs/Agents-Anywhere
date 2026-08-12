@@ -19,6 +19,7 @@ from openai_codex.generated.v2_all import (
     Thread,
     ThreadItem,
     Turn,
+    TurnError,
     TurnStatus,
     UserInput,
     UserMessageThreadItem,
@@ -763,6 +764,57 @@ def test_codex_sdk_event_normalizes_typed_turn_completion() -> None:
     assert event.params["turn"]["id"] == "turn_done"
     assert event.params["turn"]["items"][0]["type"] == "agentMessage"
     assert event.params["turn"]["items"][0]["text"] == "hello"
+
+
+def test_codex_sdk_event_normalizes_typed_failed_turn_completion() -> None:
+    event = CodexSdkEvent.from_value(
+        Notification(
+            method="turn/completed",
+            payload=TurnCompletedNotification(
+                threadId="thread_1",
+                turn=Turn(
+                    id="turn_failed",
+                    status=TurnStatus.failed,
+                    items=[],
+                    completedAt=None,
+                    durationMs=None,
+                    error=TurnError(
+                        message="Exploded",
+                        additionalDetails="details",
+                        codexErrorInfo=None,
+                    ),
+                    itemsView=None,
+                    startedAt=None,
+                ),
+            ),
+        ),
+    )
+
+    assert event.event_type == "turn/failed"
+    assert event.params["turn"]["error"]["message"] == "Exploded"
+
+
+def test_codex_sdk_event_normalizes_typed_interrupted_turn_completion() -> None:
+    event = CodexSdkEvent.from_value(
+        Notification(
+            method="turn/completed",
+            payload=TurnCompletedNotification(
+                threadId="thread_1",
+                turn=Turn(
+                    id="turn_interrupted",
+                    status=TurnStatus.interrupted,
+                    items=[],
+                    completedAt=None,
+                    durationMs=None,
+                    error=None,
+                    itemsView=None,
+                    startedAt=None,
+                ),
+            ),
+        ),
+    )
+
+    assert event.event_type == "turn/interrupted"
 
 
 def test_codex_timeline_projects_context_compaction_thread_item() -> None:
@@ -3864,6 +3916,44 @@ async def _test_codex_runtime_failed_turn_creates_blocking_error_notice() -> Non
     assert error_update["error"]["code"] == "boom"
 
 
+def test_codex_runtime_native_failed_completion_sets_error_state() -> None:
+    asyncio.run(_test_codex_runtime_native_failed_completion_sets_error_state())
+
+
+async def _test_codex_runtime_native_failed_completion_sets_error_state() -> None:
+    host = FakeHost()
+    runtime = CodexRuntime(config=_config(), host=host, client=FakeCodexClient())
+
+    await runtime.start_turn("sess_1", "thread_1", "hello")
+    await runtime._handle_notification(
+        {
+            "method": "turn/completed",
+            "params": {
+                "platformSessionId": "sess_1",
+                "threadId": "thread_1",
+                "turnId": "turn_new",
+                "turn": {
+                    "id": "turn_new",
+                    "status": "failed",
+                    "items": [],
+                    "error": {
+                        "code": "native_failure",
+                        "message": "Native turn failed",
+                    },
+                },
+            },
+        }
+    )
+
+    error_update = next(
+        update
+        for update in reversed(host.state_updates)
+        if update["status"] == "error"
+    )
+    assert error_update["error"]["code"] == "native_failure"
+    assert error_update["error"]["message"] == "Native turn failed"
+
+
 def test_codex_runtime_tags_completed_user_echo_with_client_message_id() -> None:
     asyncio.run(_test_codex_runtime_tags_completed_user_echo_with_client_message_id())
 
@@ -4252,11 +4342,11 @@ async def _test_codex_runtime_snapshot_and_live_use_same_sdk_item_identity() -> 
     assert snapshot.items[0].source["derivedKey"] == live_item.source["derivedKey"]
 
 
-def test_codex_sdk_stream_finally_emits_completed_when_sdk_omits_it() -> None:
-    asyncio.run(_test_codex_sdk_stream_finally_emits_completed_when_sdk_omits_it())
+def test_codex_sdk_stream_exhaustion_emits_failed_when_sdk_omits_terminal() -> None:
+    asyncio.run(_test_codex_sdk_stream_exhaustion_emits_failed_when_sdk_omits_terminal())
 
 
-async def _test_codex_sdk_stream_finally_emits_completed_when_sdk_omits_it() -> None:
+async def _test_codex_sdk_stream_exhaustion_emits_failed_when_sdk_omits_terminal() -> None:
     emitted: list[Any] = []
     client = CodexSdkClient(_FakeSdkClient())
 
@@ -4269,9 +4359,14 @@ async def _test_codex_sdk_stream_finally_emits_completed_when_sdk_omits_it() -> 
 
     assert [_notification_method(message) for message in emitted] == [
         "item/agentMessage/delta",
-        "turn/completed",
+        "turn/failed",
     ]
-    assert emitted[-1]["params"]["metadata"] == {"source": "codex.sdk.stream.finally"}
+    assert emitted[-1]["params"]["error"]["code"] == (
+        "codex_stream_ended_without_terminal_event"
+    )
+    assert emitted[-1]["params"]["metadata"] == {
+        "source": "codex.sdk.stream.exhausted"
+    }
 
 
 def test_codex_sdk_start_turn_initializes_before_low_level_detection() -> None:

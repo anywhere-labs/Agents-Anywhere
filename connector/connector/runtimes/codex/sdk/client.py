@@ -600,11 +600,15 @@ class CodexSdkClient:
             if not completed_seen and not cancelled:
                 await self._emit(
                     {
-                        "method": "turn/completed",
+                        "method": "turn/failed",
                         "params": {
                             "threadId": thread_id,
                             "turnId": turn_id,
-                            "metadata": {"source": "codex.sdk.stream.finally"},
+                            "error": {
+                                "code": "codex_stream_ended_without_terminal_event",
+                                "message": "Codex stream ended without a terminal turn event.",
+                            },
+                            "metadata": {"source": "codex.sdk.stream.exhausted"},
                         },
                     }
                 )

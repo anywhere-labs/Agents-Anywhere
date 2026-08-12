@@ -188,7 +188,7 @@ class CodexSdkEvent:
                 "output_delta",
             )
         return cls(
-            event_type=event_type,
+            event_type=canonical_turn_event_type(event_type, params),
             thread_id=thread_id,
             platform_session_id=_first_string(
                 params,
@@ -240,6 +240,20 @@ class CodexSdkEvent:
             **({"id": self.request_id} if self.request_id is not None else {}),
             "params": dict(self.params),
         }
+
+
+def canonical_turn_event_type(event_type: str, params: dict[str, Any]) -> str:
+    if event_type != "turn/completed":
+        return event_type
+    turn = params.get("turn")
+    if not isinstance(turn, dict):
+        return event_type
+    status = turn.get("status")
+    if status == "failed":
+        return "turn/failed"
+    if status == "interrupted":
+        return "turn/interrupted"
+    return event_type
 
 
 def sdk_event_mapping(value: Any) -> dict[str, Any]:

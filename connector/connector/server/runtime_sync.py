@@ -28,7 +28,7 @@ NotificationSender = Callable[[str, dict[str, Any]], Awaitable[None]]
 IngestNotificationSender = Callable[[list[dict[str, Any]]], Awaitable[None]]
 PreferencesReader = Callable[[], dict[str, Any]]
 ACTIVE_SESSION_SYNC_SKIP_STATUSES: frozenset[RuntimeStatus] = frozenset(
-    {"waiting", "pending", "running", "stopping"}
+    {"waiting", "pending", "running", "waiting_approval", "stopping"}
 )
 
 
@@ -51,6 +51,9 @@ class RuntimeSyncRunner:
         self.send_notification = send_notification
         self.ingest_notifications = ingest_notifications
         self._last_preferences: dict[str, Any] | None = None
+        self._last_active_session_updates: dict[
+            str, tuple[SessionMeta, SessionState]
+        ] = {}
 
     async def sync_existing_loop(self) -> None:
         if not self.config.sync_existing_on_connect:
@@ -134,11 +137,14 @@ class RuntimeSyncRunner:
         """Publish one discovered session and any required fresh timeline.
 
         Side effects:
-        - upserts session meta to the platform immediately
+        - upserts new or changed session meta to the platform
         - when the runtime marks the session as changed, reads and pushes its
           timeline snapshot, current state, and active notices
+        - publishes an active session's meta and state once per distinct update
         """
         if not session_requires_timeline_sync(session):
+            if session_sync_changed(session) is False:
+                return
             await self.host.session_meta_upsert(
                 session_id=session.session_id,
                 runtime=session.runtime,
@@ -163,19 +169,30 @@ class RuntimeSyncRunner:
             session.external_session_id,
         )
         if state is not None and state.status in ACTIVE_SESSION_SYNC_SKIP_STATUSES:
+            active_update = (session, state)
+            if self._last_active_session_updates.get(session.session_id) == active_update:
+                logger.debug(
+                    "existing session sync suppressed unchanged active session runtime={} session_id={} status={}",
+                    session.runtime,
+                    session.session_id,
+                    state.status,
+                )
+                return
             await self._ingest_scanner_notifications(
                 [
                     _session_meta_notification(session),
                     _session_state_notification(state),
                 ]
             )
+            self._last_active_session_updates[session.session_id] = active_update
             logger.info(
-                "existing session timeline sync skipped active session runtime={} session_id={} status={}",
+                "existing session sync deferred active session runtime={} session_id={} status={}",
                 session.runtime,
                 session.session_id,
                 state.status,
             )
             return
+        self._last_active_session_updates.pop(session.session_id, None)
         prepared = await runtime.prepare_session_timeline_sync(
             session.session_id,
             session.external_session_id,
@@ -304,6 +321,14 @@ def session_requires_timeline_sync(session: SessionMeta) -> bool:
     if not isinstance(sync, dict):
         return False
     return sync.get("requires_timeline_sync") is True
+
+
+def session_sync_changed(session: SessionMeta) -> bool | None:
+    sync = session.metadata.get("sync")
+    if not isinstance(sync, dict):
+        return None
+    changed = sync.get("changed")
+    return changed if isinstance(changed, bool) else None
 
 
 def _session_meta_notification(session: SessionMeta) -> dict[str, Any]:

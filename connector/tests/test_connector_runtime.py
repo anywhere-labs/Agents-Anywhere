@@ -1167,7 +1167,12 @@ async def _exercise_runtime_sync_pushes_each_session_snapshot_before_next_meta()
                     title="Unchanged",
                     cwd="/repo",
                     ordering_time="2026-08-01T00:00:00Z",
-                    metadata={"sync": {"requires_timeline_sync": False}},
+                    metadata={
+                        "sync": {
+                            "requires_timeline_sync": False,
+                            "changed": False,
+                        }
+                    },
                 ),
             )
 
@@ -1211,7 +1216,6 @@ async def _exercise_runtime_sync_pushes_each_session_snapshot_before_next_meta()
         ("timeline", "sess_changed"),
         ("state", "sess_changed"),
         ("notice", "sess_changed"),
-        ("meta", "sess_unchanged"),
     ]
     assert [call[0] for call in runtime.calls] == [
         "runtime.modelCatalog",
@@ -1408,14 +1412,21 @@ async def _exercise_runtime_sync_skips_active_session_timeline_reads() -> None:
     )
 
     await runner.sync_existing_once()
+    await runner.sync_existing_once()
 
     assert host.events == [
         ("model_catalog", "codex"),
         ("permission_catalog", "codex"),
         ("meta", "sess_running"),
         ("state", "sess_running"),
+        ("model_catalog", "codex"),
+        ("permission_catalog", "codex"),
     ]
     assert [call[0] for call in runtime.calls] == [
+        "runtime.modelCatalog",
+        "runtime.permissionCatalog",
+        "session.discover",
+        "session.state",
         "runtime.modelCatalog",
         "runtime.permissionCatalog",
         "session.discover",
@@ -1425,6 +1436,7 @@ async def _exercise_runtime_sync_skips_active_session_timeline_reads() -> None:
         "session.meta.upsert",
         "session.state.updated",
     ]
+    assert len(ingested_batches) == 1
 
 
 async def _exercise_runtime_sync_continues_after_single_session_ingest_failure() -> None:
