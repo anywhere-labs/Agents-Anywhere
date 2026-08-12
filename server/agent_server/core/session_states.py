@@ -25,7 +25,6 @@ class SessionStateFacts:
     current_status: SessionStatus
     observed_status: SessionStatus | None = None
     has_active_run: bool = False
-    has_active_timeline_work: bool = False
     has_blocking_interaction: bool = False
     settle_stopping: bool = False
 
@@ -37,12 +36,8 @@ def derive_session_status(facts: SessionStateFacts) -> SessionStatus:
         return facts.observed_status
     if facts.current_status == "stopping" and not facts.settle_stopping:
         return "stopping"
-    if facts.observed_status == "stopping" and (
-        facts.has_active_run or facts.has_active_timeline_work
-    ):
+    if facts.observed_status == "stopping" and facts.has_active_run:
         return "stopping"
-    if facts.has_active_timeline_work:
-        return "running"
     if facts.observed_status == "running":
         return "running"
     if facts.has_active_run:

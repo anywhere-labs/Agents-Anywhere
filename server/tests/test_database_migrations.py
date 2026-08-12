@@ -228,6 +228,44 @@ def test_unversioned_v2_2_database_is_stamped_then_upgraded(tmp_path) -> None:
     finally:
         engine.dispose()
 
+
+@pytest.mark.parametrize("source_revision", ["v2_7", "v2_8", "v2_9"])
+def test_unversioned_recent_v2_database_runs_remaining_migrations(
+    tmp_path,
+    source_revision: str,
+) -> None:
+    path = tmp_path / f"unversioned-{source_revision}.sqlite3"
+    upgrade_database(db_url=_sqlite_url(path), revision=source_revision)
+    engine = create_engine(f"sqlite:///{path}")
+    try:
+        with engine.begin() as connection:
+            connection.execute(text("DROP TABLE alembic_version"))
+    finally:
+        engine.dispose()
+
+    upgrade_database(db_url=_sqlite_url(path))
+
+    engine = create_engine(f"sqlite:///{path}")
+    try:
+        inspector = inspect(engine)
+        assert "timeline_reset_seq" in {
+            column["name"] for column in inspector.get_columns("sessions")
+        }
+        assert "turn_id" not in {
+            column["name"]
+            for column in inspector.get_columns("session_active_runs")
+        }
+        assert "turn_id" not in {
+            column["name"] for column in inspector.get_columns("timeline_items")
+        }
+        with engine.connect() as connection:
+            assert connection.execute(
+                text("SELECT version_num FROM alembic_version")
+            ).scalar_one() == CURRENT_SCHEMA_REVISION
+    finally:
+        engine.dispose()
+
+
 def test_v2_0_database_upgrades_through_current_revision(tmp_path) -> None:
     path = tmp_path / "versioned-v2-0.sqlite3"
     upgrade_database(db_url=_sqlite_url(path), revision="v2_0")
@@ -273,6 +311,8 @@ def test_v2_0_database_upgrades_through_current_revision(tmp_path) -> None:
         ("v2_5", "v2_6"),
         ("v2_6", "v2_7"),
         ("v2_7", "v2_8"),
+        ("v2_8", "v2_9"),
+        ("v2_9", "v2_10"),
     ],
 )
 def test_every_adjacent_schema_upgrade(
@@ -415,6 +455,35 @@ def test_v2_9_removes_turn_data_from_timelines(tmp_path) -> None:
             column["name"]
             for column in inspect(engine).get_columns("session_active_runs")
         }
+    finally:
+        engine.dispose()
+
+
+def test_v2_10_adds_timeline_reset_watermark(tmp_path) -> None:
+    path = tmp_path / "v2_10-timeline-reset.sqlite3"
+    upgrade_database(db_url=_sqlite_url(path), revision="v2_9")
+
+    engine = create_engine(f"sqlite:///{path}")
+    try:
+        assert "timeline_reset_seq" not in {
+            column["name"] for column in inspect(engine).get_columns("sessions")
+        }
+    finally:
+        engine.dispose()
+
+    upgrade_database(db_url=_sqlite_url(path), revision="v2_10")
+
+    engine = create_engine(f"sqlite:///{path}")
+    try:
+        columns = {
+            column["name"]: column
+            for column in inspect(engine).get_columns("sessions")
+        }
+        assert columns["timeline_reset_seq"]["nullable"] is False
+        with engine.connect() as connection:
+            assert connection.execute(
+                text("SELECT version_num FROM alembic_version")
+            ).scalar_one() == "v2_10"
     finally:
         engine.dispose()
 

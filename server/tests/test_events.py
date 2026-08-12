@@ -50,6 +50,22 @@ def test_timeline_reset_invalidation_becomes_one_snapshot_event() -> None:
     assert events[0].payload["items"][0]["id"] == "item-1"
 
 
+def test_empty_timeline_reset_becomes_one_empty_snapshot_event() -> None:
+    events = events_from_invalidation(
+        {
+            "sessionId": "session-1",
+            "nextSeq": 4,
+            "timelineReset": True,
+            "items": [],
+        }
+    )
+
+    assert len(events) == 1
+    assert events[0].type == "timeline.snapshot"
+    assert events[0].sequence == 4
+    assert events[0].payload["items"] == []
+
+
 def test_notice_reset_invalidation_becomes_one_snapshot_event() -> None:
     events = events_from_invalidation(
         {
@@ -176,7 +192,7 @@ def test_recovery_requires_every_durable_revision_to_be_projected() -> None:
     )
 
 
-def test_timeline_snapshot_replace_does_not_require_snapshot_for_sparse_watermark(
+def test_timeline_snapshot_replace_requires_snapshot_for_deleted_items(
     tmp_path,
 ) -> None:
     async def exercise() -> None:
@@ -213,7 +229,7 @@ def test_timeline_snapshot_replace_does_not_require_snapshot_for_sparse_watermar
                 user_id="user-1",
             )
 
-            assert recovery.snapshotRequired is False
+            assert recovery.snapshotRequired is True
         finally:
             await presence.close()
             await store.close()

@@ -2419,7 +2419,7 @@ def test_session_state_update_drives_runtime_status_independently_from_timeline(
         assert updated["items"][0]["content"]["text"] == "hello done"
 
 
-def test_timeline_upsert_removes_legacy_history_duplicates(tmp_path):
+def test_timeline_sync_preserves_distinct_runtime_item_ids(tmp_path):
     client = make_client(tmp_path)
     _, access_token, session_id, headers = create_connector_and_session(client)
 
@@ -2470,10 +2470,10 @@ def test_timeline_upsert_removes_legacy_history_duplicates(tmp_path):
 
         state = wait_for_item_update(client, session_id, headers, 0)
         messages = [item for item in state["items"] if item["type"] == "message"]
-        assert [item["id"] for item in messages] == ["tl_canonical"]
+        assert [item["id"] for item in messages] == ["tl_legacy", "tl_canonical"]
 
 
-def test_timeline_sync_removes_snapshot_reasoning_duplicate_after_live_item(tmp_path):
+def test_timeline_sync_preserves_distinct_reasoning_item_ids(tmp_path):
     client = make_client(tmp_path)
     _, access_token, session_id, headers = create_connector_and_session(client)
 
@@ -2559,7 +2559,10 @@ def test_timeline_sync_removes_snapshot_reasoning_duplicate_after_live_item(tmp_
         for item in state["items"]
         if item["type"] == "system" and item["content"].get("kind") == "reasoning"
     ]
-    assert [item["id"] for item in reasoning_items] == ["tl_live_reasoning"]
+    assert [item["id"] for item in reasoning_items] == [
+        "tl_live_reasoning",
+        "tl_snapshot_reasoning",
+    ]
 
 
 def test_complete_timeline_sync_dedupes_duplicate_item_ids(tmp_path):
@@ -4098,7 +4101,7 @@ def test_send_message_forwards_uploaded_attachment_metadata_to_connector(tmp_pat
     ]
 
 
-def test_ingest_adds_active_run_attachments_to_user_message(tmp_path):
+def test_ingest_preserves_runtime_owned_user_message_identity_and_attachments(tmp_path):
     client = make_client(tmp_path)
     connector_id, access_token, session_id, headers = create_connector_and_session(client)
     fake_rpc = FakeLocalRpc()
@@ -4143,20 +4146,23 @@ def test_ingest_adds_active_run_attachments_to_user_message(tmp_path):
                             "status": "done",
                             "role": "user",
                             "content": {
-                                "text": (
-                                    "read attachment "
-                                    "/Users/t4wefan/.agents-anywhere/attachments/"
-                                    "sess_demo/file_demo-notes.md "
-                                    "Attached file: notes.md at "
-                                    "/Users/t4wefan/.agents-anywhere/attachments/"
-                                    "sess_demo/file_demo-notes.md"
-                                )
+                                "text": "read attachment",
+                                "attachments": [
+                                    {
+                                        "fileId": attachment["fileId"],
+                                        "name": "notes.md",
+                                        "mediaType": "text/markdown",
+                                        "size": len(data),
+                                        "sha256": hashlib.sha256(data).hexdigest(),
+                                    }
+                                ],
                             },
                             "source": {
                                 "runtime": "codex",
                                 "sessionId": "thr_demo",
                                 "turnId": "turn_file",
                                 "event": "item/completed",
+                                "clientMessageId": "opt_file",
                             },
                             "orderSeq": 1,
                             "revision": 1,
@@ -4502,7 +4508,7 @@ def test_timeline_items_do_not_own_active_run(tmp_path):
     assert asyncio.run(client.app.state.store.get_active_run(session_id)) is None
 
 
-def test_claude_chat_active_run_merges_history_timeline_sync(tmp_path):
+def test_claude_history_sync_uses_runtime_owned_user_identity(tmp_path):
     client = make_client(tmp_path)
     connector_id, access_token, _, headers = create_connector_and_session(client)
     fake_rpc = FakeLocalRpc()
@@ -4543,6 +4549,7 @@ def test_claude_chat_active_run_merges_history_timeline_sync(tmp_path):
                                     "turnId": "turn_scanner",
                                     "event": "transcript-user",
                                     "derivedKey": "message",
+                                    "clientMessageId": "opt_active",
                                 },
                                 "orderSeq": 1,
                                 "revision": 1,
@@ -4562,7 +4569,7 @@ def test_claude_chat_active_run_merges_history_timeline_sync(tmp_path):
     assert asyncio.run(client.app.state.store.get_active_run(session_id)) is not None
 
 
-def test_timeline_sync_keeps_existing_client_message_id(tmp_path):
+def test_timeline_sync_accepts_runtime_source_updates_for_same_id(tmp_path):
     client = make_client(tmp_path)
     _, access_token, session_id, headers = create_connector_and_session(client)
 
@@ -4610,6 +4617,7 @@ def test_timeline_sync_keeps_existing_client_message_id(tmp_path):
             for key, value in tagged_item["source"].items()
             if key != "clientMessageId"
         },
+        "contentHash": "sha256:user-hi-without-client-id",
     }
     response = client.post(
         "/connector/ingest",
@@ -4629,7 +4637,7 @@ def test_timeline_sync_keeps_existing_client_message_id(tmp_path):
     assert response.status_code == 200, response.text
 
     state = session_view_for_assertions(client, session_id, headers)
-    assert state["items"][0]["source"]["clientMessageId"] == "opt_keep"
+    assert state["items"][0]["source"].get("clientMessageId") is None
 
 
 def test_timeline_sync_uses_content_hash_as_state_identity(tmp_path):
@@ -4741,7 +4749,7 @@ def test_timeline_sync_upserts_without_deleting_missing_items(tmp_path):
     assert by_id["tl_upsert_patch"]["content"]["text"] == "new text"
 
 
-def test_timeline_sync_tags_only_latest_active_run_message_and_keeps_run(tmp_path):
+def test_timeline_sync_does_not_infer_user_identity_from_active_run(tmp_path):
     client = make_client(tmp_path)
     connector_id, access_token, session_id, headers = create_connector_and_session(client)
     fake_rpc = FakeLocalRpc()
@@ -4795,7 +4803,7 @@ def test_timeline_sync_tags_only_latest_active_run_message_and_keeps_run(tmp_pat
     state = session_view_for_assertions(client, session_id, headers)
     by_id = {item["id"]: item for item in state["items"]}
     assert by_id["tl_old_user"]["source"].get("clientMessageId") is None
-    assert by_id["tl_new_user"]["source"]["clientMessageId"] == "opt_latest"
+    assert by_id["tl_new_user"]["source"].get("clientMessageId") is None
     active = asyncio.run(client.app.state.store.get_active_run(session_id))
     assert active is not None
     assert "turnId" not in active
@@ -6119,7 +6127,7 @@ def test_claude_history_sync_replaces_live_item_with_snapshot_same_id(tmp_path):
         tool = state["items"][0]
         assert tool["id"] == "claude_tool_result_same"
         assert tool["content"] == {"toolUseId": "toolu_1", "result": "passed"}
-        assert tool["revision"] == 1
+        assert tool["revision"] == 3
 
 
 def test_claude_timeline_sync_replaces_existing_timeline(tmp_path):
@@ -6395,49 +6403,54 @@ def test_claude_empty_timeline_sync_clears_existing_timeline(tmp_path):
     fake_rpc = FakeLocalRpc()
     client.app.state.rpc = fake_rpc
     session_id = _create_claude_session(client, connector_id, headers, fake_rpc)
+    ticket = ws_ticket(client, session_id, headers)
 
-    response = client.post(
-        "/connector/ingest",
-        headers={"Authorization": f"Bearer {access_token}"},
-        json={
-            "notifications": [
-                {
-                    "method": "timeline.itemUpsert",
-                    "params": {
-                        "sessionId": session_id,
-                        "item": {
-                            "id": "claude_live_only",
+    with client.websocket_connect(f"/sessions/{session_id}/ws?ticket={ticket}") as ws:
+        assert ws.receive_json()["type"] == "session.subscribed"
+        response = client.post(
+            "/connector/ingest",
+            headers={"Authorization": f"Bearer {access_token}"},
+            json={
+                "notifications": [
+                    {
+                        "method": "timeline.itemUpsert",
+                        "params": {
                             "sessionId": session_id,
-                            "turnId": "turn_live",
-                            "type": "message",
-                            "status": "done",
-                            "role": "assistant",
-                            "content": {"text": "live"},
-                            "source": {
-                                "runtime": "claude",
-                                "sessionId": "claude_session_1",
+                            "item": {
+                                "id": "claude_live_only",
+                                "sessionId": session_id,
                                 "turnId": "turn_live",
-                                "itemId": "msg_live",
-                                "itemType": "assistant",
+                                "type": "message",
+                                "status": "done",
+                                "role": "assistant",
+                                "content": {"text": "live"},
+                                "source": {
+                                    "runtime": "claude",
+                                    "sessionId": "claude_session_1",
+                                    "turnId": "turn_live",
+                                    "itemId": "msg_live",
+                                    "itemType": "assistant",
+                                },
+                                "orderSeq": 1,
+                                "revision": 1,
+                                "contentHash": "sha256:live",
                             },
-                            "orderSeq": 1,
-                            "revision": 1,
-                            "contentHash": "sha256:live",
                         },
                     },
-                },
-                {
-                    "method": "timeline.sync",
-                    "params": {
-                        "sessionId": session_id,
-                        "complete": True,
-                        "items": [],
+                    {
+                        "method": "timeline.sync",
+                        "params": {
+                            "sessionId": session_id,
+                            "complete": True,
+                            "items": [],
+                        },
                     },
-                },
-            ]
-        },
-    )
-    assert response.status_code == 200, response.text
+                ]
+            },
+        )
+        assert response.status_code == 200, response.text
+        snapshot_event = receive_session_ws_event(ws, "timeline.snapshot")
+        assert snapshot_event["payload"]["items"] == []
 
     state = session_view_for_assertions(client, session_id, headers)
     assert state["items"] == []
@@ -6853,6 +6866,65 @@ def test_session_ws_projects_codex_timeline_sync_as_incremental_update_without_r
         assert timeline_event["payload"]["item"]["content"]["text"] == "synced over ws"
 
 
+def test_increment_after_complete_timeline_sync_requests_refetch(tmp_path):
+    client = make_client(tmp_path)
+    _, access_token, session_id, headers = create_connector_and_session(client)
+    ticket = ws_ticket(client, session_id, headers)
+
+    def item(item_id: str, text: str, order_seq: int) -> dict[str, Any]:
+        return {
+            "id": item_id,
+            "sessionId": session_id,
+            "type": "message",
+            "status": "done",
+            "role": "assistant",
+            "content": {"text": text},
+            "source": {
+                "runtime": "codex",
+                "sessionId": "thr_1",
+                "itemId": item_id,
+                "itemType": "agentMessage",
+            },
+            "orderSeq": order_seq,
+            "revision": 1,
+            "contentHash": f"sha256:{item_id}",
+        }
+
+    with client.websocket_connect(f"/sessions/{session_id}/ws?ticket={ticket}") as ws:
+        assert ws.receive_json()["type"] == "session.subscribed"
+        response = client.post(
+            "/connector/ingest",
+            headers={"Authorization": f"Bearer {access_token}"},
+            json={
+                "notifications": [
+                    {
+                        "method": "timeline.sync",
+                        "params": {
+                            "sessionId": session_id,
+                            "complete": True,
+                            "items": [item("snapshot_item", "snapshot", 1)],
+                        },
+                    },
+                    {
+                        "method": "timeline.itemUpsert",
+                        "params": {
+                            "sessionId": session_id,
+                            "item": item("incremental_item", "incremental", 2),
+                        },
+                    },
+                ]
+            },
+        )
+        assert response.status_code == 200, response.text
+        assert ws.receive_json()["type"] == "session.refetch_required"
+
+    state = session_view_for_assertions(client, session_id, headers)
+    assert [value["id"] for value in state["items"]] == [
+        "snapshot_item",
+        "incremental_item",
+    ]
+
+
 def test_session_ws_pushes_compact_item_completion_update(tmp_path):
     client = make_client(tmp_path)
     _, access_token, session_id, headers = create_connector_and_session(client)
@@ -6940,7 +7012,7 @@ def test_session_ws_pushes_compact_item_completion_update(tmp_path):
         assert updated["payload"]["item"]["content"]["state"] == "completed"
 
 
-def test_unchanged_large_codex_timeline_sync_does_not_request_another_snapshot(tmp_path):
+def test_large_complete_codex_timeline_sync_refetches_once(tmp_path):
     client = make_client(tmp_path)
     _, access_token, session_id, headers = create_connector_and_session(client)
     ticket = ws_ticket(client, session_id, headers)
@@ -6970,7 +7042,11 @@ def test_unchanged_large_codex_timeline_sync_does_not_request_another_snapshot(t
         "notifications": [
             {
                 "method": "timeline.sync",
-                "params": {"sessionId": session_id, "items": items},
+                "params": {
+                    "sessionId": session_id,
+                    "complete": True,
+                    "items": items,
+                },
             }
         ]
     }
@@ -6983,7 +7059,11 @@ def test_unchanged_large_codex_timeline_sync_does_not_request_another_snapshot(t
             json=payload,
         )
         assert response.status_code == 200, response.text
-        receive_session_ws_event(ws, "session.refetch_required")
+        event = ws.receive_json()
+        assert event["type"] == "session.refetch_required"
+        sequence_after_first_sync = asyncio.run(
+            client.app.state.store.get_session_seq(session_id)
+        )
 
         response = client.post(
             "/connector/ingest",
@@ -6991,7 +7071,10 @@ def test_unchanged_large_codex_timeline_sync_does_not_request_another_snapshot(t
             json=payload,
         )
         assert response.status_code == 200, response.text
-        receive_session_ws_event(ws, "runtime.capability.updated")
+        assert (
+            asyncio.run(client.app.state.store.get_session_seq(session_id))
+            == sequence_after_first_sync
+        )
 
 
 def test_session_events_recovery_returns_json_events(tmp_path):
@@ -7276,7 +7359,7 @@ def test_existing_connector_session_metadata_sync_does_not_rearm_unread(tmp_path
     assert session["unread"] is False
 
 
-def test_timeline_sync_keeps_more_complete_existing_tool_item(tmp_path):
+def test_timeline_sync_accepts_latest_runtime_value_for_same_tool_id(tmp_path):
     client = make_client(tmp_path)
     _, access_token, session_id, headers = create_connector_and_session(client)
 
@@ -7344,14 +7427,14 @@ def test_timeline_sync_keeps_more_complete_existing_tool_item(tmp_path):
             client,
             session_id,
             headers,
-            lambda items: len(items) == 1 and items[0]["content"].get("outputText") == "1\n",
+            lambda items: len(items) == 1 and items[0]["status"] == "running",
         )
         assert len(state["items"]) == 1
-        assert state["items"][0]["status"] == "done"
-        assert state["items"][0]["content"]["outputText"] == "1\n"
+        assert state["items"][0]["status"] == "running"
+        assert state["items"][0]["content"].get("outputText") is None
 
 
-def test_timeline_sync_dedupes_snapshot_message_already_seen_live(tmp_path):
+def test_timeline_sync_preserves_same_content_with_distinct_ids(tmp_path):
     client = make_client(tmp_path)
     _, access_token, session_id, headers = create_connector_and_session(client)
 
@@ -7423,12 +7506,15 @@ def test_timeline_sync_dedupes_snapshot_message_already_seen_live(tmp_path):
             client,
             session_id,
             headers,
-            lambda items: len([item for item in items if item["type"] == "message"]) == 1,
+            lambda items: len([item for item in items if item["type"] == "message"]) == 2,
         )
-        assert [item["id"] for item in state["items"] if item["type"] == "message"] == ["tl_live_msg"]
+        assert [item["id"] for item in state["items"] if item["type"] == "message"] == [
+            "tl_live_msg",
+            "tl_snapshot_msg",
+        ]
 
 
-def test_timeline_sync_dedupes_same_source_item_with_snapshot_derived_key(tmp_path):
+def test_timeline_sync_preserves_distinct_ids_for_same_source_item(tmp_path):
     client = make_client(tmp_path)
     _, access_token, session_id, headers = create_connector_and_session(client)
     source = {
@@ -7490,14 +7576,17 @@ def test_timeline_sync_dedupes_same_source_item_with_snapshot_derived_key(tmp_pa
             json=sync_payload,
         )
         assert response.status_code == 200, response.text
-        cleanup_events = [ws.receive_json() for _ in range(2)]
-        assert "session.refetch_required" not in {
-            event["type"] for event in cleanup_events
-        }
+        receive_session_ws_event(ws, "timeline.item_created")
 
         state = session_view_for_assertions(client, session_id, headers)
         messages = [item for item in state["items"] if item["type"] == "message"]
-        assert [item["id"] for item in messages] == ["tl_live_real_msg"]
+        assert [item["id"] for item in messages] == [
+            "tl_live_real_msg",
+            "tl_snapshot_real_msg",
+        ]
+        sequence_after_first_sync = asyncio.run(
+            client.app.state.store.get_session_seq(session_id)
+        )
 
         response = client.post(
             "/connector/ingest",
@@ -7505,10 +7594,13 @@ def test_timeline_sync_dedupes_same_source_item_with_snapshot_derived_key(tmp_pa
             json=sync_payload,
         )
         assert response.status_code == 200, response.text
-        receive_session_ws_event(ws, "runtime.capability.updated")
+        assert (
+            asyncio.run(client.app.state.store.get_session_seq(session_id))
+            == sequence_after_first_sync
+        )
 
 
-def test_timeline_sync_deduped_snapshot_message_does_not_rearm_unread(tmp_path):
+def test_timeline_sync_new_distinct_id_advances_read_sequence(tmp_path):
     client = make_client(tmp_path)
     _, access_token, session_id, headers = create_connector_and_session(client)
 
@@ -7587,7 +7679,7 @@ def test_timeline_sync_deduped_snapshot_message_does_not_rearm_unread(tmp_path):
             return current if current["sourceObservedAt"] == "2026-06-08T00:00:02Z" else None
 
         session = wait_for(read_sessions)
-        assert session["updatedSeq"] == read_seq
+        assert session["updatedSeq"] > read_seq
         assert session["unread"] is False
 
 

@@ -263,6 +263,7 @@ sessions = Table(
     Column("archived", Integer, nullable=False, server_default="0"),
     Column("archived_at", Text),
     Column("last_read_seq", Integer, nullable=False, server_default="0"),
+    Column("timeline_reset_seq", Integer, nullable=False, server_default="0"),
     Column("last_synced_at", Text),
     Column("source_observed_at", Text),
     Column("last_activity_at", Text),

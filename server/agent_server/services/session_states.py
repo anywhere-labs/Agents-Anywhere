@@ -38,14 +38,10 @@ class SessionStateService:
     ) -> SessionStateDecision:
         session = await self._store.get_session(session_id)
         active_run = await self._store.get_active_run(session_id)
-        has_active_timeline_item = await self._store.has_active_timeline_item(
-            session_id
-        )
         facts = SessionStateFacts(
             current_status=session.status,
             observed_status=observed_status,
             has_active_run=active_run is not None,
-            has_active_timeline_work=has_active_timeline_item,
             has_blocking_interaction=False,
             settle_stopping=settle_stopping,
         )
