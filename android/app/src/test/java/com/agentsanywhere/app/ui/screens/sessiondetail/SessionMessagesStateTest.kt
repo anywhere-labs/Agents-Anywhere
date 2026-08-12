@@ -1,5 +1,7 @@
 package com.agentsanywhere.app.ui.screens.sessiondetail
 
+import com.agentsanywhere.app.feature.sessiondetail.attachmentCacheFileName
+import com.agentsanywhere.app.feature.sessiondetail.isValidAttachmentMediaType
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue

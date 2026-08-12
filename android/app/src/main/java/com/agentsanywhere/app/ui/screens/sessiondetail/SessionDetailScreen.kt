@@ -75,6 +75,8 @@ import com.agentsanywhere.app.feature.sessiondetail.SessionDetailState
 import com.agentsanywhere.app.feature.sessiondetail.SessionRuntimeStatus
 import com.agentsanywhere.app.feature.sessiondetail.SessionTimelineState
 import com.agentsanywhere.app.feature.sessiondetail.TimelineMessage
+import com.agentsanywhere.app.feature.sessiondetail.cacheDownloadedAttachment
+import com.agentsanywhere.app.feature.sessiondetail.isValidAttachmentMediaType
 import com.agentsanywhere.app.feature.sessiondetail.RuntimeMessageAction
 import com.agentsanywhere.app.feature.sessiondetail.RuntimeNotice
 import com.agentsanywhere.app.feature.sessiondetail.RuntimeNoticeAction
@@ -230,12 +232,9 @@ fun SessionDetailScreen(
         scope.launch {
             controller.downloadAttachment(id, attachment)
                 .onSuccess { downloaded ->
-                    val directory = File(context.cacheDir, "session-attachments").apply { mkdirs() }
-                    val target = File(
-                        directory,
-                        attachmentCacheFileName(downloaded.fileId, downloaded.name),
-                    )
-                    withContext(Dispatchers.IO) { target.writeBytes(downloaded.bytes) }
+                    val target = withContext(Dispatchers.IO) {
+                        cacheDownloadedAttachment(context.cacheDir, downloaded)
+                    }
                     val uri = FileProvider.getUriForFile(
                         context,
                         "${context.packageName}.attachments",
@@ -1492,19 +1491,3 @@ private fun Context.uploadPart(attachment: PendingAttachment): UploadFilePart {
 
 private const val MAX_ATTACHMENT_FILES = 6
 private const val MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024
-private val MEDIA_TYPE_PATTERN = Regex("^[a-z0-9!#$&^_.+-]+/[a-z0-9!#$&^_.+-]+$")
-internal fun isValidAttachmentMediaType(mediaType: String): Boolean {
-    return mediaType.isEmpty() || MEDIA_TYPE_PATTERN.matches(mediaType.lowercase())
-}
-
-internal fun attachmentCacheFileName(fileId: String, name: String): String {
-    val safeId = fileId
-        .replace(Regex("[^A-Za-z0-9._-]"), "_")
-        .take(48)
-        .ifBlank { "attachment" }
-    val safeName = name
-        .replace(Regex("[^A-Za-z0-9._-]"), "_")
-        .take(180)
-        .ifBlank { "download" }
-    return "$safeId-$safeName"
-}
