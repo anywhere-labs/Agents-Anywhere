@@ -4,24 +4,6 @@ from agent_server.infra.repositories.store_support import *
 
 
 class TimelineRepositoryMixin:
-    async def get_open_turn_id(self, session_id: str) -> str | None:
-        """Return the most recently started turn that hasn't yet ended, or None.
-
-        Used by /interrupt to tell the connector which turn to abort — codex
-        runtimes require both a thread id and a turn id on `turn/interrupt`.
-        """
-        items = await self.timeline.read(session_id)
-        ended = {item.turnId for item in items if item.type == "turn.end" and item.turnId}
-        open_starts = [
-            item
-            for item in items
-            if item.type == "turn.start" and item.turnId and item.turnId not in ended
-        ]
-        if not open_starts:
-            return None
-        latest = max(open_starts, key=lambda item: item.orderSeq)
-        return latest.turnId
-
     async def has_active_timeline_item(self, session_id: str) -> bool:
         async with self._engine.connect() as conn:
             row = (

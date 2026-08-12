@@ -646,23 +646,24 @@ class FakeAgentRuntime(AgentRuntime):
         )
         return RuntimeOperationResult(ok=True, result={"steered": True, "turnId": "turn_agent"})
 
-    async def interrupt_turn(
+    async def interrupt_session(
         self,
         session_id: str,
-        external_session_id: str | None = None,
         reason: str | None = None,
     ) -> RuntimeOperationResult:
         self.calls.append(
             (
-                "turn.interrupt",
+                "session.interrupt",
                 {
                     "sessionId": session_id,
-                    "externalSessionId": external_session_id,
                     "reason": reason,
                 },
             )
         )
-        return RuntimeOperationResult(ok=True, result={"interrupted": True, "turnId": "turn_agent"})
+        return RuntimeOperationResult(
+            ok=True,
+            result={"interrupted": True, "alreadyStopped": False},
+        )
 
     async def update_session_selections(
         self,
@@ -2401,10 +2402,17 @@ async def _exercise_runtime_protocol_routing() -> None:
         "turn.steer",
         {"runtime": "claude", "sessionId": "s2", "content": "focus"},
     )
-    await client.dispatch("turn.interrupt", {"runtime": "claude", "sessionId": "s2", "reason": "user"})
+    await client.dispatch(
+        "session.interrupt",
+        {"runtime": "claude", "sessionId": "s2", "reason": "user"},
+    )
 
     assert [c[0] for c in codex.calls] == ["turn.start"]
-    assert [c[0] for c in claude.calls] == ["turn.start", "turn.steer", "turn.interrupt"]
+    assert [c[0] for c in claude.calls] == [
+        "turn.start",
+        "turn.steer",
+        "session.interrupt",
+    ]
     assert codex.calls[0][1]["sessionId"] == "s1"
     assert claude.calls[0][1]["sessionId"] == "s2"
     assert claude.calls[2][1]["reason"] == "user"
@@ -2439,7 +2447,7 @@ async def _exercise_agent_runtime_turn_rpc(tmp_path) -> None:
         },
     )
     interrupted = await client.dispatch(
-        "turn.interrupt",
+        "session.interrupt",
         {
             "runtime": "codex",
             "sessionId": "sess_1",
@@ -2451,11 +2459,11 @@ async def _exercise_agent_runtime_turn_rpc(tmp_path) -> None:
     assert agent_runtime.started is True
     assert started == {"turnId": "turn_agent"}
     assert steered == {"steered": True, "turnId": "turn_agent"}
-    assert interrupted == {"interrupted": True, "turnId": "turn_agent"}
+    assert interrupted == {"interrupted": True, "alreadyStopped": False}
     assert [call[0] for call in agent_runtime.calls] == [
         "turn.start",
         "turn.steer",
-        "turn.interrupt",
+        "session.interrupt",
     ]
     assert agent_runtime.calls[0][1]["attachments"][0].file_id == "file_1"
     assert agent_runtime.calls[0][1]["clientMessageId"] == "cm_1"

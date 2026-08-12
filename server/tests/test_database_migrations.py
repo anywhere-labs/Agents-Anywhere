@@ -272,6 +272,7 @@ def test_v2_0_database_upgrades_through_current_revision(tmp_path) -> None:
         ("v2_4", "v2_5"),
         ("v2_5", "v2_6"),
         ("v2_6", "v2_7"),
+        ("v2_7", "v2_8"),
     ],
 )
 def test_every_adjacent_schema_upgrade(
@@ -290,6 +291,31 @@ def test_every_adjacent_schema_upgrade(
             assert connection.execute(
                 text("SELECT version_num FROM alembic_version")
             ).scalar_one() == target_revision
+    finally:
+        engine.dispose()
+
+
+def test_v2_8_removes_turn_id_from_active_session_runs(tmp_path) -> None:
+    path = tmp_path / "v2_8-active-runs.sqlite3"
+    upgrade_database(db_url=_sqlite_url(path), revision="v2_7")
+
+    engine = create_engine(f"sqlite:///{path}")
+    try:
+        assert "turn_id" in {
+            column["name"]
+            for column in inspect(engine).get_columns("session_active_runs")
+        }
+    finally:
+        engine.dispose()
+
+    upgrade_database(db_url=_sqlite_url(path), revision="v2_8")
+
+    engine = create_engine(f"sqlite:///{path}")
+    try:
+        assert "turn_id" not in {
+            column["name"]
+            for column in inspect(engine).get_columns("session_active_runs")
+        }
     finally:
         engine.dispose()
 

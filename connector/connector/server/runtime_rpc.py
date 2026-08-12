@@ -31,11 +31,11 @@ from connector.server.runtime_session_rpc import (
 )
 from connector.server.runtime_turn_rpc import (
     dispatch_interaction_respond,
-    dispatch_interrupt,
     dispatch_runtime_commands,
     dispatch_session_command_execute,
     dispatch_session_commands,
     dispatch_session_create,
+    dispatch_session_interrupt,
     dispatch_session_selections_update,
     dispatch_turn_start,
     dispatch_turn_steer,
@@ -70,7 +70,7 @@ class RuntimeRpcHandler:
         "interaction.respond",
         "turn.start",
         "turn.steer",
-        "turn.interrupt",
+        "session.interrupt",
     }
 
     def __init__(
@@ -214,8 +214,8 @@ class RuntimeRpcHandler:
                 self._resolve_agent_runtime(params),
                 params,
             )
-        if method == "turn.interrupt":
-            return await dispatch_interrupt(
+        if method == "session.interrupt":
+            return await dispatch_session_interrupt(
                 self._resolve_agent_runtime(params),
                 params,
             )

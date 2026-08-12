@@ -6,6 +6,7 @@ from typing import Any
 
 from connector.runtime_protocol import (
     AgentRuntime,
+    PreparedSessionTimelineSync,
     RuntimeAttachment,
     RuntimeCapabilitySet,
     RuntimeConfig,
@@ -13,7 +14,6 @@ from connector.runtime_protocol import (
     RuntimeModelCatalog,
     RuntimeOperationResult,
     RuntimePermissionCatalog,
-    PreparedSessionTimelineSync,
     RuntimeSessionStateCache,
     RuntimeTimelineSnapshot,
     SessionMeta,
@@ -30,12 +30,14 @@ from connector.runtimes.claude.domain.capabilities import (
 from connector.runtimes.claude.domain.session import ClaudeSession
 from connector.runtimes.claude.history.state import ClaudeHistoryCursorStore
 from connector.runtimes.claude.history.syncer import ClaudeHistorySyncer
+from connector.runtimes.claude.notifications.notices import ClaudeNoticeRegistry
+from connector.runtimes.claude.notifications.projector import (
+    ClaudeNotificationProjector,
+)
 from connector.runtimes.claude.sdk.client import (
     ClaudeClientFactory,
     SdkLoader,
 )
-from connector.runtimes.claude.notifications.notices import ClaudeNoticeRegistry
-from connector.runtimes.claude.notifications.projector import ClaudeNotificationProjector
 from connector.runtimes.claude.sessions.cache import ClaudeSessionStore
 from connector.runtimes.claude.sessions.reader import ClaudeSessionReader
 from connector.runtimes.claude.timeline.messages import ClaudeMessageProjector
@@ -277,15 +279,13 @@ class ClaudeRuntime(AgentRuntime):
             selections=selections,
         )
 
-    async def interrupt_turn(
+    async def interrupt_session(
         self,
         session_id: str,
-        external_session_id: str | None = None,
         reason: str | None = None,
     ) -> RuntimeOperationResult:
-        return await self._turns.interrupt_turn(
+        return await self._turns.interrupt_session(
             session_id=session_id,
-            external_session_id=external_session_id,
             reason=reason,
         )
 

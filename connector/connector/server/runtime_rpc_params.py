@@ -324,16 +324,14 @@ class TurnSteerParams:
 
 
 @dataclass(frozen=True, slots=True)
-class TurnInterruptParams:
+class SessionInterruptParams:
     session_id: str
-    external_session_id: str | None
     reason: str | None
 
     @classmethod
-    def parse(cls, params: dict[str, Any]) -> TurnInterruptParams:
+    def parse(cls, params: dict[str, Any]) -> SessionInterruptParams:
         return cls(
             session_id=required_session_id(params),
-            external_session_id=optional_string(params.get("externalSessionId")),
             reason=optional_string(params.get("reason")),
         )
 

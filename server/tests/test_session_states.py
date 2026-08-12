@@ -9,9 +9,7 @@ from agent_server.core.models import Notice, SessionStatus, SessionView
 from agent_server.core.session_states import (
     SessionStateDomainError,
     SessionStateFacts,
-    can_interrupt_turn,
     can_start_turn,
-    can_steer_turn,
     derive_session_status,
     require_session_transition,
 )
@@ -27,7 +25,7 @@ from agent_server.services.session_states import SessionStateService
             "waiting",
         ),
         (
-            SessionStateFacts(current_status="pending", has_active_turn=True),
+            SessionStateFacts(current_status="pending", has_active_timeline_work=True),
             "running",
         ),
         (
@@ -45,7 +43,7 @@ from agent_server.services.session_states import SessionStateService
         (
             SessionStateFacts(
                 current_status="running",
-                has_active_turn=True,
+                has_active_timeline_work=True,
                 has_blocking_interaction=True,
             ),
             "waiting_approval",
@@ -57,7 +55,7 @@ from agent_server.services.session_states import SessionStateService
         (
             SessionStateFacts(
                 current_status="stopping",
-                has_active_turn=True,
+                has_active_timeline_work=True,
                 settle_stopping=True,
             ),
             "running",
@@ -80,7 +78,7 @@ from agent_server.services.session_states import SessionStateService
             SessionStateFacts(
                 current_status="running",
                 observed_status="stopping",
-                has_active_turn=True,
+                has_active_timeline_work=True,
             ),
             "stopping",
         ),
@@ -98,19 +96,11 @@ def test_session_transition_rejects_idle_to_stopping() -> None:
         require_session_transition("idle", "stopping")
 
 
-def test_session_queries_centralize_start_and_interrupt_rules() -> None:
+def test_session_queries_centralize_start_rule() -> None:
     assert can_start_turn("idle") is True
     assert can_start_turn("blocked") is False
     assert can_start_turn("waiting_approval") is False
     assert can_start_turn("error") is False
-    assert can_interrupt_turn("idle", has_active_work=False) is False
-    assert can_interrupt_turn("idle", has_active_work=True) is True
-    assert can_interrupt_turn("blocked", has_active_work=False) is True
-    assert can_interrupt_turn("waiting_approval", has_active_work=False) is True
-    assert can_steer_turn("running", has_active_turn=True) is True
-    assert can_steer_turn("blocked", has_active_turn=True) is False
-    assert can_steer_turn("running", has_active_turn=False) is False
-    assert can_steer_turn("stopping", has_active_turn=True) is False
 
 
 def test_session_state_service_reconciles_with_compare_and_set() -> None:
@@ -195,10 +185,6 @@ class _SessionStateRepository:
     async def has_active_timeline_item(self, session_id: str) -> bool:
         assert session_id == self.session.id
         return self.active_timeline_item
-
-    async def get_open_turn_id(self, session_id: str) -> str | None:
-        assert session_id == self.session.id
-        return None
 
     async def list_open_blocking_notices(self, session_id: str) -> list[Notice]:
         assert session_id == self.session.id

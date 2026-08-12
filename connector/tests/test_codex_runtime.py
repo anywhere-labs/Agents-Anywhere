@@ -1617,7 +1617,7 @@ async def _test_codex_runtime_reports_idle_after_no_active_turn() -> None:
     runtime = CodexRuntime(config=_config(), host=FakeHost(), client=FakeCodexClient())
 
     await runtime.start_turn("sess_1", "thread_1", "hello")
-    await runtime.interrupt_turn("sess_1", "thread_1")
+    await runtime.interrupt_session("sess_1")
     capability_set = await runtime.get_session_capabilities("sess_1", "thread_1")
     capabilities = {
         capability.capability_id: capability
@@ -2620,9 +2620,9 @@ async def _test_codex_runtime_does_not_restore_running_after_fast_terminal_turn(
     assert result.result["completed"] is True
     assert result.result["status"] == "idle"
     assert [update["status"] for update in host.state_updates] == ["waiting", "idle"]
-    interrupt = await runtime.interrupt_turn("sess_1", "thread_1")
-    assert interrupt.ok is False
-    assert interrupt.code == "codex_no_active_turn"
+    interrupt = await runtime.interrupt_session("sess_1")
+    assert interrupt.ok is True
+    assert interrupt.result["alreadyStopped"] is True
 
 
 def test_codex_runtime_terminal_event_without_platform_session_uses_cached_session() -> None:
@@ -3003,7 +3003,7 @@ async def _test_codex_runtime_item_event_without_start_marks_running_and_interru
             },
         }
     )
-    result = await runtime.interrupt_turn("sess_1", "thread_1")
+    result = await runtime.interrupt_session("sess_1")
 
     assert host.state_updates[-2]["status"] == "running"
     assert host.state_updates[-2]["metadata"]["turn_id"] == "turn_event"
@@ -3667,7 +3667,7 @@ async def _test_codex_runtime_failed_turn_creates_blocking_error_notice() -> Non
             },
         }
     )
-    interrupt = await runtime.interrupt_turn("sess_1", "thread_1")
+    interrupt = await runtime.interrupt_session("sess_1")
 
     notice = host.notice_upserts[-1]
     assert notice.type == "interaction"
@@ -3675,8 +3675,8 @@ async def _test_codex_runtime_failed_turn_creates_blocking_error_notice() -> Non
     assert notice.severity == "error"
     assert notice.blocking == {"scope": "session", "targetId": "sess_1"}
     assert host.state_updates[-1]["status"] == "idle"
-    assert interrupt.ok is False
-    assert interrupt.code == "codex_no_active_turn"
+    assert interrupt.ok is True
+    assert interrupt.result["alreadyStopped"] is True
     error_update = next(
         update
         for update in reversed(host.state_updates)
@@ -4448,8 +4448,8 @@ async def _test_codex_runtime_interrupts_active_turn_and_sets_idle() -> None:
     runtime = CodexRuntime(config=_config(), host=host, client=client)
 
     await runtime.start_turn("sess_1", "thread_1", "hello")
-    result = await runtime.interrupt_turn("sess_1", "thread_1")
-    second = await runtime.interrupt_turn("sess_1", "thread_1")
+    result = await runtime.interrupt_session("sess_1")
+    second = await runtime.interrupt_session("sess_1")
 
     assert result.ok is True
     assert result.result["interrupted"] is True
@@ -4461,11 +4461,14 @@ async def _test_codex_runtime_interrupts_active_turn_and_sets_idle() -> None:
         },
     )
     assert host.state_updates[-1]["status"] == "idle"
-    assert second.ok is False
-    assert second.code == "codex_no_active_turn"
+    assert second.ok is True
+    assert second.result == {
+        "interrupted": False,
+        "alreadyStopped": True,
+    }
     assert (
         host.state_updates[-1]["metadata"]["source"]
-        == "codex.turn/interrupt.no-active-turn"
+        == "codex.session/interrupt.already-stopped"
     )
     capabilities = capability_map(host.session_capability_updates[-1])
     assert capabilities[CAPABILITY_SESSION_SEND_MESSAGE].available is True
@@ -4486,11 +4489,11 @@ async def _test_codex_runtime_interrupt_soft_failure_sets_idle() -> None:
     runtime = CodexRuntime(config=_config(), host=host, client=client)
 
     await runtime.start_turn("sess_1", "thread_1", "hello")
-    result = await runtime.interrupt_turn("sess_1", "thread_1")
+    result = await runtime.interrupt_session("sess_1")
 
-    assert result.ok is False
-    assert result.code == "turn_not_found"
+    assert result.ok is True
     assert result.result["interrupted"] is False
+    assert result.result["alreadyStopped"] is True
     assert host.state_updates[-1]["status"] == "idle"
 
 
@@ -4507,11 +4510,11 @@ async def _test_codex_runtime_interrupt_no_active_sdk_turn_sets_idle() -> None:
     runtime = CodexRuntime(config=_config(), host=host, client=client)
 
     await runtime.start_turn("sess_1", "thread_1", "hello")
-    result = await runtime.interrupt_turn("sess_1", "thread_1")
+    result = await runtime.interrupt_session("sess_1")
 
-    assert result.ok is False
-    assert result.code == "turn_not_found"
+    assert result.ok is True
     assert result.result["interrupted"] is False
+    assert result.result["alreadyStopped"] is True
     assert host.state_updates[-1]["status"] == "idle"
 
 
@@ -4528,15 +4531,15 @@ async def _test_codex_runtime_interrupt_no_active_sdk_turn_request_error_sets_id
     runtime = CodexRuntime(config=_config(), host=host, client=client)
 
     await runtime.start_turn("sess_1", "thread_1", "hello")
-    result = await runtime.interrupt_turn("sess_1", "thread_1")
+    result = await runtime.interrupt_session("sess_1")
 
-    assert result.ok is False
-    assert result.code == "turn_not_found"
+    assert result.ok is True
     assert result.result["interrupted"] is False
+    assert result.result["alreadyStopped"] is True
     assert host.state_updates[-1]["status"] == "idle"
     assert (
         host.state_updates[-1]["metadata"]["source"]
-        == "codex.turn/interrupt.soft-failed"
+        == "codex.session/interrupt.already-stopped"
     )
 
 
@@ -4756,7 +4759,7 @@ async def _test_codex_runtime_interrupt_closes_open_approval_notice() -> None:
             },
         }
     )
-    result = await runtime.interrupt_turn("sess_1", "thread_1")
+    result = await runtime.interrupt_session("sess_1")
 
     assert result.ok is True
     assert host.notice_upserts[-1].notice_id == "notice_approval_appr_cmd"

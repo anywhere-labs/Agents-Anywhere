@@ -5,8 +5,17 @@ from typing import Any, ClassVar
 from loguru import logger
 from pydantic import ValidationError
 
-from agent_server.core.catalogs import CatalogType, validate_model_catalog, validate_permission_catalog
-from agent_server.core.models import NoticeIn, SessionStatus, SessionView, TimelineItemIn
+from agent_server.core.catalogs import (
+    CatalogType,
+    validate_model_catalog,
+    validate_permission_catalog,
+)
+from agent_server.core.models import (
+    NoticeIn,
+    SessionStatus,
+    SessionView,
+    TimelineItemIn,
+)
 from agent_server.core.protocol import (
     ProtocolCapability,
     ProtocolCapabilitySet,
@@ -325,14 +334,17 @@ class SessionStateNotificationHandler:
                 external_session_id=external_session_id,
             )
             session_id = session.id
+        runtime_state = runtime_state_from_session_state_params(
+            session_id=session_id,
+            runtime=runtime,
+            external_session_id=external_session_id,
+            params=params,
+        )
+        if runtime_state["status"] in {"idle", "error"}:
+            await self._store.clear_active_run(session_id)
         return IngestEffect(
             session_id=session_id,
-            runtime_state=runtime_state_from_session_state_params(
-                session_id=session_id,
-                runtime=runtime,
-                external_session_id=external_session_id,
-                params=params,
-            ),
+            runtime_state=runtime_state,
         )
 
 
@@ -388,7 +400,6 @@ class TimelineNotificationHandler:
                 items=items,
                 mark_read_on_change=True,
             )
-        await _reconcile_active_run_from_timeline(self._store, session_id, items)
         for item in items:
             if item.type != "turn.end":
                 continue
@@ -436,8 +447,6 @@ class TimelineNotificationHandler:
             item=item,
             mark_read_on_change=True,
         )
-        if item.type == "turn.start" and item.turnId:
-            await self._store.update_active_run_turn_id(session_id, item.turnId)
         if item.type == "turn.end":
             await close_waiting_approval_items_for_finished_turn(
                 self._store,
@@ -445,7 +454,6 @@ class TimelineNotificationHandler:
                 item,
                 mark_read_on_change=True,
             )
-            await self._store.clear_active_run(session_id)
         affects_run_state = _timeline_item_affects_run_state(item)
         return IngestEffect(
             session_id=session_id,
@@ -807,44 +815,6 @@ def _timeline_item_is_active_work(item: TimelineItemIn) -> bool:
     return item.status in {"pending", "running", "waiting_approval"}
 
 
-async def _reconcile_active_run_from_timeline(
-    store: ConnectorNotificationRepository,
-    session_id: str,
-    items: list[TimelineItemIn],
-) -> None:
-    active = await store.get_active_run(session_id)
-    if active is None:
-        return
-    turn_id = active.get("turnId")
-    if not isinstance(turn_id, str) or not turn_id:
-        params = active.get("params")
-        client_message_id = (
-            params.get("clientMessageId") if isinstance(params, dict) else None
-        )
-        if isinstance(client_message_id, str) and client_message_id:
-            tagged_candidates = [
-                item
-                for item in items
-                if item.source.clientMessageId == client_message_id
-                and item.turnId is not None
-            ]
-            tagged = (
-                max(tagged_candidates, key=lambda item: item.orderSeq)
-                if tagged_candidates
-                else None
-            )
-            if tagged is not None:
-                turn_id = tagged.turnId
-        if not isinstance(turn_id, str) or not turn_id:
-            turn_id = await store.get_open_turn_id(session_id)
-        if isinstance(turn_id, str) and turn_id:
-            await store.update_active_run_turn_id(session_id, turn_id)
-    if isinstance(turn_id, str) and any(
-        item.type == "turn.end" and item.turnId == turn_id for item in items
-    ):
-        await store.clear_active_run(session_id)
-
-
 async def _tag_active_run_user_messages(
     store: ConnectorNotificationRepository,
     session_id: str,
@@ -864,16 +834,10 @@ async def _tag_active_run_user_messages(
     if not isinstance(expected_text, str):
         return items
 
-    active_turn_id = active.get("turnId")
     candidate_indexes = [
         index
         for index, item in enumerate(items)
         if _active_run_user_message_matches(item, expected_text)
-        and (
-            not isinstance(active_turn_id, str)
-            or not active_turn_id
-            or item.turnId == active_turn_id
-        )
     ]
     if not candidate_indexes:
         return items

@@ -25,7 +25,7 @@ class SessionStateFacts:
     current_status: SessionStatus
     observed_status: SessionStatus | None = None
     has_active_run: bool = False
-    has_active_turn: bool = False
+    has_active_timeline_work: bool = False
     has_blocking_interaction: bool = False
     settle_stopping: bool = False
 
@@ -38,10 +38,10 @@ def derive_session_status(facts: SessionStateFacts) -> SessionStatus:
     if facts.current_status == "stopping" and not facts.settle_stopping:
         return "stopping"
     if facts.observed_status == "stopping" and (
-        facts.has_active_run or facts.has_active_turn
+        facts.has_active_run or facts.has_active_timeline_work
     ):
         return "stopping"
-    if facts.has_active_turn:
+    if facts.has_active_timeline_work:
         return "running"
     if facts.observed_status == "running":
         return "running"
@@ -68,26 +68,3 @@ def require_session_transition(
 
 def can_start_turn(status: SessionStatus) -> bool:
     return status == "idle"
-
-
-def can_interrupt_turn(
-    status: SessionStatus,
-    *,
-    has_active_work: bool,
-) -> bool:
-    return has_active_work or status in {
-        "waiting",
-        "pending",
-        "running",
-        "stopping",
-        "waiting_approval",
-        "blocked",
-    }
-
-
-def can_steer_turn(
-    status: SessionStatus,
-    *,
-    has_active_turn: bool,
-) -> bool:
-    return has_active_turn and status == "running"

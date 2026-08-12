@@ -14,7 +14,9 @@ from connector.runtime_protocol.host import RuntimeHostClient
 from connector.runtimes.claude.catalogs.reader import ClaudeCatalogReader
 from connector.runtimes.claude.history.syncer import ClaudeHistorySyncer
 from connector.runtimes.claude.notifications.notices import ClaudeNoticeRegistry
-from connector.runtimes.claude.notifications.projector import ClaudeNotificationProjector
+from connector.runtimes.claude.notifications.projector import (
+    ClaudeNotificationProjector,
+)
 from connector.runtimes.claude.sdk.client import ClaudeClientFactory, SdkLoader
 from connector.runtimes.claude.sessions.cache import ClaudeSessionStore
 from connector.runtimes.claude.sessions.reader import ClaudeSessionReader
@@ -127,15 +129,13 @@ class ClaudeTurnController:
             cwd=cwd,
         )
 
-    async def interrupt_turn(
+    async def interrupt_session(
         self,
         session_id: str,
-        external_session_id: str | None = None,
         reason: str | None = None,
     ) -> RuntimeOperationResult:
-        return await self.actions.interrupt_turn(
+        return await self.actions.interrupt_session(
             session_id=session_id,
-            external_session_id=external_session_id,
             reason=reason,
         )
 

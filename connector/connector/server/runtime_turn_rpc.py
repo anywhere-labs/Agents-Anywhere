@@ -9,8 +9,8 @@ from connector.server.runtime_rpc_params import (
     RuntimeCommandsParams,
     SessionCommandsParams,
     SessionCreateParams,
+    SessionInterruptParams,
     SessionSelectionUpdateParams,
-    TurnInterruptParams,
     TurnStartParams,
     TurnSteerParams,
 )
@@ -83,15 +83,14 @@ async def dispatch_turn_steer(
     return operation_result_payload(result)
 
 
-async def dispatch_interrupt(
+async def dispatch_session_interrupt(
     runtime: AgentRuntime,
     params: dict[str, Any],
 ) -> dict[str, Any]:
-    parsed = TurnInterruptParams.parse(params)
-    result = await runtime.interrupt_turn(
-        parsed.session_id,
-        parsed.external_session_id,
-        parsed.reason,
+    parsed = SessionInterruptParams.parse(params)
+    result = await runtime.interrupt_session(
+        session_id=parsed.session_id,
+        reason=parsed.reason,
     )
     return operation_result_payload(result)
 

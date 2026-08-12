@@ -142,15 +142,13 @@ class CodexTurnController:
             client_message_id=client_message_id,
         )
 
-    async def interrupt_turn(
+    async def interrupt_session(
         self,
         session_id: str,
-        external_session_id: str | None = None,
         reason: str | None = None,
     ) -> RuntimeOperationResult:
-        return await self.actions.interrupt_turn(
+        return await self.actions.interrupt_session(
             session_id=session_id,
-            external_session_id=external_session_id,
             reason=reason,
         )
 

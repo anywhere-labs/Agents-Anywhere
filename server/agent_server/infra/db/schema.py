@@ -284,7 +284,6 @@ session_active_runs = Table(
     ),
     Column("runtime", Text, nullable=False),
     Column("external_session_id", Text),
-    Column("turn_id", Text),
     Column("status", Text, nullable=False),
     Column("params_json", Text),
     Column("started_at", Text, nullable=False),
