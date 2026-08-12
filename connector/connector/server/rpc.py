@@ -6,7 +6,7 @@ import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 from connector.logging import logger
 from connector.runtime_protocol import RuntimeProtocolError
@@ -40,8 +40,7 @@ RPC_LOG_PARTIAL_SECRET_KEYS = frozenset(
     key for key in RPC_LOG_EXACT_SECRET_KEYS if key != "auth"
 )
 CONNECTOR_WS_MAX_NOTIFICATION_BYTES = 900 * 1024
-SEND_RESPONSE_WEIGHT = 4
-SEND_NOTIFICATION_WEIGHT = 1
+QueuedSendQueueName = Literal["response", "notification"]
 
 
 class WebSocketSender(Protocol):
@@ -89,8 +88,7 @@ class ConnectorRpcChannel:
         self._response_send_queue: asyncio.Queue[_QueuedSend] | None = None
         self._notification_send_queue: asyncio.Queue[_QueuedSend] | None = None
         self._send_worker_task: asyncio.Task[None] | None = None
-        self._response_send_budget = SEND_RESPONSE_WEIGHT
-        self._notification_send_budget = SEND_NOTIFICATION_WEIGHT
+        self._next_send_queue_name: QueuedSendQueueName = "response"
         self._request_tasks: set[asyncio.Task[None]] = set()
         self._request_semaphore = asyncio.Semaphore(8)
 
@@ -100,8 +98,7 @@ class ConnectorRpcChannel:
         self._ws = ws
         self._response_send_queue = asyncio.Queue()
         self._notification_send_queue = asyncio.Queue()
-        self._response_send_budget = SEND_RESPONSE_WEIGHT
-        self._notification_send_budget = SEND_NOTIFICATION_WEIGHT
+        self._next_send_queue_name = "response"
         self._send_worker_task = asyncio.create_task(
             self._send_worker_loop()
         )
@@ -338,38 +335,28 @@ class ConnectorRpcChannel:
             raise RuntimeError("backend websocket is not connected")
         while True:
             if response_queue.empty() and notification_queue.empty():
-                return await self._wait_for_next_send_item(
+                queue_name, item = await self._wait_for_next_send_item(
                     response_queue,
                     notification_queue,
                 )
-            if self._response_send_budget <= 0 and self._notification_send_budget <= 0:
-                self._response_send_budget = SEND_RESPONSE_WEIGHT
-                self._notification_send_budget = SEND_NOTIFICATION_WEIGHT
-            if not response_queue.empty() and (
-                self._response_send_budget > 0 or notification_queue.empty()
-            ):
-                self._response_send_budget = max(self._response_send_budget - 1, 0)
+                self._next_send_queue_name = _opposite_queue_name(queue_name)
+                return item
+            queue_name = self._choose_send_queue_name(
+                response_queue,
+                notification_queue,
+            )
+            if queue_name == "response":
+                self._next_send_queue_name = "notification"
                 return response_queue.get_nowait()
-            if not notification_queue.empty() and (
-                self._notification_send_budget > 0 or response_queue.empty()
-            ):
-                self._notification_send_budget = max(
-                    self._notification_send_budget - 1,
-                    0,
-                )
+            if queue_name == "notification":
+                self._next_send_queue_name = "response"
                 return notification_queue.get_nowait()
-            if not response_queue.empty():
-                self._response_send_budget = SEND_RESPONSE_WEIGHT
-                continue
-            if not notification_queue.empty():
-                self._notification_send_budget = SEND_NOTIFICATION_WEIGHT
-                continue
 
     async def _wait_for_next_send_item(
         self,
         response_queue: asyncio.Queue[_QueuedSend],
         notification_queue: asyncio.Queue[_QueuedSend],
-    ) -> _QueuedSend:
+    ) -> tuple[QueuedSendQueueName, _QueuedSend]:
         response_task = asyncio.create_task(response_queue.get())
         notification_task = asyncio.create_task(notification_queue.get())
         tasks = {
@@ -387,14 +374,29 @@ class ConnectorRpcChannel:
                 await task
         finished_task = next(iter(done))
         queue_name = tasks[finished_task]
-        if queue_name == "response":
-            self._response_send_budget = max(self._response_send_budget - 1, 0)
-        else:
-            self._notification_send_budget = max(
-                self._notification_send_budget - 1,
-                0,
-            )
-        return finished_task.result()
+        return queue_name, finished_task.result()
+
+    def _choose_send_queue_name(
+        self,
+        response_queue: asyncio.Queue[_QueuedSend],
+        notification_queue: asyncio.Queue[_QueuedSend],
+    ) -> QueuedSendQueueName:
+        preferred_queue = (
+            response_queue
+            if self._next_send_queue_name == "response"
+            else notification_queue
+        )
+        if not preferred_queue.empty():
+            return self._next_send_queue_name
+        alternate_queue_name = _opposite_queue_name(self._next_send_queue_name)
+        alternate_queue = (
+            notification_queue
+            if alternate_queue_name == "notification"
+            else response_queue
+        )
+        if not alternate_queue.empty():
+            return alternate_queue_name
+        return self._next_send_queue_name
 
     def _send_queue(self, queue_name: str) -> asyncio.Queue[_QueuedSend] | None:
         if queue_name == "response":
@@ -483,3 +485,7 @@ def rpc_log_key_is_secret(key: str) -> bool:
     if normalized in RPC_LOG_EXACT_SECRET_KEYS:
         return True
     return any(secret_key in normalized for secret_key in RPC_LOG_PARTIAL_SECRET_KEYS)
+
+
+def _opposite_queue_name(queue_name: QueuedSendQueueName) -> QueuedSendQueueName:
+    return "notification" if queue_name == "response" else "response"

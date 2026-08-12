@@ -69,6 +69,32 @@ def test_connector_rpc_send_queue_preserves_order() -> None:
     assert parsed[2]["params"]["seq"] == 3
 
 
+def test_connector_rpc_send_queue_alternates_between_queues() -> None:
+    async def exercise() -> list[str]:
+        websocket = MemoryWebSocket()
+        channel = ConnectorRpcChannel()
+        channel.set_connection(websocket)
+        await channel.send_response("req-1", ok=True, result={"seq": 1})
+        await channel.send_notification("timeline.itemUpsert", {"seq": 2})
+        await channel.send_response("req-2", ok=True, result={"seq": 3})
+        await channel.send_notification("timeline.itemUpsert", {"seq": 4})
+        return websocket.sent
+
+    sent = asyncio.run(exercise())
+    parsed = [json.loads(payload) for payload in sent]
+
+    assert [payload["type"] for payload in parsed] == [
+        "response",
+        "notification",
+        "response",
+        "notification",
+    ]
+    assert [payload.get("id") for payload in parsed if payload["type"] == "response"] == [
+        "req-1",
+        "req-2",
+    ]
+
+
 def test_connector_rpc_rejects_oversized_notification_before_send() -> None:
     async def exercise() -> MemoryWebSocket:
         websocket = MemoryWebSocket()
