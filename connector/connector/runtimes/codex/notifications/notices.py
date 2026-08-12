@@ -142,6 +142,10 @@ class CodexNoticeHandler:
 
 def error_from_params(params: dict[str, Any]) -> dict[str, Any]:
     raw = params.get("error")
+    if not isinstance(raw, dict):
+        turn = params.get("turn")
+        if isinstance(turn, dict):
+            raw = turn.get("error")
     if isinstance(raw, dict):
         code = raw.get("code")
         message = raw.get("message") or raw.get("detail")

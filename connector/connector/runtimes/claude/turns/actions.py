@@ -12,7 +12,9 @@ from connector.runtime_protocol import (
     RuntimeSessionStateCache,
 )
 from connector.runtimes.claude.domain.session import ClaudeSession
-from connector.runtimes.claude.notifications.projector import ClaudeNotificationProjector
+from connector.runtimes.claude.notifications.projector import (
+    ClaudeNotificationProjector,
+)
 from connector.runtimes.claude.sdk.client import disconnect_client, interrupt_client
 from connector.runtimes.claude.sessions.cache import ClaudeSessionStore
 from connector.runtimes.claude.turns.interactions import ClaudeInteractionController
@@ -95,33 +97,28 @@ class ClaudeTurnActionHandler:
             },
         )
 
-    async def interrupt_turn(
+    async def interrupt_session(
         self,
         session_id: str,
-        external_session_id: str | None = None,
         reason: str | None = None,
     ) -> RuntimeOperationResult:
-        _ = external_session_id
         session = self.session_store.get(session_id)
         if session is None or session.active_turn_id is None:
             return RuntimeOperationResult(
-                ok=False,
-                code="claude_no_active_turn",
-                message="Claude runtime has no active turn to interrupt",
+                ok=True,
+                result={"interrupted": False, "alreadyStopped": True},
             )
 
         interrupted = await interrupt_client(session.client)
         if session.active_task is not None and not session.active_task.done():
             session.active_task.cancel()
             interrupted = True
-        turn_id = session.active_turn_id
         session.clear_active_turn()
         await self.notifications.session_state.session_state_update(
             session,
             "idle",
             metadata={
-                "source": "claude.turn.interrupt",
-                "turnId": turn_id,
+                "source": "claude.session.interrupt",
                 **({"reason": reason} if reason else {}),
             },
         )
@@ -131,12 +128,11 @@ class ClaudeTurnActionHandler:
             reason="interrupted",
         )
         return RuntimeOperationResult(
-            ok=interrupted,
-            code=None if interrupted else "claude_interrupt_unavailable",
-            message=None
-            if interrupted
-            else "Claude SDK client did not expose interrupt",
-            result={"interrupted": interrupted, "turnId": turn_id},
+            ok=True,
+            result={
+                "interrupted": interrupted,
+                "alreadyStopped": not interrupted,
+            },
         )
 
     def has_active_turn(self, session_id: str) -> bool:

@@ -738,7 +738,7 @@ export function TaskComposer() {
                     title={t("selectionSettings")}
                     description={t("selectionSettingsDescription")}
                     permissionLabel={t("permissionMode")}
-                    modelLabel={t("modelAndReasoning")}
+                    modelLabel={t("model")}
                     reasoningLabel={t("reasoning")}
                     permissionItems={permissionDrawerItems}
                     selectedPermission={selectedPermissionMode}

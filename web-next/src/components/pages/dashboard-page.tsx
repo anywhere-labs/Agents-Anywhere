@@ -66,7 +66,7 @@ const TREND_COLORS = {
   dau: "#60a5fa",
   activeUsers: "#a78bfa",
   newUsers: "#f87171",
-  totalTurns: "#34d399",
+  totalMessages: "#34d399",
   activeSessions: "#f59e0b",
 } as const
 
@@ -74,7 +74,7 @@ const trendConfig = {
   dau: { label: "DAU", color: TREND_COLORS.dau },
   activeUsers: { label: "Active users", color: TREND_COLORS.activeUsers },
   newUsers: { label: "New users", color: TREND_COLORS.newUsers },
-  totalTurns: { label: "Turns", color: TREND_COLORS.totalTurns },
+  totalMessages: { label: "Messages", color: TREND_COLORS.totalMessages },
   activeSessions: { label: "Sessions", color: TREND_COLORS.activeSessions },
 } satisfies ChartConfig
 
@@ -356,7 +356,7 @@ function OverviewTab({ overview }: { overview: AdminDashboardOverviewResponse })
             percent: userShare(overview.summary.activeUsers, overview.summary.totalUsers),
           })}
         />
-        <MetricCard label={t("metrics.turns")} value={overview.summary.totalTurns} />
+        <MetricCard label={t("metrics.messages")} value={overview.summary.totalMessages} />
         <MetricCard label={t("metrics.activeSessions")} value={overview.summary.activeSessions} />
       </div>
       <section className="rounded-xl border border-border bg-card">
@@ -391,9 +391,9 @@ function UsageTab({
     <div className="flex flex-col gap-4">
       <div className="grid gap-4 xl:grid-cols-2">
         <HistogramPanel
-          title={t("turnHistogram")}
-          data={overview.turnHistogram}
-          axisDescription={t("axes.turnHistogram")}
+          title={t("messageHistogram")}
+          data={overview.messageHistogram}
+          axisDescription={t("axes.messageHistogram")}
         />
         <HistogramPanel
           title={t("sessionHistogram")}
@@ -445,12 +445,12 @@ function UsageTab({
             }
           />
           <ListField
-            label={t("turnBins")}
-            value={settingsDraft.histogramBins.turns}
+            label={t("messageBins")}
+            value={settingsDraft.histogramBins.messages}
             onChange={(value) =>
               onSettingsChange({
                 ...settingsDraft,
-                histogramBins: { ...settingsDraft.histogramBins, turns: value },
+                histogramBins: { ...settingsDraft.histogramBins, messages: value },
               })
             }
           />
@@ -572,7 +572,7 @@ function TrendChart({ data }: { data: AdminDashboardOverviewResponse["series"] }
         <ChartTooltip content={<ChartTooltipContent />} />
         <Area type="monotone" dataKey="dau" stroke={TREND_COLORS.dau} strokeWidth={2} fill={TREND_COLORS.dau} fillOpacity={0.12} />
         <Area type="monotone" dataKey="activeUsers" stroke={TREND_COLORS.activeUsers} strokeWidth={2} fill={TREND_COLORS.activeUsers} fillOpacity={0.1} />
-        <Area type="monotone" dataKey="totalTurns" stroke={TREND_COLORS.totalTurns} strokeWidth={2} fill={TREND_COLORS.totalTurns} fillOpacity={0.1} />
+        <Area type="monotone" dataKey="totalMessages" stroke={TREND_COLORS.totalMessages} strokeWidth={2} fill={TREND_COLORS.totalMessages} fillOpacity={0.1} />
         <Area type="monotone" dataKey="activeSessions" stroke={TREND_COLORS.activeSessions} strokeWidth={2} fill={TREND_COLORS.activeSessions} fillOpacity={0.08} />
       </AreaChart>
     </ChartContainer>

@@ -6,6 +6,7 @@ from typing import Any
 
 from connector.runtime_protocol.errors import RuntimeUnsupportedError
 from connector.runtime_protocol.models import (
+    PreparedSessionTimelineSync,
     RuntimeAttachment,
     RuntimeCapabilitySet,
     RuntimeCommand,
@@ -16,7 +17,6 @@ from connector.runtime_protocol.models import (
     RuntimeOperationResult,
     RuntimePermissionCatalog,
     RuntimeTimelineSnapshot,
-    PreparedSessionTimelineSync,
     SessionMeta,
     SessionNotice,
     SessionState,
@@ -164,13 +164,12 @@ class AgentRuntime(ABC):
     ) -> RuntimeOperationResult:
         raise RuntimeUnsupportedError("steer_turn")
 
-    async def interrupt_turn(
+    async def interrupt_session(
         self,
         session_id: str,
-        external_session_id: str | None = None,
         reason: str | None = None,
     ) -> RuntimeOperationResult:
-        raise RuntimeUnsupportedError("interrupt_turn")
+        raise RuntimeUnsupportedError("interrupt_session")
 
     async def update_session_selections(
         self,

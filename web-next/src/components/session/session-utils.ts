@@ -15,38 +15,14 @@ export function runtimeLabel(runtime: string): string {
 }
 
 export function sortTimelineItems(items: TimelineItem[]): TimelineItem[] {
-  const turnAnchors = new Map<string, number>()
-  for (const item of items) {
-    if (!item.turnId) continue
-    const current = turnAnchors.get(item.turnId)
-    const anchor = item.type === "turn.start" ? item.orderSeq : (current ?? item.orderSeq)
-    turnAnchors.set(item.turnId, current === undefined ? anchor : Math.min(current, anchor))
-  }
-  return [...items].sort((a, b) => compareTimelineItems(a, b, turnAnchors))
+  return [...items].sort(compareTimelineItems)
 }
 
 export function compareTimelineItems(
   a: TimelineItem,
   b: TimelineItem,
-  turnAnchors?: ReadonlyMap<string, number>,
 ): number {
-  if (turnAnchors) {
-    const aAnchor = a.turnId ? turnAnchors.get(a.turnId) : undefined
-    const bAnchor = b.turnId ? turnAnchors.get(b.turnId) : undefined
-    const blockOrder = (aAnchor ?? a.orderSeq) - (bAnchor ?? b.orderSeq)
-    if (blockOrder !== 0) return blockOrder
-    if (a.turnId && a.turnId === b.turnId) {
-      const boundaryOrder = timelineBoundaryOrder(a) - timelineBoundaryOrder(b)
-      if (boundaryOrder !== 0) return boundaryOrder
-    }
-  }
   return a.orderSeq - b.orderSeq || a.updatedSeq - b.updatedSeq || a.id.localeCompare(b.id)
-}
-
-function timelineBoundaryOrder(item: TimelineItem): number {
-  if (item.type === "turn.start") return -1
-  if (item.type === "turn.end") return 1
-  return 0
 }
 
 export function textOf(value: unknown): string | null {

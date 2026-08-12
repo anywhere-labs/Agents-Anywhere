@@ -272,6 +272,7 @@ def test_v2_0_database_upgrades_through_current_revision(tmp_path) -> None:
         ("v2_4", "v2_5"),
         ("v2_5", "v2_6"),
         ("v2_6", "v2_7"),
+        ("v2_7", "v2_8"),
     ],
 )
 def test_every_adjacent_schema_upgrade(
@@ -290,6 +291,130 @@ def test_every_adjacent_schema_upgrade(
             assert connection.execute(
                 text("SELECT version_num FROM alembic_version")
             ).scalar_one() == target_revision
+    finally:
+        engine.dispose()
+
+
+def test_v2_8_removes_turn_id_from_active_session_runs(tmp_path) -> None:
+    path = tmp_path / "v2_8-active-runs.sqlite3"
+    upgrade_database(db_url=_sqlite_url(path), revision="v2_7")
+
+    engine = create_engine(f"sqlite:///{path}")
+    try:
+        assert "turn_id" in {
+            column["name"]
+            for column in inspect(engine).get_columns("session_active_runs")
+        }
+    finally:
+        engine.dispose()
+
+
+def test_v2_9_removes_turn_data_from_timelines(tmp_path) -> None:
+    path = tmp_path / "v2_9-timelines.sqlite3"
+    upgrade_database(db_url=_sqlite_url(path), revision="v2_8")
+
+    engine = create_engine(f"sqlite:///{path}")
+    try:
+        with engine.begin() as connection:
+            connection.execute(text("PRAGMA foreign_keys = OFF"))
+            connection.execute(
+                text(
+                    "INSERT INTO dashboard_daily_metrics "
+                    "(date, metric_key, dimension_key, dimension_value, value, computed_at) "
+                    "VALUES ('2026-08-12', 'usage.turns', '', '', 3, '2026-08-12T00:00:00Z')"
+                )
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO dashboard_settings (key, value_json, updated_at) "
+                    "VALUES ('settings', :value, '2026-08-12T00:00:00Z')"
+                ),
+                {
+                    "value": json.dumps(
+                        {
+                            "intensity": {"basis": "turns", "lightMax": 1, "mediumMax": 2},
+                            "histogramBins": {"turns": [0, 1], "sessions": [0, 1]},
+                        }
+                    )
+                },
+            )
+            for item_id, item_type, payload in (
+                (
+                    "turn_start_1",
+                    "turn.start",
+                    {"id": "turn_start_1", "type": "turn.start", "turnId": "turn_1"},
+                ),
+                (
+                    "message_1",
+                    "message",
+                    {
+                        "id": "message_1",
+                        "type": "message",
+                        "turnId": "turn_1",
+                        "source": {"runtime": "codex", "turnId": "turn_1"},
+                        "content": {"turn": "left", "text": "done"},
+                    },
+                ),
+            ):
+                connection.execute(
+                    text(
+                        "INSERT INTO timeline_items "
+                        "(session_id, id, type, status, role, turn_id, order_seq, updated_seq, item_time, payload_json) "
+                        "VALUES ('sess_1', :id, :type, 'done', NULL, 'turn_1', 1, 1, NULL, :payload)"
+                    ),
+                    {"id": item_id, "type": item_type, "payload": json.dumps(payload)},
+                )
+    finally:
+        engine.dispose()
+
+    upgrade_database(db_url=_sqlite_url(path), revision="v2_9")
+
+    engine = create_engine(f"sqlite:///{path}")
+    try:
+        assert "turn_id" not in {
+            column["name"] for column in inspect(engine).get_columns("timeline_items")
+        }
+        fact_columns = {
+            column["name"]
+            for column in inspect(engine).get_columns("dashboard_user_daily_facts")
+        }
+        assert "messages" in fact_columns
+        assert "turns" not in fact_columns
+        with engine.connect() as connection:
+            rows = connection.execute(
+                text("SELECT id, payload_json FROM timeline_items ORDER BY id")
+            ).mappings().all()
+            metric_key = connection.execute(
+                text("SELECT metric_key FROM dashboard_daily_metrics")
+            ).scalar_one()
+            settings = json.loads(
+                connection.execute(
+                    text("SELECT value_json FROM dashboard_settings WHERE key = 'settings'")
+                ).scalar_one()
+            )
+        assert [row["id"] for row in rows] == ["message_1"]
+        assert json.loads(rows[0]["payload_json"]) == {
+            "content": {"text": "done", "turn": "left"},
+            "id": "message_1",
+            "source": {"runtime": "codex"},
+            "type": "message",
+        }
+        assert metric_key == "usage.messages"
+        assert settings == {
+            "histogramBins": {"messages": [0, 1], "sessions": [0, 1]},
+            "intensity": {"basis": "messages", "lightMax": 1, "mediumMax": 2},
+        }
+    finally:
+        engine.dispose()
+
+    upgrade_database(db_url=_sqlite_url(path), revision="v2_8")
+
+    engine = create_engine(f"sqlite:///{path}")
+    try:
+        assert "turn_id" not in {
+            column["name"]
+            for column in inspect(engine).get_columns("session_active_runs")
+        }
     finally:
         engine.dispose()
 

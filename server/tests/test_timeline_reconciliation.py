@@ -164,3 +164,60 @@ def test_derived_key_duplicate_keeps_multiple_completed_assistant_messages() -> 
     )
 
     assert _dedupe_legacy_history_items([first, second]) == [first, second]
+
+
+def test_thread_read_echo_with_matching_client_message_id_is_ignored() -> None:
+    live = TimelineItem(
+        id="live_user_item",
+        sessionId="sess_1",
+        turnId="turn_1",
+        type="message",
+        status="done",
+        role="user",
+        content={"text": "read this", "format": "markdown"},
+        source={
+            "runtime": "codex",
+            "sessionId": "thread_1",
+            "turnId": "turn_1",
+            "itemId": "live_user_item",
+            "itemType": "userMessage",
+            "event": "item/completed",
+            "clientMessageId": "cm_file_1",
+        },
+        orderSeq=1,
+        revision=1,
+        contentHash="sha256:live",
+        updatedSeq=1,
+        createdAt="2026-08-07T00:00:00Z",
+        updatedAt="2026-08-07T00:00:00Z",
+    )
+    snapshot = TimelineItem(
+        id="item-1",
+        sessionId="sess_1",
+        turnId="turn_1",
+        type="message",
+        status="done",
+        role="user",
+        content={
+            "text": "read this\n\n[Attached file: note.txt (text/plain, 16 bytes) at /tmp/file_1-note.txt]",
+            "format": "markdown",
+            "attachments": [{"fileId": "file_1", "name": "note.txt"}],
+        },
+        source={
+            "runtime": "codex",
+            "sessionId": "thread_1",
+            "turnId": "turn_1",
+            "itemId": "item-1",
+            "itemType": "userMessage",
+            "event": "thread/read",
+            "clientMessageId": "cm_file_1",
+        },
+        orderSeq=2,
+        revision=1,
+        contentHash="sha256:snapshot",
+        updatedSeq=2,
+        createdAt="2026-08-07T00:00:00Z",
+        updatedAt="2026-08-07T00:00:00Z",
+    )
+
+    assert _dedupe_legacy_history_items([live, snapshot]) == [live]

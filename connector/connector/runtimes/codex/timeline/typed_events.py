@@ -28,8 +28,8 @@ from openai_codex.generated.v2_all import (
     ItemStartedNotification,
     LocalImageUserInput,
     McpToolCallThreadItem,
-    MessageResponseItem,
     MentionUserInput,
+    MessageResponseItem,
     OutputTextContentItem,
     PlanDeltaNotification,
     PlanThreadItem,
@@ -50,6 +50,7 @@ from openai_codex.generated.v2_all import (
 )
 
 from connector.runtimes.codex.sdk.events import CodexSdkEvent
+from connector.runtimes.codex.timeline.identity import uses_turn_position_identity
 from connector.runtimes.codex.timeline.projection import CodexTimelineProjection
 
 
@@ -149,6 +150,7 @@ def timeline_projections_from_sdk_turn_event(
     if not isinstance(payload, TurnStartedNotification | TurnCompletedNotification):
         return None
     projections: list[CodexTimelineProjection] = []
+    generated_position = 0
     for item in payload.turn.items:
         projection = timeline_projection_from_thread_item(
             item=item,
@@ -156,6 +158,11 @@ def timeline_projections_from_sdk_turn_event(
             event_status=None,
         )
         if projection is not None:
+            if uses_turn_position_identity(
+                projection.raw_type, projection.effective_role()
+            ):
+                projection = projection.with_turn_position(generated_position)
+                generated_position += 1
             projections.append(projection)
     return tuple(projections)
 
@@ -166,6 +173,7 @@ def timeline_projections_from_sdk_thread(
 ) -> tuple[CodexTimelineProjection, ...]:
     projections: list[CodexTimelineProjection] = []
     for turn in thread.turns:
+        generated_position = 0
         for item in turn.items:
             projection = timeline_projection_from_thread_item(
                 item=item,
@@ -173,6 +181,11 @@ def timeline_projections_from_sdk_thread(
                 event_status=None,
             )
             if projection is not None:
+                if uses_turn_position_identity(
+                    projection.raw_type, projection.effective_role()
+                ):
+                    projection = projection.with_turn_position(generated_position)
+                    generated_position += 1
                 projections.append(projection)
     if limit is None:
         return tuple(projections)
@@ -433,7 +446,7 @@ def user_input_text(items: Sequence[UserInput]) -> str | None:
 def is_attachment_note_text(text: str) -> bool:
     lines = [line for line in text.splitlines() if line.strip()]
     return bool(lines) and all(
-        line.startswith("Attached file: ") or line.startswith("[Attached file: ")
+        line.startswith(("Attached file: ", "[Attached file: "))
         for line in lines
     )
 

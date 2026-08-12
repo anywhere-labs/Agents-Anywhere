@@ -475,12 +475,30 @@
       "runtimeConfigDescription": "Runtime configuration.",
       "runtimeSchemaUnavailable": "This runtime did not provide a configuration schema.",
       "runtimeConfigInvalid": "The configuration is invalid.",
-      "runtimeConfigExecutablePath": "Claude executable path (optional)",
-      "runtimeConfigExecutablePathDescription": "Optional. Fill this only when Claude Code is not available on the default PATH.",
-      "runtimeConfigEnvironment": "Environment variables (optional)",
-      "runtimeConfigEnvironmentDescription": "Environment variables added or overridden when this runtime starts.",
-      "runtimeConfigCustomModels": "Custom models (optional)",
-      "runtimeConfigCustomModelsDescription": "Add models to show in the model picker, plus the reasoning efforts available for each model.",
+      "runtimeConfigFields": {
+        "claudeExecutablePath": {
+          "label": "Claude executable path (optional)",
+          "description": "Optional. Fill this only when Claude Code is not available on the default PATH."
+        },
+        "codexExecutablePath": {
+          "label": "Codex executable path (optional)",
+          "description": "Optional. When set, this executable is always used and Use System Codex is ignored. Leave it empty to use automatic binary selection."
+        },
+        "useSystemCodex": {
+          "label": "Use System Codex",
+          "description": "Use the Codex executable from your login shell PATH. If it is unavailable, the bundled Codex is used automatically. Turn this off to always use the bundled Codex."
+        }
+      },
+      "runtimeConfigComponents": {
+        "keyValue": {
+          "label": "Environment variables (optional)",
+          "description": "Environment variables added or overridden when this runtime starts."
+        },
+        "customModels": {
+          "label": "Custom models (optional)",
+          "description": "Add models to show in the model picker, plus the reasoning efforts available for each model."
+        }
+      },
       "resetAllDefaults": "Reset all defaults",
       "noEnvironmentOverrides": "No environment overrides.",
       "environmentName": "Variable name",
@@ -693,6 +711,12 @@
       "copyItemJson": "Copy item JSON",
       "copyItemText": "Copy text",
       "gitOperationCommitted": "Committed",
+      "gitOperationCreatedBranch": "Created branch",
+      "gitOperationCreatedBranchNamed": "Created branch {branch}",
+      "gitOperationCreatedDraftPr": "Opened draft PR",
+      "gitOperationCreatedDraftPrForBranch": "Opened draft PR for {branch}",
+      "gitOperationCreatedPr": "Opened PR",
+      "gitOperationCreatedPrForBranch": "Opened PR for {branch}",
       "gitOperationPushed": "Pushed",
       "gitOperationPushedBranch": "Pushed {branch}",
       "gitOperationStaged": "Staged",
@@ -1124,7 +1148,7 @@
     },
     "opsDashboard": {
       "title": "Dashboard",
-      "description": "Operational metrics for users, turns, sessions, devices, and agents.",
+      "description": "Operational metrics for users, messages, sessions, devices, and agents.",
       "from": "From",
       "to": "To",
       "load": "Load",
@@ -1139,19 +1163,19 @@
       "deviceBreakdown": "Device mix",
       "agentBreakdown": "Agent mix",
       "sessionAgentBreakdown": "Active session agent mix",
-      "turnHistogram": "Turns per user distribution",
+      "messageHistogram": "Messages per user distribution",
       "sessionHistogram": "Active sessions per user distribution",
       "axes": {
-        "turnHistogram": "X-axis: turn count range · Y-axis: users",
+        "messageHistogram": "X-axis: message count range · Y-axis: users",
         "sessionHistogram": "X-axis: active session count range · Y-axis: users"
       },
       "userSegments": "User intensity",
       "intensitySettings": "Intensity thresholds",
-      "intensityDescription": "Classify users by turns in the selected range.",
+      "intensityDescription": "Classify users by messages in the selected range.",
       "saveSettings": "Save settings",
-      "lightMax": "Light max turns",
-      "mediumMax": "Medium max turns",
-      "turnBins": "Turn buckets",
+      "lightMax": "Light max messages",
+      "mediumMax": "Medium max messages",
+      "messageBins": "Message buckets",
       "sessionBins": "Session buckets",
       "breakdown": "Breakdown",
       "name": "Name",
@@ -1169,7 +1193,7 @@
         "totalUsers": "Total users",
         "newUsers": "New users",
         "mau": "MAU",
-        "turns": "Turns",
+        "messages": "Messages",
         "activeSessions": "Active sessions",
         "activeUsers": "Active users",
         "avgDevices": "Avg. devices/user",

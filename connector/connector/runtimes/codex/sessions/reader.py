@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import asyncio
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+import asyncer
 from openai_codex.generated.v2_all import Thread
 
 from connector.logging import logger
@@ -238,19 +238,19 @@ class CodexSessionReader:
         read_elapsed_ms = (time.monotonic() - started_at) * 1000
         project_started_at = time.monotonic()
         if isinstance(result.thread, Thread) and self.timeline is not None:
-            projections = await asyncio.to_thread(
-                codex_timeline.timeline_projections_from_sdk_thread,
-                thread=result.thread,
-                limit=limit,
-            )
-            items = self.timeline.items_from_snapshot_projections(
+            projections = await asyncer.asyncify(
+                codex_timeline.timeline_projections_from_sdk_thread
+            )(thread=result.thread, limit=limit)
+            items = await asyncer.asyncify(
+                self.timeline.items_from_snapshot_projections
+            )(
                 session_id=session_id,
                 external_session_id=external_session_id,
                 projections=projections,
             )
         elif self.timeline is not None:
             thread = dict(result.thread)
-            items = self.timeline.items_from_thread_snapshot(
+            items = await asyncer.asyncify(self.timeline.items_from_thread_snapshot)(
                 session_id=session_id,
                 external_session_id=external_session_id,
                 thread=thread,
@@ -258,7 +258,9 @@ class CodexSessionReader:
             )
         else:
             thread = dict(result.thread)
-            items = codex_timeline.timeline_items_from_thread(
+            items = await asyncer.asyncify(
+                codex_timeline.timeline_items_from_thread
+            )(
                 session_id=session_id,
                 external_session_id=external_session_id,
                 thread=thread,

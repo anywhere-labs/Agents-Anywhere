@@ -16,8 +16,8 @@ from agent_server.core.models import (
     SessionRuntimeState,
     SessionSelectionPatchRequest,
     SessionStatus,
+    SessionSteerRequest,
     SessionView,
-    SteerTurnRequest,
 )
 from agent_server.core.utc import utc_now
 from agent_server.infra.connector_rpc import (
@@ -187,12 +187,10 @@ class SessionRunService:
                 message="connector did not return an external session id",
             )
             raise SessionRunUpstreamError("connector did not return an external session id")
-        turn_id = connector_result.get("turnId")
         await self._store.start_active_run(
             session_id=session.id,
             runtime=payload.runtime,
             external_session_id=external_session_id if isinstance(external_session_id, str) else None,
-            turn_id=turn_id if isinstance(turn_id, str) else None,
             params=params,
         )
         session = await self._store.upsert_connector_session(
@@ -269,7 +267,7 @@ class SessionRunService:
         try:
             result = await self._manager.request(
                 session.connectorId,
-                "turn.start",
+                "session.send_message",
                 params,
             )
         except ConnectorOfflineError as exc:
@@ -366,7 +364,7 @@ class SessionRunService:
     async def steer_session(
         self,
         session_id: str,
-        payload: SteerTurnRequest,
+        payload: SessionSteerRequest,
         *,
         user_id: str,
     ) -> RpcResponsePayload:
@@ -382,25 +380,16 @@ class SessionRunService:
             raise SessionRunConflictError("session runtime does not support steer")
         if not await self._manager.is_online(session.connectorId):
             raise SessionRunConflictError("connector is offline")
-
-        active_run = await self._store.get_active_run(session_id)
-        turn_id = active_run.get("turnId") if active_run else None
-        if turn_id is None:
-            turn_id = await self._store.get_open_turn_id(session_id)
-        if turn_id is None:
-            raise SessionRunConflictError("no active turn to steer")
+        runtime_status = await self._read_runtime_status(session)
+        if runtime_status != "running":
+            raise SessionRunConflictError("session is not running")
 
         params: dict[str, Any] = {
             "sessionId": session_id,
             "runtime": session.runtime,
             "content": payload.content,
-            "turnId": turn_id,
         }
-        external_session_id = (
-            active_run.get("externalSessionId")
-            if active_run
-            else session.externalSessionId
-        )
+        external_session_id = session.externalSessionId
         if external_session_id:
             params["externalSessionId"] = external_session_id
         if session.cwd:
@@ -421,7 +410,7 @@ class SessionRunService:
         try:
             result = await self._manager.request(
                 session.connectorId,
-                "turn.steer",
+                "session.steer",
                 params,
             )
         except ConnectorOfflineError as exc:
@@ -526,38 +515,22 @@ class SessionRunService:
             raise SessionRunNotFoundError("session not found") from None
         if require_takeover and not session.takeover:
             raise SessionRunConflictError("session is read-only until takeover is enabled")
-        active_run = await self._store.get_active_run(session_id)
-        turn_id = active_run.get("turnId") if active_run else None
-        if turn_id is None:
-            turn_id = await self._store.get_open_turn_id(session_id)
-
         params: dict[str, Any] = {
             "sessionId": session_id,
             "runtime": session.runtime,
         }
-        if turn_id is not None:
-            params["turnId"] = turn_id
-        external_session_id = active_run.get("externalSessionId") if active_run else session.externalSessionId
-        if external_session_id:
-            params["externalSessionId"] = external_session_id
         try:
-            result = await self._manager.request(session.connectorId, "turn.interrupt", params)
+            result = await self._manager.request(
+                session.connectorId,
+                "session.interrupt",
+                params,
+            )
         except ConnectorOfflineError as exc:
             raise SessionRunConflictError(str(exc)) from exc
         except ConnectorRpcError as exc:
             raise SessionRunUpstreamError(exc.message or exc.code) from exc
-        if _interrupt_target_not_found(result):
-            await self._store.clear_active_run(session_id)
+        await self._store.clear_active_run(session_id)
         return RpcResponsePayload(ok=True, result=result)
-
-
-def _interrupt_target_not_found(result: object) -> bool:
-    if not isinstance(result, dict):
-        return False
-    if result.get("interrupted") is not False:
-        return False
-    reason = result.get("reason")
-    return reason in {"thread_not_found", "turn_not_found"}
 
 
 def _selections_from_mapping(value: dict[str, str | None]) -> dict[str, str]:

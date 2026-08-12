@@ -21,6 +21,7 @@ from connector.runtimes.codex.timeline.identity import (
     explicit_derived_key,
     native_item_id,
     timeline_item_id_from_values,
+    uses_turn_position_identity,
 )
 from connector.runtimes.codex.timeline.items import (
     CodexTimelineItem,
@@ -53,6 +54,7 @@ class CodexTimelineProjection:
     status: str | None = None
     role: str | None = None
     turn_id: str | None = None
+    turn_position: int | None = None
     text: str | None = None
     input_value: Any = None
     message: str | None = None
@@ -91,6 +93,9 @@ class CodexTimelineProjection:
     def with_platform_id(self, platform_id: str) -> CodexTimelineProjection:
         return replace(self, platform_id=platform_id)
 
+    def with_turn_position(self, turn_position: int) -> CodexTimelineProjection:
+        return replace(self, turn_position=turn_position)
+
     def with_text(self, text: str) -> CodexTimelineProjection:
         return replace(self, text=text)
 
@@ -122,6 +127,12 @@ class CodexTimelineProjection:
     def derived_key(self, fallback_index: int) -> str:
         if self.explicit_derived_key is not None:
             return self.explicit_derived_key
+        if (
+            self.turn_id is not None
+            and self.turn_position is not None
+            and uses_turn_position_identity(self.raw_type, self.effective_role())
+        ):
+            return f"turn-item-{self.turn_id}-{self.turn_position}"
         return derived_key_from_values(
             raw_type=self.raw_type,
             role=self.effective_role(),

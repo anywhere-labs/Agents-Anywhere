@@ -114,7 +114,7 @@ def test_create_sdk_client_prefers_async_codex_sdk_entrypoint() -> None:
         runtime="codex",
         revision=1,
         values={
-            "runtimeBinaryMode": "sdk_bundled",
+            "useSystemCodex": False,
             "environment": {"EXAMPLE": "1"},
         },
     )
@@ -155,7 +155,7 @@ def test_create_sdk_client_prefers_login_shell_codex_binary(
         runtime="codex",
         revision=1,
         values={
-            "runtimeBinaryMode": "prefer_system",
+            "useSystemCodex": True,
             "environment": {"EXAMPLE": "1"},
         },
     )
@@ -167,6 +167,28 @@ def test_create_sdk_client_prefers_login_shell_codex_binary(
     assert isinstance(client.config, _FakeCodexConfig)
     assert client.config.codex_bin == str(codex_bin)
     assert client.config.env == {"PATH": str(tmp_path), "EXAMPLE": "1"}
+
+
+def test_create_sdk_client_prefers_configured_codex_binary(tmp_path: Path) -> None:
+    codex_bin = tmp_path / "codex-custom"
+    codex_bin.write_text("#!/bin/sh\n", encoding="utf-8")
+    codex_bin.chmod(0o755)
+    config = RuntimeConfig(
+        runtime="codex",
+        revision=1,
+        values={
+            "useSystemCodex": False,
+            "codexExecutablePath": str(codex_bin),
+            "environment": {},
+        },
+    )
+    sdk = _FakeAsyncCodexSdkModule()
+
+    client = _create_sdk_client(sdk, config)
+
+    assert isinstance(client, _FakeAsyncCodex)
+    assert isinstance(client.config, _FakeCodexConfig)
+    assert client.config.codex_bin == str(codex_bin)
 
 
 def test_codex_sdk_client_adapts_async_codex_thread_turn_flow() -> None:

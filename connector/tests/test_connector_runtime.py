@@ -646,23 +646,24 @@ class FakeAgentRuntime(AgentRuntime):
         )
         return RuntimeOperationResult(ok=True, result={"steered": True, "turnId": "turn_agent"})
 
-    async def interrupt_turn(
+    async def interrupt_session(
         self,
         session_id: str,
-        external_session_id: str | None = None,
         reason: str | None = None,
     ) -> RuntimeOperationResult:
         self.calls.append(
             (
-                "turn.interrupt",
+                "session.interrupt",
                 {
                     "sessionId": session_id,
-                    "externalSessionId": external_session_id,
                     "reason": reason,
                 },
             )
         )
-        return RuntimeOperationResult(ok=True, result={"interrupted": True, "turnId": "turn_agent"})
+        return RuntimeOperationResult(
+            ok=True,
+            result={"interrupted": True, "alreadyStopped": False},
+        )
 
     async def update_session_selections(
         self,
@@ -933,6 +934,10 @@ def test_connector_rpc_start_message_does_not_block_later_requests() -> None:
     asyncio.run(_exercise_nonblocking_runtime_rpc())
 
 
+def test_connector_runtime_host_keeps_turn_data_inside_runtime() -> None:
+    asyncio.run(_exercise_session_only_server_notifications())
+
+
 def test_connector_config_saves_and_loads_local_json(tmp_path) -> None:
     path = tmp_path / "connector.json"
     config = ConnectorConfig(
@@ -1162,7 +1167,12 @@ async def _exercise_runtime_sync_pushes_each_session_snapshot_before_next_meta()
                     title="Unchanged",
                     cwd="/repo",
                     ordering_time="2026-08-01T00:00:00Z",
-                    metadata={"sync": {"requires_timeline_sync": False}},
+                    metadata={
+                        "sync": {
+                            "requires_timeline_sync": False,
+                            "changed": False,
+                        }
+                    },
                 ),
             )
 
@@ -1206,7 +1216,6 @@ async def _exercise_runtime_sync_pushes_each_session_snapshot_before_next_meta()
         ("timeline", "sess_changed"),
         ("state", "sess_changed"),
         ("notice", "sess_changed"),
-        ("meta", "sess_unchanged"),
     ]
     assert [call[0] for call in runtime.calls] == [
         "runtime.modelCatalog",
@@ -1403,14 +1412,21 @@ async def _exercise_runtime_sync_skips_active_session_timeline_reads() -> None:
     )
 
     await runner.sync_existing_once()
+    await runner.sync_existing_once()
 
     assert host.events == [
         ("model_catalog", "codex"),
         ("permission_catalog", "codex"),
         ("meta", "sess_running"),
         ("state", "sess_running"),
+        ("model_catalog", "codex"),
+        ("permission_catalog", "codex"),
     ]
     assert [call[0] for call in runtime.calls] == [
+        "runtime.modelCatalog",
+        "runtime.permissionCatalog",
+        "session.discover",
+        "session.state",
         "runtime.modelCatalog",
         "runtime.permissionCatalog",
         "session.discover",
@@ -1420,6 +1436,7 @@ async def _exercise_runtime_sync_skips_active_session_timeline_reads() -> None:
         "session.meta.upsert",
         "session.state.updated",
     ]
+    assert len(ingested_batches) == 1
 
 
 async def _exercise_runtime_sync_continues_after_single_session_ingest_failure() -> None:
@@ -1650,7 +1667,6 @@ async def _exercise_runtime() -> None:
         "result": {
             "sessionId": "sess_1",
             "externalSessionId": "thr_created",
-            "turnId": "turn_agent",
         },
     }
 
@@ -1658,12 +1674,12 @@ async def _exercise_runtime() -> None:
         {
             "id": "rpc_2",
             "type": "request",
-            "method": "turn.start",
+            "method": "session.send_message",
             "params": {"runtime": "codex", "sessionId": "sess_1", "externalSessionId": "thr_1", "content": "hi"},
         }
     )
     assert runtime.calls[-1][0] == "turn.start"
-    assert ws.messages[-1]["result"] == {"turnId": "turn_agent"}
+    assert ws.messages[-1]["result"] == {}
 
     await client.handle_message(
         {
@@ -2013,7 +2029,7 @@ async def _exercise_nonblocking_runtime_rpc() -> None:
         {
             "id": "rpc_fast",
             "type": "request",
-            "method": "turn.start",
+            "method": "session.send_message",
             "params": {
                 "runtime": "codex",
                 "sessionId": "sess_1",
@@ -2023,12 +2039,74 @@ async def _exercise_nonblocking_runtime_rpc() -> None:
         }
     )
     fast_response = await wait_for_ws_response(ws, "rpc_fast")
-    assert fast_response["result"] == {"turnId": "turn_agent"}
+    assert fast_response["result"] == {}
     assert not any(message.get("id") == "rpc_slow" for message in ws.messages)
 
     runtime.state_release.set()
     slow_response = await wait_for_ws_response(ws, "rpc_slow")
     assert slow_response["result"]["state"]["sessionId"] == "sess_1"
+
+
+async def _exercise_session_only_server_notifications() -> None:
+    notifications: list[tuple[str, dict[str, Any]]] = []
+
+    async def notify(method: str, params: dict[str, Any]) -> None:
+        notifications.append((method, params))
+
+    async def download(_session_id: str, _file_id: str) -> tuple[bytes, str, str]:
+        raise AssertionError("unexpected attachment download")
+
+    from connector.server.runtime_host import ConnectorRuntimeHost
+
+    host = ConnectorRuntimeHost("conn_1", notify, download)
+    await host.session_state_update(
+        "sess_1",
+        "codex",
+        status="running",
+        metadata={"turnId": "turn_1", "nested": {"turn_id": "turn_1"}},
+    )
+    await host.timeline_sync(
+        "sess_1",
+        "codex",
+        (
+            RuntimeTimelineItem(
+                id="turn_start_1",
+                session_id="sess_1",
+                turn_id="turn_1",
+                type="turn.start",
+                status="running",
+                content={},
+                source={"runtime": "codex", "turnId": "turn_1"},
+                order_seq=1,
+                revision=1,
+                content_hash="sha256:start",
+            ),
+            RuntimeTimelineItem(
+                id="message_1",
+                session_id="sess_1",
+                turn_id="turn_1",
+                type="message",
+                status="done",
+                role="assistant",
+                content={"text": "done", "turn": "left"},
+                source={"runtime": "codex", "turnId": "turn_1"},
+                order_seq=2,
+                revision=1,
+                content_hash="sha256:message",
+            ),
+        ),
+        complete=True,
+    )
+
+    assert [method for method, _params in notifications] == [
+        "session.state.updated",
+        "timeline.sync",
+    ]
+    assert [item["id"] for item in notifications[1][1]["items"]] == ["message_1"]
+    encoded = json.dumps(notifications)
+    assert "turnId" not in encoded
+    assert "turn_id" not in encoded
+    assert notifications[1][1]["items"][0]["content"]["turn"] == "left"
 
 
 async def wait_for_ws_response(
@@ -2395,16 +2473,23 @@ async def _exercise_runtime_protocol_routing() -> None:
     await client.dispatch("runtime.start", {"runtimeId": "codex", "config": {}})
     await client.dispatch("runtime.start", {"runtimeId": "claude", "config": {}})
 
-    await client.dispatch("turn.start", {"runtime": "codex", "sessionId": "s1", "content": "hi"})
-    await client.dispatch("turn.start", {"runtime": "claude", "sessionId": "s2", "content": "hi"})
+    await client.dispatch("session.send_message", {"runtime": "codex", "sessionId": "s1", "content": "hi"})
+    await client.dispatch("session.send_message", {"runtime": "claude", "sessionId": "s2", "content": "hi"})
     await client.dispatch(
-        "turn.steer",
+        "session.steer",
         {"runtime": "claude", "sessionId": "s2", "content": "focus"},
     )
-    await client.dispatch("turn.interrupt", {"runtime": "claude", "sessionId": "s2", "reason": "user"})
+    await client.dispatch(
+        "session.interrupt",
+        {"runtime": "claude", "sessionId": "s2", "reason": "user"},
+    )
 
     assert [c[0] for c in codex.calls] == ["turn.start"]
-    assert [c[0] for c in claude.calls] == ["turn.start", "turn.steer", "turn.interrupt"]
+    assert [c[0] for c in claude.calls] == [
+        "turn.start",
+        "turn.steer",
+        "session.interrupt",
+    ]
     assert codex.calls[0][1]["sessionId"] == "s1"
     assert claude.calls[0][1]["sessionId"] == "s2"
     assert claude.calls[2][1]["reason"] == "user"
@@ -2417,7 +2502,7 @@ async def _exercise_agent_runtime_turn_rpc(tmp_path) -> None:
     await client.dispatch("runtime.start", {"runtimeId": "codex", "config": {}})
 
     started = await client.dispatch(
-        "turn.start",
+        "session.send_message",
         {
             "runtime": "codex",
             "sessionId": "sess_1",
@@ -2429,7 +2514,7 @@ async def _exercise_agent_runtime_turn_rpc(tmp_path) -> None:
         },
     )
     steered = await client.dispatch(
-        "turn.steer",
+        "session.steer",
         {
             "runtime": "codex",
             "sessionId": "sess_1",
@@ -2439,7 +2524,7 @@ async def _exercise_agent_runtime_turn_rpc(tmp_path) -> None:
         },
     )
     interrupted = await client.dispatch(
-        "turn.interrupt",
+        "session.interrupt",
         {
             "runtime": "codex",
             "sessionId": "sess_1",
@@ -2449,13 +2534,13 @@ async def _exercise_agent_runtime_turn_rpc(tmp_path) -> None:
     )
 
     assert agent_runtime.started is True
-    assert started == {"turnId": "turn_agent"}
-    assert steered == {"steered": True, "turnId": "turn_agent"}
-    assert interrupted == {"interrupted": True, "turnId": "turn_agent"}
+    assert started == {}
+    assert steered == {"steered": True}
+    assert interrupted == {"interrupted": True, "alreadyStopped": False}
     assert [call[0] for call in agent_runtime.calls] == [
         "turn.start",
         "turn.steer",
-        "turn.interrupt",
+        "session.interrupt",
     ]
     assert agent_runtime.calls[0][1]["attachments"][0].file_id == "file_1"
     assert agent_runtime.calls[0][1]["clientMessageId"] == "cm_1"
@@ -2549,7 +2634,7 @@ async def _exercise_runtime_config_read() -> None:
 async def _exercise_unknown_runtime() -> None:
     client = _client()
     try:
-        await client.dispatch("turn.start", {"runtime": "opencode", "sessionId": "s1", "content": "hi"})
+        await client.dispatch("session.send_message", {"runtime": "opencode", "sessionId": "s1", "content": "hi"})
     except RuntimeError as exc:
         assert "opencode" in str(exc)
     else:

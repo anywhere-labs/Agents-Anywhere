@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 from connector.runtime_protocol import (
@@ -40,7 +41,7 @@ def runtime_config_payload(config: RuntimeConfig) -> dict[str, Any]:
 
 
 def operation_result_payload(result: RuntimeOperationResult) -> dict[str, Any]:
-    payload = dict(result.result)
+    payload = _operation_result_without_turn_data(result.result)
     if result.ok and result.code is None and result.message is None:
         return payload
     return {
@@ -97,6 +98,32 @@ def capability_payload(capability: RuntimeCapability) -> dict[str, Any]:
 
 def drop_none_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in payload.items() if value is not None}
+
+
+def server_payload_without_turn_data(value: Any) -> Any:
+    """Remove runtime-owned turn details from data crossing into Server."""
+
+    if isinstance(value, Mapping):
+        return {
+            key: server_payload_without_turn_data(item)
+            for key, item in value.items()
+            if key not in {"turnId", "turn_id"}
+        }
+    if isinstance(value, (list, tuple)):
+        return [server_payload_without_turn_data(item) for item in value]
+    return value
+
+
+def _operation_result_without_turn_data(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {
+            key: _operation_result_without_turn_data(item)
+            for key, item in value.items()
+            if key not in {"turn", "turnId", "turn_id"}
+        }
+    if isinstance(value, (list, tuple)):
+        return [_operation_result_without_turn_data(item) for item in value]
+    return value
 
 
 def runtime_command_payload(command: RuntimeCommand) -> dict[str, Any]:

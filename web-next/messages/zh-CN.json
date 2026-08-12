@@ -475,12 +475,30 @@
       "runtimeConfigDescription": "Runtime 配置。",
       "runtimeSchemaUnavailable": "这个 Runtime 没有提供配置 Schema。",
       "runtimeConfigInvalid": "配置内容不合法。",
-      "runtimeConfigExecutablePath": "Claude 可执行文件路径（可选）",
-      "runtimeConfigExecutablePathDescription": "可选。只有 Claude Code 不在默认 PATH 时才需要填写。",
-      "runtimeConfigEnvironment": "环境变量（可选）",
-      "runtimeConfigEnvironmentDescription": "启动这个 Runtime 时追加或覆盖的环境变量。",
-      "runtimeConfigCustomModels": "自定义模型（可选）",
-      "runtimeConfigCustomModelsDescription": "手动添加要显示在模型选择器里的模型，以及每个模型可用的推理强度。",
+      "runtimeConfigFields": {
+        "claudeExecutablePath": {
+          "label": "Claude 可执行文件路径（可选）",
+          "description": "可选。只有 Claude Code 不在默认 PATH 时才需要填写。"
+        },
+        "codexExecutablePath": {
+          "label": "Codex 可执行文件路径（可选）",
+          "description": "可选。填写后将始终使用该程序，并忽略“使用系统 Codex”设置。留空则使用自动选择策略。"
+        },
+        "useSystemCodex": {
+          "label": "使用系统 Codex",
+          "description": "优先使用登录 Shell PATH 中的 Codex；如果找不到，则自动使用捆绑的 Codex。关闭后将始终只使用捆绑的 Codex。"
+        }
+      },
+      "runtimeConfigComponents": {
+        "keyValue": {
+          "label": "环境变量（可选）",
+          "description": "启动这个 Runtime 时追加或覆盖的环境变量。"
+        },
+        "customModels": {
+          "label": "自定义模型（可选）",
+          "description": "手动添加要显示在模型选择器里的模型，以及每个模型可用的推理强度。"
+        }
+      },
       "resetAllDefaults": "全部恢复默认值",
       "noEnvironmentOverrides": "没有环境变量覆盖。",
       "environmentName": "变量名",
@@ -693,6 +711,12 @@
       "copyItemJson": "复制 item JSON",
       "copyItemText": "复制文本",
       "gitOperationCommitted": "已提交",
+      "gitOperationCreatedBranch": "已创建分支",
+      "gitOperationCreatedBranchNamed": "已创建分支 {branch}",
+      "gitOperationCreatedDraftPr": "已创建草稿 PR",
+      "gitOperationCreatedDraftPrForBranch": "已为 {branch} 创建草稿 PR",
+      "gitOperationCreatedPr": "已创建 PR",
+      "gitOperationCreatedPrForBranch": "已为 {branch} 创建 PR",
       "gitOperationPushed": "已推送",
       "gitOperationPushedBranch": "已推送 {branch}",
       "gitOperationStaged": "已暂存",
@@ -1124,7 +1148,7 @@
     },
     "opsDashboard": {
       "title": "看板",
-      "description": "查看用户、Turn、会话、设备和 Agent 的运营数据。",
+      "description": "查看用户、消息、会话、设备和 Agent 的运营数据。",
       "from": "开始",
       "to": "结束",
       "load": "加载",
@@ -1139,19 +1163,19 @@
       "deviceBreakdown": "设备占比",
       "agentBreakdown": "Agent 占比",
       "sessionAgentBreakdown": "活跃会话 Agent 占比",
-      "turnHistogram": "每个用户的 Turn 数分布",
+      "messageHistogram": "每个用户的消息数分布",
       "sessionHistogram": "每个用户的活跃会话数分布",
       "axes": {
-        "turnHistogram": "横轴：Turn 数区间 · 纵轴：用户数",
+        "messageHistogram": "横轴：消息数区间 · 纵轴：用户数",
         "sessionHistogram": "横轴：活跃会话数区间 · 纵轴：用户数"
       },
       "userSegments": "用户强度",
       "intensitySettings": "强度阈值",
-      "intensityDescription": "按所选时间范围内的 Turn 数划分用户。",
+      "intensityDescription": "按所选时间范围内的消息数划分用户。",
       "saveSettings": "保存设置",
       "lightMax": "低度用户上限",
       "mediumMax": "中度用户上限",
-      "turnBins": "Turn 分桶",
+      "messageBins": "消息分桶",
       "sessionBins": "会话分桶",
       "breakdown": "明细",
       "name": "名称",
@@ -1169,7 +1193,7 @@
         "totalUsers": "总用户",
         "newUsers": "新增用户",
         "mau": "MAU",
-        "turns": "Turn",
+        "messages": "消息",
         "activeSessions": "活跃会话",
         "activeUsers": "活跃用户",
         "avgDevices": "人均设备",

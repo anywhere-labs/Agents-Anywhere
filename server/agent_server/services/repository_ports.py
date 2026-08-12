@@ -52,8 +52,6 @@ class SessionStateRepository(SessionLookupRepository, Protocol):
 
     async def has_active_timeline_item(self, session_id: str) -> bool: ...
 
-    async def get_open_turn_id(self, session_id: str) -> str | None: ...
-
     async def set_session_status(
         self,
         session_id: str,
@@ -194,8 +192,6 @@ class ConnectorNotificationRepository(
         *,
         user_id: str | None = None,
     ) -> SessionView: ...
-
-    async def update_active_run_turn_id(self, session_id: str, turn_id: str) -> None: ...
 
     async def update_connector_preferences(
         self,

@@ -17,11 +17,11 @@ from connector.runtime_protocol import (
     RuntimeProvider,
 )
 from connector.runtime_protocol.host import RuntimeHostClient
-from connector.runtimes.custom_models import normalize_custom_models
 from connector.runtimes.claude import discovery, provider_config
 from connector.runtimes.claude.runtime import ClaudeRuntime
+from connector.runtimes.custom_models import normalize_custom_models
 
-CLAUDE_CONFIG_SCHEMA_REVISION = 2
+CLAUDE_CONFIG_SCHEMA_REVISION = 3
 
 
 class ClaudeProvider(RuntimeProvider):

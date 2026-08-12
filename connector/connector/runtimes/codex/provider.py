@@ -6,6 +6,7 @@ from typing import Any
 
 from jsonschema import Draft202012Validator
 
+from connector.core.json_kv import JsonKeyValueStore
 from connector.runtime_protocol import (
     AgentRuntime,
     RuntimeConfig,
@@ -28,7 +29,7 @@ from connector.runtimes.custom_models import normalize_custom_models
 
 SdkChecker = Callable[[], dict[str, Any]]
 SdkClientFactory = Callable[[RuntimeConfig], Any]
-CODEX_CONFIG_SCHEMA_REVISION = 2
+CODEX_CONFIG_SCHEMA_REVISION = 3
 
 
 class CodexProvider(RuntimeProvider):
@@ -89,13 +90,18 @@ class CodexProvider(RuntimeProvider):
             revision=CODEX_CONFIG_SCHEMA_REVISION,
             schema=schema,
             ui_schema={
-                "order": ["runtimeBinaryMode", "environment", "customModels"],
-                "runtimeBinaryMode": {"component": "select"},
+                "order": [
+                    "useSystemCodex",
+                    "codexExecutablePath",
+                    "environment",
+                    "customModels",
+                ],
+                "codexExecutablePath": {"component": "path"},
                 "environment": {"component": "keyValue"},
                 "customModels": {"component": "customModels"},
             },
             defaults={
-                "runtimeBinaryMode": "prefer_system",
+                "useSystemCodex": True,
                 "environment": {},
                 "customModels": [],
             },
@@ -106,6 +112,17 @@ class CodexProvider(RuntimeProvider):
         values: Mapping[str, Any],
     ) -> RuntimeConfig:
         raw_values = dict(values)
+        use_system_codex = provider_config.normalize_system_codex_preference(
+            raw_values.get("useSystemCodex"),
+        )
+        raw_values["useSystemCodex"] = use_system_codex
+        codex_executable_path = provider_config.normalize_codex_executable_path(
+            raw_values.get("codexExecutablePath")
+        )
+        if codex_executable_path is None:
+            raw_values.pop("codexExecutablePath", None)
+        else:
+            raw_values["codexExecutablePath"] = codex_executable_path
         schema = (await self.get_config_schema()).schema
         errors = sorted(
             Draft202012Validator(schema).iter_errors(raw_values),
@@ -121,8 +138,9 @@ class CodexProvider(RuntimeProvider):
         if not sdk.get("available"):
             raise RuntimeInvalidRequestError("Codex SDK is not available")
         provider_config.merge_environment(raw_values.get("environment"))
-        binary_mode = provider_config.normalize_runtime_binary_mode(
-            raw_values.get("runtimeBinaryMode")
+        provider_config.validate_codex_executable_path(codex_executable_path)
+        binary_mode = provider_config.runtime_binary_mode_for_system_preference(
+            use_system_codex
         )
         runtime_environment, shell_path = codex_runtime_environment(
             raw_values.get("environment")
@@ -131,13 +149,16 @@ class CodexProvider(RuntimeProvider):
             binary_mode,
             runtime_environment,
             shell_path,
+            configured_path=codex_executable_path,
         )
 
         normalized_values: dict[str, Any] = {
-            "runtimeBinaryMode": binary_mode,
+            "useSystemCodex": use_system_codex,
             "environment": dict(raw_values.get("environment") or {}),
             "customModels": normalize_custom_models(raw_values.get("customModels")),
         }
+        if codex_executable_path is not None:
+            normalized_values["codexExecutablePath"] = codex_executable_path
 
         return RuntimeConfig(
             runtime=self.runtime,
@@ -161,4 +182,9 @@ class CodexProvider(RuntimeProvider):
         if isinstance(sdk, dict) and not sdk.get("available", True):
             raise RuntimeInvalidRequestError("Codex SDK is not available")
         client = self._sdk_client_factory(config)
-        return CodexRuntime(config=config, host=host, client=client)
+        return CodexRuntime(
+            config=config,
+            host=host,
+            client=client,
+            client_message_kv=JsonKeyValueStore.default(),
+        )

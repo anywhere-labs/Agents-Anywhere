@@ -63,6 +63,8 @@ class RuntimeSessionStateCache:
                 **dict(metadata or {}),
             },
         )
+        if previous is not None and state == previous:
+            return previous
         if (
             previous is not None
             and previous.external_session_id is not None

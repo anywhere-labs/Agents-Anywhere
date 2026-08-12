@@ -29,7 +29,6 @@ from connector.logging import logger
 from connector.runtime_protocol import RuntimeConfig, RuntimeInvalidRequestError
 from connector.runtimes.codex.runtime_helpers import soft_codex_unavailable_reason
 from connector.runtimes.codex.sdk.binary import (
-    codex_runtime_binary_mode,
     codex_runtime_environment,
     select_codex_runtime_binary,
 )
@@ -601,11 +600,15 @@ class CodexSdkClient:
             if not completed_seen and not cancelled:
                 await self._emit(
                     {
-                        "method": "turn/completed",
+                        "method": "turn/failed",
                         "params": {
                             "threadId": thread_id,
                             "turnId": turn_id,
-                            "metadata": {"source": "codex.sdk.stream.finally"},
+                            "error": {
+                                "code": "codex_stream_ended_without_terminal_event",
+                                "message": "Codex stream ended without a terminal turn event.",
+                            },
+                            "metadata": {"source": "codex.sdk.stream.exhausted"},
                         },
                     }
                 )
@@ -660,7 +663,8 @@ def _sdk_config(sdk: Any, config: RuntimeConfig) -> Any:
         return None
     values = config.values
     environment_overrides = values.get("environment")
-    mode = codex_runtime_binary_mode(values.get("runtimeBinaryMode"))
+    use_system_codex = values.get("useSystemCodex", True)
+    mode = "prefer_system" if use_system_codex is True else "sdk_bundled"
     runtime_environment, shell_path = codex_runtime_environment(
         environment_overrides if isinstance(environment_overrides, Mapping) else None
     )
@@ -668,6 +672,11 @@ def _sdk_config(sdk: Any, config: RuntimeConfig) -> Any:
         mode,
         runtime_environment,
         shell_path,
+        configured_path=(
+            values.get("codexExecutablePath")
+            if isinstance(values.get("codexExecutablePath"), str)
+            else None
+        ),
     )
     logger.info(
         "codex sdk runtime binary selected mode={} source={} codex_bin={} login_shell={}",

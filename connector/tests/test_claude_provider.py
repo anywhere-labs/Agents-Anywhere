@@ -100,6 +100,16 @@ async def _test_claude_provider_schema_and_config_validation() -> None:
         "environment",
         "executablePath",
     }
+    assert schema.schema["properties"]["executablePath"]["metadata"] == {
+        "i18n": {
+            "labelKey": (
+                "dashboard.device.runtimeConfigFields.claudeExecutablePath.label"
+            ),
+            "descriptionKey": (
+                "dashboard.device.runtimeConfigFields.claudeExecutablePath.description"
+            ),
+        }
+    }
     assert config.runtime == "claude"
     assert config.values["executablePath"] == "/opt/claude"
     assert config.values["environment"] == {"EXAMPLE": "1"}

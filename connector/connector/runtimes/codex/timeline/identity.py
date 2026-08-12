@@ -37,6 +37,27 @@ def timeline_item_id_from_values(
     )
 
 
+def turn_position_item_id(
+    session_id: str,
+    turn_id: str,
+    position: int,
+) -> str:
+    identity = f"codex-turn-item-v1\0{session_id}\0{turn_id}\0{position}"
+    digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:32]
+    return f"codex_item_{digest}"
+
+
+def uses_turn_position_identity(raw_type: str, role: str | None) -> bool:
+    if is_user_message_values(raw_type=raw_type, role=role):
+        return False
+    return raw_type not in {
+        "contextCompaction",
+        "runtimeMessage",
+        "turnEnd",
+        "turnStart",
+    }
+
+
 def native_item_id(raw: dict[str, Any]) -> str | None:
     for key in ("id", "itemId", "item_id"):
         value = raw.get(key)

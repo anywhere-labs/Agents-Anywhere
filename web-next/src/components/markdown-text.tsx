@@ -171,10 +171,25 @@ function MarkdownBody({
   )
 }
 
+const GIT_DIRECTIVE_ACTIONS = [
+  "stage",
+  "commit",
+  "create-branch",
+  "push",
+  "create-pr",
+] as const
+
+type GitDirectiveAction = (typeof GIT_DIRECTIVE_ACTIONS)[number]
+
 type GitDirective = {
-  action: "stage" | "commit" | "push"
+  action: GitDirectiveAction
   attrs: Record<string, string>
 }
+
+const gitDirectivePattern = new RegExp(
+  `::git-(${GIT_DIRECTIVE_ACTIONS.join("|")})\\{([^}]*)\\}`,
+  "g",
+)
 
 type MarkdownAstNode = {
   type: string
@@ -209,8 +224,7 @@ function replaceGitDirectivesInTextChildren(node: MarkdownAstNode) {
 }
 
 function splitGitDirectiveTextNode(text: string): MarkdownAstNode[] {
-  const directivePattern = /::git-(stage|commit|push)\{([^}]*)\}/g
-  const matches = Array.from(text.matchAll(directivePattern))
+  const matches = Array.from(text.matchAll(gitDirectivePattern))
   if (matches.length === 0) return [{ type: "text", value: text }]
 
   const nodes: MarkdownAstNode[] = []
@@ -230,8 +244,10 @@ function splitGitDirectiveTextNode(text: string): MarkdownAstNode[] {
       if (before.trim()) flushDirectives()
       nodes.push({ type: "text", value: before })
     }
+    const action = gitDirectiveAction(match[1])
+    if (!action) continue
     const directive: GitDirective = {
-      action: gitDirectiveAction(match[1] ?? "stage"),
+      action,
       attrs: parseDirectiveAttributes(match[2] ?? ""),
     }
     pendingDirectives.push(directive)
@@ -371,33 +387,37 @@ function isGitDirectiveSeparator(node: MarkdownAstNode): boolean {
 }
 
 function serializeGitDirectives(directives: GitDirective[]): string {
-  return directives
-    .map((directive) => {
-      const branch = directive.attrs.branch
-      return branch ? `${directive.action}:${encodeURIComponent(branch)}` : directive.action
-    })
-    .join(",")
+  return JSON.stringify(directives)
 }
 
 function parseGitDirectives(input?: string): GitDirective[] {
   if (!input) return []
-  return input
-    .split(",")
-    .map(parseGitDirective)
-    .filter((directive): directive is GitDirective => directive !== null)
+  try {
+    const values: unknown = JSON.parse(input)
+    if (!Array.isArray(values)) return []
+    return values.flatMap((value): GitDirective[] => {
+      if (!isRecord(value)) return []
+      const action = gitDirectiveAction(value.action)
+      if (!action || !isRecord(value.attrs)) return []
+      const attrs = Object.fromEntries(
+        Object.entries(value.attrs).filter(
+          (entry): entry is [string, string] => typeof entry[1] === "string",
+        ),
+      )
+      return [{ action, attrs }]
+    })
+  } catch {
+    return []
+  }
 }
 
-function parseGitDirective(input: string): GitDirective | null {
-  const [actionInput, branchInput] = input.split(":", 2)
-  if (!actionInput) return null
-  const action = gitDirectiveAction(actionInput)
-  const branch = branchInput ? decodeURIComponent(branchInput) : ""
-  return { action, attrs: branch ? { branch } : {} }
+function gitDirectiveAction(action: unknown): GitDirectiveAction | null {
+  if (typeof action !== "string") return null
+  return GIT_DIRECTIVE_ACTIONS.find((candidate) => candidate === action) ?? null
 }
 
-function gitDirectiveAction(action: string): GitDirective["action"] {
-  if (action === "commit" || action === "push") return action
-  return "stage"
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
 function parseDirectiveAttributes(input: string): Record<string, string> {
@@ -416,8 +436,32 @@ function GitDirectiveBadge({ actions }: { actions?: string }) {
   return (
     <Badge variant="secondary" className="mx-0.5 inline-flex h-6 gap-1.5 rounded-full px-2.5 align-baseline font-normal">
       <GitBranch data-icon="inline-start" />
-      <span>{directives.map((directive) => gitDirectiveLabel(directive, tSession)).join(" · ")}</span>
+      <span className="inline-flex items-center gap-1">
+        {directives.map((directive, index) => (
+          <React.Fragment key={`${directive.action}-${index}`}>
+            {index > 0 ? <span aria-hidden="true">·</span> : null}
+            <GitDirectiveLabel directive={directive} tSession={tSession} />
+          </React.Fragment>
+        ))}
+      </span>
     </Badge>
+  )
+}
+
+function GitDirectiveLabel({
+  directive,
+  tSession,
+}: {
+  directive: GitDirective
+  tSession: (key: string, values?: Record<string, string | number>) => string
+}) {
+  const label = gitDirectiveLabel(directive, tSession)
+  const url = directive.action === "create-pr" ? safeExternalUrl(directive.attrs.url) : null
+  if (!url) return label
+  return (
+    <a href={url} target="_blank" rel="noreferrer" className="underline underline-offset-2">
+      {label}
+    </a>
   )
 }
 
@@ -428,8 +472,35 @@ function gitDirectiveLabel(
   if (directive.action === "stage") return tSession("gitOperationStaged")
   if (directive.action === "commit") return tSession("gitOperationCommitted")
   const branch = directive.attrs.branch
-  if (branch) return tSession("gitOperationPushedBranch", { branch })
-  return tSession("gitOperationPushed")
+  if (directive.action === "create-branch") {
+    return branch
+      ? tSession("gitOperationCreatedBranchNamed", { branch })
+      : tSession("gitOperationCreatedBranch")
+  }
+  if (directive.action === "push") {
+    return branch
+      ? tSession("gitOperationPushedBranch", { branch })
+      : tSession("gitOperationPushed")
+  }
+  const isDraft = directive.attrs.isDraft === "true"
+  if (isDraft) {
+    return branch
+      ? tSession("gitOperationCreatedDraftPrForBranch", { branch })
+      : tSession("gitOperationCreatedDraftPr")
+  }
+  return branch
+    ? tSession("gitOperationCreatedPrForBranch", { branch })
+    : tSession("gitOperationCreatedPr")
+}
+
+function safeExternalUrl(value?: string): string | null {
+  if (!value) return null
+  try {
+    const url = new URL(value)
+    return url.protocol === "http:" || url.protocol === "https:" ? url.href : null
+  } catch {
+    return null
+  }
 }
 
 function MarkdownCodeBlock({ code, language }: { code: string; language: string }) {

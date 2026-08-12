@@ -161,7 +161,7 @@ async def connector_fs_transfer_upload(
 
 def _safe_header_value(value: str) -> str:
     # HTTP header values must be latin-1; drop anything fancier. The connector
-    # already knows the canonical name from its turn.start request — this is
+    # already knows the canonical name from its session send request — this is
     # only a debug aid.
     return value.encode("latin-1", errors="replace").decode("latin-1")
 

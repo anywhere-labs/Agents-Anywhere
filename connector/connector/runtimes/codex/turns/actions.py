@@ -260,32 +260,34 @@ class CodexTurnActions:
             },
         )
 
-    async def interrupt_turn(
+    async def interrupt_session(
         self,
         session_id: str,
-        external_session_id: str | None = None,
         reason: str | None = None,
     ) -> RuntimeOperationResult:
         _ = reason
-        if self.client is None or external_session_id is None:
-            raise RuntimeUnsupportedError("interrupt_turn")
+        state = self.session_states.get(session_id)
+        external_session_id = state.external_session_id if state is not None else None
         turn_id = self.active_turn_ids.get(session_id)
         if turn_id is None:
             await self._set_session_state(
                 session_id=session_id,
                 external_session_id=external_session_id,
                 status="idle",
-                metadata={"source": "codex.turn/interrupt.no-active-turn"},
+                metadata={"source": "codex.session/interrupt.already-stopped"},
             )
             return RuntimeOperationResult(
-                ok=False,
-                code="codex_no_active_turn",
-                message="Codex runtime has no active turn to interrupt",
-                result={"externalSessionId": external_session_id},
+                ok=True,
+                result={
+                    "interrupted": False,
+                    "alreadyStopped": True,
+                },
             )
+        if self.client is None or external_session_id is None:
+            raise RuntimeUnsupportedError("interrupt_session")
         await self.ensure_started()
         try:
-            result = await self.client.interrupt_turn(
+            await self.client.interrupt_turn(
                 CodexInterruptTurnRequest(
                     thread_id=external_session_id,
                     turn_id=turn_id,
@@ -296,42 +298,40 @@ class CodexTurnActions:
             if soft_reason is None:
                 raise
             self.active_turn_ids.pop(session_id, None)
-            await self._close_blocking_notices_for_interrupted_turn(session_id)
+            await self.close_blocking_notices_for_interrupted_session(session_id)
             await self._set_session_state(
                 session_id=session_id,
                 external_session_id=external_session_id,
                 status="idle",
                 metadata={
-                    "source": "codex.turn/interrupt.soft-failed",
+                    "source": "codex.session/interrupt.already-stopped",
                     "reason": soft_reason,
-                    "turn_id": turn_id,
                 },
             )
             return RuntimeOperationResult(
-                ok=False,
-                code=soft_reason,
-                message="Codex turn was already unavailable to interrupt",
-                result={"interrupted": False, "turnId": turn_id},
+                ok=True,
+                result={
+                    "interrupted": False,
+                    "alreadyStopped": True,
+                },
             )
         self.active_turn_ids.pop(session_id, None)
-        await self._close_blocking_notices_for_interrupted_turn(session_id)
+        await self.close_blocking_notices_for_interrupted_session(session_id)
         await self._set_session_state(
             session_id=session_id,
             external_session_id=external_session_id,
             status="idle",
-            metadata={"source": "codex.turn/interrupt", "turn_id": turn_id},
+            metadata={"source": "codex.session/interrupt"},
         )
         return RuntimeOperationResult(
             ok=True,
             result={
                 "interrupted": True,
-                "turnId": turn_id,
-                "externalSessionId": external_session_id,
-                "turn": dict(result.payload),
+                "alreadyStopped": False,
             },
         )
 
-    async def _close_blocking_notices_for_interrupted_turn(
+    async def close_blocking_notices_for_interrupted_session(
         self,
         session_id: str,
     ) -> None:
@@ -339,7 +339,7 @@ class CodexTurnActions:
             session_id=session_id,
             status="closed",
             reason="interrupted",
-            source="codex.turn/interrupt",
+            source="codex.session/interrupt",
         ):
             await self.host.notice_upsert(notice)
 

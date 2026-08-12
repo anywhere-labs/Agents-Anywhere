@@ -1431,7 +1431,7 @@ async def _test_claude_runtime_interrupts_active_turn() -> None:
     assert active_capabilities["session.interrupt"].available is True
 
     task = runtime._sessions["sess_interrupt"].active_task
-    interrupt_result = await runtime.interrupt_turn("sess_interrupt", reason="user")
+    interrupt_result = await runtime.interrupt_session("sess_interrupt", reason="user")
 
     assert interrupt_result.ok is True
     assert interrupt_result.result["interrupted"] is True
@@ -1444,6 +1444,10 @@ async def _test_claude_runtime_interrupts_active_turn() -> None:
     assert client.disconnected is True
     assert runtime._sessions["sess_interrupt"].active_turn_id is None
     assert host.session_state_updates[-1]["status"] == "idle"
+
+    repeated = await runtime.interrupt_session("sess_interrupt", reason="user")
+    assert repeated.ok is True
+    assert repeated.result == {"interrupted": False, "alreadyStopped": True}
 
 
 def test_claude_runtime_result_error_blocks_session_state() -> None:
@@ -1642,7 +1646,7 @@ async def _test_claude_runtime_tool_approval_round_trips_to_sdk() -> None:
 
 def _runtime(
     host: _RecordingHost | None = None,
-    client: "_FakeClaudeClient | None" = None,
+    client: _FakeClaudeClient | None = None,
     sdk: Any | None = None,
     config: RuntimeConfig | None = None,
 ) -> ClaudeRuntime:

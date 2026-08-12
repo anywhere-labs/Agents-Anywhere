@@ -243,8 +243,6 @@ export type TakeoverResponse = {
 };
 
 export type TimelineType =
-  | "turn.start"
-  | "turn.end"
   | "message"
   | "tool"
   | "artifact"
@@ -265,7 +263,6 @@ export type TimelineRole = "user" | "assistant" | "system" | "tool";
 export type TimelineItem = {
   id: string;
   sessionId: string;
-  turnId: string | null;
   type: TimelineType;
   status: TimelineStatus;
   role: TimelineRole | null;
@@ -299,7 +296,6 @@ export type ApprovalKind =
 export type Approval = {
   id: string;
   sessionId: string;
-  turnId: string | null;
   status: ApprovalStatus;
   kind: ApprovalKind;
   targetItemId: string | null;
@@ -596,13 +592,13 @@ export type AttachmentUploadResponse = {
 export type DashboardSegment = "light" | "medium" | "heavy";
 
 export type AdminDashboardIntensitySettings = {
-  basis: "turns";
+  basis: "messages";
   lightMax: number;
   mediumMax: number;
 };
 
 export type AdminDashboardHistogramSettings = {
-  turns: number[];
+  messages: number[];
   sessions: number[];
 };
 
@@ -624,9 +620,9 @@ export type AdminDashboardSummary = {
   activeUsers: number;
   wau: number;
   mau: number;
-  totalTurns: number;
+  totalMessages: number;
   activeSessions: number;
-  avgTurnsPerActiveUser: number;
+  avgMessagesPerActiveUser: number;
   avgActiveSessionsPerActiveUser: number;
   totalDevices: number;
   avgDevicesPerUser: number;
@@ -665,7 +661,7 @@ export type AdminDashboardOverviewResponse = {
   };
   summary: AdminDashboardSummary;
   series: AdminDashboardSeriesPoint[];
-  turnHistogram: AdminDashboardHistogramBucket[];
+  messageHistogram: AdminDashboardHistogramBucket[];
   sessionHistogram: AdminDashboardHistogramBucket[];
   userSegments: AdminDashboardUserSegmentItem[];
   deviceBreakdown: AdminDashboardBreakdownItem[];
