@@ -5,17 +5,19 @@ import secrets
 from collections.abc import Mapping
 from dataclasses import dataclass
 
+from connector.logging import logger
 from connector.runtime_protocol import (
     RuntimeAttachment,
     RuntimeInvalidRequestError,
     RuntimeOperationResult,
     RuntimeSessionStateCache,
 )
-from connector.runtimes.claude.domain.session import ClaudeSession
+from connector.runtimes.claude.domain.session import ClaudeExecution, ClaudeSession
 from connector.runtimes.claude.notifications.projector import (
     ClaudeNotificationProjector,
 )
-from connector.runtimes.claude.sdk.client import disconnect_client, interrupt_client
+from connector.runtimes.claude.sdk.client import interrupt_client
+from connector.runtimes.claude.sdk.events import interrupted_terminal_event
 from connector.runtimes.claude.sessions.cache import ClaudeSessionStore
 from connector.runtimes.claude.turns.interactions import ClaudeInteractionController
 from connector.runtimes.claude.turns.lifecycle import ClaudeTurnRunner
@@ -32,16 +34,16 @@ class ClaudeTurnActionHandler:
     runner: ClaudeTurnRunner
 
     async def stop(self) -> None:
-        tasks: list[asyncio.Task[None]] = []
         for session in self.session_store.sessions():
-            if session.active_task is not None and not session.active_task.done():
-                session.active_task.cancel()
-                tasks.append(session.active_task)
-            await disconnect_client(session.client)
-            session.client = None
-            session.clear_active_turn()
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
+            execution = session.execution
+            if execution is None:
+                continue
+            await self.interrupt_execution(
+                session=session,
+                execution=execution,
+                source="claude.runtime.stop",
+                reason="runtime_stopped",
+            )
 
     async def start_turn(
         self,
@@ -53,15 +55,9 @@ class ClaudeTurnActionHandler:
         client_message_id: str | None = None,
         cwd: str | None = None,
     ) -> RuntimeOperationResult:
-        session = self._session_for(session_id, external_session_id, cwd)
-        if self.has_active_turn(session_id):
-            return RuntimeOperationResult(
-                ok=False,
-                code="claude_turn_already_running",
-                message="Claude runtime already has an active turn for this session",
-            )
+        session = self.session_for(session_id, external_session_id, cwd)
         try:
-            session.selections = self.selections.effective_selections(
+            effective_selections = self.selections.effective_selections(
                 session_id,
                 selections,
             )
@@ -72,27 +68,42 @@ class ClaudeTurnActionHandler:
                 message=str(exc),
             )
 
-        turn_id = f"turn_claude_{secrets.token_urlsafe(12)}"
-        session.start_active_turn(turn_id)
-        await self.notifications.session_state.session_state_update(
-            session,
-            "waiting",
-            selections=session.selections,
-            metadata={"source": "claude.turn.start", "turnId": turn_id},
-        )
-        session.active_task = asyncio.create_task(
-            self.runner.drive_turn(
-                session=session,
-                turn_id=turn_id,
-                content=content,
-                attachments=attachments,
-                client_message_id=client_message_id,
+        async with session.execution_lock:
+            if session.execution is not None:
+                return RuntimeOperationResult(
+                    ok=False,
+                    code="claude_turn_already_running",
+                    message="Claude runtime already has an active turn for this session",
+                )
+            execution = ClaudeExecution(
+                turn_id=f"turn_claude_{secrets.token_urlsafe(12)}"
             )
-        )
+            session.execution = execution
+            session.selections = effective_selections
+            try:
+                await self.notifications.session_state.session_state_update(
+                    session,
+                    "waiting",
+                    selections=session.selections,
+                    metadata={"source": "claude.turn.start"},
+                )
+                execution.task = asyncio.create_task(
+                    self.runner.drive_turn(
+                        session=session,
+                        execution=execution,
+                        content=content,
+                        attachments=attachments,
+                        client_message_id=client_message_id,
+                    )
+                )
+            except BaseException:
+                session.execution = None
+                execution.finished.set()
+                raise
         return RuntimeOperationResult(
             ok=True,
             result={
-                "turnId": turn_id,
+                "turnId": execution.turn_id,
                 "externalSessionId": session.external_session_id,
             },
         )
@@ -103,47 +114,65 @@ class ClaudeTurnActionHandler:
         reason: str | None = None,
     ) -> RuntimeOperationResult:
         session = self.session_store.get(session_id)
-        if session is None or session.active_turn_id is None:
+        if session is None:
             return RuntimeOperationResult(
                 ok=True,
                 result={"interrupted": False, "alreadyStopped": True},
             )
-
-        interrupted = await interrupt_client(session.client)
-        if session.active_task is not None and not session.active_task.done():
-            session.active_task.cancel()
-            interrupted = True
-        session.clear_active_turn()
-        await self.notifications.session_state.session_state_update(
-            session,
-            "idle",
-            metadata={
-                "source": "claude.session.interrupt",
-                **({"reason": reason} if reason else {}),
-            },
-        )
-        await self.interactions.close_open_approval_notices(
-            session,
-            status="closed",
-            reason="interrupted",
+        async with session.execution_lock:
+            execution = session.execution
+            if execution is None:
+                return RuntimeOperationResult(
+                    ok=True,
+                    result={"interrupted": False, "alreadyStopped": True},
+                )
+            execution.interrupt_source = "claude.session.interrupt"
+            execution.interrupt_reason = reason
+        await self.interrupt_execution(
+            session=session,
+            execution=execution,
+            source="claude.session.interrupt",
+            reason=reason,
         )
         return RuntimeOperationResult(
             ok=True,
-            result={
-                "interrupted": interrupted,
-                "alreadyStopped": not interrupted,
-            },
+            result={"interrupted": True, "alreadyStopped": False},
+        )
+
+    async def interrupt_execution(
+        self,
+        session: ClaudeSession,
+        execution: ClaudeExecution,
+        source: str,
+        reason: str | None,
+    ) -> None:
+        """Stop one owned execution and wait until all of its work has exited."""
+
+        execution.interrupt_source = source
+        execution.interrupt_reason = reason
+        try:
+            await interrupt_client(execution.client)
+        except Exception:  # noqa: BLE001
+            logger.debug(
+                "Claude SDK interrupt raced with shutdown session_id={}",
+                session.session_id,
+            )
+        task = execution.task
+        if task is not None and not task.done():
+            task.cancel()
+        if task is not None:
+            await asyncio.gather(task, return_exceptions=True)
+        await self.runner.finish_execution(
+            session=session,
+            execution=execution,
+            terminal=interrupted_terminal_event(reason),
         )
 
     def has_active_turn(self, session_id: str) -> bool:
         session = self.session_store.get(session_id)
-        return bool(
-            session is not None
-            and session.active_task is not None
-            and not session.active_task.done()
-        )
+        return session is not None and session.execution is not None
 
-    def _session_for(
+    def session_for(
         self,
         session_id: str,
         external_session_id: str | None,

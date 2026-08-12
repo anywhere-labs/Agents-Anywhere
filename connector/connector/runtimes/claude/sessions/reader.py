@@ -294,19 +294,21 @@ def _history_items_from_messages(
         if turn_seed is None:
             turn_seed = native_id or f"{session.external_session_id}:initial"
         turn_id = _history_turn_id(session.external_session_id, turn_seed)
-        for item in projector.tool_items_for_message(
-            session=session,
-            turn_id=turn_id,
-            message=message,
-        ):
-            items.append(item)
-        for item in projector.system_items_for_message(
-            session=session,
-            turn_id=turn_id,
-            message=message,
-            event="claude.history.system",
-        ):
-            items.append(item)
+        items.extend(
+            projector.tool_items_for_message(
+                session=session,
+                turn_id=turn_id,
+                message=message,
+            )
+        )
+        items.extend(
+            projector.system_items_for_message(
+                session=session,
+                turn_id=turn_id,
+                message=message,
+                event="claude.history.system",
+            )
+        )
         if role not in {"user", "assistant", "system"} or not text:
             continue
         items.append(
@@ -466,10 +468,7 @@ def _unresolved_live_session_barriers(
     for session in sessions:
         if session.external_session_id is not None:
             continue
-        active_task_running = (
-            session.active_task is not None and not session.active_task.done()
-        )
-        if session.active_turn_id is None and not active_task_running:
+        if session.execution is None:
             continue
         started_at = session.active_turn_started_at_monotonic
         if started_at is None:
@@ -585,7 +584,7 @@ def _history_turn_id(
     turn_seed: str,
 ) -> str:
     digest = hashlib.sha256(
-        f"{external_session_id or 'unknown'}:{turn_seed}".encode("utf-8")
+        f"{external_session_id or 'unknown'}:{turn_seed}".encode()
     ).hexdigest()[:24]
     return f"turn_claude_{digest}"
 

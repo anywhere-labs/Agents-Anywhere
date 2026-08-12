@@ -1,15 +1,15 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any
 
+from connector.logging import logger
 from connector.runtime_protocol import RuntimeAttachment, RuntimeConfig
 from connector.runtime_protocol.host import RuntimeHostClient
-from connector.runtimes.claude.domain.session import ClaudeSession
-from connector.runtimes.claude.history.syncer import ClaudeHistorySyncer
-from connector.runtimes.claude.notifications.projector import ClaudeNotificationProjector
+from connector.runtimes.claude.domain.session import ClaudeExecution, ClaudeSession
+from connector.runtimes.claude.notifications.projector import (
+    ClaudeNotificationProjector,
+)
 from connector.runtimes.claude.sdk.client import (
     ClaudeClientFactory,
     SdkLoader,
@@ -20,14 +20,17 @@ from connector.runtimes.claude.sdk.client import (
     query_client,
     receive_response_messages,
 )
+from connector.runtimes.claude.sdk.events import (
+    ClaudeTerminalEvent,
+    failed_terminal_event,
+    interrupted_terminal_event,
+    terminal_event_from_message,
+)
 from connector.runtimes.claude.sdk.stderr import ClaudeStderrBuffer
 from connector.runtimes.claude.sessions.cache import ClaudeSessionStore
 from connector.runtimes.claude.timeline.messages import (
     ClaudeMessageProjector,
-    is_result_message,
-    message_error_text,
     message_id,
-    message_is_error,
     message_role,
     message_session_id,
     message_text,
@@ -48,7 +51,6 @@ class ClaudeTurnRunner:
     config: RuntimeConfig
     host: RuntimeHostClient
     session_store: ClaudeSessionStore
-    history_syncer: ClaudeHistorySyncer
     timeline: ClaudeMessageProjector
     notifications: ClaudeNotificationProjector
     interactions: ClaudeInteractionController
@@ -58,12 +60,15 @@ class ClaudeTurnRunner:
     async def drive_turn(
         self,
         session: ClaudeSession,
-        turn_id: str,
+        execution: ClaudeExecution,
         content: str,
         attachments: tuple[RuntimeAttachment, ...],
         client_message_id: str | None,
     ) -> None:
+        turn_id = execution.turn_id
         stderr = ClaudeStderrBuffer(session.session_id)
+        client: object | None = None
+        terminal: ClaudeTerminalEvent | None = None
         try:
             sdk = load_sdk(self.sdk_loader)
             client = new_sdk_client(
@@ -78,7 +83,7 @@ class ClaudeTurnRunner:
                 ),
                 stderr=stderr.record,
             )
-            session.client = client
+            execution.client = client
             await connect_client(client)
             materialized_attachments = await materialize_claude_attachments(
                 self.host,
@@ -92,7 +97,7 @@ class ClaudeTurnRunner:
             await self.notifications.session_state.session_state_update(
                 session,
                 "running",
-                metadata={"source": "claude.turn.running", "turnId": turn_id},
+                metadata={"source": "claude.turn.running"},
             )
             await self.notifications.timeline_activity.timeline_item_upsert(
                 self.timeline.message_item(
@@ -110,7 +115,6 @@ class ClaudeTurnRunner:
             )
             await query_client(client, effective_content)
 
-            result_error: Mapping[str, Any] | None = None
             emitted_final_assistant_content = False
             stream_accumulator = ClaudeStreamAccumulator()
             async for message in receive_response_messages(client):
@@ -129,13 +133,9 @@ class ClaudeTurnRunner:
                     )
                 if is_stream_event(message):
                     continue
-                if is_result_message(message):
-                    if message_is_error(message):
-                        result_error = {
-                            "code": "claude_result_error",
-                            "message": message_error_text(message)
-                            or "Claude turn completed with an error",
-                        }
+                terminal_message = terminal_event_from_message(message)
+                if terminal_message is not None:
+                    terminal = terminal_message
                     if not emitted_final_assistant_content:
                         text = message_text(message)
                         if text:
@@ -156,7 +156,7 @@ class ClaudeTurnRunner:
                             )
                             emitted_final_assistant_content = True
                             stream_accumulator.reset()
-                    continue
+                    break
                 for item in self.timeline.tool_items_for_message(
                     session=session,
                     turn_id=turn_id,
@@ -200,49 +200,100 @@ class ClaudeTurnRunner:
                     emitted_final_assistant_content = True
                     stream_accumulator.reset()
 
-            if result_error is not None:
-                self._release_active_turn(session, turn_id)
-                await self.notifications.session_state.session_state_update(
-                    session,
-                    "error",
-                    error=result_error,
-                    metadata={"source": "claude.turn.failed", "turnId": turn_id},
-                )
-            else:
-                consumed = await self.history_syncer.mark_session_consumed(session)
-                if consumed:
-                    self._release_active_turn(session, turn_id)
-                await self.notifications.session_state.session_state_update(
-                    session,
-                    "idle",
-                    metadata={"source": "claude.turn.completed", "turnId": turn_id},
+            if terminal is None:
+                terminal = failed_terminal_event(
+                    code="claude_stream_ended_without_result",
+                    message="Claude response stream ended without a terminal result",
+                    reason="stream_exhausted",
                 )
         except asyncio.CancelledError:
-            await self.interactions.close_open_approval_notices(
-                session,
-                status="closed",
-                reason="cancelled",
-            )
-            self._release_active_turn(session, turn_id)
-            await self.notifications.session_state.session_state_update(
-                session,
-                "idle",
-                metadata={"source": "claude.turn.cancelled", "turnId": turn_id},
+            terminal = interrupted_terminal_event(
+                execution.interrupt_reason or "cancelled"
             )
         except Exception as exc:  # noqa: BLE001
-            self._release_active_turn(session, turn_id)
+            terminal = failed_terminal_event(
+                code=exc.__class__.__name__,
+                message=stderr.failure_message(exc),
+            )
+        finally:
+            try:
+                await disconnect_client(client)
+            except Exception:  # noqa: BLE001
+                logger.exception(
+                    "Claude SDK disconnect failed session_id={}",
+                    session.session_id,
+                )
+            execution.client = None
+            if terminal is None:
+                terminal = failed_terminal_event(
+                    code="claude_turn_missing_terminal_state",
+                    message="Claude turn stopped without a terminal state",
+                )
+            await self.finish_execution(
+                session=session,
+                execution=execution,
+                terminal=terminal,
+            )
+
+    async def finish_execution(
+        self,
+        session: ClaudeSession,
+        execution: ClaudeExecution,
+        terminal: ClaudeTerminalEvent,
+    ) -> bool:
+        """Publish one terminal state and release this exact execution."""
+
+        async with execution.finalization_lock:
+            if execution.finished.is_set():
+                return False
+            async with session.execution_lock:
+                if session.execution is not execution:
+                    execution.finished.set()
+                    return False
+                try:
+                    await self.interactions.close_open_approval_notices(
+                        session,
+                        status="closed",
+                        reason=terminal.status,
+                    )
+                    await self.publish_terminal_state(session, execution, terminal)
+                finally:
+                    session.execution = None
+                    execution.finished.set()
+            return True
+
+    async def publish_terminal_state(
+        self,
+        session: ClaudeSession,
+        execution: ClaudeExecution,
+        terminal: ClaudeTerminalEvent,
+    ) -> None:
+        reason = terminal.reason or execution.interrupt_reason
+        if terminal.status == "failed":
             await self.notifications.session_state.session_state_update(
                 session,
                 "error",
                 error={
-                    "code": exc.__class__.__name__,
-                    "message": stderr.failure_message(exc),
+                    "code": terminal.error_code or "claude_turn_failed",
+                    "message": terminal.error_message or "Claude turn failed",
                 },
-                metadata={"source": "claude.turn.failed", "turnId": turn_id},
+                metadata={
+                    "source": "claude.turn.failed",
+                    **({"terminalReason": reason} if reason else {}),
+                },
             )
-        finally:
-            await disconnect_client(session.client)
-            session.client = None
+            return
+        source = "claude.turn.completed"
+        if terminal.status == "interrupted":
+            source = execution.interrupt_source or "claude.turn.interrupted"
+        await self.notifications.session_state.session_state_update(
+            session,
+            "idle",
+            metadata={
+                "source": source,
+                **({"terminalReason": reason} if reason else {}),
+            },
+        )
 
     async def _update_external_session_id(
         self,
@@ -258,6 +309,3 @@ class ClaudeTurnRunner:
             session,
             source="claude.session.external_id",
         )
-
-    def _release_active_turn(self, session: ClaudeSession, turn_id: str) -> None:
-        session.clear_active_turn(turn_id)

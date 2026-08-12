@@ -4,9 +4,20 @@ import asyncio
 import hashlib
 import time
 from dataclasses import dataclass, field
-from typing import Any
 
 from connector.runtime_protocol import RuntimeTimelineItem
+
+
+@dataclass(slots=True)
+class ClaudeExecution:
+    turn_id: str
+    started_at_monotonic: float = field(default_factory=time.monotonic)
+    task: asyncio.Task[None] | None = None
+    client: object | None = None
+    interrupt_source: str | None = None
+    interrupt_reason: str | None = None
+    finalization_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    finished: asyncio.Event = field(default_factory=asyncio.Event)
 
 
 @dataclass(slots=True)
@@ -20,24 +31,27 @@ class ClaudeSession:
     timeline_items: dict[str, RuntimeTimelineItem] = field(default_factory=dict)
     timeline_revision: int = 0
     synced_revision: int = 0
-    active_turn_id: str | None = None
-    active_turn_started_at_monotonic: float | None = None
-    active_task: asyncio.Task[None] | None = None
-    client: Any = None
+    execution: ClaudeExecution | None = None
+    execution_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
-    def start_active_turn(self, turn_id: str) -> None:
-        self.active_turn_id = turn_id
-        self.active_turn_started_at_monotonic = time.monotonic()
+    @property
+    def active_turn_id(self) -> str | None:
+        execution = self.execution
+        return execution.turn_id if execution is not None else None
 
-    def clear_active_turn(self, turn_id: str | None = None) -> None:
-        if turn_id is not None and self.active_turn_id != turn_id:
-            return
-        self.active_turn_id = None
-        self.active_turn_started_at_monotonic = None
+    @property
+    def active_turn_started_at_monotonic(self) -> float | None:
+        execution = self.execution
+        return execution.started_at_monotonic if execution is not None else None
+
+    @property
+    def active_task(self) -> asyncio.Task[None] | None:
+        execution = self.execution
+        return execution.task if execution is not None else None
 
 
 def stable_session_id(connector_id: str, external_session_id: str) -> str:
     digest = hashlib.sha256(
-        f"{connector_id}:claude:{external_session_id}".encode("utf-8")
+        f"{connector_id}:claude:{external_session_id}".encode()
     ).hexdigest()[:24]
     return f"sess_claude_{digest}"

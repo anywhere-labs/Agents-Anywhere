@@ -65,7 +65,6 @@ class ClaudeTurnController:
             config=self.config,
             host=self.host,
             session_store=self.session_store,
-            history_syncer=self.history_syncer,
             timeline=self.timeline,
             notifications=self.notifications,
             interactions=self.interactions,

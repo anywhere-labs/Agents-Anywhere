@@ -13,7 +13,7 @@ from connector.runtime_protocol import (
     RuntimeStatus,
     RuntimeTimelineItem,
 )
-from connector.runtimes.claude.domain.session import stable_session_id
+from connector.runtimes.claude.domain.session import ClaudeExecution, stable_session_id
 from connector.runtimes.claude.runtime import ClaudeRuntime
 
 
@@ -770,11 +770,11 @@ async def _test_claude_runtime_merges_local_and_history_sync_flags() -> None:
     )
 
 
-def test_claude_runtime_marks_sdk_history_consumed_after_turn_completion() -> None:
-    asyncio.run(_test_claude_runtime_marks_sdk_history_consumed_after_turn_completion())
+def test_claude_runtime_defers_history_cursor_until_scanner_sync() -> None:
+    asyncio.run(_test_claude_runtime_defers_history_cursor_until_scanner_sync())
 
 
-async def _test_claude_runtime_marks_sdk_history_consumed_after_turn_completion() -> None:
+async def _test_claude_runtime_defers_history_cursor_until_scanner_sync() -> None:
     host = _RecordingHost()
     sdk = _HistorySdk(
         messages={
@@ -811,17 +811,25 @@ async def _test_claude_runtime_marks_sdk_history_consumed_after_turn_completion(
     await task
 
     assert host.timeline_syncs == []
+    assert "claude/history/cursor/claude_history_turn" not in host.sync_states
+    assert runtime._sessions["sess_history_turn"].active_turn_id is None
+
+    handled = await runtime.sync_session_timeline(
+        "sess_history_turn",
+        "claude_history_turn",
+    )
+
+    assert handled is True
     cursor = host.sync_states["claude/history/cursor/claude_history_turn"]
     assert cursor["cursor"]["messageCount"] == 2
     assert cursor["cursor"]["lastMessageUuid"] == "history_turn_assistant"
-    assert runtime._sessions["sess_history_turn"].active_turn_id is None
 
 
-def test_claude_runtime_keeps_active_marker_when_cursor_update_fails() -> None:
-    asyncio.run(_test_claude_runtime_keeps_active_marker_when_cursor_update_fails())
+def test_claude_runtime_releases_execution_before_history_cursor_retry() -> None:
+    asyncio.run(_test_claude_runtime_releases_execution_before_history_cursor_retry())
 
 
-async def _test_claude_runtime_keeps_active_marker_when_cursor_update_fails() -> None:
+async def _test_claude_runtime_releases_execution_before_history_cursor_retry() -> None:
     host = _RecordingHost()
     sdk = _HistorySdk(
         messages={
@@ -856,9 +864,31 @@ async def _test_claude_runtime_keeps_active_marker_when_cursor_update_fails() ->
 
     await task
 
-    assert runtime._sessions["sess_cursor_fail"].active_turn_id is not None
+    assert runtime._sessions["sess_cursor_fail"].active_turn_id is None
     assert host.session_state_updates[-1]["status"] == "idle"
     assert "claude/history/cursor/claude_cursor_fail" not in host.sync_states
+
+    try:
+        await runtime.sync_session_timeline(
+            "sess_cursor_fail",
+            "claude_cursor_fail",
+        )
+    except RuntimeError as exc:
+        assert str(exc) == "sync state write failed"
+    else:
+        raise AssertionError("history cursor commit should fail")
+
+    assert len(host.timeline_syncs) == 1
+    assert "claude/history/cursor/claude_cursor_fail" not in host.sync_states
+
+    host.sync_state_write = _RecordingHost.sync_state_write.__get__(host)
+    handled = await runtime.sync_session_timeline(
+        "sess_cursor_fail",
+        "claude_cursor_fail",
+    )
+
+    assert handled is True
+    assert "claude/history/cursor/claude_cursor_fail" in host.sync_states
 
 
 def test_claude_runtime_scanner_syncs_full_history_without_cursor() -> None:
@@ -990,7 +1020,7 @@ async def _test_claude_runtime_scanner_skips_active_session_without_storing_curs
         "sess_history_active",
         "claude_history_active",
     )
-    session.active_turn_id = "turn_active"
+    session.execution = ClaudeExecution(turn_id="turn_active")
 
     handled = await runtime.sync_session_timeline(
         "sess_history_active",
@@ -1450,6 +1480,130 @@ async def _test_claude_runtime_interrupts_active_turn() -> None:
     assert repeated.result == {"interrupted": False, "alreadyStopped": True}
 
 
+def test_claude_runtime_rejects_concurrent_start_for_one_session() -> None:
+    asyncio.run(_test_claude_runtime_rejects_concurrent_start_for_one_session())
+
+
+async def _test_claude_runtime_rejects_concurrent_start_for_one_session() -> None:
+    host = _RecordingHost()
+    release = asyncio.Event()
+    client = _BlockingClaudeClient(release)
+    runtime = _runtime(host=host, client=client)
+
+    first_result, second_result = await asyncio.gather(
+        runtime.start_turn("sess_concurrent", None, "first"),
+        runtime.start_turn("sess_concurrent", None, "second"),
+    )
+
+    results = (first_result, second_result)
+    assert sum(result.ok for result in results) == 1
+    rejected = next(result for result in results if not result.ok)
+    assert rejected.code == "claude_turn_already_running"
+    await _wait_until(lambda: len(client.queries) == 1)
+
+    interrupted = await runtime.interrupt_session("sess_concurrent")
+
+    assert interrupted.ok is True
+    assert runtime._sessions["sess_concurrent"].execution is None
+
+
+def test_claude_runtime_interrupt_waits_before_immediate_restart() -> None:
+    asyncio.run(_test_claude_runtime_interrupt_waits_before_immediate_restart())
+
+
+async def _test_claude_runtime_interrupt_waits_before_immediate_restart() -> None:
+    host = _RecordingHost()
+    first_release = asyncio.Event()
+    first_client = _BlockingClaudeClient(first_release)
+    second_client = _FakeClaudeClient(
+        messages=[SimpleNamespace(type="result", session_id="claude_restart")]
+    )
+    clients = iter((first_client, second_client))
+    runtime = _runtime_with_client_factory(host=host, clients=clients)
+
+    first = await runtime.start_turn("sess_restart", None, "first")
+    assert first.ok is True
+    await _wait_until(lambda: bool(first_client.queries))
+
+    interrupted = await runtime.interrupt_session("sess_restart", reason="user")
+
+    assert interrupted.result == {"interrupted": True, "alreadyStopped": False}
+    assert first_client.disconnected is True
+    assert runtime._sessions["sess_restart"].execution is None
+
+    second = await runtime.start_turn("sess_restart", None, "second")
+    second_task = runtime._sessions["sess_restart"].active_task
+
+    assert second.ok is True
+    assert second_task is not None
+    await second_task
+    assert second_client.queries == ["second"]
+    assert second_client.disconnected is True
+    assert host.session_state_updates[-1]["status"] == "idle"
+
+
+def test_claude_runtime_fails_stream_without_result_message() -> None:
+    asyncio.run(_test_claude_runtime_fails_stream_without_result_message())
+
+
+async def _test_claude_runtime_fails_stream_without_result_message() -> None:
+    host = _RecordingHost()
+    client = _FakeClaudeClient(
+        messages=[
+            SimpleNamespace(
+                type="assistant",
+                uuid="assistant_without_result",
+                session_id="claude_without_result",
+                message={"role": "assistant", "content": "partial answer"},
+            )
+        ]
+    )
+    runtime = _runtime(host=host, client=client)
+
+    result = await runtime.start_turn("sess_without_result", None, "hello")
+    task = runtime._sessions["sess_without_result"].active_task
+
+    assert result.ok is True
+    assert task is not None
+    await task
+    assert runtime._sessions["sess_without_result"].execution is None
+    assert host.session_state_updates[-1]["status"] == "error"
+    assert host.session_state_updates[-1]["error"]["code"] == (
+        "claude_stream_ended_without_result"
+    )
+
+
+def test_claude_runtime_normalizes_interrupted_result_message() -> None:
+    asyncio.run(_test_claude_runtime_normalizes_interrupted_result_message())
+
+
+async def _test_claude_runtime_normalizes_interrupted_result_message() -> None:
+    host = _RecordingHost()
+    client = _FakeClaudeClient(
+        messages=[
+            SimpleNamespace(
+                type="result",
+                session_id="claude_sdk_interrupted",
+                is_error=False,
+                terminal_reason="aborted_streaming",
+            )
+        ]
+    )
+    runtime = _runtime(host=host, client=client)
+
+    result = await runtime.start_turn("sess_sdk_interrupted", None, "hello")
+    task = runtime._sessions["sess_sdk_interrupted"].active_task
+
+    assert result.ok is True
+    assert task is not None
+    await task
+    assert host.session_state_updates[-1]["status"] == "idle"
+    assert host.session_state_updates[-1]["metadata"] == {
+        "source": "claude.turn.interrupted",
+        "terminalReason": "aborted_streaming",
+    }
+
+
 def test_claude_runtime_result_error_blocks_session_state() -> None:
     asyncio.run(_test_claude_runtime_result_error_blocks_session_state())
 
@@ -1663,6 +1817,25 @@ def _runtime(
         config=config or _config(),
         host=active_host,
         sdk_loader=lambda: active_sdk,
+        client_factory=client_factory,
+    )
+
+
+def _runtime_with_client_factory(
+    *,
+    host: _RecordingHost,
+    clients: Any,
+) -> ClaudeRuntime:
+    def client_factory(sdk: Any, options: Any) -> _FakeClaudeClient:
+        _ = sdk
+        client = next(clients)
+        client.options = options
+        return client
+
+    return ClaudeRuntime(
+        config=_config(),
+        host=host,
+        sdk_loader=_default_sdk,
         client_factory=client_factory,
     )
 

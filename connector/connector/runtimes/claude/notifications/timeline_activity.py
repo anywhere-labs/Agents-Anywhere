@@ -15,6 +15,7 @@ class ClaudeTimelineActivityHandler:
     async def timeline_item_upsert(self, item: RuntimeTimelineItem) -> None:
         self.session_store.record_timeline_item(item)
         await self.host.timeline_item_upsert(item)
+        self.session_store.mark_synced(item.session_id)
 
     async def timeline_sync(
         self,
