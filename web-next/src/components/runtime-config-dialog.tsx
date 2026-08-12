@@ -517,7 +517,6 @@ function CustomModelsEditor({
               <Input
                 value={row.modelId}
                 onChange={(event) => update(rows.map((item) => item.id === row.id ? { ...item, modelId: event.currentTarget.value } : item))}
-                placeholder="claude-sonnet-4-5"
                 spellCheck={false}
                 aria-label={t("customModelId")}
                 aria-invalid={invalid}
@@ -528,7 +527,6 @@ function CustomModelsEditor({
               <Input
                 value={row.displayName}
                 onChange={(event) => update(rows.map((item) => item.id === row.id ? { ...item, displayName: event.currentTarget.value } : item))}
-                placeholder="Claude Sonnet 4.5"
                 spellCheck={false}
                 aria-label={t("customModelDisplayName")}
                 aria-invalid={invalid}
@@ -567,7 +565,6 @@ function CustomModelsEditor({
                   <Input
                     value={effort.effortId}
                     onChange={(event) => updateEffort(row.id, effort.id, { effortId: event.currentTarget.value })}
-                    placeholder="high"
                     spellCheck={false}
                     aria-label={t("customEffortId")}
                     aria-invalid={invalid}
@@ -578,7 +575,6 @@ function CustomModelsEditor({
                   <Input
                     value={effort.displayName}
                     onChange={(event) => updateEffort(row.id, effort.id, { displayName: event.currentTarget.value })}
-                    placeholder={t("customEffortDisplayName")}
                     spellCheck={false}
                     aria-label={t("customEffortDisplayName")}
                     aria-invalid={invalid}
