@@ -3,6 +3,7 @@ package com.agentsanywhere.app.app
 import android.content.Context
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
+import android.net.Network
 import android.net.Uri
 import android.widget.Toast
 import androidx.compose.animation.AnimatedContent
@@ -33,6 +34,7 @@ import com.agentsanywhere.app.api.ApiClient
 import com.agentsanywhere.app.api.AuthApi
 import com.agentsanywhere.app.api.DevicesApi
 import com.agentsanywhere.app.api.FilesApi
+import com.agentsanywhere.app.api.RealtimeApi
 import com.agentsanywhere.app.api.SessionsApi
 import com.agentsanywhere.app.api.TerminalApi
 import com.agentsanywhere.app.feature.auth.AuthController
@@ -44,6 +46,9 @@ import com.agentsanywhere.app.feature.devices.DeviceRuntimeList
 import com.agentsanywhere.app.feature.devices.DeviceSetupCredential
 import com.agentsanywhere.app.feature.devices.DevicesController
 import com.agentsanywhere.app.feature.files.FilesController
+import com.agentsanywhere.app.feature.realtime.DashboardRealtimeController
+import com.agentsanywhere.app.feature.realtime.RealtimeClientIdStore
+import com.agentsanywhere.app.feature.realtime.SessionRealtimeController
 import com.agentsanywhere.app.feature.sessions.SessionsController
 import com.agentsanywhere.app.feature.sessions.SessionsState
 import com.agentsanywhere.app.feature.sessions.SessionBatchUpdate
@@ -55,6 +60,7 @@ import com.agentsanywhere.app.feature.sessions.NewSessionPermissionCatalog
 import com.agentsanywhere.app.feature.sessions.NewSessionRuntimeCapabilities
 import com.agentsanywhere.app.feature.sessions.beginSessionRequest
 import com.agentsanywhere.app.feature.sessions.mergedWithRefresh
+import com.agentsanywhere.app.feature.sessions.replacedByDashboardSnapshot
 import com.agentsanywhere.app.feature.sessions.withDeletedDevice
 import com.agentsanywhere.app.feature.sessions.withPatchedDevice
 import com.agentsanywhere.app.feature.sessions.withPatchedSession
@@ -94,8 +100,8 @@ import com.agentsanywhere.app.ui.screens.home.NewSessionScreen
 import com.agentsanywhere.app.ui.screens.terminal.TerminalScreen
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import java.util.concurrent.atomic.AtomicBoolean
 
 @Composable
 fun AgentsAnywhereApp(
@@ -130,6 +136,8 @@ fun AgentsAnywhereApp(
             unauthorizedTokens.trySend(accessToken)
         })
     }
+    val realtimeApi = remember(apiClient) { RealtimeApi(client = apiClient) }
+    val realtimeClientId = remember(context) { RealtimeClientIdStore(context).readOrCreate() }
     val authController = remember(context, sessionStore, apiClient) {
         AuthController(
             api = AuthApi(apiClient),
@@ -171,6 +179,12 @@ fun AgentsAnywhereApp(
     val remoteTerminalPool = remember(terminalController) {
         RemoteTerminalPool(terminalController)
     }
+    val dashboardRealtimeController = remember(realtimeApi, sessionStore, realtimeClientId) {
+        DashboardRealtimeController(realtimeApi, sessionStore, realtimeClientId)
+    }
+    val sessionRealtimeController = remember(realtimeApi, sessionStore, realtimeClientId) {
+        SessionRealtimeController(realtimeApi, sessionStore, realtimeClientId)
+    }
     val currentDestination = AppDestination.valueOf(destinationName)
     val hasAuthSession = sessionStore.hasAuthSession()
     var sessionsState by remember(sessionsController) {
@@ -185,6 +199,39 @@ fun AgentsAnywhereApp(
     var isRefreshingSessions by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val lifecycleOwner = LocalLifecycleOwner.current
+    var appVisible by remember(lifecycleOwner) {
+        mutableStateOf(lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED))
+    }
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_START -> appVisible = true
+                Lifecycle.Event.ON_STOP -> appVisible = false
+                else -> Unit
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        appVisible = lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    DisposableEffect(context, dashboardRealtimeController, sessionRealtimeController) {
+        val connectivity = context.getSystemService(ConnectivityManager::class.java)
+        val networkWasLost = AtomicBoolean(false)
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                if (networkWasLost.getAndSet(false)) {
+                    dashboardRealtimeController.requestImmediateReconnect()
+                    sessionRealtimeController.requestImmediateReconnect()
+                }
+            }
+
+            override fun onLost(network: Network) {
+                networkWasLost.set(true)
+            }
+        }
+        connectivity.registerDefaultNetworkCallback(callback)
+        onDispose { connectivity.unregisterNetworkCallback(callback) }
+    }
     fun clearSessionAndReturnToLogin(expectedToken: String? = null) {
         val didClearSession = if (expectedToken == null) {
             authController.signOut()
@@ -284,19 +331,43 @@ fun AgentsAnywhereApp(
         destinationName = destination.name
     }
 
-    LaunchedEffect(hasAuthSession, sessionsController) {
+    val realtimeServerUrl = sessionStore.readServerUrl()
+    val realtimeAccessToken = sessionStore.readAccessToken()
+    LaunchedEffect(
+        hasAuthSession,
+        appVisible,
+        realtimeServerUrl,
+        realtimeAccessToken,
+        dashboardRealtimeController,
+    ) {
         if (!hasAuthSession) {
             sessionsState = SessionsState()
             return@LaunchedEffect
         }
-
-        while (true) {
-            refreshSessions(
-                showInitialLoading = true,
-                showRefreshIndicator = false,
-            )
-            delay(5_000)
-        }
+        if (!appVisible) return@LaunchedEffect
+        dashboardRealtimeController.start(
+            scope = this,
+            onSnapshot = { snapshot ->
+                scope.launch {
+                    if (sessionStore.readServerUrl() != realtimeServerUrl ||
+                        sessionStore.readAccessToken() != realtimeAccessToken
+                    ) return@launch
+                    sessionsState = sessionsState.replacedByDashboardSnapshot(
+                        sessionsController.dashboardSnapshotState(snapshot),
+                    )
+                }
+            },
+            onInitialFailure = {
+                scope.launch {
+                    if (sessionStore.readServerUrl() != realtimeServerUrl ||
+                        sessionStore.readAccessToken() != realtimeAccessToken
+                    ) return@launch
+                    if (!sessionsState.hasLoaded) {
+                        refreshSessions(showInitialLoading = true, showRefreshIndicator = false)
+                    }
+                }
+            },
+        ).join()
     }
 
     LaunchedEffect(oauthCallbackUri) {
@@ -363,6 +434,7 @@ fun AgentsAnywhereApp(
         appearanceMode = appearanceMode,
         languageMode = languageMode,
         sessionDetailController = sessionDetailController,
+        sessionRealtimeController = sessionRealtimeController,
         filesController = filesController,
         remoteTerminalPool = remoteTerminalPool,
         pendingMobileLoginQr = pendingMobileLoginQr,
@@ -651,6 +723,7 @@ private fun AgentsAnywhereNavHost(
     appearanceMode: String,
     languageMode: String,
     sessionDetailController: SessionDetailController,
+    sessionRealtimeController: SessionRealtimeController,
     filesController: FilesController,
     remoteTerminalPool: RemoteTerminalPool,
     pendingMobileLoginQr: MobileLoginQrPayload?,
@@ -694,9 +767,12 @@ private fun AgentsAnywhereNavHost(
     onOAuthPendingReceived: (OAuthFlowState, AppDestination) -> Unit,
     onOAuthErrorConsumed: () -> Unit,
 ) {
+    val context = LocalContext.current
     val colors = LocalAAColors.current
     var pairDeviceSheetOpen by remember { mutableStateOf(false) }
-    val sessionComposerDraftStore = remember(userId) { SessionComposerDraftStore() }
+    val sessionComposerDraftStore = remember(context, userId) {
+        SessionComposerDraftStore(context.applicationContext, userId)
+    }
 
     Surface(
         modifier = Modifier.fillMaxSize(),
@@ -801,6 +877,7 @@ private fun AgentsAnywhereNavHost(
                         .firstOrNull { it.id == selectedSessionId },
                     devices = sessionsState.devices,
                     controller = sessionDetailController,
+                    realtimeController = sessionRealtimeController,
                     filesController = filesController,
                     terminalPool = remoteTerminalPool,
                     composerDraftStore = sessionComposerDraftStore,

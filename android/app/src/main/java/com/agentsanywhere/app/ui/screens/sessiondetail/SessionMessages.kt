@@ -38,7 +38,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -87,9 +86,6 @@ private const val LOAD_OLDER_VISIBLE_THRESHOLD = 3
 private const val RETURN_TO_LATEST_ANIMATION_WINDOW = 12
 private val AUTO_FOLLOW_RESUME_THRESHOLD = 8.dp
 private val AUTO_FOLLOW_DRAG_PAUSE_THRESHOLD = 32.dp
-private val TimelineMessageOrder = compareBy<TimelineMessage> { it.orderSeq }
-    .thenBy { it.updatedSeq }
-    .thenBy { it.id }
 private val SessionWelcomeFontFamily = FontFamily(
     Font(R.font.newsreader_opsz_wght, FontWeight(650)),
 )
@@ -220,6 +216,7 @@ internal fun MessageList(
     loadingOlder: Boolean,
     onLoadOlder: () -> Unit,
     onPreviewAttachment: (TimelineAttachment) -> Unit,
+    onOpenAttachment: (TimelineAttachment) -> Unit,
     onCopyMessage: (String) -> Unit,
     onOpenFile: (String) -> Unit,
 ) {
@@ -228,12 +225,8 @@ internal fun MessageList(
     val density = LocalDensity.current
     val resumeThresholdPx = with(density) { AUTO_FOLLOW_RESUME_THRESHOLD.roundToPx() }
     val dragPauseThresholdPx = with(density) { AUTO_FOLLOW_DRAG_PAUSE_THRESHOLD.toPx() }
-    val latestMessages by rememberUpdatedState(messages)
-    val latestWorkingLabel by rememberUpdatedState(workingLabel)
-    var lockedMessages by remember(sessionId) { mutableStateOf<List<TimelineMessage>?>(null) }
-    var lockedWorkingLabel by remember(sessionId) { mutableStateOf<String?>(null) }
-    val displayMessages = lockedMessages ?: messages
-    val displayWorkingLabel = if (lockedMessages != null) lockedWorkingLabel else workingLabel
+    val displayMessages = messages
+    val displayWorkingLabel = workingLabel
     val timelineItems = remember(displayMessages) { groupTimelineMessages(displayMessages) }
     val agentTurnCopyTextByItem = remember(timelineItems, displayWorkingLabel) {
         buildAgentTurnCopyTextByItem(timelineItems, displayWorkingLabel != null)
@@ -243,30 +236,13 @@ internal fun MessageList(
     var userPausedAutoFollow by remember(sessionId) { mutableStateOf(false) }
 
     fun releaseReadLock() {
-        lockedMessages = null
-        lockedWorkingLabel = null
         userPausedAutoFollow = false
         autoFollowLatest = true
     }
 
     fun pauseAutoFollowWithSnapshot() {
-        if (lockedMessages == null) {
-            lockedMessages = latestMessages
-            lockedWorkingLabel = latestWorkingLabel
-        }
         userPausedAutoFollow = true
         autoFollowLatest = false
-    }
-
-    LaunchedEffect(messages, lockedMessages) {
-        val locked = lockedMessages ?: return@LaunchedEffect
-        val merged = mergeOlderMessagesIntoLock(
-            lockedMessages = locked,
-            latestMessages = messages,
-        )
-        if (merged.size != locked.size) {
-            lockedMessages = merged
-        }
     }
 
     LaunchedEffect(listState) {
@@ -315,7 +291,13 @@ internal fun MessageList(
     }
 
     LaunchedEffect(streamLatestRequest) {
-        if (streamLatestRequest > 0 && autoFollowLatest && !userPausedAutoFollow && !listState.isScrollInProgress) {
+        if (shouldAutoFollowRealtime(
+                hasRealtimeUpdate = streamLatestRequest > 0,
+                autoFollowLatest = autoFollowLatest,
+                userPaused = userPausedAutoFollow,
+                scrolling = listState.isScrollInProgress,
+            )
+        ) {
             listState.scrollToItem(0)
         }
     }
@@ -387,6 +369,7 @@ internal fun MessageList(
                                 sessionId = sessionId,
                                 controller = controller,
                                 onPreviewAttachment = onPreviewAttachment,
+                                onOpenAttachment = onOpenAttachment,
                                 onCopyMessage = onCopyMessage,
                                 onOpenFile = onOpenFile,
                             )
@@ -444,24 +427,16 @@ private suspend fun LazyListState.animateToLatestFromAnywhere() {
     animateScrollToItem(0)
 }
 
-private fun mergeOlderMessagesIntoLock(
-    lockedMessages: List<TimelineMessage>,
-    latestMessages: List<TimelineMessage>,
-): List<TimelineMessage> {
-    val firstLocked = lockedMessages.minWithOrNull(TimelineMessageOrder) ?: return lockedMessages
-    val lockedIds = lockedMessages.mapTo(mutableSetOf()) { it.id }
-    val olderMessages = latestMessages.filter { message ->
-        message.id !in lockedIds && TimelineMessageOrder.compare(message, firstLocked) < 0
-    }
-    if (olderMessages.isEmpty()) return lockedMessages
-    return (olderMessages + lockedMessages)
-        .distinctBy { it.id }
-        .sortedWith(TimelineMessageOrder)
-}
-
 private fun LazyListState.isNearLatest(thresholdPx: Int): Boolean {
     return firstVisibleItemIndex == 0 && firstVisibleItemScrollOffset <= thresholdPx
 }
+
+internal fun shouldAutoFollowRealtime(
+    hasRealtimeUpdate: Boolean,
+    autoFollowLatest: Boolean,
+    userPaused: Boolean,
+    scrolling: Boolean,
+): Boolean = hasRealtimeUpdate && autoFollowLatest && !userPaused && !scrolling
 
 private fun LazyListState.isAtLatest(): Boolean {
     return firstVisibleItemIndex == 0 && firstVisibleItemScrollOffset == 0
@@ -585,6 +560,10 @@ private fun TimelineMessage.isToolRunItem(): Boolean {
     return kind == TimelineMessageKind.Command ||
         kind == TimelineMessageKind.FileChange ||
         kind == TimelineMessageKind.ToolCall
+}
+
+internal fun diagnosticTimelineText(message: TimelineMessage): String {
+    return message.takeIf { it.kind == TimelineMessageKind.Diagnostic }?.text.orEmpty()
 }
 
 @Composable
@@ -800,6 +779,7 @@ private fun TimelineMessageRow(
     sessionId: String,
     controller: SessionDetailController,
     onPreviewAttachment: (TimelineAttachment) -> Unit,
+    onOpenAttachment: (TimelineAttachment) -> Unit,
     onCopyMessage: (String) -> Unit,
     onOpenFile: (String) -> Unit,
 ) {
@@ -807,13 +787,87 @@ private fun TimelineMessageRow(
         TimelineMessageKind.Reasoning -> ReasoningSection(message, darkMode)
         TimelineMessageKind.Command,
         TimelineMessageKind.FileChange,
-        TimelineMessageKind.ToolCall -> ToolActivityCard(message, darkMode, listState)
-        TimelineMessageKind.System -> ToolPlaceholder(message, darkMode)
+        TimelineMessageKind.ToolCall,
+        TimelineMessageKind.Artifact -> ToolActivityCard(message, darkMode, listState, onOpenFile = onOpenFile)
+        TimelineMessageKind.Marker,
+        TimelineMessageKind.Error,
+        TimelineMessageKind.Diagnostic,
+        TimelineMessageKind.System -> ToolPlaceholder(message, darkMode, onCopyMessage)
         TimelineMessageKind.Text -> when (message.author) {
-            MessageAuthor.User -> UserBubble(message, darkMode, sessionId, controller, onPreviewAttachment, onCopyMessage)
-            MessageAuthor.Agent -> AgentMarkdownText(message.text, darkMode, onOpenFile = onOpenFile)
-            MessageAuthor.Tool -> ToolPlaceholder(message, darkMode)
+            MessageAuthor.User -> UserBubble(
+                message,
+                darkMode,
+                sessionId,
+                controller,
+                onPreviewAttachment,
+                onOpenAttachment,
+                onCopyMessage,
+            )
+            MessageAuthor.Agent -> AgentMessageContent(
+                message = message,
+                darkMode = darkMode,
+                sessionId = sessionId,
+                controller = controller,
+                onPreviewAttachment = onPreviewAttachment,
+                onOpenAttachment = onOpenAttachment,
+                onOpenFile = onOpenFile,
+            )
+            MessageAuthor.Tool -> PlatformMessageContent(
+                message = message,
+                darkMode = darkMode,
+                sessionId = sessionId,
+                controller = controller,
+                onPreviewAttachment = onPreviewAttachment,
+                onOpenAttachment = onOpenAttachment,
+            )
         }
+    }
+}
+
+@Composable
+private fun AgentMessageContent(
+    message: TimelineMessage,
+    darkMode: Boolean,
+    sessionId: String,
+    controller: SessionDetailController,
+    onPreviewAttachment: (TimelineAttachment) -> Unit,
+    onOpenAttachment: (TimelineAttachment) -> Unit,
+    onOpenFile: (String) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (message.text.isNotBlank()) AgentMarkdownText(message.text, darkMode, onOpenFile = onOpenFile)
+        UserAttachmentStrip(
+            attachments = message.attachments,
+            darkMode = darkMode,
+            sessionId = sessionId,
+            controller = controller,
+            onPreviewAttachment = onPreviewAttachment,
+            onOpenAttachment = onOpenAttachment,
+            alignEnd = false,
+        )
+    }
+}
+
+@Composable
+private fun PlatformMessageContent(
+    message: TimelineMessage,
+    darkMode: Boolean,
+    sessionId: String,
+    controller: SessionDetailController,
+    onPreviewAttachment: (TimelineAttachment) -> Unit,
+    onOpenAttachment: (TimelineAttachment) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (message.text.isNotBlank()) ToolPlaceholder(message, darkMode)
+        UserAttachmentStrip(
+            attachments = message.attachments,
+            darkMode = darkMode,
+            sessionId = sessionId,
+            controller = controller,
+            onPreviewAttachment = onPreviewAttachment,
+            onOpenAttachment = onOpenAttachment,
+            alignEnd = false,
+        )
     }
 }
 
@@ -824,6 +878,7 @@ private fun UserBubble(
     sessionId: String,
     controller: SessionDetailController,
     onPreviewAttachment: (TimelineAttachment) -> Unit,
+    onOpenAttachment: (TimelineAttachment) -> Unit,
     onCopyMessage: (String) -> Unit,
 ) {
     BoxWithConstraints(Modifier.fillMaxWidth()) {
@@ -854,6 +909,7 @@ private fun UserBubble(
                     sessionId = sessionId,
                     controller = controller,
                     onPreviewAttachment = onPreviewAttachment,
+                    onOpenAttachment = onOpenAttachment,
                 )
                 if (text.isNotBlank()) {
                     Row(
@@ -971,10 +1027,12 @@ private fun UserAttachmentStrip(
     sessionId: String,
     controller: SessionDetailController,
     onPreviewAttachment: (TimelineAttachment) -> Unit,
+    onOpenAttachment: (TimelineAttachment) -> Unit,
+    alignEnd: Boolean = true,
 ) {
     if (attachments.isEmpty()) return
     Column(
-        horizontalAlignment = Alignment.End,
+        horizontalAlignment = if (alignEnd) Alignment.End else Alignment.Start,
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         attachments.forEach { attachment ->
@@ -993,6 +1051,7 @@ private fun UserAttachmentStrip(
                 UserFileAttachmentCard(
                     attachment = attachment,
                     darkMode = darkMode,
+                    onOpen = { onOpenAttachment(attachment) },
                 )
             }
         }
@@ -1003,6 +1062,7 @@ private fun UserAttachmentStrip(
 private fun UserFileAttachmentCard(
     attachment: TimelineAttachment,
     darkMode: Boolean,
+    onOpen: () -> Unit,
 ) {
     val surface = if (darkMode) Color(0xFF2A2A2D) else Color(0xFFF1F0ED)
     val iconSurface = if (darkMode) Color(0xFF18181B) else Color.White.copy(alpha = 0.86f)
@@ -1016,6 +1076,7 @@ private fun UserFileAttachmentCard(
             .height(72.dp)
             .clip(RoundedCornerShape(18.dp))
             .background(surface)
+            .noRippleClickable(onClick = onOpen)
             .padding(10.dp),
         horizontalArrangement = Arrangement.spacedBy(10.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -1096,6 +1157,7 @@ private fun ToolActivityCard(
     darkMode: Boolean,
     listState: LazyListState,
     embedded: Boolean = false,
+    onOpenFile: (String) -> Unit = {},
 ) {
     val surface = if (darkMode) Color(0xFF18181B) else Color(0xFFF1F0ED)
     val border = if (darkMode) Color(0xFF27272A) else Color(0xFFE4E1DB)
@@ -1136,7 +1198,15 @@ private fun ToolActivityCard(
                 .heightIn(min = 34.dp)
                 .clip(RoundedCornerShape(8.dp))
                 .background(collapsedSurface)
-                .then(if (expandable) Modifier.noRippleClickable { toggleExpanded() } else Modifier)
+                .then(
+                    when {
+                        expandable -> Modifier.noRippleClickable { toggleExpanded() }
+                        message.kind == TimelineMessageKind.Artifact && message.detail.isNotBlank() -> {
+                            Modifier.noRippleClickable { onOpenFile(message.detail) }
+                        }
+                        else -> Modifier
+                    },
+                )
                 .padding(horizontal = 6.dp, vertical = 6.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -1364,6 +1434,12 @@ private fun ToolActivityIcon(
             darkMode = darkMode,
             sizeDp = sizeDp,
         )
+        TimelineMessageKind.Artifact -> PngToolIcon(
+            lightRes = R.drawable.ic_attachment_file_black,
+            darkRes = R.drawable.ic_attachment_file_white,
+            darkMode = darkMode,
+            sizeDp = sizeDp,
+        )
         else -> PngToolIcon(
             lightRes = R.drawable.ic_tool_call_light,
             darkRes = R.drawable.ic_tool_call_dark,
@@ -1411,19 +1487,36 @@ private fun CompactStatusPill(label: String, darkMode: Boolean) {
 }
 
 @Composable
-private fun ToolPlaceholder(message: TimelineMessage, darkMode: Boolean) {
+private fun ToolPlaceholder(
+    message: TimelineMessage,
+    darkMode: Boolean,
+    onCopyMessage: ((String) -> Unit)? = null,
+) {
+    val destructive = message.kind == TimelineMessageKind.Error || message.status == "failed"
+    val muted = when {
+        destructive -> Color(0xFFF87171)
+        darkMode -> Color(0xFFA1A1AA)
+        else -> Color(0xFF7C7B76)
+    }
     Row(
         modifier = Modifier.padding(horizontal = 4.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        SparklesGlyph(if (darkMode) Color(0xFFA1A1AA) else Color(0xFF7C7B76))
+        SparklesGlyph(muted)
         Text(
             text = message.text.ifBlank { message.type },
-            color = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF7C7B76),
+            modifier = Modifier.weight(1f, fill = false),
+            color = muted,
             fontSize = 13.sp,
-            fontWeight = FontWeight.Bold,
+            fontWeight = if (message.kind == TimelineMessageKind.Diagnostic) FontWeight.Medium else FontWeight.Bold,
         )
+        if (message.kind == TimelineMessageKind.Diagnostic && onCopyMessage != null) {
+            MessageCopyButton(
+                darkMode = darkMode,
+                onClick = { onCopyMessage(diagnosticTimelineText(message)) },
+            )
+        }
     }
 }
 

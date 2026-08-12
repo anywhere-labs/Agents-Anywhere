@@ -8,6 +8,7 @@ import com.agentsanywhere.app.api.SessionsApi
 import com.agentsanywhere.app.api.RemoteDevice
 import com.agentsanywhere.app.api.RemoteSession
 import com.agentsanywhere.app.api.RemoteSessionCreateAndStartRequest
+import com.agentsanywhere.app.api.RemoteDashboardSnapshot
 import com.agentsanywhere.app.api.RemoteSessionsMutationResponse
 import com.agentsanywhere.app.feature.auth.AuthSessionStore
 import com.agentsanywhere.app.feature.devices.DeviceRuntimeList
@@ -32,6 +33,9 @@ class SessionsController(
     private val filesApi: FilesApi,
     private val sessionStore: AuthSessionStore,
 ) {
+    fun dashboardSnapshotState(snapshot: RemoteDashboardSnapshot): SessionsState {
+        return toState(snapshot.sessions, snapshot.devices)
+    }
     suspend fun loadSessions(): Result<SessionsState> {
         val serverUrl = sessionStore.readServerUrl()
         val accessToken = sessionStore.readAccessToken()

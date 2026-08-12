@@ -176,6 +176,21 @@ fun SessionsState.mergedWithRefresh(
     ).withPatchedSessions(merged)
 }
 
+fun SessionsState.replacedByDashboardSnapshot(loaded: SessionsState): SessionsState {
+    val currentById = (sessions + archivedSessions).associateBy { it.id }
+    val accepted = (loaded.sessions + loaded.archivedSessions).map { incoming ->
+        currentById[incoming.id]?.takeIf { current -> current.updatedSeq > incoming.updatedSeq } ?: incoming
+    }
+    return loaded.copy(
+        sessions = accepted
+            .filterNot { it.archived }
+            .sortedWith(compareByDescending<AgentSession> { it.pinned }.thenByDescending { it.sortKey }),
+        archivedSessions = accepted.filter { it.archived }.sortedByDescending { it.sortKey },
+        sessionRequestGenerations = sessionRequestGenerations,
+        nextRequestGeneration = nextRequestGeneration,
+    )
+}
+
 fun SessionsState.withPatchedDevice(device: AgentDevice): SessionsState {
     val hadDevice = devices.any { it.id == device.id }
     val nextDevices = if (hadDevice) {

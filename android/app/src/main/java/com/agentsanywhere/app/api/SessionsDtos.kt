@@ -227,3 +227,32 @@ data class RemoteUploadedAttachment(
     val size: Long,
     val sha256: String? = null,
 )
+
+data class RemoteAttachmentRef(
+    val fileId: String,
+)
+
+data class RemoteDownloadedAttachment(
+    val fileId: String,
+    val sessionId: String,
+    val path: String,
+    val name: String,
+    val size: Long,
+    val sha256: String,
+    val bytes: ByteArray,
+    val createdAt: String?,
+    val serverTime: String?,
+)
+
+enum class AttachmentTransferFailure {
+    InvalidBase64,
+    IncompleteUpload,
+    SizeMismatch,
+    Sha256Mismatch,
+}
+
+class AttachmentTransferException(
+    val failure: AttachmentTransferFailure,
+    val attachmentName: String? = null,
+    cause: Throwable? = null,
+) : IllegalStateException(failure.name, cause)

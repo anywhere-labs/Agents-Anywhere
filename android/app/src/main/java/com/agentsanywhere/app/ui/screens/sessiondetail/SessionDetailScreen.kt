@@ -35,6 +35,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -61,14 +62,19 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import com.agentsanywhere.app.R
+import com.agentsanywhere.app.api.AttachmentTransferException
+import com.agentsanywhere.app.api.AttachmentTransferFailure
 import com.agentsanywhere.app.api.UploadFilePart
 import com.agentsanywhere.app.feature.files.FilesController
+import com.agentsanywhere.app.feature.realtime.SessionRealtimeController
 import com.agentsanywhere.app.feature.sessiondetail.SessionDetailController
 import com.agentsanywhere.app.feature.sessiondetail.SessionMeta
 import com.agentsanywhere.app.feature.sessiondetail.SessionDetailState
 import com.agentsanywhere.app.feature.sessiondetail.SessionRuntimeStatus
 import com.agentsanywhere.app.feature.sessiondetail.SessionTimelineState
+import com.agentsanywhere.app.feature.sessiondetail.TimelineMessage
 import com.agentsanywhere.app.feature.sessiondetail.RuntimeMessageAction
 import com.agentsanywhere.app.feature.sessiondetail.RuntimeNotice
 import com.agentsanywhere.app.feature.sessiondetail.RuntimeNoticeAction
@@ -99,6 +105,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.UUID
+import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -109,6 +116,7 @@ fun SessionDetailScreen(
     initialSession: AgentSession?,
     devices: List<AgentDevice>,
     controller: SessionDetailController,
+    realtimeController: SessionRealtimeController,
     filesController: FilesController,
     terminalPool: RemoteTerminalPool,
     composerDraftStore: SessionComposerDraftStore,
@@ -120,6 +128,8 @@ fun SessionDetailScreen(
     val clipboard = LocalClipboardManager.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
+    val currentDevices by rememberUpdatedState(devices)
+    val currentOnSessionChanged by rememberUpdatedState(onSessionChanged)
     val focusManager = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
     val haptic = LocalHapticFeedback.current
@@ -137,6 +147,8 @@ fun SessionDetailScreen(
     var forceLatestRequest by remember(sessionId) { mutableStateOf(0) }
     var streamLatestRequest by remember(sessionId) { mutableStateOf(0) }
     var attachments by remember(sessionId) { mutableStateOf(restoredComposerDraft.attachments) }
+    var retryClientMessageId by remember(sessionId) { mutableStateOf(restoredComposerDraft.clientMessageId) }
+    var retryMessageAction by remember(sessionId) { mutableStateOf(restoredComposerDraft.retryAction) }
     var takeoverConfirm by remember(sessionId) { mutableStateOf<Boolean?>(null) }
     var previewImage by remember(sessionId) { mutableStateOf<AttachmentPreview?>(null) }
     var showCamera by remember(sessionId) { mutableStateOf(false) }
@@ -182,6 +194,23 @@ fun SessionDetailScreen(
         }
     }
 
+    fun attachmentErrorMessage(error: Throwable, fallback: Int): String {
+        val transfer = error as? AttachmentTransferException
+        return when (transfer?.failure) {
+            AttachmentTransferFailure.InvalidBase64 -> context.getString(R.string.session_attachment_base64_invalid)
+            AttachmentTransferFailure.IncompleteUpload -> context.getString(R.string.session_attachment_upload_incomplete)
+            AttachmentTransferFailure.SizeMismatch -> context.getString(
+                R.string.session_attachment_size_mismatch,
+                transfer.attachmentName ?: context.getString(R.string.session_attachment_name_fallback),
+            )
+            AttachmentTransferFailure.Sha256Mismatch -> context.getString(
+                R.string.session_attachment_sha_mismatch,
+                transfer.attachmentName ?: context.getString(R.string.session_attachment_name_fallback),
+            )
+            null -> error.message ?: context.getString(fallback)
+        }
+    }
+
     fun copyMessageText(text: String) {
         val copyText = text.trimEnd('\r', '\n')
         if (copyText.isBlank()) return
@@ -196,30 +225,68 @@ fun SessionDetailScreen(
         scope.launch { pagerState.animateScrollToPage(1) }
     }
 
-    fun saveComposerDraft(nextDraft: String, nextAttachments: List<PendingAttachment>) {
-        composerDraftStore.save(sessionId, nextDraft, nextAttachments)
+    fun openAttachment(attachment: com.agentsanywhere.app.feature.sessiondetail.TimelineAttachment) {
+        val id = sessionId ?: return
+        scope.launch {
+            controller.downloadAttachment(id, attachment)
+                .onSuccess { downloaded ->
+                    val directory = File(context.cacheDir, "session-attachments").apply { mkdirs() }
+                    val target = File(
+                        directory,
+                        attachmentCacheFileName(downloaded.fileId, downloaded.name),
+                    )
+                    withContext(Dispatchers.IO) { target.writeBytes(downloaded.bytes) }
+                    val uri = FileProvider.getUriForFile(
+                        context,
+                        "${context.packageName}.attachments",
+                        target,
+                    )
+                    val intent = Intent(Intent.ACTION_VIEW).apply {
+                        setDataAndType(uri, downloaded.mediaType.ifBlank { "application/octet-stream" })
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    }
+                    runCatching { context.startActivity(intent) }
+                        .onFailure { showError(context.getString(R.string.session_attachment_open_failed)) }
+                }
+                .onFailure { error ->
+                    showError(attachmentErrorMessage(error, R.string.session_attachment_download_failed))
+                }
+        }
+    }
+
+    fun saveComposerDraft(
+        nextDraft: String,
+        nextAttachments: List<PendingAttachment>,
+        clientMessageId: String? = retryClientMessageId,
+        retryAction: RuntimeMessageAction? = retryMessageAction,
+    ) {
+        composerDraftStore.save(sessionId, nextDraft, nextAttachments, clientMessageId, retryAction)
     }
 
     fun setComposerDraft(nextDraft: String) {
         draft = nextDraft
-        saveComposerDraft(nextDraft, attachments)
+        retryClientMessageId = null
+        retryMessageAction = null
+        saveComposerDraft(nextDraft, attachments, null, null)
     }
 
     fun setComposerAttachments(nextAttachments: List<PendingAttachment>) {
         attachments = nextAttachments
-        saveComposerDraft(draft, nextAttachments)
+        retryClientMessageId = null
+        retryMessageAction = null
+        saveComposerDraft(draft, nextAttachments, null, null)
     }
 
     fun clearComposerDraft() {
         draft = ""
         attachments = emptyList()
         composerDraftStore.clear(sessionId)
+        retryClientMessageId = null
+        retryMessageAction = null
     }
 
     fun updateAttachment(id: String, transform: (PendingAttachment) -> PendingAttachment) {
-        val nextAttachments = attachments.map { attachment ->
-            if (attachment.id == id) transform(attachment) else attachment
-        }
+        val nextAttachments = attachments.updateItemById(id, PendingAttachment::id, transform)
         setComposerAttachments(nextAttachments)
     }
 
@@ -259,11 +326,18 @@ fun SessionDetailScreen(
                     updateAttachment(attachment.id) {
                         it.copy(
                             uploadState = AttachmentUploadState.Failed,
-                            errorMessage = error.message ?: context.getString(R.string.session_attachment_upload_failed),
+                            errorMessage = attachmentErrorMessage(error, R.string.session_attachment_upload_failed),
                         )
                     }
                 }
         }
+    }
+
+    fun retryPendingAttachment(attachment: PendingAttachment) {
+        updateAttachment(attachment.id) {
+            it.copy(uploadState = AttachmentUploadState.Uploading, remote = null, errorMessage = null)
+        }
+        uploadPendingAttachment(attachment)
     }
 
     fun unfocusComposer() {
@@ -389,7 +463,7 @@ fun SessionDetailScreen(
             controller.loadInitialSnapshot(id, devices, state)
                 .onSuccess { loaded ->
                     if (!appVisible) return@onSuccess
-                    state = loaded
+                    state = controller.mergeSnapshotWithLiveState(id, loaded, state)
                     state.session?.let(onSessionChanged)
                 }
                 .onFailure { error ->
@@ -413,53 +487,13 @@ fun SessionDetailScreen(
         }
     }
 
-    suspend fun refreshDomains(showLoading: Boolean) {
-        val id = sessionId ?: return
-        if (!appVisible || !state.initialized) return
-        if (!refetchInFlight.compareAndSet(false, true)) return
-        if (showLoading) {
-            state = state.copy(
-                meta = state.meta.copy(isLoading = true, errorMessage = null),
-                timeline = state.timeline.copy(isLoading = true, errorMessage = null),
-                runtime = state.runtime.copy(isLoading = true, errorMessage = null),
-                capabilities = state.capabilities.copy(isLoading = true, errorMessage = null),
-                notices = state.notices.copy(isLoading = true, errorMessage = null),
-            )
-        }
-        try {
-            runCatching { controller.refreshDomains(id, devices, state) }
-                .onSuccess { refreshed ->
-                    if (!appVisible) return@onSuccess
-                    val hadNewMessages = refreshed.timeline.messages.size > state.timeline.messages.size ||
-                        refreshed.timeline.nextSeq > state.timeline.nextSeq
-                    state = refreshed
-                    state.session?.let(onSessionChanged)
-                    if (hadNewMessages) streamLatestRequest += 1
-                }
-                .onFailure { error ->
-                    if (appVisible) {
-                        val message = error.message ?: context.getString(R.string.session_load_messages_failed)
-                        state = state.copy(
-                            meta = state.meta.copy(isLoading = false, errorMessage = message),
-                            timeline = state.timeline.copy(isLoading = false, errorMessage = message),
-                            runtime = state.runtime.copy(isLoading = false, errorMessage = message),
-                            capabilities = state.capabilities.copy(isLoading = false, errorMessage = message),
-                            notices = state.notices.copy(isLoading = false, errorMessage = message),
-                        )
-                    }
-                }
-        } finally {
-            refetchInFlight.set(false)
-        }
-    }
-
     fun loadOlderMessages() {
         val id = sessionId ?: return
         if (!appVisible || !state.hasMore || state.timeline.loadingOlder) return
         if (!olderInFlight.compareAndSet(false, true)) return
-        val beforeOrderSeq = state.messages
-            .filterNot { it.optimistic }
+        val beforeOrderSeq = state.timeline.orderingItems
             .minOfOrNull { it.orderSeq }
+            ?: state.messages.filterNot { it.optimistic }.minOfOrNull { it.orderSeq }
         if (beforeOrderSeq == null || beforeOrderSeq <= 1) {
             olderInFlight.set(false)
             state = state.copy(
@@ -503,7 +537,16 @@ fun SessionDetailScreen(
             showError(context.getString(R.string.session_steer_unavailable))
             return
         }
-        val clientMessageId = "opt_${UUID.randomUUID()}"
+        val clientMessageId = retryClientMessageId ?: "opt_${UUID.randomUUID()}"
+        val requestAction = retryMessageAction ?: messageAction
+        val actionAllowed = when (requestAction) {
+            RuntimeMessageAction.Send -> state.capabilities.isUsable(SESSION_SEND_MESSAGE_CAPABILITY, runtimeId)
+            RuntimeMessageAction.Steer -> state.capabilities.isUsable(SESSION_STEER_CAPABILITY, runtimeId)
+        }
+        if (!actionAllowed) {
+            showError(context.getString(R.string.session_steer_unavailable))
+            return
+        }
         val pendingAttachments = attachments
         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
         scope.launch {
@@ -518,10 +561,11 @@ fun SessionDetailScreen(
                 text = text,
                 clientMessageId = clientMessageId,
                 attachments = uploadedAttachments,
+                retryAction = requestAction,
             )
             unfocusComposer()
             forceLatestRequest += 1
-            val request = if (messageAction == RuntimeMessageAction.Steer) {
+            val request = if (requestAction == RuntimeMessageAction.Steer) {
                 controller.steer(
                     sessionId = id,
                     content = text,
@@ -547,20 +591,31 @@ fun SessionDetailScreen(
                         turnId = result.turnId,
                         attachments = result.attachments,
                     )
-                    refreshDomains(showLoading = false)
                 }
                 .onFailure { error ->
                     val message = error.message ?: context.getString(R.string.session_send_failed)
+                    if (controller.hasServerEcho(state, clientMessageId)) {
+                        clearComposerDraft()
+                        return@onFailure
+                    }
+                    retryClientMessageId = clientMessageId
+                    retryMessageAction = requestAction
+                    saveComposerDraft(text, pendingAttachments, clientMessageId, requestAction)
                     state = controller.markOptimisticMessage(
                         sessionId = id,
                         state = state,
                         clientMessageId = clientMessageId,
                         status = "failed",
+                        errorMessage = message,
                     ).copy(actionError = message)
                     showError(message)
-                    refreshDomains(showLoading = false)
                 }
         }
+    }
+
+    LaunchedEffect(state.messages, retryClientMessageId) {
+        val retryId = retryClientMessageId ?: return@LaunchedEffect
+        if (controller.hasServerEcho(state, retryId)) clearComposerDraft()
     }
 
     fun sendDraft() {
@@ -593,13 +648,11 @@ fun SessionDetailScreen(
                     .onSuccess {
                         clearComposerDraft()
                         state = state.copy(commandExecuting = false)
-                        refreshDomains(showLoading = false)
                     }
                     .onFailure { error ->
                         val message = error.message ?: context.getString(R.string.session_command_failed)
                         state = state.copy(commandExecuting = false, actionError = message)
                         showError(message)
-                        refreshDomains(showLoading = false)
                     }
             }
             return
@@ -616,7 +669,6 @@ fun SessionDetailScreen(
                 .onSuccess { session ->
                     state = state.withSession(session).copy(takeoverInFlight = false)
                     onSessionChanged(session)
-                    refreshDomains(showLoading = false)
                 }
                 .onFailure { error ->
                     val message = error.message ?: context.getString(R.string.session_takeover_update_failed)
@@ -634,13 +686,12 @@ fun SessionDetailScreen(
         scope.launch {
             controller.interrupt(id)
                 .onSuccess {
-                    refreshDomains(showLoading = false)
+                    state = state.copy(interrupting = false)
                 }
                 .onFailure { error ->
                     val message = error.message ?: context.getString(R.string.session_interrupt_failed)
                     state = state.copy(interrupting = false, actionError = message)
                     showError(message)
-                    refreshDomains(showLoading = false)
                 }
         }
     }
@@ -702,13 +753,11 @@ fun SessionDetailScreen(
                     }
                     state = state.copy(selectionUpdating = false)
                     selectionDialog = null
-                    refreshDomains(showLoading = false)
                 }
                 .onFailure { error ->
                     val message = error.message ?: context.getString(R.string.session_selection_update_failed)
                     state = state.copy(selectionUpdating = false, actionError = message)
                     showError(message)
-                    refreshDomains(showLoading = false)
                 }
         }
     }
@@ -752,12 +801,10 @@ fun SessionDetailScreen(
         scope.launch {
             controller.respondNotice(id, notice.noticeId, action.actionId, input)
                 .onSuccess {
-                    refreshDomains(showLoading = false)
                     state = state.copy(respondingNoticeIds = state.respondingNoticeIds - notice.noticeId)
                 }
                 .onFailure { error ->
                     val message = error.message ?: context.getString(R.string.session_notice_response_failed)
-                    refreshDomains(showLoading = false)
                     state = state.copy(
                         respondingNoticeIds = state.respondingNoticeIds - notice.noticeId,
                         actionError = message,
@@ -820,12 +867,73 @@ fun SessionDetailScreen(
         if (!state.initialized) loadInitialSnapshot()
     }
 
-    LaunchedEffect(sessionId, appVisible, devices, state.initialized) {
+    LaunchedEffect(sessionId, appVisible, state.initialized, realtimeController) {
         if (sessionId == null || !appVisible || !state.initialized) return@LaunchedEffect
-        while (true) {
-            delay(3_000)
-            refreshDomains(showLoading = false)
-        }
+        val id = sessionId
+        realtimeController.start(
+            scope = this,
+            sessionId = id,
+            cursor = { withContext(Dispatchers.Main.immediate) { state.realtime.cursor } },
+            onEvents = { events ->
+                if (sessionId != id || !appVisible) return@start
+                withContext(Dispatchers.Main.immediate) {
+                    val before = state
+                    state = controller.applyRealtimeEvents(state, events, currentDevices)
+                    if (latestTimelineItemChanged(before.messages, state.messages)) {
+                        streamLatestRequest += 1
+                    }
+                    if (state.session != before.session) state.session?.let(currentOnSessionChanged)
+                }
+            },
+            onCursorAdvanced = { cursor ->
+                withContext(Dispatchers.Main.immediate) {
+                    if (sessionId == id) {
+                        state = state.copy(
+                            realtime = state.realtime.copy(
+                                cursor = com.agentsanywhere.app.feature.sessiondetail.laterEventCursor(
+                                    state.realtime.cursor,
+                                    cursor,
+                                ),
+                            ),
+                        )
+                    }
+                }
+            },
+            onSnapshotRequired = { _ ->
+                if (sessionId == id && appVisible) {
+                    withContext(Dispatchers.Main.immediate) { loadInitialSnapshot() }
+                }
+            },
+            onRuntimeRefreshRequired = { connectionGeneration, refreshGeneration ->
+                if (sessionId == id && appVisible) {
+                    val requestState = withContext(Dispatchers.Main.immediate) { state }
+                    val refreshed = controller.refreshRuntimeLiveDomains(id, requestState)
+                    withContext(Dispatchers.Main.immediate) {
+                        if (sessionId == id && appVisible &&
+                            realtimeController.isCurrentRuntimeRefresh(
+                                connectionGeneration,
+                                refreshGeneration,
+                            )
+                        ) {
+                            state = controller.mergeRuntimeLiveState(state, requestState, refreshed)
+                        }
+                    }
+                }
+            },
+            onConnectionChanged = { connected, recovering, attempt, error ->
+                scope.launch {
+                    if (sessionId != id) return@launch
+                    state = state.copy(
+                        realtime = state.realtime.copy(
+                            connected = connected,
+                            recovering = recovering,
+                            reconnectAttempt = attempt,
+                            lastErrorMessage = error,
+                        ),
+                    )
+                }
+            },
+        ).join()
     }
 
     val connectorOnline = state.session?.connectorOnline == true
@@ -973,6 +1081,7 @@ fun SessionDetailScreen(
                                 loadingOlder = state.timeline.loadingOlder,
                                 onLoadOlder = { loadOlderMessages() },
                                 onPreviewAttachment = { previewImage = AttachmentPreview.Remote(it) },
+                                onOpenAttachment = ::openAttachment,
                                 onCopyMessage = ::copyMessageText,
                                 onOpenFile = ::openReferencedFile,
                             )
@@ -1043,6 +1152,7 @@ fun SessionDetailScreen(
                                 onRemoveAttachment = { remove ->
                                     setComposerAttachments(attachments.filterNot { it.id == remove.id })
                                 },
+                                onRetryAttachment = ::retryPendingAttachment,
                                 onPreviewAttachment = { previewImage = AttachmentPreview.Local(it) },
                                 onReadOnlyClick = ::handleReadOnlyComposerClick,
                                 onSend = ::sendDraft,
@@ -1057,12 +1167,9 @@ fun SessionDetailScreen(
                             title = state.session?.title ?: stringResource(R.string.session_title_fallback),
                             darkMode = darkMode,
                             onLeftClick = {
+                                realtimeController.requestImmediateReconnect()
                                 scope.launch {
-                                    if (state.initialized) {
-                                        refreshDomains(showLoading = false)
-                                    } else {
-                                        loadInitialSnapshot()
-                                    }
+                                    loadInitialSnapshot()
                                 }
                             },
                             onRightClick = { scope.launch { pagerState.animateScrollToPage(1) } },
@@ -1332,6 +1439,17 @@ private enum class RuntimeCatalogKind {
     Permission,
 }
 
+private fun latestTimelineItemChanged(
+    before: List<TimelineMessage>,
+    after: List<TimelineMessage>,
+): Boolean {
+    val previous = before.lastOrNull { !it.optimistic }
+    val current = after.lastOrNull { !it.optimistic }
+    return previous?.sourceItemId != current?.sourceItemId ||
+        previous?.revision != current?.revision ||
+        previous?.updatedSeq != current?.updatedSeq
+}
+
 private fun Context.pendingAttachment(uri: Uri): PendingAttachment? {
     val resolver = contentResolver
     var name = getString(R.string.session_attachment_name_fallback)
@@ -1361,12 +1479,32 @@ private fun Context.uploadPart(attachment: PendingAttachment): UploadFilePart {
     if (bytes.size > MAX_ATTACHMENT_BYTES) {
         throw IllegalStateException(getString(R.string.session_attachment_file_too_large, attachment.name))
     }
+    val mediaType = attachment.mediaType.trim().lowercase()
+    if (!isValidAttachmentMediaType(mediaType)) {
+        throw IllegalStateException(getString(R.string.session_attachment_media_type_invalid, attachment.name))
+    }
     return UploadFilePart(
         name = attachment.name,
-        mediaType = attachment.mediaType,
+        mediaType = mediaType,
         bytes = bytes,
     )
 }
 
 private const val MAX_ATTACHMENT_FILES = 6
 private const val MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024
+private val MEDIA_TYPE_PATTERN = Regex("^[a-z0-9!#$&^_.+-]+/[a-z0-9!#$&^_.+-]+$")
+internal fun isValidAttachmentMediaType(mediaType: String): Boolean {
+    return mediaType.isEmpty() || MEDIA_TYPE_PATTERN.matches(mediaType.lowercase())
+}
+
+internal fun attachmentCacheFileName(fileId: String, name: String): String {
+    val safeId = fileId
+        .replace(Regex("[^A-Za-z0-9._-]"), "_")
+        .take(48)
+        .ifBlank { "attachment" }
+    val safeName = name
+        .replace(Regex("[^A-Za-z0-9._-]"), "_")
+        .take(180)
+        .ifBlank { "download" }
+    return "$safeId-$safeName"
+}

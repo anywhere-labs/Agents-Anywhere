@@ -185,6 +185,56 @@ abstract class LegacyRoutesTask : DefaultTask() {
     }
 }
 
+abstract class RealtimeLifecycleTask : DefaultTask() {
+    @get:InputDirectory
+    @get:PathSensitive(PathSensitivity.RELATIVE)
+    abstract val sourceRoot: DirectoryProperty
+
+    @TaskAction
+    fun run() {
+        val root = sourceRoot.get().asFile
+        val sources = root.walkTopDown()
+            .filter { file -> file.isFile && file.extension == "kt" }
+            .associate { file -> file.relativeTo(root).invariantSeparatorsPath to file.readText() }
+
+        val violations = buildList {
+            sources.forEach { (path, source) ->
+                if ("/sessions/events/dashboard" in source) {
+                    add("$path: legacy Dashboard SSE route")
+                }
+                if (path != "com/agentsanywhere/app/api/ApiClient.kt" && ".streamSse(" in source) {
+                    add("$path: production SSE subscription")
+                }
+            }
+            listOf(
+                "com/agentsanywhere/app/app/AgentsAnywhereApp.kt",
+                "com/agentsanywhere/app/ui/screens/sessiondetail/SessionDetailScreen.kt",
+            ).forEach { path ->
+                val source = sources[path].orEmpty()
+                FIXED_REFRESH_LOOP.find(source)?.let {
+                    add("$path: fixed-interval Dashboard/Session refresh loop")
+                }
+            }
+        }
+        if (violations.isNotEmpty()) {
+            throw GradleException(
+                buildString {
+                    appendLine("Android v2 realtime lifecycle regressed:")
+                    violations.forEach { appendLine("  - $it") }
+                    append("Use ticketed Dashboard/Session WebSockets and cursor recovery instead.")
+                },
+            )
+        }
+        logger.lifecycle("Android Dashboard/Session realtime lifecycle uses WebSockets without fixed polling.")
+    }
+
+    companion object {
+        private val FIXED_REFRESH_LOOP = Regex(
+            "while\\s*\\(true\\)\\s*\\{[\\s\\S]{0,800}?(refreshSessions|refreshDomains)\\s*\\(",
+        )
+    }
+}
+
 val legacyRouteSourceRoot = layout.projectDirectory.dir("app/src/main/java")
 val legacyRouteBaseline = layout.projectDirectory.file("config/legacy-routes-baseline.txt")
 
@@ -202,4 +252,14 @@ val checkLegacyRoutes by tasks.registering(LegacyRoutesTask::class) {
     sourceRoot.set(legacyRouteSourceRoot)
     baselineFile.set(legacyRouteBaseline)
     checkBaseline.set(true)
+}
+
+val checkRealtimeLifecycle by tasks.registering(RealtimeLifecycleTask::class) {
+    group = "verification"
+    description = "Prevents Dashboard/Session realtime from regressing to SSE or fixed polling."
+    sourceRoot.set(legacyRouteSourceRoot)
+}
+
+checkLegacyRoutes {
+    dependsOn(checkRealtimeLifecycle)
 }

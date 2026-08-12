@@ -63,6 +63,16 @@ internal enum class AttachmentUploadState {
     Failed,
 }
 
+internal fun <T> List<T>.updateItemById(
+    id: String,
+    itemId: (T) -> String,
+    transform: (T) -> T,
+): List<T> {
+    return map { item ->
+        if (itemId(item) == id) transform(item) else item
+    }
+}
+
 internal sealed interface AttachmentPreview {
     data class Local(val attachment: PendingAttachment) : AttachmentPreview
     data class Remote(val attachment: TimelineAttachment) : AttachmentPreview

@@ -207,6 +207,8 @@ class DevicesApi(
         ).getJSONObject("connector").toRemoteDevice()
     }
 
+    internal fun parseDevice(value: JSONObject): RemoteDevice = value.toRemoteDevice()
+
     private fun JSONObject.toRemoteDevice(): RemoteDevice {
         return RemoteDevice(
             id = getString("id"),

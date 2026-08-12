@@ -1,8 +1,12 @@
 package com.agentsanywhere.app.feature.sessiondetail
 
 import com.agentsanywhere.app.api.ApiException
+import com.agentsanywhere.app.api.AttachmentTransferException
+import com.agentsanywhere.app.api.AttachmentTransferFailure
+import com.agentsanywhere.app.api.RemoteAttachmentRef
 import com.agentsanywhere.app.api.RemoteRuntimeCapability
 import com.agentsanywhere.app.api.RemoteRuntimeCapabilitySet
+import com.agentsanywhere.app.api.RemoteSessionEventEnvelope
 import com.agentsanywhere.app.api.RemoteRuntimeModelCatalog
 import com.agentsanywhere.app.api.RemoteRuntimeNotice
 import com.agentsanywhere.app.api.RemoteRuntimePermissionCatalog
@@ -23,6 +27,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import java.security.MessageDigest
 import kotlin.math.max
 
 private const val INITIAL_TIMELINE_LIMIT = 100
@@ -55,11 +60,17 @@ class SessionDetailController(
                     sessionId = sessionId,
                     limit = INITIAL_TIMELINE_LIMIT,
                 )
-                val realMessages = snapshot.timeline.items.flatMap { it.toTimelineMessages() }
+                val projection = mergeRemoteTimelineItems(
+                    currentOrdering = emptyList(),
+                    currentMessages = emptyList(),
+                    incoming = snapshot.timeline.items,
+                    replace = true,
+                )
                 val messages = mergeOptimistic(
                     sessionId = sessionId,
-                    realMessages = realMessages,
+                    realMessages = projection.messages,
                     currentMessages = currentState?.messages.orEmpty(),
+                    orderingItems = projection.orderingItems,
                 )
                 SessionDetailState(
                     meta = SessionMeta(
@@ -68,6 +79,7 @@ class SessionDetailController(
                     ),
                     timeline = SessionTimelineState(
                         messages = messages,
+                        orderingItems = projection.orderingItems,
                         nextSeq = snapshot.timeline.nextSeq,
                         hasMore = snapshot.timeline.hasMore,
                         eventCursor = snapshot.eventCursor,
@@ -82,11 +94,17 @@ class SessionDetailController(
                         notices = mergeRuntimeNotices(emptyList(), snapshot.notices, replace = true),
                         serverTime = snapshot.serverTime,
                         isLoaded = true,
+                        eventSequence = snapshot.eventCursor.removePrefix("seq:").toLongOrNull() ?: 0L,
                     ),
                     // Snapshot catalogs are compatibility data. Existing-session selectors
                     // always use the live session-scoped catalog endpoints.
                     catalogs = currentState?.catalogs ?: RuntimeCatalogs(),
                     commands = currentState?.commands ?: RuntimeCommands(),
+                    realtime = (currentState?.realtime ?: SessionRealtimeState()).copy(
+                        cursor = snapshot.eventCursor,
+                        recovering = false,
+                        lastErrorMessage = null,
+                    ),
                     initialized = true,
                     actionError = currentState?.actionError,
                     takeoverInFlight = currentState?.takeoverInFlight ?: false,
@@ -101,6 +119,333 @@ class SessionDetailController(
                 throw IllegalStateException(error.message ?: "Could not load messages.", error)
             }
         }
+    }
+
+    fun applyRealtimeEvent(
+        current: SessionDetailState,
+        event: RemoteSessionEventEnvelope,
+        devices: List<AgentDevice>,
+    ): SessionDetailState {
+        if (event.protocolVersion != "1.0" || event.sessionId != current.session?.id) return current
+        if (event.eventId in current.realtime.processedEventIds) return current
+
+        var next = current.copy(realtime = current.realtime.rememberEvent(event.eventId, event.cursor))
+        when (event.type) {
+            "session.subscribed" -> Unit
+            "session.meta.updated" -> event.payload.session?.let { session ->
+                val observed = session.toAgentSession(devices.associateBy { it.id })
+                val existing = next.session
+                if (existing == null || observed.updatedSeq >= existing.updatedSeq) {
+                    next = next.applyMetaObservation(observed, event.emittedAt)
+                }
+            }
+            "timeline.item_created", "timeline.item_updated" -> event.payload.item?.let { item ->
+                next = next.applyTimelineRealtimeItems(
+                    sessionId = event.sessionId,
+                    incoming = listOf(item),
+                    replace = false,
+                    cursor = event.cursor,
+                )
+            }
+            "timeline.snapshot" -> {
+                val currentTimelineSequence = next.timeline.eventCursor.removePrefix("seq:").toLongOrNull() ?: 0L
+                if (event.sequence >= currentTimelineSequence) {
+                    next = next.applyTimelineRealtimeItems(
+                        sessionId = event.sessionId,
+                        incoming = event.payload.items,
+                        replace = true,
+                        cursor = event.cursor,
+                    )
+                }
+            }
+            "runtime.state.updated" -> event.payload.state?.let { state ->
+                next = next.applyRuntimeObservation(state.toSessionRuntimeState(event.emittedAt))
+            }
+            "runtime.notice.snapshot" -> if (event.sequence >= next.notices.eventSequence) {
+                val observed = next.applyNoticeObservation(
+                    incoming = event.payload.notices,
+                    serverTime = event.emittedAt,
+                    replace = true,
+                )
+                next = observed.copy(notices = observed.notices.copy(eventSequence = event.sequence))
+            }
+            "runtime.notice.updated" -> event.payload.notice?.let { notice ->
+                val observed = next.applyNoticeObservation(
+                    incoming = listOf(notice),
+                    serverTime = event.emittedAt,
+                    replace = false,
+                )
+                next = observed.copy(
+                    notices = observed.notices.copy(eventSequence = maxOf(next.notices.eventSequence, event.sequence)),
+                )
+            }
+            "runtime.capability.updated" -> event.payload.capabilitySet?.let { capabilitySet ->
+                next = next.applyCapabilitiesObservation(
+                    capabilitySet.toEffectiveCapabilities(
+                        connectorId = next.session?.connectorId,
+                        serverTime = event.emittedAt,
+                    ),
+                )
+            }
+            "runtime.catalog.updated" -> when (event.payload.catalogType) {
+                "model" -> event.payload.modelCatalog?.let { catalog ->
+                    if (next.catalogs.model == null || catalog.revision >= next.catalogs.model.revision) {
+                        next = next.copy(
+                            catalogs = next.catalogs.copy(
+                                model = catalog,
+                                modelLoading = false,
+                                modelStale = false,
+                                modelErrorMessage = null,
+                            ),
+                        )
+                    }
+                }
+                "permission" -> event.payload.permissionCatalog?.let { catalog ->
+                    if (next.catalogs.permission == null || catalog.revision >= next.catalogs.permission.revision) {
+                        next = next.copy(
+                            catalogs = next.catalogs.copy(
+                                permission = catalog,
+                                permissionLoading = false,
+                                permissionStale = false,
+                                permissionErrorMessage = null,
+                            ),
+                        )
+                    }
+                }
+            }
+        }
+        return next
+    }
+
+    fun applyRealtimeEvents(
+        current: SessionDetailState,
+        events: List<RemoteSessionEventEnvelope>,
+        devices: List<AgentDevice>,
+    ): SessionDetailState {
+        var next = current
+        val pendingTimeline = mutableListOf<RemoteSessionEventEnvelope>()
+
+        fun flushTimeline() {
+            if (pendingTimeline.isEmpty()) return
+            val seen = mutableSetOf<String>()
+            val accepted = pendingTimeline.filter { event ->
+                event.protocolVersion == "1.0" &&
+                    event.sessionId == next.session?.id &&
+                    event.eventId !in next.realtime.processedEventIds &&
+                    seen.add(event.eventId)
+            }
+            pendingTimeline.clear()
+            if (accepted.isEmpty()) return
+            var cursor = next.realtime.cursor
+            accepted.forEach { event ->
+                cursor = laterEventCursor(cursor, event.cursor)
+                next = next.copy(realtime = next.realtime.rememberEvent(event.eventId, event.cursor))
+            }
+            next = next.applyTimelineRealtimeItems(
+                sessionId = accepted.first().sessionId,
+                incoming = accepted.mapNotNull { it.payload.item },
+                replace = false,
+                cursor = cursor,
+            )
+        }
+
+        events.forEach { event ->
+            if (event.type == "timeline.item_created" || event.type == "timeline.item_updated") {
+                pendingTimeline += event
+            } else {
+                flushTimeline()
+                next = applyRealtimeEvent(next, event, devices)
+            }
+        }
+        flushTimeline()
+        return next
+    }
+
+    fun mergeRuntimeLiveState(
+        current: SessionDetailState,
+        requestState: SessionDetailState,
+        refreshed: SessionDetailState,
+    ): SessionDetailState {
+        val runtime = if (current.runtime == requestState.runtime) {
+            refreshed.runtime
+        } else {
+            current.runtime
+        }
+        val capabilities = if (current.capabilities == requestState.capabilities) {
+            refreshed.capabilities
+        } else {
+            current.capabilities
+        }
+        val notices = if (current.notices == requestState.notices) {
+            refreshed.notices
+        } else {
+            current.notices
+        }
+        val modelOwnerUnchanged = current.catalogs.model == requestState.catalogs.model &&
+            current.catalogs.modelLoading == requestState.catalogs.modelLoading &&
+            current.catalogs.modelStale == requestState.catalogs.modelStale &&
+            current.catalogs.modelErrorMessage == requestState.catalogs.modelErrorMessage
+        val permissionOwnerUnchanged = current.catalogs.permission == requestState.catalogs.permission &&
+            current.catalogs.permissionLoading == requestState.catalogs.permissionLoading &&
+            current.catalogs.permissionStale == requestState.catalogs.permissionStale &&
+            current.catalogs.permissionErrorMessage == requestState.catalogs.permissionErrorMessage
+        val catalogs = current.catalogs.copy(
+            model = if (modelOwnerUnchanged) refreshed.catalogs.model else current.catalogs.model,
+            modelLoading = if (modelOwnerUnchanged) refreshed.catalogs.modelLoading else current.catalogs.modelLoading,
+            modelStale = if (modelOwnerUnchanged) refreshed.catalogs.modelStale else current.catalogs.modelStale,
+            modelErrorMessage = if (modelOwnerUnchanged) {
+                refreshed.catalogs.modelErrorMessage
+            } else {
+                current.catalogs.modelErrorMessage
+            },
+            permission = if (permissionOwnerUnchanged) {
+                refreshed.catalogs.permission
+            } else {
+                current.catalogs.permission
+            },
+            permissionLoading = if (permissionOwnerUnchanged) {
+                refreshed.catalogs.permissionLoading
+            } else {
+                current.catalogs.permissionLoading
+            },
+            permissionStale = if (permissionOwnerUnchanged) {
+                refreshed.catalogs.permissionStale
+            } else {
+                current.catalogs.permissionStale
+            },
+            permissionErrorMessage = if (permissionOwnerUnchanged) {
+                refreshed.catalogs.permissionErrorMessage
+            } else {
+                current.catalogs.permissionErrorMessage
+            },
+        )
+        return current.copy(
+            runtime = runtime,
+            capabilities = capabilities,
+            notices = notices,
+            catalogs = catalogs,
+            commands = current.commands,
+        )
+    }
+
+    fun mergeSnapshotWithLiveState(
+        sessionId: String,
+        snapshot: SessionDetailState,
+        live: SessionDetailState,
+    ): SessionDetailState {
+        if (!live.initialized) {
+            return snapshot.copy(
+                realtime = mergeRealtimeState(snapshot.realtime, live.realtime),
+            )
+        }
+
+        val snapshotSession = snapshot.session
+        val liveSession = live.session
+        val meta = if (liveSession != null &&
+            (snapshotSession == null || liveSession.updatedSeq >= snapshotSession.updatedSeq)
+        ) live.meta else snapshot.meta
+        val mergedOrdering = mergeTimelineOrderingItems(
+            snapshot.timeline.orderingItems,
+            live.timeline.orderingItems,
+        )
+        val snapshotReal = snapshot.messages.filterNot { it.optimistic }
+        val liveReal = live.messages.filterNot { it.optimistic }
+        val mergedReal = mergeTimelineMessages(snapshotReal, liveReal, mergedOrdering)
+        val timeline = snapshot.timeline.copy(
+            messages = mergeOptimistic(sessionId, mergedReal, live.messages, mergedOrdering),
+            orderingItems = mergedOrdering,
+            nextSeq = maxOf(snapshot.timeline.nextSeq, live.timeline.nextSeq),
+            eventCursor = laterEventCursor(snapshot.timeline.eventCursor, live.timeline.eventCursor),
+        )
+        val runtime = if (live.runtime.isLoaded && live.runtime.updatedSeq >= snapshot.runtime.updatedSeq) {
+            live.runtime
+        } else {
+            snapshot.runtime
+        }
+        val capabilities = if (live.capabilities.isLoaded && live.capabilities.revision >= snapshot.capabilities.revision) {
+            live.capabilities
+        } else {
+            snapshot.capabilities
+        }
+        val notices = if (live.notices.isLoaded && live.notices.eventSequence >= snapshot.notices.eventSequence) {
+            live.notices
+        } else {
+            snapshot.notices
+        }
+        val catalogs = snapshot.catalogs.copy(
+            model = live.catalogs.model
+                ?.takeIf { snapshot.catalogs.model == null || it.revision >= snapshot.catalogs.model.revision }
+                ?: snapshot.catalogs.model,
+            permission = live.catalogs.permission
+                ?.takeIf {
+                    snapshot.catalogs.permission == null || it.revision >= snapshot.catalogs.permission.revision
+                }
+                ?: snapshot.catalogs.permission,
+        )
+        return snapshot.copy(
+            meta = meta,
+            timeline = timeline,
+            runtime = runtime,
+            capabilities = capabilities,
+            notices = notices,
+            catalogs = catalogs,
+            commands = live.commands,
+            realtime = mergeRealtimeState(snapshot.realtime, live.realtime),
+            actionError = live.actionError,
+            takeoverInFlight = live.takeoverInFlight,
+            sending = live.sending || timeline.messages.hasPendingOptimisticSend(),
+            interrupting = live.interrupting,
+            selectionUpdating = live.selectionUpdating,
+            commandExecuting = live.commandExecuting,
+            respondingNoticeIds = live.respondingNoticeIds,
+        )
+    }
+
+    private fun mergeRealtimeState(
+        snapshot: SessionRealtimeState,
+        live: SessionRealtimeState,
+    ): SessionRealtimeState {
+        val ids = snapshot.processedEventIds + live.processedEventIds
+        return live.copy(
+            cursor = laterEventCursor(snapshot.cursor, live.cursor),
+            processedEventIds = ids.toList().takeLast(1_000).toSet(),
+        )
+    }
+
+    private fun SessionDetailState.applyTimelineRealtimeItems(
+        sessionId: String,
+        incoming: List<com.agentsanywhere.app.api.RemoteTimelineItem>,
+        replace: Boolean,
+        cursor: String,
+    ): SessionDetailState {
+        val currentReal = messages.filterNot { it.optimistic }
+        val projection = mergeRemoteTimelineItems(
+            currentOrdering = timeline.orderingItems,
+            currentMessages = currentReal,
+            incoming = incoming,
+            replace = replace,
+        )
+        val messages = mergeOptimistic(
+            sessionId,
+            projection.messages,
+            this.messages,
+            projection.orderingItems,
+        )
+        val cursorSequence = cursor.removePrefix("seq:").toLongOrNull()
+            ?.coerceAtMost(Int.MAX_VALUE.toLong())
+            ?.toInt()
+            ?: timeline.nextSeq
+        return copy(
+            timeline = timeline.copy(
+                messages = messages,
+                orderingItems = projection.orderingItems,
+                nextSeq = maxOf(timeline.nextSeq, cursorSequence),
+                eventCursor = laterEventCursor(timeline.eventCursor, cursor),
+                isLoading = false,
+                errorMessage = null,
+            ),
+            sending = messages.hasPendingOptimisticSend(),
+        )
     }
 
     suspend fun refreshDomains(
@@ -150,14 +495,21 @@ class SessionDetailController(
             )
             timelineRequest.await().fold(
                 onSuccess = { page ->
-                    val incoming = page.items.flatMap { it.toTimelineMessages() }
-                    val realMessages = mergeTimelineMessages(
-                        current = next.messages.filterNot { it.optimistic },
-                        incoming = incoming,
+                    val projection = mergeRemoteTimelineItems(
+                        currentOrdering = next.timeline.orderingItems,
+                        currentMessages = next.messages.filterNot { it.optimistic },
+                        incoming = page.items,
+                        replace = false,
                     )
                     next = next.copy(
                         timeline = next.timeline.copy(
-                            messages = mergeOptimistic(sessionId, realMessages, next.messages),
+                            messages = mergeOptimistic(
+                                sessionId,
+                                projection.messages,
+                                next.messages,
+                                projection.orderingItems,
+                            ),
+                            orderingItems = projection.orderingItems,
                             nextSeq = max(next.timeline.nextSeq, page.nextSeq),
                             eventCursor = "seq:${max(next.timeline.nextSeq, page.nextSeq)}",
                             isLoading = false,
@@ -217,6 +569,120 @@ class SessionDetailController(
         }
     }
 
+    suspend fun refreshRuntimeLiveDomains(
+        sessionId: String,
+        current: SessionDetailState,
+    ): SessionDetailState = withContext(Dispatchers.IO) {
+        val auth = authSession()
+        coroutineScope {
+            val runtimeRequest = async {
+                runCatching { sessionsApi.getSessionRuntimeState(auth.serverUrl, auth.accessToken, sessionId) }
+            }
+            val capabilitiesRequest = async {
+                runCatching { sessionsApi.getSessionRuntimeCapabilities(auth.serverUrl, auth.accessToken, sessionId) }
+            }
+            val noticesRequest = async {
+                runCatching { sessionsApi.getSessionRuntimeNotices(auth.serverUrl, auth.accessToken, sessionId) }
+            }
+            val modelCatalogRequest = current.catalogs.model?.let {
+                async {
+                    runCatching {
+                        sessionsApi.getSessionRuntimeModelCatalog(
+                            auth.serverUrl,
+                            auth.accessToken,
+                            sessionId,
+                        ).catalog
+                    }
+                }
+            }
+            val permissionCatalogRequest = current.catalogs.permission?.let {
+                async {
+                    runCatching {
+                        sessionsApi.getSessionRuntimePermissionCatalog(
+                            auth.serverUrl,
+                            auth.accessToken,
+                            sessionId,
+                        ).catalog
+                    }
+                }
+            }
+            var next = current
+            runtimeRequest.await().fold(
+                onSuccess = { response ->
+                    next = next.applyRuntimeObservation(response.state.toSessionRuntimeState(response.serverTime))
+                },
+                onFailure = { error ->
+                    next = next.copy(runtime = next.runtime.copy(errorMessage = error.userMessage()))
+                },
+            )
+            capabilitiesRequest.await().fold(
+                onSuccess = { response ->
+                    next = next.applyCapabilitiesObservation(
+                        response.capabilitySet.toEffectiveCapabilities(response.connectorId, response.serverTime),
+                    )
+                },
+                onFailure = { error ->
+                    next = next.copy(capabilities = next.capabilities.copy(errorMessage = error.userMessage()))
+                },
+            )
+            noticesRequest.await().fold(
+                onSuccess = { response ->
+                    next = next.applyNoticeObservation(response.notices, response.serverTime, replace = true)
+                },
+                onFailure = { error ->
+                    next = next.copy(notices = next.notices.copy(errorMessage = error.userMessage()))
+                },
+            )
+            modelCatalogRequest?.await()?.fold(
+                onSuccess = { catalog ->
+                    if (next.catalogs.model?.let { catalog.revision >= it.revision } != false) {
+                        next = next.copy(
+                            catalogs = next.catalogs.copy(
+                                model = catalog,
+                                modelLoading = false,
+                                modelStale = false,
+                                modelErrorMessage = null,
+                            ),
+                        )
+                    }
+                },
+                onFailure = { error ->
+                    next = next.copy(
+                        catalogs = next.catalogs.copy(
+                            modelLoading = false,
+                            modelStale = next.catalogs.model != null,
+                            modelErrorMessage = error.userMessage(),
+                        ),
+                    )
+                },
+            )
+            permissionCatalogRequest?.await()?.fold(
+                onSuccess = { catalog ->
+                    if (next.catalogs.permission?.let { catalog.revision >= it.revision } != false) {
+                        next = next.copy(
+                            catalogs = next.catalogs.copy(
+                                permission = catalog,
+                                permissionLoading = false,
+                                permissionStale = false,
+                                permissionErrorMessage = null,
+                            ),
+                        )
+                    }
+                },
+                onFailure = { error ->
+                    next = next.copy(
+                        catalogs = next.catalogs.copy(
+                            permissionLoading = false,
+                            permissionStale = next.catalogs.permission != null,
+                            permissionErrorMessage = error.userMessage(),
+                        ),
+                    )
+                },
+            )
+            next
+        }
+    }
+
     suspend fun loadOlder(
         sessionId: String,
         beforeOrderSeq: Int,
@@ -231,8 +697,15 @@ class SessionDetailController(
                     beforeOrderSeq = beforeOrderSeq,
                     limit = TIMELINE_PAGE_LIMIT,
                 )
+                val projection = mergeRemoteTimelineItems(
+                    currentOrdering = emptyList(),
+                    currentMessages = emptyList(),
+                    incoming = page.items,
+                    replace = true,
+                )
                 SessionTimelineState(
-                    messages = page.items.flatMap { it.toTimelineMessages() },
+                    messages = projection.messages,
+                    orderingItems = projection.orderingItems,
                     nextSeq = page.nextSeq,
                     hasMore = page.hasMore,
                 )
@@ -293,30 +766,25 @@ class SessionDetailController(
                 } else if (attachments.isEmpty()) {
                     emptyList()
                 } else {
-                    sessionsApi.uploadSessionAttachments(
-                        serverUrl = auth.serverUrl,
-                        authorizationToken = auth.accessToken,
-                        sessionId = sessionId,
-                        files = attachments,
-                    ).map { it.toTimelineAttachment() }
+                    uploadAttachmentsWithVerification(auth, sessionId, attachments)
                 }
                 val response = if (steer) {
                     sessionsApi.steerSession(
                         serverUrl = auth.serverUrl,
                         authorizationToken = auth.accessToken,
                         sessionId = sessionId,
-                        content = content.ifBlank { ATTACHMENT_ONLY_PROMPT },
+                        content = content,
                         clientMessageId = clientMessageId,
-                        attachments = uploaded.map { it.toRemoteUploadedAttachment() },
+                        attachments = uploaded.map { it.toRemoteAttachmentRef() },
                     )
                 } else {
                     sessionsApi.sendSessionMessage(
                         serverUrl = auth.serverUrl,
                         authorizationToken = auth.accessToken,
                         sessionId = sessionId,
-                        content = content.ifBlank { ATTACHMENT_ONLY_PROMPT },
+                        content = content,
                         clientMessageId = clientMessageId,
-                        attachments = uploaded.map { it.toRemoteUploadedAttachment() },
+                        attachments = uploaded.map { it.toRemoteAttachmentRef() },
                     )
                 }
                 response.let {
@@ -336,13 +804,36 @@ class SessionDetailController(
         return withContext(Dispatchers.IO) {
             runCatching {
                 val auth = authSession()
-                sessionsApi.uploadSessionAttachments(
-                    serverUrl = auth.serverUrl,
-                    authorizationToken = auth.accessToken,
-                    sessionId = sessionId,
-                    files = attachments,
-                ).map { it.toTimelineAttachment() }
+                uploadAttachmentsWithVerification(auth, sessionId, attachments)
             }
+        }
+    }
+
+    private fun uploadAttachmentsWithVerification(
+        auth: ApiAuth,
+        sessionId: String,
+        attachments: List<UploadFilePart>,
+    ): List<TimelineAttachment> {
+        val uploaded = sessionsApi.uploadSessionAttachments(
+            serverUrl = auth.serverUrl,
+            authorizationToken = auth.accessToken,
+            sessionId = sessionId,
+            files = attachments,
+        )
+        if (uploaded.size != attachments.size) {
+            throw AttachmentTransferException(AttachmentTransferFailure.IncompleteUpload)
+        }
+        return uploaded.zip(attachments).map { (remote, local) ->
+            val localSha256 = MessageDigest.getInstance("SHA-256")
+                .digest(local.bytes)
+                .joinToString("") { byte -> "%02x".format(byte) }
+            if (remote.size != local.bytes.size.toLong()) {
+                throw AttachmentTransferException(AttachmentTransferFailure.SizeMismatch, local.name)
+            }
+            if (remote.sha256?.lowercase() != localSha256) {
+                throw AttachmentTransferException(AttachmentTransferFailure.Sha256Mismatch, local.name)
+            }
+            remote.toTimelineAttachment()
         }
     }
 
@@ -379,6 +870,31 @@ class SessionDetailController(
                 authorizationToken = auth.accessToken,
                 cacheKey = "attachment:$sessionId:${attachment.fileId}",
             )
+        }
+    }
+
+    suspend fun downloadAttachment(
+        sessionId: String,
+        attachment: TimelineAttachment,
+    ): Result<DownloadedAttachment> {
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                val auth = authSession()
+                val downloaded = sessionsApi.downloadSessionAttachment(
+                    serverUrl = auth.serverUrl,
+                    authorizationToken = auth.accessToken,
+                    sessionId = sessionId,
+                    fileId = attachment.fileId,
+                )
+                DownloadedAttachment(
+                    fileId = downloaded.fileId,
+                    name = downloaded.name,
+                    mediaType = attachment.mediaType,
+                    size = downloaded.size,
+                    sha256 = downloaded.sha256,
+                    bytes = downloaded.bytes,
+                )
+            }
         }
     }
 
@@ -507,18 +1023,25 @@ class SessionDetailController(
         current: SessionDetailState,
         older: SessionTimelineState,
     ): SessionDetailState {
+        val orderingItems = mergeTimelineOrderingItems(
+            current.timeline.orderingItems,
+            older.orderingItems,
+        )
         val realMessages = mergeTimelineMessages(
             current = current.messages.filterNot { it.optimistic },
             incoming = older.messages,
+            orderingItems = orderingItems,
         )
         val messages = mergeOptimistic(
             sessionId = sessionId,
             realMessages = realMessages,
             currentMessages = current.messages,
+            orderingItems = orderingItems,
         )
         return current.copy(
             timeline = current.timeline.copy(
                 messages = messages,
+                orderingItems = orderingItems,
                 nextSeq = max(current.nextSeq, older.nextSeq),
                 hasMore = older.hasMore,
                 loadingOlder = false,
@@ -533,7 +1056,13 @@ class SessionDetailController(
         text: String,
         clientMessageId: String,
         attachments: List<TimelineAttachment> = emptyList(),
+        retryAction: RuntimeMessageAction? = null,
     ): SessionDetailState {
+        val lastOrderSeq = maxOf(
+            state.timeline.orderingItems.maxOfOrNull { it.orderSeq } ?: 0,
+            state.messages.maxOfOrNull { it.orderSeq } ?: 0,
+        )
+        val optimisticOrderSeq = maxOf(lastOrderSeq + 1, state.nextSeq + 1)
         val message = TimelineMessage(
             id = clientMessageId,
             sourceItemId = clientMessageId,
@@ -542,11 +1071,12 @@ class SessionDetailController(
             attachments = attachments,
             status = "pending",
             badge = "Sending",
-            orderSeq = Int.MAX_VALUE,
-            updatedSeq = 0,
+            orderSeq = optimisticOrderSeq,
+            updatedSeq = optimisticOrderSeq,
             clientMessageId = clientMessageId,
             turnId = null,
             optimistic = true,
+            retryAction = retryAction,
         )
         upsertOptimisticMessage(sessionId, message)
         return state.copy(
@@ -555,6 +1085,7 @@ class SessionDetailController(
                     sessionId = sessionId,
                     realMessages = state.messages,
                     currentMessages = state.messages + message,
+                    orderingItems = state.timeline.orderingItems,
                 ),
             ),
             sending = true,
@@ -569,6 +1100,7 @@ class SessionDetailController(
         status: String,
         turnId: String? = null,
         attachments: List<TimelineAttachment> = emptyList(),
+        errorMessage: String? = null,
     ): SessionDetailState {
         val updatedMessages = state.messages.map { message ->
             if (message.id == clientMessageId && message.optimistic) {
@@ -577,6 +1109,7 @@ class SessionDetailController(
                     badge = status.statusLabel(),
                     turnId = turnId ?: message.turnId,
                     attachments = attachments.ifEmpty { message.attachments },
+                    errorMessage = errorMessage,
                 )
             } else {
                 message
@@ -592,11 +1125,18 @@ class SessionDetailController(
                     sessionId = sessionId,
                     realMessages = state.messages,
                     currentMessages = updatedMessages,
+                    orderingItems = state.timeline.orderingItems,
                 ),
             ),
-            sending = false,
+            sending = status == "pending",
             actionError = if (status == "failed") state.actionError else null,
         )
+    }
+
+    fun hasServerEcho(state: SessionDetailState, clientMessageId: String): Boolean {
+        return state.messages.any { message ->
+            !message.optimistic && message.matchesClientMessage(clientMessageId)
+        }
     }
 
     private fun authSession(): ApiAuth {
@@ -616,16 +1156,18 @@ class SessionDetailController(
         sessionId: String,
         realMessages: List<TimelineMessage>,
         currentMessages: List<TimelineMessage>,
+        orderingItems: List<TimelineOrderingItem>,
     ): List<TimelineMessage> {
         val real = realMessages.filterNot { it.optimistic }
         val optimistic = (currentMessages.filter { it.optimistic } + optimisticMessages(sessionId))
-            .distinctBy { it.id }
+            .associateBy { it.id }
+            .values
+            .toList()
         val pending = optimistic.filter { optimisticMessage ->
-            optimisticMessage.status == "failed" ||
-                real.none { realMessage -> realMessage.matchesClientMessage(optimisticMessage.id) }
+            real.none { realMessage -> realMessage.matchesClientMessage(optimisticMessage.id) }
         }
         replaceOptimisticMessages(sessionId, pending)
-        return sortMessages(real + pending)
+        return sortTimelineMessages(real + pending, orderingItems)
     }
 
     private fun optimisticMessages(sessionId: String): List<TimelineMessage> {
@@ -638,7 +1180,7 @@ class SessionDetailController(
         synchronized(optimisticLock) {
             val messages = optimisticMessagesBySession[sessionId].orEmpty()
                 .filterNot { it.id == message.id } + message
-            optimisticMessagesBySession[sessionId] = sortMessages(messages)
+            optimisticMessagesBySession[sessionId] = sortTimelineMessages(messages)
         }
     }
 
@@ -647,17 +1189,9 @@ class SessionDetailController(
             if (messages.isEmpty()) {
                 optimisticMessagesBySession.remove(sessionId)
             } else {
-                optimisticMessagesBySession[sessionId] = sortMessages(messages.filter { it.optimistic })
+                optimisticMessagesBySession[sessionId] = sortTimelineMessages(messages.filter { it.optimistic })
             }
         }
-    }
-
-    private fun sortMessages(messages: List<TimelineMessage>): List<TimelineMessage> {
-        return messages.sortedWith(
-            compareBy<TimelineMessage> { it.orderSeq }
-                .thenBy { it.updatedSeq }
-                .thenBy { it.id },
-        )
     }
 
     private fun TimelineMessage.matchesClientMessage(clientMessageId: String): Boolean {
@@ -674,15 +1208,13 @@ class SessionDetailController(
             name = name,
             mediaType = mediaType,
             size = size,
+            sha256 = sha256,
         )
     }
 
-    private fun TimelineAttachment.toRemoteUploadedAttachment(): RemoteUploadedAttachment {
-        return RemoteUploadedAttachment(
+    private fun TimelineAttachment.toRemoteAttachmentRef(): RemoteAttachmentRef {
+        return RemoteAttachmentRef(
             fileId = fileId,
-            name = name,
-            mediaType = mediaType,
-            size = size,
         )
     }
 
@@ -693,18 +1225,59 @@ class SessionDetailController(
             name = text("name") ?: fileId,
             mediaType = text("mediaType").orEmpty(),
             size = optLong("size", 0L),
+            sha256 = text("sha256"),
         )
     }
 
     private fun RemoteTimelineItem.toTimelineMessages(): List<TimelineMessage> {
         return when (type) {
-            "message" -> listOf(toTextMessage())
+            "message" -> listOf(toMessage())
             "tool" -> toToolMessages()
-            "system" -> listOfNotNull(toSystemMessage())
-            "artifact" -> if (content.text("kind") == "diff") emptyList() else listOfNotNull(toSystemMessage())
+            "artifact" -> toArtifactMessages()
+            "marker" -> listOf(toMarkerMessage())
+            "system" -> listOf(toSystemMessage())
             "turn.start", "turn.end" -> null
-            else -> listOfNotNull(toSystemMessage())
+            else -> listOf(toDiagnosticMessage())
         } ?: emptyList()
+    }
+
+    private fun mergeRemoteTimelineItems(
+        currentOrdering: List<TimelineOrderingItem>,
+        currentMessages: List<TimelineMessage>,
+        incoming: List<RemoteTimelineItem>,
+        replace: Boolean,
+    ): TimelineProjection {
+        val latestIncoming = latestTimelineItemsById(incoming)
+        val normalizedIncoming = normalizeTimelineOrderingItems(currentOrdering, latestIncoming)
+        val orderingItems = if (replace) {
+            normalizedIncoming
+        } else {
+            mergeTimelineOrderingItems(currentOrdering, normalizedIncoming)
+        }
+        val normalizedOrderById = orderingItems.associateBy { it.id }
+        val incomingMessages = latestIncoming.flatMap { item ->
+            val orderSeq = normalizedOrderById[item.id]?.orderSeq ?: item.orderSeq
+            item.toTimelineMessages().map { it.copy(orderSeq = orderSeq) }
+        }
+        val messages = if (replace) {
+            sortTimelineMessages(incomingMessages, orderingItems)
+        } else {
+            mergeTimelineMessages(currentMessages, incomingMessages, orderingItems)
+        }
+        return TimelineProjection(orderingItems, messages)
+    }
+
+    private fun latestTimelineItemsById(incoming: List<RemoteTimelineItem>): List<RemoteTimelineItem> {
+        val byId = linkedMapOf<String, RemoteTimelineItem>()
+        incoming.forEach { observed ->
+            val existing = byId[observed.id]
+            if (existing == null || observed.revision > existing.revision ||
+                observed.updatedSeq >= existing.updatedSeq
+            ) {
+                byId[observed.id] = observed
+            }
+        }
+        return byId.values.toList()
     }
 
     private fun RemoteTimelineItem.toToolMessages(): List<TimelineMessage> {
@@ -718,11 +1291,28 @@ class SessionDetailController(
                     subtitle = content.text("server") ?: "mcp",
                 )
             )
-            else -> listOf(toToolCallMessage(title = shortToolTitle(), subtitle = content.text("kind").orEmpty()))
+            "tool_call", "tool_result", "permission", "input_request" -> listOf(
+                toToolCallMessage(title = shortToolTitle(), subtitle = content.text("kind").orEmpty()),
+            )
+            else -> listOf(toDiagnosticMessage())
         }
     }
 
-    private fun RemoteTimelineItem.toTextMessage(): TimelineMessage {
+    private fun RemoteTimelineItem.toMessage(): TimelineMessage {
+        val contentKind = content.text("kind")
+        val nestedContent = content.optJSONObject("content")
+        val attachments = (
+            content.records("attachments") + nestedContent?.records("attachments").orEmpty()
+        ).mapNotNull { it.toTimelineAttachmentOrNull() }
+            .distinctBy { it.fileId }
+        val messageText = text
+            .ifBlank { content.platformMessageText().orEmpty() }
+            .stripInjectedAttachmentMentions()
+        if (contentKind !in setOf(null, "text", "markdown", "multimodal") ||
+            (messageText.isBlank() && attachments.isEmpty())
+        ) {
+            return toDiagnosticMessage()
+        }
         val author = when (role) {
             "user" -> MessageAuthor.User
             "assistant" -> MessageAuthor.Agent
@@ -732,8 +1322,8 @@ class SessionDetailController(
             id = id,
             sourceItemId = id,
             author = author,
-            text = (text.ifBlank { content.text("text").orEmpty() }).stripInjectedAttachmentMentions(),
-            attachments = content.records("attachments").mapNotNull { it.toTimelineAttachmentOrNull() },
+            text = messageText,
+            attachments = attachments,
             status = status,
             type = type,
             badge = status.statusLabel(),
@@ -745,7 +1335,24 @@ class SessionDetailController(
         )
     }
 
-    private fun RemoteTimelineItem.toSystemMessage(): TimelineMessage? {
+    private fun JSONObject.platformMessageText(): String? {
+        firstText("text", "message", "description", "rawText")?.let { return it }
+        return when (val nested = opt("content")) {
+            is String -> nested.takeIf(String::isNotBlank)
+            is JSONObject -> nested.firstText("text", "message", "description", "rawText")
+            is JSONArray -> buildList {
+                repeat(nested.length()) { index ->
+                    when (val part = nested.opt(index)) {
+                        is String -> part.takeIf(String::isNotBlank)?.let(::add)
+                        is JSONObject -> part.firstText("text", "message", "description", "rawText")?.let(::add)
+                    }
+                }
+            }.takeIf(List<String>::isNotEmpty)?.joinToString("\n")
+            else -> null
+        }
+    }
+
+    private fun RemoteTimelineItem.toSystemMessage(): TimelineMessage {
         val kind = content.text("kind") ?: "system"
         if (kind == "reasoning") {
             val summaries = content.records("summaries").mapNotNull { it.text("text") }
@@ -769,8 +1376,11 @@ class SessionDetailController(
                 turnId = turnId,
             )
         }
+        if (kind == "compact") return toCompactMessage()
+        if (kind !in setOf("runtime", "system", "turn_start", "turn_end", "error", "notice")) {
+            return toDiagnosticMessage()
+        }
         val message = content.text("message") ?: content.text("text") ?: kind
-        if (message.isBlank()) return null
         return TimelineMessage(
             id = id,
             sourceItemId = id,
@@ -778,8 +1388,98 @@ class SessionDetailController(
             text = message,
             status = status,
             type = type,
-            kind = TimelineMessageKind.System,
+            kind = if (kind == "error" || status == "failed") TimelineMessageKind.Error else TimelineMessageKind.System,
             title = kind,
+            badge = status.statusLabel(),
+            orderSeq = orderSeq,
+            revision = revision,
+            updatedSeq = updatedSeq,
+            clientMessageId = source.text("clientMessageId"),
+            turnId = turnId,
+        )
+    }
+
+    private fun RemoteTimelineItem.toArtifactMessages(): List<TimelineMessage> {
+        val kind = content.text("kind") ?: return listOf(toDiagnosticMessage())
+        if (kind == "file_change") return toFileChangeMessages()
+        if (kind !in setOf("file", "diff", "image", "document", "code")) {
+            return listOf(toDiagnosticMessage())
+        }
+        val path = content.firstText("path", "filePath", "file", "uri")
+        val title = path?.substringAfterLast('/')?.ifBlank { null } ?: kind
+        return listOf(
+            TimelineMessage(
+                id = id,
+                sourceItemId = id,
+                author = MessageAuthor.Tool,
+                text = title,
+                status = status,
+                type = type,
+                kind = TimelineMessageKind.Artifact,
+                title = kind.replaceFirstChar { it.uppercase() },
+                subtitle = title,
+                badge = status.statusLabel(),
+                detail = path.orEmpty(),
+                body = content.text("description") ?: content.text("text").orEmpty(),
+                orderSeq = orderSeq,
+                revision = revision,
+                updatedSeq = updatedSeq,
+                clientMessageId = source.text("clientMessageId"),
+                turnId = turnId,
+            ),
+        )
+    }
+
+    private fun RemoteTimelineItem.toMarkerMessage(): TimelineMessage {
+        val kind = content.text("kind") ?: return toDiagnosticMessage()
+        if (kind == "compact") return toCompactMessage()
+        if (kind !in setOf("system", "runtime", "notice", "error")) return toDiagnosticMessage()
+        val label = content.firstText("label", "title", "text", "message") ?: kind
+        return baseInformationalMessage(
+            kind = if (kind == "error" || status == "failed") TimelineMessageKind.Error else TimelineMessageKind.Marker,
+            title = kind,
+            text = label,
+        )
+    }
+
+    private fun RemoteTimelineItem.toCompactMessage(): TimelineMessage {
+        val compactState = content.text("state")
+        val active = compactState in setOf("started", "running", "inProgress") || status in setOf("pending", "running")
+        val failed = compactState == "failed" || status == "failed"
+        return baseInformationalMessage(
+            kind = if (failed) TimelineMessageKind.Error else TimelineMessageKind.Marker,
+            title = "compact",
+            text = when {
+                failed -> "Conversation compaction failed"
+                active -> "Compacting conversation"
+                else -> "Conversation compacted"
+            },
+        )
+    }
+
+    private fun RemoteTimelineItem.toDiagnosticMessage(): TimelineMessage {
+        val contentKind = content.text("kind") ?: "unknown"
+        return baseInformationalMessage(
+            kind = TimelineMessageKind.Diagnostic,
+            title = "Unknown timeline item",
+            text = "${type.ifBlank { "unknown" }} / $contentKind · ${id.take(48)} · ${status.ifBlank { "unknown" }}",
+        )
+    }
+
+    private fun RemoteTimelineItem.baseInformationalMessage(
+        kind: TimelineMessageKind,
+        title: String,
+        text: String,
+    ): TimelineMessage {
+        return TimelineMessage(
+            id = id,
+            sourceItemId = id,
+            author = MessageAuthor.Tool,
+            text = text,
+            status = status,
+            type = type,
+            kind = kind,
+            title = title,
             badge = status.statusLabel(),
             orderSeq = orderSeq,
             revision = revision,
@@ -792,7 +1492,7 @@ class SessionDetailController(
     private fun RemoteTimelineItem.toCommandMessage(): TimelineMessage {
         val command = content.opt("command").commandText()
         val description = content.text("description") ?: command
-        val output = content.text("outputPreview") ?: content.text("outputText").orEmpty()
+        val output = content.firstText("output", "outputPreview", "outputText", "error").orEmpty()
         val exit = content.text("exitCode")?.let { "exit code $it" }.orEmpty()
         return TimelineMessage(
             id = id,
@@ -822,7 +1522,7 @@ class SessionDetailController(
     }
 
     private fun RemoteTimelineItem.toFileChangeMessage(change: JSONObject, index: Int): TimelineMessage {
-        val targetPath = change.text("path").orEmpty()
+        val targetPath = change.firstText("path", "filePath", "file", "uri").orEmpty()
         val filename = targetPath.substringAfterLast('/').ifBlank { targetPath.ifBlank { "files" } }
         val verb = change.fileChangeVerb()
         return TimelineMessage(
@@ -848,6 +1548,9 @@ class SessionDetailController(
 
     private fun RemoteTimelineItem.toToolCallMessage(title: String, subtitle: String): TimelineMessage {
         val name = title.ifBlank { "tool" }
+        val inputSummary = content.opt("input").diagnosticSummary()
+        val outputSummary = content.opt("output").diagnosticSummary()
+        val errorSummary = content.opt("error").diagnosticSummary()
         return TimelineMessage(
             id = id,
             sourceItemId = id,
@@ -859,6 +1562,8 @@ class SessionDetailController(
             title = name,
             subtitle = subtitle,
             badge = status.statusLabel(),
+            detail = inputSummary,
+            body = listOf(outputSummary, errorSummary).filter(String::isNotBlank).joinToString("\n"),
             orderSeq = orderSeq,
             revision = revision,
             updatedSeq = updatedSeq,
@@ -955,6 +1660,10 @@ class SessionDetailController(
         return List(array.length()) { index -> array.optJSONObject(index) }.filterNotNull()
     }
 
+    private fun JSONObject.firstText(vararg names: String): String? {
+        return names.firstNotNullOfOrNull { name -> text(name) }
+    }
+
     private fun JSONObject.fileChangeVerb(): String {
         val kind = optJSONObject("kind")
         val type = kind?.text("type") ?: text("action")
@@ -972,6 +1681,28 @@ class SessionDetailController(
             is JSONArray -> List(length()) { index -> opt(index).toString() }.joinToString(" ")
             else -> ""
         }
+    }
+
+    private fun Any?.diagnosticSummary(maxChars: Int = 512): String {
+        val raw = when (this) {
+            null, JSONObject.NULL -> ""
+            is String -> this
+            is Number, is Boolean -> toString()
+            is JSONObject -> keys().asSequence().toList().sorted().joinToString(", ") { key ->
+                val value = opt(key)
+                "$key=${when (value) {
+                    is String -> value
+                    is Number, is Boolean -> value.toString()
+                    is JSONArray -> "[${value.length()} items]"
+                    is JSONObject -> "{${value.length()} fields}"
+                    else -> "null"
+                }}"
+            }
+            is JSONArray -> "[${length()} items]"
+            else -> toString()
+        }
+        return raw.replace(Regex("(?i)(token|secret|password|authorization)=([^,\\s]+)"), "$1=[redacted]")
+            .take(maxChars)
     }
 
     private fun String.stripInjectedAttachmentMentions(): String {
@@ -992,14 +1723,88 @@ class SessionDetailController(
         val accessToken: String,
     )
 
-    private companion object {
-        const val ATTACHMENT_ONLY_PROMPT = "(No text content.)"
+}
+
+private data class TimelineProjection(
+    val orderingItems: List<TimelineOrderingItem>,
+    val messages: List<TimelineMessage>,
+)
+
+private fun normalizeTimelineOrderingItems(
+    current: List<TimelineOrderingItem>,
+    incoming: List<RemoteTimelineItem>,
+): List<TimelineOrderingItem> {
+    val currentById = current.associateBy { it.id }
+    var maxOrderSeq = maxOf(
+        current.maxOfOrNull { it.orderSeq.takeIf { value -> value > 0 } ?: 0 } ?: 0,
+        incoming.maxOfOrNull { it.orderSeq.takeIf { value -> value > 0 } ?: 0 } ?: 0,
+    )
+    return incoming.map { item ->
+        val existingOrder = currentById[item.id]?.orderSeq?.takeIf { it > 0 }
+        val normalizedOrder = item.orderSeq.takeIf { it > 0 }
+            ?: existingOrder
+            ?: (++maxOrderSeq)
+        TimelineOrderingItem(
+            id = item.id,
+            type = item.type,
+            turnId = item.turnId,
+            orderSeq = normalizedOrder,
+            revision = item.revision,
+            updatedSeq = item.updatedSeq,
+        )
+    }
+}
+
+internal fun mergeTimelineOrderingItems(
+    current: List<TimelineOrderingItem>,
+    incoming: List<TimelineOrderingItem>,
+): List<TimelineOrderingItem> {
+    val byId = current.associateByTo(linkedMapOf()) { it.id }
+    incoming.forEach { observed ->
+        val existing = byId[observed.id]
+        if (existing == null || observed.revision > existing.revision || observed.updatedSeq >= existing.updatedSeq) {
+            byId[observed.id] = observed.copy(
+                orderSeq = observed.orderSeq.takeIf { it > 0 }
+                    ?: existing?.orderSeq?.takeIf { it > 0 }
+                    ?: ((byId.values.maxOfOrNull { it.orderSeq } ?: 0) + 1),
+            )
+        }
+    }
+    return byId.values.toList()
+}
+
+internal fun sortTimelineMessages(
+    messages: List<TimelineMessage>,
+    orderingItems: List<TimelineOrderingItem> = emptyList(),
+): List<TimelineMessage> {
+    val orderingById = orderingItems.associateBy { it.id }
+    val turnAnchors = mutableMapOf<String, Int>()
+    orderingItems.forEach { item ->
+        val turnId = item.turnId ?: return@forEach
+        turnAnchors[turnId] = minOf(turnAnchors[turnId] ?: item.orderSeq, item.orderSeq)
+    }
+    messages.forEach { message ->
+        val turnId = message.turnId ?: return@forEach
+        val itemOrder = orderingById[message.sourceItemId]?.orderSeq ?: message.orderSeq
+        turnAnchors[turnId] = minOf(turnAnchors[turnId] ?: itemOrder, itemOrder)
+    }
+    return messages.sortedWith { left, right ->
+        val leftOrder = orderingById[left.sourceItemId]?.orderSeq ?: left.orderSeq
+        val rightOrder = orderingById[right.sourceItemId]?.orderSeq ?: right.orderSeq
+        val leftBlock = left.turnId?.let(turnAnchors::get) ?: leftOrder
+        val rightBlock = right.turnId?.let(turnAnchors::get) ?: rightOrder
+        compareValues(leftBlock, rightBlock)
+            .takeIf { it != 0 }
+            ?: compareValues(leftOrder, rightOrder).takeIf { it != 0 }
+            ?: compareValues(left.updatedSeq, right.updatedSeq).takeIf { it != 0 }
+            ?: left.id.compareTo(right.id)
     }
 }
 
 internal fun mergeTimelineMessages(
     current: List<TimelineMessage>,
     incoming: List<TimelineMessage>,
+    orderingItems: List<TimelineOrderingItem> = emptyList(),
 ): List<TimelineMessage> {
     val currentBySource = current.filterNot { it.optimistic }.groupBy { it.sourceItemId }
     val incomingBySource = incoming.filterNot { it.optimistic }.groupBy { it.sourceItemId }
@@ -1018,11 +1823,7 @@ internal fun mergeTimelineMessages(
         } else {
             currentGroup
         }
-    }.sortedWith(
-        compareBy<TimelineMessage> { it.orderSeq }
-            .thenBy { it.updatedSeq }
-            .thenBy { it.id },
-    )
+    }.let { sortTimelineMessages(it, orderingItems) }
 }
 
 internal fun mergeRuntimeNotices(
@@ -1183,6 +1984,7 @@ internal fun SessionDetailState.applyNoticeObservation(
             notices = mergeRuntimeNotices(notices.notices, incoming, replace),
             serverTime = serverTime,
             isLoaded = true,
+            eventSequence = notices.eventSequence,
         ),
     )
 }

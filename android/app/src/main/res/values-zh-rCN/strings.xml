@@ -311,6 +311,13 @@
     <string name="session_attachment_read_failed">无法读取附件。</string>
     <string name="session_attachment_upload_empty">上传结果为空。</string>
     <string name="session_attachment_upload_failed">附件上传失败。</string>
+    <string name="session_attachment_download_failed">无法下载附件。</string>
+    <string name="session_attachment_open_failed">没有应用可以打开这个附件。</string>
+    <string name="session_attachment_base64_invalid">下载的附件内容已损坏。</string>
+    <string name="session_attachment_upload_incomplete">服务端返回的附件上传结果不完整。</string>
+    <string name="session_attachment_size_mismatch">%1$s 的文件大小校验失败。</string>
+    <string name="session_attachment_sha_mismatch">%1$s 的 SHA-256 校验失败。</string>
+    <string name="session_attachment_media_type_invalid">%1$s 的媒体类型无效。</string>
     <string name="session_attachment_limit">每条消息最多添加 %1$d 个附件。</string>
     <string name="session_attachment_file_too_large">%1$s 超过 25 MB。</string>
     <string name="session_attachment_read_one_failed">无法读取这个附件。</string>

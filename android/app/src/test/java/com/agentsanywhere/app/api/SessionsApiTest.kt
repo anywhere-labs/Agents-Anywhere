@@ -5,6 +5,8 @@ import java.io.ByteArrayOutputStream
 import java.io.Closeable
 import java.net.InetAddress
 import java.net.ServerSocket
+import java.security.MessageDigest
+import java.util.Base64
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.concurrent.thread
 import org.json.JSONObject
@@ -406,7 +408,7 @@ class SessionsApiTest {
                 "session/one",
                 content = "message",
                 clientMessageId = "client-message",
-                attachments = listOf(RemoteUploadedAttachment("file/one", "one.txt", "text/plain", 3)),
+                attachments = listOf(RemoteAttachmentRef("file/one")),
             )
             val steer = api.steerSession(
                 serverUrl,
@@ -476,6 +478,80 @@ class SessionsApiTest {
             assertEquals("op-1", (command.result as JSONObject).getString("operationId"))
             assertEquals("turn-1", message.turnId)
             assertEquals("turn-1", steer.turnId)
+        }
+    }
+
+    @Test
+    fun attachmentOnlyMessageUsesEmptyContentAndFileIdRefsOnly() {
+        val rpcResponse = JSONObject()
+            .put("ok", true)
+            .put("result", JSONObject().put("turnId", "turn-attachment"))
+            .toString()
+        withJsonServer(ArrayDeque(listOf(TestResponse(body = rpcResponse)))) { serverUrl, requests ->
+            SessionsApi().sendSessionMessage(
+                serverUrl = serverUrl,
+                authorizationToken = "token",
+                sessionId = "session/one",
+                content = "",
+                clientMessageId = "client-attachment",
+                attachments = listOf(RemoteAttachmentRef("file/one")),
+            )
+
+            val body = JSONObject(requests.single().body)
+            assertEquals("", body.getString("content"))
+            assertEquals("client-attachment", body.getString("clientMessageId"))
+            val attachment = body.getJSONArray("attachments").getJSONObject(0)
+            assertEquals(setOf("fileId"), attachment.keys().asSequence().toSet())
+            assertEquals("file/one", attachment.getString("fileId"))
+        }
+    }
+
+    @Test
+    fun attachmentDownloadUsesAuthAndRejectsCorruptSizeOrSha256() {
+        val bytes = "downloaded".toByteArray()
+        val sha256 = MessageDigest.getInstance("SHA-256")
+            .digest(bytes)
+            .joinToString("") { byte -> "%02x".format(byte) }
+        fun response(size: Long = bytes.size.toLong(), digest: String = sha256): String = JSONObject()
+            .put("fileId", "file/one")
+            .put("sessionId", "session/one")
+            .put("path", "")
+            .put("name", "file.txt")
+            .put("size", size)
+            .put("sha256", digest)
+            .put("contentBase64", Base64.getEncoder().encodeToString(bytes))
+            .put("createdAt", "now")
+            .put("serverTime", "now")
+            .toString()
+
+        withJsonServer(ArrayDeque(listOf(TestResponse(body = response())))) { serverUrl, requests ->
+            val downloaded = SessionsApi().downloadSessionAttachment(
+                serverUrl,
+                "token",
+                "session/one",
+                "file/one",
+            )
+            assertEquals(bytes.toList(), downloaded.bytes.toList())
+            assertEquals(sha256, downloaded.sha256)
+            assertRequest(
+                requests.single(),
+                "GET",
+                "/api/v2/sessions/session%2Fone/attachments/file%2Fone",
+                "",
+            )
+            assertEquals("Bearer token", requests.single().authorization)
+        }
+        withJsonServer(ArrayDeque(listOf(TestResponse(body = response(size = 999))))) { serverUrl, _ ->
+            val error = assertThrows(AttachmentTransferException::class.java) {
+                SessionsApi().downloadSessionAttachment(serverUrl, "token", "session", "file")
+            }
+            assertEquals(AttachmentTransferFailure.SizeMismatch, error.failure)
+        }
+        withJsonServer(ArrayDeque(listOf(TestResponse(body = response(digest = "0".repeat(64)))))) { serverUrl, _ ->
+            val error = assertThrows(AttachmentTransferException::class.java) {
+                SessionsApi().downloadSessionAttachment(serverUrl, "token", "session", "file")
+            }
+            assertEquals(AttachmentTransferFailure.Sha256Mismatch, error.failure)
         }
     }
 

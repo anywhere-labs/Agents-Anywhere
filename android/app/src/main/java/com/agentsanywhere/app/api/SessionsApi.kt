@@ -2,6 +2,8 @@ package com.agentsanywhere.app.api
 
 import org.json.JSONArray
 import org.json.JSONObject
+import java.security.MessageDigest
+import java.util.Base64
 
 class SessionsApi(
     private val client: ApiClient = ApiClient(),
@@ -368,7 +370,7 @@ class SessionsApi(
         sessionId: String,
         content: String,
         clientMessageId: String,
-        attachments: List<RemoteUploadedAttachment> = emptyList(),
+        attachments: List<RemoteAttachmentRef> = emptyList(),
     ): RemoteRpcResponse {
         val body = JSONObject()
             .put("content", content)
@@ -393,7 +395,7 @@ class SessionsApi(
         sessionId: String,
         content: String,
         clientMessageId: String,
-        attachments: List<RemoteUploadedAttachment> = emptyList(),
+        attachments: List<RemoteAttachmentRef> = emptyList(),
     ): RemoteRpcResponse {
         val body = JSONObject()
             .put("content", content)
@@ -434,6 +436,63 @@ class SessionsApi(
         return apiUrl(
             serverUrl = serverUrl,
             path = "/sessions/${sessionId.urlEncode()}/attachments/${fileId.urlEncode()}/open",
+        )
+    }
+
+    fun attachmentDownloadUrl(
+        serverUrl: String,
+        sessionId: String,
+        fileId: String,
+    ): String {
+        return apiUrl(
+            serverUrl = serverUrl,
+            path = "/sessions/${sessionId.urlEncode()}/attachments/${fileId.urlEncode()}",
+        )
+    }
+
+    fun downloadSessionAttachment(
+        serverUrl: String,
+        authorizationToken: String,
+        sessionId: String,
+        fileId: String,
+    ): RemoteDownloadedAttachment {
+        val response = client.getJson(
+            serverUrl = serverUrl,
+            path = "/sessions/${sessionId.urlEncode()}/attachments/${fileId.urlEncode()}",
+            authorizationToken = authorizationToken,
+        )
+        val contentBase64 = response.optString("contentBase64", "")
+        val expectedSize = response.optLong("size", -1L)
+        if (expectedSize !in 0..MAX_ATTACHMENT_DOWNLOAD_BYTES ||
+            contentBase64.length > MAX_ATTACHMENT_DOWNLOAD_BASE64_CHARS
+        ) {
+            throw AttachmentTransferException(AttachmentTransferFailure.SizeMismatch)
+        }
+        val bytes = try {
+            Base64.getDecoder().decode(contentBase64)
+        } catch (error: IllegalArgumentException) {
+            throw AttachmentTransferException(AttachmentTransferFailure.InvalidBase64, cause = error)
+        }
+        if (bytes.size.toLong() != expectedSize) {
+            throw AttachmentTransferException(AttachmentTransferFailure.SizeMismatch)
+        }
+        val expectedSha256 = response.optString("sha256", "").lowercase()
+        val actualSha256 = MessageDigest.getInstance("SHA-256")
+            .digest(bytes)
+            .joinToString("") { byte -> "%02x".format(byte) }
+        if (expectedSha256.length != 64 || actualSha256 != expectedSha256) {
+            throw AttachmentTransferException(AttachmentTransferFailure.Sha256Mismatch)
+        }
+        return RemoteDownloadedAttachment(
+            fileId = response.optString("fileId", fileId),
+            sessionId = response.optString("sessionId", sessionId),
+            path = response.optString("path", ""),
+            name = response.optString("name", fileId).ifBlank { fileId },
+            size = expectedSize,
+            sha256 = expectedSha256,
+            bytes = bytes,
+            createdAt = response.optNullableString("createdAt"),
+            serverTime = response.optNullableString("serverTime"),
         )
     }
 
@@ -491,6 +550,37 @@ class SessionsApi(
             body = body,
             authorizationToken = authorizationToken,
         ).toRemoteRpcResponse()
+    }
+
+    internal fun parseSession(value: JSONObject): RemoteSession = value.toRemoteSession()
+
+    internal fun parseSessionEvent(value: JSONObject): RemoteSessionEventEnvelope {
+        val payload = value.optJSONObject("payload") ?: JSONObject()
+        val catalogType = payload.optNullableString("catalogType")
+        val catalog = payload.optJSONObject("catalog")
+        return RemoteSessionEventEnvelope(
+            protocolVersion = value.optString("protocolVersion", ""),
+            eventId = value.getString("eventId"),
+            sequence = value.getLong("sequence"),
+            cursor = value.getString("cursor"),
+            type = value.getString("type"),
+            sessionId = value.getString("sessionId"),
+            emittedAt = value.optNullableString("emittedAt"),
+            payload = RemoteSessionEventPayload(
+                session = payload.optJSONObject("session")?.toRemoteSession(),
+                item = payload.optJSONObject("item")?.toRemoteTimelineItem(),
+                items = payload.optJSONArray("items").toObjectList { toRemoteTimelineItem() },
+                state = payload.optJSONObject("state")?.toRemoteSessionRuntimeState(),
+                notice = payload.optJSONObject("notice")?.toRemoteRuntimeNotice(),
+                notices = payload.optJSONArray("notices").toObjectList { toRemoteRuntimeNotice() },
+                capabilitySet = payload.optJSONObject("capabilitySet")?.toRemoteRuntimeCapabilitySet(),
+                catalogType = catalogType,
+                modelCatalog = catalog?.takeIf { catalogType == "model" }?.toRemoteRuntimeModelCatalog(),
+                permissionCatalog = catalog?.takeIf { catalogType == "permission" }
+                    ?.toRemoteRuntimePermissionCatalog(),
+                eventCursor = payload.optNullableString("eventCursor"),
+            ),
+        )
     }
 
     private fun JSONObject.toRemoteSession(): RemoteSession {
@@ -823,6 +913,8 @@ class SessionsApi(
 
     private companion object {
         const val CREATE_AND_START_READ_TIMEOUT_SECONDS = 75L
+        const val MAX_ATTACHMENT_DOWNLOAD_BYTES = 25L * 1024L * 1024L
+        const val MAX_ATTACHMENT_DOWNLOAD_BASE64_CHARS = 34_952_536
     }
 
 }

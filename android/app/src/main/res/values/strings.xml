@@ -311,6 +311,13 @@
     <string name="session_attachment_read_failed">Could not read attachment.</string>
     <string name="session_attachment_upload_empty">Upload returned no file.</string>
     <string name="session_attachment_upload_failed">Could not upload attachment.</string>
+    <string name="session_attachment_download_failed">Could not download attachment.</string>
+    <string name="session_attachment_open_failed">No app can open this attachment.</string>
+    <string name="session_attachment_base64_invalid">The downloaded attachment is corrupted.</string>
+    <string name="session_attachment_upload_incomplete">The server returned an incomplete attachment upload.</string>
+    <string name="session_attachment_size_mismatch">The size check failed for %1$s.</string>
+    <string name="session_attachment_sha_mismatch">The SHA-256 check failed for %1$s.</string>
+    <string name="session_attachment_media_type_invalid">%1$s has an invalid media type.</string>
     <string name="session_attachment_limit">You can attach up to %1$d files per message.</string>
     <string name="session_attachment_file_too_large">%1$s exceeds 25 MB.</string>
     <string name="session_attachment_read_one_failed">Could not read that attachment.</string>

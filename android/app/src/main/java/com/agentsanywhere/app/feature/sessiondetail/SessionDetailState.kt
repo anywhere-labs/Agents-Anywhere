@@ -25,6 +25,7 @@ data class SessionDetailState(
     val notices: RuntimeNotices = RuntimeNotices(),
     val catalogs: RuntimeCatalogs = RuntimeCatalogs(),
     val commands: RuntimeCommands = RuntimeCommands(),
+    val realtime: SessionRealtimeState = SessionRealtimeState(),
     val initialized: Boolean = false,
     val actionError: String? = null,
     val takeoverInFlight: Boolean = false,
@@ -51,6 +52,36 @@ data class SessionDetailState(
     }
 }
 
+data class SessionRealtimeState(
+    val connected: Boolean = false,
+    val recovering: Boolean = false,
+    val reconnectAttempt: Int = 0,
+    val cursor: String = "seq:0",
+    val processedEventIds: Set<String> = emptySet(),
+    val lastErrorMessage: String? = null,
+) {
+    fun rememberEvent(eventId: String, cursor: String): SessionRealtimeState {
+        val remembered = (processedEventIds + eventId).let { ids ->
+            if (ids.size <= MAX_PROCESSED_EVENTS) ids else ids.drop(ids.size - RETAINED_PROCESSED_EVENTS).toSet()
+        }
+        return copy(
+            cursor = laterEventCursor(this.cursor, cursor),
+            processedEventIds = remembered,
+        )
+    }
+
+    private companion object {
+        const val MAX_PROCESSED_EVENTS = 1_000
+        const val RETAINED_PROCESSED_EVENTS = 500
+    }
+}
+
+internal fun laterEventCursor(current: String, incoming: String): String {
+    val currentSequence = current.removePrefix("seq:").toLongOrNull() ?: 0L
+    val incomingSequence = incoming.removePrefix("seq:").toLongOrNull() ?: return current
+    return if (incomingSequence >= currentSequence) incoming else current
+}
+
 data class SessionMeta(
     val session: AgentSession? = null,
     val serverTime: String? = null,
@@ -60,6 +91,7 @@ data class SessionMeta(
 
 data class SessionTimelineState(
     val messages: List<TimelineMessage> = emptyList(),
+    val orderingItems: List<TimelineOrderingItem> = emptyList(),
     val nextSeq: Int = 0,
     val hasMore: Boolean = false,
     val eventCursor: String = "seq:0",
@@ -67,6 +99,19 @@ data class SessionTimelineState(
     val loadingOlder: Boolean = false,
     val errorMessage: String? = null,
     val historyErrorMessage: String? = null,
+)
+
+/**
+ * Server-owned ordering data kept separately from visible Android rows.
+ * Turn boundary items participate in ordering but are never rendered.
+ */
+data class TimelineOrderingItem(
+    val id: String,
+    val type: String,
+    val turnId: String?,
+    val orderSeq: Int,
+    val revision: Int,
+    val updatedSeq: Int,
 )
 
 data class SessionRuntimeState(
@@ -166,6 +211,7 @@ data class RuntimeNotices(
     val isLoaded: Boolean = false,
     val isLoading: Boolean = false,
     val errorMessage: String? = null,
+    val eventSequence: Long = 0L,
 )
 
 data class RuntimeNotice(
@@ -416,6 +462,8 @@ data class TimelineMessage(
     val clientMessageId: String? = null,
     val turnId: String? = null,
     val optimistic: Boolean = false,
+    val retryAction: RuntimeMessageAction? = null,
+    val errorMessage: String? = null,
 )
 
 data class TimelineAttachment(
@@ -423,6 +471,7 @@ data class TimelineAttachment(
     val name: String,
     val mediaType: String,
     val size: Long,
+    val sha256: String? = null,
 ) {
     val isImage: Boolean
         get() = mediaType.startsWith("image/")
@@ -432,6 +481,15 @@ data class AttachmentImageRequest(
     val url: String,
     val authorizationToken: String,
     val cacheKey: String,
+)
+
+data class DownloadedAttachment(
+    val fileId: String,
+    val name: String,
+    val mediaType: String,
+    val size: Long,
+    val sha256: String,
+    val bytes: ByteArray,
 )
 
 enum class MessageAuthor {
@@ -578,5 +636,9 @@ enum class TimelineMessageKind {
     Command,
     FileChange,
     ToolCall,
+    Artifact,
+    Marker,
+    Error,
+    Diagnostic,
     System,
 }
