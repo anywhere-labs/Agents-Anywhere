@@ -69,30 +69,63 @@ def test_connector_rpc_send_queue_preserves_order() -> None:
     assert parsed[2]["params"]["seq"] == 3
 
 
-def test_connector_rpc_send_queue_alternates_between_queues() -> None:
+def test_connector_rpc_send_queue_preserves_cross_type_fifo_order() -> None:
     async def exercise() -> list[str]:
-        websocket = MemoryWebSocket()
+        websocket = BlockingWebSocket()
         channel = ConnectorRpcChannel()
         channel.set_connection(websocket)
-        await channel.send_response("req-1", ok=True, result={"seq": 1})
-        await channel.send_notification("timeline.itemUpsert", {"seq": 2})
-        await channel.send_response("req-2", ok=True, result={"seq": 3})
-        await channel.send_notification("timeline.itemUpsert", {"seq": 4})
+        first = asyncio.create_task(
+            channel.send_notification("timeline.itemUpsert", {"seq": 1})
+        )
+        await websocket.first_send_started.wait()
+        second = asyncio.create_task(
+            channel.send_response("req-1", ok=True, result={"seq": 2})
+        )
+        third = asyncio.create_task(
+            channel.send_notification("timeline.itemUpsert", {"seq": 3})
+        )
+        fourth = asyncio.create_task(
+            channel.send_response("req-2", ok=True, result={"seq": 4})
+        )
+        await asyncio.sleep(0)
+        websocket.release_first_send.set()
+        await asyncio.gather(first, second, third, fourth)
         return websocket.sent
 
     sent = asyncio.run(exercise())
     parsed = [json.loads(payload) for payload in sent]
 
     assert [payload["type"] for payload in parsed] == [
-        "response",
         "notification",
         "response",
         "notification",
+        "response",
     ]
-    assert [payload.get("id") for payload in parsed if payload["type"] == "response"] == [
-        "req-1",
-        "req-2",
-    ]
+    assert parsed[0]["params"]["seq"] == 1
+    assert parsed[1]["id"] == "req-1"
+    assert parsed[2]["params"]["seq"] == 3
+    assert parsed[3]["id"] == "req-2"
+
+
+def test_connector_rpc_clear_connection_fails_in_flight_and_pending_sends() -> None:
+    async def exercise() -> list[BaseException | None]:
+        websocket = BlockingWebSocket()
+        channel = ConnectorRpcChannel()
+        channel.set_connection(websocket)
+        first = asyncio.create_task(
+            channel.send_notification("timeline.itemUpsert", {"seq": 1})
+        )
+        await websocket.first_send_started.wait()
+        second = asyncio.create_task(
+            channel.send_response("req-1", ok=True, result={"seq": 2})
+        )
+        await asyncio.sleep(0)
+        channel.clear_connection()
+        return await asyncio.gather(first, second, return_exceptions=True)
+
+    results = asyncio.run(exercise())
+
+    assert all(isinstance(result, ConnectionError) for result in results)
 
 
 def test_connector_rpc_rejects_oversized_notification_before_send() -> None:

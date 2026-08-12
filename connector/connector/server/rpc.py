@@ -4,9 +4,8 @@ import asyncio
 import json
 import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from contextlib import suppress
 from dataclasses import dataclass
-from typing import Any, Literal, Protocol
+from typing import Any, Protocol
 
 from connector.logging import logger
 from connector.runtime_protocol import RuntimeProtocolError
@@ -40,7 +39,6 @@ RPC_LOG_PARTIAL_SECRET_KEYS = frozenset(
     key for key in RPC_LOG_EXACT_SECRET_KEYS if key != "auth"
 )
 CONNECTOR_WS_MAX_NOTIFICATION_BYTES = 900 * 1024
-QueuedSendQueueName = Literal["response", "notification"]
 
 
 class WebSocketSender(Protocol):
@@ -85,10 +83,8 @@ class ConnectorRpcChannel:
 
     def __init__(self) -> None:
         self._ws: WebSocketSender | None = None
-        self._response_send_queue: asyncio.Queue[_QueuedSend] | None = None
-        self._notification_send_queue: asyncio.Queue[_QueuedSend] | None = None
+        self._send_queue: asyncio.Queue[_QueuedSend] | None = None
         self._send_worker_task: asyncio.Task[None] | None = None
-        self._next_send_queue_name: QueuedSendQueueName = "response"
         self._request_tasks: set[asyncio.Task[None]] = set()
         self._request_semaphore = asyncio.Semaphore(8)
 
@@ -96,11 +92,10 @@ class ConnectorRpcChannel:
         if self._send_worker_task is not None:
             self._send_worker_task.cancel()
         self._ws = ws
-        self._response_send_queue = asyncio.Queue()
-        self._notification_send_queue = asyncio.Queue()
-        self._next_send_queue_name = "response"
+        send_queue: asyncio.Queue[_QueuedSend] = asyncio.Queue()
+        self._send_queue = send_queue
         self._send_worker_task = asyncio.create_task(
-            self._send_worker_loop()
+            self._send_worker_loop(ws, send_queue)
         )
 
     def clear_connection(self) -> None:
@@ -108,8 +103,12 @@ class ConnectorRpcChannel:
         if self._send_worker_task is not None:
             self._send_worker_task.cancel()
             self._send_worker_task = None
-        self._response_send_queue = None
-        self._notification_send_queue = None
+        send_queue = self._send_queue
+        self._send_queue = None
+        self._fail_pending_send_queue(
+            send_queue,
+            ConnectionError("backend websocket connection cleared"),
+        )
 
     @property
     def connected(self) -> bool:
@@ -226,7 +225,6 @@ class ConnectorRpcChannel:
         await self.send_json(
             {"type": "notification", "method": method, "params": params},
             max_frame_bytes=CONNECTOR_WS_MAX_NOTIFICATION_BYTES,
-            queue_name="notification",
         )
 
     async def send_response(
@@ -249,15 +247,14 @@ class ConnectorRpcChannel:
             ok,
             sanitize_rpc_log_value(response_body),
         )
-        await self.send_json(payload, queue_name="response")
+        await self.send_json(payload)
 
     async def send_json(
         self,
         payload: dict[str, Any],
         max_frame_bytes: int | None = None,
-        queue_name: str = "notification",
     ) -> None:
-        queue = self._send_queue(queue_name)
+        queue = self._send_queue
         if self._ws is None or queue is None:
             raise RuntimeError("backend websocket is not connected")
         frame_type = payload.get("type")
@@ -308,120 +305,39 @@ class ConnectorRpcChannel:
                 wait_elapsed_ms,
             )
 
-    async def _send_worker_loop(self) -> None:
+    async def _send_worker_loop(
+        self,
+        ws: WebSocketSender,
+        queue: asyncio.Queue[_QueuedSend],
+    ) -> None:
+        current_item: _QueuedSend | None = None
         try:
             while True:
-                item = await self._next_send_item()
+                current_item = await queue.get()
                 try:
-                    ws = self._ws
-                    if ws is None:
-                        raise RuntimeError("backend websocket is not connected")
-                    await ws.send(item.encoded)
-                    if not item.future.done():
-                        item.future.set_result(None)
+                    await ws.send(current_item.encoded)
+                    if not current_item.future.done():
+                        current_item.future.set_result(None)
                 except Exception as exc:  # noqa: BLE001
-                    if not item.future.done():
-                        item.future.set_exception(exc)
-                    self._fail_pending_send_queues(exc)
+                    if not current_item.future.done():
+                        current_item.future.set_exception(exc)
+                    self._fail_pending_send_queue(queue, exc)
                     return
-        except asyncio.CancelledError as exc:
-            self._fail_pending_send_queues(exc)
+                current_item = None
+        except asyncio.CancelledError:
+            cancellation_error = ConnectionError("backend websocket send worker stopped")
+            if current_item is not None and not current_item.future.done():
+                current_item.future.set_exception(cancellation_error)
+            self._fail_pending_send_queue(queue, cancellation_error)
             raise
-
-    async def _next_send_item(self) -> _QueuedSend:
-        response_queue = self._response_send_queue
-        notification_queue = self._notification_send_queue
-        if response_queue is None or notification_queue is None:
-            raise RuntimeError("backend websocket is not connected")
-        while True:
-            if response_queue.empty() and notification_queue.empty():
-                queue_name, item = await self._wait_for_next_send_item(
-                    response_queue,
-                    notification_queue,
-                )
-                self._next_send_queue_name = _opposite_queue_name(queue_name)
-                return item
-            queue_name = self._choose_send_queue_name(
-                response_queue,
-                notification_queue,
-            )
-            if queue_name == "response":
-                self._next_send_queue_name = "notification"
-                return response_queue.get_nowait()
-            if queue_name == "notification":
-                self._next_send_queue_name = "response"
-                return notification_queue.get_nowait()
-
-    async def _wait_for_next_send_item(
-        self,
-        response_queue: asyncio.Queue[_QueuedSend],
-        notification_queue: asyncio.Queue[_QueuedSend],
-    ) -> tuple[QueuedSendQueueName, _QueuedSend]:
-        response_task = asyncio.create_task(response_queue.get())
-        notification_task = asyncio.create_task(notification_queue.get())
-        tasks = {
-            response_task: "response",
-            notification_task: "notification",
-        }
-        done, pending = await asyncio.wait(
-            tasks,
-            return_when=asyncio.FIRST_COMPLETED,
-        )
-        for task in pending:
-            task.cancel()
-        for task in pending:
-            with suppress(asyncio.CancelledError):
-                await task
-        finished_task = next(iter(done))
-        queue_name = tasks[finished_task]
-        return queue_name, finished_task.result()
-
-    def _choose_send_queue_name(
-        self,
-        response_queue: asyncio.Queue[_QueuedSend],
-        notification_queue: asyncio.Queue[_QueuedSend],
-    ) -> QueuedSendQueueName:
-        preferred_queue = (
-            response_queue
-            if self._next_send_queue_name == "response"
-            else notification_queue
-        )
-        if not preferred_queue.empty():
-            return self._next_send_queue_name
-        alternate_queue_name = _opposite_queue_name(self._next_send_queue_name)
-        alternate_queue = (
-            notification_queue
-            if alternate_queue_name == "notification"
-            else response_queue
-        )
-        if not alternate_queue.empty():
-            return alternate_queue_name
-        return self._next_send_queue_name
-
-    def _send_queue(self, queue_name: str) -> asyncio.Queue[_QueuedSend] | None:
-        if queue_name == "response":
-            return self._response_send_queue
-        if queue_name == "notification":
-            return self._notification_send_queue
-        raise ValueError(f"unknown send queue name: {queue_name}")
-
-    def _fail_pending_send_queues(
-        self,
-        exc: BaseException,
-    ) -> None:
-        for queue in (
-            self._response_send_queue,
-            self._notification_send_queue,
-        ):
-            if queue is None:
-                continue
-            self._fail_pending_send_queue(queue, exc)
 
     def _fail_pending_send_queue(
         self,
-        queue: asyncio.Queue[_QueuedSend],
+        queue: asyncio.Queue[_QueuedSend] | None,
         exc: BaseException,
     ) -> None:
+        if queue is None:
+            return
         while True:
             try:
                 item = queue.get_nowait()
@@ -485,7 +401,3 @@ def rpc_log_key_is_secret(key: str) -> bool:
     if normalized in RPC_LOG_EXACT_SECRET_KEYS:
         return True
     return any(secret_key in normalized for secret_key in RPC_LOG_PARTIAL_SECRET_KEYS)
-
-
-def _opposite_queue_name(queue_name: QueuedSendQueueName) -> QueuedSendQueueName:
-    return "notification" if queue_name == "response" else "response"
