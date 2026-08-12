@@ -83,6 +83,7 @@ from connector.runtimes.codex.sdk.runtime_client import (
 )
 from connector.runtimes.codex.sdk.shapes import notification_dict, thread_ref
 from connector.runtimes.codex.timeline.accumulator import CodexTimelineAccumulator
+from connector.runtimes.codex.timeline.identity import turn_position_item_id
 from connector.runtimes.codex.timeline.items import (
     CodexAgentMessageItem,
     CodexArtifactTimelineItem,
@@ -953,7 +954,7 @@ def test_codex_compaction_snapshot_skips_transcript_message_mirrors() -> None:
     assert [item.id for item in snapshot_items] == [
         "context_compaction_thread_1",
         "file_1",
-        "msg_new",
+        turn_position_item_id("sess_1", "turn_after_compact", 0),
     ]
 
 
@@ -979,7 +980,8 @@ def test_codex_timeline_projects_typed_sdk_delta_without_params_dict() -> None:
     )
 
     assert item is not None
-    assert item.id == "item_command"
+    assert item.id == turn_position_item_id("sess_1", "turn_1", 0)
+    assert item.source["itemId"] == "item_command"
     assert item.type == "tool"
     assert item.status == "running"
     assert item.content == {
@@ -1030,8 +1032,8 @@ def test_codex_timeline_accumulates_typed_reasoning_delta() -> None:
 
     assert first is not None
     assert second is not None
-    assert first.id == "item_reasoning"
-    assert second.id == "item_reasoning"
+    assert first.id == turn_position_item_id("sess_1", "turn_1", 0)
+    assert second.id == first.id
     assert second.type == "system"
     assert second.status == "running"
     assert second.content == {
@@ -1082,7 +1084,8 @@ def test_codex_timeline_projects_typed_sdk_turn_without_params_dict() -> None:
     assert len(items) == 2
     message_item = items[0]
     turn_end = items[1]
-    assert message_item.id == "item_agent"
+    assert message_item.id == turn_position_item_id("sess_1", "turn_done", 0)
+    assert message_item.source["itemId"] == "item_agent"
     assert message_item.type == "message"
     assert message_item.content == {
         "kind": "markdown",
@@ -1925,7 +1928,10 @@ async def _test_codex_runtime_reads_typed_sdk_snapshot_with_parent_turn_id() -> 
         external_session_id="thread_1",
     )
 
-    assert [item.id for item in snapshot.items] == ["item_user", "item_assistant"]
+    assert [item.id for item in snapshot.items] == [
+        "item_user",
+        turn_position_item_id("sess_1", "turn_sdk", 0),
+    ]
     assert [item.turn_id for item in snapshot.items] == ["turn_sdk", "turn_sdk"]
     assert snapshot.items[0].source["itemId"] == "item_user"
     assert snapshot.items[1].source["itemId"] == "item_assistant"
@@ -1980,8 +1986,12 @@ async def _test_codex_runtime_default_snapshot_reads_more_than_hundred_items() -
     )
 
     assert len(snapshot.items) == 101
-    assert snapshot.items[0].id == "item_0"
-    assert snapshot.items[-1].id == "item_100"
+    assert snapshot.items[0].id == turn_position_item_id("sess_1", "turn_many", 0)
+    assert snapshot.items[-1].id == turn_position_item_id(
+        "sess_1", "turn_many", 100
+    )
+    assert snapshot.items[0].source["itemId"] == "item_0"
+    assert snapshot.items[-1].source["itemId"] == "item_100"
 
 
 async def _test_codex_runtime_typed_snapshot_preserves_messages_after_compaction() -> (
@@ -2034,7 +2044,7 @@ async def _test_codex_runtime_typed_snapshot_preserves_messages_after_compaction
     assert [item.id for item in snapshot.items] == [
         "item_compact",
         "item_user",
-        "item_assistant",
+        turn_position_item_id("sess_1", "turn_compacted", 0),
     ]
     assert [item.turn_id for item in snapshot.items] == [
         "turn_compacted",
@@ -2099,7 +2109,10 @@ async def _test_codex_runtime_reads_typed_tool_items_from_snapshot() -> None:
         external_session_id="thread_1",
     )
 
-    assert [item.id for item in snapshot.items] == ["mcp_1", "web_1"]
+    assert [item.id for item in snapshot.items] == [
+        turn_position_item_id("sess_1", "turn_tools", 0),
+        turn_position_item_id("sess_1", "turn_tools", 1),
+    ]
     assert [item.type for item in snapshot.items] == ["tool", "tool"]
     assert [item.turn_id for item in snapshot.items] == ["turn_tools", "turn_tools"]
     assert snapshot.items[0].source["itemId"] == "mcp_1"
@@ -2173,7 +2186,7 @@ async def _test_codex_runtime_reads_typed_dynamic_tool_item_from_snapshot() -> N
 
     assert len(snapshot.items) == 1
     item = snapshot.items[0]
-    assert item.id == "dyn_1"
+    assert item.id == turn_position_item_id("sess_1", "turn_dynamic", 0)
     assert item.type == "tool"
     assert item.turn_id == "turn_dynamic"
     assert item.source["itemId"] == "dyn_1"
@@ -2244,7 +2257,7 @@ async def _test_codex_runtime_reads_typed_collab_agent_item_from_snapshot() -> N
 
     assert len(snapshot.items) == 1
     item = snapshot.items[0]
-    assert item.id == "collab_1"
+    assert item.id == turn_position_item_id("sess_1", "turn_collab", 0)
     assert item.type == "tool"
     assert item.turn_id == "turn_collab"
     assert item.source["itemId"] == "collab_1"
@@ -2317,9 +2330,171 @@ async def _test_codex_snapshot_keeps_assistant_native_identity_without_turn_id()
         external_session_id="thread_1",
     )
 
-    assert host.timeline_item_upserts[-1].id == "msg_live"
+    assert host.timeline_item_upserts[-1].id == turn_position_item_id(
+        "sess_1", "turn_1", 0
+    )
     assert snapshot.items[0].id == "item-2"
     assert snapshot.items[0].source["itemId"] == "item-2"
+
+
+def test_codex_turn_position_identity_matches_live_and_snapshot_native_ids() -> None:
+    accumulator = CodexTimelineAccumulator()
+    accumulator.begin_turn("thread_1", "turn_1")
+
+    live_item = accumulator.item_from_notification(
+        session_id="sess_1",
+        external_session_id="thread_1",
+        method="item/completed",
+        params={
+            "threadId": "thread_1",
+            "turnId": "turn_1",
+            "item": {
+                "id": "msg_live",
+                "type": "agentMessage",
+                "status": "completed",
+                "text": "same answer",
+            },
+        },
+    )
+    snapshot_items = accumulator.items_from_thread_snapshot(
+        session_id="sess_1",
+        external_session_id="thread_1",
+        thread={
+            "turns": [
+                {
+                    "id": "turn_1",
+                    "items": [
+                        {
+                            "id": "item-1",
+                            "type": "userMessage",
+                            "status": "completed",
+                            "text": "question",
+                        },
+                        {
+                            "id": "item-2",
+                            "type": "agentMessage",
+                            "status": "completed",
+                            "text": "same answer",
+                        },
+                    ],
+                }
+            ]
+        },
+        limit=None,
+    )
+
+    assert live_item is not None
+    assert live_item.id == snapshot_items[1].id
+    assert live_item.id.startswith("codex_item_")
+    assert live_item.source["itemId"] == "msg_live"
+    assert snapshot_items[1].source["itemId"] == "item-2"
+    assert snapshot_items[0].id == "item-1"
+
+
+def test_codex_turn_position_identity_distinguishes_repeated_assistant_messages() -> None:
+    accumulator = CodexTimelineAccumulator()
+    accumulator.begin_turn("thread_1", "turn_1")
+
+    live_items = tuple(
+        accumulator.item_from_notification(
+            session_id="sess_1",
+            external_session_id="thread_1",
+            method="item/completed",
+            params={
+                "threadId": "thread_1",
+                "turnId": "turn_1",
+                "item": {
+                    "id": native_id,
+                    "type": "agentMessage",
+                    "status": "completed",
+                    "text": "same answer",
+                },
+            },
+        )
+        for native_id in ("msg_live_1", "msg_live_2")
+    )
+    snapshot_items = accumulator.items_from_thread_snapshot(
+        session_id="sess_1",
+        external_session_id="thread_1",
+        thread={
+            "turns": [
+                {
+                    "id": "turn_1",
+                    "items": [
+                        {
+                            "id": "item-1",
+                            "type": "userMessage",
+                            "status": "completed",
+                            "text": "question",
+                        },
+                        {
+                            "id": "item-2",
+                            "type": "agentMessage",
+                            "status": "completed",
+                            "text": "same answer",
+                        },
+                        {
+                            "id": "item-3",
+                            "type": "agentMessage",
+                            "status": "completed",
+                            "text": "same answer",
+                        },
+                    ],
+                }
+            ]
+        },
+        limit=None,
+    )
+
+    assert all(item is not None for item in live_items)
+    live_ids = [item.id for item in live_items if item is not None]
+    snapshot_assistant_ids = [
+        item.id for item in snapshot_items if item.role == "assistant"
+    ]
+    assert live_ids == snapshot_assistant_ids
+    assert len(set(live_ids)) == 2
+
+
+def test_codex_turn_position_tracking_is_released_at_turn_end() -> None:
+    accumulator = CodexTimelineAccumulator()
+    accumulator.begin_turn("thread_1", "turn_1")
+    item = accumulator.item_from_notification(
+        session_id="sess_1",
+        external_session_id="thread_1",
+        method="item/completed",
+        params={
+            "threadId": "thread_1",
+            "turnId": "turn_1",
+            "item": {
+                "id": "msg_live",
+                "type": "agentMessage",
+                "status": "completed",
+                "text": "answer",
+            },
+        },
+    )
+
+    assert item is not None
+    accumulator.end_turn("thread_1", "turn_1")
+    accumulator.begin_turn("thread_1", "turn_1")
+    restarted_item = accumulator.item_from_notification(
+        session_id="sess_1",
+        external_session_id="thread_1",
+        method="item/completed",
+        params={
+            "threadId": "thread_1",
+            "turnId": "turn_1",
+            "item": {
+                "id": "msg_after_restart",
+                "type": "agentMessage",
+                "status": "completed",
+                "text": "answer",
+            },
+        },
+    )
+
+    assert restarted_item is not None
+    assert restarted_item.id == item.id
 
 
 def test_codex_snapshot_keeps_late_user_client_message_identity() -> None:
@@ -3081,7 +3256,7 @@ async def _test_codex_runtime_agent_message_delta_upserts_timeline_item() -> Non
 
     assert len(host.timeline_item_upserts) == 2
     first, second = host.timeline_item_upserts
-    assert first.id == "item_agent"
+    assert first.id == turn_position_item_id("sess_1", "turn_1", 0)
     assert first.order_seq == second.order_seq
     assert second.type == "message"
     assert second.role == "assistant"
@@ -3126,8 +3301,12 @@ async def _test_codex_runtime_agent_message_native_id_overrides_text_identity() 
         }
     )
 
-    assert host.timeline_item_upserts[-2].id == "msg_old"
-    assert host.timeline_item_upserts[-1].id == "msg_new"
+    assert host.timeline_item_upserts[-2].id == turn_position_item_id(
+        "sess_1", "turn_1", 0
+    )
+    assert host.timeline_item_upserts[-1].id == turn_position_item_id(
+        "sess_1", "turn_1", 1
+    )
     assert host.timeline_item_upserts[-1].source["itemId"] == "msg_new"
 
 
@@ -3282,8 +3461,8 @@ def test_codex_accumulator_preserves_multiple_native_agent_messages() -> None:
 
     assert first is not None
     assert second is not None
-    assert first.id == "msg_1"
-    assert second.id == "msg_2"
+    assert first.id == turn_position_item_id("sess_1", "turn_1", 0)
+    assert second.id == turn_position_item_id("sess_1", "turn_1", 1)
     assert first.id != second.id
     assert first.content["text"] == "first"
     assert second.content["text"] == "second"
@@ -3591,7 +3770,7 @@ async def _test_codex_runtime_completed_turn_syncs_timeline_snapshot() -> None:
     assert sync["complete"] is False
     assert [item.id for item in sync["items"]] == [
         "item_user",
-        "item_agent",
+        turn_position_item_id("sess_1", "turn_done", 0),
         "codex_turn_end_turn_done",
     ]
     assert [item.role for item in sync["items"]] == ["user", "assistant", "system"]
