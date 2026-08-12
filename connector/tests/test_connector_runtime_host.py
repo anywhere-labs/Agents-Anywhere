@@ -89,7 +89,6 @@ async def _exercise_timeline_item_notification() -> None:
                 "item": {
                     "id": "item_1",
                     "sessionId": "sess_1",
-                    "turnId": "turn_1",
                     "type": "message",
                     "status": "running",
                     "role": "assistant",
@@ -97,7 +96,6 @@ async def _exercise_timeline_item_notification() -> None:
                     "source": {
                         "runtime": "codex",
                         "sessionId": "thr_1",
-                        "turnId": "turn_1",
                         "itemId": "item_1",
                         "itemType": "agentMessage",
                         "event": "item/agentMessage/delta",

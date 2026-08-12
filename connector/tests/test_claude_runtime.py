@@ -13,12 +13,117 @@ from connector.runtime_protocol import (
     RuntimeStatus,
     RuntimeTimelineItem,
 )
+from connector.runtimes.claude.domain.pending_messages import (
+    ClaudeHistoryUserMessage,
+    ClaudePendingClientMessageRegistry,
+)
 from connector.runtimes.claude.domain.session import ClaudeExecution, stable_session_id
 from connector.runtimes.claude.runtime import ClaudeRuntime
 
 
 def test_claude_runtime_lifecycle_and_config() -> None:
     asyncio.run(_test_claude_runtime_lifecycle_and_config())
+
+
+def test_claude_pending_messages_follow_external_session_id_changes() -> None:
+    registry = ClaudePendingClientMessageRegistry("conn_test")
+    registry.register_live_message(
+        session_id="sess_migrated",
+        external_session_id="claude_old",
+        client_message_id="client_migrated",
+        platform_item_id="platform_migrated",
+        text="hello",
+        attachments=(),
+    )
+
+    registry.bind_external_session("sess_migrated", "claude_new")
+    matches = registry.match_history_messages(
+        session_id="sess_migrated",
+        external_session_id="claude_new",
+        messages=(
+            ClaudeHistoryUserMessage(
+                native_message_id="native_migrated",
+                text="hello",
+            ),
+        ),
+    )
+
+    assert matches["native_migrated"].client_message_id == "client_migrated"
+    assert matches["native_migrated"].platform_item_id == "platform_migrated"
+
+
+def test_claude_pending_messages_match_incremental_history_in_send_order() -> None:
+    registry = ClaudePendingClientMessageRegistry("conn_test")
+    for index in (1, 2):
+        registry.register_live_message(
+            session_id="sess_incremental",
+            external_session_id="claude_incremental",
+            client_message_id=f"client_incremental_{index}",
+            platform_item_id=f"platform_incremental_{index}",
+            text="same content",
+            attachments=(),
+        )
+
+    first_matches = registry.match_history_messages(
+        session_id="sess_incremental",
+        external_session_id="claude_incremental",
+        messages=(
+            ClaudeHistoryUserMessage(
+                native_message_id="native_incremental_1",
+                text="same content",
+            ),
+        ),
+        prefer_latest=False,
+    )
+    second_matches = registry.match_history_messages(
+        session_id="sess_incremental",
+        external_session_id="claude_incremental",
+        messages=(
+            ClaudeHistoryUserMessage(
+                native_message_id="native_incremental_2",
+                text="same content",
+            ),
+        ),
+        prefer_latest=False,
+    )
+
+    assert first_matches["native_incremental_1"].client_message_id == (
+        "client_incremental_1"
+    )
+    assert second_matches["native_incremental_2"].client_message_id == (
+        "client_incremental_2"
+    )
+
+
+def test_claude_pending_messages_keep_a_bounded_recent_window() -> None:
+    registry = ClaudePendingClientMessageRegistry("conn_test")
+    for index in range(130):
+        registry.register_live_message(
+            session_id="sess_bounded",
+            external_session_id="claude_bounded",
+            client_message_id=f"client_bounded_{index}",
+            platform_item_id=f"platform_bounded_{index}",
+            text=f"message {index}",
+            attachments=(),
+        )
+
+    matches = registry.match_history_messages(
+        session_id="sess_bounded",
+        external_session_id="claude_bounded",
+        messages=tuple(
+            ClaudeHistoryUserMessage(
+                native_message_id=f"native_bounded_{index}",
+                text=f"message {index}",
+            )
+            for index in range(130)
+        ),
+    )
+
+    assert len(matches) == 128
+    assert "native_bounded_0" not in matches
+    assert "native_bounded_1" not in matches
+    assert matches["native_bounded_2"].client_message_id == "client_bounded_2"
+    assert matches["native_bounded_129"].client_message_id == "client_bounded_129"
 
 
 async def _test_claude_runtime_lifecycle_and_config() -> None:
@@ -100,7 +205,9 @@ async def _test_claude_runtime_empty_reads_are_stable() -> None:
         "xhigh",
         "max",
     ]
-    assert [item.id for item in (await runtime.list_permission_catalog()).permissions] == [
+    assert [
+        item.id for item in (await runtime.list_permission_catalog()).permissions
+    ] == [
         "default",
         "acceptEdits",
         "plan",
@@ -122,23 +229,15 @@ async def _test_claude_runtime_starts_turn_and_projects_timeline() -> None:
     host = _RecordingHost()
     client = _FakeClaudeClient(
         messages=[
-            SimpleNamespace(
-                type="assistant",
+            AssistantMessage(
                 uuid="assistant_1",
                 session_id="claude_session_1",
-                message={
-                    "role": "assistant",
-                    "content": [{"type": "text", "text": "do"}],
-                },
+                content=[{"type": "text", "text": "do"}],
             ),
-            SimpleNamespace(
-                type="assistant",
+            AssistantMessage(
                 uuid="assistant_1",
                 session_id="claude_session_1",
-                message={
-                    "role": "assistant",
-                    "content": [{"type": "text", "text": "done"}],
-                },
+                content=[{"type": "text", "text": "done"}],
             ),
             SimpleNamespace(
                 type="result",
@@ -170,6 +269,7 @@ async def _test_claude_runtime_starts_turn_and_projects_timeline() -> None:
     assert client.queries == ["hello"]
     assert client.options.kwargs["resume"] == "claude_session_0"
     assert client.options.kwargs["cwd"] == "/Users/t4wefan"
+    assert client.options.kwargs["extra_args"] == {"replay-user-messages": None}
     assert runtime._sessions["sess_1"].cwd == "/Users/t4wefan"
     assert runtime._sessions["sess_1"].external_session_id == "claude_session_1"
     assert [update["status"] for update in host.session_state_updates] == [
@@ -182,6 +282,14 @@ async def _test_claude_runtime_starts_turn_and_projects_timeline() -> None:
         "assistant",
         "assistant",
     ]
+    assert [
+        _capability_available(capabilities, "session.send_message")
+        for capabilities in host.session_capability_updates
+    ] == [False, False, True]
+    assert [
+        _capability_available(capabilities, "session.interrupt")
+        for capabilities in host.session_capability_updates
+    ] == [True, True, False]
     user_item, first_assistant_item, assistant_item = host.timeline_item_upserts
     assert user_item.content["text"] == "hello"
     assert user_item.source["clientMessageId"] == "client_msg_1"
@@ -271,16 +379,36 @@ def test_claude_runtime_create_and_start_publishes_session_meta() -> None:
 
 async def _test_claude_runtime_create_and_start_publishes_session_meta() -> None:
     host = _RecordingHost()
-    client = _FakeClaudeClient(
-        messages=[SimpleNamespace(type="result", session_id="claude_session_2")]
+    sdk = _HistorySdk(
+        messages={
+            "claude_session_2": [
+                SimpleNamespace(
+                    type="user",
+                    uuid="native_new_user",
+                    session_id="claude_session_2",
+                    message={"role": "user", "content": "start"},
+                )
+            ]
+        }
     )
-    runtime = _runtime(host=host, client=client)
+    client = _FakeClaudeClient(
+        messages=[
+            SystemMessage(
+                subtype="init",
+                data={"session_id": "claude_session_2"},
+            ),
+            UserMessage(content="start", uuid="native_new_user"),
+            SimpleNamespace(type="result", session_id="claude_session_2"),
+        ]
+    )
+    runtime = _runtime(host=host, client=client, sdk=sdk)
 
     result = await runtime.create_and_start_session(
         "sess_new",
         "start",
         title="New session",
         cwd="/repo",
+        client_message_id="client_new_user",
     )
     task = runtime._sessions["sess_new"].active_task
 
@@ -294,6 +422,18 @@ async def _test_claude_runtime_create_and_start_publishes_session_meta() -> None
 
     assert client.options.kwargs["cwd"] == "/repo"
     assert runtime._sessions["sess_new"].external_session_id == "claude_session_2"
+
+    live_user = next(item for item in host.timeline_item_upserts if item.role == "user")
+    handled = await runtime.sync_session_timeline("sess_new", "claude_session_2")
+    history_user = next(
+        item for item in host.timeline_syncs[-1]["items"] if item.role == "user"
+    )
+
+    assert handled is True
+    assert live_user.source["itemId"] == "native_new_user"
+    assert history_user.id == live_user.id
+    assert history_user.source["clientMessageId"] == "client_new_user"
+    assert history_user.source["itemId"] == "native_new_user"
 
 
 def test_claude_runtime_projects_result_only_reply() -> None:
@@ -480,6 +620,14 @@ async def _test_claude_runtime_lists_sessions_from_sdk_history() -> None:
     assert session.metadata["source"] == "claude.session/list"
     assert session.metadata["sync"]["changed"] is True
     assert session.metadata["sync"]["requires_timeline_sync"] is True
+    assert "claude/session-sync/claude_history_1" not in host.sync_states
+
+    handled = await runtime.sync_session_timeline(
+        session.session_id,
+        session.external_session_id,
+    )
+
+    assert handled is True
     assert host.sync_states["claude/session-sync/claude_history_1"]["session_id"] == (
         stable_session_id("conn_test", "claude_history_1")
     )
@@ -519,11 +667,73 @@ async def _test_claude_runtime_session_sync_marker_skips_unchanged_history() -> 
 
     assert first[0].metadata["sync"]["changed"] is True
     assert second[0].metadata["sync"]["changed"] is False
-    assert second[0].metadata["sync"]["requires_timeline_sync"] is True
+    assert second[0].metadata["sync"]["requires_timeline_sync"] is False
     assert second[0].metadata["sync"]["history_cursor_missing"] is False
     assert host.timeline_syncs == []
     assert forced[0].metadata["sync"]["changed"] is True
     assert forced[0].metadata["sync"]["requires_timeline_sync"] is True
+
+
+def test_claude_runtime_does_not_commit_session_marker_when_publish_fails() -> None:
+    asyncio.run(
+        _test_claude_runtime_does_not_commit_session_marker_when_publish_fails()
+    )
+
+
+async def _test_claude_runtime_does_not_commit_session_marker_when_publish_fails() -> (
+    None
+):
+    host = _RecordingHost()
+    sdk = _HistorySdk(
+        sessions=[
+            SimpleNamespace(
+                session_id="claude_history_publish_fail",
+                summary="History",
+                last_modified=1_789_000_000_000,
+                file_size=123,
+            )
+        ],
+        messages={
+            "claude_history_publish_fail": [
+                SimpleNamespace(
+                    type="user",
+                    uuid="publish_fail_user",
+                    session_id="claude_history_publish_fail",
+                    message={"role": "user", "content": "hello"},
+                )
+            ]
+        },
+    )
+    runtime = _runtime(host=host, sdk=sdk)
+    session = (await runtime.list_sessions(limit=10))[0]
+
+    async def fail_timeline_sync(**_kwargs: Any) -> None:
+        raise RuntimeError("timeline publish failed")
+
+    host.timeline_sync = fail_timeline_sync  # type: ignore[method-assign]
+
+    try:
+        await runtime.sync_session_timeline(
+            session.session_id,
+            session.external_session_id,
+        )
+    except RuntimeError as exc:
+        assert str(exc) == "timeline publish failed"
+    else:
+        raise AssertionError("timeline publish should fail")
+
+    assert "claude/session-sync/claude_history_publish_fail" not in host.sync_states
+    assert "claude/history/cursor/claude_history_publish_fail" not in host.sync_states
+
+    host.timeline_sync = _RecordingHost.timeline_sync.__get__(host)
+    handled = await runtime.sync_session_timeline(
+        session.session_id,
+        session.external_session_id,
+    )
+
+    assert handled is True
+    assert "claude/session-sync/claude_history_publish_fail" in host.sync_states
+    assert "claude/history/cursor/claude_history_publish_fail" in host.sync_states
 
 
 def test_claude_runtime_projects_sdk_history_snapshot() -> None:
@@ -688,7 +898,9 @@ def test_claude_runtime_prefers_sdk_history_over_local_partial_snapshot() -> Non
     asyncio.run(_test_claude_runtime_prefers_sdk_history_over_local_partial_snapshot())
 
 
-async def _test_claude_runtime_prefers_sdk_history_over_local_partial_snapshot() -> None:
+async def _test_claude_runtime_prefers_sdk_history_over_local_partial_snapshot() -> (
+    None
+):
     sdk = _HistorySdk(
         messages={
             "claude_history_complete": [
@@ -733,7 +945,7 @@ async def _test_claude_runtime_prefers_sdk_history_over_local_partial_snapshot()
     assert snapshot.metadata["source"] == "claude.session.history"
     assert [item.role for item in snapshot.items] == ["user", "assistant"]
     assert snapshot.items[1].content["text"] == "history answer"
-    assert session.synced_revision == session.timeline_revision
+    assert session.synced_revision < session.timeline_revision
 
 
 def test_claude_runtime_merges_local_and_history_sync_flags() -> None:
@@ -777,6 +989,14 @@ def test_claude_runtime_defers_history_cursor_until_scanner_sync() -> None:
 async def _test_claude_runtime_defers_history_cursor_until_scanner_sync() -> None:
     host = _RecordingHost()
     sdk = _HistorySdk(
+        sessions=[
+            SimpleNamespace(
+                session_id="claude_history_active",
+                summary="Active history",
+                last_modified=1_789_000_000_000,
+                file_size=123,
+            )
+        ],
         messages={
             "claude_history_turn": [
                 SimpleNamespace(
@@ -795,7 +1015,7 @@ async def _test_claude_runtime_defers_history_cursor_until_scanner_sync() -> Non
                     },
                 ),
             ]
-        }
+        },
     )
     client = _FakeClaudeClient(
         messages=[SimpleNamespace(type="result", session_id="claude_history_turn")]
@@ -939,6 +1159,154 @@ async def _test_claude_runtime_scanner_syncs_full_history_without_cursor() -> No
     )
 
 
+def test_claude_runtime_local_snapshot_marks_synced_only_after_commit() -> None:
+    asyncio.run(_test_claude_runtime_local_snapshot_marks_synced_only_after_commit())
+
+
+async def _test_claude_runtime_local_snapshot_marks_synced_only_after_commit() -> None:
+    runtime = _runtime()
+    session = runtime._session_store.ensure("sess_local_pending")
+    item = runtime._timeline.message_item(
+        session=session,
+        turn_id="turn_local_pending",
+        role="user",
+        text="pending",
+        event="claude.turn.user",
+        client_message_id="client_local_pending",
+    )
+    runtime._session_store.record_timeline_item(item)
+
+    prepared = await runtime.prepare_session_timeline_sync("sess_local_pending")
+
+    assert prepared is not None
+    assert prepared.snapshot is not None
+    assert [snapshot_item.id for snapshot_item in prepared.snapshot.items] == [item.id]
+    assert session.synced_revision == 0
+    assert prepared.commit is not None
+
+    await prepared.commit()
+
+    assert session.synced_revision == session.timeline_revision
+
+
+def test_claude_runtime_retries_unsynced_local_snapshot_when_history_is_unchanged() -> (
+    None
+):
+    asyncio.run(
+        _test_claude_runtime_retries_unsynced_local_snapshot_when_history_is_unchanged()
+    )
+
+
+async def _test_claude_runtime_retries_unsynced_local_snapshot_when_history_is_unchanged() -> (
+    None
+):
+    host = _RecordingHost()
+    external_session_id = "claude_local_retry"
+    sdk = _HistorySdk(messages={external_session_id: []})
+    runtime = _runtime(host=host, sdk=sdk)
+
+    await runtime.sync_session_timeline("sess_local_retry", external_session_id)
+    session = runtime._session_store.ensure("sess_local_retry", external_session_id)
+    item = runtime._timeline.message_item(
+        session=session,
+        turn_id="turn_local_retry",
+        role="user",
+        text="retry",
+        event="claude.turn.user",
+        client_message_id="client_local_retry",
+    )
+    runtime._session_store.record_timeline_item(item)
+    host.timeline_syncs.clear()
+
+    prepared = await runtime.prepare_session_timeline_sync(
+        "sess_local_retry",
+        external_session_id,
+    )
+
+    assert prepared is not None
+    assert prepared.snapshot is not None
+    assert [snapshot_item.id for snapshot_item in prepared.snapshot.items] == [item.id]
+    assert session.synced_revision < session.timeline_revision
+    assert prepared.commit is not None
+
+    await prepared.commit()
+
+    assert session.synced_revision == session.timeline_revision
+
+
+def test_claude_runtime_retries_local_snapshot_before_first_history_cursor() -> None:
+    asyncio.run(
+        _test_claude_runtime_retries_local_snapshot_before_first_history_cursor()
+    )
+
+
+async def _test_claude_runtime_retries_local_snapshot_before_first_history_cursor() -> (
+    None
+):
+    host = _RecordingHost()
+    external_session_id = "claude_local_first_retry"
+    runtime = _runtime(
+        host=host,
+        sdk=_HistorySdk(messages={external_session_id: []}),
+    )
+    session = runtime._session_store.ensure(
+        "sess_local_first_retry",
+        external_session_id,
+    )
+    item = runtime._timeline.message_item(
+        session=session,
+        turn_id="turn_local_first_retry",
+        role="user",
+        text="retry before history",
+        event="claude.turn.user",
+        client_message_id="client_local_first_retry",
+    )
+    runtime._session_store.record_timeline_item(item)
+
+    prepared = await runtime.prepare_session_timeline_sync(
+        "sess_local_first_retry",
+        external_session_id,
+    )
+
+    assert prepared is not None
+    assert prepared.snapshot is not None
+    assert [snapshot_item.id for snapshot_item in prepared.snapshot.items] == [item.id]
+    assert "claude/history/cursor/claude_local_first_retry" not in host.sync_states
+    assert prepared.commit is not None
+
+    await prepared.commit()
+
+    assert session.synced_revision == session.timeline_revision
+    assert "claude/history/cursor/claude_local_first_retry" not in host.sync_states
+
+
+def test_claude_runtime_history_read_failure_does_not_publish_or_commit() -> None:
+    asyncio.run(_test_claude_runtime_history_read_failure_does_not_publish_or_commit())
+
+
+async def _test_claude_runtime_history_read_failure_does_not_publish_or_commit() -> (
+    None
+):
+    host = _RecordingHost()
+    sdk = _HistorySdk()
+
+    def fail_history_read(_session_id: str) -> list[Any]:
+        raise RuntimeError("history unavailable")
+
+    sdk.get_session_messages = fail_history_read  # type: ignore[method-assign]
+    runtime = _runtime(host=host, sdk=sdk)
+
+    try:
+        await runtime.sync_session_timeline("sess_history_fail", "claude_history_fail")
+    except RuntimeError as exc:
+        assert str(exc) == "Claude history sync failed for session claude_history_fail"
+    else:
+        raise AssertionError("history sync should fail explicitly")
+
+    assert host.timeline_syncs == []
+    assert host.sync_states == {}
+
+
 def test_claude_runtime_scanner_syncs_delta_after_cursor() -> None:
     asyncio.run(_test_claude_runtime_scanner_syncs_delta_after_cursor())
 
@@ -995,10 +1363,14 @@ async def _test_claude_runtime_scanner_syncs_delta_after_cursor() -> None:
 
 
 def test_claude_runtime_scanner_skips_active_session_without_storing_cursor() -> None:
-    asyncio.run(_test_claude_runtime_scanner_skips_active_session_without_storing_cursor())
+    asyncio.run(
+        _test_claude_runtime_scanner_skips_active_session_without_storing_cursor()
+    )
 
 
-async def _test_claude_runtime_scanner_skips_active_session_without_storing_cursor() -> None:
+async def _test_claude_runtime_scanner_skips_active_session_without_storing_cursor() -> (
+    None
+):
     host = _RecordingHost()
     sdk = _HistorySdk(
         messages={
@@ -1022,11 +1394,16 @@ async def _test_claude_runtime_scanner_skips_active_session_without_storing_curs
     )
     session.execution = ClaudeExecution(turn_id="turn_active")
 
+    listed = await runtime.list_sessions()
+
     handled = await runtime.sync_session_timeline(
         "sess_history_active",
         "claude_history_active",
     )
 
+    assert len(listed) == 1
+    assert listed[0].metadata["source"] == "claude.session.local"
+    assert listed[0].metadata["sync"]["requires_timeline_sync"] is False
     assert handled is True
     assert host.timeline_syncs == []
     assert "claude/history/cursor/claude_history_active" not in host.sync_states
@@ -1036,7 +1413,9 @@ def test_claude_runtime_session_state_defaults_to_idle_for_known_history() -> No
     asyncio.run(_test_claude_runtime_session_state_defaults_to_idle_for_known_history())
 
 
-async def _test_claude_runtime_session_state_defaults_to_idle_for_known_history() -> None:
+async def _test_claude_runtime_session_state_defaults_to_idle_for_known_history() -> (
+    None
+):
     sdk = _HistorySdk(
         infos={
             "claude_history_state": SimpleNamespace(
@@ -1108,9 +1487,7 @@ async def _test_claude_runtime_applies_model_selection_to_sdk_options() -> None:
     )
     runtime = _runtime(host=host, client=client)
     model = (await runtime.list_model_catalog(query="sonnet")).models[0]
-    effort = next(
-        item for item in model.reasoning_items if item.id == "high"
-    )
+    effort = next(item for item in model.reasoning_items if item.id == "high")
 
     result = await runtime.start_turn(
         "sess_model",
@@ -1127,9 +1504,7 @@ async def _test_claude_runtime_applies_model_selection_to_sdk_options() -> None:
 
     assert client.options.kwargs["model"] == "claude-sonnet-5"
     assert client.options.kwargs["effort"] == "high"
-    assert host.session_state_updates[0]["selections"] == {
-        "model": effort.selection_id
-    }
+    assert host.session_state_updates[0]["selections"] == {"model": effort.selection_id}
 
 
 def test_claude_runtime_applies_plain_model_selection_to_sdk_options() -> None:
@@ -1302,6 +1677,49 @@ def test_claude_runtime_projects_tool_blocks_to_timeline() -> None:
 
 async def _test_claude_runtime_projects_tool_blocks_to_timeline() -> None:
     host = _RecordingHost()
+    sdk = _HistorySdk(
+        messages={
+            "claude_tool_session": [
+                SimpleNamespace(
+                    type="user",
+                    uuid="history_tool_user",
+                    session_id="claude_tool_session",
+                    message={"role": "user", "content": "run tests"},
+                ),
+                SimpleNamespace(
+                    type="assistant",
+                    uuid="history_tool_call",
+                    session_id="claude_tool_session",
+                    message={
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": "tool_1",
+                                "name": "Bash",
+                                "input": {"command": "pytest"},
+                            }
+                        ],
+                    },
+                ),
+                SimpleNamespace(
+                    type="user",
+                    uuid="history_tool_result",
+                    session_id="claude_tool_session",
+                    message={
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": "tool_1",
+                                "content": "ok",
+                            }
+                        ],
+                    },
+                ),
+            ]
+        }
+    )
     client = _FakeClaudeClient(
         messages=[
             SimpleNamespace(
@@ -1336,9 +1754,14 @@ async def _test_claude_runtime_projects_tool_blocks_to_timeline() -> None:
             SimpleNamespace(type="result", session_id="claude_tool_session"),
         ]
     )
-    runtime = _runtime(host=host, client=client)
+    runtime = _runtime(host=host, client=client, sdk=sdk)
 
-    result = await runtime.start_turn("sess_tools", "claude_tool_session", "run tests")
+    result = await runtime.start_turn(
+        "sess_tools",
+        "claude_tool_session",
+        "run tests",
+        client_message_id="client_tool_message",
+    )
     task = runtime._sessions["sess_tools"].active_task
 
     assert result.ok is True
@@ -1359,6 +1782,283 @@ async def _test_claude_runtime_projects_tool_blocks_to_timeline() -> None:
     assert tool_result.content["output"] == "ok"
     assert tool_result.content["toolName"] == "Bash"
     assert tool_result.source["itemType"] == "tool_result"
+
+    handled = await runtime.sync_session_timeline(
+        "sess_tools",
+        "claude_tool_session",
+    )
+    history_tool = next(
+        item for item in host.timeline_syncs[-1]["items"] if item.type == "tool"
+    )
+
+    assert handled is True
+    assert history_tool.id == tool_result.id
+    assert history_tool.status == "done"
+
+
+def test_claude_runtime_binds_identical_live_user_messages_by_history_order() -> None:
+    asyncio.run(
+        _test_claude_runtime_binds_identical_live_user_messages_by_history_order()
+    )
+
+
+async def _test_claude_runtime_binds_identical_live_user_messages_by_history_order() -> (
+    None
+):
+    host = _RecordingHost()
+    external_session_id = "claude_identical_messages"
+    sdk = _HistorySdk(messages={external_session_id: []})
+    client = _FakeClaudeClient()
+    runtime = _runtime(host=host, client=client, sdk=sdk)
+
+    client.messages = [
+        UserMessage(content="same content", uuid="native_same_1"),
+        SimpleNamespace(type="result", session_id=external_session_id),
+    ]
+    first = await runtime.start_turn(
+        "sess_identical_messages",
+        external_session_id,
+        "same content",
+        client_message_id="client_same_1",
+    )
+    first_task = runtime._sessions["sess_identical_messages"].active_task
+    assert first.ok is True
+    assert first_task is not None
+    await first_task
+
+    client.messages = [
+        UserMessage(content="same content", uuid="native_same_2"),
+        SimpleNamespace(type="result", session_id=external_session_id),
+    ]
+    second = await runtime.start_turn(
+        "sess_identical_messages",
+        external_session_id,
+        "same content",
+        client_message_id="client_same_2",
+    )
+    second_task = runtime._sessions["sess_identical_messages"].active_task
+    assert second.ok is True
+    assert second_task is not None
+    await second_task
+
+    live_users = [item for item in host.timeline_item_upserts if item.role == "user"]
+    assert len(live_users) == 2
+    assert live_users[0].id != live_users[1].id
+
+    sdk.messages[external_session_id] = [
+        SimpleNamespace(
+            type="user",
+            uuid="native_same_1",
+            session_id=external_session_id,
+            message={"role": "user", "content": "same content"},
+        ),
+    ]
+
+    first_sync = await runtime.sync_session_timeline(
+        "sess_identical_messages",
+        external_session_id,
+    )
+    first_history_user = next(
+        item for item in host.timeline_syncs[-1]["items"] if item.role == "user"
+    )
+
+    sdk.messages[external_session_id].append(
+        SimpleNamespace(
+            type="user",
+            uuid="native_same_2",
+            session_id=external_session_id,
+            message={"role": "user", "content": "same content"},
+        )
+    )
+
+    second_sync = await runtime.sync_session_timeline(
+        "sess_identical_messages",
+        external_session_id,
+    )
+    second_history_user = next(
+        item for item in host.timeline_syncs[-1]["items"] if item.role == "user"
+    )
+
+    assert first_sync is True
+    assert second_sync is True
+    assert first_history_user.id == live_users[0].id
+    assert first_history_user.source["clientMessageId"] == "client_same_1"
+    assert first_history_user.source["itemId"] == "native_same_1"
+    assert second_history_user.id == live_users[1].id
+    assert second_history_user.source["clientMessageId"] == "client_same_2"
+    assert second_history_user.source["itemId"] == "native_same_2"
+
+
+def test_claude_runtime_native_user_id_survives_binding_eviction() -> None:
+    asyncio.run(_test_claude_runtime_native_user_id_survives_binding_eviction())
+
+
+async def _test_claude_runtime_native_user_id_survives_binding_eviction() -> None:
+    host = _RecordingHost()
+    external_session_id = "claude_native_eviction"
+    sdk = _HistorySdk(
+        messages={
+            external_session_id: [
+                SimpleNamespace(
+                    type="user",
+                    uuid="native_eviction_original",
+                    session_id=external_session_id,
+                    message={"role": "user", "content": "original"},
+                )
+            ]
+        }
+    )
+    client = _FakeClaudeClient(
+        messages=[
+            UserMessage(content="original", uuid="native_eviction_original"),
+            SimpleNamespace(type="result", session_id=external_session_id),
+        ]
+    )
+    runtime = _runtime(host=host, client=client, sdk=sdk)
+
+    result = await runtime.start_turn(
+        "sess_native_eviction",
+        external_session_id,
+        "original",
+        client_message_id="client_eviction_original",
+    )
+    task = runtime._sessions["sess_native_eviction"].active_task
+    assert result.ok is True
+    assert task is not None
+    await task
+    live_user = next(item for item in host.timeline_item_upserts if item.role == "user")
+
+    for index in range(1001):
+        client_message_id = f"client_eviction_{index}"
+        runtime._pending_messages.register_live_message(
+            session_id="sess_native_eviction",
+            external_session_id=external_session_id,
+            client_message_id=client_message_id,
+            platform_item_id=f"platform_eviction_{index}",
+            text=f"eviction message {index}",
+            attachments=(),
+        )
+        assert runtime._pending_messages.bind_live_native_message(
+            session_id="sess_native_eviction",
+            external_session_id=external_session_id,
+            client_message_id=client_message_id,
+            native_message_id=f"native_eviction_{index}",
+            text=f"eviction message {index}",
+        )
+
+    handled = await runtime.sync_session_timeline(
+        "sess_native_eviction",
+        external_session_id,
+    )
+    history_user = next(
+        item for item in host.timeline_syncs[-1]["items"] if item.role == "user"
+    )
+
+    assert handled is True
+    assert "clientMessageId" not in history_user.source
+    assert history_user.id == live_user.id
+    assert history_user.source["itemId"] == "native_eviction_original"
+
+
+def test_claude_runtime_native_ids_survive_connector_restart() -> None:
+    asyncio.run(_test_claude_runtime_native_ids_survive_connector_restart())
+
+
+async def _test_claude_runtime_native_ids_survive_connector_restart() -> None:
+    external_session_id = "claude_restart_identity"
+    messages = [
+        SimpleNamespace(
+            type="user",
+            uuid="native_restart_user",
+            session_id=external_session_id,
+            message={"role": "user", "content": "restart"},
+        ),
+        SimpleNamespace(
+            type="assistant",
+            uuid="native_restart_assistant_entry",
+            session_id=external_session_id,
+            message={
+                "id": "native_restart_assistant_message",
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "native_restart_tool",
+                        "name": "Bash",
+                        "input": {"command": "pwd"},
+                    },
+                    {"type": "text", "text": "done"},
+                ],
+            },
+        ),
+    ]
+    live_host = _RecordingHost()
+    live_runtime = _runtime(
+        host=live_host,
+        client=_FakeClaudeClient(
+            messages=[
+                UserMessage(content="restart", uuid="native_restart_user"),
+                SimpleNamespace(
+                    type="assistant",
+                    uuid="native_restart_assistant_entry",
+                    session_id=external_session_id,
+                    message={
+                        "id": "native_restart_assistant_message",
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": "native_restart_tool",
+                                "name": "Bash",
+                                "input": {"command": "pwd"},
+                            },
+                            {"type": "text", "text": "done"},
+                        ],
+                    },
+                ),
+                SimpleNamespace(type="result", session_id=external_session_id),
+            ]
+        ),
+    )
+
+    result = await live_runtime.start_turn(
+        "sess_platform_created",
+        external_session_id,
+        "restart",
+        client_message_id="client_restart",
+    )
+    task = live_runtime._sessions["sess_platform_created"].active_task
+    assert result.ok is True
+    assert task is not None
+    await task
+    live_ids = {
+        (item.type, item.role): item.id for item in live_host.timeline_item_upserts
+    }
+
+    restarted_runtime = _runtime(
+        sdk=_HistorySdk(
+            sessions=[
+                SimpleNamespace(
+                    session_id=external_session_id,
+                    summary="Restart identity",
+                    last_modified=1_789_000_000_000,
+                    file_size=123,
+                )
+            ],
+            messages={external_session_id: messages},
+        )
+    )
+    imported_session = (await restarted_runtime.list_sessions())[0]
+    snapshot = await restarted_runtime.get_session_snapshot(
+        imported_session.session_id,
+        imported_session.external_session_id,
+    )
+    history_ids = {(item.type, item.role): item.id for item in snapshot.items}
+
+    assert imported_session.session_id != "sess_platform_created"
+    assert history_ids[("message", "user")] == live_ids[("message", "user")]
+    assert history_ids[("message", "assistant")] == live_ids[("message", "assistant")]
+    assert history_ids[("tool", "tool")] == live_ids[("tool", "tool")]
 
 
 def test_claude_runtime_projects_special_tool_content() -> None:
@@ -1860,6 +2560,14 @@ def _config() -> RuntimeConfig:
     )
 
 
+def _capability_available(capability_set: Any, capability_id: str) -> bool:
+    return next(
+        capability.available
+        for capability in capability_set.capabilities
+        if capability.capability_id == capability_id
+    )
+
+
 class _FakeOptions:
     def __init__(self, **kwargs: Any) -> None:
         self.kwargs = kwargs
@@ -1964,12 +2672,25 @@ class StreamEvent(SimpleNamespace):
     pass
 
 
+class UserMessage(SimpleNamespace):
+    pass
+
+
+class AssistantMessage(SimpleNamespace):
+    pass
+
+
+class SystemMessage(SimpleNamespace):
+    pass
+
+
 class _RecordingHost(RuntimeHostClient):
     def __init__(self) -> None:
         self.session_meta_upserts: list[dict[str, Any]] = []
         self.session_state_updates: list[dict[str, Any]] = []
         self.timeline_item_upserts: list[RuntimeTimelineItem] = []
         self.timeline_syncs: list[dict[str, Any]] = []
+        self.session_capability_updates: list[Any] = []
         self.notice_upserts: list[Any] = []
         self.attachments: dict[str, RuntimeAttachmentContent] = {}
         self.sync_states: dict[str, dict[str, Any]] = {}
@@ -2026,6 +2747,9 @@ class _RecordingHost(RuntimeHostClient):
 
     async def timeline_item_upsert(self, item: RuntimeTimelineItem) -> None:
         self.timeline_item_upserts.append(item)
+
+    async def session_capabilities_update(self, capabilities: Any) -> None:
+        self.session_capability_updates.append(capabilities)
 
     async def timeline_sync(
         self,

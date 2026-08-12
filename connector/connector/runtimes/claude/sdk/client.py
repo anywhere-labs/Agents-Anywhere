@@ -54,7 +54,10 @@ def build_sdk_options(
     stderr: Callable[[str], None] | None = None,
 ) -> Any:
     values = dict(config_values)
-    kwargs: dict[str, Any] = {"include_partial_messages": True}
+    kwargs: dict[str, Any] = {
+        "include_partial_messages": True,
+        "extra_args": {"replay-user-messages": None},
+    }
     if session.cwd:
         kwargs["cwd"] = session.cwd
     if session.external_session_id:
@@ -118,7 +121,7 @@ async def interrupt_client(client: Any) -> bool:
 async def query_client(client: Any, content: str) -> None:
     query = getattr(client, "query", None)
     if not callable(query):
-        raise RuntimeError("ClaudeSDKClient.query is unavailable")
+        raise RuntimeError("ClaudeSDKClient.query is unavailable")  # noqa: TRY004
     await maybe_await(query(content))
 
 
@@ -157,9 +160,7 @@ def _permission_hooks(sdk: Any) -> dict[str, Any] | None:
         return {"continue_": True}
 
     return {
-        "PreToolUse": [
-            hook_matcher(matcher=None, hooks=[keep_permission_stream_open])
-        ]
+        "PreToolUse": [hook_matcher(matcher=None, hooks=[keep_permission_stream_open])]
     }
 
 

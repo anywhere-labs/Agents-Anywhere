@@ -144,7 +144,6 @@ class ClaudeSessionStore:
         )
         if limit is not None:
             items = items[:limit]
-        session.synced_revision = session.timeline_revision
         return RuntimeTimelineSnapshot(
             session_id=session.session_id,
             external_session_id=session.external_session_id,

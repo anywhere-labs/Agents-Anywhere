@@ -7,6 +7,7 @@ from typing import Any
 
 from jsonschema import Draft202012Validator
 
+from connector.core.json_kv import JsonKeyValueStore
 from connector.launch import launch_target
 from connector.runtime_protocol import (
     AgentRuntime,
@@ -156,4 +157,5 @@ class ClaudeProvider(RuntimeProvider):
             config=config,
             host=host,
             sdk_loader=self._sdk_loader,
+            client_message_kv=JsonKeyValueStore.default(),
         )

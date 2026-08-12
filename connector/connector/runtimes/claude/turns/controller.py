@@ -12,6 +12,9 @@ from connector.runtime_protocol import (
 )
 from connector.runtime_protocol.host import RuntimeHostClient
 from connector.runtimes.claude.catalogs.reader import ClaudeCatalogReader
+from connector.runtimes.claude.domain.pending_messages import (
+    ClaudePendingClientMessageRegistry,
+)
 from connector.runtimes.claude.history.syncer import ClaudeHistorySyncer
 from connector.runtimes.claude.notifications.notices import ClaudeNoticeRegistry
 from connector.runtimes.claude.notifications.projector import (
@@ -40,6 +43,7 @@ class ClaudeTurnController:
     timeline: ClaudeMessageProjector
     notices: ClaudeNoticeRegistry
     notifications: ClaudeNotificationProjector
+    pending_messages: ClaudePendingClientMessageRegistry
     sdk_loader: SdkLoader | None = None
     client_factory: ClaudeClientFactory | None = None
     interactions: ClaudeInteractionController = field(init=False)
@@ -68,6 +72,7 @@ class ClaudeTurnController:
             timeline=self.timeline,
             notifications=self.notifications,
             interactions=self.interactions,
+            pending_messages=self.pending_messages,
             sdk_loader=self.sdk_loader,
             client_factory=self.client_factory,
         )

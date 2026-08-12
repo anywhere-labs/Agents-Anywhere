@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
+from connector.core.json_kv import JsonKeyValueStore
 from connector.runtime_protocol import (
     AgentRuntime,
     PreparedSessionTimelineSync,
@@ -27,6 +28,9 @@ from connector.runtimes.claude.domain.capabilities import (
     claude_runtime_capabilities,
     claude_session_capabilities,
 )
+from connector.runtimes.claude.domain.pending_messages import (
+    ClaudePendingClientMessageRegistry,
+)
 from connector.runtimes.claude.domain.session import ClaudeSession
 from connector.runtimes.claude.history.state import ClaudeHistoryCursorStore
 from connector.runtimes.claude.history.syncer import ClaudeHistorySyncer
@@ -40,6 +44,7 @@ from connector.runtimes.claude.sdk.client import (
 )
 from connector.runtimes.claude.sessions.cache import ClaudeSessionStore
 from connector.runtimes.claude.sessions.reader import ClaudeSessionReader
+from connector.runtimes.claude.sessions.sync_state import ClaudeSessionSyncStateStore
 from connector.runtimes.claude.timeline.messages import ClaudeMessageProjector
 from connector.runtimes.claude.turns.controller import ClaudeTurnController
 
@@ -50,11 +55,14 @@ class ClaudeRuntime(AgentRuntime):
     host: RuntimeHostClient
     sdk_loader: SdkLoader | None = None
     client_factory: ClaudeClientFactory | None = None
+    client_message_kv: JsonKeyValueStore | None = None
     runtime_version: str = "native-0"
     _sessions: dict[str, ClaudeSession] = field(default_factory=dict, init=False)
     _session_states: RuntimeSessionStateCache = field(init=False)
     _session_store: ClaudeSessionStore = field(init=False)
     _session_reader: ClaudeSessionReader = field(init=False)
+    _session_sync_states: ClaudeSessionSyncStateStore = field(init=False)
+    _pending_messages: ClaudePendingClientMessageRegistry = field(init=False)
     _history_syncer: ClaudeHistorySyncer = field(init=False)
     _catalogs: ClaudeCatalogReader = field(init=False)
     _timeline: ClaudeMessageProjector = field(init=False)
@@ -63,14 +71,25 @@ class ClaudeRuntime(AgentRuntime):
     _turns: ClaudeTurnController = field(init=False)
 
     def __post_init__(self) -> None:
-        self._session_states = RuntimeSessionStateCache("claude", self.host)
+        self._session_states = RuntimeSessionStateCache(
+            "claude",
+            self.host,
+            on_state_updated=self.publish_session_capabilities_for_state,
+        )
         self._session_store = ClaudeSessionStore(self._sessions)
+        self._session_sync_states = ClaudeSessionSyncStateStore(self.host)
+        self._pending_messages = ClaudePendingClientMessageRegistry(
+            connector_id=self.host.connector_id,
+            kv_store=self.client_message_kv,
+        )
         self._catalogs = ClaudeCatalogReader(config=self.config)
         self._session_reader = ClaudeSessionReader(
             config=self.config,
             host=self.host,
             session_store=self._session_store,
             sdk_loader=self.sdk_loader,
+            sync_states=self._session_sync_states,
+            pending_messages=self._pending_messages,
         )
         self._history_syncer = ClaudeHistorySyncer(
             config=self.config,
@@ -78,6 +97,8 @@ class ClaudeRuntime(AgentRuntime):
             session_store=self._session_store,
             sdk_loader=self.sdk_loader,
             cursor_store=ClaudeHistoryCursorStore(self.host),
+            sync_states=self._session_sync_states,
+            pending_messages=self._pending_messages,
         )
         self._timeline = ClaudeMessageProjector()
         self._notices = ClaudeNoticeRegistry()
@@ -98,6 +119,7 @@ class ClaudeRuntime(AgentRuntime):
             timeline=self._timeline,
             notices=self._notices,
             notifications=self._notifications,
+            pending_messages=self._pending_messages,
             sdk_loader=self.sdk_loader,
             client_factory=self.client_factory,
         )
@@ -150,9 +172,7 @@ class ClaudeRuntime(AgentRuntime):
         if state is not None:
             return state
         if external_session_id is not None:
-            state = self._session_states.get_by_external_session_id(
-                external_session_id
-            )
+            state = self._session_states.get_by_external_session_id(external_session_id)
             if state is not None:
                 return state
         return await self._session_reader.get_session_state(
@@ -173,13 +193,30 @@ class ClaudeRuntime(AgentRuntime):
         session_id: str,
         external_session_id: str | None = None,
     ) -> RuntimeCapabilitySet:
-        _ = external_session_id
+        state = await self.get_session_state(session_id, external_session_id)
         return claude_session_capabilities(
             ClaudeCapabilityContext(
                 connector_id=self.host.connector_id,
                 revision=self.config.revision,
                 session_id=session_id,
-                has_active_turn=self._turns.has_active_turn(session_id),
+                has_active_turn=claude_state_has_active_execution(state),
+            )
+        )
+
+    async def publish_session_capabilities_for_state(
+        self,
+        state: SessionState,
+    ) -> None:
+        """Publish session capabilities after a Claude state transition."""
+
+        await self.host.session_capabilities_update(
+            claude_session_capabilities(
+                ClaudeCapabilityContext(
+                    connector_id=self.host.connector_id,
+                    revision=self.config.revision,
+                    session_id=state.session_id,
+                    has_active_turn=claude_state_has_active_execution(state),
+                )
             )
         )
 
@@ -302,3 +339,16 @@ class ClaudeRuntime(AgentRuntime):
             action_id=action_id,
             input_data=input_data,
         )
+
+
+def claude_state_has_active_execution(state: SessionState | None) -> bool:
+    if state is None:
+        return False
+    return state.status in {
+        "waiting",
+        "pending",
+        "running",
+        "stopping",
+        "waiting_approval",
+        "blocked",
+    }

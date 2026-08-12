@@ -11,8 +11,8 @@ from connector.runtime_protocol import (
     FileChangeToolContent,
     GenericSystemContent,
     MarkdownMessageContent,
-    MessageTimelineItem,
     McpToolContent,
+    MessageTimelineItem,
     ReasoningSystemContent,
     RuntimeTimelineItem,
     SystemTimelineItem,
@@ -102,11 +102,21 @@ class ClaudeMessageProjector:
                 external_session_id=session.external_session_id,
                 turn_id=turn_id,
                 native_item_id=native_item_id,
+                native_item_type=role,
                 event=event,
                 client_message_id=client_message_id,
             ),
             revision=revision,
         ).to_platform_item(session_id=session.session_id, order_seq=order_seq)
+
+    def move_reserved_order(self, reserved_item_id: str, item_id: str) -> None:
+        """Move a live item's reserved order to its final SDK-backed ID."""
+
+        if reserved_item_id == item_id:
+            return
+        order_seq = self._order_by_id.pop(reserved_item_id, None)
+        if order_seq is not None:
+            self._order_by_id.setdefault(item_id, order_seq)
 
     def tool_items_for_message(
         self,
@@ -116,9 +126,8 @@ class ClaudeMessageProjector:
     ) -> tuple[RuntimeTimelineItem, ...]:
         items: list[RuntimeTimelineItem] = []
         for block in message_tool_blocks(message):
-            if (
-                block.block_type == "tool_use"
-                and is_task_event_tool_name(block.tool_name)
+            if block.block_type == "tool_use" and is_task_event_tool_name(
+                block.tool_name
             ):
                 self._ignored_task_tool_use_ids.add(block.tool_use_id)
                 continue
@@ -140,14 +149,11 @@ class ClaudeMessageProjector:
         items: list[RuntimeTimelineItem] = []
         native_message_id = message_id(message)
         for block in message_system_blocks(message):
-            item_id = _stable_id(
-                "system",
-                session.session_id,
-                session.external_session_id,
-                turn_id,
-                native_message_id,
-                block.block_index,
-                block.block_type,
+            item_id = stable_system_item_id(
+                session=session,
+                turn_id=turn_id,
+                native_message_id=native_message_id,
+                block=block,
             )
             order_seq = self._order_by_id.get(item_id)
             if order_seq is None:
@@ -182,13 +188,7 @@ class ClaudeMessageProjector:
         turn_id: str,
         block: ClaudeToolBlock,
     ) -> RuntimeTimelineItem:
-        item_id = _stable_id(
-            "tool",
-            session.session_id,
-            session.external_session_id,
-            turn_id,
-            block.tool_use_id,
-        )
+        item_id = stable_tool_item_id(session, block.tool_use_id)
         order_seq = self._order_by_id.get(item_id)
         if order_seq is None:
             order_seq = self._next_order_seq
@@ -237,7 +237,13 @@ def message_role(message: Any) -> str | None:
         if isinstance(raw_nested_role, str) and raw_nested_role:
             return raw_nested_role
     raw_type = _extract(message, "type")
-    return raw_type if isinstance(raw_type, str) and raw_type else None
+    if isinstance(raw_type, str) and raw_type:
+        return raw_type
+    return {
+        "UserMessage": "user",
+        "AssistantMessage": "assistant",
+        "SystemMessage": "system",
+    }.get(message.__class__.__name__)
 
 
 def message_text(message: Any) -> str | None:
@@ -310,7 +316,13 @@ def message_system_blocks(message: Any) -> tuple[ClaudeSystemBlock, ...]:
 
 def message_session_id(message: Any) -> str | None:
     value = _extract(message, "session_id", "sessionId")
-    return value if isinstance(value, str) and value else None
+    if isinstance(value, str) and value:
+        return value
+    data = _extract(message, "data")
+    if not isinstance(data, Mapping):
+        return None
+    nested = _extract(data, "session_id", "sessionId")
+    return nested if isinstance(nested, str) and nested else None
 
 
 def message_id(message: Any) -> str | None:
@@ -481,7 +493,9 @@ def _tool_call_content(block: ClaudeToolBlock) -> Any:
             **common,
             "name": tool_name,
             "tool": tool_name,
-            "arguments": tool_input if isinstance(tool_input, Mapping) else block.tool_input,
+            "arguments": tool_input
+            if isinstance(tool_input, Mapping)
+            else block.tool_input,
         },
     )
 
@@ -503,53 +517,18 @@ def _tool_result_content(
         "isError": block.is_error,
         **({"error": output} if block.is_error else {}),
     }
-    if call is None:
-        return ToolResultContent(output=output, metadata=result_metadata)
-
-    call_content = _tool_call_content(call)
-    if isinstance(call_content, CommandToolContent):
-        return CommandToolContent(
-            title=call_content.title,
-            command=call_content.command,
-            input=call_content.input,
-            output=output,
-            exit_code=call_content.exit_code,
-            metadata={**call_content.metadata, **result_metadata},
-        )
-    if isinstance(call_content, FileChangeToolContent):
-        return FileChangeToolContent(
-            title=call_content.title,
-            command=call_content.command,
-            input=call_content.input,
-            output=output,
-            exit_code=call_content.exit_code,
-            metadata={**call_content.metadata, **result_metadata},
-        )
-    if isinstance(call_content, WebSearchToolContent):
-        return WebSearchToolContent(
-            title=call_content.title,
-            command=call_content.command,
-            input=call_content.input,
-            output=output,
-            exit_code=call_content.exit_code,
-            metadata={**call_content.metadata, **result_metadata},
-        )
-    if isinstance(call_content, McpToolContent):
-        return McpToolContent(
-            title=call_content.title,
-            command=call_content.command,
-            input=call_content.input,
-            output=output,
-            exit_code=call_content.exit_code,
-            metadata={**call_content.metadata, **result_metadata},
-        )
-    return ToolCallContent(
-        title=call_content.title,
-        command=call_content.command,
-        input=call_content.input,
+    call_content = _tool_call_content(call) if call is not None else None
+    return ToolResultContent(
+        title=call_content.title if call_content is not None else None,
+        command=call_content.command if call_content is not None else None,
+        input=call_content.input if call_content is not None else None,
         output=output,
-        exit_code=call_content.exit_code,
-        metadata={**call_content.metadata, **result_metadata},
+        exit_code=call_content.exit_code if call_content is not None else None,
+        metadata={
+            **(dict(call_content.metadata) if call_content is not None else {}),
+            **result_metadata,
+            **({"callKind": call_content.kind} if call_content is not None else {}),
+        },
     )
 
 
@@ -689,6 +668,29 @@ def stable_message_item_id(
 ) -> str:
     scope = session.external_session_id or session.session_id
     return "claude_msg_" + _short("message", scope, native_message_id)
+
+
+def stable_tool_item_id(session: ClaudeSession, tool_use_id: str) -> str:
+    scope = session.external_session_id or session.session_id
+    return "claude_tool_" + _short("tool", scope, tool_use_id)
+
+
+def stable_system_item_id(
+    *,
+    session: ClaudeSession,
+    turn_id: str,
+    native_message_id: str | None,
+    block: ClaudeSystemBlock,
+) -> str:
+    scope = session.external_session_id or session.session_id
+    native_scope = native_message_id or turn_id
+    return "claude_system_" + _short(
+        "system",
+        scope,
+        native_scope,
+        block.block_index,
+        block.block_type,
+    )
 
 
 def _short(*parts: Any) -> str:

@@ -8,6 +8,8 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import Any
 
+import asyncer
+
 from connector.logging import logger
 from connector.runtime_protocol import (
     RuntimeConfig,
@@ -18,6 +20,11 @@ from connector.runtime_protocol import (
     timeline_content_hash,
 )
 from connector.runtime_protocol.host import RuntimeHostClient
+from connector.runtimes.claude.domain.pending_messages import (
+    ClaudeClientMessageBinding,
+    ClaudeHistoryUserMessage,
+    ClaudePendingClientMessageRegistry,
+)
 from connector.runtimes.claude.domain.session import (
     ClaudeSession,
     stable_session_id,
@@ -30,6 +37,7 @@ from connector.runtimes.claude.sdk.history import (
     read_sdk_session_messages,
 )
 from connector.runtimes.claude.sessions.cache import ClaudeSessionStore
+from connector.runtimes.claude.sessions.sync_state import ClaudeSessionSyncStateStore
 from connector.runtimes.claude.timeline.messages import (
     ClaudeMessageProjector,
     message_id,
@@ -46,6 +54,8 @@ class ClaudeSessionReader:
     host: RuntimeHostClient
     session_store: ClaudeSessionStore
     sdk_loader: SdkLoader | None
+    sync_states: ClaudeSessionSyncStateStore
+    pending_messages: ClaudePendingClientMessageRegistry
 
     async def list_sessions(
         self,
@@ -62,6 +72,10 @@ class ClaudeSessionReader:
         history_sessions = _filter_history_sessions_for_unresolved_live_sessions(
             runtime_sessions=self.session_store.sessions(),
             local_sessions=local_sessions,
+            history_sessions=history_sessions,
+        )
+        history_sessions = _filter_history_sessions_for_active_local_sessions(
+            runtime_sessions=self.session_store.sessions(),
             history_sessions=history_sessions,
         )
         return _merge_session_metas(local_sessions, history_sessions)[:limit]
@@ -116,7 +130,6 @@ class ClaudeSessionReader:
             limit=limit,
         )
         if history_snapshot.items or local_session is None or not local_snapshot.items:
-            self.session_store.mark_synced(session_id, external_session_id)
             return history_snapshot
         if local_snapshot.items:
             return local_snapshot
@@ -177,16 +190,20 @@ class ClaudeSessionReader:
             history_cursor_key(external_session_id)
         )
         changed = force or previous_marker != sync_marker
-        await self.host.sync_state_write(
-            sync_key,
-            {
-                "marker": sync_marker,
-                "title": title,
-                "cwd": cwd,
-                "ordering_time": ordering_time,
-                "session_id": session_id,
-            },
-        )
+        requires_timeline_sync = changed or previous_cursor is None
+        sync_state = {
+            "marker": sync_marker,
+            "title": title,
+            "cwd": cwd,
+            "ordering_time": ordering_time,
+            "session_id": session_id,
+        }
+        if requires_timeline_sync:
+            self.sync_states.stage(
+                external_session_id=external_session_id,
+                sync_key=sync_key,
+                state=sync_state,
+            )
         return SessionMeta(
             session_id=session_id,
             external_session_id=external_session_id,
@@ -200,7 +217,7 @@ class ClaudeSessionReader:
                     "key": sync_key,
                     "marker": sync_marker,
                     "changed": changed,
-                    "requires_timeline_sync": True,
+                    "requires_timeline_sync": requires_timeline_sync,
                     "history_cursor_missing": previous_cursor is None,
                     "previous_marker": previous_marker,
                 },
@@ -248,7 +265,16 @@ class ClaudeSessionReader:
                 or _int_attr(info, "created_at")
             ),
         )
-        items = _history_items_from_messages(session, messages)
+        client_message_matches = await _match_history_client_messages(
+            session=session,
+            messages=messages,
+            pending_messages=self.pending_messages,
+        )
+        items = await asyncer.asyncify(_history_items_from_messages)(
+            session,
+            messages,
+            client_message_matches=client_message_matches,
+        )
         if limit is not None:
             items = items[-limit:] if limit > 0 else ()
         return RuntimeTimelineSnapshot(
@@ -279,9 +305,11 @@ class ClaudeSessionReader:
 def _history_items_from_messages(
     session: ClaudeSession,
     messages: tuple[Any, ...],
+    client_message_matches: Mapping[str, ClaudeClientMessageBinding] | None = None,
 ) -> tuple[RuntimeTimelineItem, ...]:
     projector = ClaudeMessageProjector()
     items: list[RuntimeTimelineItem] = []
+    matches = client_message_matches or {}
     turn_seed: str | None = None
     turn_index = 0
     for index, message in enumerate(messages):
@@ -311,44 +339,62 @@ def _history_items_from_messages(
         )
         if role not in {"user", "assistant", "system"} or not text:
             continue
+        client_message = matches.get(native_id or "")
         items.append(
             projector.message_item(
                 session=session,
                 turn_id=turn_id,
                 role=role,
-                text=text,
+                text=client_message.text if client_message is not None else text,
                 event=f"claude.history.{role}",
                 native_item_id=native_id or f"history_{index}",
+                item_id=(
+                    client_message.platform_item_id
+                    if client_message is not None
+                    else None
+                ),
+                client_message_id=(
+                    client_message.client_message_id
+                    if client_message is not None
+                    else None
+                ),
+                attachments=(
+                    client_message.attachments if client_message is not None else ()
+                ),
             )
         )
-    return _resequence_history_items(
-        _visible_history_items(_dedupe_history_items(items))
+    return _resequence_history_items(_dedupe_history_items(items))
+
+
+async def _match_history_client_messages(
+    *,
+    session: ClaudeSession,
+    messages: tuple[Any, ...],
+    pending_messages: ClaudePendingClientMessageRegistry | None,
+    prefer_latest: bool = True,
+) -> dict[str, ClaudeClientMessageBinding]:
+    if pending_messages is None or session.external_session_id is None:
+        return {}
+    user_messages = await asyncer.asyncify(_history_user_messages)(messages)
+    return pending_messages.match_history_messages(
+        session_id=session.session_id,
+        external_session_id=session.external_session_id,
+        messages=user_messages,
+        prefer_latest=prefer_latest,
     )
 
 
-def _visible_history_items(
-    items: tuple[RuntimeTimelineItem, ...],
-) -> tuple[RuntimeTimelineItem, ...]:
-    return tuple(item for item in items if _is_visible_history_item(item))
-
-
-def _is_visible_history_item(item: RuntimeTimelineItem) -> bool:
-    if item.type != "tool":
-        return True
-    content = item.content
-    if not isinstance(content, Mapping):
-        return False
-    if content.get("kind") != "file_change":
-        return False
-    has_call = isinstance(content.get("toolUseId"), str) and isinstance(
-        content.get("toolName"),
-        str,
+def _history_user_messages(
+    messages: tuple[Any, ...],
+) -> tuple[ClaudeHistoryUserMessage, ...]:
+    return tuple(
+        ClaudeHistoryUserMessage(native_message_id=native_id, text=text)
+        for message in messages
+        for role in (message_role(message),)
+        for native_id in (message_id(message),)
+        for text in (message_text(message),)
+        if role == "user" and native_id is not None and text is not None
     )
-    has_result = item.status in {"done", "failed"} and any(
-        content.get(key) not in (None, "", [], {})
-        for key in ("result", "outputText", "outputPreview", "error")
-    )
-    return has_call and has_result
 
 
 def _resequence_history_items(
@@ -460,6 +506,31 @@ def _filter_history_sessions_for_unresolved_live_sessions(
     return tuple(filtered)
 
 
+def _filter_history_sessions_for_active_local_sessions(
+    *,
+    runtime_sessions: tuple[ClaudeSession, ...],
+    history_sessions: tuple[SessionMeta, ...],
+) -> tuple[SessionMeta, ...]:
+    active_session_ids = {
+        session.session_id
+        for session in runtime_sessions
+        if session.execution is not None
+    }
+    active_external_session_ids = {
+        session.external_session_id
+        for session in runtime_sessions
+        if session.execution is not None and session.external_session_id is not None
+    }
+    if not active_session_ids and not active_external_session_ids:
+        return history_sessions
+    return tuple(
+        session
+        for session in history_sessions
+        if session.session_id not in active_session_ids
+        and session.external_session_id not in active_external_session_ids
+    )
+
+
 def _unresolved_live_session_barriers(
     sessions: tuple[ClaudeSession, ...],
 ) -> tuple[str, ...]:
@@ -508,7 +579,8 @@ def _merge_session_meta(primary: SessionMeta, secondary: SessionMeta) -> Session
         }
     return SessionMeta(
         session_id=primary.session_id,
-        external_session_id=primary.external_session_id or secondary.external_session_id,
+        external_session_id=primary.external_session_id
+        or secondary.external_session_id,
         runtime=primary.runtime,
         title=primary.title or secondary.title,
         cwd=primary.cwd or secondary.cwd,
