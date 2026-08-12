@@ -228,8 +228,8 @@ internal fun MessageList(
     val displayMessages = messages
     val displayWorkingLabel = workingLabel
     val timelineItems = remember(displayMessages) { groupTimelineMessages(displayMessages) }
-    val agentTurnCopyTextByItem = remember(timelineItems, displayWorkingLabel) {
-        buildAgentTurnCopyTextByItem(timelineItems, displayWorkingLabel != null)
+    val agentCopyTextByItem = remember(timelineItems, displayWorkingLabel) {
+        buildAgentCopyTextByItem(timelineItems, displayWorkingLabel != null)
     }
     var showScrollToBottom by remember { mutableStateOf(false) }
     var autoFollowLatest by remember(sessionId) { mutableStateOf(true) }
@@ -379,7 +379,7 @@ internal fun MessageList(
                                 listState = listState,
                             )
                         }
-                        agentTurnCopyTextByItem[item.key]?.let { copyText ->
+                        agentCopyTextByItem[item.key]?.let { copyText ->
                             DisableSelection {
                                 AgentReplyCopyAction(
                                     darkMode = darkMode,
@@ -499,50 +499,27 @@ private fun groupTimelineMessages(messages: List<TimelineMessage>): List<Timelin
     return result
 }
 
-private fun buildAgentTurnCopyTextByItem(
+private fun buildAgentCopyTextByItem(
     items: List<TimelineRenderItem>,
-    hideLatestTurn: Boolean,
+    hideLatestItem: Boolean,
 ): Map<String, String> {
-    val latestTurnId = if (hideLatestTurn) {
+    val latestCopyableItemKey = if (hideLatestItem) {
         items.asReversed()
-            .asSequence()
-            .flatMap { it.messages.asReversed().asSequence() }
-            .firstOrNull { it.turnId != null }
-            ?.turnId
+            .firstOrNull { item -> item.messages.any(TimelineMessage::isCopyableAgentText) }
+            ?.key
     } else {
         null
     }
-    val turnOrder = mutableListOf<String>()
-    val textByTurn = linkedMapOf<String, MutableList<String>>()
-    val lastItemKeyByTurn = linkedMapOf<String, String>()
-
-    items.forEach { item ->
-        item.messages.forEach { message ->
-            val turnKey = message.turnId ?: "message:${message.id}"
-            if (message.turnId != null || message.isCopyableAgentText()) {
-                lastItemKeyByTurn[turnKey] = item.key
-            }
-            val text = message.agentCopyText()
-            if (text.isNotBlank()) {
-                if (turnKey !in textByTurn) {
-                    turnOrder += turnKey
-                    textByTurn[turnKey] = mutableListOf()
-                }
-                textByTurn.getValue(turnKey) += text
-            }
-        }
-    }
-
     return buildMap {
-        turnOrder.forEach { turnKey ->
-            if (turnKey == latestTurnId) return@forEach
-            val copyText = textByTurn[turnKey]
-                .orEmpty()
+        items.forEach { item ->
+            if (item.key == latestCopyableItemKey) return@forEach
+            val copyText = item.messages
+                .map(TimelineMessage::agentCopyText)
+                .filter(String::isNotBlank)
                 .joinToString("\n\n")
                 .trim()
-            val lastItemKey = lastItemKeyByTurn[turnKey]
-            if (copyText.isNotBlank() && lastItemKey != null) {
-                put(lastItemKey, copyText)
+            if (copyText.isNotBlank()) {
+                put(item.key, copyText)
             }
         }
     }

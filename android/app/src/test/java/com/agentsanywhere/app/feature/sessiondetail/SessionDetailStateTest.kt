@@ -345,7 +345,7 @@ class SessionDetailStateTest {
     }
 
     @Test
-    fun turnAwareOrderingMatchesWebAndKeepsBoundariesHidden() {
+    fun timelineOrderingMatchesWebWithoutTurnOwnership() {
         val controller = SessionDetailController(
             SessionsApi(),
             object : AuthSessionReader {
@@ -358,11 +358,10 @@ class SessionDetailStateTest {
             initialized = true,
         )
         val items = listOf(
-            timelineItem("turn-a-start", 1, 1).copy(id = "turn-a-start", type = "turn.start", turnId = "turn-a"),
-            timelineItem("turn-b-start", 5, 5).copy(id = "turn-b-start", type = "turn.start", turnId = "turn-b"),
-            timelineItem("turn-b-message", 6, 6).copy(id = "turn-b-message", turnId = "turn-b"),
-            timelineItem("turn-a-reply", 10, 10).copy(id = "turn-a-reply", turnId = "turn-a"),
-            timelineItem("turn-a-end", 11, 11).copy(id = "turn-a-end", type = "turn.end", turnId = "turn-a"),
+            timelineItem("later", 10, 10).copy(id = "later"),
+            timelineItem("same-z", 5, 6).copy(id = "same-z"),
+            timelineItem("same-b", 5, 5).copy(id = "same-b"),
+            timelineItem("same-a", 5, 5).copy(id = "same-a"),
         )
         val events = items.map { item ->
             event(
@@ -375,9 +374,8 @@ class SessionDetailStateTest {
 
         val result = controller.applyRealtimeEvents(initial, events, emptyList())
 
-        assertEquals(listOf("turn-a-reply", "turn-b-message"), result.messages.map { it.id })
-        assertEquals(5, result.timeline.orderingItems.size)
-        assertFalse(result.messages.any { it.type == "turn.start" || it.type == "turn.end" })
+        assertEquals(listOf("same-a", "same-b", "same-z", "later"), result.messages.map { it.id })
+        assertEquals(4, result.timeline.orderingItems.size)
     }
 
     @Test
@@ -393,7 +391,7 @@ class SessionDetailStateTest {
             meta = SessionMeta(session = session(true)),
             timeline = SessionTimelineState(
                 messages = listOf(message("item", "item", 1, 5, 20)),
-                orderingItems = listOf(TimelineOrderingItem("item", "message", "turn", 20, 1, 5)),
+                orderingItems = listOf(TimelineOrderingItem("item", 20, 1, 5)),
             ),
             initialized = true,
         )
@@ -404,7 +402,6 @@ class SessionDetailStateTest {
             RemoteSessionEventPayload(
                 item = timelineItem("updated", orderSeq = 0, updatedSeq = 6).copy(
                     id = "item",
-                    turnId = "turn",
                     revision = 2,
                 ),
             ),
@@ -442,7 +439,7 @@ class SessionDetailStateTest {
         val initial = SessionDetailState(
             timeline = SessionTimelineState(
                 messages = listOf(message("server", "server", 1, 4, 4)),
-                orderingItems = listOf(TimelineOrderingItem("server", "message", null, 4, 1, 4)),
+                orderingItems = listOf(TimelineOrderingItem("server", 4, 1, 4)),
                 nextSeq = 4,
             ),
         )
@@ -551,8 +548,6 @@ class SessionDetailStateTest {
                 type = "future.type",
                 content = JSONObject().put("kind", "future_kind").put("password", "do-not-leak"),
             ),
-            timelineItem("turn-start", 12, 12).copy(type = "turn.start", turnId = "turn"),
-            timelineItem("turn-end", 13, 13).copy(type = "turn.end", turnId = "turn"),
         )
         val events = items.map { item ->
             event("event-${item.id}", "timeline.item_created", item.updatedSeq.toLong(), RemoteSessionEventPayload(item = item))
@@ -576,8 +571,7 @@ class SessionDetailStateTest {
         assertTrue(unknown.text.contains("future.type / future_kind"))
         assertTrue(unknown.text.contains("item-unknown"))
         assertFalse(unknown.text.contains("do-not-leak"))
-        assertFalse(rendered.messages.any { it.type == "turn.start" || it.type == "turn.end" })
-        assertEquals(14, rendered.timeline.orderingItems.size)
+        assertEquals(12, rendered.timeline.orderingItems.size)
     }
 
     @Test
@@ -689,7 +683,7 @@ class SessionDetailStateTest {
                     ),
                 )
             }
-            listOf("reasoning", "runtime", "system", "turn_start", "turn_end", "error", "notice", "compact")
+            listOf("reasoning", "runtime", "system", "error", "notice", "compact")
                 .forEachIndexed { index, kind ->
                     add(
                         timelineItem("system-$kind", 80 + index, 80 + index).copy(
@@ -1036,7 +1030,6 @@ class SessionDetailStateTest {
     private fun timelineItem(text: String, orderSeq: Int, updatedSeq: Int): RemoteTimelineItem = RemoteTimelineItem(
         id = "item-$text",
         sessionId = "session",
-        turnId = null,
         type = "message",
         status = "done",
         role = "assistant",

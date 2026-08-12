@@ -38,7 +38,6 @@ class SessionDetailReducerTest {
             item = RemoteTimelineItem(
                 id = id,
                 sessionId = "session",
-                turnId = null,
                 type = "message",
                 status = "done",
                 role = "assistant",

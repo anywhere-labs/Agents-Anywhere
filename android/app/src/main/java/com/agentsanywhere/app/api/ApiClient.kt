@@ -118,63 +118,6 @@ class ApiClient(
         )
     }
 
-    fun streamSse(
-        serverUrl: String,
-        path: String,
-        authorizationToken: String? = null,
-        onOpen: () -> Unit = {},
-        onEvent: (JSONObject) -> Unit,
-    ) {
-        val endpoint = URL(apiUrl(serverUrl, path))
-        val connection = (endpoint.openConnection() as HttpURLConnection).apply {
-            requestMethod = "GET"
-            connectTimeout = 10_000
-            readTimeout = 35_000
-            setRequestProperty("Accept", "text/event-stream")
-            setRequestProperty("Cache-Control", "no-cache")
-            setRequestProperty("ngrok-skip-browser-warning", "true")
-            if (!authorizationToken.isNullOrBlank()) {
-                setRequestProperty("Authorization", "Bearer $authorizationToken")
-            }
-        }
-        try {
-            val responseCode = connection.responseCode
-            if (responseCode !in 200..299) {
-                val responseText = readResponseText(connection, responseCode)
-                notifyUnauthorized(responseCode, authorizationToken)
-                throw ApiException(
-                    message = parseErrorMessage(responseText) ?: defaultErrorMessage(responseCode),
-                    statusCode = responseCode,
-                )
-            }
-            onOpen()
-            connection.inputStream.bufferedReader(Charsets.UTF_8).use { reader ->
-                val data = StringBuilder()
-                while (!Thread.currentThread().isInterrupted) {
-                    val line = reader.readLine() ?: break
-                    when {
-                        line.isEmpty() -> {
-                            if (data.isNotEmpty()) {
-                                onEvent(JSONObject(data.toString()))
-                                data.clear()
-                            }
-                        }
-                        line.startsWith("data:") -> {
-                            if (data.isNotEmpty()) data.append('\n')
-                            data.append(line.removePrefix("data:").trimStart())
-                        }
-                    }
-                }
-            }
-        } catch (exc: ApiException) {
-            throw exc
-        } catch (exc: IOException) {
-            throw ApiException("Could not reach the server. Check the URL and network.", cause = exc)
-        } finally {
-            connection.disconnect()
-        }
-    }
-
     fun postMultipart(
         serverUrl: String,
         path: String,

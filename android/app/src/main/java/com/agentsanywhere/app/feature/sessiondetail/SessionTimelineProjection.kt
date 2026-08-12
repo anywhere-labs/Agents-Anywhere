@@ -22,9 +22,8 @@ private fun RemoteTimelineItem.toTimelineMessages(): List<TimelineMessage> {
         "artifact" -> toArtifactMessages()
         "marker" -> listOf(toMarkerMessage())
         "system" -> listOf(toSystemMessage())
-        "turn.start", "turn.end" -> null
         else -> listOf(toDiagnosticMessage())
-    } ?: emptyList()
+    }
 }
 
 internal fun mergeRemoteTimelineItems(
@@ -117,7 +116,6 @@ private fun RemoteTimelineItem.toMessage(): TimelineMessage {
         revision = revision,
         updatedSeq = updatedSeq,
         clientMessageId = source.text("clientMessageId"),
-        turnId = turnId,
     )
 }
 
@@ -159,11 +157,10 @@ private fun RemoteTimelineItem.toSystemMessage(): TimelineMessage {
             revision = revision,
             updatedSeq = updatedSeq,
             clientMessageId = source.text("clientMessageId"),
-            turnId = turnId,
         )
     }
     if (kind == "compact") return toCompactMessage()
-    if (kind !in setOf("runtime", "system", "turn_start", "turn_end", "error", "notice")) {
+    if (kind !in setOf("runtime", "system", "error", "notice")) {
         return toDiagnosticMessage()
     }
     val message = content.text("message") ?: content.text("text") ?: kind
@@ -181,7 +178,6 @@ private fun RemoteTimelineItem.toSystemMessage(): TimelineMessage {
         revision = revision,
         updatedSeq = updatedSeq,
         clientMessageId = source.text("clientMessageId"),
-        turnId = turnId,
     )
 }
 
@@ -211,7 +207,6 @@ private fun RemoteTimelineItem.toArtifactMessages(): List<TimelineMessage> {
             revision = revision,
             updatedSeq = updatedSeq,
             clientMessageId = source.text("clientMessageId"),
-            turnId = turnId,
         ),
     )
 }
@@ -271,7 +266,6 @@ private fun RemoteTimelineItem.baseInformationalMessage(
         revision = revision,
         updatedSeq = updatedSeq,
         clientMessageId = source.text("clientMessageId"),
-        turnId = turnId,
     )
 }
 
@@ -297,7 +291,6 @@ private fun RemoteTimelineItem.toCommandMessage(): TimelineMessage {
         revision = revision,
         updatedSeq = updatedSeq,
         clientMessageId = source.text("clientMessageId"),
-        turnId = turnId,
     )
 }
 
@@ -328,7 +321,6 @@ private fun RemoteTimelineItem.toFileChangeMessage(change: JSONObject, index: In
         revision = revision,
         updatedSeq = updatedSeq,
         clientMessageId = source.text("clientMessageId"),
-        turnId = turnId,
     )
 }
 
@@ -354,7 +346,6 @@ private fun RemoteTimelineItem.toToolCallMessage(title: String, subtitle: String
         revision = revision,
         updatedSeq = updatedSeq,
         clientMessageId = source.text("clientMessageId"),
-        turnId = turnId,
     )
 }
 
@@ -472,8 +463,6 @@ private fun normalizeTimelineOrderingItems(
             ?: (++maxOrderSeq)
         TimelineOrderingItem(
             id = item.id,
-            type = item.type,
-            turnId = item.turnId,
             orderSeq = normalizedOrder,
             revision = item.revision,
             updatedSeq = item.updatedSeq,
@@ -504,24 +493,10 @@ internal fun sortTimelineMessages(
     orderingItems: List<TimelineOrderingItem> = emptyList(),
 ): List<TimelineMessage> {
     val orderingById = orderingItems.associateBy { it.id }
-    val turnAnchors = mutableMapOf<String, Int>()
-    orderingItems.forEach { item ->
-        val turnId = item.turnId ?: return@forEach
-        turnAnchors[turnId] = minOf(turnAnchors[turnId] ?: item.orderSeq, item.orderSeq)
-    }
-    messages.forEach { message ->
-        val turnId = message.turnId ?: return@forEach
-        val itemOrder = orderingById[message.sourceItemId]?.orderSeq ?: message.orderSeq
-        turnAnchors[turnId] = minOf(turnAnchors[turnId] ?: itemOrder, itemOrder)
-    }
     return messages.sortedWith { left, right ->
         val leftOrder = orderingById[left.sourceItemId]?.orderSeq ?: left.orderSeq
         val rightOrder = orderingById[right.sourceItemId]?.orderSeq ?: right.orderSeq
-        val leftBlock = left.turnId?.let(turnAnchors::get) ?: leftOrder
-        val rightBlock = right.turnId?.let(turnAnchors::get) ?: rightOrder
-        compareValues(leftBlock, rightBlock)
-            .takeIf { it != 0 }
-            ?: compareValues(leftOrder, rightOrder).takeIf { it != 0 }
+        compareValues(leftOrder, rightOrder).takeIf { it != 0 }
             ?: compareValues(left.updatedSeq, right.updatedSeq).takeIf { it != 0 }
             ?: left.id.compareTo(right.id)
     }

@@ -587,7 +587,6 @@ fun SessionDetailScreen(
                         state = state,
                         clientMessageId = clientMessageId,
                         status = "running",
-                        turnId = result.turnId,
                         attachments = result.attachments,
                     )
                 }

@@ -14,12 +14,10 @@ data class SessionTimelineState(
 
 /**
  * Server-owned ordering data kept separately from visible Android rows.
- * Turn boundary items participate in ordering but are never rendered.
+ * Every source item is ordered by the same v2 Timeline contract as Web.
  */
 data class TimelineOrderingItem(
     val id: String,
-    val type: String,
-    val turnId: String?,
     val orderSeq: Int,
     val revision: Int,
     val updatedSeq: Int,
@@ -43,7 +41,6 @@ data class TimelineMessage(
     val revision: Int = 1,
     val updatedSeq: Int = 0,
     val clientMessageId: String? = null,
-    val turnId: String? = null,
     val optimistic: Boolean = false,
     val retryAction: RuntimeMessageAction? = null,
     val errorMessage: String? = null,

@@ -3,26 +3,24 @@ package com.agentsanywhere.app.feature.sessiondetail
 import com.agentsanywhere.app.api.RemoteTimelineItem
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Test
 
 class SessionTimelineProjectionTest {
     @Test
-    fun turnBoundaryAnchorsInvisibleRowsAndLateItemsStayInTheirTurn() {
+    fun serverOrderingMatchesWebOrderSeqUpdatedSeqAndIdContract() {
         val projection = mergeRemoteTimelineItems(
             currentOrdering = emptyList(),
             currentMessages = emptyList(),
             incoming = listOf(
-                item("turn-a-start", "turn.start", "turn-a", 1),
-                item("turn-b-start", "turn.start", "turn-b", 2),
-                item("reply-b", "message", "turn-b", 3, "reply b"),
-                item("late-a", "system", "turn-a", 4, contentKind = "reasoning"),
+                item("later", orderSeq = 20, updatedSeq = 1),
+                item("same-z", orderSeq = 10, updatedSeq = 3),
+                item("same-b", orderSeq = 10, updatedSeq = 2),
+                item("same-a", orderSeq = 10, updatedSeq = 2),
             ),
             replace = true,
         )
 
-        assertEquals(listOf("late-a", "reply-b"), projection.messages.map { it.id })
-        assertFalse(projection.messages.any { it.sourceItemId.endsWith("start") })
+        assertEquals(listOf("same-a", "same-b", "same-z", "later"), projection.messages.map { it.id })
         assertEquals(4, projection.orderingItems.size)
     }
 
@@ -54,24 +52,20 @@ class SessionTimelineProjectionTest {
 
     private fun item(
         id: String,
-        type: String,
-        turnId: String?,
         orderSeq: Int,
-        text: String = "",
-        contentKind: String = "text",
+        updatedSeq: Int,
     ) = RemoteTimelineItem(
         id = id,
         sessionId = "session",
-        turnId = turnId,
-        type = type,
+        type = "message",
         status = "done",
-        role = if (type == "message") "assistant" else null,
-        text = text,
-        content = JSONObject().put("kind", contentKind).put("text", "reasoning"),
+        role = "assistant",
+        text = id,
+        content = JSONObject().put("kind", "text").put("text", id),
         source = JSONObject(),
         orderSeq = orderSeq,
         revision = 1,
-        updatedSeq = orderSeq,
+        updatedSeq = updatedSeq,
         createdAt = "now",
         updatedAt = null,
     )

@@ -19,34 +19,6 @@ class SessionsApi(
         ).optJSONArray("sessions").toObjectList { toRemoteSession() }
     }
 
-    fun bindSession(
-        serverUrl: String,
-        authorizationToken: String,
-        connectorId: String,
-        runtime: String,
-        externalSessionId: String,
-        title: String?,
-        cwd: String?,
-        selections: Map<String, String> = emptyMap(),
-    ): RemoteSessionCreateResponse {
-        val body = JSONObject().apply {
-            put("connectorId", connectorId)
-            put("runtime", runtime)
-            put("externalSessionId", externalSessionId)
-            title?.takeIf { it.isNotBlank() }?.let { put("title", it) }
-            cwd?.takeIf { it.isNotBlank() }?.let { put("cwd", it) }
-            selections.filterValues(String::isNotBlank).takeIf { it.isNotEmpty() }?.let {
-                put("selections", JSONObject(it))
-            }
-        }
-        return client.postJson(
-            serverUrl = serverUrl,
-            path = "/sessions",
-            body = body,
-            authorizationToken = authorizationToken,
-        ).toRemoteSessionCreateResponse()
-    }
-
     fun createAndStartSession(
         serverUrl: String,
         authorizationToken: String,
@@ -842,7 +814,6 @@ class SessionsApi(
         return RemoteTimelineItem(
             id = getString("id"),
             sessionId = optString("sessionId", ""),
-            turnId = optNullableString("turnId"),
             type = optString("type", "message"),
             status = optString("status", "done"),
             role = optNullableString("role"),
@@ -861,10 +832,11 @@ class SessionsApi(
     }
 
     private fun JSONObject.toRemoteRpcResponse(): RemoteRpcResponse {
-        val result = optJSONObject("result")
+        val error = optJSONObject("error")
         return RemoteRpcResponse(
             ok = optBoolean("ok", false),
-            turnId = result?.optNullableString("turnId"),
+            errorCode = error?.optNullableString("code"),
+            errorMessage = error?.optNullableString("message"),
         )
     }
 

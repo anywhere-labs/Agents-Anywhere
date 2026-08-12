@@ -51,26 +51,6 @@ class ApiClientTest {
     }
 
     @Test
-    fun `authenticated sse sends bearer header and 401 notifies unauthorized listener`() {
-        val notifiedTokens = mutableListOf<String>()
-        val client = ApiClient(onUnauthorized = notifiedTokens::add)
-        val observedAuthorization = AtomicReference<String?>()
-
-        val error = withHttpResponse(401, observedAuthorization) { serverUrl ->
-            client.streamSse(
-                serverUrl = serverUrl,
-                path = "/events?token=expired-stream-token",
-                authorizationToken = "expired-stream-token",
-                onEvent = {},
-            )
-        }
-
-        assertApiException(error, 401)
-        assertEquals("Bearer expired-stream-token", observedAuthorization.get())
-        assertEquals(listOf("expired-stream-token"), notifiedTokens)
-    }
-
-    @Test
     fun `unauthenticated 401 and authenticated non-401 do not notify`() {
         val notifiedTokens = mutableListOf<String>()
         val client = ApiClient(onUnauthorized = notifiedTokens::add)

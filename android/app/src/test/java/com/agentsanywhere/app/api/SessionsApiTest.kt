@@ -21,7 +21,6 @@ class SessionsApiTest {
     @Test
     fun createAndStartUsesSingleV2RequestWithCompleteBodyAndResponse() {
         val response = JSONObject(sessionResponse("created-session"))
-            .put("connectorResult", JSONObject().put("turnId", "turn-1"))
             .put(
                 "attachments",
                 listOf(
@@ -105,32 +104,6 @@ class SessionsApiTest {
             val body = JSONObject(requests.single().body)
             assertEquals(setOf("connectorId", "runtime", "content"), body.keys().asSequence().toSet())
             assertEquals("", body.getString("content"))
-        }
-    }
-
-    @Test
-    fun bindSessionKeepsPostSessionsForExternalImportOnly() {
-        withJsonServer(ArrayDeque(listOf(TestResponse(body = sessionResponse("bound"))))) { serverUrl, requests ->
-            val bound = SessionsApi().bindSession(
-                serverUrl = serverUrl,
-                authorizationToken = "token",
-                connectorId = "connector",
-                runtime = "codex",
-                externalSessionId = "external-123",
-                title = null,
-                cwd = null,
-                selections = mapOf("model" to "model-selection"),
-            )
-
-            val request = requests.single()
-            assertEquals("POST", request.method)
-            assertEquals("/api/v2/sessions", request.path)
-            assertEquals("Bearer token", request.authorization)
-            val body = JSONObject(request.body)
-            assertEquals("external-123", body.getString("externalSessionId"))
-            assertEquals("model-selection", body.getJSONObject("selections").getString("model"))
-            assertFalse(body.has("content"))
-            assertEquals("bound", bound.session.id)
         }
     }
 
@@ -355,7 +328,7 @@ class SessionsApiTest {
             .toString()
         val rpcResponse = JSONObject()
             .put("ok", true)
-            .put("result", JSONObject().put("turnId", "turn-1"))
+            .put("result", JSONObject().put("accepted", true))
             .toString()
         val responses = ArrayDeque(
             listOf(
@@ -463,8 +436,36 @@ class SessionsApiTest {
             assertEquals(listOf("shrink"), commands.commands.single().aliases)
             assertTrue(command.ok)
             assertEquals("op-1", (command.result as JSONObject).getString("operationId"))
-            assertEquals("turn-1", message.turnId)
-            assertEquals("turn-1", steer.turnId)
+            assertTrue(message.ok)
+            assertNull(message.errorCode)
+            assertNull(message.errorMessage)
+            assertTrue(steer.ok)
+        }
+    }
+
+    @Test
+    fun rpcFailurePreservesServerErrorForControllerHandling() {
+        val response = JSONObject()
+            .put("ok", false)
+            .put(
+                "error",
+                JSONObject()
+                    .put("code", "notice_not_found")
+                    .put("message", "Notice was already resolved."),
+            )
+            .toString()
+        withJsonServer(ArrayDeque(listOf(TestResponse(body = response)))) { serverUrl, _ ->
+            val result = SessionsApi().respondRuntimeNotice(
+                serverUrl = serverUrl,
+                authorizationToken = "token",
+                sessionId = "session",
+                noticeId = "notice",
+                actionId = "approve",
+            )
+
+            assertFalse(result.ok)
+            assertEquals("notice_not_found", result.errorCode)
+            assertEquals("Notice was already resolved.", result.errorMessage)
         }
     }
 
@@ -472,7 +473,7 @@ class SessionsApiTest {
     fun attachmentOnlyMessageUsesEmptyContentAndFileIdRefsOnly() {
         val rpcResponse = JSONObject()
             .put("ok", true)
-            .put("result", JSONObject().put("turnId", "turn-attachment"))
+            .put("result", JSONObject().put("accepted", true))
             .toString()
         withJsonServer(ArrayDeque(listOf(TestResponse(body = rpcResponse)))) { serverUrl, requests ->
             SessionsApi().sendSessionMessage(
@@ -868,7 +869,6 @@ class SessionsApiTest {
         return JSONObject()
             .put("id", "item-1")
             .put("sessionId", "session/one")
-            .put("turnId", "turn-1")
             .put("type", "message")
             .put("status", "done")
             .put("role", "assistant")

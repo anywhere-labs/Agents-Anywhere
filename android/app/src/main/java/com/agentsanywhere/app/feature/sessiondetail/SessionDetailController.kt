@@ -1,6 +1,7 @@
 package com.agentsanywhere.app.feature.sessiondetail
 
 import com.agentsanywhere.app.api.ApiException
+import com.agentsanywhere.app.api.RemoteRpcResponse
 import com.agentsanywhere.app.api.RemoteSessionEventEnvelope
 import com.agentsanywhere.app.api.RemoteRuntimeModelCatalog
 import com.agentsanywhere.app.api.RemoteRuntimePermissionCatalog
@@ -488,12 +489,10 @@ class SessionDetailController(
                         attachments = uploaded.map { it.toRemoteAttachmentRef() },
                     )
                 }
-                response.let {
-                    SendMessageResult(
-                        turnId = it.turnId,
-                        attachments = uploaded,
-                    )
+                if (!response.ok) {
+                    throw IllegalStateException(response.failureMessage("Runtime rejected the message."))
                 }
+                SendMessageResult(attachments = uploaded)
             }
         }
     }
@@ -554,7 +553,10 @@ class SessionDetailController(
         return withContext(Dispatchers.IO) {
             runCatching {
                 val auth = authSession()
-                sessionsApi.interruptSession(auth.serverUrl, auth.accessToken, sessionId)
+                val response = sessionsApi.interruptSession(auth.serverUrl, auth.accessToken, sessionId)
+                if (!response.ok) {
+                    throw IllegalStateException(response.failureMessage("Runtime rejected the interrupt."))
+                }
                 Unit
             }
         }
@@ -657,7 +659,7 @@ class SessionDetailController(
         return withContext(Dispatchers.IO) {
             runCatching {
                 val auth = authSession()
-                sessionsApi.respondRuntimeNotice(
+                val response = sessionsApi.respondRuntimeNotice(
                     auth.serverUrl,
                     auth.accessToken,
                     sessionId,
@@ -665,9 +667,18 @@ class SessionDetailController(
                     actionId,
                     input,
                 )
+                if (!response.ok) {
+                    throw IllegalStateException(response.failureMessage("Runtime rejected the response."))
+                }
                 Unit
             }
         }
+    }
+
+    private fun RemoteRpcResponse.failureMessage(fallback: String): String {
+        return errorMessage?.takeIf(String::isNotBlank)
+            ?: errorCode?.takeIf(String::isNotBlank)
+            ?: fallback
     }
 
     fun applyOlder(
@@ -726,7 +737,6 @@ class SessionDetailController(
             orderSeq = optimisticOrderSeq,
             updatedSeq = optimisticOrderSeq,
             clientMessageId = clientMessageId,
-            turnId = null,
             optimistic = true,
             retryAction = retryAction,
         )
@@ -750,7 +760,6 @@ class SessionDetailController(
         state: SessionDetailState,
         clientMessageId: String,
         status: String,
-        turnId: String? = null,
         attachments: List<TimelineAttachment> = emptyList(),
         errorMessage: String? = null,
     ): SessionDetailState {
@@ -759,7 +768,6 @@ class SessionDetailController(
                 message.copy(
                     status = status,
                     badge = status.statusLabel(),
-                    turnId = turnId ?: message.turnId,
                     attachments = attachments.ifEmpty { message.attachments },
                     errorMessage = errorMessage,
                 )
@@ -828,7 +836,6 @@ class SessionDetailController(
 }
 
 data class SendMessageResult(
-    val turnId: String?,
     val attachments: List<TimelineAttachment>,
 )
 

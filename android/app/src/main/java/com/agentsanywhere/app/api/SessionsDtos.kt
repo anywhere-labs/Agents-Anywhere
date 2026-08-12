@@ -156,7 +156,6 @@ data class RemoteSessionTimelineSnapshot(
 data class RemoteTimelineItem(
     val id: String,
     val sessionId: String,
-    val turnId: String?,
     val type: String,
     val status: String,
     val role: String?,
@@ -172,7 +171,8 @@ data class RemoteTimelineItem(
 
 data class RemoteRpcResponse(
     val ok: Boolean,
-    val turnId: String?,
+    val errorCode: String?,
+    val errorMessage: String?,
 )
 
 data class RemoteSessionSelectionPatchResponse(

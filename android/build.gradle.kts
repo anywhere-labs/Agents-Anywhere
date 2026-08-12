@@ -74,27 +74,7 @@ abstract class LegacyRoutesTask : DefaultTask() {
             .sortedBy { file -> file.relativeTo(root).invariantSeparatorsPath }
             .flatMap { file ->
                 val relativePath = "app/src/main/java/" + file.relativeTo(root).invariantSeparatorsPath
-                file.readLines().asSequence().flatMapIndexed { index, line ->
-                    ROUTE_LITERAL.findAll(line).flatMap { match ->
-                        val route = match.groupValues[1]
-                        val withoutNamespace = when {
-                            route == "/api/v2" -> "/"
-                            route.startsWith("/api/v2/") -> route.removePrefix("/api/v2")
-                            else -> route
-                        }
-                        val segments = withoutNamespace.substringBefore('?').split('/')
-                        rules.asSequence()
-                            .filter { rule -> rule.matches(segments) }
-                            .map { rule ->
-                                LegacyRouteFinding(
-                                    rule = rule,
-                                    relativePath = relativePath,
-                                    lineNumber = index + 1,
-                                    route = route,
-                                )
-                            }
-                    }
-                }
+                scanSource(relativePath, file.readLines(), rules).asSequence()
             }
             .toList()
     }
@@ -102,14 +82,49 @@ abstract class LegacyRoutesTask : DefaultTask() {
     private fun verifyRuleProbes() {
         val rules = rules()
         LEGACY_ROUTE_PROBES.forEach { (route, expectedRuleId) ->
-            val segments = route.substringBefore('?').split('/')
-            val matching = rules.filter { rule -> rule.matches(segments) }.map { it.id }
+            val findings = scanSource(
+                relativePath = "app/src/main/java/__legacy_route_probe__.kt",
+                lines = listOf("val forbiddenRoute = \"$route\""),
+                rules = rules,
+            )
+            val matching = findings.map { finding -> finding.rule.id }
             if (expectedRuleId !in matching) {
                 throw GradleException(
-                    "Legacy route rule probe failed: $route was not detected as $expectedRuleId.",
+                    "Legacy route negative probe failed: $route was not scanned as $expectedRuleId.",
                 )
             }
+            if (signatures(findings).isEmpty()) {
+                throw GradleException("Legacy route negative probe did not create baseline debt: $route")
+            }
         }
+    }
+
+    private fun scanSource(
+        relativePath: String,
+        lines: List<String>,
+        rules: List<LegacyRouteRule>,
+    ): List<LegacyRouteFinding> {
+        return lines.asSequence().flatMapIndexed { index, line ->
+            ROUTE_LITERAL.findAll(line).flatMap { match ->
+                val route = match.groupValues[1]
+                val withoutNamespace = when {
+                    route == "/api/v2" -> "/"
+                    route.startsWith("/api/v2/") -> route.removePrefix("/api/v2")
+                    else -> route
+                }
+                val segments = withoutNamespace.substringBefore('?').split('/')
+                rules.asSequence()
+                    .filter { rule -> rule.matches(segments) }
+                    .map { rule ->
+                        LegacyRouteFinding(
+                            rule = rule,
+                            relativePath = relativePath,
+                            lineNumber = index + 1,
+                            route = route,
+                        )
+                    }
+            }
+        }.toList()
     }
 
     private fun report(findings: List<LegacyRouteFinding>) {
@@ -228,8 +243,8 @@ abstract class RealtimeLifecycleTask : DefaultTask() {
                 if ("/sessions/events/dashboard" in source) {
                     add("$path: legacy Dashboard SSE route")
                 }
-                if (path != "com/agentsanywhere/app/api/ApiClient.kt" && ".streamSse(" in source) {
-                    add("$path: production SSE subscription")
+                if (".streamSse(" in source || "text/event-stream" in source) {
+                    add("$path: production SSE implementation")
                 }
             }
             listOf(
@@ -251,7 +266,9 @@ abstract class RealtimeLifecycleTask : DefaultTask() {
                 },
             )
         }
-        logger.lifecycle("Android Dashboard/Session realtime lifecycle uses WebSockets without fixed polling.")
+        logger.lifecycle(
+            "Android Dashboard/Session realtime lifecycle uses WebSockets without SSE or fixed polling.",
+        )
     }
 
     companion object {
@@ -284,6 +301,9 @@ abstract class AndroidV2ReleaseGateTask : DefaultTask() {
             }
             sources.forEach { (path, source) ->
                 ACP_RUNTIME_LITERAL.find(source)?.let { add("$path: ACP-specific production runtime") }
+                SERVER_TURN_OWNERSHIP.find(source)?.let {
+                    add("$path: removed Server turn-ownership protocol")
+                }
                 source.lineSequence().forEachIndexed { index, line ->
                     val namespaceCount = NAMESPACE.findAll(line).count()
                     if (namespaceCount > 1) add("$path:${index + 1}: repeated /api/v2 namespace")
@@ -298,11 +318,17 @@ abstract class AndroidV2ReleaseGateTask : DefaultTask() {
                 },
             )
         }
-        logger.lifecycle("Android v2 release gate passed: zero legacy debt, no ACP UI, single namespaces.")
+        logger.lifecycle(
+            "Android v2 release gate passed: zero legacy debt, no ACP runtime, " +
+                "no Server turn ownership, single namespaces.",
+        )
     }
 
     companion object {
         private val ACP_RUNTIME_LITERAL = Regex("[\\\"'](?:ACP|acp)[\\\"']")
+        private val SERVER_TURN_OWNERSHIP = Regex(
+            "\\bturnId\\b|[\\\"']turn[._](?:start|end)[\\\"']",
+        )
         private val NAMESPACE = Regex("/api/v2")
     }
 }
