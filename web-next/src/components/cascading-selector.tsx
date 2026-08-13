@@ -3,6 +3,7 @@
 import { useState } from "react"
 import { ChevronDown, Check } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { cn } from "@/lib/utils"
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -18,6 +19,7 @@ import {
 interface SelectOption {
   id: string
   label: string
+  description?: string | null
 }
 
 interface CascadingSelectorProps {
@@ -46,6 +48,8 @@ export function CascadingSelector({
   const primaryLabel = primaryOptions.find((opt) => opt.id === selectedPrimary)?.label ?? "Select"
   const secondaryValueLabel =
     secondaryOptions.find((opt) => opt.id === selectedSecondary)?.label ?? "None"
+  const secondaryValueDescription =
+    secondaryOptions.find((opt) => opt.id === selectedSecondary)?.description
 
   return (
     <DropdownMenu open={open} onOpenChange={setOpen}>
@@ -55,6 +59,11 @@ export function CascadingSelector({
           <span className="text-foreground">{primaryLabel}</span>
           <span className="text-muted-foreground/40">·</span>
           <span className="text-foreground">{secondaryValueLabel}</span>
+          {secondaryValueDescription ? (
+            <span className="max-w-28 truncate text-xs text-muted-foreground">
+              {secondaryValueDescription}
+            </span>
+          ) : null}
           <ChevronDown className="size-3.5 opacity-50" />
         </Button>
       </DropdownMenuTrigger>
@@ -109,8 +118,15 @@ export function CascadingSelector({
                       ) : (
                         <span className="size-3.5 shrink-0" />
                       )}
-                      <span className={secSelected ? "font-medium text-foreground" : ""}>
-                        {sec.label}
+                      <span className="min-w-0 flex-1">
+                        <span className={cn("block truncate", secSelected && "font-medium text-foreground")}>
+                          {sec.label}
+                        </span>
+                        {sec.description ? (
+                          <span className="block truncate text-xs text-muted-foreground">
+                            {sec.description}
+                          </span>
+                        ) : null}
                       </span>
                     </DropdownMenuItem>
                   )

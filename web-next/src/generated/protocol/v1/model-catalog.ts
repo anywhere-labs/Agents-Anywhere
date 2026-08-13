@@ -18,7 +18,7 @@ export type Reasoningitems = ProtocolReasoningItem[]
 export type Selectionid1 = string | null
 export type Models = ProtocolModelItem[]
 export type Revision = number
-export type Runtime = "codex" | "claude" | "opencode" | "acp"
+export type Runtime = string
 
 export interface ProtocolModelCatalog {
   models?: Models

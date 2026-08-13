@@ -29,6 +29,8 @@ import type {
   ProtocolModelCatalogResponse,
   ProtocolPermissionCatalogResponse,
   RpcResponse,
+  RuntimeInstanceCreateRequest,
+  RuntimeTypeListResponse,
   SessionCommandListResponse,
   SessionCreateAndStartRequest,
   SessionCreateRequest,
@@ -777,13 +779,48 @@ export class DashboardApi {
     );
   }
 
-  discoverConnectorRuntimes(
+  getConnectorRuntimeTypes(
     token: string,
     connectorId: string,
-  ): Promise<DeviceRuntimeListResponse> {
-    return this.client.post<DeviceRuntimeListResponse>(
-      `/connectors/${encodeURIComponent(connectorId)}/runtimes/discover`,
+  ): Promise<RuntimeTypeListResponse> {
+    return this.client.get<RuntimeTypeListResponse>(
+      `/connectors/${encodeURIComponent(connectorId)}/runtime-types`,
+      { token },
+    );
+  }
+
+  discoverConnectorRuntimeTypes(
+    token: string,
+    connectorId: string,
+  ): Promise<RuntimeTypeListResponse> {
+    return this.client.post<RuntimeTypeListResponse>(
+      `/connectors/${encodeURIComponent(connectorId)}/runtime-types/discover`,
       {},
+      { token },
+    );
+  }
+
+  createConnectorRuntime(
+    token: string,
+    connectorId: string,
+    body: RuntimeInstanceCreateRequest,
+  ): Promise<DeviceRuntimeView> {
+    return this.client.post<DeviceRuntimeView>(
+      `/connectors/${encodeURIComponent(connectorId)}/runtimes`,
+      body,
+      { token },
+    );
+  }
+
+  renameConnectorRuntime(
+    token: string,
+    connectorId: string,
+    runtimeId: string,
+    name: string,
+  ): Promise<DeviceRuntimeView> {
+    return this.client.patch<DeviceRuntimeView>(
+      `/connectors/${encodeURIComponent(connectorId)}/runtimes/${encodeURIComponent(runtimeId)}`,
+      { name },
       { token },
     );
   }
@@ -810,17 +847,6 @@ export class DashboardApi {
     return this.client.put<DeviceRuntimeView>(
       `/connectors/${encodeURIComponent(connectorId)}/runtimes/${encodeURIComponent(runtimeId)}/active`,
       { active },
-      { token },
-    );
-  }
-
-  deleteConnectorRuntimeConfig(
-    token: string,
-    connectorId: string,
-    runtimeId: string,
-  ): Promise<DeviceRuntimeView> {
-    return this.client.delete<DeviceRuntimeView>(
-      `/connectors/${encodeURIComponent(connectorId)}/runtimes/${encodeURIComponent(runtimeId)}/config`,
       { token },
     );
   }

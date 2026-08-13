@@ -446,18 +446,34 @@
       "renameFailed": "Failed to rename device.",
       "setupFailed": "Failed to prepare device setup.",
       "agentRuntimes": "Agent runtimes",
-      "configuredRuntimes": "Configured",
-      "discoveredRuntimes": "Discovered, not configured",
-      "noConfiguredRuntimes": "No runtimes have been configured.",
-      "noDiscoveredRuntimes": "No additional runtimes were discovered.",
+      "addedRuntimeInstances": "Added instances",
+      "noRuntimeInstances": "No runtime instances have been added.",
+      "recommendedRuntimeTypes": "Recommended additions",
+      "recommendedRuntimeTypesDescription": "Add another instance whenever you need separate configuration or history.",
+      "noRecommendedRuntimeTypes": "No recommended runtime types are currently available.",
+      "addRuntime": "Add",
+      "addCustomRuntime": "Custom add",
+      "addAndStartRuntime": "Add and start",
+      "addRuntimeTitle": "Add runtime instance",
+      "addRuntimeDescription": "Choose a runtime type, give this instance a distinct name, then configure it.",
+      "runtimeType": "Runtime type",
+      "selectRuntimeType": "Select a runtime type",
+      "runtimeInstanceName": "Instance name",
+      "runtimeInstanceNamePlaceholder": "e.g. Work Codex",
+      "runtimeInstanceNameDescription": "Names must be unique on this device. You can change the name later.",
+      "runtimeInstanceNameRequired": "Enter an instance name.",
+      "startImmediately": "Start immediately",
+      "startImmediatelyDescription": "Validate the configuration and start this instance after adding it.",
+      "runtimeAdded": "Added {name}.",
+      "runtimeAddedAndStarted": "Added and started {name}.",
+      "addRuntimeFailed": "Failed to add the runtime instance.",
       "refreshRuntimes": "Refresh",
       "discoveringRuntimes": "Discovering…",
       "loadRuntimesFailed": "Failed to load runtimes.",
       "discoverRuntimesFailed": "Runtime discovery failed.",
-      "runtimeDiscovered": "Ready to configure",
-      "runtimeExecutableNotFound": "Executable not found; provide a path to configure it",
-      "runtimeNotReported": "This runtime is not currently reported by the connector.",
+      "runtimeTypeUnavailable": "Type unavailable",
       "runtimeIssue": "Issue",
+      "runtimeUnknownError": "The runtime reported an unknown error.",
       "runtimeStatus": {
         "stopped": "Stopped",
         "discovering": "Discovering",
@@ -475,11 +491,20 @@
       "configureRuntime": "Configure {name}",
       "activateRuntime": "Activate {name}",
       "deactivateRuntime": "Deactivate {name}",
+      "renameRuntime": "Rename {name}",
+      "saveRuntimeName": "Save runtime name",
+      "cancelRuntimeRename": "Cancel runtime rename",
+      "runtimeRenamed": "Renamed runtime to {name}.",
+      "runtimeRenameFailed": "Failed to rename the runtime. The name may already be in use.",
       "runtimeConfigTitle": "Configure {name}",
       "runtimeConfigDescription": "Runtime configuration.",
       "runtimeSchemaUnavailable": "This runtime did not provide a configuration schema.",
       "runtimeConfigInvalid": "The configuration is invalid.",
       "runtimeConfigFields": {
+        "codexHome": {
+          "label": "Codex Home",
+          "description": "Configuration and history directory for this Codex instance. Leave empty to use CODEX_HOME or ~/.codex. Running Codex instances must use different Home directories."
+        },
         "claudeExecutablePath": {
           "label": "Claude executable path (optional)",
           "description": "Optional. Fill this only when Claude Code is not available on the default PATH."
@@ -513,6 +538,10 @@
         "modelGateway": {
           "label": "Model gateway (optional)",
           "description": "Route this runtime's model requests through a compatible custom gateway. Leave both fields empty to use the runtime's default endpoint and authentication."
+        },
+        "path": {
+          "label": "Path",
+          "description": "Enter an absolute or home-relative path for this runtime."
         }
       },
       "modelGatewayBaseUrl": "Gateway URL",

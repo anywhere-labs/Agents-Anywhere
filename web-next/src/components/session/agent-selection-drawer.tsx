@@ -72,6 +72,7 @@ export function AgentSelectionDrawer({
                 key={item.id}
                 selected={selectedDevice === item.id}
                 label={item.label}
+                description={item.description}
                 onClick={() => onDeviceChange(item.id)}
               />
             ))}
@@ -86,6 +87,7 @@ export function AgentSelectionDrawer({
                     key={item.id}
                     selected={selectedAgent === item.id}
                     label={item.label}
+                    description={item.description}
                     onClick={() => {
                       onAgentChange(item.id)
                       setOpen(false)
@@ -113,10 +115,12 @@ function SelectionSection({ title, children }: { title: string; children: React.
 function SelectionRow({
   selected,
   label,
+  description,
   onClick,
 }: {
   selected: boolean
   label: string
+  description?: string | null
   onClick: () => void
 }) {
   return (
@@ -129,7 +133,12 @@ function SelectionRow({
       )}
     >
       <Check className={cn("size-4 shrink-0", selected ? "opacity-100" : "opacity-0")} />
-      <span className="min-w-0 flex-1 truncate font-medium">{label}</span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate font-medium">{label}</span>
+        {description ? (
+          <span className="block truncate text-xs text-muted-foreground">{description}</span>
+        ) : null}
+      </span>
     </button>
   )
 }

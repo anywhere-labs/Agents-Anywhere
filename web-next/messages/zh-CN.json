@@ -446,18 +446,34 @@
       "renameFailed": "设备重命名失败。",
       "setupFailed": "无法准备设备设置。",
       "agentRuntimes": "Agent Runtime",
-      "configuredRuntimes": "已配置",
-      "discoveredRuntimes": "已发现但未配置",
-      "noConfiguredRuntimes": "还没有配置 Runtime。",
-      "noDiscoveredRuntimes": "没有发现其他 Runtime。",
+      "addedRuntimeInstances": "已添加实例",
+      "noRuntimeInstances": "还没有添加 Runtime 实例。",
+      "recommendedRuntimeTypes": "推荐添加",
+      "recommendedRuntimeTypesDescription": "需要独立配置或历史记录时，可以继续添加同类型实例。",
+      "noRecommendedRuntimeTypes": "当前没有可用的推荐 Runtime 类型。",
+      "addRuntime": "添加",
+      "addCustomRuntime": "自定义添加",
+      "addAndStartRuntime": "添加并启动",
+      "addRuntimeTitle": "添加 Runtime 实例",
+      "addRuntimeDescription": "选择 Runtime 类型，为这个实例设置独立名称，然后完成配置。",
+      "runtimeType": "Runtime 类型",
+      "selectRuntimeType": "选择 Runtime 类型",
+      "runtimeInstanceName": "实例名称",
+      "runtimeInstanceNamePlaceholder": "例如 工作 Codex",
+      "runtimeInstanceNameDescription": "同一设备上的名称不能重复，之后仍可修改。",
+      "runtimeInstanceNameRequired": "请输入实例名称。",
+      "startImmediately": "立即启动",
+      "startImmediatelyDescription": "添加后验证配置并启动这个实例。",
+      "runtimeAdded": "已添加 {name}。",
+      "runtimeAddedAndStarted": "已添加并启动 {name}。",
+      "addRuntimeFailed": "无法添加 Runtime 实例。",
       "refreshRuntimes": "刷新",
       "discoveringRuntimes": "正在发现…",
       "loadRuntimesFailed": "无法加载 Runtime。",
       "discoverRuntimesFailed": "Runtime 发现失败。",
-      "runtimeDiscovered": "可以开始配置",
-      "runtimeExecutableNotFound": "没有找到可执行文件；配置时请填写路径",
-      "runtimeNotReported": "Connector 当前没有上报这个 Runtime。",
+      "runtimeTypeUnavailable": "类型当前不可用",
       "runtimeIssue": "异常",
+      "runtimeUnknownError": "Runtime 返回了未知错误。",
       "runtimeStatus": {
         "stopped": "已停止",
         "discovering": "正在发现",
@@ -475,11 +491,20 @@
       "configureRuntime": "配置 {name}",
       "activateRuntime": "激活 {name}",
       "deactivateRuntime": "停用 {name}",
+      "renameRuntime": "重命名 {name}",
+      "saveRuntimeName": "保存 Runtime 名称",
+      "cancelRuntimeRename": "取消 Runtime 重命名",
+      "runtimeRenamed": "Runtime 已重命名为 {name}。",
+      "runtimeRenameFailed": "无法重命名 Runtime，这个名称可能已被使用。",
       "runtimeConfigTitle": "配置 {name}",
       "runtimeConfigDescription": "Runtime 配置。",
       "runtimeSchemaUnavailable": "这个 Runtime 没有提供配置 Schema。",
       "runtimeConfigInvalid": "配置内容不合法。",
       "runtimeConfigFields": {
+        "codexHome": {
+          "label": "Codex Home",
+          "description": "这个 Codex 实例使用的配置和历史目录。留空时使用 CODEX_HOME 或 ~/.codex；同时运行的 Codex 实例必须使用不同的 Home 目录。"
+        },
         "claudeExecutablePath": {
           "label": "Claude 可执行文件路径（可选）",
           "description": "可选。只有 Claude Code 不在默认 PATH 时才需要填写。"
@@ -513,6 +538,10 @@
         "modelGateway": {
           "label": "模型 Gateway（可选）",
           "description": "让这个 Runtime 通过兼容的自定义 Gateway 发送模型请求。两个字段都留空时，继续使用 Runtime 默认的模型地址和认证。"
+        },
+        "path": {
+          "label": "路径",
+          "description": "输入这个 Runtime 使用的绝对路径或以 Home 为基准的路径。"
         }
       },
       "modelGatewayBaseUrl": "Gateway 地址",

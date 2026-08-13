@@ -10,6 +10,7 @@ import {
   Drawer,
   DrawerClose,
   DrawerContent,
+  DrawerDescription,
   DrawerFooter,
   DrawerHeader,
   DrawerTitle,
@@ -22,6 +23,7 @@ import {
   FieldLabel,
 } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
+import { Separator } from "@/components/ui/separator"
 import {
   InputGroup,
   InputGroupAddon,
@@ -31,6 +33,7 @@ import {
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
   SelectTrigger,
   SelectValue,
@@ -61,15 +64,33 @@ type UiField = {
 }
 
 type RuntimeConfigDialogProps = {
+  formKey: string
   runtimeName: string
+  title?: string
+  description?: string
   schema: Record<string, unknown> | null
   uiSchema: Record<string, unknown>
+  defaults?: Record<string, unknown>
   config: Record<string, unknown> | null
+  instanceFields?: RuntimeInstanceFields
   open: boolean
   saving: boolean
   submitLabel?: string
   onOpenChange: (open: boolean) => void
   onSave: (config: Record<string, unknown>) => Promise<void>
+}
+
+export type RuntimeInstanceFields = {
+  runtimeType: string
+  runtimeTypes: Array<{
+    value: string
+    label: string
+  }>
+  name: string
+  startImmediately: boolean
+  onRuntimeTypeChange: (runtimeType: string) => void
+  onNameChange: (name: string) => void
+  onStartImmediatelyChange: (active: boolean) => void
 }
 
 const RUNTIME_CONFIG_COMPONENT_COPY: Record<string, { titleKey: string; descriptionKey?: string }> = {
@@ -85,13 +106,22 @@ const RUNTIME_CONFIG_COMPONENT_COPY: Record<string, { titleKey: string; descript
     titleKey: "runtimeConfigComponents.modelGateway.label",
     descriptionKey: "runtimeConfigComponents.modelGateway.description",
   },
+  path: {
+    titleKey: "runtimeConfigComponents.path.label",
+    descriptionKey: "runtimeConfigComponents.path.description",
+  },
 }
 
 export function RuntimeConfigDialog({
+  formKey,
   runtimeName,
+  title,
+  description,
   schema,
   uiSchema,
+  defaults = {},
   config,
+  instanceFields,
   open,
   saving,
   submitLabel,
@@ -100,16 +130,18 @@ export function RuntimeConfigDialog({
 }: RuntimeConfigDialogProps) {
   const t = useTranslations("dashboard.device")
   const tCommon = useTranslations("common")
-  const [draft, setDraft] = React.useState<Record<string, unknown>>(config ?? {})
+  const [draft, setDraft] = React.useState<Record<string, unknown>>(() => initialConfig(defaults, config))
   const [errors, setErrors] = React.useState<Record<string, string>>({})
+  const [instanceNameInvalid, setInstanceNameInvalid] = React.useState(false)
   const [resetKey, setResetKey] = React.useState(0)
 
   React.useEffect(() => {
     if (!open) return
-    setDraft(config ?? {})
+    setDraft(initialConfig(defaults, config))
     setErrors({})
+    setInstanceNameInvalid(false)
     setResetKey((value) => value + 1)
-  }, [config, open])
+  }, [formKey, open])
 
   const typedSchema = schema as JsonSchema | null
   const properties = typedSchema?.properties ?? {}
@@ -138,12 +170,16 @@ export function RuntimeConfigDialog({
   }
 
   const resetAll = () => {
-    setDraft({})
+    setDraft({ ...defaults })
     setErrors({})
     setResetKey((value) => value + 1)
   }
 
   const submit = async () => {
+    if (instanceFields && !instanceFields.name.trim()) {
+      setInstanceNameInvalid(true)
+      return
+    }
     if (!schema) return
     const ajv = new Ajv2020({ allErrors: true, strict: false })
     const validate = ajv.compile(schema)
@@ -156,8 +192,12 @@ export function RuntimeConfigDialog({
       setErrors(next)
       return
     }
-    await onSave(draft)
-    onOpenChange(false)
+    try {
+      await onSave(draft)
+      onOpenChange(false)
+    } catch {
+      // The caller reports the request error and refreshes persisted runtime state.
+    }
   }
 
   return (
@@ -166,7 +206,8 @@ export function RuntimeConfigDialog({
         className="data-[vaul-drawer-direction=right]:w-[min(42rem,calc(100vw-1rem))] data-[vaul-drawer-direction=right]:sm:max-w-2xl"
       >
         <DrawerHeader className="px-6 py-5 pr-16">
-          <DrawerTitle className="text-xl">{t("runtimeConfigTitle", { name: runtimeName })}</DrawerTitle>
+          <DrawerTitle className="text-xl">{title ?? t("runtimeConfigTitle", { name: runtimeName })}</DrawerTitle>
+          {description ? <DrawerDescription>{description}</DrawerDescription> : null}
         </DrawerHeader>
         <DrawerClose asChild>
           <Button
@@ -181,6 +222,61 @@ export function RuntimeConfigDialog({
         </DrawerClose>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-5">
+          {instanceFields ? (
+            <>
+              <FieldGroup className="gap-5">
+                <Field>
+                  <FieldLabel htmlFor="runtime-instance-type">{t("runtimeType")}</FieldLabel>
+                  <Select
+                    value={instanceFields.runtimeType}
+                    onValueChange={instanceFields.onRuntimeTypeChange}
+                  >
+                    <SelectTrigger id="runtime-instance-type" className="w-full">
+                      <SelectValue placeholder={t("selectRuntimeType")} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectGroup>
+                        {instanceFields.runtimeTypes.map((runtimeType) => (
+                          <SelectItem key={runtimeType.value} value={runtimeType.value}>
+                            {runtimeType.label}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                </Field>
+                <Field data-invalid={instanceNameInvalid}>
+                  <FieldLabel htmlFor="runtime-instance-name">{t("runtimeInstanceName")}</FieldLabel>
+                  <Input
+                    id="runtime-instance-name"
+                    value={instanceFields.name}
+                    onChange={(event) => {
+                      instanceFields.onNameChange(event.currentTarget.value)
+                      if (event.currentTarget.value.trim()) setInstanceNameInvalid(false)
+                    }}
+                    placeholder={t("runtimeInstanceNamePlaceholder")}
+                    maxLength={128}
+                    aria-invalid={instanceNameInvalid}
+                    autoFocus
+                  />
+                  <FieldDescription>{t("runtimeInstanceNameDescription")}</FieldDescription>
+                  {instanceNameInvalid ? <FieldError>{t("runtimeInstanceNameRequired")}</FieldError> : null}
+                </Field>
+                <Field orientation="horizontal">
+                  <div className="min-w-0 flex-1">
+                    <FieldLabel htmlFor="runtime-start-immediately">{t("startImmediately")}</FieldLabel>
+                    <FieldDescription>{t("startImmediatelyDescription")}</FieldDescription>
+                  </div>
+                  <Switch
+                    id="runtime-start-immediately"
+                    checked={instanceFields.startImmediately}
+                    onCheckedChange={instanceFields.onStartImmediatelyChange}
+                  />
+                </Field>
+              </FieldGroup>
+              <Separator className="my-6" />
+            </>
+          ) : null}
           {!typedSchema ? (
             <FieldError>{t("runtimeSchemaUnavailable")}</FieldError>
           ) : (
@@ -224,6 +320,13 @@ export function RuntimeConfigDialog({
       </DrawerContent>
     </Drawer>
   )
+}
+
+function initialConfig(
+  defaults: Record<string, unknown>,
+  config: Record<string, unknown> | null,
+): Record<string, unknown> {
+  return { ...defaults, ...(config ?? {}) }
 }
 
 function RuntimeConfigField({

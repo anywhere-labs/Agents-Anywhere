@@ -56,17 +56,21 @@ export type DeviceRuntimeView = {
   connectorId: string;
   runtimeId: string;
   runtimeType: string;
+  name: string;
+  // Temporary Server compatibility alias. New Web code should use name.
   displayName: string;
-  present: boolean;
+  typeDisplayName: string;
   configured: boolean;
   active: boolean;
   status: DeviceRuntimeStatus;
-  discovery: Record<string, unknown>;
+  available: boolean;
   schema: Record<string, unknown> | null;
   uiSchema: Record<string, unknown>;
+  defaults: Record<string, unknown>;
+  capabilities: Record<string, boolean>;
   config: Record<string, unknown> | null;
   error: Record<string, unknown> | null;
-  lastDiscoveredAt: string;
+  createdAt: string;
   updatedAt: string;
 };
 
@@ -74,6 +78,37 @@ export type DeviceRuntimeListResponse = {
   connectorId: string;
   runtimes: DeviceRuntimeView[];
   serverTime: string;
+};
+
+export type RuntimeTypeView = {
+  connectorId: string;
+  runtimeType: string;
+  displayName: string;
+  description: string | null;
+  available: boolean;
+  recommended: boolean;
+  recommendationRank: number | null;
+  discovery: Record<string, unknown>;
+  schema: Record<string, unknown> | null;
+  uiSchema: Record<string, unknown>;
+  defaults: Record<string, unknown>;
+  capabilities: Record<string, boolean>;
+  metadata: Record<string, unknown>;
+  lastDiscoveredAt: string;
+  updatedAt: string;
+};
+
+export type RuntimeTypeListResponse = {
+  connectorId: string;
+  runtimeTypes: RuntimeTypeView[];
+  serverTime: string;
+};
+
+export type RuntimeInstanceCreateRequest = {
+  runtimeType: string;
+  name: string;
+  config: Record<string, unknown>;
+  active: boolean;
 };
 
 export type SessionStatusValue =

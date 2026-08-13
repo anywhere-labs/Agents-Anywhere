@@ -34,6 +34,7 @@ import { WorkspacePicker, type WorkspaceSelection } from "@/components/workspace
 import { useWorkspace } from "@/components/workspace-context"
 import { useAuth } from "@/components/auth/auth-context"
 import { dashboardApi } from "@/features/dashboard/api"
+import { runtimeInstanceOptions } from "@/features/dashboard/runtime-instances"
 import { createClientId } from "@/lib/id"
 import { cn } from "@/lib/utils"
 import { useElementWidth } from "@/hooks/use-element-width"
@@ -228,10 +229,7 @@ export function TaskComposer() {
   const selectedConnectorId = selectedConnector?.id ?? ""
   const agentOptions = React.useMemo(
     () => selectedConnector
-      ? activeRuntimes(runtimeInventory[selectedConnector.id]).map((runtime) => ({
-          id: runtime.runtimeId,
-          label: runtime.displayName,
-        }))
+      ? runtimeInstanceOptions(activeRuntimes(runtimeInventory[selectedConnector.id]))
       : [],
     [runtimeInventory, selectedConnector],
   )
@@ -875,7 +873,6 @@ export function TaskComposer() {
 function activeRuntimes(runtimes: DeviceRuntimeView[] | undefined) {
   return (runtimes ?? [])
     .filter((runtime) => runtime.configured && runtime.active && runtime.status === "running")
-    .sort((a, b) => a.displayName.localeCompare(b.displayName))
 }
 
 function sameRuntimeInventory(
@@ -894,8 +891,9 @@ function stableRuntimeInventoryKey(value: Record<string, DeviceRuntimeView[]>): 
         .map((runtime) => [
           runtime.runtimeId,
           runtime.runtimeType,
-          runtime.displayName,
-          runtime.present,
+          runtime.name,
+          runtime.typeDisplayName,
+          runtime.available,
           runtime.configured,
           runtime.active,
           runtime.status,

@@ -8,6 +8,7 @@
     "dev": "next dev --hostname 127.0.0.1 --port 5174",
     "build": "next build",
     "start": "next start --hostname 127.0.0.1 --port 5174",
+    "test": "tsx --test src/features/dashboard/runtime-instances.test.ts",
     "typecheck": "tsc --noEmit",
     "lint": "tsc --noEmit",
     "protocol:generate": "node scripts/generate-protocol-types.mjs",
@@ -88,6 +89,7 @@
     "@types/react-dom": "^19.2.3",
     "@types/react-is": "^19",
     "json-schema-to-typescript": "^15.0.4",
+    "tsx": "^4.23.12",
     "typescript": "^6.0.3"
   }
 }

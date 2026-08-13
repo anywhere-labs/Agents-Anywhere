@@ -11,7 +11,7 @@ export type Id = string
 export type Selectionid = string
 export type Permissions = ProtocolPermissionItem[]
 export type Revision = number
-export type Runtime = "codex" | "claude" | "opencode" | "acp"
+export type Runtime = string
 
 export interface ProtocolPermissionCatalog {
   permissions?: Permissions
