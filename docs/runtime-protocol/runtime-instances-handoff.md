@@ -1,27 +1,33 @@
 # Runtime Instances Refactor Handoff
 
-Status: paused on 2026-08-13.
+Status: cross-layer implementation completed on 2026-08-14; ready for review.
 
 This document is the handoff for the named, multi-instance runtime refactor.
-It records what is already implemented on the current branch, what remains to
-be changed, and the order in which the remaining work should be completed.
+It records the completed implementation, its verification, and the remaining
+product risks that should be considered before merging.
 
 ## Repository state
 
 - Repository: `Agents-Anywhere`
 - Branch: `codex/runtime-instances`
-- Last implementation commit: `f66adc8 refactor(connector): support named runtime instances`
+- Last implementation commit: `dd54959 fix(web): refresh runtime choices after instance changes`
 - Remote: the branch has been pushed to `origin/codex/runtime-instances`
 - Base before this refactor: `836a66a`
-- Worktree was clean before this handoff document was added.
+- The local and remote branch tips match after each implementation milestone.
 
-The implementation commit changed 31 Connector files with approximately
-`+1913/-773` lines.
+Completed implementation commits after the original handoff:
 
-Important: this branch is not yet a deployable cross-layer change. Connector
-RPC has moved to the new runtime type/instance contract, while Server and Web
-still use the old inventory contract. Finish the Server and Web phases before
-merging this branch into `v2`.
+```text
+97172e9 feat(server): persist runtime types and named instances
+a174acf feat(server): route sessions through runtime instances
+8d4db38 feat(web): manage named runtime instances
+d8f1b81 fix(web): surface persisted runtime startup errors
+dd54959 fix(web): refresh runtime choices after instance changes
+```
+
+Connector, Server, protocol schemas, generated Web types, and Web now use the
+same runtime type/instance contract. The branch has not been merged into `v2`;
+review the known risks below before adoption.
 
 ## Product decisions
 
@@ -212,17 +218,18 @@ Full-repository Ruff is not currently clean because `_reference` and unrelated
 legacy modules contain existing warnings. Do not mix that cleanup into this
 refactor.
 
-## Remaining Server work
+## Completed Server work
 
-Complete Server before touching the main Web interaction flow. The recommended
-Server work should be split into two independently verifiable commits.
+Server work was completed in two independently verified commits: `97172e9` for
+storage/API and `a174acf` for concrete instance session routing.
 
-### 1. Add a runtime type catalog table
+### 1. Runtime type catalog table
 
-Create migration `v2_11` and update the current schema revision.
+Migration `v2_11` and schema revision `2.11` add the type catalog and migrate
+the old inventory rows.
 
-Add `connector_runtime_types` with a composite primary key of
-`connector_id + runtime_type`. It should contain type-owned discovery data:
+`connector_runtime_types` has a composite primary key of
+`connector_id + runtime_type` and contains type-owned discovery data:
 
 ```text
 connector_id
@@ -242,7 +249,7 @@ last_discovered_at
 updated_at
 ```
 
-`device_runtimes` should become instance-owned storage:
+`device_runtimes` is instance-owned storage:
 
 ```text
 connector_id
@@ -258,11 +265,11 @@ created_at
 updated_at
 ```
 
-Use `name_key` for a normalized, case-insensitive uniqueness constraint per
-Connector. Do not rely on database-specific case-insensitive collation.
+`name_key` provides a normalized, case-insensitive uniqueness constraint per
+Connector without database-specific case-insensitive collation.
 
-Do not make discovery overwrite instance name, config, active state, status,
-or error. Type availability is read by joining the instance to its latest type
+Discovery does not overwrite instance name, config, active state, status, or
+error. Type availability is read by joining the instance to its latest type
 descriptor.
 
 Migration rules for existing rows:
@@ -278,7 +285,7 @@ Migration rules for existing rows:
    a migrated instance, not a newly discovered placeholder.
 5. Verify both SQLite migration tests and PostgreSQL-compatible DDL.
 
-Files to change first:
+Primary files:
 
 - `server/migrations/versions/v2_11.py`
 - `server/agent_server/infra/db/schema.py`
@@ -289,12 +296,12 @@ Files to change first:
 - `server/tests/test_database_migrations.py`
 - `server/tests/conftest.py`
 
-### 2. Add type and instance API models
+### 2. Type and instance API models
 
-Replace the old `RuntimeInventory` model with a runtime type catalog model that
-parses Connector `runtimeTypes`.
+The old `RuntimeInventory` model was replaced with a runtime type catalog model
+that parses Connector `runtimeTypes`.
 
-Add response/request models for:
+Response/request models cover:
 
 - listing runtime types;
 - listing runtime instances;
@@ -302,7 +309,7 @@ Add response/request models for:
 - renaming an instance;
 - updating config and active state.
 
-Recommended instance creation request:
+Instance creation accepts:
 
 ```json
 {
@@ -315,11 +322,11 @@ Recommended instance creation request:
 }
 ```
 
-Generate IDs on Server, for example `rti_<token>`. Insert the instance before
-validation/start so any asynchronous `runtime.statusChanged` notification can
-be attached to an existing row.
+Server generates `rti_<token>` IDs and inserts an instance before
+validation/start so asynchronous `runtime.statusChanged` notifications attach
+to an existing row.
 
-The instance response should expose explicit fields:
+The instance response exposes explicit fields:
 
 ```text
 runtimeId
@@ -339,7 +346,7 @@ defaults
 `displayName` may temporarily mirror `name` for mobile compatibility, but new
 Web code should use `name`.
 
-Recommended routes:
+Implemented routes:
 
 ```text
 GET  /api/v2/connectors/{connectorId}/runtime-types
@@ -351,13 +358,13 @@ PUT  /api/v2/connectors/{connectorId}/runtimes/{runtimeId}/config
 PUT  /api/v2/connectors/{connectorId}/runtimes/{runtimeId}/active
 ```
 
-Decide deletion semantics before adding a hard-delete endpoint. A runtime
-instance referenced by sessions should not be silently deleted. Prefer a 409 or
-a future soft-delete design.
+Hard deletion remains deliberately absent. A runtime instance referenced by
+sessions must not be silently deleted; a future design should use a 409 or
+soft deletion.
 
-### 3. Update Server lifecycle RPC
+### 3. Server lifecycle RPC
 
-All validation and start calls must include instance identity:
+All validation and start calls include instance identity:
 
 ```json
 {
@@ -369,7 +376,7 @@ All validation and start calls must include instance identity:
 }
 ```
 
-Update:
+This applies to:
 
 - `DeviceRuntimeService._request_validate()`;
 - `DeviceRuntimeService._start_locked()`;
@@ -380,12 +387,12 @@ For a running rename, calling `runtime.start` again with the same config and the
 new name is acceptable. Connector updates the wrapper identity without
 restarting the native runtime.
 
-Type discovery should no longer call stop on a type that Server did not
-activate. Reconciliation operates only on persisted instances.
+Type discovery no longer calls stop on a type that Server did not activate.
+Reconciliation operates only on persisted instances.
 
-### 4. Preserve startup errors for the tooltip
+### 4. Durable startup errors
 
-The intended error path is:
+The implemented error path is:
 
 ```text
 Connector start/validation failure
@@ -395,19 +402,18 @@ Connector start/validation failure
   -> Web instance error badge tooltip
 ```
 
-`DeviceRuntimeService._start_locked()` already has the useful core behavior:
-it leaves `active=true`, sets `status=error`, stores `code/message`, and raises
-an HTTP error. Preserve that behavior when the service is rewritten.
+`DeviceRuntimeService._start_locked()` leaves `active=true`, sets
+`status=error`, stores `code/message`, and raises an HTTP error.
 
-The HTTP error `detail` should contain the same structured payload stored on
-the instance. Do not replace the Connector message with a generic 502 string.
+The HTTP error `detail` contains the same structured payload stored on the
+instance rather than replacing the Connector message with a generic 502.
 
-### 5. Make session runtime IDs dynamic
+### 5. Dynamic session runtime IDs
 
-The current Server `RuntimeName` literal only accepts known types. Dynamic
-instance IDs require a bounded runtime ID string model instead.
+Runtime fields now use a bounded runtime ID string model rather than a known
+runtime type literal.
 
-Update runtime fields used by:
+The dynamic model applies to:
 
 - `SessionCreateRequest` and `SessionCreateAndStartRequest`;
 - `SessionView` and `SessionRuntimeState`;
@@ -415,60 +421,57 @@ Update runtime fields used by:
 - Connector notification parsing;
 - runtime catalog routes.
 
-Session creation and every session operation must validate the concrete
-instance through `DeviceRuntimeService.ensure_active_running()`.
+Session creation and session operations validate the concrete instance through
+`DeviceRuntimeService.ensure_active_running()`.
 
-Also fix external-session reconciliation. Repository fallback lookup currently
-matches `connector_id + external_session_id`. With multiple instances it must
-include the concrete runtime ID:
+External-session reconciliation now includes the concrete runtime ID:
 
 ```text
 connector_id + runtime_id + external_session_id
 ```
 
-Apply the same scoping to `resolve_connector_session_id()` and Connector
-session upsert paths. Otherwise two native sources can merge into one platform
+The same scoping is applied to `resolve_connector_session_id()` and Connector
+session upsert paths, so two native sources cannot merge into one platform
 session.
 
-Do not add a Server turn table or turn-aware interrupt logic while changing
-session binding.
+No Server turn table or turn-aware interrupt logic was added.
 
-## Remaining Web work
+## Completed Web work
 
-Start Web only after the new Server endpoints and response models are stable.
+Web work was completed after the Server endpoints stabilized, in commits
+`8d4db38` and `d8f1b81`.
 
-### 1. Replace inventory UI with instance management
+### 1. Instance management UI
 
-The device page should contain:
+The device page contains:
 
 - added runtime instances;
 - a recommended-add list sorted by `recommendationRank`;
 - a custom-add action that lets the user choose any available runtime type.
 
-Remove the "Discovered, not configured" section. A discovered type is not an
-instance.
+The "Discovered, not configured" section was removed. A discovered type is not
+an instance.
 
-The add flow should collect:
+The add flow collects:
 
 1. runtime type;
 2. instance name;
 3. schema-driven runtime config;
 4. whether to start immediately, normally true for the primary action.
 
-Reuse the generic schema renderer. Do not add Codex- or Claude-specific form
+The generic schema renderer is reused without Codex- or Claude-specific form
 branches.
 
-Update task composer runtime choices to use active instances:
+Task composer choices use active instances:
 
 - option value: `runtimeId`;
 - option label: instance `name`;
 - optional secondary label: `typeDisplayName`.
 
-### 2. Implement the startup error tooltip completely
+### 2. Startup error tooltip
 
-The device page already renders a destructive error badge with a tooltip when
-`runtime.error` exists. The missing behavior is state refresh after a failed
-request.
+The shared manager renders a destructive error badge with a tooltip when
+`runtime.error` exists and refreshes durable state after failed requests.
 
 For create/start, activate, config restart, and pairing start failures:
 
@@ -478,14 +481,13 @@ For create/start, activate, config restart, and pairing start failures:
 4. keep the config dialog open when appropriate;
 5. render the persisted `runtime.error` in the instance row tooltip.
 
-The pairing dialog currently has no runtime error tooltip. Extract a shared
-component such as `RuntimeErrorBadge` and use it on both the device page and
-pairing page.
+`RuntimeErrorBadge` is shared by the manager used on both the device and
+pairing screens.
 
 The tooltip should prefer `error.message`, then a meaningful nested message,
 then `error.code`. Do not expose a raw JSON object as the primary UI.
 
-### 3. Complete schema i18n
+### 3. Schema i18n
 
 Connector already emits these Codex Home keys:
 
@@ -494,13 +496,13 @@ dashboard.device.runtimeConfigFields.codexHome.label
 dashboard.device.runtimeConfigFields.codexHome.description
 ```
 
-They are not yet present in:
+They are present in:
 
 - `web-next/messages/en.json`
 - `web-next/messages/zh-CN.json`
 
-Add them along with i18n for recommended add, custom add, runtime instance
-name, type selection, rename, and conflict/error states.
+The same locale files include recommended add, custom add, runtime instance
+name, type selection, rename, and conflict/error copy.
 
 Schema rendering should continue to fall back to Web-owned generic component
 copy when a schema does not provide an i18n key. This applies to generic
@@ -508,7 +510,7 @@ components such as `customModels`, `modelGateway`, `keyValue`, and `path`.
 
 ### 4. Pairing flow
 
-After pairing completes:
+After pairing completes, Web now:
 
 1. discover runtime types;
 2. fetch existing instances;
@@ -516,9 +518,21 @@ After pairing completes:
 4. configure/create/start the selected instance;
 5. show any persisted startup error in a tooltip after refresh.
 
-Do not auto-create one instance per discovered type.
+The flow does not auto-create one instance per discovered type.
 
-## Required tests
+## Verification
+
+Completed verification:
+
+```text
+Connector: 363 passed
+Server: 398 passed, 14 skipped
+Web: 7 runtime instance tests passed
+Web: typecheck, lint, and protocol:check passed
+Web: final production build passed
+```
+
+Coverage includes the original required cases below.
 
 ### Server
 
@@ -559,21 +573,19 @@ unless explicitly requested.
 
 ## Known risks
 
-1. Connector and Server contracts are currently incompatible on this branch.
-   Do not deploy the Connector commit alone.
-2. Claude source isolation is not complete. Multiple wrappers work, but native
+1. Claude source isolation is not complete. Multiple wrappers work, but native
    history/config ownership needs an explicit provider decision.
-3. Codex Home normalization uses `Path.resolve(strict=False)`. Existing
+2. Codex Home normalization uses `Path.resolve(strict=False)`. Existing
    symlinks resolve correctly, but case-only aliases on a case-insensitive
    filesystem should be tested before treating canonicalization as exhaustive.
-4. Existing mobile clients read `displayName`. Keep a temporary response alias
+3. Existing mobile clients read `displayName`. Keep a temporary response alias
    or update mobile clients in the same release.
-5. Hard-deleting an instance can orphan session bindings. Define deletion or
+4. Hard-deleting an instance can orphan session bindings. Define deletion or
    soft-deletion semantics first.
-6. Runtime type availability and instance lifecycle status are separate facts.
+5. Runtime type availability and instance lifecycle status are separate facts.
    Do not collapse them back into one `status` field.
 
-## Recommended commit sequence
+## Completed commit sequence
 
 1. `feat(server): persist runtime types and named instances`
    - migration, schema, repository, core models, migration tests
@@ -583,9 +595,12 @@ unless explicitly requested.
    - recommended/custom add, naming, composer instance selection, i18n
 4. `fix(web): surface persisted runtime startup errors`
    - shared tooltip component and failed-request refresh behavior
-5. Final cross-layer verification, documentation update, push, and review
+5. `fix(web): refresh runtime choices after instance changes`
+   - cross-screen inventory invalidation and exact runtime ID preservation
+6. Final cross-layer verification and documentation update
 
-Push each independently verified milestone to `origin/codex/runtime-instances`.
+All implementation milestones were pushed independently to
+`origin/codex/runtime-instances`.
 
 ## Resume checklist
 
@@ -593,8 +608,8 @@ Push each independently verified milestone to `origin/codex/runtime-instances`.
 git switch codex/runtime-instances
 git pull --ff-only origin codex/runtime-instances
 git status --short --branch
-git show --stat --oneline f66adc8
+git log --oneline --decorate -6
 ```
 
-Then begin with Server migration `v2_11`. Do not restart the Connector work or
+Then review the five completion commits and the known risks above. Do not
 reintroduce the old runtime inventory compatibility path.
