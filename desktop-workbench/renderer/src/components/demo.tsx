@@ -210,7 +210,7 @@ function DesktopShellHeader() {
           </Button>
         </div>
       </div>
-      <div data-slot="desktop-shell-header-actions" className="aa-window-no-drag ml-auto flex h-full min-w-0 flex-1 items-center justify-end px-3" />
+      <div data-slot="desktop-shell-header-actions" className="ml-auto flex h-full min-w-0 flex-1 items-center justify-end px-3" />
     </header>
   )
 }
