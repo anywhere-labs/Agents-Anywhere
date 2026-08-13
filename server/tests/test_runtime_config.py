@@ -279,6 +279,47 @@ def test_custom_executable_path_is_not_constrained_to_discovered_default(tmp_pat
     assert rpc.requests[-1][2] == {"runtimeId": "codex", "config": config}
 
 
+def test_model_gateway_key_round_trips_without_redaction(tmp_path):
+    client, rpc, connector_id, headers = _make_client(tmp_path)
+    gateway_schema = {
+        "type": "object",
+        "required": ["baseUrl", "apiKey"],
+        "properties": {
+            "baseUrl": {"type": "string", "minLength": 1},
+            "apiKey": {"type": "string", "minLength": 1},
+        },
+        "additionalProperties": False,
+    }
+    rpc.inventory["runtimes"][0]["schema"]["properties"]["modelGateway"] = (
+        gateway_schema
+    )
+    asyncio.run(
+        client.app.state.device_runtime_service.ingest_inventory(
+            connector_id,
+            rpc.inventory,
+        )
+    )
+    config = {
+        "modelGateway": {
+            "baseUrl": "https://gateway.example/v1",
+            "apiKey": "gateway-secret",
+        }
+    }
+
+    saved = client.put(
+        f"{_runtime_url(connector_id)}/config",
+        headers=headers,
+        json={"config": config},
+    )
+    loaded = client.get(f"/connectors/{connector_id}/runtimes", headers=headers)
+
+    assert saved.status_code == 200, saved.text
+    assert loaded.status_code == 200, loaded.text
+    assert saved.json()["config"] == config
+    assert loaded.json()["runtimes"][0]["config"] == config
+    assert rpc.requests[-1][2] == {"runtimeId": "codex", "config": config}
+
+
 def test_server_rejects_invalid_config_before_connector_rpc(tmp_path):
     client, rpc, connector_id, headers = _make_client(tmp_path)
 

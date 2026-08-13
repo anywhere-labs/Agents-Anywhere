@@ -487,6 +487,14 @@
         "useSystemCodex": {
           "label": "Use System Codex",
           "description": "Use the Codex executable from your login shell PATH. If it is unavailable, the bundled Codex is used automatically. Turn this off to always use the bundled Codex."
+        },
+        "modelGatewayBaseUrl": {
+          "label": "Gateway URL",
+          "description": "The HTTP or HTTPS base URL exposed by your model gateway."
+        },
+        "modelGatewayApiKey": {
+          "label": "Gateway API key",
+          "description": "The API key sent to this gateway. It is stored and returned as part of the runtime configuration."
         }
       },
       "runtimeConfigComponents": {
@@ -497,8 +505,16 @@
         "customModels": {
           "label": "Custom models (optional)",
           "description": "Add models to show in the model picker, plus the reasoning efforts available for each model."
+        },
+        "modelGateway": {
+          "label": "Model gateway (optional)",
+          "description": "Route this runtime's model requests through a compatible custom gateway. Leave both fields empty to use the runtime's default endpoint and authentication."
         }
       },
+      "modelGatewayBaseUrl": "Gateway URL",
+      "modelGatewayApiKey": "Gateway API key",
+      "showModelGatewayApiKey": "Show gateway API key",
+      "hideModelGatewayApiKey": "Hide gateway API key",
       "resetAllDefaults": "Reset all defaults",
       "noEnvironmentOverrides": "No environment overrides.",
       "environmentName": "Variable name",

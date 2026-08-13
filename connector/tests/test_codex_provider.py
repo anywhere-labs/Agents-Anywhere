@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+
 from connector.runtime_protocol import RuntimeConfig, RuntimeInvalidRequestError
 from connector.runtimes.codex.provider import CodexProvider
 from connector.runtimes.codex.runtime import CodexRuntime
@@ -76,14 +77,17 @@ async def _test_codex_provider_schema_exposes_no_ipc_or_app_server_switches() ->
     assert schema.ui_schema["order"] == [
         "useSystemCodex",
         "codexExecutablePath",
+        "modelGateway",
         "environment",
         "customModels",
     ]
     assert schema.ui_schema["customModels"]["component"] == "customModels"
+    assert schema.ui_schema["modelGateway"]["component"] == "modelGateway"
     assert set(schema.schema["properties"]) == {
         "codexExecutablePath",
         "customModels",
         "environment",
+        "modelGateway",
         "useSystemCodex",
     }
     assert schema.schema["properties"]["useSystemCodex"] == {
@@ -167,6 +171,46 @@ async def _test_codex_provider_validates_sdk_config() -> None:
     assert config.metadata["sdk"]["available"] is True
     assert config.metadata["runtimeBinary"]["mode"] == "prefer_system"
     assert "launchTarget" not in config.metadata
+
+
+def test_codex_provider_preserves_model_gateway_config() -> None:
+    asyncio.run(_test_codex_provider_preserves_model_gateway_config())
+
+
+async def _test_codex_provider_preserves_model_gateway_config() -> None:
+    provider = CodexProvider(sdk_checker=_available_sdk)
+
+    config = await provider.validate_config(
+        {
+            "modelGateway": {
+                "baseUrl": " https://gateway.example/v1/ ",
+                "apiKey": " gateway-secret ",
+            }
+        }
+    )
+
+    assert config.values["modelGateway"] == {
+        "baseUrl": "https://gateway.example/v1",
+        "apiKey": " gateway-secret ",
+    }
+
+
+def test_codex_provider_rejects_invalid_model_gateway_url() -> None:
+    asyncio.run(_test_codex_provider_rejects_invalid_model_gateway_url())
+
+
+async def _test_codex_provider_rejects_invalid_model_gateway_url() -> None:
+    provider = CodexProvider(sdk_checker=_available_sdk)
+
+    with pytest.raises(RuntimeInvalidRequestError, match="absolute HTTP or HTTPS URL"):
+        await provider.validate_config(
+            {
+                "modelGateway": {
+                    "baseUrl": "gateway.example/v1",
+                    "apiKey": "gateway-secret",
+                }
+            }
+        )
 
 
 def test_codex_provider_can_force_bundled_codex() -> None:

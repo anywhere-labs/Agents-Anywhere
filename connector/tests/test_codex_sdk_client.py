@@ -7,23 +7,6 @@ from types import SimpleNamespace, TracebackType
 from typing import Any, Self
 
 import pytest
-from connector.runtime_protocol import RuntimeConfig
-from connector.runtimes.codex.sdk import client as codex_sdk_client
-from connector.runtimes.codex.sdk.binary import LoginShellPathResult
-from connector.runtimes.codex.sdk.client import (
-    CodexSdkClient,
-    _create_sdk_client,
-    _sdk_config,
-)
-from connector.runtimes.codex.sdk.events import CodexSdkEvent
-from connector.runtimes.codex.sdk.runtime_client import (
-    CodexInterruptTurnRequest,
-    CodexStartThreadRequest,
-    CodexStartTurnRequest,
-    CodexSteerTurnRequest,
-    CodexTurnInputAttachment,
-)
-from connector.runtimes.codex.sdk.shapes import sdk_approval_mode, thread_read_result
 from openai_codex.generated.v2_all import (
     AgentMessageThreadItem,
     ContextCompactedNotification,
@@ -41,6 +24,25 @@ from openai_codex.models import (
     Notification,
     TurnCompletedNotification,
 )
+
+from connector.runtime_protocol import RuntimeConfig
+from connector.runtimes.codex.sdk import client as codex_sdk_client
+from connector.runtimes.codex.sdk.binary import LoginShellPathResult
+from connector.runtimes.codex.sdk.client import (
+    CodexSdkClient,
+    _create_sdk_client,
+    _sdk_config,
+)
+from connector.runtimes.codex.sdk.events import CodexSdkEvent
+from connector.runtimes.codex.sdk.runtime_client import (
+    CodexInterruptTurnRequest,
+    CodexStartThreadRequest,
+    CodexStartTurnRequest,
+    CodexSteerTurnRequest,
+    CodexTurnInputAttachment,
+)
+from connector.runtimes.codex.sdk.shapes import sdk_approval_mode, thread_read_result
+from connector.runtimes.model_gateway import ModelGateway
 
 
 def test_codex_sdk_client_delegates_runtime_protocol_methods() -> None:
@@ -217,6 +219,10 @@ def test_codex_sdk_client_resumes_thread_before_compact() -> None:
 
 def test_codex_sdk_client_retries_turn_start_after_thread_not_found() -> None:
     asyncio.run(_test_codex_sdk_client_retries_turn_start_after_thread_not_found())
+
+
+def test_codex_sdk_client_applies_gateway_to_thread_start_and_resume() -> None:
+    asyncio.run(_test_codex_sdk_client_applies_gateway_to_thread_start_and_resume())
 
 
 async def _test_codex_sdk_client_adapts_async_codex_thread_turn_flow() -> None:
@@ -512,6 +518,58 @@ async def _test_codex_sdk_client_retries_turn_start_after_thread_not_found() -> 
     ]
     assert native.low_level.thread_resume_params[0]["threadId"] == "thread_low"
     assert native.low_level.thread_resume_params[0]["approvalPolicy"] == "on-request"
+
+
+async def _test_codex_sdk_client_applies_gateway_to_thread_start_and_resume() -> None:
+    gateway = ModelGateway(
+        base_url="https://gateway.example/v1",
+        api_key="gateway-secret",
+    )
+    sdk = _FakeLowLevelSdkModule()
+    fresh_native = _FakeLowLevelAsyncCodex()
+    fresh_client = CodexSdkClient(
+        fresh_native,
+        sdk=sdk,
+        model_gateway=gateway,
+    )
+
+    await fresh_client.start_thread(
+        CodexStartThreadRequest(model="gateway-model")
+    )
+
+    provider = fresh_native.low_level.thread_start_params[0]["config"][
+        "model_providers"
+    ]["agents_anywhere_gateway"]
+    assert fresh_native.low_level.thread_start_params[0]["modelProvider"] == (
+        "agents_anywhere_gateway"
+    )
+    assert provider == {
+        "name": "Agents Anywhere Model Gateway",
+        "base_url": "https://gateway.example/v1",
+        "experimental_bearer_token": "gateway-secret",
+        "wire_api": "responses",
+        "requires_openai_auth": False,
+    }
+
+    resumed_native = _FakeLowLevelAsyncCodex()
+    resumed_client = CodexSdkClient(
+        resumed_native,
+        sdk=sdk,
+        model_gateway=gateway,
+    )
+
+    await resumed_client.start_turn(
+        CodexStartTurnRequest(
+            thread_id="thread_existing",
+            content="hello through gateway",
+        )
+    )
+
+    resume = resumed_native.low_level.thread_resume_params[0]
+    assert resume["modelProvider"] == "agents_anywhere_gateway"
+    assert resume["config"]["model_providers"]["agents_anywhere_gateway"][
+        "experimental_bearer_token"
+    ] == "gateway-secret"
 
 
 class _NativeSdkClient:
