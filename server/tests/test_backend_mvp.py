@@ -151,20 +151,66 @@ def create_connector_and_session(
     assert auth_response.status_code == 200
     access_token = auth_response.json()["accessToken"]
 
-    session_response = client.post(
-        "/sessions",
-        headers=headers,
-        json={
-            "connectorId": connector_id,
-            "runtime": runtime,
-            "externalSessionId": external_session_id
-            or f"thr_{connector_id}_demo",
-            "title": "Demo",
-            "cwd": "/repo",
-        },
+    class AppStateRpcProxy:
+        initial_rpc = client.app.state.rpc
+
+        async def is_online(self, requested_connector_id: str) -> bool:
+            if client.app.state.rpc is self.initial_rpc:
+                return True
+            return await client.app.state.rpc.is_online(requested_connector_id)
+
+        async def request(
+            self,
+            requested_connector_id: str,
+            method: str,
+            params: dict[str, Any],
+            **kwargs: Any,
+        ) -> Any:
+            return await client.app.state.rpc.request(
+                requested_connector_id,
+                method,
+                params,
+                **kwargs,
+            )
+
+    client.app.state.device_runtime_service = DeviceRuntimeService(
+        client.app.state.store,
+        AppStateRpcProxy(),
+        client.app.state.timeline_broker,
+        client.app.state.redis,
+        client.app.state.session_runtime_state_cache,
     )
-    assert session_response.status_code == 200
-    session_id = session_response.json()["session"]["id"]
+
+    async def seed_runtime_and_session() -> str:
+        await client.app.state.device_runtime_service.ingest_runtime_types(
+            connector_id,
+            _runtime_inventory(runtime),
+        )
+        await client.app.state.store.create_device_runtime(
+            connector_id,
+            runtime_id=runtime,
+            runtime_type=runtime,
+            name=runtime.title(),
+            config={},
+            active=True,
+        )
+        await client.app.state.store.set_device_runtime_status(
+            connector_id,
+            runtime,
+            "running",
+        )
+        session = await client.app.state.store.create_session(
+            connector_id=connector_id,
+            user_id=user_id,
+            runtime=runtime,
+            external_session_id=external_session_id
+            or f"thr_{connector_id}_demo",
+            title="Demo",
+            cwd="/repo",
+        )
+        return session.id
+
+    session_id = asyncio.run(seed_runtime_and_session())
     return connector_id, access_token, session_id, headers
 
 
@@ -263,7 +309,7 @@ def _runtime_inventory(runtime: str) -> dict[str, Any]:
                     "sessionSnapshot": True,
                     "sessionState": True,
                     "startTurn": True,
-                    "steerTurn": True,
+                    "steerTurn": runtime == "codex",
                     "interruptTurn": True,
                     "interactions": True,
                 },
@@ -278,7 +324,10 @@ def _seed_running_runtime(
     connector_id: str,
     fake_rpc: Any,
     runtime: str = "codex",
+    *,
+    runtime_type: str | None = None,
 ) -> None:
+    resolved_runtime_type = runtime_type or runtime
     client.app.state.rpc = fake_rpc
     client.app.state.device_runtime_service = DeviceRuntimeService(
         client.app.state.store,
@@ -290,16 +339,28 @@ def _seed_running_runtime(
     async def _seed() -> None:
         await client.app.state.device_runtime_service.ingest_runtime_types(
             connector_id,
-            _runtime_inventory(runtime),
+            _runtime_inventory(resolved_runtime_type),
         )
-        await client.app.state.store.create_device_runtime(
-            connector_id,
-            runtime_id=runtime,
-            runtime_type=runtime,
-            name=runtime.title(),
-            config={},
-            active=True,
-        )
+        try:
+            await client.app.state.store.get_device_runtime(
+                connector_id,
+                runtime,
+            )
+        except KeyError:
+            await client.app.state.store.create_device_runtime(
+                connector_id,
+                runtime_id=runtime,
+                runtime_type=resolved_runtime_type,
+                name=runtime.title(),
+                config={},
+                active=True,
+            )
+        else:
+            await client.app.state.store.set_device_runtime_active(
+                connector_id,
+                runtime,
+                True,
+            )
         await client.app.state.store.set_device_runtime_status(
             connector_id,
             runtime,
@@ -437,6 +498,7 @@ def test_session_create_does_not_persist_external_session_model_selection(tmp_pa
     model_selection_id = seed_codex_model_catalog(app, connector_id)
     fake_rpc = FakeLocalRpc()
     app.state.rpc = fake_rpc
+    _seed_running_runtime(client, connector_id, fake_rpc)
 
     response = client.post(
         "/sessions",
@@ -468,6 +530,7 @@ def test_session_create_does_not_persist_external_session_permission_selection(t
     permission_selection_id = seed_codex_permission_catalog(app, connector_id)
     fake_rpc = FakeLocalRpc()
     app.state.rpc = fake_rpc
+    _seed_running_runtime(client, connector_id, fake_rpc)
 
     response = client.post(
         "/sessions",
@@ -523,6 +586,7 @@ def test_session_create_and_start_preallocates_session_and_passes_selections(tmp
 
     fake_rpc = FakeCreateAndStartRpc()
     app.state.rpc = fake_rpc
+    _seed_running_runtime(client, connector_id, fake_rpc)
 
     response = client.post(
         "/sessions/create-and-start",
@@ -666,6 +730,76 @@ def test_session_state_reads_runtime_status_over_stale_db_status(tmp_path):
     assert state["state"]["status"] == "idle"
 
 
+def test_missing_runtime_instance_blocks_rpc_but_keeps_persisted_state_readable(
+    tmp_path,
+):
+    client = make_client(tmp_path)
+    headers = auth_headers(client)
+    connector_response = client.post(
+        "/connectors",
+        headers=headers,
+        json={"name": "dev"},
+    )
+    connector_id = connector_response.json()["connector"]["id"]
+
+    class RecordingRpc:
+        def __init__(self) -> None:
+            self.requests: list[tuple[str, str, dict[str, Any]]] = []
+
+        async def is_online(self, _connector_id: str) -> bool:
+            return True
+
+        async def request(
+            self,
+            requested_connector_id: str,
+            method: str,
+            params: dict[str, Any],
+            **_: Any,
+        ) -> dict[str, Any]:
+            self.requests.append((requested_connector_id, method, params))
+            return {}
+
+    rpc = RecordingRpc()
+    client.app.state.rpc = rpc
+    client.app.state.device_runtime_service = DeviceRuntimeService(
+        client.app.state.store,
+        rpc,
+        client.app.state.timeline_broker,
+        client.app.state.redis,
+        client.app.state.session_runtime_state_cache,
+    )
+
+    async def seed_session() -> str:
+        session = await client.app.state.store.create_session(
+            connector_id=connector_id,
+            user_id=ADMIN_USER,
+            runtime="rti_missing",
+            external_session_id="thr_missing_runtime",
+            title="Missing runtime",
+            cwd="/repo",
+            takeover=True,
+        )
+        return session.id
+
+    session_id = asyncio.run(seed_session())
+    state = client.get(f"/sessions/{session_id}/runtime/state", headers=headers)
+    send = client.post(
+        f"/sessions/{session_id}/runtime/messages",
+        headers=headers,
+        json={"content": "hello"},
+    )
+
+    assert state.status_code == 200, state.text
+    assert state.json()["state"]["runtime"] == "rti_missing"
+    assert state.json()["state"]["status"] == "idle"
+    assert send.status_code == 404, send.text
+    assert send.json()["detail"] == {
+        "code": "runtime_not_found",
+        "message": "runtime not found",
+    }
+    assert rpc.requests == []
+
+
 def test_session_create_rejects_legacy_runtime_settings_model_fields(tmp_path):
     app = create_app(tmp_path / "test.sqlite3")
     client = TestClient(app)
@@ -743,18 +877,24 @@ def test_session_title_defaults_to_first_user_message(tmp_path):
         "/connector/auth",
         headers={"Authorization": f"Connector {connector_id}:{connector_token}"},
     ).json()["accessToken"]
-
-    session_response = client.post(
-        "/sessions",
-        headers=headers,
-        json={"connectorId": connector_id, "runtime": "codex", "externalSessionId": "thr_title", "cwd": "/repo"},
-    )
-    session_id = session_response.json()["session"]["id"]
+    _seed_running_runtime(client, connector_id, client.app.state.rpc)
 
     with client.websocket_connect(
         "/connector/ws",
         headers={"Authorization": f"Bearer {access_token}"},
     ) as ws:
+        session_response = client.post(
+            "/sessions",
+            headers=headers,
+            json={
+                "connectorId": connector_id,
+                "runtime": "codex",
+                "externalSessionId": "thr_title",
+                "cwd": "/repo",
+            },
+        )
+        assert session_response.status_code == 200, session_response.text
+        session_id = session_response.json()["session"]["id"]
         ws.send_json(
             {
                 "type": "notification",
@@ -4240,6 +4380,7 @@ def _create_claude_session(client, connector_id, headers, fake_rpc):
     """Insert a Claude session bound to the existing connector and mark
     it ready for turn.start (online + takeover)."""
     store = client.app.state.store
+    _seed_running_runtime(client, connector_id, fake_rpc, "claude")
 
     async def _seed() -> str:
         session = await store.upsert_connector_session(
@@ -4277,6 +4418,49 @@ def test_send_message_carries_runtime_for_codex_session(tmp_path):
     assert params["runtime"] == "codex"
 
 
+def test_send_message_routes_through_named_runtime_instance_id(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, _, _, headers = create_connector_and_session(client)
+    fake_rpc = FakeLocalRpc()
+    _seed_running_runtime(
+        client,
+        connector_id,
+        fake_rpc,
+        "rti_work",
+        runtime_type="codex",
+    )
+
+    async def seed_session() -> str:
+        session = await client.app.state.store.create_session(
+            connector_id=connector_id,
+            user_id=ADMIN_USER,
+            runtime="rti_work",
+            external_session_id="thr_named_runtime",
+            title="Named runtime",
+            cwd="/repo",
+            takeover=True,
+        )
+        return session.id
+
+    session_id = asyncio.run(seed_session())
+    response = client.post(
+        f"/sessions/{session_id}/runtime/messages",
+        headers=headers,
+        json={"content": "hi"},
+    )
+
+    assert response.status_code == 200, response.text
+    params = wait_for_rpc_method(fake_rpc, "session.send_message")[2]
+    assert params["runtime"] == "rti_work"
+    runtime = client.get(
+        f"/connectors/{connector_id}/runtimes",
+        headers=headers,
+    ).json()["runtimes"]
+    assert next(item for item in runtime if item["runtimeId"] == "rti_work")[
+        "runtimeType"
+    ] == "codex"
+
+
 def test_send_message_carries_runtime_for_claude_session(tmp_path):
     client = make_client(tmp_path)
     connector_id, _, _, headers = create_connector_and_session(client)
@@ -4297,7 +4481,7 @@ def test_send_message_carries_runtime_for_claude_session(tmp_path):
 
 def test_interrupt_and_sync_carry_runtime(tmp_path):
     client = make_client(tmp_path)
-    connector_id, access_token, _, headers = create_connector_and_session(client)
+    connector_id, _access_token, _, headers = create_connector_and_session(client)
     fake_rpc = FakeLocalRpc()
     _seed_running_runtime(client, connector_id, fake_rpc, "claude")
     session_id = _create_claude_session(client, connector_id, headers, fake_rpc)

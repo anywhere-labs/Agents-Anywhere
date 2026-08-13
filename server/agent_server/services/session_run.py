@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from agent_server.core.api_namespace import api_v2_path
+from agent_server.core.device_runtime import DeviceRuntimeView
 from agent_server.core.models import (
     InlineAttachmentRef,
     MessageCreateRequest,
@@ -25,14 +26,18 @@ from agent_server.infra.connector_rpc import (
     ConnectorRpcError,
     ConnectorRpcManager,
 )
+from agent_server.services.device_runtimes import (
+    DeviceRuntimeError,
+    DeviceRuntimeService,
+)
 from agent_server.services.repository_ports import SessionRunRepository
 
 
 class SessionRunError(RuntimeError):
     status_code = 500
 
-    def __init__(self, detail: str) -> None:
-        super().__init__(detail)
+    def __init__(self, detail: Any) -> None:
+        super().__init__(str(detail))
         self.detail = detail
 
 
@@ -52,6 +57,12 @@ class SessionRunInvalidConfigError(SessionRunError):
     status_code = 422
 
 
+class SessionRunRuntimeError(SessionRunError):
+    def __init__(self, exc: DeviceRuntimeError) -> None:
+        self.status_code = exc.status_code
+        super().__init__(exc.detail)
+
+
 @dataclass(frozen=True, slots=True)
 class PersistedInlineAttachment:
     file_id: str
@@ -62,9 +73,15 @@ class PersistedInlineAttachment:
 
 
 class SessionRunService:
-    def __init__(self, store: SessionRunRepository, manager: ConnectorRpcManager) -> None:
+    def __init__(
+        self,
+        store: SessionRunRepository,
+        manager: ConnectorRpcManager,
+        device_runtimes: DeviceRuntimeService,
+    ) -> None:
         self._store = store
         self._manager = manager
+        self._device_runtimes = device_runtimes
 
     async def create_session(
         self,
@@ -72,28 +89,31 @@ class SessionRunService:
         *,
         user_id: str,
     ) -> dict[str, Any]:
+        if payload.externalSessionId is None:
+            raise SessionRunInvalidConfigError(
+                "new sessions must use /sessions/create-and-start"
+            )
         try:
             connector = await self._store.get_connector(payload.connectorId)
             if connector.userId != user_id:
                 raise KeyError(payload.connectorId)
         except KeyError:
             raise SessionRunNotFoundError("connector not found") from None
-
-        connector_result = None
-        if payload.externalSessionId is not None:
-            session = await self._store.create_session(
-                connector_id=payload.connectorId,
-                user_id=user_id,
-                runtime=payload.runtime,
-                external_session_id=payload.externalSessionId,
-                title=payload.title,
-                cwd=payload.cwd,
-            )
-            return {"session": session, "connectorResult": connector_result}
-
-        raise SessionRunInvalidConfigError(
-            "new sessions must use /sessions/create-and-start"
+        await self._ensure_runtime(
+            payload.connectorId,
+            payload.runtime,
+            user_id=user_id,
         )
+
+        session = await self._store.create_session(
+            connector_id=payload.connectorId,
+            user_id=user_id,
+            runtime=payload.runtime,
+            external_session_id=payload.externalSessionId,
+            title=payload.title,
+            cwd=payload.cwd,
+        )
+        return {"session": session, "connectorResult": None}
 
     async def create_and_start_session(
         self,
@@ -107,8 +127,11 @@ class SessionRunService:
                 raise KeyError(payload.connectorId)
         except KeyError:
             raise SessionRunNotFoundError("connector not found") from None
-        if not await self._manager.is_online(payload.connectorId):
-            raise SessionRunConflictError("connector is offline")
+        runtime = await self._ensure_runtime(
+            payload.connectorId,
+            payload.runtime,
+            user_id=user_id,
+        )
 
         selections = _selections_from_mapping(payload.selections)
         session = await self._store.create_session(
@@ -179,7 +202,9 @@ class SessionRunService:
             )
             raise SessionRunUpstreamError("connector did not return a session result")
         external_session_id = connector_result.get("externalSessionId")
-        if payload.runtime != "claude" and not isinstance(external_session_id, str):
+        if runtime.runtimeType != "claude" and not isinstance(
+            external_session_id, str
+        ):
             await self._mark_create_and_start_failed(
                 session.id,
                 runtime=payload.runtime,
@@ -233,8 +258,11 @@ class SessionRunService:
 
         if not session.takeover:
             raise SessionRunConflictError("session is read-only until takeover is enabled")
-        if not await self._manager.is_online(session.connectorId):
-            raise SessionRunConflictError("connector is offline")
+        await self._ensure_runtime(
+            session.connectorId,
+            session.runtime,
+            user_id=user_id,
+        )
         runtime_status = await self._read_runtime_status(session)
         if runtime_status != "idle":
             raise SessionRunConflictError(f"session is {runtime_status}")
@@ -328,8 +356,11 @@ class SessionRunService:
             raise SessionRunNotFoundError("session not found") from None
         if not session.takeover:
             raise SessionRunConflictError("session is read-only until takeover is enabled")
-        if not await self._manager.is_online(session.connectorId):
-            raise SessionRunConflictError("connector is offline")
+        await self._ensure_runtime(
+            session.connectorId,
+            session.runtime,
+            user_id=user_id,
+        )
         params: dict[str, Any] = {
             "sessionId": session_id,
             "runtime": session.runtime,
@@ -376,10 +407,13 @@ class SessionRunService:
             raise SessionRunConflictError(
                 "session is read-only until takeover is enabled"
             )
-        if session.runtime != "codex":
+        runtime = await self._ensure_runtime(
+            session.connectorId,
+            session.runtime,
+            user_id=user_id,
+        )
+        if not runtime.capabilities.get("steerTurn", False):
             raise SessionRunConflictError("session runtime does not support steer")
-        if not await self._manager.is_online(session.connectorId):
-            raise SessionRunConflictError("connector is offline")
         runtime_status = await self._read_runtime_status(session)
         if runtime_status != "running":
             raise SessionRunConflictError("session is not running")
@@ -515,6 +549,11 @@ class SessionRunService:
             raise SessionRunNotFoundError("session not found") from None
         if require_takeover and not session.takeover:
             raise SessionRunConflictError("session is read-only until takeover is enabled")
+        await self._ensure_runtime(
+            session.connectorId,
+            session.runtime,
+            user_id=user_id,
+        )
         params: dict[str, Any] = {
             "sessionId": session_id,
             "runtime": session.runtime,
@@ -531,6 +570,22 @@ class SessionRunService:
             raise SessionRunUpstreamError(exc.message or exc.code) from exc
         await self._store.clear_active_run(session_id)
         return RpcResponsePayload(ok=True, result=result)
+
+    async def _ensure_runtime(
+        self,
+        connector_id: str,
+        runtime_id: str,
+        *,
+        user_id: str,
+    ) -> DeviceRuntimeView:
+        try:
+            return await self._device_runtimes.ensure_active_running(
+                connector_id,
+                runtime_id,
+                user_id=user_id,
+            )
+        except DeviceRuntimeError as exc:
+            raise SessionRunRuntimeError(exc) from exc
 
 
 def _selections_from_mapping(value: dict[str, str | None]) -> dict[str, str]:

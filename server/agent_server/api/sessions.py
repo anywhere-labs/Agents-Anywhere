@@ -127,21 +127,41 @@ def _raise_session_run_error(exc: SessionRunError) -> None:
     raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
 
+async def _ensure_session_runtime(
+    device_runtimes: DeviceRuntimeService,
+    session: SessionView,
+    *,
+    user_id: str,
+) -> None:
+    try:
+        await device_runtimes.ensure_active_running(
+            session.connectorId,
+            session.runtime,
+            user_id=user_id,
+        )
+    except DeviceRuntimeError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+
+
 async def _publish_session_protocol_update(
     db: Store,
     broker: TimelineBroker,
     manager: ConnectorRpcManager,
+    device_runtimes: DeviceRuntimeService,
     runtime_state_cache: SessionRuntimeStateCache,
     session_id: str,
+    *,
+    user_id: str,
 ) -> None:
     next_seq = await db.get_session_seq(session_id)
-    session = await db.get_session(session_id)
+    session = await db.get_session(session_id, user_id=user_id)
     runtime_state = await read_runtime_state_live(
         db,
         manager,
         runtime_state_cache,
         session,
-        None,
+        user_id,
+        device_runtimes=device_runtimes,
     )
     session = session_with_runtime_state(session, runtime_state)
     session = await with_effective_session_connector_status(manager, session)
@@ -149,7 +169,8 @@ async def _publish_session_protocol_update(
         db,
         manager,
         session,
-        None,
+        user_id,
+        device_runtimes=device_runtimes,
     )
     effective_capabilities = derive_session_effective_capabilities(
         session=session,
@@ -169,10 +190,11 @@ async def _best_effort_publish_session_protocol_update(
     db: Store,
     broker: TimelineBroker,
     manager: ConnectorRpcManager,
+    device_runtimes: DeviceRuntimeService,
     runtime_state_cache: SessionRuntimeStateCache,
     session_id: str,
     *,
-    user_id: str | None,
+    user_id: str,
 ) -> None:
     try:
         await db.get_session(session_id, user_id=user_id)
@@ -180,8 +202,10 @@ async def _best_effort_publish_session_protocol_update(
             db,
             broker,
             manager,
+            device_runtimes,
             runtime_state_cache,
             session_id,
+            user_id=user_id,
         )
     except Exception:
         return
@@ -228,6 +252,7 @@ async def create_and_start_session(
     runtime_state_cache: SessionRuntimeStateCache = Depends(
         get_session_runtime_state_cache
     ),
+    device_runtimes: DeviceRuntimeService = Depends(get_device_runtime_service),
 ) -> dict[str, Any]:
     try:
         result = await run_service.create_and_start_session(payload, user_id=user_id)
@@ -251,8 +276,10 @@ async def create_and_start_session(
             db,
             broker,
             manager,
+            device_runtimes,
             runtime_state_cache,
             session.id,
+            user_id=user_id,
         )
     return result
 
@@ -452,6 +479,7 @@ async def session_runtime_state(
     runtime_state_cache: SessionRuntimeStateCache = Depends(
         get_session_runtime_state_cache
     ),
+    device_runtimes: DeviceRuntimeService = Depends(get_device_runtime_service),
 ) -> SessionRuntimeStateResponse:
     try:
         session = await db.get_session(session_id, user_id=user_id)
@@ -461,6 +489,7 @@ async def session_runtime_state(
             runtime_state_cache,
             session,
             user_id,
+            device_runtimes=device_runtimes,
         )
     except KeyError:
         raise HTTPException(status_code=404, detail="session not found") from None
@@ -473,11 +502,13 @@ async def session_runtime_capabilities(
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
     manager: ConnectorRpcManager = Depends(get_rpc),
+    device_runtimes: DeviceRuntimeService = Depends(get_device_runtime_service),
 ) -> ProtocolCapabilitiesResponse:
     try:
         session = await db.get_session(session_id, user_id=user_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="session not found") from None
+    await _ensure_session_runtime(device_runtimes, session, user_id=user_id)
     session = await with_effective_session_connector_status(manager, session)
     runtime_capabilities = await read_session_capabilities_from_connector(
         manager,
@@ -574,6 +605,7 @@ async def patch_session_selections(
     runtime_state_cache: SessionRuntimeStateCache = Depends(
         get_session_runtime_state_cache
     ),
+    device_runtimes: DeviceRuntimeService = Depends(get_device_runtime_service),
 ) -> SessionSelectionPatchResponse:
     try:
         state, connector_result = await run_service.update_session_selections(
@@ -587,6 +619,7 @@ async def patch_session_selections(
         db,
         broker,
         manager,
+        device_runtimes,
         runtime_state_cache,
         session_id,
         user_id=user_id,
@@ -663,17 +696,24 @@ async def session_snapshot(
         get_session_runtime_state_cache
     ),
     catalogs: CatalogService = Depends(get_catalog_service),
+    device_runtimes: DeviceRuntimeService = Depends(get_device_runtime_service),
 ) -> ProtocolSessionSnapshotResponse:
     try:
         session = await db.get_session(session_id, user_id=user_id)
         items, has_more = await db.list_timeline_latest(session_id=session_id, limit=limit)
-        notices = await read_session_notices_for_snapshot(manager, session)
+        notices = await read_session_notices_for_snapshot(
+            manager,
+            device_runtimes,
+            session,
+            user_id=user_id,
+        )
         runtime_state = await read_runtime_state_live(
             db,
             manager,
             runtime_state_cache,
             session,
             user_id,
+            device_runtimes=device_runtimes,
         )
         session = session_with_runtime_state(session, runtime_state)
         session = await with_effective_session_connector_status(manager, session)
@@ -682,6 +722,7 @@ async def session_snapshot(
             manager,
             session,
             user_id,
+            device_runtimes=device_runtimes,
         )
         effective_capabilities = derive_session_effective_capabilities(
             session=session,
@@ -819,6 +860,7 @@ async def enable_takeover(
     runtime_state_cache: SessionRuntimeStateCache = Depends(
         get_session_runtime_state_cache
     ),
+    device_runtimes: DeviceRuntimeService = Depends(get_device_runtime_service),
 ) -> TakeoverResponse:
     try:
         await db.get_session(session_id, user_id=user_id)
@@ -827,8 +869,10 @@ async def enable_takeover(
             db,
             broker,
             manager,
+            device_runtimes,
             runtime_state_cache,
             session_id,
+            user_id=user_id,
         )
         return TakeoverResponse(
             session=await with_effective_session_connector_status(manager, session)
@@ -847,6 +891,7 @@ async def disable_takeover(
     runtime_state_cache: SessionRuntimeStateCache = Depends(
         get_session_runtime_state_cache
     ),
+    device_runtimes: DeviceRuntimeService = Depends(get_device_runtime_service),
 ) -> TakeoverResponse:
     try:
         await db.get_session(session_id, user_id=user_id)
@@ -855,8 +900,10 @@ async def disable_takeover(
             db,
             broker,
             manager,
+            device_runtimes,
             runtime_state_cache,
             session_id,
+            user_id=user_id,
         )
         return TakeoverResponse(
             session=await with_effective_session_connector_status(manager, session)
@@ -877,11 +924,13 @@ async def list_session_runtime_commands(
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
     manager: ConnectorRpcManager = Depends(get_rpc),
+    device_runtimes: DeviceRuntimeService = Depends(get_device_runtime_service),
 ) -> SessionCommandListResponse:
     try:
         session = await db.get_session(session_id, user_id=user_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="session not found") from None
+    await _ensure_session_runtime(device_runtimes, session, user_id=user_id)
     params: dict[str, Any] = {
         "sessionId": session.id,
         "runtime": session.runtime,
@@ -922,11 +971,13 @@ async def execute_session_command(
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
     manager: ConnectorRpcManager = Depends(get_rpc),
+    device_runtimes: DeviceRuntimeService = Depends(get_device_runtime_service),
 ) -> SessionCommandResponse:
     try:
         session = await db.get_session(session_id, user_id=user_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="session not found") from None
+    await _ensure_session_runtime(device_runtimes, session, user_id=user_id)
     params: dict[str, Any] = {
         "sessionId": session.id,
         "runtime": session.runtime,
@@ -981,6 +1032,7 @@ async def send_message(
     runtime_state_cache: SessionRuntimeStateCache = Depends(
         get_session_runtime_state_cache
     ),
+    device_runtimes: DeviceRuntimeService = Depends(get_device_runtime_service),
 ) -> RpcResponsePayload:
     try:
         result = await run_service.send_message(session_id, payload, user_id=user_id)
@@ -988,8 +1040,10 @@ async def send_message(
             db,
             broker,
             manager,
+            device_runtimes,
             runtime_state_cache,
             session_id,
+            user_id=user_id,
         )
         return result
     except SessionRunError as exc:
@@ -997,6 +1051,7 @@ async def send_message(
             db,
             broker,
             manager,
+            device_runtimes,
             runtime_state_cache,
             session_id,
             user_id=user_id,
@@ -1015,6 +1070,7 @@ async def interrupt_session(
     runtime_state_cache: SessionRuntimeStateCache = Depends(
         get_session_runtime_state_cache
     ),
+    device_runtimes: DeviceRuntimeService = Depends(get_device_runtime_service),
 ) -> RpcResponsePayload:
     try:
         result = await run_service.interrupt_session(session_id, user_id=user_id)
@@ -1022,8 +1078,10 @@ async def interrupt_session(
             db,
             broker,
             manager,
+            device_runtimes,
             runtime_state_cache,
             session_id,
+            user_id=user_id,
         )
         return result
     except SessionRunError as exc:
@@ -1031,6 +1089,7 @@ async def interrupt_session(
             db,
             broker,
             manager,
+            device_runtimes,
             runtime_state_cache,
             session_id,
             user_id=user_id,
@@ -1050,6 +1109,7 @@ async def steer_session(
     runtime_state_cache: SessionRuntimeStateCache = Depends(
         get_session_runtime_state_cache
     ),
+    device_runtimes: DeviceRuntimeService = Depends(get_device_runtime_service),
 ) -> RpcResponsePayload:
     try:
         result = await run_service.steer_session(
@@ -1061,8 +1121,10 @@ async def steer_session(
             db,
             broker,
             manager,
+            device_runtimes,
             runtime_state_cache,
             session_id,
+            user_id=user_id,
         )
         return result
     except SessionRunError as exc:
@@ -1070,6 +1132,7 @@ async def steer_session(
             db,
             broker,
             manager,
+            device_runtimes,
             runtime_state_cache,
             session_id,
             user_id=user_id,
@@ -1083,11 +1146,13 @@ async def list_session_runtime_notices(
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
     manager: ConnectorRpcManager = Depends(get_rpc),
+    device_runtimes: DeviceRuntimeService = Depends(get_device_runtime_service),
 ) -> RuntimeNoticeListResponse:
     try:
         session = await db.get_session(session_id, user_id=user_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="session not found") from None
+    await _ensure_session_runtime(device_runtimes, session, user_id=user_id)
     notices = await read_session_notices_from_connector(manager, session)
     return RuntimeNoticeListResponse(
         notices=notices,
@@ -1107,11 +1172,13 @@ async def respond_interaction(
     runtime_state_cache: SessionRuntimeStateCache = Depends(
         get_session_runtime_state_cache
     ),
+    device_runtimes: DeviceRuntimeService = Depends(get_device_runtime_service),
 ) -> RpcResponsePayload:
     try:
         session = await db.get_session(session_id, user_id=user_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="session not found") from None
+    await _ensure_session_runtime(device_runtimes, session, user_id=user_id)
     input_data = await interaction_input_with_runtime_notice_context(
         manager=manager,
         session=session,
@@ -1161,6 +1228,7 @@ async def respond_interaction(
         db,
         broker,
         manager,
+        device_runtimes,
         runtime_state_cache,
         session_id,
         user_id=user_id,
@@ -1180,18 +1248,9 @@ async def sync_session(
         session = await db.get_session(session_id, user_id=user_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="session not found") from None
-    if not await manager.is_online(session.connectorId):
-        raise HTTPException(status_code=409, detail="connector is offline")
     if not session.externalSessionId:
         raise HTTPException(status_code=409, detail="session has no external runtime id")
-    try:
-        await device_runtimes.ensure_active_running(
-            session.connectorId,
-            session.runtime,
-            user_id=user_id,
-        )
-    except DeviceRuntimeError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    await _ensure_session_runtime(device_runtimes, session, user_id=user_id)
     try:
         result = await manager.request(
             session.connectorId,
@@ -1215,7 +1274,9 @@ async def read_runtime_state_live(
     manager: ConnectorRpcManager,
     runtime_state_cache: SessionRuntimeStateCache,
     session: SessionView,
-    user_id: str | None,
+    user_id: str,
+    *,
+    device_runtimes: DeviceRuntimeService,
 ) -> SessionRuntimeState:
     """Read the latest runtime-owned session state.
 
@@ -1224,7 +1285,12 @@ async def read_runtime_state_live(
     - does not rely on DB status as the source of runtime truth.
     """
 
-    if await manager.is_online(session.connectorId):
+    if await _runtime_ready_for_best_effort_read(
+        manager,
+        device_runtimes,
+        session,
+        user_id=user_id,
+    ):
         state = await read_runtime_state_from_connector(manager, session)
         if state is not None:
             persisted_session = await db.set_session_status(session.id, state.status)
@@ -1241,7 +1307,9 @@ async def read_session_capabilities_with_fallback(
     db: Store,
     manager: ConnectorRpcManager,
     session: SessionView,
-    user_id: str | None,
+    user_id: str,
+    *,
+    device_runtimes: DeviceRuntimeService,
 ) -> ProtocolCapabilitySet:
     """Read the latest session capability facts when possible.
 
@@ -1251,7 +1319,12 @@ async def read_session_capabilities_with_fallback(
       snapshot and WebSocket publish paths.
     """
 
-    if await manager.is_online(session.connectorId):
+    if await _runtime_ready_for_best_effort_read(
+        manager,
+        device_runtimes,
+        session,
+        user_id=user_id,
+    ):
         try:
             return await read_session_capabilities_from_connector(manager, session)
         except HTTPException:
@@ -1472,12 +1545,42 @@ def merge_interaction_input(
 
 async def read_session_notices_for_snapshot(
     manager: ConnectorRpcManager,
+    device_runtimes: DeviceRuntimeService,
     session: SessionView,
+    *,
+    user_id: str,
 ) -> list[NoticeIn]:
+    if not await _runtime_ready_for_best_effort_read(
+        manager,
+        device_runtimes,
+        session,
+        user_id=user_id,
+    ):
+        return []
     try:
         return await read_session_notices_from_connector(manager, session)
     except HTTPException:
         return []
+
+
+async def _runtime_ready_for_best_effort_read(
+    manager: ConnectorRpcManager,
+    device_runtimes: DeviceRuntimeService,
+    session: SessionView,
+    *,
+    user_id: str,
+) -> bool:
+    if not await manager.is_online(session.connectorId):
+        return False
+    try:
+        await device_runtimes.ensure_active_running(
+            session.connectorId,
+            session.runtime,
+            user_id=user_id,
+        )
+    except DeviceRuntimeError:
+        return False
+    return True
 
 
 def runtime_state_from_rpc_payload(
