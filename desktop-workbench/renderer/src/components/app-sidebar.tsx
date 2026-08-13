@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { Plus, Settings, Users, Server, LogOut, Pin, Archive, CheckCheck, Copy, FolderOpen, Pencil, LayoutDashboard } from "lucide-react"
+import { Search, Plus, Settings, Users, Server, LogOut, Pin, Archive, CheckCheck, Copy, FolderOpen, Pencil, LayoutDashboard } from "lucide-react"
 import { toast } from "sonner"
 import { PairDeviceDialog } from "@/components/pair-device-dialog"
 
@@ -105,9 +105,18 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
   return (
     <Sidebar contained={contained} className="border-sidebar-border">
       <SidebarHeader className="gap-0 px-4 pb-2 pt-3">
-        <button type="button" onClick={goHome} className="aa-wordmark mb-3 mt-1 text-xl leading-none">
-          Agents Anywhere
-        </button>
+        <div className="mb-3 mt-1 flex items-center justify-between gap-2">
+          <button type="button" onClick={goHome} className="aa-wordmark min-w-0 pr-px text-left text-xl leading-none">
+            Agents Anywhere
+          </button>
+          <button
+            type="button"
+            aria-label={t("actions.search")}
+            className="shrink-0 rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+          >
+            <Search className="size-4" />
+          </button>
+        </div>
 
         <SidebarMenu>
           <SidebarMenuItem>
