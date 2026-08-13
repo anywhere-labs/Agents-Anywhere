@@ -5,6 +5,8 @@ import java.io.ByteArrayOutputStream
 import java.io.Closeable
 import java.net.InetAddress
 import java.net.ServerSocket
+import java.security.MessageDigest
+import java.util.Base64
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.concurrent.thread
 import org.json.JSONObject
@@ -19,7 +21,6 @@ class SessionsApiTest {
     @Test
     fun createAndStartUsesSingleV2RequestWithCompleteBodyAndResponse() {
         val response = JSONObject(sessionResponse("created-session"))
-            .put("connectorResult", JSONObject().put("turnId", "turn-1"))
             .put(
                 "attachments",
                 listOf(
@@ -79,9 +80,6 @@ class SessionsApiTest {
             assertEquals("aGVsbG8=", attachment.getString("contentBase64"))
 
             assertEquals("created-session", created.session.id)
-            assertEquals("turn-1", (created.connectorResult as JSONObject).getString("turnId"))
-            assertEquals(listOf("stored-file"), created.attachments.map { it.fileId })
-            assertEquals("stored-sha", created.attachments.single().sha256)
         }
     }
 
@@ -106,32 +104,6 @@ class SessionsApiTest {
             val body = JSONObject(requests.single().body)
             assertEquals(setOf("connectorId", "runtime", "content"), body.keys().asSequence().toSet())
             assertEquals("", body.getString("content"))
-        }
-    }
-
-    @Test
-    fun bindSessionKeepsPostSessionsForExternalImportOnly() {
-        withJsonServer(ArrayDeque(listOf(TestResponse(body = sessionResponse("bound"))))) { serverUrl, requests ->
-            val bound = SessionsApi().bindSession(
-                serverUrl = serverUrl,
-                authorizationToken = "token",
-                connectorId = "connector",
-                runtime = "codex",
-                externalSessionId = "external-123",
-                title = null,
-                cwd = null,
-                selections = mapOf("model" to "model-selection"),
-            )
-
-            val request = requests.single()
-            assertEquals("POST", request.method)
-            assertEquals("/api/v2/sessions", request.path)
-            assertEquals("Bearer token", request.authorization)
-            val body = JSONObject(request.body)
-            assertEquals("external-123", body.getString("externalSessionId"))
-            assertEquals("model-selection", body.getJSONObject("selections").getString("model"))
-            assertFalse(body.has("content"))
-            assertEquals("bound", bound.session.id)
         }
     }
 
@@ -246,7 +218,6 @@ class SessionsApiTest {
     fun detailReadsUseV2OwnedRoutesAndParseCompleteResponses() {
         val responses = ArrayDeque(
             listOf(
-                TestResponse(body = timelineResponse(hasMore = true)),
                 TestResponse(body = timelineResponse(hasMore = false)),
                 TestResponse(body = timelineResponse(hasMore = false)),
                 TestResponse(body = snapshotResponse()),
@@ -258,7 +229,6 @@ class SessionsApiTest {
         withJsonServer(responses) { serverUrl, requests ->
             val api = SessionsApi()
 
-            val latest = api.getSessionTimelineLatest(serverUrl, "token", "session/one", limit = 25)
             val history = api.getSessionTimelineHistory(
                 serverUrl,
                 "token",
@@ -279,21 +249,17 @@ class SessionsApiTest {
             val notices = api.getSessionRuntimeNotices(serverUrl, "token", "session/one")
 
             assertEquals(
-                "/api/v2/sessions/session%2Fone/timeline?mode=latest&limit=25",
+                "/api/v2/sessions/session%2Fone/timeline?mode=history&beforeOrderSeq=41&limit=20",
                 requests[0].target,
             )
             assertEquals(
-                "/api/v2/sessions/session%2Fone/timeline?mode=history&beforeOrderSeq=41&limit=20",
+                "/api/v2/sessions/session%2Fone/timeline?mode=changes&afterSeq=11&limit=30",
                 requests[1].target,
             )
-            assertEquals(
-                "/api/v2/sessions/session%2Fone/timeline?mode=changes&afterSeq=11&limit=30",
-                requests[2].target,
-            )
-            assertEquals("/api/v2/sessions/session%2Fone/snapshot?limit=50", requests[3].target)
-            assertEquals("/api/v2/sessions/session%2Fone/runtime/state", requests[4].target)
-            assertEquals("/api/v2/sessions/session%2Fone/runtime/capabilities", requests[5].target)
-            assertEquals("/api/v2/sessions/session%2Fone/runtime/notices", requests[6].target)
+            assertEquals("/api/v2/sessions/session%2Fone/snapshot?limit=50", requests[2].target)
+            assertEquals("/api/v2/sessions/session%2Fone/runtime/state", requests[3].target)
+            assertEquals("/api/v2/sessions/session%2Fone/runtime/capabilities", requests[4].target)
+            assertEquals("/api/v2/sessions/session%2Fone/runtime/notices", requests[5].target)
             requests.forEach {
                 assertEquals("GET", it.method)
                 assertEquals("Bearer token", it.authorization)
@@ -301,10 +267,9 @@ class SessionsApiTest {
                 assertEquals(1, Regex("/api/v2").findAll(it.target).count())
             }
 
-            assertEquals("session/one", latest.sessionId)
-            assertTrue(latest.hasMore)
-            assertEquals(3, latest.items.single().revision)
-            assertEquals("2026-08-10T00:00:02Z", latest.items.single().updatedAt)
+            assertEquals("session/one", history.sessionId)
+            assertEquals(3, history.items.single().revision)
+            assertEquals("2026-08-10T00:00:02Z", history.items.single().updatedAt)
             assertFalse(history.hasMore)
             assertEquals(12, changes.nextSeq)
 
@@ -313,9 +278,6 @@ class SessionsApiTest {
             assertNull(snapshot.state?.selections?.get("permission"))
             assertEquals(4L, snapshot.effectiveCapabilities.revision)
             assertEquals("future.capability", snapshot.effectiveCapabilities.capabilities.last().capabilityId)
-            assertEquals("model-selection", snapshot.catalogs.model?.models?.single()?.selectionId)
-            assertEquals("permission-selection", snapshot.catalogs.permission?.permissions?.single()?.selectionId)
-            assertTrue(snapshot.catalogs.unknown.containsKey("futureCatalog"))
             assertEquals("notice-1", snapshot.notices.single().noticeId)
             assertEquals("seq:12", snapshot.eventCursor)
 
@@ -366,7 +328,7 @@ class SessionsApiTest {
             .toString()
         val rpcResponse = JSONObject()
             .put("ok", true)
-            .put("result", JSONObject().put("turnId", "turn-1"))
+            .put("result", JSONObject().put("accepted", true))
             .toString()
         val responses = ArrayDeque(
             listOf(
@@ -406,7 +368,7 @@ class SessionsApiTest {
                 "session/one",
                 content = "message",
                 clientMessageId = "client-message",
-                attachments = listOf(RemoteUploadedAttachment("file/one", "one.txt", "text/plain", 3)),
+                attachments = listOf(RemoteAttachmentRef("file/one")),
             )
             val steer = api.steerSession(
                 serverUrl,
@@ -474,8 +436,110 @@ class SessionsApiTest {
             assertEquals(listOf("shrink"), commands.commands.single().aliases)
             assertTrue(command.ok)
             assertEquals("op-1", (command.result as JSONObject).getString("operationId"))
-            assertEquals("turn-1", message.turnId)
-            assertEquals("turn-1", steer.turnId)
+            assertTrue(message.ok)
+            assertNull(message.errorCode)
+            assertNull(message.errorMessage)
+            assertTrue(steer.ok)
+        }
+    }
+
+    @Test
+    fun rpcFailurePreservesServerErrorForControllerHandling() {
+        val response = JSONObject()
+            .put("ok", false)
+            .put(
+                "error",
+                JSONObject()
+                    .put("code", "notice_not_found")
+                    .put("message", "Notice was already resolved."),
+            )
+            .toString()
+        withJsonServer(ArrayDeque(listOf(TestResponse(body = response)))) { serverUrl, _ ->
+            val result = SessionsApi().respondRuntimeNotice(
+                serverUrl = serverUrl,
+                authorizationToken = "token",
+                sessionId = "session",
+                noticeId = "notice",
+                actionId = "approve",
+            )
+
+            assertFalse(result.ok)
+            assertEquals("notice_not_found", result.errorCode)
+            assertEquals("Notice was already resolved.", result.errorMessage)
+        }
+    }
+
+    @Test
+    fun attachmentOnlyMessageUsesEmptyContentAndFileIdRefsOnly() {
+        val rpcResponse = JSONObject()
+            .put("ok", true)
+            .put("result", JSONObject().put("accepted", true))
+            .toString()
+        withJsonServer(ArrayDeque(listOf(TestResponse(body = rpcResponse)))) { serverUrl, requests ->
+            SessionsApi().sendSessionMessage(
+                serverUrl = serverUrl,
+                authorizationToken = "token",
+                sessionId = "session/one",
+                content = "",
+                clientMessageId = "client-attachment",
+                attachments = listOf(RemoteAttachmentRef("file/one")),
+            )
+
+            val body = JSONObject(requests.single().body)
+            assertEquals("", body.getString("content"))
+            assertEquals("client-attachment", body.getString("clientMessageId"))
+            val attachment = body.getJSONArray("attachments").getJSONObject(0)
+            assertEquals(setOf("fileId"), attachment.keys().asSequence().toSet())
+            assertEquals("file/one", attachment.getString("fileId"))
+        }
+    }
+
+    @Test
+    fun attachmentDownloadUsesAuthAndRejectsCorruptSizeOrSha256() {
+        val bytes = "downloaded".toByteArray()
+        val sha256 = MessageDigest.getInstance("SHA-256")
+            .digest(bytes)
+            .joinToString("") { byte -> "%02x".format(byte) }
+        fun response(size: Long = bytes.size.toLong(), digest: String = sha256): String = JSONObject()
+            .put("fileId", "file/one")
+            .put("sessionId", "session/one")
+            .put("path", "")
+            .put("name", "file.txt")
+            .put("size", size)
+            .put("sha256", digest)
+            .put("contentBase64", Base64.getEncoder().encodeToString(bytes))
+            .put("createdAt", "now")
+            .put("serverTime", "now")
+            .toString()
+
+        withJsonServer(ArrayDeque(listOf(TestResponse(body = response())))) { serverUrl, requests ->
+            val downloaded = SessionsApi().downloadSessionAttachment(
+                serverUrl,
+                "token",
+                "session/one",
+                "file/one",
+            )
+            assertEquals(bytes.toList(), downloaded.bytes.toList())
+            assertEquals(sha256, downloaded.sha256)
+            assertRequest(
+                requests.single(),
+                "GET",
+                "/api/v2/sessions/session%2Fone/attachments/file%2Fone",
+                "",
+            )
+            assertEquals("Bearer token", requests.single().authorization)
+        }
+        withJsonServer(ArrayDeque(listOf(TestResponse(body = response(size = 999))))) { serverUrl, _ ->
+            val error = assertThrows(AttachmentTransferException::class.java) {
+                SessionsApi().downloadSessionAttachment(serverUrl, "token", "session", "file")
+            }
+            assertEquals(AttachmentTransferFailure.SizeMismatch, error.failure)
+        }
+        withJsonServer(ArrayDeque(listOf(TestResponse(body = response(digest = "0".repeat(64)))))) { serverUrl, _ ->
+            val error = assertThrows(AttachmentTransferException::class.java) {
+                SessionsApi().downloadSessionAttachment(serverUrl, "token", "session", "file")
+            }
+            assertEquals(AttachmentTransferFailure.Sha256Mismatch, error.failure)
         }
     }
 
@@ -805,7 +869,6 @@ class SessionsApiTest {
         return JSONObject()
             .put("id", "item-1")
             .put("sessionId", "session/one")
-            .put("turnId", "turn-1")
             .put("type", "message")
             .put("status", "done")
             .put("role", "assistant")

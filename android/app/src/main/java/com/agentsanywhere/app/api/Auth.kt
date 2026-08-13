@@ -1,7 +1,6 @@
 package com.agentsanywhere.app.api
 
 import org.json.JSONObject
-import java.net.URLEncoder
 
 class AuthApi(
     private val client: ApiClient = ApiClient(),
@@ -24,97 +23,26 @@ class AuthApi(
         ).toAuthConfigResponse()
     }
 
-    fun login(
-        serverUrl: String,
-        userId: String,
-        password: String,
-    ): AuthResponse {
-        return try {
-            client.postJson(
-                serverUrl = serverUrl,
-                path = "/auth/login",
-                body = JSONObject()
-                    .put("userId", userId)
-                    .put("password", password),
-            ).toAuthResponse()
-        } catch (exc: ApiException) {
-            if (exc.statusCode == 401) {
-                throw ApiException("Invalid User ID or password.", exc.statusCode, exc)
-            }
-            throw exc
-        }
+    fun requireWebLoginHost(serverUrl: String) {
+        client.requireHtmlDocument(serverUrl = serverUrl)
     }
 
-    fun register(
+    fun oauthToken(
         serverUrl: String,
-        userId: String,
-        password: String,
-    ): AuthResponse {
-        return try {
-            client.postJson(
-                serverUrl = serverUrl,
-                path = "/auth/register",
-                body = JSONObject()
-                    .put("userId", userId)
-                    .put("password", password),
-            ).toAuthResponse()
-        } catch (exc: ApiException) {
-            throw when (exc.statusCode) {
-                403 -> ApiException("Registration is closed. Contact your administrator to enable it.", exc.statusCode, exc)
-                409 -> ApiException("That User ID is already taken.", exc.statusCode, exc)
-                else -> exc
-            }
-        }
-    }
-
-    fun startOAuth(
-        serverUrl: String,
-        returnTo: String,
-    ): OAuthStartResponse {
-        val encodedReturnTo = URLEncoder.encode(returnTo, Charsets.UTF_8.name())
-        return try {
-            client.getJson(
-                serverUrl = serverUrl,
-                path = "/auth/oauth/start?returnTo=$encodedReturnTo",
-            ).toOAuthStartResponse()
-        } catch (exc: ApiException) {
-            if (exc.statusCode == 404) {
-                throw ApiException("OAuth is not configured on this server.", exc.statusCode, exc)
-            }
-            throw exc
-        }
-    }
-
-    fun finalizeOAuth(
-        serverUrl: String,
-        pendingToken: String,
-        userId: String? = null,
-        password: String? = null,
-        setPassword: Boolean = false,
-    ): OAuthFinalizeResponse {
-        val body = JSONObject()
-            .put("pendingToken", pendingToken)
-            .put("setPassword", setPassword)
-        if (!userId.isNullOrBlank()) {
-            body.put("userId", userId)
-        }
-        if (!password.isNullOrBlank()) {
-            body.put("password", password)
-        }
-
-        return try {
-            client.postJson(
-                serverUrl = serverUrl,
-                path = "/auth/oauth/finalize",
-                body = body,
-            ).toOAuthFinalizeResponse()
-        } catch (exc: ApiException) {
-            throw when (exc.statusCode) {
-                401 -> ApiException(oauthUnauthorizedMessage(exc.message), exc.statusCode, exc)
-                403 -> ApiException("OAuth registration is closed. Contact your administrator to enable it.", exc.statusCode, exc)
-                else -> exc
-            }
-        }
+        code: String,
+        codeVerifier: String,
+    ): OAuthTokenResponse {
+        return client.postForm(
+            serverUrl = serverUrl,
+            path = "/oauth/token",
+            fields = linkedMapOf(
+                "grant_type" to "authorization_code",
+                "code" to code,
+                "client_id" to "agents-anywhere-mobile",
+                "redirect_uri" to "agents-anywhere://oauth/callback",
+                "code_verifier" to codeVerifier,
+            ),
+        ).toOAuthTokenResponse()
     }
 
     fun requestMobileLogin(
@@ -231,17 +159,13 @@ class AuthApi(
         )
     }
 
-    private fun JSONObject.toOAuthStartResponse(): OAuthStartResponse {
-        return OAuthStartResponse(
-            authorizeUrl = getString("authorizeUrl"),
-            serverTime = getString("serverTime"),
-        )
-    }
-
-    private fun JSONObject.toOAuthFinalizeResponse(): OAuthFinalizeResponse {
-        return OAuthFinalizeResponse(
-            auth = getJSONObject("auth").toAuthResponse(),
-            serverTime = getString("serverTime"),
+    private fun JSONObject.toOAuthTokenResponse(): OAuthTokenResponse {
+        return OAuthTokenResponse(
+            accessToken = getString("access_token"),
+            tokenType = optString("token_type", "Bearer"),
+            expiresIn = getInt("expires_in"),
+            scope = optString("scope"),
+            refreshToken = optNullableString("refresh_token"),
         )
     }
 
@@ -291,10 +215,4 @@ class AuthApi(
         return optString(name).takeIf { it.isNotBlank() }
     }
 
-    private fun oauthUnauthorizedMessage(message: String?): String {
-        if (message == "oauth session expired") {
-            return "OAuth session expired. Start sign-in again."
-        }
-        return "Password is required to link this account."
-    }
 }

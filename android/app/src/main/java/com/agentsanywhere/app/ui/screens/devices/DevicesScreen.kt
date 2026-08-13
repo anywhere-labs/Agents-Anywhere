@@ -471,13 +471,8 @@ private fun LoadingRow(darkMode: Boolean) {
 
 @Composable
 private fun deviceMeta(device: AgentDevice): String {
-    val count = device.attachedRuntimes.size
-    val agents = stringResource(
-        if (count == 1) R.string.devices_agent_count_one else R.string.devices_agent_count_other,
-        count,
-    )
     val seen = if (device.online) stringResource(R.string.common_now) else device.lastSeenAt.relativeTimeLabel()
-    return "$agents · $seen"
+    return "${device.subtitle} · $seen"
 }
 
 internal fun List<AgentDevice>.sortedForDevicesPage(): List<AgentDevice> {

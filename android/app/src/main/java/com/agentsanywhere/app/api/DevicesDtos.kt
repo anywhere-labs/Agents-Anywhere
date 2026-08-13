@@ -6,7 +6,6 @@ data class RemoteDevice(
     val deviceOs: String?,
     val status: String,
     val lastSeenAt: String?,
-    val attachedRuntimes: List<String>,
     val createdAt: String?,
     val updatedAt: String?,
 )

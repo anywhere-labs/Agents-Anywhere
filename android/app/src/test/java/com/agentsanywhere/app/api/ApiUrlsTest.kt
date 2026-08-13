@@ -15,7 +15,7 @@ class ApiUrlsTest {
     }
 
     @Test
-    fun `apiUrl covers HTTP SSE file and legacy configured namespaces`() {
+    fun `apiUrl covers HTTP recovery file and legacy configured namespaces`() {
         assertEquals(
             "https://server.example.com/api/v2/sessions",
             apiUrl("https://server.example.com/api/v2", "/sessions"),

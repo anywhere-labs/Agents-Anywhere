@@ -38,7 +38,6 @@ data class AgentDevice(
     val deviceOs: String? = null,
     val subtitle: String,
     val online: Boolean,
-    val attachedRuntimes: List<String> = emptyList(),
     val lastSeenAt: String? = null,
     val createdAt: String? = null,
 )
