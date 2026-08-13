@@ -165,7 +165,7 @@ function DesktopResizableShell() {
             }}
             className="min-w-0"
           >
-            <AppSidebar contained showChromeHeader={false} />
+            <AppSidebar contained />
           </ResizablePanel>
           <ResizableHandle className="bg-transparent transition-colors hover:bg-border/40 focus-visible:bg-border/60" />
           <ResizablePanel id="dashboard-main" minSize={0} className="min-w-0">
@@ -180,20 +180,11 @@ function DesktopResizableShell() {
 }
 
 function DesktopShellHeader() {
-  const { goHome } = useWorkspace()
-
   return (
     <header className="aa-window-drag flex h-12 shrink-0 items-center border-b border-border/80 bg-background text-foreground">
       <div className="w-[6.75rem] shrink-0" aria-hidden="true" />
       <div className="aa-window-no-drag flex min-w-0 items-center gap-2">
-        <button
-          type="button"
-          onClick={goHome}
-          className="max-w-40 truncate text-sm font-semibold leading-none text-foreground/80 transition-colors hover:text-foreground"
-        >
-          Agents Anywhere
-        </button>
-        <DashboardSidebarToggle showOnDesktop className="-translate-y-0.5 rounded-md text-muted-foreground hover:bg-muted hover:text-foreground" />
+        <DashboardSidebarToggle showOnDesktop className="-translate-y-px rounded-md text-muted-foreground hover:bg-muted hover:text-foreground" />
         <div className="flex items-center gap-1">
           <Button
             type="button"

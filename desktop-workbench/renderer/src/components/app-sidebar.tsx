@@ -52,13 +52,7 @@ import { useAuth } from "@/components/auth/auth-context"
 import { dashboardApi } from "@/features/dashboard/api"
 import { useTranslations } from "next-intl"
 
-export function AppSidebar({
-  contained = false,
-  showChromeHeader = true,
-}: {
-  contained?: boolean
-  showChromeHeader?: boolean
-}) {
+export function AppSidebar({ contained = false }: { contained?: boolean }) {
   const {
     connectors,
     sessions,
@@ -111,13 +105,11 @@ export function AppSidebar({
   return (
     <Sidebar contained={contained} className="border-sidebar-border">
       <SidebarHeader className="gap-0 px-4 pb-2 pt-3">
-        {showChromeHeader ? (
-          <button type="button" onClick={goHome} className="aa-wordmark mb-3 mt-1 text-xl leading-none">
-            Agents Anywhere
-          </button>
-        ) : null}
+        <button type="button" onClick={goHome} className="aa-wordmark mb-3 mt-1 text-xl leading-none">
+          Agents Anywhere
+        </button>
 
-        <SidebarMenu className={showChromeHeader ? "mt-0" : "mt-1"}>
+        <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton className="h-10 font-medium" onClick={goHome}>
               <Plus className="size-4" />
