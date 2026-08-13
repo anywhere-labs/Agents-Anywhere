@@ -69,3 +69,47 @@ data class SessionMeta(
     val isLoading: Boolean = false,
     val errorMessage: String? = null,
 )
+
+internal fun SessionDetailState.beginSnapshotLoad(clearErrors: Boolean): SessionDetailState = copy(
+    meta = meta.copy(
+        isLoading = true,
+        errorMessage = if (clearErrors) null else meta.errorMessage,
+    ),
+    timeline = timeline.copy(
+        isLoading = true,
+        loadingOlder = false,
+        errorMessage = if (clearErrors) null else timeline.errorMessage,
+    ),
+    runtime = runtime.copy(
+        isLoading = true,
+        errorMessage = if (clearErrors) null else runtime.errorMessage,
+    ),
+    capabilities = capabilities.copy(
+        isLoading = true,
+        errorMessage = if (clearErrors) null else capabilities.errorMessage,
+    ),
+    notices = notices.copy(
+        isLoading = true,
+        errorMessage = if (clearErrors) null else notices.errorMessage,
+    ),
+)
+
+internal fun SessionDetailState.completeSnapshotLoad(): SessionDetailState = copy(
+    meta = meta.copy(isLoading = false, errorMessage = null),
+    timeline = timeline.copy(isLoading = false, loadingOlder = false, errorMessage = null),
+    runtime = runtime.copy(isLoading = false, errorMessage = null),
+    capabilities = capabilities.copy(isLoading = false, errorMessage = null),
+    notices = notices.copy(isLoading = false, errorMessage = null),
+)
+
+internal fun SessionDetailState.failSnapshotLoad(message: String?): SessionDetailState = copy(
+    meta = meta.copy(isLoading = false, errorMessage = meta.errorMessage ?: message),
+    timeline = timeline.copy(
+        isLoading = false,
+        loadingOlder = false,
+        errorMessage = timeline.errorMessage ?: message,
+    ),
+    runtime = runtime.copy(isLoading = false, errorMessage = runtime.errorMessage ?: message),
+    capabilities = capabilities.copy(isLoading = false, errorMessage = capabilities.errorMessage ?: message),
+    notices = notices.copy(isLoading = false, errorMessage = notices.errorMessage ?: message),
+)

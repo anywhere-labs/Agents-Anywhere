@@ -75,8 +75,12 @@ import com.agentsanywhere.app.feature.sessiondetail.SessionDetailState
 import com.agentsanywhere.app.feature.sessiondetail.SessionRuntimeStatus
 import com.agentsanywhere.app.feature.sessiondetail.SessionTimelineState
 import com.agentsanywhere.app.feature.sessiondetail.TimelineMessage
+import com.agentsanywhere.app.feature.sessiondetail.beginSnapshotLoad
 import com.agentsanywhere.app.feature.sessiondetail.cacheDownloadedAttachment
+import com.agentsanywhere.app.feature.sessiondetail.completeSnapshotLoad
+import com.agentsanywhere.app.feature.sessiondetail.failSnapshotLoad
 import com.agentsanywhere.app.feature.sessiondetail.isValidAttachmentMediaType
+import com.agentsanywhere.app.feature.sessiondetail.isInternalRuntimeError
 import com.agentsanywhere.app.feature.sessiondetail.RuntimeMessageAction
 import com.agentsanywhere.app.feature.sessiondetail.RuntimeNotice
 import com.agentsanywhere.app.feature.sessiondetail.RuntimeNoticeAction
@@ -90,6 +94,8 @@ import com.agentsanywhere.app.feature.sessiondetail.SESSION_PERMISSION_CATALOG_C
 import com.agentsanywhere.app.feature.sessiondetail.SESSION_SEND_MESSAGE_CAPABILITY
 import com.agentsanywhere.app.feature.sessiondetail.SESSION_STEER_CAPABILITY
 import com.agentsanywhere.app.feature.sessiondetail.selectionOptions
+import com.agentsanywhere.app.feature.sessiondetail.runtimeSelectionEnabled
+import com.agentsanywhere.app.feature.sessiondetail.sessionComposerEnabled
 import com.agentsanywhere.app.feature.sessiondetail.validatedSelection
 import com.agentsanywhere.app.feature.sessions.mergeAuthoritativeSessionMetadata
 import com.agentsanywhere.app.feature.terminal.RemoteTerminalForegroundService
@@ -100,6 +106,7 @@ import com.agentsanywhere.app.navigation.AppDestination
 import com.agentsanywhere.app.ui.designsystem.AAToastHost
 import com.agentsanywhere.app.ui.designsystem.AAToastVisuals
 import com.agentsanywhere.app.ui.designsystem.LocalAAColors
+import com.agentsanywhere.app.ui.designsystem.runtimePermissionLocalizer
 import com.agentsanywhere.app.ui.designsystem.ScreenScaffold
 import com.agentsanywhere.app.ui.designsystem.noRippleClickable
 import kotlinx.coroutines.Dispatchers
@@ -109,6 +116,12 @@ import kotlinx.coroutines.withContext
 import java.util.UUID
 import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
+
+private enum class SnapshotLoadResult {
+    Success,
+    Failed,
+    NotStarted,
+}
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -159,6 +172,9 @@ fun SessionDetailScreen(
     var terminalVerticalDragActive by remember(sessionId) { mutableStateOf(false) }
     var composerHeightPx by remember { mutableStateOf(0) }
     var readOnlyComposerTapCount by remember(sessionId) { mutableStateOf(0) }
+    var modelCatalogRefreshKey by remember(sessionId) { mutableStateOf<String?>(null) }
+    var permissionCatalogRefreshKey by remember(sessionId) { mutableStateOf<String?>(null) }
+    var snapshotRefreshInProgress by remember(sessionId) { mutableStateOf(false) }
     val refetchInFlight = remember(sessionId) { AtomicBoolean(false) }
     val olderInFlight = remember(sessionId) { AtomicBoolean(false) }
     val remoteTerminal = remember(sessionId, terminalPool) { terminalPool.forSession(sessionId) }
@@ -447,41 +463,42 @@ fun SessionDetailScreen(
         }
     }
 
-    suspend fun loadInitialSnapshot() {
-        val id = sessionId ?: return
-        if (!appVisible) return
-        if (!refetchInFlight.compareAndSet(false, true)) return
-        state = state.copy(
-            meta = state.meta.copy(isLoading = true, errorMessage = null),
-            timeline = state.timeline.copy(isLoading = true, loadingOlder = false, errorMessage = null),
-            runtime = state.runtime.copy(isLoading = true, errorMessage = null),
-            capabilities = state.capabilities.copy(isLoading = true, errorMessage = null),
-            notices = state.notices.copy(isLoading = true, errorMessage = null),
-        )
-        try {
-            controller.loadInitialSnapshot(id, devices, state)
-                .onSuccess { loaded ->
-                    if (!appVisible) return@onSuccess
-                    state = controller.mergeSnapshotWithLiveState(id, loaded, state)
-                    state.session?.let(onSessionChanged)
-                }
-                .onFailure { error ->
-                    if (appVisible) {
-                        val message = error.message ?: context.getString(R.string.session_load_messages_failed)
-                        state = state.copy(
-                            meta = state.meta.copy(isLoading = false, errorMessage = message),
-                            timeline = state.timeline.copy(
-                                isLoading = false,
-                                loadingOlder = false,
-                                errorMessage = message,
-                            ),
-                            runtime = state.runtime.copy(isLoading = false, errorMessage = message),
-                            capabilities = state.capabilities.copy(isLoading = false, errorMessage = message),
-                            notices = state.notices.copy(isLoading = false, errorMessage = message),
-                        )
+    suspend fun loadInitialSnapshot(
+        onStarted: () -> Unit = {},
+    ): SnapshotLoadResult {
+        val id = sessionId ?: return SnapshotLoadResult.NotStarted
+        if (!appVisible) return SnapshotLoadResult.NotStarted
+        if (!refetchInFlight.compareAndSet(false, true)) return SnapshotLoadResult.NotStarted
+        val hadInitializedState = state.initialized
+        snapshotRefreshInProgress = true
+        return try {
+            onStarted()
+            state = state.beginSnapshotLoad(clearErrors = !hadInitializedState)
+            controller.loadInitialSnapshot(id, devices, state).fold(
+                onSuccess = { loaded ->
+                    if (!appVisible) {
+                        state = state.failSnapshotLoad(null)
+                        SnapshotLoadResult.NotStarted
+                    } else {
+                        state = controller.mergeSnapshotWithLiveState(id, loaded, state)
+                            .completeSnapshotLoad()
+                        state.session?.let(onSessionChanged)
+                        SnapshotLoadResult.Success
                     }
-                }
+                },
+                onFailure = {
+                    if (!appVisible) {
+                        state = state.failSnapshotLoad(null)
+                        SnapshotLoadResult.NotStarted
+                    } else {
+                        val initialLoadError = context.getString(R.string.session_load_messages_failed)
+                        state = state.failSnapshotLoad(initialLoadError.takeUnless { hadInitializedState })
+                        SnapshotLoadResult.Failed
+                    }
+                },
+            )
         } finally {
+            snapshotRefreshInProgress = false
             refetchInFlight.set(false)
         }
     }
@@ -591,7 +608,10 @@ fun SessionDetailScreen(
                     )
                 }
                 .onFailure { error ->
-                    val message = error.message ?: context.getString(R.string.session_send_failed)
+                    val rawMessage = error.message
+                    val message = rawMessage
+                        ?.takeUnless(::isInternalRuntimeError)
+                        ?: context.getString(R.string.session_send_failed)
                     if (controller.hasServerEcho(state, clientMessageId)) {
                         clearComposerDraft()
                         return@onFailure
@@ -947,9 +967,15 @@ fun SessionDetailScreen(
     val canUseCommands = state.capabilities.isUsable(SESSION_COMMANDS_CAPABILITY, runtimeId) ||
         state.capabilities.isUsable(SESSION_COMMAND_EXECUTE_CAPABILITY, runtimeId)
     val capabilityFactsFresh = state.capabilities.isLoaded && state.capabilities.errorMessage == null
-    val commandMode = draft.trimStart().startsWith('/') && attachments.isEmpty()
+    val commandMode = takeoverEnabled && draft.trimStart().startsWith('/') && attachments.isEmpty()
     val commandQuery = draft.trimStart().removePrefix("/").trim()
-    val inputEnabled = capabilityFactsFresh && (canUseSendMessage || canUseSteer || canUseCommands)
+    val inputEnabled = sessionComposerEnabled(
+        takeoverEnabled = takeoverEnabled,
+        capabilityFactsFresh = capabilityFactsFresh,
+        canSendMessage = canUseSendMessage,
+        canSteer = canUseSteer,
+        canUseCommands = canUseCommands,
+    )
     val attachmentsReady = attachments.all { it.uploadState == AttachmentUploadState.Uploaded }
     val canSend = inputEnabled &&
         !state.sending &&
@@ -966,9 +992,21 @@ fun SessionDetailScreen(
             ?.takeIf { canRespondToNotice }
     }
     val modelOptions = remember(state.catalogs.model) { state.catalogs.model?.selectionOptions().orEmpty() }
-    val permissionOptions = remember(state.catalogs.permission) {
-        state.catalogs.permission?.selectionOptions().orEmpty()
-    }
+    val permissionLocalizer = runtimePermissionLocalizer()
+    val permissionOptions = state.catalogs.permission?.let { catalog ->
+        val permissions = catalog.permissions.associateBy { it.selectionId }
+        catalog.selectionOptions().map { option ->
+            val permission = permissions[option.selectionId] ?: return@map option
+            val localized = permissionLocalizer.localize(
+                runtime = catalog.runtime,
+                permissionId = permission.id,
+                label = option.label,
+                description = option.description,
+                metadata = permission.metadata,
+            )
+            option.copy(label = localized.label, description = localized.description)
+        }
+    }.orEmpty()
     val modelSelection = modelOptions.validatedSelection(state.runtime.selections["model"])
     val permissionSelection = permissionOptions.validatedSelection(state.runtime.selections["permission"])
     val modelLabel = modelOptions.firstOrNull { it.selectionId == modelSelection }?.label
@@ -977,14 +1015,74 @@ fun SessionDetailScreen(
     val permissionCapability = state.capabilities.find(SESSION_PERMISSION_CATALOG_CAPABILITY, runtimeId)
     val commandCapability = state.capabilities.find(SESSION_COMMANDS_CAPABILITY, runtimeId)
         ?: state.capabilities.find(SESSION_COMMAND_EXECUTE_CAPABILITY, runtimeId)
-    val sendUnavailableReason = state.capabilities.find(SESSION_SEND_MESSAGE_CAPABILITY, runtimeId)
-        ?.unavailableReason
-        ?: state.capabilities.find(SESSION_STEER_CAPABILITY, runtimeId)?.unavailableReason
-    val modelControlLabel = modelLabel ?: modelCapability?.unavailableReason?.let {
-        "${stringResource(R.string.new_session_model)} · $it"
+    val modelControlLabel = modelLabel ?: stringResource(
+        if (state.catalogs.modelLoading) {
+            R.string.session_runtime_model_loading
+        } else {
+            R.string.session_runtime_model_unavailable
+        },
+    )
+    val permissionControlLabel = permissionLabel ?: stringResource(
+        if (state.catalogs.permissionLoading) {
+            R.string.session_runtime_permission_loading
+        } else {
+            R.string.session_runtime_permission_unavailable
+        },
+    )
+    val modelVisible = state.catalogs.model != null || modelCapability?.supported == true
+    val permissionVisible = state.catalogs.permission != null || permissionCapability?.supported == true
+    val modelEnabled = runtimeSelectionEnabled(takeoverEnabled, canUseModelCatalog)
+    val permissionEnabled = runtimeSelectionEnabled(takeoverEnabled, canUsePermissionCatalog)
+
+    LaunchedEffect(
+        sessionId,
+        state.runtime.selections["model"],
+        state.catalogs.model?.revision,
+        modelCapability?.supported,
+        state.catalogs.modelLoading,
+        state.catalogs.modelErrorMessage,
+    ) {
+        val selection = state.runtime.selections["model"]?.takeIf(String::isNotBlank)
+        val catalogMissing = state.catalogs.model == null && modelCapability?.supported == true
+        val selectionMissing = selection != null && state.catalogs.model != null &&
+            modelOptions.none { it.selectionId == selection }
+        val refreshKey = when {
+            catalogMissing -> "catalog:${state.capabilities.revision}"
+            selectionMissing -> "selection:$selection:${state.catalogs.model?.revision}"
+            else -> null
+        }
+        if ((catalogMissing || selectionMissing) && !state.catalogs.modelLoading &&
+            state.catalogs.modelErrorMessage == null && modelCatalogRefreshKey != refreshKey
+        ) {
+            modelCatalogRefreshKey = refreshKey
+            loadModelCatalog()
+        }
     }
-    val permissionControlLabel = permissionLabel ?: permissionCapability?.unavailableReason?.let {
-        "${stringResource(R.string.new_session_permission)} · $it"
+    LaunchedEffect(
+        sessionId,
+        state.runtime.selections["permission"],
+        state.catalogs.permission?.revision,
+        permissionCapability?.supported,
+        state.catalogs.permissionLoading,
+        state.catalogs.permissionErrorMessage,
+        state.catalogs.modelLoading,
+    ) {
+        val selection = state.runtime.selections["permission"]?.takeIf(String::isNotBlank)
+        val catalogMissing = state.catalogs.permission == null && permissionCapability?.supported == true
+        val selectionMissing = selection != null && state.catalogs.permission != null &&
+            permissionOptions.none { it.selectionId == selection }
+        val refreshKey = when {
+            catalogMissing -> "catalog:${state.capabilities.revision}"
+            selectionMissing -> "selection:$selection:${state.catalogs.permission?.revision}"
+            else -> null
+        }
+        if ((catalogMissing || selectionMissing) && !state.catalogs.permissionLoading &&
+            state.catalogs.permissionErrorMessage == null && !state.catalogs.modelLoading &&
+            permissionCatalogRefreshKey != refreshKey
+        ) {
+            permissionCatalogRefreshKey = refreshKey
+            loadPermissionCatalog()
+        }
     }
 
     LaunchedEffect(sessionId, commandMode, canUseCommands) {
@@ -1008,19 +1106,15 @@ fun SessionDetailScreen(
     val replyTarget = state.session?.runtimeLabel?.takeIf { it.isNotBlank() }
         ?: stringResource(R.string.session_agent_fallback)
     val placeholder = when {
+        !takeoverEnabled -> stringResource(R.string.session_read_only_placeholder)
         state.session != null && !connectorOnline -> stringResource(R.string.session_device_offline_placeholder)
         state.runtime.errorMessage != null -> state.runtime.errorMessage.orEmpty()
         state.runtime.status == SessionRuntimeStatus.Unknown -> stringResource(R.string.session_runtime_state_unknown)
-        state.runtime.status == SessionRuntimeStatus.Error -> {
-            state.runtime.statusReason
-                ?: state.runtime.error?.get("message")?.toString()
-                ?: stringResource(R.string.session_runtime_state_error)
-        }
+        state.runtime.status == SessionRuntimeStatus.Error -> stringResource(R.string.session_runtime_state_error)
         canUseSteer && !canUseSendMessage -> stringResource(R.string.session_reply_to, replyTarget)
-        !canUseSendMessage && !canUseCommands -> sendUnavailableReason
-            ?: stringResource(R.string.session_send_unavailable)
+        !canUseSendMessage && !canUseCommands -> stringResource(R.string.session_send_unavailable)
         inputEnabled -> stringResource(R.string.session_reply_to, replyTarget)
-        else -> stringResource(R.string.session_read_only_placeholder)
+        else -> stringResource(R.string.session_send_unavailable)
     }
 
     ScreenScaffold {
@@ -1116,10 +1210,10 @@ fun SessionDetailScreen(
                             SessionRuntimeControlBar(
                                 modelLabel = modelControlLabel,
                                 permissionLabel = permissionControlLabel,
-                                modelVisible = modelCapability?.supported == true,
-                                permissionVisible = permissionCapability?.supported == true,
-                                modelEnabled = canUseModelCatalog,
-                                permissionEnabled = canUsePermissionCatalog,
+                                modelVisible = modelVisible,
+                                permissionVisible = permissionVisible,
+                                modelEnabled = modelEnabled,
+                                permissionEnabled = permissionEnabled,
                                 busy = state.selectionUpdating,
                                 onModelClick = {
                                     selectionDialog = RuntimeCatalogKind.Model
@@ -1132,7 +1226,7 @@ fun SessionDetailScreen(
                             )
                             MessageComposer(
                                 darkMode = darkMode,
-                                draft = draft,
+                                draft = if (takeoverEnabled) draft else "",
                                 onDraftChange = ::setComposerDraft,
                                 takeoverEnabled = takeoverEnabled,
                                 takeoverBusy = state.takeoverInFlight || !connectorOnline,
@@ -1142,7 +1236,7 @@ fun SessionDetailScreen(
                                 showInterrupt = showInterrupt,
                                 interrupting = state.interrupting,
                                 placeholder = placeholder,
-                                attachments = attachments,
+                                attachments = if (takeoverEnabled) attachments else emptyList(),
                                 onToggleTakeover = { takeoverConfirm = !takeoverEnabled },
                                 onPickPhoto = ::openPhotoPicker,
                                 onPickFile = ::openFilePicker,
@@ -1164,10 +1258,22 @@ fun SessionDetailScreen(
                         SessionDetailHeader(
                             title = state.session?.title ?: stringResource(R.string.session_title_fallback),
                             darkMode = darkMode,
+                            refreshing = snapshotRefreshInProgress,
                             onLeftClick = {
-                                realtimeController.requestImmediateReconnect()
                                 scope.launch {
-                                    loadInitialSnapshot()
+                                    when (
+                                        loadInitialSnapshot(
+                                            onStarted = realtimeController::requestImmediateReconnect,
+                                        )
+                                    ) {
+                                        SnapshotLoadResult.Success -> showToast(
+                                            context.getString(R.string.session_refresh_success),
+                                        )
+                                        SnapshotLoadResult.Failed -> showError(
+                                            context.getString(R.string.session_refresh_failed),
+                                        )
+                                        SnapshotLoadResult.NotStarted -> Unit
+                                    }
                                 }
                             },
                             onRightClick = { scope.launch { pagerState.animateScrollToPage(1) } },

@@ -27,6 +27,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -113,6 +114,7 @@ import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 import com.agentsanywhere.app.ui.designsystem.ScreenScaffold
 import com.agentsanywhere.app.ui.designsystem.SearchGlyph
 import com.agentsanywhere.app.ui.designsystem.noRippleClickable
+import com.agentsanywhere.app.ui.designsystem.runtimePermissionLocalizer
 import com.composables.icons.lucide.Bot
 import com.composables.icons.lucide.ChevronDown
 import com.composables.icons.lucide.ChevronRight
@@ -362,8 +364,19 @@ fun NewSessionScreen(
                 )
         }
         .orEmpty()
+    val permissionLocalizer = runtimePermissionLocalizer()
     val permissionOptions = runtimeSelection.permissionCatalog.data?.permissions
         ?.filter { it.id.isNotBlank() && it.selectionId.isNotBlank() }
+        ?.map { permission ->
+            val localized = permissionLocalizer.localize(
+                runtime = runtimeSelection.permissionCatalog.data?.runtime ?: selectedRuntime?.id,
+                permissionId = permission.id,
+                label = permission.displayName.ifBlank { permission.id },
+                description = permission.description,
+                metadata = permission.metadata,
+            )
+            permission.copy(displayName = localized.label, description = localized.description)
+        }
         .orEmpty()
     val catalogLoading = runtimeSelection.capabilities.loading ||
         runtimeSelection.modelCatalog.loading ||
@@ -556,7 +569,10 @@ fun NewSessionScreen(
                             label = stringResource(R.string.new_session_permission),
                             value = when {
                                 catalogLoading -> stringResource(R.string.new_session_catalog_loading)
-                                runtimeSelection.selectedPermission != null -> runtimeSelection.selectedPermission!!.displayName
+                                runtimeSelection.selectedPermission != null -> permissionOptions
+                                    .firstOrNull { it.id == runtimeSelection.selectedPermissionId }
+                                    ?.displayName
+                                    ?: runtimeSelection.selectedPermission!!.displayName
                                 else -> stringResource(R.string.new_session_catalog_unavailable)
                             },
                             icon = Lucide.Pencil,
@@ -671,6 +687,7 @@ fun NewSessionScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .windowInsetsPadding(WindowInsets.navigationBars)
+                    .imePadding()
                     .padding(start = 18.dp, end = 18.dp, bottom = 10.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
@@ -1715,14 +1732,16 @@ private fun SheetChoiceRow(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            Text(
-                text = subtitle,
-                color = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF777777),
-                fontSize = 12.sp,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+            if (subtitle.isNotBlank()) {
+                Text(
+                    text = subtitle,
+                    color = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF777777),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
         if (selected) {
             CheckGlyph(color = Color(0xFF22C55E))

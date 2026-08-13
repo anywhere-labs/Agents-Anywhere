@@ -87,7 +87,10 @@ class SessionDetailController(
                         isLoaded = true,
                         eventSequence = snapshot.eventCursor.removePrefix("seq:").toLongOrNull() ?: 0L,
                     ),
-                    catalogs = currentState?.catalogs ?: RuntimeCatalogs(),
+                    catalogs = RuntimeCatalogs(
+                        model = snapshot.catalogs.model,
+                        permission = snapshot.catalogs.permission,
+                    ),
                     commands = currentState?.commands ?: RuntimeCommands(),
                     realtime = (currentState?.realtime ?: SessionRealtimeState()).copy(
                         cursor = snapshot.eventCursor,

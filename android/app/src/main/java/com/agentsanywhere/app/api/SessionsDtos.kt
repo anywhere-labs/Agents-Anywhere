@@ -143,8 +143,14 @@ data class RemoteSessionSnapshot(
     val notices: List<RemoteRuntimeNotice>,
     val effectiveCapabilities: RemoteRuntimeCapabilitySet,
     val runtimeCapabilities: RemoteRuntimeCapabilitySet,
+    val catalogs: RemoteSessionRuntimeCatalogs,
     val eventCursor: String,
     val serverTime: String?,
+)
+
+data class RemoteSessionRuntimeCatalogs(
+    val model: RemoteRuntimeModelCatalog?,
+    val permission: RemoteRuntimePermissionCatalog?,
 )
 
 data class RemoteSessionTimelineSnapshot(

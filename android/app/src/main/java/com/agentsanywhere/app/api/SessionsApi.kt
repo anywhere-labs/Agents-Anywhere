@@ -591,6 +591,7 @@ class SessionsApi(
 
     private fun JSONObject.toRemoteSessionSnapshot(): RemoteSessionSnapshot {
         val timeline = optJSONObject("timeline") ?: JSONObject()
+        val catalogs = optJSONObject("catalogs")
         return RemoteSessionSnapshot(
             session = getJSONObject("session").toRemoteSession(),
             state = optJSONObject("state")?.toRemoteSessionRuntimeState(),
@@ -602,6 +603,10 @@ class SessionsApi(
             notices = optJSONArray("notices").toObjectList { toRemoteRuntimeNotice() },
             effectiveCapabilities = optJSONObject("effectiveCapabilities").toRemoteRuntimeCapabilitySet(),
             runtimeCapabilities = optJSONObject("runtimeCapabilities").toRemoteRuntimeCapabilitySet(),
+            catalogs = RemoteSessionRuntimeCatalogs(
+                model = catalogs?.optJSONObject("model")?.toRemoteRuntimeModelCatalog(),
+                permission = catalogs?.optJSONObject("permission")?.toRemoteRuntimePermissionCatalog(),
+            ),
             eventCursor = optString("eventCursor", "seq:0"),
             serverTime = optNullableString("serverTime"),
         )

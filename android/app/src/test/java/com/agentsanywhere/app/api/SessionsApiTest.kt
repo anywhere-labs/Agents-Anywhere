@@ -276,6 +276,13 @@ class SessionsApiTest {
             assertEquals("future_status", snapshot.state?.status)
             assertEquals("model-selection", snapshot.state?.selections?.get("model"))
             assertNull(snapshot.state?.selections?.get("permission"))
+            assertEquals(7L, snapshot.catalogs.model?.revision)
+            assertEquals("model-selection", snapshot.catalogs.model?.models?.single()?.selectionId)
+            assertEquals(8L, snapshot.catalogs.permission?.revision)
+            assertEquals(
+                "permission-selection",
+                snapshot.catalogs.permission?.permissions?.single()?.selectionId,
+            )
             assertEquals(4L, snapshot.effectiveCapabilities.revision)
             assertEquals("future.capability", snapshot.effectiveCapabilities.capabilities.last().capabilityId)
             assertEquals("notice-1", snapshot.notices.single().noticeId)

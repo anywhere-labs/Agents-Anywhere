@@ -316,6 +316,63 @@ data class RuntimeSelectionOption(
     val default: Boolean,
 )
 
+internal enum class RuntimePermissionTranslation {
+    RequestApproval,
+    AutoReview,
+    FullAccess,
+    ClaudeDefault,
+    ClaudeAcceptEdits,
+    ClaudePlan,
+    ClaudeAuto,
+    ClaudeDontAsk,
+    ClaudeBypassPermissions,
+}
+
+internal fun runtimePermissionTranslation(
+    runtime: String?,
+    permissionId: String,
+    metadata: Map<String, Any?> = emptyMap(),
+): RuntimePermissionTranslation? {
+    val i18n = metadata["i18n"] as? Map<*, *>
+    val labelKey = i18n?.get("labelKey") as? String
+    permissionTranslationByLabelKey(labelKey)?.let { return it }
+
+    val normalizedId = permissionId.trim().lowercase()
+    return when (normalizedId) {
+        "request_approval" -> RuntimePermissionTranslation.RequestApproval
+        "auto_review" -> RuntimePermissionTranslation.AutoReview
+        "full_access" -> RuntimePermissionTranslation.FullAccess
+        else -> if (runtime.orEmpty().trim().lowercase().contains("claude")) {
+            when (normalizedId) {
+                "default" -> RuntimePermissionTranslation.ClaudeDefault
+                "acceptedits" -> RuntimePermissionTranslation.ClaudeAcceptEdits
+                "plan" -> RuntimePermissionTranslation.ClaudePlan
+                "auto" -> RuntimePermissionTranslation.ClaudeAuto
+                "dontask" -> RuntimePermissionTranslation.ClaudeDontAsk
+                "bypasspermissions" -> RuntimePermissionTranslation.ClaudeBypassPermissions
+                else -> null
+            }
+        } else {
+            null
+        }
+    }
+}
+
+private fun permissionTranslationByLabelKey(labelKey: String?): RuntimePermissionTranslation? =
+    when (labelKey) {
+        "dashboard.new.permissionModes.requestApproval.label" -> RuntimePermissionTranslation.RequestApproval
+        "dashboard.new.permissionModes.autoReview.label" -> RuntimePermissionTranslation.AutoReview
+        "dashboard.new.permissionModes.fullAccess.label" -> RuntimePermissionTranslation.FullAccess
+        "dashboard.new.permissionModes.claude.default.label" -> RuntimePermissionTranslation.ClaudeDefault
+        "dashboard.new.permissionModes.claude.acceptEdits.label" -> RuntimePermissionTranslation.ClaudeAcceptEdits
+        "dashboard.new.permissionModes.claude.plan.label" -> RuntimePermissionTranslation.ClaudePlan
+        "dashboard.new.permissionModes.claude.auto.label" -> RuntimePermissionTranslation.ClaudeAuto
+        "dashboard.new.permissionModes.claude.dontAsk.label" -> RuntimePermissionTranslation.ClaudeDontAsk
+        "dashboard.new.permissionModes.claude.bypassPermissions.label" ->
+            RuntimePermissionTranslation.ClaudeBypassPermissions
+        else -> null
+    }
+
 internal fun RemoteRuntimeModelCatalog.selectionOptions(): List<RuntimeSelectionOption> {
     return models.flatMap { model ->
         val reasoning = model.reasoningItems.filter { it.selectionId.isNotBlank() }
@@ -356,10 +413,35 @@ internal fun RemoteRuntimePermissionCatalog.selectionOptions(): List<RuntimeSele
         }
         .distinctBy { it.selectionId }
 
-internal fun List<RuntimeSelectionOption>.validatedSelection(hint: String?): String? =
-    firstOrNull { it.selectionId == hint }?.selectionId
-        ?: firstOrNull { it.default }?.selectionId
-        ?: firstOrNull()?.selectionId
+internal fun List<RuntimeSelectionOption>.validatedSelection(hint: String?): String? {
+    val explicitSelection = hint?.takeIf(String::isNotBlank)
+    return if (explicitSelection != null) {
+        firstOrNull { it.selectionId == explicitSelection }?.selectionId
+    } else {
+        firstOrNull { it.default }?.selectionId ?: firstOrNull()?.selectionId
+    }
+}
+
+internal fun sessionComposerEnabled(
+    takeoverEnabled: Boolean,
+    capabilityFactsFresh: Boolean,
+    canSendMessage: Boolean,
+    canSteer: Boolean,
+    canUseCommands: Boolean,
+): Boolean = takeoverEnabled && capabilityFactsFresh && (canSendMessage || canSteer || canUseCommands)
+
+internal fun runtimeSelectionEnabled(takeoverEnabled: Boolean, capabilityUsable: Boolean): Boolean =
+    takeoverEnabled && capabilityUsable
+
+internal fun isInternalRuntimeError(message: String?): Boolean {
+    val normalized = message?.trim()?.lowercase().orEmpty()
+    if (normalized.isEmpty()) return false
+    return normalized.contains("json-rpc") ||
+        normalized.contains("invalidrequesterror") ||
+        normalized.contains("traceback") ||
+        normalized.contains("already has an active writer") ||
+        Regex("[a-z0-9_.]+(?:error|exception):").containsMatchIn(normalized)
+}
 
 internal fun RemoteRuntimeNoticeAction.toRuntimeNoticeAction(): RuntimeNoticeAction {
     return RuntimeNoticeAction(
