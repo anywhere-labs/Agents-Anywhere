@@ -12,6 +12,7 @@ import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.concurrent.TimeUnit
+import org.json.JSONException
 
 class ApiClient(
     private val onUnauthorized: (accessToken: String) -> Unit = {},
@@ -242,18 +243,6 @@ class ApiClient(
                 method == "POST" || method == "PUT" || method == "PATCH" -> EMPTY_JSON_BODY
                 else -> null
             }
-            val request = Request.Builder()
-                .url(apiUrl(serverUrl, path))
-                .header("Accept", "application/json")
-                .header("ngrok-skip-browser-warning", "true")
-                .method(method, resolvedRequestBody)
-                .apply {
-                    if (!authorizationToken.isNullOrBlank()) {
-                        header("Authorization", "Bearer $authorizationToken")
-                    }
-                }
-                .build()
-
             val httpClient = if (readTimeoutSeconds == null) {
                 JSON_HTTP_CLIENT
             } else {
@@ -261,17 +250,42 @@ class ApiClient(
                     .readTimeout(readTimeoutSeconds, TimeUnit.SECONDS)
                     .build()
             }
-            httpClient.newCall(request).execute().use { response ->
-                val responseText = response.body?.string().orEmpty()
-                if (!response.isSuccessful) {
-                    notifyUnauthorized(response.code, authorizationToken)
-                    throw ApiException(
-                        message = parseErrorMessage(responseText) ?: defaultErrorMessage(response.code),
-                        statusCode = response.code,
-                    )
+
+            val candidates = apiUrlCandidates(serverUrl, path)
+            candidates.forEachIndexed { index, url ->
+                val request = Request.Builder()
+                    .url(url)
+                    .header("Accept", "application/json")
+                    .header("ngrok-skip-browser-warning", "true")
+                    .method(method, resolvedRequestBody)
+                    .apply {
+                        if (!authorizationToken.isNullOrBlank()) {
+                            header("Authorization", "Bearer $authorizationToken")
+                        }
+                    }
+                    .build()
+
+                httpClient.newCall(request).execute().use { response ->
+                    val responseText = response.body?.string().orEmpty()
+                    val contentType = response.header("Content-Type").orEmpty()
+                    val canTryLegacy = index < candidates.lastIndex &&
+                        shouldTryLegacyApi(response.code, response.isSuccessful, contentType, responseText)
+                    if (canTryLegacy) return@forEachIndexed
+
+                    if (!response.isSuccessful) {
+                        notifyUnauthorized(response.code, authorizationToken)
+                        throw ApiException(
+                            message = parseErrorMessage(responseText) ?: defaultErrorMessage(response.code),
+                            statusCode = response.code,
+                        )
+                    }
+
+                    val json = parseJsonResponse(responseText)
+                    rememberApiUrl(serverUrl, url)
+                    return json
                 }
-                if (responseText.isBlank()) JSONObject() else JSONObject(responseText)
             }
+            throw ApiException("The server returned an invalid response.")
         } catch (exc: ApiException) {
             throw exc
         } catch (exc: IllegalArgumentException) {
@@ -320,6 +334,30 @@ class ApiClient(
         }.getOrNull()
     }
 
+    private fun parseJsonResponse(responseText: String): JSONObject {
+        if (responseText.isBlank()) return JSONObject()
+        return try {
+            JSONObject(responseText)
+        } catch (exc: JSONException) {
+            throw ApiException("The server returned an invalid response.", cause = exc)
+        }
+    }
+
+    private fun shouldTryLegacyApi(
+        statusCode: Int,
+        successful: Boolean,
+        contentType: String,
+        responseText: String,
+    ): Boolean {
+        if (statusCode == 405) return true
+        if (contentType.isJsonContentType()) return false
+        if (statusCode == 404) return true
+        val looksLikeHtml = contentType.contains("text/html", ignoreCase = true) ||
+            responseText.trimStart().startsWith("<!DOCTYPE", ignoreCase = true) ||
+            responseText.trimStart().startsWith("<html", ignoreCase = true)
+        return successful && looksLikeHtml
+    }
+
     private fun defaultErrorMessage(statusCode: Int): String {
         return when (statusCode) {
             401 -> "Unauthorized request."
@@ -330,6 +368,11 @@ class ApiClient(
 
     private fun String.httpQuoted(): String {
         return replace("\\", "\\\\").replace("\"", "\\\"").replace("\r", "").replace("\n", "")
+    }
+
+    private fun String.isJsonContentType(): Boolean {
+        return contains("application/json", ignoreCase = true) ||
+            contains("+json", ignoreCase = true)
     }
 }
 

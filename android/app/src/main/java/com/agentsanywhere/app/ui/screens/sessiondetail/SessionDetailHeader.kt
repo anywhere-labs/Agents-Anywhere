@@ -12,24 +12,16 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -41,7 +33,6 @@ import com.agentsanywhere.app.ui.designsystem.noRippleClickable
 internal fun SessionDetailHeader(
     title: String,
     darkMode: Boolean,
-    refreshing: Boolean,
     onLeftClick: () -> Unit,
     onRightClick: () -> Unit,
     modifier: Modifier = Modifier,
@@ -59,13 +50,12 @@ internal fun SessionDetailHeader(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         HeaderImageButton(
-            resId = if (darkMode) R.drawable.ic_session_refresh_dark else R.drawable.ic_session_refresh_light,
+            resId = if (darkMode) {
+                R.drawable.ic_session_runtime_settings_dark
+            } else {
+                R.drawable.ic_session_runtime_settings_light
+            },
             darkMode = darkMode,
-            enabled = !refreshing,
-            rotating = refreshing,
-            contentDescription = stringResource(
-                if (refreshing) R.string.session_refreshing_action else R.string.session_refresh_action,
-            ),
             onClick = onLeftClick,
         )
         Row(
@@ -96,7 +86,6 @@ internal fun SessionDetailHeader(
                 R.drawable.ic_session_agent_button_light
             },
             darkMode = darkMode,
-            contentDescription = null,
             onClick = onRightClick,
         )
     }
@@ -126,27 +115,10 @@ internal fun HeaderVeil(
 private fun HeaderImageButton(
     resId: Int,
     darkMode: Boolean,
-    enabled: Boolean = true,
-    rotating: Boolean = false,
-    contentDescription: String?,
     onClick: () -> Unit,
 ) {
     val surface = if (darkMode) Color(0xF218181B) else Color(0xF2FFFFFF)
     val border = if (darkMode) Color(0xFF27272A) else Color(0xFFE8E5DE)
-    val rotation = if (rotating) {
-        val transition = rememberInfiniteTransition(label = "session-refresh")
-        val animatedRotation by transition.animateFloat(
-            initialValue = 0f,
-            targetValue = 360f,
-            animationSpec = infiniteRepeatable(
-                animation = tween(durationMillis = 900, easing = LinearEasing),
-            ),
-            label = "session-refresh-rotation",
-        )
-        animatedRotation
-    } else {
-        0f
-    }
     Box(
         modifier = Modifier
             .size(44.dp)
@@ -154,15 +126,13 @@ private fun HeaderImageButton(
             .clip(CircleShape)
             .background(surface)
             .border(1.dp, border, CircleShape)
-            .noRippleClickable(enabled = enabled, onClick = onClick),
+            .noRippleClickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         Image(
             painter = painterResource(resId),
-            contentDescription = contentDescription,
-            modifier = Modifier
-                .size(20.dp)
-                .graphicsLayer { rotationZ = rotation },
+            contentDescription = null,
+            modifier = Modifier.size(20.dp),
             contentScale = ContentScale.Fit,
         )
     }

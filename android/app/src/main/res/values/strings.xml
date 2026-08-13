@@ -91,6 +91,10 @@
     <string name="home_online">Online</string>
     <string name="home_offline">Offline</string>
     <string name="home_new_session">New session</string>
+    <string name="home_session_status_waiting_approval">Waiting approval</string>
+    <string name="home_session_status_running">Session running</string>
+    <string name="home_session_status_unread">Unread session</string>
+    <string name="home_session_status_error">Session error</string>
 
     <string name="devices_title">Devices</string>
     <string name="devices_empty">No devices yet. Add one to start pairing.</string>
@@ -289,10 +293,6 @@
     <string name="session_photo_access_required">Please allow photo access to choose images.</string>
     <string name="session_file_picker_failed">Could not open file picker.</string>
     <string name="session_load_messages_failed">Could not load messages.</string>
-    <string name="session_refresh_action">Refresh session</string>
-    <string name="session_refreshing_action">Refreshing session</string>
-    <string name="session_refresh_success">Session refreshed.</string>
-    <string name="session_refresh_failed">Could not refresh the session. Please try again.</string>
     <string name="session_wait_uploads">Wait for attachments to finish uploading.</string>
     <string name="session_send_failed">Failed to send message.</string>
     <string name="session_takeover_update_failed">Could not update takeover.</string>
@@ -377,6 +377,7 @@
     <string name="session_attachment_file">File</string>
     <string name="session_attachment_name_fallback">attachment</string>
     <string name="session_runtime_select_model">Select model</string>
+    <string name="session_runtime_settings_title">Model settings</string>
     <string name="session_runtime_mode_effort">Mode &amp; effort</string>
     <string name="session_runtime_no_settings">No settings available</string>
     <string name="session_runtime_permission_mode">Permission mode</string>

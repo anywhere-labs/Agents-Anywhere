@@ -9,7 +9,13 @@ import android.view.Gravity
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -61,6 +67,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -72,6 +80,8 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -84,6 +94,8 @@ import androidx.compose.ui.window.DialogProperties
 import com.agentsanywhere.app.R
 import com.agentsanywhere.app.api.AuthMeResponse
 import com.agentsanywhere.app.feature.sessions.SessionsState
+import com.agentsanywhere.app.feature.sessions.SessionListIndicator
+import com.agentsanywhere.app.feature.sessions.listIndicator
 import com.agentsanywhere.app.feature.sessions.pinnedSessions
 import com.agentsanywhere.app.feature.sessions.recentSessions
 import com.agentsanywhere.app.model.AgentDevice
@@ -350,7 +362,7 @@ private fun HomeSessionActionOverlay(
 }
 
 @Composable
-private fun HomeSessionHighlightRow(session: AgentSession, darkMode: Boolean) {
+internal fun HomeSessionHighlightRow(session: AgentSession, darkMode: Boolean) {
     val subtitle = listOf(session.runtimeLabel, session.workspaceLabel)
         .filter { it.isNotBlank() }
         .joinToString("  ·  ")
@@ -400,14 +412,7 @@ private fun HomeSessionHighlightRow(session: AgentSession, darkMode: Boolean) {
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        Text(
-            text = session.updatedAtLabel.ifBlank { "now" },
-            color = meta,
-            fontSize = 10.8.sp,
-            fontFamily = FontFamily.Monospace,
-            fontWeight = FontWeight.SemiBold,
-            maxLines = 1,
-        )
+        SessionRowTrailing(session = session, timeColor = meta)
     }
 }
 
@@ -1279,7 +1284,7 @@ private fun HomeSectionHeader(
 }
 
 @Composable
-private fun HomePinnedSessionRow(
+internal fun HomePinnedSessionRow(
     session: AgentSession,
     showDivider: Boolean,
     onClick: () -> Unit,
@@ -1318,19 +1323,12 @@ private fun HomePinnedSessionRow(
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        Text(
-            text = session.updatedAtLabel.ifBlank { "now" },
-            color = LocalAAColors.current.faint,
-            fontSize = 10.8.sp,
-            fontFamily = FontFamily.Monospace,
-            fontWeight = FontWeight.SemiBold,
-            maxLines = 1,
-        )
+        SessionRowTrailing(session = session, timeColor = LocalAAColors.current.faint)
     }
 }
 
 @Composable
-private fun HomeRecentSessionRow(
+internal fun HomeRecentSessionRow(
     session: AgentSession,
     onClick: () -> Unit,
     onLongPress: (Rect) -> Unit,
@@ -1347,15 +1345,119 @@ private fun HomeRecentSessionRow(
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
+        SessionRowTrailing(session = session, timeColor = LocalAAColors.current.faint)
+    }
+}
+
+@Composable
+private fun SessionRowTrailing(
+    session: AgentSession,
+    timeColor: Color,
+) {
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        SessionStatusIndicator(indicator = session.listIndicator())
         Text(
             text = session.updatedAtLabel.ifBlank { "now" },
-            color = LocalAAColors.current.faint,
+            color = timeColor,
             fontSize = 10.8.sp,
             fontFamily = FontFamily.Monospace,
             fontWeight = FontWeight.SemiBold,
             maxLines = 1,
         )
     }
+}
+
+@Composable
+internal fun SessionStatusIndicator(indicator: SessionListIndicator) {
+    val colors = LocalAAColors.current
+    val green = Color(0xFF22C55E)
+
+    when (indicator) {
+        SessionListIndicator.WaitingApproval -> {
+            val label = stringResource(R.string.home_session_status_waiting_approval)
+            val darkMode = colors.canvas == Color(0xFF09090B)
+            Text(
+                text = label,
+                modifier = Modifier
+                    .clip(CircleShape)
+                    .background(green.copy(alpha = if (darkMode) 0.18f else 0.12f))
+                    .border(1.dp, green.copy(alpha = 0.22f), CircleShape)
+                    .padding(horizontal = 8.dp, vertical = 2.dp),
+                color = if (darkMode) Color(0xFF4ADE80) else Color(0xFF15803D),
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Medium,
+                lineHeight = 16.sp,
+                maxLines = 1,
+            )
+        }
+
+        SessionListIndicator.Error -> SessionStatusDot(
+            color = colors.errorIcon,
+            description = stringResource(R.string.home_session_status_error),
+        )
+
+        SessionListIndicator.Busy -> SessionBusyIndicator(
+            description = stringResource(R.string.home_session_status_running),
+        )
+
+        SessionListIndicator.Unread -> SessionStatusDot(
+            color = green,
+            description = stringResource(R.string.home_session_status_unread),
+        )
+
+        SessionListIndicator.None -> Unit
+    }
+}
+
+@Composable
+private fun SessionBusyIndicator(description: String) {
+    val colors = LocalAAColors.current
+    val transition = rememberInfiniteTransition(label = "session-status")
+    val rotation by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 850, easing = LinearEasing),
+        ),
+        label = "session-status-rotation",
+    )
+
+    Canvas(
+        modifier = Modifier
+            .size(14.dp)
+            .semantics { contentDescription = description }
+            .graphicsLayer { rotationZ = rotation },
+    ) {
+        val strokeWidth = 2.dp.toPx()
+        drawCircle(
+            color = colors.faint.copy(alpha = 0.32f),
+            style = Stroke(width = strokeWidth),
+        )
+        drawArc(
+            color = colors.muted,
+            startAngle = -90f,
+            sweepAngle = 105f,
+            useCenter = false,
+            style = Stroke(width = strokeWidth, cap = StrokeCap.Round),
+        )
+    }
+}
+
+@Composable
+private fun SessionStatusDot(
+    color: Color,
+    description: String,
+) {
+    Box(
+        modifier = Modifier
+            .size(8.dp)
+            .clip(CircleShape)
+            .background(color)
+            .semantics { contentDescription = description },
+    )
 }
 
 @Composable

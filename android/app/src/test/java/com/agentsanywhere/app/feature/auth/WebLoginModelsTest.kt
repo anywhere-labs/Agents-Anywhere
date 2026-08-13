@@ -1,5 +1,6 @@
 package com.agentsanywhere.app.feature.auth
 
+import com.agentsanywhere.app.api.rememberApiUrl
 import java.net.URI
 import java.net.URLDecoder
 import org.junit.Assert.assertEquals
@@ -121,6 +122,17 @@ class WebLoginModelsTest {
         assertTrue(script.contains("window.visualViewport?.height || window.innerHeight"))
         assertFalse(script.contains("#/mobile-oauth"))
         assertFalse(script.contains(WEB_LOGIN_CALLBACK_URI))
+    }
+
+    @Test
+    fun apiBridgeRemovesNamespaceForLegacyWebServer() {
+        val serverUrl = "https://legacy-web.example.com"
+        rememberApiUrl(serverUrl, "$serverUrl/auth/config")
+
+        val script = webLoginApiOriginBridgeScript(serverUrl)
+
+        assertTrue(script.contains("const legacyApiRoute = true"))
+        assertTrue(script.contains("url.pathname.substring(\"/api/v2\".length)"))
     }
 
     private fun newSession() = createWebLoginSession(

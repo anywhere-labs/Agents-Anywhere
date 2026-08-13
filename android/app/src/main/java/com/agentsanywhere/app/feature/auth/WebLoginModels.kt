@@ -1,6 +1,7 @@
 package com.agentsanywhere.app.feature.auth
 
 import com.agentsanywhere.app.api.normalizeServerOrigin
+import com.agentsanywhere.app.api.usesLegacyApiRoute
 import java.net.URI
 import java.net.URLDecoder
 import java.net.URLEncoder
@@ -109,9 +110,11 @@ internal fun webLoginApiOriginBridgeScript(serverUrl: String): String {
     val origin = requireNotNull(normalizeServerOrigin(serverUrl)) {
         "Server URL must be an HTTP(S) origin."
     }
+    val legacyApiRoute = usesLegacyApiRoute(origin)
        return """
          (() => {
            const serverOrigin = ${JSONObject.quote(origin)};
+           const legacyApiRoute = $legacyApiRoute;
            const viewportHeightProperty = "--agents-anywhere-android-viewport-height";
            const installViewportHeightFix = () => {
              const root = document.documentElement;
@@ -145,7 +148,10 @@ internal fun webLoginApiOriginBridgeScript(serverUrl: String): String {
             try {
               const url = new URL(String(value), window.location.href);
               if (url.pathname !== "/api/v2" && !url.pathname.startsWith("/api/v2/")) return value;
-              return serverOrigin + url.pathname + url.search + url.hash;
+              const pathname = legacyApiRoute
+                ? (url.pathname.substring("/api/v2".length) || "/")
+                : url.pathname;
+              return serverOrigin + pathname + url.search + url.hash;
             } catch (_) {
               return value;
             }
