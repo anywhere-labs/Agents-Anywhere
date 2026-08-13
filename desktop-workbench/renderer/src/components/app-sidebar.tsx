@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { Search, Plus, Settings, Users, Server, LogOut, Pin, Archive, CheckCheck, Copy, FolderOpen, Pencil, LayoutDashboard } from "lucide-react"
+import { Plus, Settings, Users, Server, LogOut, Pin, Archive, CheckCheck, Copy, FolderOpen, Pencil, LayoutDashboard } from "lucide-react"
 import { toast } from "sonner"
 import { PairDeviceDialog } from "@/components/pair-device-dialog"
 
@@ -51,9 +51,14 @@ import { SessionFilterMenu } from "@/components/session-filter-menu"
 import { useAuth } from "@/components/auth/auth-context"
 import { dashboardApi } from "@/features/dashboard/api"
 import { useTranslations } from "next-intl"
-import { DashboardSidebarToggle } from "@/components/dashboard-sidebar-toggle"
 
-export function AppSidebar({ contained = false }: { contained?: boolean }) {
+export function AppSidebar({
+  contained = false,
+  showChromeHeader = true,
+}: {
+  contained?: boolean
+  showChromeHeader?: boolean
+}) {
   const {
     connectors,
     sessions,
@@ -106,26 +111,13 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
   return (
     <Sidebar contained={contained} className="border-sidebar-border">
       <SidebarHeader className="gap-0 px-4 pb-2 pt-3">
-        <div className="flex h-7 items-center">
-          <div className="w-[4.5rem] shrink-0" aria-hidden="true" />
-          <DashboardSidebarToggle showOnDesktop className="-translate-y-1 rounded-md hover:bg-sidebar-accent hover:text-sidebar-accent-foreground" />
-        </div>
-        <div className="mt-2 flex items-center justify-between">
-          <button type="button" onClick={goHome} className="aa-wordmark text-xl leading-none">
+        {showChromeHeader ? (
+          <button type="button" onClick={goHome} className="aa-wordmark mb-3 mt-1 text-xl leading-none">
             Agents Anywhere
           </button>
-          <div className="flex items-center gap-1 text-muted-foreground">
-            <button
-              type="button"
-              aria-label={t("actions.search")}
-              className="rounded-md p-1.5 transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-            >
-              <Search className="size-4" />
-            </button>
-          </div>
-        </div>
+        ) : null}
 
-        <SidebarMenu className="mt-3">
+        <SidebarMenu className={showChromeHeader ? "mt-0" : "mt-1"}>
           <SidebarMenuItem>
             <SidebarMenuButton className="h-10 font-medium" onClick={goHome}>
               <Plus className="size-4" />

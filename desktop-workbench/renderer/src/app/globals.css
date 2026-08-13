@@ -157,6 +157,15 @@ body {
   white-space: nowrap;
 }
 
+.aa-window-drag {
+  -webkit-app-region: drag;
+}
+
+.aa-window-no-drag,
+.aa-window-no-drag * {
+  -webkit-app-region: no-drag;
+}
+
 .code-mono {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
