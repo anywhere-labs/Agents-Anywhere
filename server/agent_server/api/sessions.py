@@ -12,13 +12,15 @@ from fastapi import (
     HTTPException,
     Query,
     WebSocket,
-    WebSocketDisconnect,
 )
 from starlette.requests import HTTPConnection
 
 from agent_server.api.connector_runtimes import (
     parse_runtime_model_catalog_response,
     parse_runtime_permission_catalog_response,
+)
+from agent_server.api.server_push_websocket import (
+    run_server_push_until_disconnect,
 )
 from agent_server.core.events import (
     EventCursorError,
@@ -79,12 +81,12 @@ from agent_server.infra.connector_rpc import (
 from agent_server.infra.repositories.facade import Store
 from agent_server.infra.timeline_broker import TimelineBroker
 from agent_server.infra.ws_tickets import ClientWsTicketManager
+from agent_server.services.catalogs import CatalogService
 from agent_server.services.connector_presence import (
     with_effective_session_connector_status,
     with_effective_session_connector_statuses,
 )
 from agent_server.services.dashboard_events import publish_dashboard_changed
-from agent_server.services.catalogs import CatalogService
 from agent_server.services.device_runtimes import (
     DeviceRuntimeError,
     DeviceRuntimeService,
@@ -767,7 +769,8 @@ async def session_ws(
 
     await websocket.accept()
     queue = await broker.register(session_id)
-    try:
+
+    async def send_session_updates() -> None:
         next_seq = await db.get_session_seq(session_id)
         await websocket.send_json(
             protocol_event(
@@ -784,7 +787,9 @@ async def session_ws(
             try:
                 message = await asyncio.wait_for(queue.get(), timeout=15.0)
             except asyncio.TimeoutError:
-                await websocket.send_json({"type": "keepalive", "serverTime": utc_now()})
+                await websocket.send_json(
+                    {"type": "keepalive", "serverTime": utc_now()}
+                )
                 continue
             try:
                 invalidation = json.loads(message)
@@ -794,8 +799,12 @@ async def session_ws(
                 continue
             for event in events_from_invalidation(invalidation):
                 await websocket.send_json(event.model_dump(mode="json"))
-    except WebSocketDisconnect:
-        pass
+
+    try:
+        await run_server_push_until_disconnect(
+            websocket,
+            send_session_updates(),
+        )
     finally:
         await broker.unregister(session_id, queue)
 
