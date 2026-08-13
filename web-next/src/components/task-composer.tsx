@@ -34,7 +34,11 @@ import { WorkspacePicker, type WorkspaceSelection } from "@/components/workspace
 import { useWorkspace } from "@/components/workspace-context"
 import { useAuth } from "@/components/auth/auth-context"
 import { dashboardApi } from "@/features/dashboard/api"
-import { runtimeInstanceOptions } from "@/features/dashboard/runtime-instances"
+import {
+  runnableRuntimeInstances,
+  runtimeInstanceOptions,
+  subscribeRuntimeInstancesChanged,
+} from "@/features/dashboard/runtime-instances"
 import { createClientId } from "@/lib/id"
 import { cn } from "@/lib/utils"
 import { useElementWidth } from "@/hooks/use-element-width"
@@ -161,6 +165,7 @@ export function TaskComposer() {
 
   const [runtimeInventory, setRuntimeInventory] = React.useState<Record<string, DeviceRuntimeView[]>>({})
   const [runtimeInventoryLoading, setRuntimeInventoryLoading] = React.useState(true)
+  const [runtimeInventoryRevision, setRuntimeInventoryRevision] = React.useState(0)
   const onlineConnectorKey = React.useMemo(
     () => connectors
       .filter((connector) => connector.status === "online")
@@ -169,6 +174,12 @@ export function TaskComposer() {
       .join("|"),
     [connectors],
   )
+
+  React.useEffect(() => {
+    return subscribeRuntimeInstancesChanged(() => {
+      setRuntimeInventoryRevision((revision) => revision + 1)
+    })
+  }, [])
 
   React.useEffect(() => {
     if (!authSession?.accessToken) {
@@ -201,12 +212,12 @@ export function TaskComposer() {
     return () => {
       cancelled = true
     }
-  }, [authSession?.accessToken, onlineConnectorKey])
+  }, [authSession?.accessToken, onlineConnectorKey, runtimeInventoryRevision])
 
   // New sessions can only target runtimes that the Server has activated and the Connector reports as running.
   const onlineConnectors = React.useMemo(
     () => connectors.filter((connector) =>
-      connector.status === "online" && activeRuntimes(runtimeInventory[connector.id]).length > 0,
+      connector.status === "online" && runnableRuntimeInstances(runtimeInventory[connector.id]).length > 0,
     ),
     [connectors, runtimeInventory],
   )
@@ -229,7 +240,7 @@ export function TaskComposer() {
   const selectedConnectorId = selectedConnector?.id ?? ""
   const agentOptions = React.useMemo(
     () => selectedConnector
-      ? runtimeInstanceOptions(activeRuntimes(runtimeInventory[selectedConnector.id]))
+      ? runtimeInstanceOptions(runnableRuntimeInstances(runtimeInventory[selectedConnector.id]))
       : [],
     [runtimeInventory, selectedConnector],
   )
@@ -868,11 +879,6 @@ export function TaskComposer() {
       </div>
     </div>
   )
-}
-
-function activeRuntimes(runtimes: DeviceRuntimeView[] | undefined) {
-  return (runtimes ?? [])
-    .filter((runtime) => runtime.configured && runtime.active && runtime.status === "running")
 }
 
 function sameRuntimeInventory(

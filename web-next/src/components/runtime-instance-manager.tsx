@@ -26,7 +26,9 @@ import {
   availableRuntimeTypes,
   findCreatedRuntime,
   nextRuntimeInstanceName,
+  notifyRuntimeInstancesChanged,
   recommendedRuntimeTypes,
+  subscribeRuntimeInstancesChanged,
 } from "@/features/dashboard/runtime-instances"
 import type {
   DeviceRuntimeStatus,
@@ -103,6 +105,7 @@ export function RuntimeInstanceManager({
         }
       }
       await fetchRuntimeData()
+      if (discover) notifyRuntimeInstancesChanged(connectorId)
     } catch (error) {
       toast.error(error instanceof Error ? error.message : t("loadRuntimesFailed"))
     } finally {
@@ -121,6 +124,12 @@ export function RuntimeInstanceManager({
     setRenamingRuntimeId(null)
     void loadRuntimeData(discoverOnMount)
   }, [connectorId, discoverOnMount, loadRuntimeData])
+
+  React.useEffect(() => {
+    return subscribeRuntimeInstancesChanged((changedConnectorId) => {
+      if (changedConnectorId === connectorId) void fetchRuntimeData()
+    })
+  }, [connectorId, fetchRuntimeData])
 
   const availableTypes = React.useMemo(
     () => availableRuntimeTypes(runtimeTypes),
@@ -146,6 +155,7 @@ export function RuntimeInstanceManager({
       ? current.map((item) => item.runtimeId === runtime.runtimeId ? runtime : item)
       : [...current, runtime])
     setConfigRuntime((current) => current?.runtimeId === runtime.runtimeId ? runtime : current)
+    notifyRuntimeInstancesChanged(connectorId)
   }
 
   const openAddRuntime = (runtimeType: RuntimeTypeView) => {
@@ -188,6 +198,7 @@ export function RuntimeInstanceManager({
           setAddDraft(null)
           setConfigRuntime(failedRuntime)
         }
+        notifyRuntimeInstancesChanged(connectorId)
       } catch {
         // Keep the original failure as the primary user-facing error.
       }
@@ -218,6 +229,7 @@ export function RuntimeInstanceManager({
         const refreshed = await fetchRuntimeData()
         const failedRuntime = refreshed.find((item) => item.runtimeId === runtime.runtimeId)
         if (failedRuntime) setConfigRuntime(failedRuntime)
+        notifyRuntimeInstancesChanged(connectorId)
       } catch {
         // Keep the original failure as the primary user-facing error.
       }
@@ -242,6 +254,7 @@ export function RuntimeInstanceManager({
       toast.error(error instanceof Error ? error.message : t("runtimeActionFailed"))
       try {
         await fetchRuntimeData()
+        notifyRuntimeInstancesChanged(connectorId)
       } catch {
         // Keep the original failure as the primary user-facing error.
       }
@@ -283,6 +296,7 @@ export function RuntimeInstanceManager({
         const refreshed = await fetchRuntimeData()
         const current = refreshed.find((item) => item.runtimeId === runtime.runtimeId)
         if (current?.name === nextName) setRenamingRuntimeId(null)
+        notifyRuntimeInstancesChanged(connectorId)
       } catch {
         // Keep the original failure as the primary user-facing error.
       }

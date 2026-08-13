@@ -7,6 +7,7 @@ import {
   findCreatedRuntime,
   nextRuntimeInstanceName,
   recommendedRuntimeTypes,
+  runnableRuntimeInstances,
   runtimeErrorMessage,
   runtimeInstanceOptions,
 } from "./runtime-instances"
@@ -74,6 +75,24 @@ test("instances of one type remain distinct and composer options use runtime IDs
     { id: "rti_work", label: "Work Codex", description: "Codex" },
   ])
   assert.equal(nextRuntimeInstanceName("Codex", [{ ...instances[0]!, name: "Codex" }]), "Codex 2")
+})
+
+test("composer only offers available running instances", () => {
+  const instance = {
+    runtimeId: "rti_work",
+    runtimeType: "codex",
+    name: "Work Codex",
+    typeDisplayName: "Codex",
+    available: true,
+    configured: true,
+    active: true,
+    status: "running",
+  }
+  assert.deepEqual(runnableRuntimeInstances([
+    instance,
+    { ...instance, runtimeId: "rti_unavailable", available: false },
+    { ...instance, runtimeId: "rti_stopped", status: "stopped" },
+  ]).map((runtime) => runtime.runtimeId), ["rti_work"])
 })
 
 test("failed create refresh identifies the persisted instance by immutable ID", () => {
@@ -147,9 +166,15 @@ test("device and pairing screens share runtime management and error UI", () => {
   const devicePage = readFileSync(new URL("pages/device-page.tsx", componentRoot), "utf8")
   const pairingDialog = readFileSync(new URL("pair-device-dialog.tsx", componentRoot), "utf8")
   const manager = readFileSync(new URL("runtime-instance-manager.tsx", componentRoot), "utf8")
+  const taskComposer = readFileSync(new URL("task-composer.tsx", componentRoot), "utf8")
+  const workspaceContext = readFileSync(new URL("workspace-context.tsx", componentRoot), "utf8")
 
   assert.match(devicePage, /<RuntimeInstanceManager/)
   assert.match(pairingDialog, /<RuntimeInstanceManager/)
   assert.match(manager, /<RuntimeErrorBadge error=\{runtime\.error\}/)
   assert.ok((manager.match(/await fetchRuntimeData\(\)/g) ?? []).length >= 4)
+  assert.match(taskComposer, /subscribeRuntimeInstancesChanged/)
+  assert.match(taskComposer, /runtime:\s*selectedAgent/)
+  assert.match(workspaceContext, /runtime: session\.runtime/)
+  assert.doesNotMatch(workspaceContext, /runtime: runtimeLabel\(session\.runtime\)/)
 })

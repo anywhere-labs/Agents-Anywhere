@@ -138,7 +138,7 @@ function mapSession(session: RealSessionView): SessionView {
     id: session.id,
     connectorId: session.connectorId,
     connectorStatus: session.connectorStatus,
-    runtime: runtimeLabel(session.runtime),
+    runtime: session.runtime,
     externalSessionId: session.externalSessionId,
     title: session.title || "Untitled session",
     cwd: session.cwd,
@@ -220,14 +220,6 @@ function isDashboardSnapshotMessage(value: unknown): value is DashboardSnapshotM
     Array.isArray(message.connectors) &&
     Array.isArray(message.sessions)
   )
-}
-
-function runtimeLabel(runtime: string): string {
-  if (runtime === "codex") return "Codex"
-  if (runtime === "claude") return "Claude"
-  if (runtime === "opencode") return "OpenCode"
-  if (runtime === "cursor") return "Cursor"
-  return runtime.slice(0, 1).toUpperCase() + runtime.slice(1)
 }
 
 function relativeSessionTime(session: RealSessionView): string {

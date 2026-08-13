@@ -13,6 +13,15 @@ export type RuntimeInstanceLike = {
   typeDisplayName: string
 }
 
+export type RunnableRuntimeInstanceLike = RuntimeInstanceLike & {
+  available: boolean
+  configured: boolean
+  active: boolean
+  status: string
+}
+
+const RUNTIME_INSTANCES_CHANGED_EVENT = "agents-anywhere:runtime-instances-changed"
+
 export function availableRuntimeTypes<T extends RuntimeTypeDescriptorLike>(
   runtimeTypes: T[],
 ): T[] {
@@ -38,6 +47,36 @@ export function runtimeInstanceOptions<T extends RuntimeInstanceLike>(runtimes: 
       label: runtime.name,
       description: runtime.typeDisplayName,
     }))
+}
+
+export function runnableRuntimeInstances<T extends RunnableRuntimeInstanceLike>(
+  runtimes: T[] | undefined,
+): T[] {
+  return (runtimes ?? []).filter((runtime) => (
+    runtime.available &&
+    runtime.configured &&
+    runtime.active &&
+    runtime.status === "running"
+  ))
+}
+
+export function notifyRuntimeInstancesChanged(connectorId: string): void {
+  if (typeof window === "undefined") return
+  window.dispatchEvent(new CustomEvent(RUNTIME_INSTANCES_CHANGED_EVENT, {
+    detail: { connectorId },
+  }))
+}
+
+export function subscribeRuntimeInstancesChanged(listener: (connectorId: string) => void): () => void {
+  if (typeof window === "undefined") return () => {}
+  const handleChange = (event: Event) => {
+    const detail = (event as CustomEvent<unknown>).detail
+    if (!isRecord(detail)) return
+    const connectorId = nonEmptyString(detail.connectorId)
+    if (connectorId) listener(connectorId)
+  }
+  window.addEventListener(RUNTIME_INSTANCES_CHANGED_EVENT, handleChange)
+  return () => window.removeEventListener(RUNTIME_INSTANCES_CHANGED_EVENT, handleChange)
 }
 
 export function nextRuntimeInstanceName(
