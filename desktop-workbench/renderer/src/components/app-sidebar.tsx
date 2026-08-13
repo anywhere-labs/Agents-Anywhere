@@ -51,6 +51,7 @@ import { SessionFilterMenu } from "@/components/session-filter-menu"
 import { useAuth } from "@/components/auth/auth-context"
 import { dashboardApi } from "@/features/dashboard/api"
 import { useTranslations } from "next-intl"
+import { DashboardSidebarToggle } from "@/components/dashboard-sidebar-toggle"
 
 export function AppSidebar({ contained = false }: { contained?: boolean }) {
   const {
@@ -104,9 +105,13 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
 
   return (
     <Sidebar contained={contained} className="border-sidebar-border">
-      <SidebarHeader className="gap-0 px-4 pt-4 pb-2">
-        <div className="flex items-center justify-between">
-          <button type="button" onClick={goHome} className="aa-wordmark text-xl">
+      <SidebarHeader className="gap-0 px-4 pb-2 pt-3">
+        <div className="flex h-7 items-center">
+          <div className="w-[4.5rem] shrink-0" aria-hidden="true" />
+          <DashboardSidebarToggle showOnDesktop className="rounded-md hover:bg-sidebar-accent hover:text-sidebar-accent-foreground" />
+        </div>
+        <div className="mt-2 flex items-center justify-between">
+          <button type="button" onClick={goHome} className="aa-wordmark text-xl leading-none">
             Agents Anywhere
           </button>
           <div className="flex items-center gap-1 text-muted-foreground">

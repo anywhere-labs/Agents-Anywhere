@@ -5,6 +5,7 @@ import type { PanelImperativeHandle } from "react-resizable-panels"
 
 import { SidebarProvider, SidebarInset, useSidebar } from "@/components/ui/sidebar"
 import { DashboardSidebarControlsContext } from "@/components/dashboard-sidebar-controls"
+import { DashboardSidebarToggle } from "@/components/dashboard-sidebar-toggle"
 import { AppSidebar } from "@/components/app-sidebar"
 import { TaskComposer } from "@/components/task-composer"
 import { SessionView } from "@/components/session-view"
@@ -144,6 +145,11 @@ function DesktopResizableShell() {
         direction="horizontal"
         className="h-svh min-h-0 w-full overflow-hidden overscroll-none bg-background"
       >
+        {!open ? (
+          <div className="absolute left-[4.5rem] top-3 z-20">
+            <DashboardSidebarToggle showOnDesktop className="rounded-md bg-background/80 shadow-sm backdrop-blur hover:bg-muted" />
+          </div>
+        ) : null}
         <ResizablePanel
           id="dashboard-sidebar"
           panelRef={sidebarPanelRef}
