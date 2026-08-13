@@ -189,7 +189,7 @@ function createMainWindow() {
     show: false,
     title: APP_NAME,
     titleBarStyle: process.platform === "darwin" ? "hidden" : "default",
-    trafficLightPosition: process.platform === "darwin" ? { x: 17, y: 18 } : undefined,
+    trafficLightPosition: process.platform === "darwin" ? { x: 17, y: 16 } : undefined,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
