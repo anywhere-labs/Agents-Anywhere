@@ -1,0 +1,23 @@
+{
+  "name": "agents-anywhere-desktop-workbench",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Electron shell for the Agents Anywhere web workbench",
+  "packageManager": "yarn@4.6.0",
+  "main": "dist/electron/main.js",
+  "engines": {
+    "node": ">=22 <23"
+  },
+  "scripts": {
+    "build:main": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "dev": "yarn build:main && node scripts/dev.mjs",
+    "start": "yarn build:main && electron .",
+    "build:web": "node scripts/build-web.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.2",
+    "electron": "^39.2.7",
+    "typescript": "^6.0.3"
+  }
+}
