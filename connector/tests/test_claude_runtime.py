@@ -1583,6 +1583,52 @@ async def _test_claude_runtime_applies_custom_model_selection_to_sdk_options() -
     assert "effort" not in client.options.kwargs
 
 
+def test_claude_runtime_applies_model_gateway_to_sdk_options() -> None:
+    asyncio.run(_test_claude_runtime_applies_model_gateway_to_sdk_options())
+
+
+async def _test_claude_runtime_applies_model_gateway_to_sdk_options() -> None:
+    client = _FakeClaudeClient(
+        messages=[SimpleNamespace(type="result", session_id="claude_gateway")]
+    )
+    runtime = _runtime(
+        client=client,
+        config=RuntimeConfig(
+            runtime="claude",
+            revision=4,
+            values={
+                "environment": {
+                    "EXAMPLE": "1",
+                    "ANTHROPIC_BASE_URL": "https://old.example",
+                    "ANTHROPIC_AUTH_TOKEN": "old-secret",
+                },
+                "modelGateway": {
+                    "baseUrl": "https://gateway.example/anthropic",
+                    "apiKey": "gateway-secret",
+                },
+            },
+        ),
+    )
+
+    result = await runtime.start_turn(
+        "sess_gateway",
+        "claude_gateway",
+        "use gateway",
+    )
+    task = runtime._sessions["sess_gateway"].active_task
+
+    assert result.ok is True
+    assert task is not None
+    await task
+
+    assert client.options.kwargs["env"] == {
+        "EXAMPLE": "1",
+        "ANTHROPIC_BASE_URL": "https://gateway.example/anthropic",
+        "ANTHROPIC_AUTH_TOKEN": "gateway-secret",
+        "ANTHROPIC_API_KEY": "",
+    }
+
+
 def test_claude_runtime_applies_custom_model_effort_to_sdk_options() -> None:
     asyncio.run(_test_claude_runtime_applies_custom_model_effort_to_sdk_options())
 

@@ -9,6 +9,7 @@ from connector.runtimes.claude.domain.permissions import (
     permission_mode_from_selection_id,
 )
 from connector.runtimes.claude.domain.session import ClaudeSession
+from connector.runtimes.model_gateway import model_gateway_from_config
 
 SdkLoader = Callable[[], Any]
 ClaudeClientFactory = Callable[[Any, Any], Any]
@@ -78,9 +79,9 @@ def build_sdk_options(
     executable_path = values.get("executablePath")
     if isinstance(executable_path, str) and executable_path:
         kwargs["cli_path"] = executable_path
-    environment = values.get("environment")
-    if isinstance(environment, Mapping):
-        kwargs["env"] = dict(environment)
+    environment = claude_sdk_environment(values)
+    if environment:
+        kwargs["env"] = environment
     if can_use_tool is not None:
         kwargs["can_use_tool"] = can_use_tool
     if stderr is not None:
@@ -96,6 +97,23 @@ def build_sdk_options(
     if options_cls is None:
         return kwargs
     return options_cls(**kwargs)
+
+
+def claude_sdk_environment(config_values: Mapping[str, Any]) -> dict[str, str]:
+    """Build explicit environment overrides for one Claude SDK subprocess."""
+
+    configured_environment = config_values.get("environment")
+    environment = (
+        dict(configured_environment)
+        if isinstance(configured_environment, Mapping)
+        else {}
+    )
+    model_gateway = model_gateway_from_config(config_values.get("modelGateway"))
+    if model_gateway is not None:
+        environment["ANTHROPIC_BASE_URL"] = model_gateway.base_url
+        environment["ANTHROPIC_AUTH_TOKEN"] = model_gateway.api_key
+        environment["ANTHROPIC_API_KEY"] = ""
+    return environment
 
 
 async def connect_client(client: Any) -> None:

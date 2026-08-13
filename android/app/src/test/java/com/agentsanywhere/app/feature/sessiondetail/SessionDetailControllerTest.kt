@@ -19,6 +19,36 @@ import org.junit.Test
 
 class SessionDetailControllerTest {
     @Test
+    fun rpcOkFalseIsReportedAsActionFailure() {
+        SessionDetailServer(expectedRequests = 3).use { server ->
+            val controller = SessionDetailController(
+                sessionsApi = SessionsApi(),
+                sessionStore = object : AuthSessionReader {
+                    override fun readServerUrl(): String = server.url
+                    override fun readAccessToken(): String = "token"
+                },
+            )
+
+            kotlinx.coroutines.runBlocking {
+                assertEquals(
+                    "Message rejected.",
+                    controller.sendMessage("session", "hello", "client-message")
+                        .exceptionOrNull()?.message,
+                )
+                assertEquals(
+                    "Interrupt rejected.",
+                    controller.interrupt("session").exceptionOrNull()?.message,
+                )
+                assertEquals(
+                    "Notice was already resolved.",
+                    controller.respondNotice("session", "notice", "approve", null)
+                        .exceptionOrNull()?.message,
+                )
+            }
+        }
+    }
+
+    @Test
     fun initialSnapshotHydratesOnceAndDomainRefreshPreservesFailedOwners() {
         SessionDetailServer(expectedRequests = 11).use { server ->
             val controller = SessionDetailController(
@@ -138,8 +168,23 @@ class SessionDetailControllerTest {
                     TestResponse(503, "{\"detail\":\"notice offline\"}")
                 }
                 path.endsWith("/runtime/notices") -> TestResponse(200, notices("Updated notice", revision = 2))
+                path.endsWith("/runtime/messages") -> rpcFailure("message_rejected", "Message rejected.")
+                path.endsWith("/runtime/interrupt") -> rpcFailure("interrupt_rejected", "Interrupt rejected.")
+                path.endsWith("/runtime/notices/notice/respond") -> {
+                    rpcFailure("notice_not_found", "Notice was already resolved.")
+                }
                 else -> TestResponse(404, "{\"detail\":\"unexpected route\"}")
             }
+        }
+
+        private fun rpcFailure(code: String, message: String): TestResponse {
+            return TestResponse(
+                200,
+                JSONObject()
+                    .put("ok", false)
+                    .put("error", JSONObject().put("code", code).put("message", message))
+                    .toString(),
+            )
         }
 
         private fun snapshot(): String {

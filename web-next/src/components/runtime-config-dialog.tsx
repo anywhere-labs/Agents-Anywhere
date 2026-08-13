@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import Ajv2020 from "ajv/dist/2020"
-import { Plus, RotateCcw, Trash2, X } from "lucide-react"
+import { Eye, EyeOff, Plus, RotateCcw, Trash2, X } from "lucide-react"
 import { useTranslations } from "next-intl"
 
 import { Button } from "@/components/ui/button"
@@ -22,6 +22,12 @@ import {
   FieldLabel,
 } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
+import {
+  InputGroup,
+  InputGroupAddon,
+  InputGroupButton,
+  InputGroupInput,
+} from "@/components/ui/input-group"
 import {
   Select,
   SelectContent,
@@ -74,6 +80,10 @@ const RUNTIME_CONFIG_COMPONENT_COPY: Record<string, { titleKey: string; descript
   customModels: {
     titleKey: "runtimeConfigComponents.customModels.label",
     descriptionKey: "runtimeConfigComponents.customModels.description",
+  },
+  modelGateway: {
+    titleKey: "runtimeConfigComponents.modelGateway.label",
+    descriptionKey: "runtimeConfigComponents.modelGateway.description",
   },
 }
 
@@ -259,6 +269,23 @@ function RuntimeConfigField({
     )
   }
 
+  if (ui.component === "modelGateway") {
+    return (
+      <Field data-invalid={Boolean(error)}>
+        <FieldLabel>{title}{required ? " *" : ""}</FieldLabel>
+        {description ? <FieldDescription>{description}</FieldDescription> : null}
+        <ModelGatewayEditor
+          idPrefix={inputId}
+          schema={schema}
+          value={isRecord(effectiveValue) ? effectiveValue : {}}
+          onChange={onChange}
+          invalid={Boolean(error)}
+        />
+        <FieldError>{error}</FieldError>
+      </Field>
+    )
+  }
+
   if (ui.component === "keyValue" || (schema.type === "object" && isRecord(schema.additionalProperties))) {
     return (
       <Field data-invalid={Boolean(error)}>
@@ -407,6 +434,99 @@ function schemaI18nText(
   } catch {
     return undefined
   }
+}
+
+function ModelGatewayEditor({
+  idPrefix,
+  schema,
+  value,
+  onChange,
+  invalid,
+}: {
+  idPrefix: string
+  schema: JsonSchema
+  value: Record<string, unknown>
+  onChange: (value: unknown) => void
+  invalid: boolean
+}) {
+  const t = useTranslations("dashboard.device")
+  const tRoot = useTranslations()
+  const [showApiKey, setShowApiKey] = React.useState(false)
+  const baseUrlSchema = schema.properties?.baseUrl ?? {}
+  const apiKeySchema = schema.properties?.apiKey ?? {}
+  const baseUrl = typeof value.baseUrl === "string" ? value.baseUrl : ""
+  const apiKey = typeof value.apiKey === "string" ? value.apiKey : ""
+  const baseUrlLabel = schemaI18nText(tRoot, baseUrlSchema, "labelKey")
+    ?? baseUrlSchema.title
+    ?? t("modelGatewayBaseUrl")
+  const apiKeyLabel = schemaI18nText(tRoot, apiKeySchema, "labelKey")
+    ?? apiKeySchema.title
+    ?? t("modelGatewayApiKey")
+  const baseUrlDescription = schemaI18nText(tRoot, baseUrlSchema, "descriptionKey")
+    ?? baseUrlSchema.description
+  const apiKeyDescription = schemaI18nText(tRoot, apiKeySchema, "descriptionKey")
+    ?? apiKeySchema.description
+  const baseUrlId = `${idPrefix}-base-url`
+  const apiKeyId = `${idPrefix}-api-key`
+
+  const update = (patch: { baseUrl?: string; apiKey?: string }) => {
+    const nextBaseUrl = patch.baseUrl ?? baseUrl
+    const nextApiKey = patch.apiKey ?? apiKey
+    if (!nextBaseUrl && !nextApiKey) {
+      onChange(undefined)
+      return
+    }
+    onChange({ baseUrl: nextBaseUrl, apiKey: nextApiKey })
+  }
+
+  return (
+    <div className="flex flex-col gap-4 rounded-md border border-border p-4">
+      <div className="flex min-w-0 flex-col gap-1.5">
+        <label htmlFor={baseUrlId} className="text-xs font-medium text-muted-foreground">{baseUrlLabel}</label>
+        <Input
+          id={baseUrlId}
+          value={baseUrl}
+          onChange={(event) => update({ baseUrl: event.currentTarget.value })}
+          minLength={baseUrlSchema.minLength}
+          maxLength={baseUrlSchema.maxLength}
+          aria-invalid={invalid}
+          autoComplete="url"
+          inputMode="url"
+          spellCheck={false}
+        />
+        {baseUrlDescription ? (
+          <span className="text-xs text-muted-foreground">{baseUrlDescription}</span>
+        ) : null}
+      </div>
+      <div className="flex min-w-0 flex-col gap-1.5">
+        <label htmlFor={apiKeyId} className="text-xs font-medium text-muted-foreground">{apiKeyLabel}</label>
+        <InputGroup>
+          <InputGroupInput
+            id={apiKeyId}
+            type={showApiKey ? "text" : "password"}
+            value={apiKey}
+            onChange={(event) => update({ apiKey: event.currentTarget.value })}
+            minLength={apiKeySchema.minLength}
+            maxLength={apiKeySchema.maxLength}
+            aria-invalid={invalid}
+            autoComplete="off"
+            spellCheck={false}
+          />
+          <InputGroupAddon align="inline-end">
+            <InputGroupButton
+              onClick={() => setShowApiKey((current) => !current)}
+              aria-label={showApiKey ? t("hideModelGatewayApiKey") : t("showModelGatewayApiKey")}
+            >
+              {showApiKey ? <EyeOff /> : <Eye />}
+            </InputGroupButton>
+          </InputGroupAddon>
+        </InputGroup>
+        {apiKeyDescription ? (
+          <span className="text-xs text-muted-foreground">{apiKeyDescription}</span>
+        ) : null}
+      </div>
+    </div>
+  )
 }
 
 type EnvironmentRow = { id: number; key: string; value: string; removed: boolean }

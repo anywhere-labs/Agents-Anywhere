@@ -7,6 +7,7 @@ import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.viewModels
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -15,6 +16,7 @@ import coil3.SingletonImageLoader
 import coil3.disk.DiskCache
 import coil3.memory.MemoryCache
 import com.agentsanywhere.app.app.AgentsAnywhereApp
+import com.agentsanywhere.app.feature.auth.WebLoginViewModel
 import com.agentsanywhere.app.ui.designsystem.AAAppearanceMode
 import com.agentsanywhere.app.ui.designsystem.AALanguageMode
 import com.agentsanywhere.app.ui.designsystem.AgentsAnywhereTheme
@@ -24,6 +26,7 @@ import okio.Path.Companion.toOkioPath
 
 class MainActivity : ComponentActivity() {
     private val oauthCallbackUri = mutableStateOf<Uri?>(null)
+    private val webLoginViewModel by viewModels<WebLoginViewModel>()
     private var appearanceMode by mutableStateOf(AAAppearanceMode.System)
     private var languageMode by mutableStateOf(AALanguageMode.System)
 
@@ -72,6 +75,7 @@ class MainActivity : ComponentActivity() {
                     },
                     oauthCallbackUri = oauthCallbackUri.value,
                     onOAuthCallbackConsumed = { oauthCallbackUri.value = null },
+                    webLoginViewModel = webLoginViewModel,
                 )
             }
         }

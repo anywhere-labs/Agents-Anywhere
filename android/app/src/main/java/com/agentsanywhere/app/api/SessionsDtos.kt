@@ -60,8 +60,6 @@ data class RemoteInlineAttachmentRef(
 
 data class RemoteSessionCreateResponse(
     val session: RemoteSession,
-    val connectorResult: Any?,
-    val attachments: List<RemoteUploadedAttachment>,
 )
 
 data class RemoteSessionTimelinePage(
@@ -145,7 +143,6 @@ data class RemoteSessionSnapshot(
     val notices: List<RemoteRuntimeNotice>,
     val effectiveCapabilities: RemoteRuntimeCapabilitySet,
     val runtimeCapabilities: RemoteRuntimeCapabilitySet,
-    val catalogs: RemoteSessionRuntimeCatalogs,
     val eventCursor: String,
     val serverTime: String?,
 )
@@ -156,16 +153,9 @@ data class RemoteSessionTimelineSnapshot(
     val hasMore: Boolean,
 )
 
-data class RemoteSessionRuntimeCatalogs(
-    val model: RemoteRuntimeModelCatalog?,
-    val permission: RemoteRuntimePermissionCatalog?,
-    val unknown: Map<String, Any?>,
-)
-
 data class RemoteTimelineItem(
     val id: String,
     val sessionId: String,
-    val turnId: String?,
     val type: String,
     val status: String,
     val role: String?,
@@ -181,7 +171,8 @@ data class RemoteTimelineItem(
 
 data class RemoteRpcResponse(
     val ok: Boolean,
-    val turnId: String?,
+    val errorCode: String?,
+    val errorMessage: String?,
 )
 
 data class RemoteSessionSelectionPatchResponse(
@@ -227,3 +218,32 @@ data class RemoteUploadedAttachment(
     val size: Long,
     val sha256: String? = null,
 )
+
+data class RemoteAttachmentRef(
+    val fileId: String,
+)
+
+data class RemoteDownloadedAttachment(
+    val fileId: String,
+    val sessionId: String,
+    val path: String,
+    val name: String,
+    val size: Long,
+    val sha256: String,
+    val bytes: ByteArray,
+    val createdAt: String?,
+    val serverTime: String?,
+)
+
+enum class AttachmentTransferFailure {
+    InvalidBase64,
+    IncompleteUpload,
+    SizeMismatch,
+    Sha256Mismatch,
+}
+
+class AttachmentTransferException(
+    val failure: AttachmentTransferFailure,
+    val attachmentName: String? = null,
+    cause: Throwable? = null,
+) : IllegalStateException(failure.name, cause)

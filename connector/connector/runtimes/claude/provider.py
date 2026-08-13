@@ -21,8 +21,9 @@ from connector.runtime_protocol.host import RuntimeHostClient
 from connector.runtimes.claude import discovery, provider_config
 from connector.runtimes.claude.runtime import ClaudeRuntime
 from connector.runtimes.custom_models import normalize_custom_models
+from connector.runtimes.model_gateway import model_gateway_from_config
 
-CLAUDE_CONFIG_SCHEMA_REVISION = 3
+CLAUDE_CONFIG_SCHEMA_REVISION = 4
 
 
 class ClaudeProvider(RuntimeProvider):
@@ -81,7 +82,13 @@ class ClaudeProvider(RuntimeProvider):
             revision=CLAUDE_CONFIG_SCHEMA_REVISION,
             schema=schema,
             ui_schema={
-                "order": ["executablePath", "environment", "customModels"],
+                "order": [
+                    "executablePath",
+                    "modelGateway",
+                    "environment",
+                    "customModels",
+                ],
+                "modelGateway": {"component": "modelGateway"},
                 "environment": {"component": "keyValue"},
                 "customModels": {"component": "customModels"},
             },
@@ -93,6 +100,11 @@ class ClaudeProvider(RuntimeProvider):
         values: Mapping[str, Any],
     ) -> RuntimeConfig:
         raw_values = dict(values)
+        model_gateway = model_gateway_from_config(raw_values.get("modelGateway"))
+        if model_gateway is None:
+            raw_values.pop("modelGateway", None)
+        else:
+            raw_values["modelGateway"] = model_gateway.to_config_values()
         schema = (await self.get_config_schema()).schema
         errors = sorted(
             Draft202012Validator(schema).iter_errors(raw_values),
@@ -128,6 +140,8 @@ class ClaudeProvider(RuntimeProvider):
             "environment": dict(raw_values.get("environment") or {}),
             "customModels": normalize_custom_models(raw_values.get("customModels")),
         }
+        if model_gateway is not None:
+            normalized_values["modelGateway"] = model_gateway.to_config_values()
         if isinstance(executable_path, str) and executable_path:
             normalized_values["executablePath"] = executable_path
 

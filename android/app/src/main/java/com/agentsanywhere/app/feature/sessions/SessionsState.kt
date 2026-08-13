@@ -176,6 +176,21 @@ fun SessionsState.mergedWithRefresh(
     ).withPatchedSessions(merged)
 }
 
+fun SessionsState.replacedByDashboardSnapshot(loaded: SessionsState): SessionsState {
+    val currentById = (sessions + archivedSessions).associateBy { it.id }
+    val accepted = (loaded.sessions + loaded.archivedSessions).map { incoming ->
+        currentById[incoming.id]?.takeIf { current -> current.updatedSeq > incoming.updatedSeq } ?: incoming
+    }
+    return loaded.copy(
+        sessions = accepted
+            .filterNot { it.archived }
+            .sortedWith(compareByDescending<AgentSession> { it.pinned }.thenByDescending { it.sortKey }),
+        archivedSessions = accepted.filter { it.archived }.sortedByDescending { it.sortKey },
+        sessionRequestGenerations = sessionRequestGenerations,
+        nextRequestGeneration = nextRequestGeneration,
+    )
+}
+
 fun SessionsState.withPatchedDevice(device: AgentDevice): SessionsState {
     val hadDevice = devices.any { it.id == device.id }
     val nextDevices = if (hadDevice) {
@@ -199,37 +214,6 @@ fun SessionsState.withDeletedDevice(deviceId: String): SessionsState {
         devices = devices.filterNot { it.id == deviceId },
         sessions = sessions.filterNot { it.connectorId == deviceId },
         archivedSessions = archivedSessions.filterNot { it.connectorId == deviceId },
-        isLoading = false,
-        errorMessage = null,
-        hasLoaded = true,
-    )
-}
-
-fun SessionsState.withDeletedDeviceAgent(
-    deviceId: String,
-    runtime: String,
-    attachedRuntimes: List<String>,
-): SessionsState {
-    return copy(
-        devices = devices.map { device ->
-            if (device.id == deviceId) device.copy(attachedRuntimes = attachedRuntimes) else device
-        },
-        sessions = sessions.filterNot { it.connectorId == deviceId && it.runtime == runtime },
-        archivedSessions = archivedSessions.filterNot { it.connectorId == deviceId && it.runtime == runtime },
-        isLoading = false,
-        errorMessage = null,
-        hasLoaded = true,
-    )
-}
-
-fun SessionsState.withDeviceAgents(
-    deviceId: String,
-    attachedRuntimes: List<String>,
-): SessionsState {
-    return copy(
-        devices = devices.map { device ->
-            if (device.id == deviceId) device.copy(attachedRuntimes = attachedRuntimes) else device
-        },
         isLoading = false,
         errorMessage = null,
         hasLoaded = true,

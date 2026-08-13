@@ -95,10 +95,12 @@ async def _test_claude_provider_schema_and_config_validation() -> None:
 
     assert schema.defaults == {"environment": {}, "customModels": []}
     assert schema.ui_schema["customModels"]["component"] == "customModels"
+    assert schema.ui_schema["modelGateway"]["component"] == "modelGateway"
     assert set(schema.schema["properties"]) == {
         "customModels",
         "environment",
         "executablePath",
+        "modelGateway",
     }
     assert schema.schema["properties"]["executablePath"]["metadata"] == {
         "i18n": {
@@ -126,6 +128,28 @@ async def _test_claude_provider_schema_and_config_validation() -> None:
         }
     ]
     assert config.metadata["launchTarget"]["path"] == "/opt/claude"
+
+
+def test_claude_provider_preserves_model_gateway_config() -> None:
+    asyncio.run(_test_claude_provider_preserves_model_gateway_config())
+
+
+async def _test_claude_provider_preserves_model_gateway_config() -> None:
+    provider = ClaudeProvider(sdk_loader=_sdk, command_checker=_available_command)
+
+    config = await provider.validate_config(
+        {
+            "modelGateway": {
+                "baseUrl": "https://gateway.example/anthropic/",
+                "apiKey": "gateway-secret",
+            }
+        }
+    )
+
+    assert config.values["modelGateway"] == {
+        "baseUrl": "https://gateway.example/anthropic",
+        "apiKey": "gateway-secret",
+    }
 
 
 def test_claude_provider_rejects_duplicate_custom_models() -> None:

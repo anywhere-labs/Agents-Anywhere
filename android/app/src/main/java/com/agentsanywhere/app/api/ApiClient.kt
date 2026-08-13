@@ -3,8 +3,10 @@ package com.agentsanywhere.app.api
 import org.json.JSONArray
 import org.json.JSONObject
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.FormBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.IOException
 import java.net.HttpURLConnection
@@ -14,6 +16,40 @@ import java.util.concurrent.TimeUnit
 class ApiClient(
     private val onUnauthorized: (accessToken: String) -> Unit = {},
 ) {
+    fun requireHtmlDocument(
+        serverUrl: String,
+        path: String = "/",
+    ) {
+        try {
+            val origin = requireNotNull(normalizeServerOrigin(serverUrl)) {
+                "Server URL must be an HTTP(S) origin."
+            }
+            val normalizedPath = if (path.startsWith('/')) path else "/$path"
+            val request = Request.Builder()
+                .url("$origin$normalizedPath")
+                .header("Accept", "text/html")
+                .header("ngrok-skip-browser-warning", "true")
+                .get()
+                .build()
+
+            JSON_HTTP_CLIENT.newCall(request).execute().use { response ->
+                val contentType = response.header("Content-Type").orEmpty()
+                if (!response.isSuccessful || !contentType.contains("text/html", ignoreCase = true)) {
+                    throw ApiException(
+                        message = "This address does not host the web login. Enter the Web URL instead of the API URL.",
+                        statusCode = response.code,
+                    )
+                }
+            }
+        } catch (exc: ApiException) {
+            throw exc
+        } catch (exc: IllegalArgumentException) {
+            throw ApiException("The server URL is invalid.", cause = exc)
+        } catch (exc: IOException) {
+            throw ApiException("Could not reach the server. Check the URL and network.", cause = exc)
+        }
+    }
+
     fun getJson(
         serverUrl: String,
         path: String,
@@ -42,6 +78,24 @@ class ApiClient(
             bodyText = body.toString(),
             authorizationToken = authorizationToken,
             readTimeoutSeconds = readTimeoutSeconds,
+        )
+    }
+
+    fun postForm(
+        serverUrl: String,
+        path: String,
+        fields: Map<String, String>,
+    ): JSONObject {
+        val body = FormBody.Builder().apply {
+            fields.forEach { (name, value) -> add(name, value) }
+        }.build()
+        return requestJson(
+            serverUrl = serverUrl,
+            path = path,
+            method = "POST",
+            bodyText = null,
+            authorizationToken = null,
+            requestBody = body,
         )
     }
 
@@ -118,63 +172,6 @@ class ApiClient(
         )
     }
 
-    fun streamSse(
-        serverUrl: String,
-        path: String,
-        authorizationToken: String? = null,
-        onOpen: () -> Unit = {},
-        onEvent: (JSONObject) -> Unit,
-    ) {
-        val endpoint = URL(apiUrl(serverUrl, path))
-        val connection = (endpoint.openConnection() as HttpURLConnection).apply {
-            requestMethod = "GET"
-            connectTimeout = 10_000
-            readTimeout = 35_000
-            setRequestProperty("Accept", "text/event-stream")
-            setRequestProperty("Cache-Control", "no-cache")
-            setRequestProperty("ngrok-skip-browser-warning", "true")
-            if (!authorizationToken.isNullOrBlank()) {
-                setRequestProperty("Authorization", "Bearer $authorizationToken")
-            }
-        }
-        try {
-            val responseCode = connection.responseCode
-            if (responseCode !in 200..299) {
-                val responseText = readResponseText(connection, responseCode)
-                notifyUnauthorized(responseCode, authorizationToken)
-                throw ApiException(
-                    message = parseErrorMessage(responseText) ?: defaultErrorMessage(responseCode),
-                    statusCode = responseCode,
-                )
-            }
-            onOpen()
-            connection.inputStream.bufferedReader(Charsets.UTF_8).use { reader ->
-                val data = StringBuilder()
-                while (!Thread.currentThread().isInterrupted) {
-                    val line = reader.readLine() ?: break
-                    when {
-                        line.isEmpty() -> {
-                            if (data.isNotEmpty()) {
-                                onEvent(JSONObject(data.toString()))
-                                data.clear()
-                            }
-                        }
-                        line.startsWith("data:") -> {
-                            if (data.isNotEmpty()) data.append('\n')
-                            data.append(line.removePrefix("data:").trimStart())
-                        }
-                    }
-                }
-            }
-        } catch (exc: ApiException) {
-            throw exc
-        } catch (exc: IOException) {
-            throw ApiException("Could not reach the server. Check the URL and network.", cause = exc)
-        } finally {
-            connection.disconnect()
-        }
-    }
-
     fun postMultipart(
         serverUrl: String,
         path: String,
@@ -237,9 +234,10 @@ class ApiClient(
         bodyText: String?,
         authorizationToken: String?,
         readTimeoutSeconds: Long? = null,
+        requestBody: RequestBody? = null,
     ): JSONObject {
         return try {
-            val requestBody = when {
+            val resolvedRequestBody = requestBody ?: when {
                 bodyText != null -> bodyText.toRequestBody(JSON_MEDIA_TYPE)
                 method == "POST" || method == "PUT" || method == "PATCH" -> EMPTY_JSON_BODY
                 else -> null
@@ -248,7 +246,7 @@ class ApiClient(
                 .url(apiUrl(serverUrl, path))
                 .header("Accept", "application/json")
                 .header("ngrok-skip-browser-warning", "true")
-                .method(method, requestBody)
+                .method(method, resolvedRequestBody)
                 .apply {
                     if (!authorizationToken.isNullOrBlank()) {
                         header("Authorization", "Bearer $authorizationToken")

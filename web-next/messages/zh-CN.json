@@ -491,6 +491,14 @@
         "useSystemCodex": {
           "label": "使用系统 Codex",
           "description": "优先使用登录 Shell PATH 中的 Codex；如果找不到，则自动使用捆绑的 Codex。关闭后将始终只使用捆绑的 Codex。"
+        },
+        "modelGatewayBaseUrl": {
+          "label": "Gateway 地址",
+          "description": "模型 Gateway 对外提供的 HTTP 或 HTTPS 基础地址。"
+        },
+        "modelGatewayApiKey": {
+          "label": "Gateway API Key",
+          "description": "发送给这个 Gateway 的 API Key。它会作为 Runtime 配置的一部分被存储并返回。"
         }
       },
       "runtimeConfigComponents": {
@@ -501,8 +509,16 @@
         "customModels": {
           "label": "自定义模型（可选）",
           "description": "手动添加要显示在模型选择器里的模型，以及每个模型可用的推理强度。"
+        },
+        "modelGateway": {
+          "label": "模型 Gateway（可选）",
+          "description": "让这个 Runtime 通过兼容的自定义 Gateway 发送模型请求。两个字段都留空时，继续使用 Runtime 默认的模型地址和认证。"
         }
       },
+      "modelGatewayBaseUrl": "Gateway 地址",
+      "modelGatewayApiKey": "Gateway API Key",
+      "showModelGatewayApiKey": "显示 Gateway API Key",
+      "hideModelGatewayApiKey": "隐藏 Gateway API Key",
       "resetAllDefaults": "全部恢复默认值",
       "noEnvironmentOverrides": "没有环境变量覆盖。",
       "environmentName": "变量名",

@@ -26,10 +26,11 @@ from connector.runtimes.codex.sdk.binary import (
 from connector.runtimes.codex.sdk.client import sdk_client_from_config
 from connector.runtimes.codex.sdk.discovery import check_codex_sdk
 from connector.runtimes.custom_models import normalize_custom_models
+from connector.runtimes.model_gateway import model_gateway_from_config
 
 SdkChecker = Callable[[], dict[str, Any]]
 SdkClientFactory = Callable[[RuntimeConfig], Any]
-CODEX_CONFIG_SCHEMA_REVISION = 3
+CODEX_CONFIG_SCHEMA_REVISION = 4
 
 
 class CodexProvider(RuntimeProvider):
@@ -93,10 +94,12 @@ class CodexProvider(RuntimeProvider):
                 "order": [
                     "useSystemCodex",
                     "codexExecutablePath",
+                    "modelGateway",
                     "environment",
                     "customModels",
                 ],
                 "codexExecutablePath": {"component": "path"},
+                "modelGateway": {"component": "modelGateway"},
                 "environment": {"component": "keyValue"},
                 "customModels": {"component": "customModels"},
             },
@@ -112,6 +115,11 @@ class CodexProvider(RuntimeProvider):
         values: Mapping[str, Any],
     ) -> RuntimeConfig:
         raw_values = dict(values)
+        model_gateway = model_gateway_from_config(raw_values.get("modelGateway"))
+        if model_gateway is None:
+            raw_values.pop("modelGateway", None)
+        else:
+            raw_values["modelGateway"] = model_gateway.to_config_values()
         use_system_codex = provider_config.normalize_system_codex_preference(
             raw_values.get("useSystemCodex"),
         )
@@ -157,6 +165,8 @@ class CodexProvider(RuntimeProvider):
             "environment": dict(raw_values.get("environment") or {}),
             "customModels": normalize_custom_models(raw_values.get("customModels")),
         }
+        if model_gateway is not None:
+            normalized_values["modelGateway"] = model_gateway.to_config_values()
         if codex_executable_path is not None:
             normalized_values["codexExecutablePath"] = codex_executable_path
 
