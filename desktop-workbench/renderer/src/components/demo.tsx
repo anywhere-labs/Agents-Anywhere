@@ -147,7 +147,7 @@ function DesktopResizableShell() {
       >
         {!open ? (
           <div className="absolute left-[4.5rem] top-3 z-20">
-            <DashboardSidebarToggle showOnDesktop className="rounded-md bg-background/80 shadow-sm backdrop-blur hover:bg-muted" />
+            <DashboardSidebarToggle showOnDesktop className="-translate-y-1 rounded-md bg-background/80 shadow-sm backdrop-blur hover:bg-muted" />
           </div>
         ) : null}
         <ResizablePanel

@@ -108,7 +108,7 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
       <SidebarHeader className="gap-0 px-4 pb-2 pt-3">
         <div className="flex h-7 items-center">
           <div className="w-[4.5rem] shrink-0" aria-hidden="true" />
-          <DashboardSidebarToggle showOnDesktop className="rounded-md hover:bg-sidebar-accent hover:text-sidebar-accent-foreground" />
+          <DashboardSidebarToggle showOnDesktop className="-translate-y-1 rounded-md hover:bg-sidebar-accent hover:text-sidebar-accent-foreground" />
         </div>
         <div className="mt-2 flex items-center justify-between">
           <button type="button" onClick={goHome} className="aa-wordmark text-xl leading-none">
