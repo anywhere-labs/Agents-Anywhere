@@ -151,6 +151,7 @@ support per-turn SDK options can apply current state at dispatch time.
 
 ## Documents
 
+- [Named runtime instances handoff](./runtime-instances-handoff.md)
 - [Connector -> Runtime ABC](./connector-to-runtime.md)
 - [Runtime -> Connector host client](./runtime-host-client.md)
 - [Connector structure target](./connector-structure.md)
