@@ -163,7 +163,7 @@ function DesktopResizableShell() {
                 setOpen(nextOpen, { persist: false })
               }
             }}
-            className="min-w-0"
+            className="min-w-0 overflow-hidden"
           >
             <AppSidebar contained />
           </ResizablePanel>
