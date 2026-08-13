@@ -10,11 +10,13 @@ from agent_server.core.device_runtime import (
     DeviceRuntimeView,
     RuntimeActivePutRequest,
     RuntimeConfigPutRequest,
+    RuntimeInstanceCreateRequest,
+    RuntimeInstancePatchRequest,
+    RuntimeTypeListResponse,
 )
 from agent_server.core.models import (
     RuntimeCommandListResponse,
     RuntimeCommandView,
-    RuntimeName,
 )
 from agent_server.core.protocol import (
     ProtocolCapabilitiesResponse,
@@ -24,6 +26,7 @@ from agent_server.core.protocol import (
     ProtocolPermissionCatalog,
     ProtocolPermissionCatalogResponse,
 )
+from agent_server.core.runtime_identity import RuntimeId
 from agent_server.core.utc import utc_now
 from agent_server.deps import current_user_id, get_device_runtime_service, get_rpc
 from agent_server.infra.connector_rpc import (
@@ -60,23 +63,91 @@ async def list_connector_runtimes(
 
 
 @router.post(
-    "/{connector_id}/runtimes/discover",
-    response_model=DeviceRuntimeListResponse,
+    "/{connector_id}/runtime-types/discover",
+    response_model=RuntimeTypeListResponse,
 )
-async def discover_connector_runtimes(
+async def discover_connector_runtime_types(
     connector_id: str,
     service: DeviceRuntimeService = Depends(get_device_runtime_service),
     user_id: str = Depends(current_user_id),
-) -> DeviceRuntimeListResponse:
+) -> RuntimeTypeListResponse:
     try:
-        runtimes = await service.discover(connector_id, user_id=user_id)
+        runtime_types = await service.discover(connector_id, user_id=user_id)
     except DeviceRuntimeError as exc:
         _raise_device_runtime_error(exc)
-    return DeviceRuntimeListResponse(
+    return RuntimeTypeListResponse(
         connectorId=connector_id,
-        runtimes=runtimes,
+        runtimeTypes=runtime_types,
         serverTime=utc_now(),
     )
+
+
+@router.get(
+    "/{connector_id}/runtime-types",
+    response_model=RuntimeTypeListResponse,
+)
+async def list_connector_runtime_types(
+    connector_id: str,
+    service: DeviceRuntimeService = Depends(get_device_runtime_service),
+    user_id: str = Depends(current_user_id),
+) -> RuntimeTypeListResponse:
+    try:
+        runtime_types = await service.list_runtime_types(
+            connector_id, user_id=user_id
+        )
+    except DeviceRuntimeError as exc:
+        _raise_device_runtime_error(exc)
+    return RuntimeTypeListResponse(
+        connectorId=connector_id,
+        runtimeTypes=runtime_types,
+        serverTime=utc_now(),
+    )
+
+
+@router.post(
+    "/{connector_id}/runtimes",
+    response_model=DeviceRuntimeView,
+    status_code=201,
+)
+async def create_connector_runtime(
+    connector_id: str,
+    payload: RuntimeInstanceCreateRequest,
+    service: DeviceRuntimeService = Depends(get_device_runtime_service),
+    user_id: str = Depends(current_user_id),
+) -> DeviceRuntimeView:
+    try:
+        return await service.create_runtime(
+            connector_id,
+            runtime_type=payload.runtimeType,
+            name=payload.name,
+            config=payload.config,
+            active=payload.active,
+            user_id=user_id,
+        )
+    except DeviceRuntimeError as exc:
+        _raise_device_runtime_error(exc)
+
+
+@router.patch(
+    "/{connector_id}/runtimes/{runtime_id}",
+    response_model=DeviceRuntimeView,
+)
+async def patch_connector_runtime(
+    connector_id: str,
+    runtime_id: RuntimeId,
+    payload: RuntimeInstancePatchRequest,
+    service: DeviceRuntimeService = Depends(get_device_runtime_service),
+    user_id: str = Depends(current_user_id),
+) -> DeviceRuntimeView:
+    try:
+        return await service.rename_runtime(
+            connector_id,
+            runtime_id,
+            payload.name,
+            user_id=user_id,
+        )
+    except DeviceRuntimeError as exc:
+        _raise_device_runtime_error(exc)
 
 
 @router.put(
@@ -85,7 +156,7 @@ async def discover_connector_runtimes(
 )
 async def put_connector_runtime_config(
     connector_id: str,
-    runtime_id: str,
+    runtime_id: RuntimeId,
     payload: RuntimeConfigPutRequest,
     service: DeviceRuntimeService = Depends(get_device_runtime_service),
     user_id: str = Depends(current_user_id),
@@ -107,7 +178,7 @@ async def put_connector_runtime_config(
 )
 async def put_connector_runtime_active(
     connector_id: str,
-    runtime_id: str,
+    runtime_id: RuntimeId,
     payload: RuntimeActivePutRequest,
     service: DeviceRuntimeService = Depends(get_device_runtime_service),
     user_id: str = Depends(current_user_id),
@@ -123,33 +194,13 @@ async def put_connector_runtime_active(
         _raise_device_runtime_error(exc)
 
 
-@router.delete(
-    "/{connector_id}/runtimes/{runtime_id}/config",
-    response_model=DeviceRuntimeView,
-)
-async def delete_connector_runtime_config(
-    connector_id: str,
-    runtime_id: str,
-    service: DeviceRuntimeService = Depends(get_device_runtime_service),
-    user_id: str = Depends(current_user_id),
-) -> DeviceRuntimeView:
-    try:
-        return await service.delete_config(
-            connector_id,
-            runtime_id,
-            user_id=user_id,
-        )
-    except DeviceRuntimeError as exc:
-        _raise_device_runtime_error(exc)
-
-
 @router.get(
     "/{connector_id}/runtimes/{runtime_id}/capabilities",
     response_model=ProtocolCapabilitiesResponse,
 )
 async def get_connector_runtime_capabilities(
     connector_id: str,
-    runtime_id: RuntimeName,
+    runtime_id: RuntimeId,
     service: DeviceRuntimeService = Depends(get_device_runtime_service),
     manager: ConnectorRpcManager = Depends(get_rpc),
     user_id: str = Depends(current_user_id),
@@ -179,7 +230,7 @@ async def get_connector_runtime_capabilities(
 )
 async def get_connector_runtime_model_catalog(
     connector_id: str,
-    runtime_id: RuntimeName,
+    runtime_id: RuntimeId,
     service: DeviceRuntimeService = Depends(get_device_runtime_service),
     manager: ConnectorRpcManager = Depends(get_rpc),
     user_id: str = Depends(current_user_id),
@@ -207,7 +258,7 @@ async def get_connector_runtime_model_catalog(
 )
 async def get_connector_runtime_permission_catalog(
     connector_id: str,
-    runtime_id: RuntimeName,
+    runtime_id: RuntimeId,
     service: DeviceRuntimeService = Depends(get_device_runtime_service),
     manager: ConnectorRpcManager = Depends(get_rpc),
     user_id: str = Depends(current_user_id),
@@ -235,7 +286,7 @@ async def get_connector_runtime_permission_catalog(
 )
 async def get_connector_runtime_commands(
     connector_id: str,
-    runtime_id: RuntimeName,
+    runtime_id: RuntimeId,
     service: DeviceRuntimeService = Depends(get_device_runtime_service),
     manager: ConnectorRpcManager = Depends(get_rpc),
     user_id: str = Depends(current_user_id),
@@ -264,7 +315,7 @@ async def request_runtime_rpc(
     connector_id: str,
     method: str,
     *,
-    runtime: RuntimeName,
+    runtime: str,
     limit: int | None,
 ) -> Any:
     params: dict[str, Any] = {"runtime": runtime}

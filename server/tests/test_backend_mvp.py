@@ -129,7 +129,13 @@ def seed_codex_permission_catalog(app: Any, connector_id: str) -> str:
     return selection_id
 
 
-def create_connector_and_session(client: TestClient, user_id: str = ADMIN_USER):
+def create_connector_and_session(
+    client: TestClient,
+    user_id: str = ADMIN_USER,
+    *,
+    runtime: str = "codex",
+    external_session_id: str | None = None,
+):
     headers = auth_headers(client, user_id=user_id)
     connector_response = client.post("/connectors", headers=headers, json={"name": "dev"})
     assert connector_response.status_code == 200
@@ -150,8 +156,9 @@ def create_connector_and_session(client: TestClient, user_id: str = ADMIN_USER):
         headers=headers,
         json={
             "connectorId": connector_id,
-            "runtime": "codex",
-            "externalSessionId": f"thr_{connector_id}_demo",
+            "runtime": runtime,
+            "externalSessionId": external_session_id
+            or f"thr_{connector_id}_demo",
             "title": "Demo",
             "cwd": "/repo",
         },
@@ -237,9 +244,8 @@ def session_view_for_assertions(
 
 def _runtime_inventory(runtime: str) -> dict[str, Any]:
     return {
-        "runtimes": [
+        "runtimeTypes": [
             {
-                "runtimeId": runtime,
                 "runtimeType": runtime,
                 "displayName": runtime.title(),
                 "discovery": {"available": True},
@@ -251,8 +257,6 @@ def _runtime_inventory(runtime: str) -> dict[str, Any]:
                 },
                 "uiSchema": {},
                 "defaults": {},
-                "status": "available",
-                "configured": True,
                 "capabilities": {
                     "modelCatalog": True,
                     "permissionCatalog": True,
@@ -284,19 +288,17 @@ def _seed_running_runtime(
     )
 
     async def _seed() -> None:
-        await client.app.state.device_runtime_service.ingest_inventory(
+        await client.app.state.device_runtime_service.ingest_runtime_types(
             connector_id,
             _runtime_inventory(runtime),
         )
-        await client.app.state.store.set_device_runtime_config(
+        await client.app.state.store.create_device_runtime(
             connector_id,
-            runtime,
-            {},
-        )
-        await client.app.state.store.set_device_runtime_active(
-            connector_id,
-            runtime,
-            True,
+            runtime_id=runtime,
+            runtime_type=runtime,
+            name=runtime.title(),
+            config={},
+            active=True,
         )
         await client.app.state.store.set_device_runtime_status(
             connector_id,
@@ -3195,11 +3197,13 @@ def test_agent_catalog_requires_authentication(tmp_path):
     assert client.get("/agents/claude/permission-catalog").status_code == 401
 
 
-def test_agent_catalog_rejects_unknown_runtime(tmp_path):
+def test_removed_agent_catalog_accepts_dynamic_runtime_id(tmp_path):
     client = make_client(tmp_path)
     headers = auth_headers(client)
-    # RuntimeName Literal is enforced by pydantic; unknown runtimes 422.
-    assert client.get("/agents/python/permission-catalog", headers=headers).status_code == 422
+    response = client.get("/agents/rti_python/permission-catalog", headers=headers)
+
+    assert response.status_code == 410
+    assert response.json()["detail"]["code"] == "agent_catalog_route_removed"
 
 
 def test_agent_catalog_routes_are_removed(tmp_path):
@@ -6033,7 +6037,11 @@ def test_timeline_sync_keeps_existing_realtime_items_missing_from_snapshot(tmp_p
 
 def test_claude_history_sync_replaces_live_item_with_snapshot_same_id(tmp_path):
     client = make_client(tmp_path)
-    _, access_token, session_id, headers = create_connector_and_session(client)
+    _, access_token, session_id, headers = create_connector_and_session(
+        client,
+        runtime="claude",
+        external_session_id="claude_session_1",
+    )
 
     with client.websocket_connect(
         "/connector/ws",
@@ -6132,7 +6140,11 @@ def test_claude_history_sync_replaces_live_item_with_snapshot_same_id(tmp_path):
 
 def test_claude_timeline_sync_replaces_existing_timeline(tmp_path):
     client = make_client(tmp_path)
-    _, access_token, session_id, headers = create_connector_and_session(client)
+    _, access_token, session_id, headers = create_connector_and_session(
+        client,
+        runtime="claude",
+        external_session_id="claude_session_1",
+    )
 
     with client.websocket_connect(
         "/connector/ws",

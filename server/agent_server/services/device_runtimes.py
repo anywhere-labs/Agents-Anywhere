@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
+import secrets
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
 from typing import Any
 
 from agent_server.core.device_runtime import (
     DeviceRuntimeView,
     RuntimeConfigValidationError,
-    RuntimeInventory,
+    RuntimeTypeCatalog,
+    RuntimeTypeView,
     validate_config,
     validate_config_schema,
 )
@@ -88,25 +91,36 @@ class DeviceRuntimeService:
             raise DeviceRuntimeNotFoundError("connector not found") from exc
         return [DeviceRuntimeView.model_validate(row) for row in rows]
 
-    async def ingest_inventory(
+    async def list_runtime_types(
+        self, connector_id: str, *, user_id: str
+    ) -> list[RuntimeTypeView]:
+        try:
+            rows = await self._store.list_connector_runtime_types(
+                connector_id, user_id=user_id
+            )
+        except KeyError as exc:
+            raise DeviceRuntimeNotFoundError("connector not found") from exc
+        return [RuntimeTypeView.model_validate(row) for row in rows]
+
+    async def ingest_runtime_types(
         self,
         connector_id: str,
         raw: dict[str, Any],
-    ) -> list[DeviceRuntimeView]:
-        inventory = RuntimeInventory.model_validate(raw)
-        for runtime in inventory.runtimes:
-            if runtime.schema_ is not None:
-                validate_config_schema(runtime.schema_)
-        rows = await self._store.replace_device_runtime_inventory(
-            connector_id, inventory.runtimes
+    ) -> list[RuntimeTypeView]:
+        catalog = RuntimeTypeCatalog.model_validate(raw)
+        for runtime_type in catalog.runtimeTypes:
+            if runtime_type.schema_ is not None:
+                validate_config_schema(runtime_type.schema_)
+        rows = await self._store.replace_connector_runtime_types(
+            connector_id, catalog.runtimeTypes
         )
-        await self._publish(connector_id, "runtime.inventory")
-        return [DeviceRuntimeView.model_validate(row) for row in rows]
+        await self._publish(connector_id, "runtime.types")
+        return [RuntimeTypeView.model_validate(row) for row in rows]
 
     async def discover(
         self, connector_id: str, *, user_id: str
-    ) -> list[DeviceRuntimeView]:
-        await self.list_runtimes(connector_id, user_id=user_id)
+    ) -> list[RuntimeTypeView]:
+        await self.list_runtime_types(connector_id, user_id=user_id)
         if not await self._manager.is_online(connector_id):
             raise DeviceRuntimeOfflineError("connector is offline")
         try:
@@ -122,11 +136,97 @@ class DeviceRuntimeService:
             ) from exc
         if not isinstance(result, dict):
             raise DeviceRuntimeUpstreamError(
-                "connector returned an invalid runtime inventory"
+                "connector returned an invalid runtime type catalog"
             )
-        await self.ingest_inventory(connector_id, result)
+        await self.ingest_runtime_types(connector_id, result)
         await self.reconcile_active(connector_id)
-        return await self.list_runtimes(connector_id, user_id=user_id)
+        return await self.list_runtime_types(connector_id, user_id=user_id)
+
+    async def create_runtime(
+        self,
+        connector_id: str,
+        *,
+        runtime_type: str,
+        name: str,
+        config: dict[str, Any],
+        active: bool,
+        user_id: str,
+    ) -> DeviceRuntimeView:
+        try:
+            runtime_type_row = RuntimeTypeView.model_validate(
+                await self._store.get_connector_runtime_type(
+                    connector_id, runtime_type, user_id=user_id
+                )
+            )
+        except KeyError as exc:
+            raise DeviceRuntimeNotFoundError("runtime type not found") from exc
+        if not runtime_type_row.available:
+            raise DeviceRuntimeConflictError("runtime type is not available")
+        if runtime_type_row.schema_ is None:
+            raise DeviceRuntimeConflictError("runtime config schema is unavailable")
+        self._validate(config, runtime_type_row.schema_)
+        if not await self._manager.is_online(connector_id):
+            raise DeviceRuntimeOfflineError("connector is offline")
+
+        runtime_id = f"rti_{secrets.token_urlsafe(12)}"
+        async with self._runtime_lock(connector_id, runtime_id):
+            try:
+                runtime = DeviceRuntimeView.model_validate(
+                    await self._store.create_device_runtime(
+                        connector_id,
+                        runtime_id=runtime_id,
+                        runtime_type=runtime_type,
+                        name=name,
+                        config=config,
+                        active=active,
+                    )
+                )
+            except ValueError as exc:
+                raise DeviceRuntimeConflictError(str(exc)) from exc
+            try:
+                await self._request_validate(runtime, config)
+            except DeviceRuntimeError as exc:
+                error = (
+                    exc.detail
+                    if isinstance(exc.detail, dict)
+                    else {"code": exc.code, "message": exc.message}
+                )
+                await self._store.set_device_runtime_status(
+                    connector_id,
+                    runtime_id,
+                    "error",
+                    error=error,
+                )
+                raise
+            if active:
+                runtime = await self._start_locked(runtime)
+            await self._publish(connector_id, "runtime.created")
+            return runtime
+
+    async def rename_runtime(
+        self,
+        connector_id: str,
+        runtime_id: str,
+        name: str,
+        *,
+        user_id: str,
+    ) -> DeviceRuntimeView:
+        async with self._runtime_lock(connector_id, runtime_id):
+            current = await self._get_owned(
+                connector_id, runtime_id, user_id=user_id
+            )
+            try:
+                renamed = DeviceRuntimeView.model_validate(
+                    await self._store.rename_device_runtime(
+                        connector_id, runtime_id, name
+                    )
+                )
+            except ValueError as exc:
+                raise DeviceRuntimeConflictError(str(exc)) from exc
+            if current.status == "running" and renamed.config is not None:
+                renamed = await self._start_locked(renamed)
+            await self._publish(connector_id, "runtime.renamed")
+            return renamed
 
     async def put_config(
         self,
@@ -142,14 +242,14 @@ class DeviceRuntimeService:
             self._validate(config, schema)
             if not await self._manager.is_online(connector_id):
                 raise DeviceRuntimeOfflineError("connector is offline")
-            await self._request_validate(connector_id, runtime_id, config)
+            await self._request_validate(runtime, config)
             runtime = DeviceRuntimeView.model_validate(
                 await self._store.set_device_runtime_config(
                     connector_id, runtime_id, config
                 )
             )
             if runtime.active:
-                runtime = await self._restart_locked(runtime)
+                runtime = await self._start_locked(runtime)
             await self._publish(connector_id, "runtime.config")
             return runtime
 
@@ -168,9 +268,9 @@ class DeviceRuntimeService:
                     raise DeviceRuntimeConflictError(
                         "runtime must be configured before activation"
                     )
-                if not runtime.present:
+                if not runtime.available:
                     raise DeviceRuntimeConflictError(
-                        "runtime is not currently reported by the connector"
+                        "runtime type is not currently available on the connector"
                     )
                 if not await self._manager.is_online(connector_id):
                     raise DeviceRuntimeOfflineError("connector is offline")
@@ -202,9 +302,9 @@ class DeviceRuntimeService:
                 raise DeviceRuntimeConflictError(
                     "runtime must be configured before use"
                 )
-            if not runtime.present:
+            if not runtime.available:
                 raise DeviceRuntimeConflictError(
-                    "runtime is not currently reported by the connector"
+                    "runtime type is not currently available on the connector"
                 )
             if not await self._manager.is_online(connector_id):
                 raise DeviceRuntimeOfflineError("connector is offline")
@@ -218,35 +318,6 @@ class DeviceRuntimeService:
             started = await self._start_locked(current)
             await self._publish(connector_id, "runtime.ensure_running")
             return started
-
-    async def delete_config(
-        self,
-        connector_id: str,
-        runtime_id: str,
-        *,
-        user_id: str,
-    ) -> DeviceRuntimeView:
-        async with self._runtime_lock(connector_id, runtime_id):
-            runtime = await self._get_owned(connector_id, runtime_id, user_id=user_id)
-            if runtime.active or runtime.status in {
-                "starting",
-                "running",
-                "stopping",
-                "unknown",
-            }:
-                if not await self._manager.is_online(connector_id):
-                    raise DeviceRuntimeOfflineError(
-                        "connector must be online before deleting a running runtime"
-                    )
-                await self._store.set_device_runtime_active(
-                    connector_id, runtime_id, False
-                )
-                runtime = await self._stop_locked(runtime, allow_offline=False)
-            runtime = DeviceRuntimeView.model_validate(
-                await self._store.clear_device_runtime_config(connector_id, runtime_id)
-            )
-            await self._publish(connector_id, "runtime.config_deleted")
-            return runtime
 
     async def apply_status(
         self,
@@ -290,7 +361,7 @@ class DeviceRuntimeService:
             return
         for row in rows:
             runtime = DeviceRuntimeView.model_validate(row)
-            if not runtime.present:
+            if not runtime.available:
                 continue
             async with self._runtime_lock(connector_id, runtime.runtimeId):
                 current = DeviceRuntimeView.model_validate(
@@ -298,14 +369,9 @@ class DeviceRuntimeService:
                         connector_id, runtime.runtimeId
                     )
                 )
-                if not current.present:
+                if not current.available:
                     continue
                 if not current.active:
-                    if current.status in {"starting", "running", "stopping", "unknown"}:
-                        try:
-                            await self._stop_locked(current, allow_offline=True)
-                        except DeviceRuntimeError:
-                            pass
                     continue
                 if current.config is None:
                     continue
@@ -327,8 +393,10 @@ class DeviceRuntimeService:
                 "runtime.start",
                 {
                     "runtimeId": runtime.runtimeId,
+                    "runtimeType": runtime.runtimeType,
+                    "name": runtime.name,
                     "config": runtime.config,
-                    "configRevision": _config_revision(runtime),
+                    "configRevision": _config_revision(runtime.config),
                 },
                 timeout=90,
             )
@@ -416,11 +484,6 @@ class DeviceRuntimeService:
             )
         )
 
-    async def _restart_locked(self, runtime: DeviceRuntimeView) -> DeviceRuntimeView:
-        if runtime.status in {"starting", "running", "stopping", "unknown"}:
-            runtime = await self._stop_locked(runtime, allow_offline=False)
-        return await self._start_locked(runtime)
-
     async def _settle_runtime_sessions(self, runtime: DeviceRuntimeView) -> None:
         sessions = await self._store.list_running_sessions_for_connector_agent(
             connector_id=runtime.connectorId,
@@ -443,15 +506,20 @@ class DeviceRuntimeService:
 
     async def _request_validate(
         self,
-        connector_id: str,
-        runtime_id: str,
+        runtime: DeviceRuntimeView,
         config: dict[str, Any],
     ) -> None:
         try:
             await self._manager.request(
-                connector_id,
+                runtime.connectorId,
                 "runtime.validateConfig",
-                {"runtimeId": runtime_id, "config": config},
+                {
+                    "runtimeId": runtime.runtimeId,
+                    "runtimeType": runtime.runtimeType,
+                    "name": runtime.name,
+                    "config": config,
+                    "configRevision": _config_revision(config),
+                },
                 timeout=90,
             )
         except ConnectorOfflineError as exc:
@@ -541,12 +609,11 @@ class DeviceRuntimeService:
         )
 
 
-def _config_revision(runtime: DeviceRuntimeView) -> int:
-    value = runtime.updatedAt
-    try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        return 1
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=UTC)
-    return max(1, int(parsed.timestamp() * 1000))
+def _config_revision(config: dict[str, Any]) -> int:
+    encoded = json.dumps(
+        config,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    return max(1, int(hashlib.sha256(encoded).hexdigest()[:13], 16))

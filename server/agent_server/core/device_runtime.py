@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import json
-import re
 from typing import Any, Literal
 
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from agent_server.core.runtime_identity import (
+    RuntimeId,
+    RuntimeTypeId,
+    normalize_runtime_instance_name,
+)
 
 RuntimeStatus = Literal[
     "stopped",
@@ -20,54 +25,89 @@ RuntimeStatus = Literal[
     "error",
     "unknown",
 ]
-_RUNTIME_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 _MAX_SCHEMA_BYTES = 256 * 1024
 
 
-class RuntimeInventoryItem(BaseModel):
+class RuntimeTypeDescriptor(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    runtimeId: str
-    runtimeType: str = Field(min_length=1, max_length=64)
+    runtimeType: RuntimeTypeId
     displayName: str = Field(min_length=1, max_length=128)
+    description: str | None = Field(default=None, max_length=1024)
+    recommended: bool = False
+    recommendationRank: int | None = Field(default=None, ge=0)
     discovery: dict[str, Any] = Field(default_factory=dict)
     schema_: dict[str, Any] | None = Field(default=None, alias="schema")
     uiSchema: dict[str, Any] | None = None
     defaults: dict[str, Any] = Field(default_factory=dict)
-    status: RuntimeStatus = "stopped"
-    configured: bool | None = None
     capabilities: dict[str, bool] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
-    @field_validator("runtimeId")
+    @field_validator("discovery")
     @classmethod
-    def _validate_runtime_id(cls, value: str) -> str:
-        if not _RUNTIME_ID_RE.fullmatch(value):
-            raise ValueError("runtimeId contains unsupported characters")
+    def _validate_discovery(cls, value: dict[str, Any]) -> dict[str, Any]:
+        if not isinstance(value.get("available"), bool):
+            raise ValueError(  # noqa: TRY004 - Pydantic validators require ValueError.
+                "runtime type discovery.available must be a boolean"
+            )
         return value
 
+    @property
+    def available(self) -> bool:
+        return bool(self.discovery["available"])
 
-class RuntimeInventory(BaseModel):
+
+class RuntimeTypeCatalog(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    runtimes: list[RuntimeInventoryItem] = Field(default_factory=list, max_length=64)
+    runtimeTypes: list[RuntimeTypeDescriptor] = Field(default_factory=list, max_length=64)
+
+
+class RuntimeTypeView(BaseModel):
+    connectorId: str
+    runtimeType: RuntimeTypeId
+    displayName: str
+    description: str | None
+    available: bool
+    recommended: bool
+    recommendationRank: int | None
+    discovery: dict[str, Any]
+    schema_: dict[str, Any] | None = Field(default=None, alias="schema")
+    uiSchema: dict[str, Any]
+    defaults: dict[str, Any]
+    capabilities: dict[str, bool]
+    metadata: dict[str, Any]
+    lastDiscoveredAt: str
+    updatedAt: str
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class RuntimeTypeListResponse(BaseModel):
+    connectorId: str
+    runtimeTypes: list[RuntimeTypeView]
+    serverTime: str
 
 
 class DeviceRuntimeView(BaseModel):
     connectorId: str
-    runtimeId: str
-    runtimeType: str
+    runtimeId: RuntimeId
+    runtimeType: RuntimeTypeId
+    name: str
+    # Temporary mobile compatibility alias. New clients should use name.
     displayName: str
-    present: bool
+    typeDisplayName: str
     configured: bool
     active: bool
     status: RuntimeStatus
-    discovery: dict[str, Any]
-    schema_: dict[str, Any] | None = Field(default=None, alias="schema")
-    uiSchema: dict[str, Any]
     config: dict[str, Any] | None
     error: dict[str, Any] | None
-    lastDiscoveredAt: str
+    available: bool
+    schema_: dict[str, Any] | None = Field(default=None, alias="schema")
+    uiSchema: dict[str, Any]
+    defaults: dict[str, Any]
+    capabilities: dict[str, bool]
+    createdAt: str
     updatedAt: str
 
     model_config = ConfigDict(populate_by_name=True)
@@ -77,6 +117,31 @@ class DeviceRuntimeListResponse(BaseModel):
     connectorId: str
     runtimes: list[DeviceRuntimeView]
     serverTime: str
+
+
+class RuntimeInstanceCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    runtimeType: RuntimeTypeId
+    name: str = Field(min_length=1, max_length=128)
+    config: dict[str, Any] = Field(default_factory=dict)
+    active: bool = True
+
+    @field_validator("name")
+    @classmethod
+    def _normalize_name(cls, value: str) -> str:
+        return normalize_runtime_instance_name(value)
+
+
+class RuntimeInstancePatchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=128)
+
+    @field_validator("name")
+    @classmethod
+    def _normalize_name(cls, value: str) -> str:
+        return normalize_runtime_instance_name(value)
 
 
 class RuntimeConfigPutRequest(BaseModel):
@@ -119,7 +184,9 @@ def validate_config_schema(raw: dict[str, Any]) -> dict[str, Any]:
 
 def validate_config(config: dict[str, Any], schema: dict[str, Any]) -> None:
     validator = Draft202012Validator(schema)
-    errors = sorted(validator.iter_errors(config), key=lambda error: list(error.absolute_path))
+    errors = sorted(
+        validator.iter_errors(config), key=lambda error: list(error.absolute_path)
+    )
     if not errors:
         return
     issues = [
@@ -136,9 +203,12 @@ def validate_config(config: dict[str, Any], schema: dict[str, Any]) -> None:
 def _reject_remote_refs(value: Any) -> None:
     if isinstance(value, dict):
         for key, nested in value.items():
-            if key in {"$ref", "$dynamicRef"} and isinstance(nested, str):
-                if not nested.startswith("#"):
-                    raise ValueError("remote schema references are not supported")
+            if (
+                key in {"$ref", "$dynamicRef"}
+                and isinstance(nested, str)
+                and not nested.startswith("#")
+            ):
+                raise ValueError("remote schema references are not supported")
             _reject_remote_refs(nested)
     elif isinstance(value, list):
         for nested in value:

@@ -1,5 +1,3 @@
-# ruff: noqa: F403, F405, I001
-
 from __future__ import annotations
 
 from agent_server.infra.repositories.store_support import *
@@ -109,15 +107,26 @@ class SessionRepositoryMixin:
                 raise KeyError(connector_id)
             existing = (
                 await conn.execute(
-                    select(sessions_t.c.id).where(sessions_t.c.id == session_id)
+                    select(
+                        sessions_t.c.id,
+                        sessions_t.c.connector_id,
+                        sessions_t.c.runtime,
+                    ).where(sessions_t.c.id == session_id)
                 )
             ).first()
+            if existing is not None and (
+                existing.connector_id != connector_id or existing.runtime != runtime
+            ):
+                raise ValueError(
+                    "session ID is already bound to another connector runtime"
+                )
             if existing is None and external_session_id is not None:
                 existing = (
                     await conn.execute(
                         select(sessions_t.c.id)
                         .where(
                             sessions_t.c.connector_id == connector_id,
+                            sessions_t.c.runtime == runtime,
                             sessions_t.c.external_session_id == external_session_id,
                         )
                         .order_by(sessions_t.c.takeover.desc(), sessions_t.c.created_at.asc())
@@ -166,10 +175,7 @@ class SessionRepositoryMixin:
                 ).first()
                 if current is None:
                     raise KeyError(session_id)
-                values: dict[str, Any] = {
-                    "connector_id": connector_id,
-                    "runtime": runtime,
-                }
+                values: dict[str, Any] = {}
                 if external_session_id is not None:
                     values["external_session_id"] = external_session_id
                 if title is not None:
@@ -191,8 +197,6 @@ class SessionRepositoryMixin:
                 semantic_changed = any(
                     field in values and values[field] != getattr(current, field)
                     for field in (
-                        "connector_id",
-                        "runtime",
                         "external_session_id",
                         "title",
                         "cwd",
@@ -214,6 +218,7 @@ class SessionRepositoryMixin:
         *,
         connector_id: str,
         session_id: str,
+        runtime: str | None = None,
         external_session_id: str | None = None,
     ) -> str:
         async with self._engine.connect() as conn:
@@ -222,6 +227,7 @@ class SessionRepositoryMixin:
                     select(
                         sessions_t.c.id,
                         sessions_t.c.origin,
+                        sessions_t.c.runtime,
                         sessions_t.c.takeover,
                     ).where(
                         sessions_t.c.id == session_id,
@@ -230,24 +236,30 @@ class SessionRepositoryMixin:
                 )
             ).first()
             if explicit is not None and (
+                runtime is None or explicit.runtime == runtime
+            ) and (
                 explicit.takeover == 1 or explicit.origin == "platform"
             ):
                 return str(explicit.id)
-            if external_session_id:
+            if external_session_id and runtime is not None:
+                query = select(sessions_t.c.id).where(
+                    sessions_t.c.connector_id == connector_id,
+                    sessions_t.c.runtime == runtime,
+                    sessions_t.c.external_session_id == external_session_id,
+                )
                 row = (
                     await conn.execute(
-                        select(sessions_t.c.id)
-                        .where(
-                            sessions_t.c.connector_id == connector_id,
-                            sessions_t.c.external_session_id == external_session_id,
-                        )
-                        .order_by(sessions_t.c.takeover.desc(), sessions_t.c.created_at.asc())
-                        .limit(1)
+                        query.order_by(
+                            sessions_t.c.takeover.desc(),
+                            sessions_t.c.created_at.asc(),
+                        ).limit(1)
                     )
                 ).first()
                 if row is not None:
                     return str(row.id)
         if explicit is None:
+            raise KeyError(session_id)
+        if runtime is not None and explicit.runtime != runtime:
             raise KeyError(session_id)
         return str(explicit.id)
 

@@ -5,12 +5,14 @@ from sqlalchemy import (
     Column,
     Float,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Integer,
     MetaData,
     PrimaryKeyConstraint,
     Table,
     Text,
+    UniqueConstraint,
 )
 
 metadata = MetaData()
@@ -39,6 +41,33 @@ connectors = Table(
 )
 
 
+connector_runtime_types = Table(
+    "connector_runtime_types",
+    metadata,
+    Column(
+        "connector_id",
+        Text,
+        ForeignKey("connectors.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
+    Column("runtime_type", Text, nullable=False),
+    Column("display_name", Text, nullable=False),
+    Column("description", Text),
+    Column("available", Integer, nullable=False, server_default="0"),
+    Column("recommended", Integer, nullable=False, server_default="0"),
+    Column("recommendation_rank", Integer),
+    Column("discovery_json", Text, nullable=False),
+    Column("config_schema_json", Text),
+    Column("ui_schema_json", Text),
+    Column("defaults_json", Text, nullable=False),
+    Column("capabilities_json", Text, nullable=False),
+    Column("metadata_json", Text, nullable=False),
+    Column("last_discovered_at", Text, nullable=False),
+    Column("updated_at", Text, nullable=False),
+    PrimaryKeyConstraint("connector_id", "runtime_type"),
+)
+
+
 device_runtimes = Table(
     "device_runtimes",
     metadata,
@@ -50,20 +79,26 @@ device_runtimes = Table(
     ),
     Column("runtime_id", Text, nullable=False),
     Column("runtime_type", Text, nullable=False),
-    Column("display_name", Text, nullable=False),
-    Column("present", Integer, nullable=False, server_default="1"),
-    Column("discovery_json", Text, nullable=False),
-    Column("config_schema_json", Text),
-    Column("ui_schema_json", Text),
-    # NULL means the runtime has not been configured. An empty JSON object is
-    # a valid configured value and means "use every provider default".
+    Column("name", Text, nullable=False),
+    Column("name_key", Text, nullable=False),
+    # NULL is retained only for migrated session bindings that predate runtime
+    # instances. New instances always store an explicit config object.
     Column("config_json", Text),
     Column("active", Integer, nullable=False, server_default="0"),
     Column("status", Text, nullable=False, server_default="stopped"),
     Column("error_json", Text),
-    Column("last_discovered_at", Text, nullable=False),
+    Column("created_at", Text, nullable=False),
     Column("updated_at", Text, nullable=False),
     PrimaryKeyConstraint("connector_id", "runtime_id"),
+    UniqueConstraint("connector_id", "name_key"),
+    ForeignKeyConstraint(
+        ["connector_id", "runtime_type"],
+        [
+            "connector_runtime_types.connector_id",
+            "connector_runtime_types.runtime_type",
+        ],
+        ondelete="CASCADE",
+    ),
 )
 
 

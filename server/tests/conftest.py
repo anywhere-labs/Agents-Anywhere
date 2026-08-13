@@ -13,7 +13,6 @@ import os
 import pytest
 from fastapi.testclient import TestClient
 
-
 _PG_PREFIX = "postgresql"
 _API_PREFIX = "/api/v2"
 _API_ROOTS = (
@@ -35,6 +34,7 @@ _TRUNCATE_SQL = (
     "timeline_items, session_active_runs, "
     "sessions, "
     "connector_runtime_catalogs, connector_protocol_capabilities, device_runtimes, "
+    "connector_runtime_types, "
     "pairing_codes, connectors, users, instance_settings "
     "RESTART IDENTITY CASCADE"
 )
@@ -51,7 +51,10 @@ def _api_v2_test_path(url: str) -> str:
         return url
     if url == _API_PREFIX or url.startswith(f"{_API_PREFIX}/"):
         return url
-    if any(url == root or url.startswith(f"{root}/") or url.startswith(f"{root}?") for root in _API_ROOTS):
+    if any(
+        url == root or url.startswith((f"{root}/", f"{root}?"))
+        for root in _API_ROOTS
+    ):
         return f"{_API_PREFIX}{url}"
     return url
 

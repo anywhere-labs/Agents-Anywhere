@@ -178,7 +178,7 @@ class ConnectorIngestService:
         - does not publish session WebSocket effects; caller owns publication
         """
         if notification.method == "runtime.inventoryUpdated":
-            await self._device_runtimes.ingest_inventory(
+            await self._device_runtimes.ingest_runtime_types(
                 connector_id,
                 notification.params,
             )
@@ -200,7 +200,7 @@ class ConnectorIngestService:
         params: dict,
     ) -> None:
         if method == "runtime.inventoryUpdated":
-            await self._device_runtimes.ingest_inventory(connector_id, params)
+            await self._device_runtimes.ingest_runtime_types(connector_id, params)
             import asyncio
 
             asyncio.create_task(self._device_runtimes.reconcile_active(connector_id))
@@ -413,10 +413,8 @@ class ConnectorIngestService:
                 error=error,
             )
         except DeviceRuntimeNotFoundError:
-            # Runtime lifecycle notifications may arrive while the connector is
-            # still producing the inventory snapshot for a fresh pairing or
-            # reconnect. Inventory is the source that creates runtime rows; a
-            # pre-inventory status must not tear down the connector WebSocket.
+            # Status may race instance creation or refer to a stale local
+            # instance. Unknown IDs must not tear down the Connector WebSocket.
             return
 
 
@@ -426,10 +424,13 @@ def runtime_state_from_ingest_effect(
     raw_state: dict[str, Any],
 ) -> SessionRuntimeState:
     now = utc_now()
+    runtime = raw_state.get("runtime")
+    if not isinstance(runtime, str) or not runtime:
+        raise ValueError("runtime state requires a concrete runtime ID")
     return SessionRuntimeState.model_validate(
         {
             "sessionId": raw_state.get("sessionId") or session_id,
-            "runtime": raw_state.get("runtime") or "codex",
+            "runtime": runtime,
             "externalSessionId": raw_state.get("externalSessionId"),
             "status": raw_state.get("status") or "idle",
             "selections": raw_state.get("selections")

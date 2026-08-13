@@ -176,6 +176,7 @@ class ConnectorNotificationRepository(
         *,
         connector_id: str,
         session_id: str,
+        runtime: str | None = None,
         external_session_id: str | None = None,
     ) -> str: ...
 
@@ -211,7 +212,24 @@ class DeviceRuntimeRepository(
 ):
     async def clear_active_run(self, session_id: str) -> None: ...
 
-    async def clear_device_runtime_config(self, connector_id: str, runtime_id: str) -> dict[str, Any]: ...
+    async def create_device_runtime(
+        self,
+        connector_id: str,
+        *,
+        runtime_id: str,
+        runtime_type: str,
+        name: str,
+        config: dict[str, Any] | None,
+        active: bool,
+    ) -> dict[str, Any]: ...
+
+    async def get_connector_runtime_type(
+        self,
+        connector_id: str,
+        runtime_type: str,
+        *,
+        user_id: str | None = None,
+    ) -> dict[str, Any]: ...
 
     async def get_device_runtime(
         self,
@@ -230,6 +248,13 @@ class DeviceRuntimeRepository(
         user_id: str | None = None,
     ) -> list[dict[str, Any]]: ...
 
+    async def list_connector_runtime_types(
+        self,
+        connector_id: str,
+        *,
+        user_id: str | None = None,
+    ) -> list[dict[str, Any]]: ...
+
     async def list_running_sessions_for_connector_agent(
         self,
         *,
@@ -238,10 +263,17 @@ class DeviceRuntimeRepository(
         user_id: str | None = None,
     ) -> list[SessionView]: ...
 
-    async def replace_device_runtime_inventory(
+    async def rename_device_runtime(
         self,
         connector_id: str,
-        runtimes: list[Any],
+        runtime_id: str,
+        name: str,
+    ) -> dict[str, Any]: ...
+
+    async def replace_connector_runtime_types(
+        self,
+        connector_id: str,
+        runtime_types: list[Any],
     ) -> list[dict[str, Any]]: ...
 
     async def set_device_runtime_active(
@@ -301,6 +333,7 @@ class SessionRunRepository(
         *,
         connector_id: str,
         session_id: str,
+        runtime: str | None = None,
         external_session_id: str | None = None,
     ) -> str: ...
 

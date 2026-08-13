@@ -9,7 +9,7 @@ from conftest import ApiV2TestClient as TestClient
 from sqlalchemy import insert
 
 from agent_server.app import create_app
-from agent_server.core.device_runtime import RuntimeInventoryItem
+from agent_server.core.device_runtime import RuntimeTypeDescriptor
 from agent_server.core.models import TimelineItemIn
 from agent_server.infra.db import dashboard_daily_metrics as dashboard_daily_metrics_t
 
@@ -51,15 +51,17 @@ def create_connector(client: TestClient, headers: dict[str, str], name: str) -> 
 
 
 async def configure_runtime(store: Any, connector_id: str, runtime: str) -> None:
-    await store.replace_device_runtime_inventory(
+    await store.replace_connector_runtime_types(
         connector_id,
         [
-            RuntimeInventoryItem.model_validate(
+            RuntimeTypeDescriptor.model_validate(
                 {
-                    "runtimeId": runtime,
                     "runtimeType": runtime,
                     "displayName": runtime.title(),
-                    "discovery": {"executablePath": f"/bin/{runtime}"},
+                    "discovery": {
+                        "available": True,
+                        "executablePath": f"/bin/{runtime}",
+                    },
                     "schema": {
                         "type": "object",
                         "properties": {},
@@ -69,7 +71,14 @@ async def configure_runtime(store: Any, connector_id: str, runtime: str) -> None
             )
         ],
     )
-    await store.set_device_runtime_config(connector_id, runtime, {})
+    await store.create_device_runtime(
+        connector_id,
+        runtime_id=runtime,
+        runtime_type=runtime,
+        name=runtime.title(),
+        config={},
+        active=False,
+    )
 
 
 async def seed_dashboard_activity(client: TestClient) -> dict[str, str]:

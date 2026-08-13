@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+import pytest
 from conftest import ApiV2TestClient as TestClient
 
 from agent_server.app import create_app
@@ -112,14 +113,14 @@ def _auth_headers(client: TestClient) -> dict[str, str]:
     return {"Authorization": f"Bearer {response.json()['accessToken']}"}
 
 
-def _inventory(*, status: str = "stopped") -> dict[str, Any]:
+def _inventory() -> dict[str, Any]:
     return {
-        "runtimes": [
+        "runtimeTypes": [
             {
-                "runtimeId": "codex",
                 "runtimeType": "codex",
                 "displayName": "Codex",
                 "discovery": {
+                    "available": True,
                     "executablePath": "/opt/homebrew/bin/codex",
                     "version": "1.2.3",
                 },
@@ -139,6 +140,10 @@ def _inventory(*, status: str = "stopped") -> dict[str, Any]:
                             },
                             "default": {},
                         },
+                        "codexHome": {
+                            "type": "string",
+                            "minLength": 1,
+                        },
                     },
                     "additionalProperties": False,
                 },
@@ -147,8 +152,6 @@ def _inventory(*, status: str = "stopped") -> dict[str, Any]:
                     "environment": {"component": "keyValue"},
                 },
                 "defaults": {"environment": {}},
-                "status": status,
-                "configured": True,
                 "capabilities": {"modelCatalog": True},
                 "metadata": {"sdk": {"available": True}},
             }
@@ -166,7 +169,39 @@ def _make_client(tmp_path) -> tuple[TestClient, FakeRpc, str, dict[str, str]]:
     rpc = FakeRpc(_inventory())
     app.state.rpc = rpc
     app.state.device_runtime_service = DeviceRuntimeService(app.state.store, rpc)
-    asyncio.run(app.state.device_runtime_service.ingest_inventory(connector_id, rpc.inventory))
+    asyncio.run(
+        app.state.device_runtime_service.ingest_runtime_types(
+            connector_id, rpc.inventory
+        )
+    )
+    asyncio.run(
+        app.state.store.create_device_runtime(
+            connector_id,
+            runtime_id="codex",
+            runtime_type="codex",
+            name="Codex",
+            config=None,
+            active=False,
+        )
+    )
+    return client, rpc, connector_id, headers
+
+
+def _make_type_client(tmp_path) -> tuple[TestClient, FakeRpc, str, dict[str, str]]:
+    app = create_app(tmp_path / "test.sqlite3")
+    client = TestClient(app)
+    headers = _auth_headers(client)
+    created = client.post("/connectors", headers=headers, json={"name": "dev"})
+    assert created.status_code == 200, created.text
+    connector_id = created.json()["connector"]["id"]
+    rpc = FakeRpc(_inventory())
+    app.state.rpc = rpc
+    app.state.device_runtime_service = DeviceRuntimeService(app.state.store, rpc)
+    asyncio.run(
+        app.state.device_runtime_service.ingest_runtime_types(
+            connector_id, rpc.inventory
+        )
+    )
     return client, rpc, connector_id, headers
 
 
@@ -179,26 +214,178 @@ def _assert_runtime_start_config_revision(
     config: dict[str, Any],
 ) -> None:
     assert params["runtimeId"] == "codex"
+    assert params["runtimeType"] == "codex"
+    assert params["name"] == "Codex"
     assert params["config"] == config
     assert isinstance(params["configRevision"], int)
     assert params["configRevision"] > 0
 
 
-def test_inventory_exposes_runtime_owned_dynamic_schema(tmp_path):
+def test_runtime_type_discovery_does_not_create_an_instance(tmp_path):
+    app = create_app(tmp_path / "test.sqlite3")
+    client = TestClient(app)
+    headers = _auth_headers(client)
+    created = client.post("/connectors", headers=headers, json={"name": "dev"})
+    connector_id = created.json()["connector"]["id"]
+    rpc = FakeRpc(_inventory())
+    app.state.rpc = rpc
+    app.state.device_runtime_service = DeviceRuntimeService(app.state.store, rpc)
+
+    response = client.post(
+        f"/connectors/{connector_id}/runtime-types/discover", headers=headers
+    )
+    runtimes = client.get(
+        f"/connectors/{connector_id}/runtimes", headers=headers
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["runtimeTypes"][0]["runtimeType"] == "codex"
+    assert response.json()["runtimeTypes"][0]["available"] is True
+    assert runtimes.json()["runtimes"] == []
+
+
+def test_instance_exposes_runtime_type_owned_dynamic_schema(tmp_path):
     client, _, connector_id, headers = _make_client(tmp_path)
 
     response = client.get(f"/connectors/{connector_id}/runtimes", headers=headers)
 
     assert response.status_code == 200, response.text
     runtime = response.json()["runtimes"][0]
-    # Connector inventory reports provider readiness (`configured: true`), but
-    # Server-owned runtime config has not been saved yet.
     assert runtime["configured"] is False
     assert runtime["active"] is False
     assert runtime["schema"]["properties"]["executablePath"]["default"] == (
         "/opt/homebrew/bin/codex"
     )
     assert runtime["uiSchema"]["environment"]["component"] == "keyValue"
+
+
+def test_two_named_instances_of_one_runtime_type_can_be_created(tmp_path):
+    client, rpc, connector_id, headers = _make_type_client(tmp_path)
+
+    first = client.post(
+        f"/connectors/{connector_id}/runtimes",
+        headers=headers,
+        json={
+            "runtimeType": "codex",
+            "name": "Work Codex",
+            "config": {"codexHome": "/work/.codex"},
+            "active": False,
+        },
+    )
+    second = client.post(
+        f"/connectors/{connector_id}/runtimes",
+        headers=headers,
+        json={
+            "runtimeType": "codex",
+            "name": "Personal Codex",
+            "config": {"codexHome": "/personal/.codex"},
+            "active": False,
+        },
+    )
+
+    assert first.status_code == 201, first.text
+    assert second.status_code == 201, second.text
+    assert first.json()["runtimeId"].startswith("rti_")
+    assert second.json()["runtimeId"].startswith("rti_")
+    assert first.json()["runtimeId"] != second.json()["runtimeId"]
+    assert first.json()["displayName"] == "Work Codex"
+    assert first.json()["typeDisplayName"] == "Codex"
+    assert second.json()["runtimeType"] == "codex"
+    assert [request[1] for request in rpc.requests] == [
+        "runtime.validateConfig",
+        "runtime.validateConfig",
+    ]
+    for response, request in zip((first, second), rpc.requests, strict=True):
+        params = request[2]
+        assert params["runtimeId"] == response.json()["runtimeId"]
+        assert params["runtimeType"] == "codex"
+        assert params["name"] == response.json()["name"]
+        assert isinstance(params["configRevision"], int)
+        assert params["configRevision"] > 0
+
+
+def test_runtime_instance_names_are_unique_after_normalization(tmp_path):
+    client, _, connector_id, headers = _make_type_client(tmp_path)
+
+    first = client.post(
+        f"/connectors/{connector_id}/runtimes",
+        headers=headers,
+        json={
+            "runtimeType": "codex",
+            "name": "Work Codex",
+            "config": {},
+            "active": False,
+        },
+    )
+    duplicate = client.post(
+        f"/connectors/{connector_id}/runtimes",
+        headers=headers,
+        json={
+            "runtimeType": "codex",
+            "name": "  work   CODEX  ",
+            "config": {},
+            "active": False,
+        },
+    )
+
+    assert first.status_code == 201, first.text
+    assert duplicate.status_code == 409, duplicate.text
+    assert duplicate.json()["detail"]["code"] == "runtime_conflict"
+    listed = client.get(
+        f"/connectors/{connector_id}/runtimes", headers=headers
+    ).json()["runtimes"]
+    assert [runtime["name"] for runtime in listed] == ["Work Codex"]
+
+
+def test_failed_second_instance_preserves_first_and_exact_error(tmp_path):
+    client, rpc, connector_id, headers = _make_type_client(tmp_path)
+    first = client.post(
+        f"/connectors/{connector_id}/runtimes",
+        headers=headers,
+        json={
+            "runtimeType": "codex",
+            "name": "Primary Codex",
+            "config": {"codexHome": "/shared/.codex"},
+            "active": True,
+        },
+    )
+    assert first.status_code == 201, first.text
+    rpc.errors["runtime.start"] = ConnectorRpcError(
+        "runtime_resource_conflict",
+        "Codex Home '/shared/.codex' is already used by runtime instance 'primary'",
+    )
+
+    second = client.post(
+        f"/connectors/{connector_id}/runtimes",
+        headers=headers,
+        json={
+            "runtimeType": "codex",
+            "name": "Conflicting Codex",
+            "config": {"codexHome": "/shared/.codex"},
+            "active": True,
+        },
+    )
+
+    expected_error = {
+        "code": "runtime_resource_conflict",
+        "message": (
+            "Codex Home '/shared/.codex' is already used by runtime instance "
+            "'primary'"
+        ),
+    }
+    assert second.status_code == 502, second.text
+    assert second.json()["detail"] == expected_error
+    listed = client.get(
+        f"/connectors/{connector_id}/runtimes", headers=headers
+    ).json()["runtimes"]
+    by_name = {runtime["name"]: runtime for runtime in listed}
+    assert by_name["Primary Codex"]["status"] == "running"
+    assert by_name["Primary Codex"]["error"] is None
+    failed = by_name["Conflicting Codex"]
+    assert failed["configured"] is True
+    assert failed["active"] is True
+    assert failed["status"] == "error"
+    assert failed["error"] == expected_error
 
 
 def test_runtime_lifecycle_discovery_status_is_accepted(tmp_path):
@@ -276,7 +463,10 @@ def test_custom_executable_path_is_not_constrained_to_discovered_default(tmp_pat
 
     assert response.status_code == 200, response.text
     assert response.json()["config"] == config
-    assert rpc.requests[-1][2] == {"runtimeId": "codex", "config": config}
+    assert rpc.requests[-1][2]["runtimeId"] == "codex"
+    assert rpc.requests[-1][2]["runtimeType"] == "codex"
+    assert rpc.requests[-1][2]["name"] == "Codex"
+    assert rpc.requests[-1][2]["config"] == config
 
 
 def test_model_gateway_key_round_trips_without_redaction(tmp_path):
@@ -290,11 +480,11 @@ def test_model_gateway_key_round_trips_without_redaction(tmp_path):
         },
         "additionalProperties": False,
     }
-    rpc.inventory["runtimes"][0]["schema"]["properties"]["modelGateway"] = (
+    rpc.inventory["runtimeTypes"][0]["schema"]["properties"]["modelGateway"] = (
         gateway_schema
     )
     asyncio.run(
-        client.app.state.device_runtime_service.ingest_inventory(
+        client.app.state.device_runtime_service.ingest_runtime_types(
             connector_id,
             rpc.inventory,
         )
@@ -317,7 +507,10 @@ def test_model_gateway_key_round_trips_without_redaction(tmp_path):
     assert loaded.status_code == 200, loaded.text
     assert saved.json()["config"] == config
     assert loaded.json()["runtimes"][0]["config"] == config
-    assert rpc.requests[-1][2] == {"runtimeId": "codex", "config": config}
+    assert rpc.requests[-1][2]["runtimeId"] == "codex"
+    assert rpc.requests[-1][2]["runtimeType"] == "codex"
+    assert rpc.requests[-1][2]["name"] == "Codex"
+    assert rpc.requests[-1][2]["config"] == config
 
 
 def test_server_rejects_invalid_config_before_connector_rpc(tmp_path):
@@ -541,7 +734,7 @@ def test_session_runtime_catalog_reads_start_active_runtime_before_rpc(tmp_path)
     assert rpc.requests[2][2] == {"runtime": "codex", "limit": 200}
 
 
-def test_editing_active_config_restarts_runtime(tmp_path):
+def test_editing_active_config_replaces_runtime_without_stopping_first(tmp_path):
     client, rpc, connector_id, headers = _make_client(tmp_path)
     config_url = f"{_runtime_url(connector_id)}/config"
     active_url = f"{_runtime_url(connector_id)}/active"
@@ -559,13 +752,77 @@ def test_editing_active_config_restarts_runtime(tmp_path):
     assert response.json()["status"] == "running"
     assert [request[1] for request in rpc.requests] == [
         "runtime.validateConfig",
-        "runtime.stop",
         "runtime.start",
     ]
     _assert_runtime_start_config_revision(
         rpc.requests[-1][2],
         {"executablePath": "/new/codex"},
     )
+
+
+def test_external_session_reconciliation_is_scoped_by_runtime_instance(tmp_path):
+    client, _, connector_id, _ = _make_type_client(tmp_path)
+    store = client.app.state.store
+
+    async def exercise() -> None:
+        await store.create_device_runtime(
+            connector_id,
+            runtime_id="rti_work",
+            runtime_type="codex",
+            name="Work Codex",
+            config={},
+            active=False,
+        )
+        await store.create_device_runtime(
+            connector_id,
+            runtime_id="rti_personal",
+            runtime_type="codex",
+            name="Personal Codex",
+            config={},
+            active=False,
+        )
+        work = await store.upsert_connector_session(
+            connector_id=connector_id,
+            session_id="sess_work",
+            runtime="rti_work",
+            external_session_id="native_shared",
+        )
+        personal = await store.upsert_connector_session(
+            connector_id=connector_id,
+            session_id="sess_personal",
+            runtime="rti_personal",
+            external_session_id="native_shared",
+        )
+        work_alias = await store.upsert_connector_session(
+            connector_id=connector_id,
+            session_id="sess_work_alias",
+            runtime="rti_work",
+            external_session_id="native_shared",
+        )
+
+        assert work.id == "sess_work"
+        assert personal.id == "sess_personal"
+        assert work_alias.id == work.id
+        assert await store.resolve_connector_session_id(
+            connector_id=connector_id,
+            session_id="missing",
+            runtime="rti_work",
+            external_session_id="native_shared",
+        ) == "sess_work"
+        assert await store.resolve_connector_session_id(
+            connector_id=connector_id,
+            session_id="missing",
+            runtime="rti_personal",
+            external_session_id="native_shared",
+        ) == "sess_personal"
+        with pytest.raises(KeyError):
+            await store.resolve_connector_session_id(
+                connector_id=connector_id,
+                session_id="missing",
+                external_session_id="native_shared",
+            )
+
+    asyncio.run(exercise())
 
 
 def test_start_failure_remains_configured_active_and_visible_as_error(tmp_path):
@@ -587,29 +844,6 @@ def test_start_failure_remains_configured_active_and_visible_as_error(tmp_path):
     assert runtime["active"] is True
     assert runtime["status"] == "error"
     assert runtime["error"]["code"] == "start_failed"
-
-
-def test_delete_running_config_stops_then_returns_to_unconfigured(tmp_path):
-    client, rpc, connector_id, headers = _make_client(tmp_path)
-    config_url = f"{_runtime_url(connector_id)}/config"
-    assert client.put(config_url, headers=headers, json={"config": {}}).status_code == 200
-    assert (
-        client.put(
-            f"{_runtime_url(connector_id)}/active",
-            headers=headers,
-            json={"active": True},
-        ).status_code
-        == 200
-    )
-    rpc.requests.clear()
-
-    response = client.delete(config_url, headers=headers)
-
-    assert response.status_code == 200, response.text
-    assert response.json()["configured"] is False
-    assert response.json()["active"] is False
-    assert response.json()["status"] == "stopped"
-    assert [request[1] for request in rpc.requests] == ["runtime.stop"]
 
 
 def test_deactivation_settles_sessions_without_persisted_notices(tmp_path):
@@ -637,15 +871,14 @@ def test_deactivation_settles_sessions_without_persisted_notices(tmp_path):
     assert asyncio.run(store.get_session(session.id)).status == "idle"
 
 
-def test_explicit_discovery_stops_runtime_that_server_has_not_activated(tmp_path):
+def test_explicit_discovery_does_not_stop_inactive_instance(tmp_path):
     client, rpc, connector_id, headers = _make_client(tmp_path)
-    rpc.inventory = _inventory(status="running")
 
     response = client.post(
-        f"/connectors/{connector_id}/runtimes/discover",
+        f"/connectors/{connector_id}/runtime-types/discover",
         headers=headers,
     )
 
     assert response.status_code == 200, response.text
-    assert response.json()["runtimes"][0]["status"] == "stopped"
-    assert [request[1] for request in rpc.requests] == ["runtime.discover", "runtime.stop"]
+    assert response.json()["runtimeTypes"][0]["available"] is True
+    assert [request[1] for request in rpc.requests] == ["runtime.discover"]

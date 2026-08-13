@@ -4,7 +4,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-RuntimeName = Literal["codex", "claude", "opencode", "acp"]
+from agent_server.core.runtime_identity import RuntimeId
+
 ConnectorStatus = Literal["offline", "online"]
 ConnectorDeviceOs = Literal["macos", "windows", "linux"]
 SessionStatus = Literal[
@@ -531,7 +532,7 @@ class SessionCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     connectorId: str
-    runtime: RuntimeName = "codex"
+    runtime: RuntimeId
     externalSessionId: str | None = None
     title: str | None = None
     cwd: str | None = None
@@ -555,7 +556,7 @@ class SessionCreateAndStartRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     connectorId: str
-    runtime: RuntimeName = "codex"
+    runtime: RuntimeId
     title: str | None = None
     cwd: str | None = None
     content: str
@@ -568,7 +569,7 @@ class SessionView(BaseModel):
     id: str
     connectorId: str
     connectorStatus: ConnectorStatus
-    runtime: RuntimeName
+    runtime: RuntimeId
     externalSessionId: str | None = None
     title: str | None = None
     cwd: str | None = None
@@ -591,7 +592,7 @@ class SessionView(BaseModel):
 
 class SessionRuntimeState(BaseModel):
     sessionId: str
-    runtime: RuntimeName
+    runtime: RuntimeId
     externalSessionId: str | None = None
     status: SessionStatus = "idle"
     selections: dict[str, str | None] = Field(default_factory=dict)
@@ -658,7 +659,7 @@ class SessionResponse(BaseModel):
 
 
 class TimelineSource(BaseModel):
-    runtime: RuntimeName | Literal["platform"]
+    runtime: RuntimeId | Literal["platform"]
     sessionId: str | None = None
     itemId: str | None = None
     itemType: str | None = None
@@ -690,7 +691,7 @@ class TimelineItem(TimelineItemIn):
 
 
 class ApprovalSource(BaseModel):
-    runtime: RuntimeName
+    runtime: RuntimeId
     requestId: str | int
     sessionId: str | None = None
     itemId: str | None = None
@@ -755,7 +756,7 @@ class NoticeAction(BaseModel):
 
 
 class NoticeSource(BaseModel):
-    runtime: RuntimeName | Literal["platform"] | None = None
+    runtime: RuntimeId | Literal["platform"] | None = None
     component: str | None = None
     approvalId: str | None = None
     timelineItemId: str | None = None

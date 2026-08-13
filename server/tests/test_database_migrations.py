@@ -6,7 +6,9 @@ import json
 
 import pytest
 from sqlalchemy import BigInteger, create_engine, inspect, text
+from sqlalchemy.dialects import postgresql
 from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.schema import CreateTable
 
 from agent_server.infra.db.engine import build_engine, resolve_db_url
 from agent_server.infra.db.legacy_import import rehearse_v1_import
@@ -20,6 +22,8 @@ from agent_server.infra.db.migrations import (
 from agent_server.infra.db.schema import (
     connector_protocol_capabilities,
     connector_runtime_catalogs,
+    connector_runtime_types,
+    device_runtimes,
     metadata,
 )
 
@@ -66,9 +70,12 @@ def test_empty_database_upgrades_to_current_schema(tmp_path) -> None:
     engine = create_engine(f"sqlite:///{path}")
     try:
         tables = set(inspect(engine).get_table_names())
-        assert {"alembic_version", "device_runtimes", "sessions"}.issubset(
-            tables
-        )
+        assert {
+            "alembic_version",
+            "connector_runtime_types",
+            "device_runtimes",
+            "sessions",
+        }.issubset(tables)
         assert "approvals" not in tables
         assert "notices" not in tables
     finally:
@@ -117,8 +124,19 @@ def test_unversioned_v1_database_archives_then_removes_legacy_storage(
             runtime = (
                 connection.execute(
                     text(
-                        "SELECT runtime_id, present, active, status, discovery_json, config_json "
+                        "SELECT runtime_id, name, active, status, config_json "
                         "FROM device_runtimes WHERE connector_id = 'conn_legacy'"
+                    )
+                )
+                .mappings()
+                .one()
+            )
+            runtime_type = (
+                connection.execute(
+                    text(
+                        "SELECT available, discovery_json "
+                        "FROM connector_runtime_types "
+                        "WHERE connector_id = 'conn_legacy' AND runtime_type = 'codex'"
                     )
                 )
                 .mappings()
@@ -130,11 +148,13 @@ def test_unversioned_v1_database_archives_then_removes_legacy_storage(
         assert session_status == "blocked"
         assert revision == CURRENT_SCHEMA_REVISION
         assert runtime["runtime_id"] == "codex"
-        assert runtime["present"] == 1
+        assert runtime["name"] == "Codex"
         assert runtime["active"] == 1
         assert runtime["status"] == "unknown"
+        assert runtime_type["available"] == 1
         assert (
-            json.loads(runtime["discovery_json"])["selected"] == "/usr/local/bin/codex"
+            json.loads(runtime_type["discovery_json"])["selected"]
+            == "/usr/local/bin/codex"
         )
         assert json.loads(runtime["config_json"]) == {
             "model": "gpt-5.4",
@@ -229,7 +249,7 @@ def test_unversioned_v2_2_database_is_stamped_then_upgraded(tmp_path) -> None:
         engine.dispose()
 
 
-@pytest.mark.parametrize("source_revision", ["v2_7", "v2_8", "v2_9"])
+@pytest.mark.parametrize("source_revision", ["v2_7", "v2_8", "v2_9", "v2_10"])
 def test_unversioned_recent_v2_database_runs_remaining_migrations(
     tmp_path,
     source_revision: str,
@@ -257,6 +277,10 @@ def test_unversioned_recent_v2_database_runs_remaining_migrations(
         }
         assert "turn_id" not in {
             column["name"] for column in inspector.get_columns("timeline_items")
+        }
+        assert inspector.has_table("connector_runtime_types")
+        assert "name_key" in {
+            column["name"] for column in inspector.get_columns("device_runtimes")
         }
         with engine.connect() as connection:
             assert connection.execute(
@@ -313,6 +337,7 @@ def test_v2_0_database_upgrades_through_current_revision(tmp_path) -> None:
         ("v2_7", "v2_8"),
         ("v2_8", "v2_9"),
         ("v2_9", "v2_10"),
+        ("v2_10", "v2_11"),
     ],
 )
 def test_every_adjacent_schema_upgrade(
@@ -488,6 +513,208 @@ def test_v2_10_adds_timeline_reset_watermark(tmp_path) -> None:
         engine.dispose()
 
 
+def test_v2_11_splits_runtime_types_from_instances(tmp_path) -> None:
+    path = tmp_path / "v2_11-runtime-instances.sqlite3"
+    upgrade_database(db_url=_sqlite_url(path), revision="v2_10")
+    now = "2026-08-13T05:00:00Z"
+
+    engine = create_engine(f"sqlite:///{path}")
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO connectors "
+                    "(id, user_id, name, status, token_hash, token_prefix, revoked, "
+                    "created_at, updated_at) VALUES "
+                    "('conn_runtime', 'user_runtime', 'Runtime host', 'offline', "
+                    "'hash', 'cxt_', 0, :now, :now)"
+                ),
+                {"now": now},
+            )
+            runtime_rows = (
+                {
+                    "runtime_id": "codex",
+                    "runtime_type": "codex",
+                    "display_name": "Work Codex",
+                    "present": 1,
+                    "discovery_json": json.dumps({"available": True}),
+                    "config_schema_json": json.dumps(
+                        {"type": "object", "properties": {}}
+                    ),
+                    "ui_schema_json": json.dumps({"codexHome": {"widget": "path"}}),
+                    "config_json": json.dumps({"codexHome": "/work/.codex"}),
+                    "active": 1,
+                    "status": "error",
+                    "error_json": json.dumps(
+                        {"code": "runtime_start_failed", "message": "kept exactly"}
+                    ),
+                },
+                {
+                    "runtime_id": "claude",
+                    "runtime_type": "claude",
+                    "display_name": "Claude",
+                    "present": 1,
+                    "discovery_json": json.dumps({"available": True}),
+                    "config_schema_json": None,
+                    "ui_schema_json": None,
+                    "config_json": None,
+                    "active": 0,
+                    "status": "available",
+                    "error_json": None,
+                },
+                {
+                    "runtime_id": "legacy-acp",
+                    "runtime_type": "acp",
+                    "display_name": "Legacy ACP",
+                    "present": 0,
+                    "discovery_json": json.dumps({"available": False}),
+                    "config_schema_json": None,
+                    "ui_schema_json": json.dumps({}),
+                    "config_json": None,
+                    "active": 1,
+                    "status": "error",
+                    "error_json": json.dumps({"message": "stale discovery error"}),
+                },
+            )
+            for row in runtime_rows:
+                connection.execute(
+                    text(
+                        "INSERT INTO device_runtimes "
+                        "(connector_id, runtime_id, runtime_type, display_name, present, "
+                        "discovery_json, config_schema_json, ui_schema_json, config_json, "
+                        "active, status, error_json, last_discovered_at, updated_at) VALUES "
+                        "('conn_runtime', :runtime_id, :runtime_type, :display_name, :present, "
+                        ":discovery_json, :config_schema_json, :ui_schema_json, :config_json, "
+                        ":active, :status, :error_json, :now, :now)"
+                    ),
+                    {**row, "now": now},
+                )
+            connection.execute(
+                text(
+                    "INSERT INTO sessions "
+                    "(id, connector_id, runtime, origin, status, takeover, pinned, archived, "
+                    "last_read_seq, timeline_reset_seq, seq, updated_seq, created_at, updated_at) "
+                    "VALUES ('sess_legacy_acp', 'conn_runtime', 'legacy-acp', "
+                    "'connector_import', 'idle', 0, 0, 0, 0, 0, 1, 1, :now, :now)"
+                ),
+                {"now": now},
+            )
+    finally:
+        engine.dispose()
+
+    upgrade_database(db_url=_sqlite_url(path), revision="v2_11")
+
+    engine = create_engine(f"sqlite:///{path}")
+    try:
+        inspector = inspect(engine)
+        assert {
+            "connector_id",
+            "runtime_type",
+            "display_name",
+            "description",
+            "available",
+            "recommended",
+            "recommendation_rank",
+            "discovery_json",
+            "config_schema_json",
+            "ui_schema_json",
+            "defaults_json",
+            "capabilities_json",
+            "metadata_json",
+            "last_discovered_at",
+            "updated_at",
+        } == {
+            column["name"]
+            for column in inspector.get_columns("connector_runtime_types")
+        }
+        assert {
+            "connector_id",
+            "runtime_id",
+            "runtime_type",
+            "name",
+            "name_key",
+            "config_json",
+            "active",
+            "status",
+            "error_json",
+            "created_at",
+            "updated_at",
+        } == {column["name"] for column in inspector.get_columns("device_runtimes")}
+        unique_columns = {
+            tuple(constraint["column_names"])
+            for constraint in inspector.get_unique_constraints("device_runtimes")
+        }
+        assert ("connector_id", "name_key") in unique_columns
+
+        with engine.connect() as connection:
+            runtime_types = connection.execute(
+                text(
+                    "SELECT runtime_type, display_name, available, discovery_json, "
+                    "defaults_json, capabilities_json, metadata_json "
+                    "FROM connector_runtime_types ORDER BY runtime_type"
+                )
+            ).mappings().all()
+            instances = connection.execute(
+                text(
+                    "SELECT runtime_id, runtime_type, name, name_key, config_json, active, "
+                    "status, error_json, created_at FROM device_runtimes ORDER BY runtime_id"
+                )
+            ).mappings().all()
+            session_runtime = connection.execute(
+                text("SELECT runtime FROM sessions WHERE id = 'sess_legacy_acp'")
+            ).scalar_one()
+            revision = connection.execute(
+                text("SELECT version_num FROM alembic_version")
+            ).scalar_one()
+
+        assert [row["runtime_type"] for row in runtime_types] == [
+            "acp",
+            "claude",
+            "codex",
+        ]
+        assert all(json.loads(row["defaults_json"]) == {} for row in runtime_types)
+        assert all(
+            json.loads(row["capabilities_json"]) == {} for row in runtime_types
+        )
+        assert all(json.loads(row["metadata_json"]) == {} for row in runtime_types)
+        assert [row["runtime_id"] for row in instances] == ["codex", "legacy-acp"]
+        codex = instances[0]
+        assert codex["runtime_type"] == "codex"
+        assert codex["name"] == "Work Codex"
+        assert codex["name_key"] == "work codex"
+        assert json.loads(codex["config_json"]) == {"codexHome": "/work/.codex"}
+        assert codex["active"] == 1
+        assert codex["status"] == "error"
+        assert json.loads(codex["error_json"]) == {
+            "code": "runtime_start_failed",
+            "message": "kept exactly",
+        }
+        legacy = instances[1]
+        assert legacy["runtime_type"] == "acp"
+        assert legacy["config_json"] is None
+        assert legacy["active"] == 0
+        assert legacy["status"] == "stopped"
+        assert legacy["error_json"] is None
+        assert legacy["created_at"] == now
+        assert session_runtime == "legacy-acp"
+        assert revision == "v2_11"
+    finally:
+        engine.dispose()
+
+
+def test_v2_11_runtime_tables_compile_for_postgres() -> None:
+    dialect = postgresql.dialect()
+
+    runtime_types_ddl = str(
+        CreateTable(connector_runtime_types).compile(dialect=dialect)
+    )
+    instances_ddl = str(CreateTable(device_runtimes).compile(dialect=dialect))
+
+    assert "PRIMARY KEY (connector_id, runtime_type)" in runtime_types_ddl
+    assert "UNIQUE (connector_id, name_key)" in instances_ddl
+    assert "FOREIGN KEY(connector_id, runtime_type)" in instances_ddl
+
+
 def test_current_schema_drops_legacy_approval_notice_storage(tmp_path) -> None:
     path = tmp_path / "approval-v2-2.sqlite3"
     upgrade_database(db_url=_sqlite_url(path), revision="v2_2")
@@ -659,6 +886,7 @@ def _create_legacy_v1_database(path) -> None:
         connection.execute(text("DROP TABLE IF EXISTS notices"))
         connection.execute(text("DROP TABLE connector_protocol_capabilities"))
         connection.execute(text("DROP TABLE connector_runtime_catalogs"))
+        connection.execute(text("DROP TABLE connector_runtime_types"))
         connection.execute(text("DROP TABLE device_runtimes"))
         connection.execute(text("DROP TABLE IF EXISTS session_states"))
         connection.execute(

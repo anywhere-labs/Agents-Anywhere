@@ -9,11 +9,11 @@ from agent_server.core.catalogs import (
     validate_model_catalog,
     validate_permission_catalog,
 )
-from agent_server.core.models import RuntimeName
 from agent_server.core.protocol import (
     ProtocolModelCatalog,
     ProtocolPermissionCatalog,
 )
+from agent_server.core.runtime_identity import RuntimeId
 from agent_server.services.model_catalog import resolve_model_selection
 from agent_server.services.permission_catalog import resolve_permission_selection
 from agent_server.services.repository_ports import CatalogRepository
@@ -56,7 +56,7 @@ class CatalogService:
         self,
         connector_id: str,
         *,
-        runtime: RuntimeName,
+        runtime: RuntimeId,
         user_id: str | None = None,
     ) -> ProtocolModelCatalog | None:
         raw = await self._store.get_protocol_catalog(
@@ -76,7 +76,7 @@ class CatalogService:
         self,
         connector_id: str,
         *,
-        runtime: RuntimeName,
+        runtime: RuntimeId,
         user_id: str | None = None,
     ) -> ProtocolPermissionCatalog | None:
         raw = await self._store.get_protocol_catalog(
@@ -96,7 +96,7 @@ class CatalogService:
         self,
         connector_id: str,
         *,
-        runtime: RuntimeName,
+        runtime: RuntimeId,
         selection_id: str,
     ) -> tuple[str, str | None]:
         catalog = await self.model_catalog(connector_id, runtime=runtime)
@@ -114,7 +114,7 @@ class CatalogService:
         self,
         connector_id: str,
         *,
-        runtime: RuntimeName,
+        runtime: RuntimeId,
         selection_id: str,
     ) -> dict[str, object]:
         catalog = await self.permission_catalog(connector_id, runtime=runtime)

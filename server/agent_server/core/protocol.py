@@ -10,11 +10,11 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from agent_server.core.models import (
     Approval,
     NoticeIn,
-    RuntimeName,
     SessionRuntimeState,
     SessionView,
     TimelineItem,
 )
+from agent_server.core.runtime_identity import RuntimeId
 
 PROTOCOL_VERSION_1 = "1.0"
 SUPPORTED_PROTOCOL_VERSIONS = [PROTOCOL_VERSION_1]
@@ -29,7 +29,7 @@ class ProtocolWireModel(BaseModel):
 
 
 class ProtocolRuntimeIdentity(ProtocolWireModel):
-    runtime: RuntimeName
+    runtime: RuntimeId
     runtimeVersion: str
 
 
@@ -48,7 +48,7 @@ class ProtocolCapability(ProtocolWireModel):
     capabilityId: str
     version: str = "1"
     scope: ProtocolCapabilityScope = "runtime"
-    runtime: RuntimeName | None = None
+    runtime: RuntimeId | None = None
     sessionId: str | None = None
     supported: bool = True
     available: bool = True
@@ -89,7 +89,7 @@ class ProtocolModelItem(ProtocolWireModel):
 
 
 class ProtocolModelCatalog(ProtocolWireModel):
-    runtime: RuntimeName
+    runtime: RuntimeId
     revision: int = Field(ge=0, le=PROTOCOL_MAX_REVISION)
     models: list[ProtocolModelItem] = Field(default_factory=list)
 
@@ -109,7 +109,7 @@ class ProtocolPermissionItem(ProtocolWireModel):
 
 
 class ProtocolPermissionCatalog(ProtocolWireModel):
-    runtime: RuntimeName
+    runtime: RuntimeId
     revision: int = Field(ge=0, le=PROTOCOL_MAX_REVISION)
     permissions: list[ProtocolPermissionItem] = Field(default_factory=list)
 

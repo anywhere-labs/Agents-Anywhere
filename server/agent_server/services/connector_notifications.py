@@ -258,13 +258,21 @@ class SessionNotificationHandler:
             _reject_legacy_selection_fields(params, notification=method)
         session_id = params["sessionId"]
         external_session_id = params.get("externalSessionId")
+        runtime = _string_or_none(params.get("runtime"))
         should_archive = _session_meta_should_archive(params)
         try:
-            if isinstance(external_session_id, str):
+            if isinstance(external_session_id, str) and runtime is not None:
                 session_id = await self._store.resolve_connector_session_id(
                     connector_id=connector_id,
                     session_id=session_id,
+                    runtime=runtime,
                     external_session_id=external_session_id,
+                )
+            existing = await self._store.get_session(session_id)
+            if runtime is not None and existing.runtime != runtime:
+                raise NotificationValidationError(
+                    "session_runtime_mismatch",
+                    f"{method} runtime does not match the session binding",
                 )
             session = await self._store.update_session_snapshot(
                 session_id=session_id,
@@ -280,10 +288,11 @@ class SessionNotificationHandler:
                 session = await self._store.set_session_archived(session.id, True)
             return IngestEffect(session_id=session.id, session_changed=True)
         except KeyError:
+            runtime = _required_runtime(params, notification=method)
             session = await self._store.upsert_connector_session(
                 connector_id=connector_id,
                 session_id=session_id,
-                runtime=params.get("runtime") or "codex",
+                runtime=runtime,
                 external_session_id=_string_or_none(external_session_id),
                 title=params.get("title"),
                 cwd=params.get("cwd"),
@@ -311,20 +320,22 @@ class SessionStateNotificationHandler:
             return None
         _reject_legacy_selection_fields(params, notification=method)
         session_id = params["sessionId"]
-        runtime = params.get("runtime") or "codex"
+        runtime = _string_or_none(params.get("runtime"))
         external_session_id = _string_or_none(params.get("externalSessionId"))
-        if external_session_id is not None:
+        if external_session_id is not None and runtime is not None:
             try:
                 session_id = await self._store.resolve_connector_session_id(
                     connector_id=connector_id,
                     session_id=session_id,
+                    runtime=runtime,
                     external_session_id=external_session_id,
                 )
             except KeyError:
                 pass
         try:
-            await self._store.get_session(session_id)
+            session = await self._store.get_session(session_id)
         except KeyError:
+            runtime = _required_runtime(params, notification=method)
             session = await self._store.upsert_connector_session(
                 connector_id=connector_id,
                 session_id=session_id,
@@ -332,6 +343,14 @@ class SessionStateNotificationHandler:
                 external_session_id=external_session_id,
             )
             session_id = session.id
+        else:
+            if runtime is None:
+                runtime = session.runtime
+            elif session.runtime != runtime:
+                raise NotificationValidationError(
+                    "session_runtime_mismatch",
+                    f"{method} runtime does not match the session binding",
+                )
         runtime_state = runtime_state_from_session_state_params(
             session_id=session_id,
             runtime=runtime,
@@ -624,10 +643,19 @@ async def _resolve_timeline_session_id(
         (item.source.sessionId for item in items if item.source.sessionId),
         None,
     )
+    runtime = next(
+        (
+            item.source.runtime
+            for item in items
+            if item.source.runtime != "platform"
+        ),
+        None,
+    )
     try:
         return await store.resolve_connector_session_id(
             connector_id=connector_id,
             session_id=session_id,
+            runtime=runtime,
             external_session_id=external_session_id,
         )
     except KeyError:
@@ -696,7 +724,17 @@ def _string_param(
 
 
 def _string_or_none(value: Any) -> str | None:
-    return value if isinstance(value, str) else None
+    return value if isinstance(value, str) and value else None
+
+
+def _required_runtime(params: dict[str, Any], *, notification: str) -> str:
+    runtime = _string_or_none(params.get("runtime"))
+    if runtime is None:
+        raise NotificationValidationError(
+            "missing_runtime",
+            f"{notification} requires runtime for a new session",
+        )
+    return runtime
 
 
 def _object_or_none(value: Any) -> dict[str, Any] | None:
