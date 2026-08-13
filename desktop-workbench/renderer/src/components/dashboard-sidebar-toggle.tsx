@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { PanelLeftClose, PanelLeftOpen } from "lucide-react"
+import { PanelLeft } from "lucide-react"
 import { useTranslations } from "next-intl"
 
 import { useDashboardSidebarControls } from "@/components/dashboard-sidebar-controls"
@@ -20,7 +20,6 @@ export function DashboardSidebarToggle({
   const sidebarControls = useDashboardSidebarControls()
   const tActions = useTranslations("dashboard.actions")
   const isExpanded = isMobile ? openMobile : sidebarControls?.open ?? open
-  const Icon = isExpanded ? PanelLeftClose : PanelLeftOpen
 
   const toggleDashboardSidebar = React.useCallback(() => {
     if (isMobile) {
@@ -41,7 +40,7 @@ export function DashboardSidebarToggle({
       onClick={toggleDashboardSidebar}
       className={cn("shrink-0 text-muted-foreground hover:text-foreground", className)}
     >
-      <Icon data-icon="inline-start" />
+      <PanelLeft data-icon="inline-start" />
     </Button>
   )
 }
