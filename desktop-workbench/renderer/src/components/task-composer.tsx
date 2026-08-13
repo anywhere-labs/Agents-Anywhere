@@ -6,7 +6,6 @@ import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
-import { useSidebar } from "@/components/ui/sidebar"
 import { Spinner } from "@/components/ui/spinner"
 import { Textarea } from "@/components/ui/textarea"
 import {
@@ -37,6 +36,7 @@ import { dashboardApi } from "@/features/dashboard/api"
 import { createClientId } from "@/lib/id"
 import { cn } from "@/lib/utils"
 import { useElementWidth } from "@/hooks/use-element-width"
+import { useIsMobile } from "@/hooks/use-mobile"
 import type {
   DeviceRuntimeView,
   InlineAttachmentRef,
@@ -140,15 +140,14 @@ type MobileNewSessionTitleKey = (typeof MOBILE_NEW_SESSION_TITLE_KEYS)[number]
 
 export function TaskComposer() {
   const { session: authSession } = useAuth()
-  const { isMobile, state: sidebarState } = useSidebar()
   const {
     addOptimisticMessage,
     bindOptimisticSession,
     connectors,
-    goHome,
     markOptimisticMessageFailed,
     openSession,
   } = useWorkspace()
+  const isMobile = useIsMobile()
   const t = useTranslations("dashboard.new")
   const typewriterTitles = React.useMemo(
     () => {
@@ -522,8 +521,6 @@ export function TaskComposer() {
       Boolean(authSession?.accessToken && hasOnlineDevice && selectedConnector && selectedAgent) && catalogsLoading
     )
   const compactSelectors = composerWidth > 0 && composerWidth < 640
-  const showCollapsedBrand = isMobile || sidebarState === "collapsed"
-
   const handleCreate = async () => {
     if (!authSession?.accessToken || !selectedConnector || !selectedAgent || creating) return
     if (!prompt.trim() && attachments.length === 0) return
@@ -647,15 +644,6 @@ export function TaskComposer() {
       <DragOverlay isDragging={isDragging} />
       <div className="absolute left-3 top-3 flex items-center gap-2">
         <DashboardSidebarToggle />
-        {showCollapsedBrand ? (
-          <button
-            type="button"
-            onClick={goHome}
-            className="aa-wordmark text-xl leading-none text-foreground transition-colors hover:text-primary"
-          >
-            Agents Anywhere
-          </button>
-        ) : null}
       </div>
 
       <div className="w-full max-w-3xl">

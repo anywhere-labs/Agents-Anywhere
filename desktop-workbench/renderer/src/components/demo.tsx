@@ -165,7 +165,7 @@ function DesktopResizableShell() {
             }}
             className="min-w-0 overflow-hidden"
           >
-            {open ? <AppSidebar contained /> : null}
+            <AppSidebar contained />
           </ResizablePanel>
           <ResizableHandle className="bg-transparent transition-colors hover:bg-border/40 focus-visible:bg-border/60" />
           <ResizablePanel id="dashboard-main" minSize={0} className="min-w-0">
