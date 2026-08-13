@@ -25,10 +25,6 @@ from agent_server.services.session_states import SessionStateService
             "waiting",
         ),
         (
-            SessionStateFacts(current_status="pending", has_active_timeline_work=True),
-            "running",
-        ),
-        (
             SessionStateFacts(current_status="idle", observed_status="running"),
             "running",
         ),
@@ -43,7 +39,6 @@ from agent_server.services.session_states import SessionStateService
         (
             SessionStateFacts(
                 current_status="running",
-                has_active_timeline_work=True,
                 has_blocking_interaction=True,
             ),
             "waiting_approval",
@@ -55,10 +50,10 @@ from agent_server.services.session_states import SessionStateService
         (
             SessionStateFacts(
                 current_status="stopping",
-                has_active_timeline_work=True,
+                has_active_run=True,
                 settle_stopping=True,
             ),
-            "running",
+            "waiting",
         ),
         (
             SessionStateFacts(
@@ -78,7 +73,7 @@ from agent_server.services.session_states import SessionStateService
             SessionStateFacts(
                 current_status="running",
                 observed_status="stopping",
-                has_active_timeline_work=True,
+                has_active_run=True,
             ),
             "stopping",
         ),
@@ -113,16 +108,6 @@ def test_session_state_service_reconciles_with_compare_and_set() -> None:
     assert repository.writes == [("waiting", "idle")]
 
 
-def test_session_state_service_treats_active_timeline_item_as_running() -> None:
-    repository = _SessionStateRepository(status="idle", active_timeline_item=True)
-    service = SessionStateService(repository)
-
-    session = asyncio.run(service.reconcile("session-1"))
-
-    assert session.status == "running"
-    assert repository.writes == [("running", "idle")]
-
-
 def test_session_state_service_retries_concurrent_equivalent_update() -> None:
     repository = _SessionStateRepository(status="idle", active_run=True)
     repository.conflict_once = True
@@ -152,7 +137,6 @@ class _SessionStateRepository:
         *,
         status: SessionStatus,
         active_run: bool = False,
-        active_timeline_item: bool = False,
     ) -> None:
         self.session = SessionView(
             id="session-1",
@@ -164,7 +148,6 @@ class _SessionStateRepository:
             updatedSeq=1,
         )
         self.active_run = active_run
-        self.active_timeline_item = active_timeline_item
         self.conflict_once = False
         self.writes: list[tuple[SessionStatus, SessionStatus | None]] = []
 
@@ -181,10 +164,6 @@ class _SessionStateRepository:
     async def get_active_run(self, session_id: str) -> dict[str, Any] | None:
         assert session_id == self.session.id
         return {"sessionId": session_id} if self.active_run else None
-
-    async def has_active_timeline_item(self, session_id: str) -> bool:
-        assert session_id == self.session.id
-        return self.active_timeline_item
 
     async def list_open_blocking_notices(self, session_id: str) -> list[Notice]:
         assert session_id == self.session.id

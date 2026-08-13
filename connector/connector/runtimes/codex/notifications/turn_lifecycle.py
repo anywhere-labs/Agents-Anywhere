@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from connector.runtime_protocol import RuntimeSessionStateCache
-from connector.runtime_protocol.host import RuntimeHostClient
 from connector.runtimes.codex.domain import sessions as codex_sessions
 from connector.runtimes.codex.notifications.notices import (
     CodexNoticeHandler,
@@ -15,7 +14,6 @@ from connector.runtimes.codex.timeline.accumulator import CodexTimelineAccumulat
 
 @dataclass(slots=True)
 class CodexTurnLifecycleHandler:
-    host: RuntimeHostClient
     session_states: RuntimeSessionStateCache
     active_turn_ids: dict[str, str]
     timeline: CodexTimelineAccumulator
@@ -54,11 +52,11 @@ class CodexTurnLifecycleHandler:
         thread_id: str,
         event: CodexSdkEvent,
     ) -> None:
-        """Publish terminal turn sync and idle state.
+        """Finish Runtime-owned turn state and publish the idle state.
 
         Side effects:
         - clears active_turn_ids for the session
-        - may publish timeline_sync with terminal turn items
+        - releases bounded live timeline accumulation state
         - closes blocking notices
         - updates SessionState.status to idle
         """
@@ -70,21 +68,7 @@ class CodexTurnLifecycleHandler:
         )
         self.active_turn_ids.pop(session_id, None)
         method = event.event_type
-        turn_items = self.timeline.items_from_turn_event(
-            session_id=session_id,
-            external_session_id=thread_id,
-            event=event,
-        )
         self.timeline.end_turn(thread_id, turn_id)
-        if turn_items:
-            await self.host.timeline_sync(
-                session_id=session_id,
-                runtime="codex",
-                external_session_id=thread_id,
-                items=turn_items,
-                complete=False,
-                metadata={"source": f"codex.{method}"},
-            )
         await self.notice_handler.close_blocking_notices_for_terminal_turn(
             session_id=session_id,
             status="closed",
@@ -104,11 +88,11 @@ class CodexTurnLifecycleHandler:
         thread_id: str,
         event: CodexSdkEvent,
     ) -> None:
-        """Publish failed turn items, notice, and error state.
+        """Finish Runtime-owned failed turn state and publish the error.
 
         Side effects:
         - clears active_turn_ids for the session
-        - may publish timeline_sync with failed turn items
+        - releases bounded live timeline accumulation state
         - closes blocking notices
         - upserts an execution error notice
         - updates SessionState.status to error
@@ -121,21 +105,7 @@ class CodexTurnLifecycleHandler:
             or self.active_turn_ids.get(session_id)
         )
         self.active_turn_ids.pop(session_id, None)
-        turn_items = self.timeline.items_from_turn_event(
-            session_id=session_id,
-            external_session_id=thread_id,
-            event=event,
-        )
         self.timeline.end_turn(thread_id, turn_id)
-        if turn_items:
-            await self.host.timeline_sync(
-                session_id=session_id,
-                runtime="codex",
-                external_session_id=thread_id,
-                items=turn_items,
-                complete=False,
-                metadata={"source": "codex.turn/failed"},
-            )
         notice = self.notice_handler.execution_error_notice(
             session_id=session_id,
             thread_id=thread_id,

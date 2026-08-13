@@ -11,6 +11,10 @@ from agent_server.core.models import (
     TimelineItem,
     TimelineItemIn,
 )
+from agent_server.core.timeline import (
+    TimelineBatchWriteResult,
+    TimelineItemWriteResult,
+)
 
 
 class SessionLookupRepository(Protocol):
@@ -49,8 +53,6 @@ class CatalogRepository(Protocol):
 
 class SessionStateRepository(SessionLookupRepository, Protocol):
     async def get_active_run(self, session_id: str) -> dict[str, Any] | None: ...
-
-    async def has_active_timeline_item(self, session_id: str) -> bool: ...
 
     async def set_session_status(
         self,
@@ -96,7 +98,7 @@ class TimelineEffectRepository(Protocol):
         item: TimelineItemIn,
         source_observed_at: str | None = None,
         mark_read_on_change: bool = False,
-    ) -> TimelineItem: ...
+    ) -> TimelineItemWriteResult: ...
 
 class InteractionResolutionRepository(
     SessionLookupRepository,
@@ -151,14 +153,6 @@ class ConnectorNotificationRepository(
         user_id: str | None = None,
     ) -> dict[str, Any]: ...
 
-    async def replace_timeline(
-        self,
-        *,
-        session_id: str,
-        items: list[TimelineItemIn],
-        source_observed_at: str | None = None,
-    ) -> tuple[list[TimelineItem], bool]: ...
-
     async def replace_timeline_snapshot(
         self,
         *,
@@ -166,7 +160,7 @@ class ConnectorNotificationRepository(
         items: list[TimelineItemIn],
         source_observed_at: str | None = None,
         mark_read_on_change: bool = False,
-    ) -> list[TimelineItem]: ...
+    ) -> TimelineBatchWriteResult: ...
 
     async def sync_timeline_items(
         self,
@@ -175,7 +169,7 @@ class ConnectorNotificationRepository(
         items: list[TimelineItemIn],
         source_observed_at: str | None = None,
         mark_read_on_change: bool = False,
-    ) -> list[TimelineItem]: ...
+    ) -> TimelineBatchWriteResult: ...
 
     async def resolve_connector_session_id(
         self,

@@ -22,8 +22,8 @@ from agent_server.infra.db.engine import POSTGRES_BACKEND, resolve_db_url
 
 LEGACY_V1_REVISION = "v1_legacy"
 BASELINE_V2_REVISION = "v2_0"
-CURRENT_SCHEMA_REVISION = "v2_9"
-CURRENT_SCHEMA_VERSION = "2.8"
+CURRENT_SCHEMA_REVISION = "v2_10"
+CURRENT_SCHEMA_VERSION = "2.10"
 POSTGRES_MIGRATION_LOCK_ID = 0x414147454E545332
 DEFAULT_MIGRATION_LOCK_TIMEOUT_SECONDS = 120.0
 
@@ -267,6 +267,8 @@ def _classify_sync(connection) -> UnversionedDatabase:
 
     session_columns = _column_names(inspector, "sessions")
     connector_columns = _column_names(inspector, "connectors")
+    active_run_columns = _column_names(inspector, "session_active_runs")
+    timeline_columns = _column_names(inspector, "timeline_items")
     if {
         "connectors",
         "sessions",
@@ -288,6 +290,12 @@ def _classify_sync(connection) -> UnversionedDatabase:
                 revision = "v2_5"
             elif "notices" in tables:
                 revision = "v2_6"
+            elif "turn_id" in active_run_columns:
+                revision = "v2_7"
+            elif "turn_id" in timeline_columns:
+                revision = "v2_8"
+            elif "timeline_reset_seq" not in session_columns:
+                revision = "v2_9"
             else:
                 revision = CURRENT_SCHEMA_REVISION
             return UnversionedDatabase("v2", revision)

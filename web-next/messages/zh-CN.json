@@ -460,6 +460,10 @@
       "runtimeIssue": "异常",
       "runtimeStatus": {
         "stopped": "已停止",
+        "discovering": "正在发现",
+        "available": "可用",
+        "unavailable": "不可用",
+        "validating": "正在验证",
         "starting": "启动中",
         "running": "运行中",
         "stopping": "停止中",

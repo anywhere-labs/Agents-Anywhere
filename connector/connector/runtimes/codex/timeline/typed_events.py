@@ -42,15 +42,17 @@ from openai_codex.generated.v2_all import (
     TextUserInput,
     Thread,
     ThreadItem,
-    TurnCompletedNotification,
-    TurnStartedNotification,
     UserInput,
     UserMessageThreadItem,
     WebSearchThreadItem,
 )
 
 from connector.runtimes.codex.sdk.events import CodexSdkEvent
-from connector.runtimes.codex.timeline.identity import uses_turn_position_identity
+from connector.runtimes.codex.timeline.identity import (
+    next_turn_lane_position,
+    turn_item_lane,
+    uses_turn_position_identity,
+)
 from connector.runtimes.codex.timeline.projection import CodexTimelineProjection
 
 
@@ -143,37 +145,13 @@ def timeline_projection_from_sdk_event(
     return None
 
 
-def timeline_projections_from_sdk_turn_event(
-    event: CodexSdkEvent,
-) -> tuple[CodexTimelineProjection, ...] | None:
-    payload = event.payload
-    if not isinstance(payload, TurnStartedNotification | TurnCompletedNotification):
-        return None
-    projections: list[CodexTimelineProjection] = []
-    generated_position = 0
-    for item in payload.turn.items:
-        projection = timeline_projection_from_thread_item(
-            item=item,
-            turn_id=payload.turn.id,
-            event_status=None,
-        )
-        if projection is not None:
-            if uses_turn_position_identity(
-                projection.raw_type, projection.effective_role()
-            ):
-                projection = projection.with_turn_position(generated_position)
-                generated_position += 1
-            projections.append(projection)
-    return tuple(projections)
-
-
 def timeline_projections_from_sdk_thread(
     thread: Thread,
     limit: int | None,
 ) -> tuple[CodexTimelineProjection, ...]:
     projections: list[CodexTimelineProjection] = []
     for turn in thread.turns:
-        generated_position = 0
+        next_position_by_lane: dict[str, int] = {}
         for item in turn.items:
             projection = timeline_projection_from_thread_item(
                 item=item,
@@ -184,8 +162,12 @@ def timeline_projections_from_sdk_thread(
                 if uses_turn_position_identity(
                     projection.raw_type, projection.effective_role()
                 ):
-                    projection = projection.with_turn_position(generated_position)
-                    generated_position += 1
+                    lane = turn_item_lane(
+                        projection.raw_type,
+                        projection.effective_role(),
+                    )
+                    position = next_turn_lane_position(next_position_by_lane, lane)
+                    projection = projection.with_turn_position(position)
                 projections.append(projection)
     if limit is None:
         return tuple(projections)

@@ -4,9 +4,12 @@ import asyncio
 import json
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, WebSocket
 from starlette.requests import HTTPConnection
 
+from agent_server.api.server_push_websocket import (
+    run_server_push_until_disconnect,
+)
 from agent_server.core.utc import utc_now
 from agent_server.deps import (
     get_rpc,
@@ -87,7 +90,8 @@ async def dashboard_ws(
 
     await websocket.accept()
     queue = await broker.register_dashboard(ticket.user_id)
-    try:
+
+    async def send_dashboard_updates() -> None:
         await websocket.send_json(
             await _dashboard_snapshot(
                 db=db,
@@ -100,7 +104,9 @@ async def dashboard_ws(
             try:
                 message = await asyncio.wait_for(queue.get(), timeout=15.0)
             except TimeoutError:
-                await websocket.send_json({"type": "keepalive", "serverTime": utc_now()})
+                await websocket.send_json(
+                    {"type": "keepalive", "serverTime": utc_now()}
+                )
                 continue
             try:
                 invalidation = json.loads(message)
@@ -118,7 +124,11 @@ async def dashboard_ws(
                     user_id=ticket.user_id,
                 )
             )
-    except WebSocketDisconnect:
-        pass
+
+    try:
+        await run_server_push_until_disconnect(
+            websocket,
+            send_dashboard_updates(),
+        )
     finally:
         await broker.unregister_dashboard(ticket.user_id, queue)

@@ -460,6 +460,10 @@
       "runtimeIssue": "Issue",
       "runtimeStatus": {
         "stopped": "Stopped",
+        "discovering": "Discovering",
+        "available": "Available",
+        "unavailable": "Unavailable",
+        "validating": "Validating",
         "starting": "Starting",
         "running": "Running",
         "stopping": "Stopping",

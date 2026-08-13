@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi.testclient import TestClient
 
 from agent_server.app import create_app
+from agent_server.infra.db.migrations import CURRENT_SCHEMA_VERSION
 
 
 def test_liveness_and_readiness_are_separate(tmp_path) -> None:
@@ -14,7 +15,7 @@ def test_liveness_and_readiness_are_separate(tmp_path) -> None:
     assert response.status_code == 200
     assert response.json()["status"] == "ready"
     assert response.json()["checks"] == {
-        "database": {"status": "ok", "schemaVersion": "2.4"},
+        "database": {"status": "ok", "schemaVersion": CURRENT_SCHEMA_VERSION},
         "redis": {"status": "not_configured"},
     }
 

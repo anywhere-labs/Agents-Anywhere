@@ -1,3 +1,5 @@
+# ruff: noqa: F401, F811, I001
+
 from __future__ import annotations
 
 import asyncio
@@ -10,7 +12,7 @@ import shutil
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, AsyncIterator
+from typing import Any
 
 from loguru import logger
 from sqlalchemy import create_engine, delete, func, insert, select, text, update
@@ -53,8 +55,6 @@ from agent_server.core.models import (
     PairingPollResponse,
     SessionRuntimeState,
     SessionView,
-    TimelineItem,
-    TimelineItemIn,
     UserView,
 )
 from agent_server.infra.repositories import (
@@ -66,14 +66,6 @@ from agent_server.core.utc import utc_now
 from agent_server.infra.timeline_store import SqlTimelineStore
 
 DERIVED_SESSION_TITLE_MAX_CHARS = 48
-CODEX_ATTACHMENT_ECHO_MARKERS = (
-    "\n\n[Attached file: ",
-    "\n\nAttached file: ",
-    " Attached file: ",
-    "[Attached file: ",
-    "Attached file: ",
-    "File content:",
-)
 
 # Username format: 3-32 chars, lowercase letters / digits / hyphen / underscore.
 # Stored lowercase regardless of input.
@@ -113,12 +105,6 @@ def _utc_now_plus(seconds: int) -> str:
     return (datetime.now(UTC) + timedelta(seconds=max(60, seconds))).isoformat().replace("+00:00", "Z")
 
 
-def _session_lock_key(session_id: str) -> int:
-    """Hash session_id into a signed 64-bit int suitable for pg_advisory_lock."""
-    digest = hashlib.sha256(session_id.encode("utf-8")).digest()
-    return int.from_bytes(digest[:8], "big", signed=True)
-
-
 def _default_files_root(engine: AsyncEngine, path: str | Path | None) -> Path:
     """Pick a sibling directory for uploaded file blobs.
 
@@ -142,7 +128,7 @@ def _user_from_row(row: Any) -> UserView:
         userId=row["id"],
         role=row["role"],
         disabled=bool(row["disabled"]),
-        avatar=row["avatar"] if "avatar" in row.keys() else None,
+        avatar=row.get("avatar"),
         createdAt=row["created_at"],
         updatedAt=row["updated_at"],
     )
@@ -150,229 +136,6 @@ def _user_from_row(row: Any) -> UserView:
 
 def _mobile_login_token_hash(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
-
-
-def _dedupe_legacy_history_items(items: list[TimelineItem]) -> list[TimelineItem]:
-    live_keys = {_live_duplicate_key(item) for item in items}
-    live_keys.discard(None)
-    live_client_message_ids = {
-        client_message_id
-        for item in items
-        if _timeline_source_event(item) != "thread/read"
-        and (client_message_id := _timeline_source_client_message_id(item)) is not None
-    }
-    canonical_keys = {_canonical_duplicate_key(item) for item in items}
-    canonical_keys.discard(None)
-    result: list[TimelineItem] = []
-    for item in items:
-        if _is_thread_read_echo(item, live_client_message_ids):
-            continue
-        snapshot_key = _snapshot_duplicate_key(item)
-        if snapshot_key is not None and snapshot_key in live_keys:
-            continue
-        legacy_key = _legacy_duplicate_key(item)
-        if legacy_key is not None and legacy_key in canonical_keys:
-            continue
-        result.append(item)
-    return _dedupe_source_items(result)
-
-
-def _dedupe_source_items(items: list[TimelineItem]) -> list[TimelineItem]:
-    return _drop_empty_assistant_started_items(_dedupe_native_source_items(items))
-
-
-def _dedupe_native_source_items(items: list[TimelineItem]) -> list[TimelineItem]:
-    result: list[TimelineItem] = []
-    indexes: dict[tuple[str, str, str, str], int] = {}
-    for item in items:
-        key = _source_item_duplicate_key(item)
-        if key is None:
-            result.append(item)
-            continue
-        existing_index = indexes.get(key)
-        if existing_index is None:
-            indexes[key] = len(result)
-            result.append(item)
-            continue
-        existing = result[existing_index]
-        if _source_item_preference(item) > _source_item_preference(existing):
-            result[existing_index] = item
-    return result
-
-
-def _drop_empty_assistant_started_items(items: list[TimelineItem]) -> list[TimelineItem]:
-    replacement_keys = {
-        key
-        for item in items
-        if (key := _non_empty_assistant_derived_key(item)) is not None
-    }
-    if not replacement_keys:
-        return items
-    result: list[TimelineItem] = []
-    for item in items:
-        placeholder_key = _empty_assistant_started_derived_key(item)
-        if placeholder_key is not None and placeholder_key in replacement_keys:
-            continue
-        result.append(item)
-    return result
-
-
-def _source_item_duplicate_key(
-    item: TimelineItem,
-) -> tuple[str, str, str, str] | None:
-    source = item.source
-    if (
-        not source.sessionId
-        or not source.itemId
-        or not source.itemType
-    ):
-        return None
-    return (
-        source.runtime,
-        source.sessionId,
-        source.itemId,
-        source.itemType,
-    )
-
-
-def _non_empty_assistant_derived_key(
-    item: TimelineItem,
-) -> tuple[str, str, str, str] | None:
-    key = _assistant_derived_key(item)
-    if key is None:
-        return None
-    if item.status not in {"done", "failed", "cancelled", "interrupted"}:
-        return None
-    if _message_text_length(item.content) <= 0:
-        return None
-    return key
-
-
-def _empty_assistant_started_derived_key(
-    item: TimelineItem,
-) -> tuple[str, str, str, str] | None:
-    key = _assistant_derived_key(item)
-    if key is None:
-        return None
-    if item.status not in {"pending", "running"}:
-        return None
-    if _message_text_length(item.content) > 0:
-        return None
-    return key
-
-
-def _assistant_derived_key(
-    item: TimelineItem,
-) -> tuple[str, str, str, str] | None:
-    source = item.source
-    if (
-        not source.sessionId
-        or not source.derivedKey
-        or source.derivedKey.startswith("history-")
-    ):
-        return None
-    if item.type != "message" or item.role != "assistant":
-        return None
-    return (
-        source.runtime,
-        source.sessionId,
-        item.type,
-        source.derivedKey,
-    )
-
-
-def _source_item_preference(item: TimelineItem) -> tuple[int, int, int, int, int]:
-    return (
-        int(item.source.derivedKey is None),
-        int(item.source.clientMessageId is not None),
-        int(item.status in {"done", "failed", "cancelled", "interrupted"}),
-        _content_completeness_score(item.content),
-        item.revision,
-    )
-
-
-def _timeline_item_unchanged(existing: TimelineItem, incoming: TimelineItemIn) -> bool:
-    # contentHash is the canonical state identity supplied by the runtime.
-    # Revision/status/source metadata can differ between live IPC events and a
-    # later full snapshot without changing the item itself.
-    return existing.contentHash == incoming.contentHash
-
-
-def _should_keep_existing_timeline_item(existing: TimelineItem, incoming: TimelineItemIn) -> bool:
-    existing_client_message_id = _timeline_source_client_message_id(existing)
-    incoming_client_message_id = _timeline_source_client_message_id(incoming)
-    if existing_client_message_id and not incoming_client_message_id:
-        return True
-    if incoming_client_message_id and not existing_client_message_id:
-        return False
-    if _timeline_item_unchanged(existing, incoming):
-        return True
-    if existing.type != incoming.type:
-        return False
-    if existing.type == "tool":
-        return _content_completeness_score(existing.content) > _content_completeness_score(incoming.content)
-    if existing.type == "message":
-        if _message_has_attachment_echo(existing.content) and not _message_has_attachment_echo(
-            incoming.content
-        ):
-            return False
-        if _message_has_attachment_echo(incoming.content) and not _message_has_attachment_echo(
-            existing.content
-        ):
-            return True
-        return _message_text_length(existing.content) > _message_text_length(incoming.content)
-    return False
-
-
-def _timeline_source_client_message_id(item: TimelineItem | TimelineItemIn) -> str | None:
-    value = item.source.clientMessageId
-    return value if isinstance(value, str) and value else None
-
-
-def _timeline_source_event(item: TimelineItem | TimelineItemIn) -> str | None:
-    value = item.source.event
-    return value if isinstance(value, str) and value else None
-
-
-def _is_thread_read_echo(
-    item: TimelineItem,
-    live_client_message_ids: set[str],
-) -> bool:
-    if _timeline_source_event(item) != "thread/read":
-        return False
-    client_message_id = _timeline_source_client_message_id(item)
-    if client_message_id is None:
-        return False
-    return client_message_id in live_client_message_ids
-
-
-def _content_completeness_score(content: Any) -> int:
-    if not isinstance(content, dict):
-        return 0
-    score = len(_json_dumps(content))
-    for key in ("outputText", "outputPreview", "result", "error", "approval"):
-        if content.get(key) not in (None, "", [], {}):
-            score += 1000
-    output_length = content.get("outputLength")
-    if isinstance(output_length, int):
-        score += output_length
-    return score
-
-
-def _message_text_length(content: Any) -> int:
-    if not isinstance(content, dict):
-        return 0
-    text = content.get("text")
-    return len(text) if isinstance(text, str) else 0
-
-
-def _message_has_attachment_echo(content: Any) -> bool:
-    if not isinstance(content, dict):
-        return False
-    text = content.get("text")
-    if not isinstance(text, str):
-        return False
-    return any(marker in text for marker in CODEX_ATTACHMENT_ECHO_MARKERS)
 
 
 def _message_text(content: Any) -> str:
@@ -388,113 +151,6 @@ def _truncate_title(text: str) -> str:
     if len(text) <= DERIVED_SESSION_TITLE_MAX_CHARS:
         return text
     return f"{text[:DERIVED_SESSION_TITLE_MAX_CHARS].rstrip()}..."
-
-
-def _timeline_item_from_input(
-    item: TimelineItemIn,
-    *,
-    updated_seq: int,
-    now: str,
-    order_seq: int | None = None,
-    revision: int | None = None,
-) -> TimelineItem:
-    data = item.model_dump()
-    data["updatedSeq"] = updated_seq
-    if order_seq is not None:
-        data["orderSeq"] = order_seq
-    if revision is not None:
-        data["revision"] = revision
-    data["createdAt"] = item.createdAt or now
-    data["updatedAt"] = item.updatedAt or now
-    return TimelineItem.model_validate(data)
-
-
-def _canonical_duplicate_key(item: TimelineItem) -> tuple[str, str, str, str] | None:
-    derived_key = item.source.derivedKey
-    if not derived_key or derived_key.startswith("history-"):
-        return None
-    if item.type != "message" or not item.source.sessionId:
-        return None
-    return (item.source.sessionId, item.type, derived_key, _json_dumps(item.content))
-
-
-def _live_duplicate_key(item: TimelineItem) -> tuple[str, str, str, str, str] | None:
-    if item.type != "message":
-        return _live_reasoning_duplicate_key(item)
-    source_item_id = item.source.itemId
-    if not source_item_id or source_item_id.startswith("item-") or not item.source.sessionId:
-        return None
-    return (
-        item.source.sessionId,
-        item.type,
-        str(item.role or ""),
-        str(item.source.derivedKey or ""),
-        _json_dumps(item.content),
-    )
-
-
-def _snapshot_duplicate_key(item: TimelineItem) -> tuple[str, str, str, str, str] | None:
-    if item.type != "message":
-        return _snapshot_reasoning_duplicate_key(item)
-    source_item_id = item.source.itemId
-    if not source_item_id or not source_item_id.startswith("item-") or not item.source.sessionId:
-        return None
-    return (
-        item.source.sessionId,
-        item.type,
-        str(item.role or ""),
-        str(item.source.derivedKey or ""),
-        _json_dumps(item.content),
-    )
-
-
-def _live_reasoning_duplicate_key(item: TimelineItem) -> tuple[str, str, str, str] | None:
-    if not _is_reasoning_timeline_item(item):
-        return None
-    source_item_id = item.source.itemId
-    if not source_item_id or source_item_id.startswith("item-") or not item.source.sessionId:
-        return None
-    return (
-        item.source.sessionId,
-        item.type,
-        "reasoning",
-        _json_dumps(item.content),
-    )
-
-
-def _snapshot_reasoning_duplicate_key(item: TimelineItem) -> tuple[str, str, str, str] | None:
-    if not _is_reasoning_timeline_item(item):
-        return None
-    source_item_id = item.source.itemId
-    if not source_item_id or not source_item_id.startswith("item-") or not item.source.sessionId:
-        return None
-    return (
-        item.source.sessionId,
-        item.type,
-        "reasoning",
-        _json_dumps(item.content),
-    )
-
-
-def _is_reasoning_timeline_item(item: TimelineItem) -> bool:
-    if item.type != "system" or item.role != "system":
-        return False
-    content = item.content
-    return isinstance(content, dict) and content.get("kind") == "reasoning"
-
-
-def _legacy_duplicate_key(item: TimelineItem) -> tuple[str, str, str, str] | None:
-    derived_key = item.source.derivedKey
-    if not derived_key or not derived_key.startswith("history-"):
-        return None
-    if item.type != "message" or not item.source.sessionId:
-        return None
-    return (
-        item.source.sessionId,
-        item.type,
-        derived_key.removeprefix("history-"),
-        _json_dumps(item.content),
-    )
 
 
 __all__ = [name for name in globals() if not name.startswith("__")]

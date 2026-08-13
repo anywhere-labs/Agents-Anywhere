@@ -42,6 +42,10 @@ export type ConnectorView = {
 
 export type DeviceRuntimeStatus =
   | "stopped"
+  | "discovering"
+  | "available"
+  | "unavailable"
+  | "validating"
   | "starting"
   | "running"
   | "stopping"

@@ -363,7 +363,9 @@ def test_codex_notifications_are_split_by_side_effect_role() -> None:
     assert "timeline_sync(" not in projector_source
     assert "timeline_item_upsert(" not in projector_source
     assert "notice_upsert(" not in projector_source
-    assert "timeline_sync(" in turn_lifecycle_source
+    assert "timeline_sync(" not in turn_lifecycle_source
+    assert "timeline_item_upsert(" not in turn_lifecycle_source
+    assert "end_turn(" in turn_lifecycle_source
     assert "timeline_item_upsert(" in timeline_activity_source
     assert "notice_upsert(" in notices_source
 

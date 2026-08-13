@@ -37,6 +37,8 @@ class EventRecoveryRepository(SessionCapabilityRepository, Protocol):
         limit: int,
     ) -> tuple[list[TimelineItem], bool]: ...
 
+    async def get_timeline_reset_seq(self, session_id: str) -> int: ...
+
 
 class EventRecoveryService:
     def __init__(
@@ -74,6 +76,13 @@ class EventRecoveryService:
 
         for _attempt in range(self._stability_attempts):
             start_sequence = await self._store.get_session_seq(session_id)
+            timeline_reset_sequence = await self._store.get_timeline_reset_seq(
+                session_id
+            )
+            if after_sequence < timeline_reset_sequence:
+                return self._snapshot_required(
+                    max(start_sequence, timeline_reset_sequence)
+                )
             session = await self._store.get_session(session_id, user_id=user_id)
             session, _runtime_capabilities, effective_capabilities = (
                 await project_session_capabilities(

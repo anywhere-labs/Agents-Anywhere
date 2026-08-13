@@ -5,8 +5,8 @@ from typing import Any
 from loguru import logger
 
 from agent_server.core.models import (
-    ConnectorIngestRequest,
     ConnectorIngestRejectedNotification,
+    ConnectorIngestRequest,
     ConnectorIngestResponse,
     ConnectorNotification,
     SessionRuntimeState,
@@ -29,8 +29,9 @@ from agent_server.services.effective_capabilities import (
 )
 from agent_server.services.ingest_effects import IngestEffect
 from agent_server.services.repository_ports import ConnectorIngestRepository
-from agent_server.services.session_runtime_state_cache import SessionRuntimeStateCache
-
+from agent_server.services.session_runtime_state_cache import (
+    SessionRuntimeStateCache,
+)
 
 INGEST_REJECTION_MESSAGE_MAX_LENGTH = 500
 
@@ -271,20 +272,29 @@ class ConnectorIngestService:
                     },
                 )
                 if effect.session_id == session_id:
-                    if effect.timeline_reset:
+                    if effect.timeline_reset and not effect.needs_refetch:
                         bucket["items"] = list(effect.items or [])
                         bucket["timeline_reset"] = True
-                    else:
-                        if effect.item is not None:
-                            bucket["items"].append(effect.item)
-                        if effect.items:
-                            bucket["items"].extend(effect.items)
+                        bucket["refetch"] = False
+                    elif effect.needs_refetch:
+                        bucket["items"] = []
+                        bucket["timeline_reset"] = False
+                        bucket["refetch"] = True
+                    elif effect.item is not None or effect.items:
+                        if bucket["timeline_reset"] or bucket["refetch"]:
+                            bucket["items"] = []
+                            bucket["timeline_reset"] = False
+                            bucket["refetch"] = True
+                        else:
+                            if effect.item is not None:
+                                bucket["items"].append(effect.item)
+                            if effect.items:
+                                bucket["items"].extend(effect.items)
                     if effect.runtime_state is not None:
                         bucket["runtime_state"] = effect.runtime_state
                     bucket["session"] = bucket["session"] or effect.session_changed
                     if effect.notices:
                         bucket["notices"].extend(effect.notices)
-                    bucket["refetch"] = bucket["refetch"] or effect.needs_refetch
                 if effect.catalogs:
                     bucket["catalogs"].update(effect.catalogs)
 
@@ -304,9 +314,10 @@ class ConnectorIngestService:
             }
             if bucket["refetch"]:
                 envelope["refetch"] = True
-            if bucket["timeline_reset"]:
+            elif bucket["timeline_reset"]:
                 envelope["timelineReset"] = True
-            if bucket["items"]:
+                envelope["items"] = bucket["items"]
+            elif bucket["items"]:
                 envelope["items"] = bucket["items"]
             runtime_state: SessionRuntimeState | None = None
             if bucket["runtime_state"]:

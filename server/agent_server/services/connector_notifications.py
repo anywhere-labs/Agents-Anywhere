@@ -381,36 +381,29 @@ class TimelineNotificationHandler:
         if await _session_disabled(self._store, session_id):
             return IngestEffect()
         items = [_timeline_item_for_session(item, session_id) for item in items]
-        items = await _tag_active_run_user_messages(self._store, session_id, items)
-        previous_seq = await self._store.get_session_seq(session_id)
         replace_snapshot = params.get("complete") is True
         if replace_snapshot:
-            stored_items = await self._store.replace_timeline_snapshot(
+            result = await self._store.replace_timeline_snapshot(
                 session_id=session_id,
                 source_observed_at=params.get("sourceObservedAt"),
                 items=items,
                 mark_read_on_change=True,
             )
         else:
-            stored_items = await self._store.sync_timeline_items(
+            result = await self._store.sync_timeline_items(
                 session_id=session_id,
                 source_observed_at=params.get("sourceObservedAt"),
                 items=items,
                 mark_read_on_change=True,
             )
-        changed_items = (
-            stored_items
-            if replace_snapshot
-            else [item for item in stored_items if item.updatedSeq > previous_seq]
-        )
+        changed_items = list(result.items) if result.changed else []
         push_items = len(changed_items) <= TIMELINE_SYNC_PUSH_LIMIT
         return IngestEffect(
             session_id=session_id,
             items=[item.model_dump(mode="json") for item in changed_items]
             if push_items
             else None,
-            timeline_reset=replace_snapshot,
-            session_changed=bool(changed_items),
+            timeline_reset=replace_snapshot and result.changed and push_items,
             needs_refetch=not push_items,
         )
 
@@ -429,18 +422,15 @@ class TimelineNotificationHandler:
         if await _session_disabled(self._store, session_id):
             return IngestEffect()
         item = _timeline_item_for_session(item, session_id)
-        item = (await _tag_active_run_user_messages(self._store, session_id, [item]))[0]
-        stored = await self._store.upsert_timeline_item(
+        result = await self._store.upsert_timeline_item(
             session_id=session_id,
             source_observed_at=params.get("sourceObservedAt"),
             item=item,
             mark_read_on_change=True,
         )
-        affects_run_state = _timeline_item_affects_run_state(item)
         return IngestEffect(
             session_id=session_id,
-            item=stored.model_dump(mode="json"),
-            session_changed=affects_run_state,
+            item=result.item.model_dump(mode="json") if result.changed else None,
         )
 
 
@@ -773,26 +763,6 @@ def _timeline_item_for_session(
     return TimelineItemIn.model_validate({**item.model_dump(), "sessionId": session_id})
 
 
-def _timeline_item_failed(item: TimelineItemIn) -> bool:
-    if item.status == "failed":
-        return True
-    if isinstance(item.content, dict):
-        result = item.content.get("result")
-        if result in {"failed", "error", "dispatch_failed"}:
-            return True
-        if isinstance(item.content.get("error"), dict):
-            return True
-    return False
-
-
-def _timeline_item_affects_run_state(item: TimelineItemIn) -> bool:
-    return _timeline_item_is_active_work(item)
-
-
-def _timeline_item_is_active_work(item: TimelineItemIn) -> bool:
-    return item.status in {"pending", "running", "waiting_approval"}
-
-
 def _without_runtime_turn_ids(value: Any) -> Any:
     """Keep legacy Connector turn identifiers outside Server business handlers."""
 
@@ -805,149 +775,3 @@ def _without_runtime_turn_ids(value: Any) -> Any:
     if isinstance(value, list):
         return [_without_runtime_turn_ids(item) for item in value]
     return value
-
-
-async def _tag_active_run_user_messages(
-    store: ConnectorNotificationRepository,
-    session_id: str,
-    items: list[TimelineItemIn],
-) -> list[TimelineItemIn]:
-    active = await store.get_active_run(session_id)
-    if active is None:
-        return items
-    params = active.get("params")
-    if not isinstance(params, dict):
-        return items
-    client_message_id = params.get("clientMessageId")
-    expected_text = params.get("content")
-    attachments = _timeline_attachments_from_active_run(params)
-    if not isinstance(client_message_id, str) or not client_message_id:
-        return items
-    if not isinstance(expected_text, str):
-        return items
-
-    candidate_indexes = [
-        index
-        for index, item in enumerate(items)
-        if _active_run_user_message_matches(item, expected_text)
-    ]
-    if not candidate_indexes:
-        return items
-    target_index = max(candidate_indexes, key=lambda index: items[index].orderSeq)
-
-    tagged: list[TimelineItemIn] = []
-    for index, item in enumerate(items):
-        if index != target_index:
-            tagged.append(item)
-            continue
-        source = item.source.model_dump()
-        content = item.content if isinstance(item.content, dict) else {}
-        next_source = source
-        next_content = content
-        changed = False
-        if not source.get("clientMessageId"):
-            next_source = {**next_source, "clientMessageId": client_message_id}
-            changed = True
-        cleaned_text = _strip_codex_attachment_echo_text(content, expected_text)
-        if cleaned_text is not None and cleaned_text != content.get("text"):
-            next_content = {**next_content, "text": cleaned_text}
-            changed = True
-        if attachments and not _content_has_attachments(next_content):
-            next_content = {**next_content, "attachments": attachments}
-            changed = True
-        if not changed:
-            tagged.append(item)
-            continue
-        tagged.append(
-            TimelineItemIn.model_validate(
-                {
-                    **item.model_dump(),
-                    "source": next_source,
-                    "content": next_content,
-                }
-            )
-        )
-    return tagged
-
-
-def _active_run_user_message_matches(
-    item: TimelineItemIn,
-    expected_text: str,
-) -> bool:
-    if item.type != "message" or item.role != "user":
-        return False
-    if item.source.itemType == "steeringUserMessage":
-        return False
-    content = item.content if isinstance(item.content, dict) else {}
-    actual_text = content.get("text")
-    if not isinstance(actual_text, str):
-        return False
-    cleaned_text = _strip_codex_attachment_echo(actual_text, expected_text)
-    return _client_message_text_matches(cleaned_text, expected_text)
-
-
-def _timeline_attachments_from_active_run(
-    params: dict[str, Any],
-) -> list[dict[str, Any]]:
-    raw = params.get("timelineAttachments")
-    if not isinstance(raw, list):
-        raw = params.get("attachments")
-    if not isinstance(raw, list):
-        return []
-    out: list[dict[str, Any]] = []
-    for entry in raw:
-        if not isinstance(entry, dict):
-            continue
-        file_id = entry.get("fileId")
-        if not isinstance(file_id, str) or not file_id:
-            continue
-        attachment: dict[str, Any] = {"fileId": file_id}
-        for source, target in (
-            ("name", "name"),
-            ("mediaType", "mediaType"),
-            ("size", "size"),
-            ("sha256", "sha256"),
-        ):
-            value = entry.get(source)
-            if value is not None and target not in attachment:
-                attachment[target] = value
-        out.append(attachment)
-    return out
-
-
-def _content_has_attachments(content: dict[str, Any]) -> bool:
-    attachments = content.get("attachments")
-    return isinstance(attachments, list) and len(attachments) > 0
-
-
-def _client_message_text_matches(actual: str, expected: str) -> bool:
-    if actual == expected:
-        return True
-    return actual.startswith(expected) and actual[len(expected) :].startswith("\n\n[")
-
-
-def _strip_codex_attachment_echo_text(
-    content: dict[str, Any],
-    expected_text: str,
-) -> str | None:
-    actual = content.get("text")
-    if not isinstance(actual, str):
-        return None
-    return _strip_codex_attachment_echo(actual, expected_text)
-
-
-def _strip_codex_attachment_echo(actual: str, expected_text: str) -> str:
-    if actual == expected_text:
-        return actual
-    if actual.startswith(expected_text):
-        suffix = actual[len(expected_text) :].strip()
-        if suffix.startswith("Attached file: ") or " Attached file: " in suffix:
-            return expected_text
-        if _looks_like_codex_local_attachment_path(suffix):
-            return expected_text
-    return actual
-
-
-def _looks_like_codex_local_attachment_path(value: str) -> bool:
-    normalized = value.replace("\\", "/")
-    return "/.agents-anywhere/attachments/" in normalized

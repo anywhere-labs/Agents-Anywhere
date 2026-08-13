@@ -38,13 +38,43 @@ def timeline_item_id_from_values(
 
 
 def turn_position_item_id(
-    session_id: str,
+    external_session_id: str,
     turn_id: str,
     position: int,
+    lane: str = "assistant-message",
 ) -> str:
-    identity = f"codex-turn-item-v1\0{session_id}\0{turn_id}\0{position}"
+    identity = (
+        f"codex-turn-item-v2\0{external_session_id}\0{turn_id}\0{lane}\0{position}"
+    )
     digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:32]
     return f"codex_item_{digest}"
+
+
+def turn_item_lane(raw_type: str, role: str | None) -> str:
+    """Return the position lane shared by live events and thread history."""
+
+    if role == "assistant" and raw_type in {"agentMessage", "message"}:
+        return "assistant-message"
+    if raw_type == "reasoning":
+        return "reasoning"
+    if role == "tool":
+        return f"tool:{raw_type}"
+    if role == "system":
+        return f"system:{raw_type}"
+    return f"{role or 'item'}:{raw_type}"
+
+
+def next_turn_lane_position(
+    next_position_by_lane: dict[str, int],
+    lane: str,
+) -> int:
+    """Assign a turn-local position without letting omitted lanes shift others."""
+
+    if lane == "reasoning":
+        return next_position_by_lane.get("assistant-message", 0)
+    position = next_position_by_lane.get(lane, 0)
+    next_position_by_lane[lane] = position + 1
+    return position
 
 
 def uses_turn_position_identity(raw_type: str, role: str | None) -> bool:
