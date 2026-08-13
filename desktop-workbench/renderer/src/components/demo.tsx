@@ -181,7 +181,7 @@ function DesktopResizableShell() {
 
 function DesktopShellHeader() {
   return (
-    <header className="aa-window-drag flex h-12 shrink-0 items-center border-b border-border/80 bg-background text-foreground">
+    <header className="aa-window-drag flex h-11 shrink-0 items-center border-b border-border/80 bg-background text-foreground">
       <div className="w-[6.5rem] shrink-0" aria-hidden="true" />
       <div className="aa-window-no-drag flex min-w-0 items-center gap-2">
         <DashboardSidebarToggle showOnDesktop className="rounded-md text-muted-foreground hover:bg-muted hover:text-foreground" />
