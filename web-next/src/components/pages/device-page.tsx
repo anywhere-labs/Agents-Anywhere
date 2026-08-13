@@ -43,6 +43,7 @@ import {
 } from "@/components/ui/alert-dialog"
 import { cn } from "@/lib/utils"
 import type {
+  DeviceRuntimeStatus,
   DeviceRuntimeView,
   SessionView as RealSessionView,
 } from "@/features/dashboard/types"
@@ -60,6 +61,19 @@ const DEVICE_STATUS_LABEL_KEYS = {
   online: "online",
   offline: "offline",
 } as const
+
+const RUNTIME_STATUS_LABEL_KEYS = {
+  stopped: "runtimeStatus.stopped",
+  discovering: "runtimeStatus.discovering",
+  available: "runtimeStatus.available",
+  unavailable: "runtimeStatus.unavailable",
+  validating: "runtimeStatus.validating",
+  starting: "runtimeStatus.starting",
+  running: "runtimeStatus.running",
+  stopping: "runtimeStatus.stopping",
+  error: "runtimeStatus.error",
+  unknown: "runtimeStatus.unknown",
+} as const satisfies Record<DeviceRuntimeStatus, string>
 
 type ConnectorWorkspace = {
   path: string
@@ -285,6 +299,10 @@ function runtimeErrorMessage(error: Record<string, unknown>) {
 export function DevicePage() {
   const t = useTranslations("dashboard.device")
   const tCommon = useTranslations("common")
+  const runtimeStatusLabel = (status: DeviceRuntimeStatus) => {
+    const key = RUNTIME_STATUS_LABEL_KEYS[status]
+    return key ? t(key) : status
+  }
   const {
     activeConnectorId,
     connectors,
@@ -730,7 +748,7 @@ export function DevicePage() {
                             <div className="flex min-w-0 items-center gap-2">
                               <span className="truncate text-sm font-medium">{runtime.displayName}</span>
                               <Badge variant="outline" className="shrink-0 font-normal">
-                                {t(`runtimeStatus.${runtime.status}`)}
+                                {runtimeStatusLabel(runtime.status)}
                               </Badge>
                               {runtime.error ? (
                                 <Tooltip>
