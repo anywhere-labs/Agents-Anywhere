@@ -15,6 +15,7 @@ import { toast } from "sonner"
 
 import { LoadingState } from "@/components/loading-state"
 import { RuntimeConfigDialog } from "@/components/runtime-config-dialog"
+import { RuntimeErrorBadge } from "@/components/runtime-error-badge"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -23,6 +24,7 @@ import { Switch } from "@/components/ui/switch"
 import { dashboardApi } from "@/features/dashboard/api"
 import {
   availableRuntimeTypes,
+  findCreatedRuntime,
   nextRuntimeInstanceName,
   recommendedRuntimeTypes,
 } from "@/features/dashboard/runtime-instances"
@@ -157,6 +159,7 @@ export function RuntimeInstanceManager({
 
   const createRuntime = async (config: Record<string, unknown>) => {
     if (!addDraft || !addRuntimeType) return
+    const beforeRuntimeIds = new Set(runtimes.map((runtime) => runtime.runtimeId))
     const requestedName = addDraft.name.trim()
     setBusyRuntimeId("new")
     try {
@@ -173,6 +176,21 @@ export function RuntimeInstanceManager({
       onInstancesChanged?.()
     } catch (error) {
       toast.error(error instanceof Error ? error.message : t("addRuntimeFailed"))
+      try {
+        const refreshed = await fetchRuntimeData()
+        const failedRuntime = findCreatedRuntime(
+          beforeRuntimeIds,
+          refreshed,
+          addDraft.runtimeType,
+          requestedName,
+        )
+        if (failedRuntime) {
+          setAddDraft(null)
+          setConfigRuntime(failedRuntime)
+        }
+      } catch {
+        // Keep the original failure as the primary user-facing error.
+      }
       throw error
     } finally {
       setBusyRuntimeId(null)
@@ -196,6 +214,13 @@ export function RuntimeInstanceManager({
       onInstancesChanged?.()
     } catch (error) {
       toast.error(error instanceof Error ? error.message : t("saveRuntimeConfigFailed"))
+      try {
+        const refreshed = await fetchRuntimeData()
+        const failedRuntime = refreshed.find((item) => item.runtimeId === runtime.runtimeId)
+        if (failedRuntime) setConfigRuntime(failedRuntime)
+      } catch {
+        // Keep the original failure as the primary user-facing error.
+      }
       throw error
     } finally {
       setBusyRuntimeId(null)
@@ -215,6 +240,11 @@ export function RuntimeInstanceManager({
       onInstancesChanged?.()
     } catch (error) {
       toast.error(error instanceof Error ? error.message : t("runtimeActionFailed"))
+      try {
+        await fetchRuntimeData()
+      } catch {
+        // Keep the original failure as the primary user-facing error.
+      }
     } finally {
       setBusyRuntimeId(null)
     }
@@ -249,6 +279,13 @@ export function RuntimeInstanceManager({
       onInstancesChanged?.()
     } catch (error) {
       toast.error(error instanceof Error ? error.message : t("runtimeRenameFailed"))
+      try {
+        const refreshed = await fetchRuntimeData()
+        const current = refreshed.find((item) => item.runtimeId === runtime.runtimeId)
+        if (current?.name === nextName) setRenamingRuntimeId(null)
+      } catch {
+        // Keep the original failure as the primary user-facing error.
+      }
     } finally {
       setBusyRuntimeId(null)
     }
@@ -284,14 +321,14 @@ export function RuntimeInstanceManager({
                 return (
                   <div
                     key={runtime.runtimeId}
-                    className="flex min-h-14 items-center gap-3 rounded-lg px-2 py-2 hover:bg-accent/30"
+                    className="flex min-h-14 flex-wrap items-center gap-3 rounded-lg px-2 py-2 hover:bg-accent/30"
                   >
                     {busy ? (
                       <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" />
                     ) : (
                       <span className={cn("size-2 shrink-0 rounded-full", runtimeStatusDot(runtime))} />
                     )}
-                    <div className="min-w-0 flex-1">
+                    <div className="min-w-0 flex-[1_1_12rem]">
                       {renaming ? (
                         <div className="flex items-center gap-1.5">
                           <Input
@@ -333,6 +370,7 @@ export function RuntimeInstanceManager({
                           <Badge variant="outline" className="shrink-0 font-normal">
                             {t(RUNTIME_STATUS_LABEL_KEYS[runtime.status])}
                           </Badge>
+                          <RuntimeErrorBadge error={runtime.error} />
                         </div>
                       )}
                       {!renaming ? (
@@ -408,9 +446,9 @@ export function RuntimeInstanceManager({
               {recommendedTypes.map((runtimeType) => (
                 <div
                   key={runtimeType.runtimeType}
-                  className="flex min-h-14 items-center gap-3 rounded-lg px-2 py-2 hover:bg-accent/30"
+                  className="flex min-h-14 flex-wrap items-center gap-3 rounded-lg px-2 py-2 hover:bg-accent/30"
                 >
-                  <div className="min-w-0 flex-1">
+                  <div className="min-w-0 flex-[1_1_12rem]">
                     <p className="truncate text-sm font-medium">{runtimeType.displayName}</p>
                     {runtimeType.description ? (
                       <p className="line-clamp-2 text-xs text-muted-foreground">{runtimeType.description}</p>
