@@ -6,6 +6,20 @@ import { pathToFileURL } from "node:url";
 const APP_NAME = "Agents Anywhere Workbench";
 const WEB_PROTOCOL = "aa-workbench";
 const WEB_HOST = "web";
+const DEFAULT_API_ORIGIN = "https://web.agents-anywhere.com";
+const DEFAULT_API_NAMESPACE = "";
+const API_ROUTE_PREFIXES = [
+  "/admin",
+  "/agents",
+  "/auth",
+  "/connector",
+  "/connectors",
+  "/health",
+  "/oauth",
+  "/pairing",
+  "/sessions",
+  "/.well-known",
+];
 
 let mainWindow: BrowserWindow | null = null;
 let devOrigin: string | null = null;
@@ -35,11 +49,40 @@ function staticWorkbenchUrl(route = "/") {
   return `${WEB_PROTOCOL}://${WEB_HOST}${route}`;
 }
 
+function apiOrigin() {
+  return (process.env.WORKBENCH_API_ORIGIN || process.env.AGENTS_ANYWHERE_API || DEFAULT_API_ORIGIN).replace(/\/+$/, "");
+}
+
+function apiNamespace() {
+  const namespace = process.env.WORKBENCH_API_NAMESPACE ?? process.env.AGENTS_ANYWHERE_API_NAMESPACE ?? DEFAULT_API_NAMESPACE;
+  return normalizeApiNamespace(namespace);
+}
+
+function normalizeApiNamespace(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed || trimmed === "/") return "";
+  return `/${trimmed.replace(/^\/+|\/+$/g, "")}`;
+}
+
+function shouldProxyApiPath(pathname: string) {
+  const namespace = apiNamespace();
+  if (namespace) return pathname === namespace || pathname.startsWith(`${namespace}/`);
+  return API_ROUTE_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
+}
+
 function registerStaticWebProtocol() {
   protocol.handle(WEB_PROTOCOL, (request) => {
     const url = new URL(request.url);
     if (url.hostname !== WEB_HOST) {
       return new Response("Not found", { status: 404 });
+    }
+
+    if (shouldProxyApiPath(url.pathname)) {
+      return net.fetch(`${apiOrigin()}${url.pathname}${url.search}`, {
+        method: request.method,
+        headers: request.headers,
+        body: request.body,
+      });
     }
 
     const outDir = webOutDir();
@@ -207,4 +250,3 @@ app.whenReady().then(() => {
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
 });
-
