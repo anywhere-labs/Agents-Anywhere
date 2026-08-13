@@ -42,7 +42,7 @@ function webOutDir() {
   if (process.env.WORKBENCH_WEB_OUT_DIR?.trim()) {
     return path.resolve(process.env.WORKBENCH_WEB_OUT_DIR.trim());
   }
-  return path.resolve(app.getAppPath(), "..", "web-next", "out");
+  return path.resolve(app.getAppPath(), "renderer", "out");
 }
 
 function staticWorkbenchUrl(route = "/") {
@@ -162,7 +162,7 @@ function missingWebBuildHtml(outDir: string) {
     <main>
       <h1>Web workbench build not found</h1>
       <p>Build the web app first, then start this Electron shell.</p>
-      <p><code>cd ../web-next && NEXT_OUTPUT=export yarn build</code></p>
+      <p><code>yarn build:web</code></p>
       <p>Expected output directory: <code>${escapeHtml(outDir)}</code></p>
     </main>
   </body>

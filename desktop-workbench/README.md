@@ -10,7 +10,7 @@ yarn install
 yarn dev
 ```
 
-`yarn dev` starts `../web-next` on the first available local port from `5184`, waits for it, then opens Electron.
+`yarn dev` starts the bundled `renderer` Next app on the first available local port from `5184`, waits for it, then opens Electron.
 By default, the embedded web app talks to `https://web.agents-anywhere.com`.
 That production endpoint uses root API paths such as `/auth/login`, so the desktop shell defaults to an empty API namespace.
 
@@ -45,6 +45,7 @@ WORKBENCH_API_ORIGIN=http://127.0.0.1:8000 WORKBENCH_API_NAMESPACE=/api/v2 yarn 
 
 ## Notes
 
-- This package only embeds the existing web app for now.
+- This package embeds a copied Next renderer under `renderer`.
+- The original repo-level `../web-next` app is not started or modified by the desktop dev script.
 - Connector lifecycle, native sidebar treatment, tray, packaging, and local runtime bridges are intentionally out of scope for this first shell.
-- Production/static mode expects `../web-next/out`, or a custom `WORKBENCH_WEB_OUT_DIR`.
+- Production/static mode expects `renderer/out`, or a custom `WORKBENCH_WEB_OUT_DIR`.

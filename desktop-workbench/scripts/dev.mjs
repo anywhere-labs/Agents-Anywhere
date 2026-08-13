@@ -5,13 +5,13 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const repoRoot = path.resolve(root, "..");
-const webRoot = path.join(repoRoot, "web-next");
+const rendererPackage = "agents-anywhere-desktop-renderer";
 const explicitWebUrl = process.env.WORKBENCH_WEB_URL?.trim();
 const apiOrigin = process.env.WORKBENCH_API_ORIGIN?.trim() || process.env.AGENTS_ANYWHERE_API?.trim() || "https://web.agents-anywhere.com";
 const apiNamespace = process.env.WORKBENCH_API_NAMESPACE ?? process.env.AGENTS_ANYWHERE_API_NAMESPACE ?? "";
 const usesShell = process.platform === "win32";
 const host = "127.0.0.1";
+const yarnCommand = process.platform === "win32" ? "yarn.cmd" : "yarn";
 
 let webProcess = null;
 let devUrl = explicitWebUrl;
@@ -19,11 +19,10 @@ let devUrl = explicitWebUrl;
 if (!explicitWebUrl) {
   const port = await findAvailablePort(5184);
   devUrl = `http://${host}:${port}`;
-  const nextBin = path.join(webRoot, "node_modules", ".bin", process.platform === "win32" ? "next.cmd" : "next");
-  console.log(`Starting web-next at ${devUrl}`);
+  console.log(`Starting desktop renderer at ${devUrl}`);
   console.log(`Using Agents Anywhere API at ${apiOrigin}${apiNamespace || ""}`);
-  webProcess = spawn(nextBin, ["dev", "--hostname", host, "--port", String(port)], {
-    cwd: webRoot,
+  webProcess = spawn(yarnCommand, ["workspace", rendererPackage, "exec", "next", "dev", "--hostname", host, "--port", String(port)], {
+    cwd: root,
     stdio: "inherit",
     env: {
       ...process.env,

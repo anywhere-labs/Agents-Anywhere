@@ -4,12 +4,16 @@
   "version": "0.1.0",
   "description": "Electron shell for the Agents Anywhere web workbench",
   "packageManager": "yarn@4.6.0",
+  "workspaces": [
+    "renderer"
+  ],
   "main": "dist/electron/main.js",
   "engines": {
     "node": ">=22 <23"
   },
   "scripts": {
     "build:main": "tsc -p tsconfig.json",
+    "renderer:typecheck": "yarn workspace agents-anywhere-desktop-renderer typecheck",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "dev": "yarn build:main && node scripts/dev.mjs",
     "start": "yarn build:main && electron .",
