@@ -36,15 +36,16 @@ CAPABILITY_SESSION_COMMANDS = "session.commands"
 
 @dataclass(frozen=True, slots=True)
 class RuntimeIdentity:
-    runtime: str
+    runtime_id: str
+    runtime_type: str
+    name: str
     runtime_version: str
-    display_name: str | None = None
     protocol_version: str = "1.0"
 
 
 @dataclass(frozen=True, slots=True)
 class RuntimeConfig:
-    runtime: str
+    runtime_type: str
     revision: int
     values: Mapping[str, Any] = field(default_factory=dict)
     schema: Mapping[str, Any] | None = None
@@ -54,7 +55,7 @@ class RuntimeConfig:
 
 @dataclass(frozen=True, slots=True)
 class RuntimeConfigSchema:
-    runtime: str
+    runtime_type: str
     revision: int
     schema: Mapping[str, Any]
     ui_schema: Mapping[str, Any] | None = None
@@ -63,16 +64,31 @@ class RuntimeConfigSchema:
 
 
 @dataclass(frozen=True, slots=True)
-class RuntimeInventoryItem:
-    runtime: str
+class RuntimeTypeDescriptor:
     runtime_type: str
     display_name: str
+    description: str | None
     available: bool
-    configured: bool = False
+    recommended: bool = False
+    recommendation_rank: int | None = None
     capabilities: Mapping[str, bool] = field(default_factory=dict)
     reason: str | None = None
     config_schema: RuntimeConfigSchema | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeInstanceSpec:
+    runtime_id: str
+    runtime_type: str
+    name: str
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeResourceClaim:
+    kind: str
+    key: str
+    label: str
 
 
 @dataclass(frozen=True, slots=True)

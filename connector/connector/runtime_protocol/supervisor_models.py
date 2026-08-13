@@ -4,7 +4,11 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from connector.runtime_protocol.models import RuntimeConfig
+from connector.runtime_protocol.models import (
+    RuntimeConfig,
+    RuntimeInstanceSpec,
+    RuntimeResourceClaim,
+)
 from connector.runtime_protocol.protocol import AgentRuntime
 from connector.runtime_protocol.provider import RuntimeProvider
 
@@ -35,9 +39,11 @@ MISSING = Missing()
 
 @dataclass(frozen=True, slots=True)
 class RuntimeSupervisorEntry:
+    instance: RuntimeInstanceSpec
     provider: RuntimeProvider
     runtime: AgentRuntime | None = None
     config: RuntimeConfig | None = None
+    resource_claims: tuple[RuntimeResourceClaim, ...] = ()
     requested_values: Mapping[str, Any] | None = None
     status: RuntimeLifecycleStatus = "stopped"
     error: Mapping[str, Any] | None = None
@@ -55,7 +61,7 @@ def same_effective_config(left: RuntimeConfig | None, right: RuntimeConfig) -> b
     if left is None:
         return False
     return (
-        left.runtime == right.runtime
+        left.runtime_type == right.runtime_type
         and left.revision == right.revision
         and dict(left.values) == dict(right.values)
     )

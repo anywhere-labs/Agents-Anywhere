@@ -13,9 +13,10 @@ from connector.runtime_protocol import (
     AgentRuntime,
     RuntimeConfig,
     RuntimeConfigSchema,
+    RuntimeInstanceSpec,
     RuntimeInvalidRequestError,
-    RuntimeInventoryItem,
     RuntimeProvider,
+    RuntimeTypeDescriptor,
 )
 from connector.runtime_protocol.host import RuntimeHostClient
 from connector.runtimes.claude import discovery, provider_config
@@ -28,16 +29,24 @@ CLAUDE_CONFIG_SCHEMA_REVISION = 4
 
 class ClaudeProvider(RuntimeProvider):
     @property
-    def runtime(self) -> str:
-        return "claude"
-
-    @property
     def runtime_type(self) -> str:
         return "claude"
 
     @property
     def display_name(self) -> str:
         return "Claude"
+
+    @property
+    def description(self) -> str:
+        return "Anthropic Claude Code runtime"
+
+    @property
+    def recommended(self) -> bool:
+        return True
+
+    @property
+    def recommendation_rank(self) -> int:
+        return 20
 
     def __init__(
         self,
@@ -49,7 +58,7 @@ class ClaudeProvider(RuntimeProvider):
         self._discovered_sdk: dict[str, Any] | None = None
         self._discovered_target = None
 
-    async def discover(self) -> RuntimeInventoryItem:
+    async def discover(self) -> RuntimeTypeDescriptor:
         sdk = discovery.check_claude_sdk(self._sdk_loader)
         self._discovered_sdk = sdk
         environment = provider_config.merge_environment({})
@@ -58,13 +67,16 @@ class ClaudeProvider(RuntimeProvider):
             environment,
         )
         available = bool(sdk.get("available"))
-        reason = None if available else sdk.get("reason") or "claude-agent-sdk unavailable"
-        return RuntimeInventoryItem(
-            runtime=self.runtime,
+        reason = (
+            None if available else sdk.get("reason") or "claude-agent-sdk unavailable"
+        )
+        return RuntimeTypeDescriptor(
             runtime_type=self.runtime_type,
             display_name=self.display_name,
+            description=self.description,
             available=available,
-            configured=available,
+            recommended=self.recommended,
+            recommendation_rank=self.recommendation_rank,
             capabilities=provider_config.claude_capabilities(),
             reason=reason,
             config_schema=await self.get_config_schema(),
@@ -78,7 +90,7 @@ class ClaudeProvider(RuntimeProvider):
     async def get_config_schema(self) -> RuntimeConfigSchema:
         schema = provider_config.claude_config_schema()
         return RuntimeConfigSchema(
-            runtime=self.runtime,
+            runtime_type=self.runtime_type,
             revision=CLAUDE_CONFIG_SCHEMA_REVISION,
             schema=schema,
             ui_schema={
@@ -147,7 +159,7 @@ class ClaudeProvider(RuntimeProvider):
 
         config_schema = await self.get_config_schema()
         return RuntimeConfig(
-            runtime=self.runtime,
+            runtime_type=self.runtime_type,
             revision=CLAUDE_CONFIG_SCHEMA_REVISION,
             values=normalized_values,
             schema=schema,
@@ -161,9 +173,11 @@ class ClaudeProvider(RuntimeProvider):
 
     async def create_runtime(
         self,
+        instance: RuntimeInstanceSpec,
         config: RuntimeConfig,
         host: RuntimeHostClient,
     ) -> AgentRuntime:
+        _ = instance
         sdk = config.metadata.get("sdk") if isinstance(config.metadata, dict) else None
         if isinstance(sdk, dict) and not sdk.get("available", True):
             raise RuntimeInvalidRequestError("Claude Agent SDK is not available")

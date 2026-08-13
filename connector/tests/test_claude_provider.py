@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 
 from connector.launch import LaunchTarget
-from connector.runtime_protocol import RuntimeInvalidRequestError
+from connector.runtime_protocol import RuntimeInstanceSpec, RuntimeInvalidRequestError
 from connector.runtimes.claude.provider import ClaudeProvider
 from connector.runtimes.claude.runtime import ClaudeRuntime
 
@@ -26,7 +26,8 @@ async def _test_claude_provider_discovers_sdk_with_initial_runtime_actions() -> 
     item = await provider.discover()
 
     assert item.available is True
-    assert item.configured is True
+    assert item.runtime_type == "claude"
+    assert item.recommended is True
     assert item.capabilities["modelCatalog"] is True
     assert item.capabilities["createAndStartSession"] is True
     assert item.capabilities["startTurn"] is True
@@ -59,7 +60,7 @@ async def _test_claude_provider_reports_unavailable_without_sdk() -> None:
     item = await provider.discover()
 
     assert item.available is False
-    assert item.configured is False
+    assert item.runtime_type == "claude"
     assert "claude_agent_sdk" in (item.reason or "")
 
 
@@ -112,7 +113,7 @@ async def _test_claude_provider_schema_and_config_validation() -> None:
             ),
         }
     }
-    assert config.runtime == "claude"
+    assert config.runtime_type == "claude"
     assert config.values["executablePath"] == "/opt/claude"
     assert config.values["environment"] == {"EXAMPLE": "1"}
     assert config.values["customModels"] == [
@@ -202,7 +203,9 @@ async def _test_claude_provider_rejects_protected_environment() -> None:
     provider = ClaudeProvider(sdk_loader=_sdk, command_checker=_available_command)
 
     with pytest.raises(RuntimeInvalidRequestError, match="managed by the connector"):
-        await provider.validate_config({"environment": {"AGENT_SERVER_URL": "http://x"}})
+        await provider.validate_config(
+            {"environment": {"AGENT_SERVER_URL": "http://x"}}
+        )
 
 
 def test_claude_provider_creates_skeleton_runtime() -> None:
@@ -213,7 +216,7 @@ async def _test_claude_provider_creates_skeleton_runtime() -> None:
     provider = ClaudeProvider(sdk_loader=_sdk, command_checker=_available_command)
     config = await provider.validate_config({"executablePath": "/opt/claude"})
 
-    runtime = await provider.create_runtime(config, _NoHost())
+    runtime = await provider.create_runtime(_instance(), config, _NoHost())
 
     assert isinstance(runtime, ClaudeRuntime)
     assert await runtime.get_config() == config
@@ -252,3 +255,15 @@ class _NoHost:
     @property
     def connector_id(self) -> str:
         return "conn_test"
+
+    @property
+    def session_namespace(self) -> str:
+        return "conn_test:runtime-claude-1"
+
+
+def _instance() -> RuntimeInstanceSpec:
+    return RuntimeInstanceSpec(
+        runtime_id="runtime-claude-1",
+        runtime_type="claude",
+        name="Claude 1",
+    )

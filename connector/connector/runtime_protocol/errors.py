@@ -22,6 +22,10 @@ class RuntimeConflictError(RuntimeProtocolError):
     code = "runtime_conflict"
 
 
+class RuntimeResourceConflictError(RuntimeConflictError):
+    code = "runtime_resource_conflict"
+
+
 class RuntimeUnavailableError(RuntimeProtocolError):
     code = "runtime_unavailable"
     retryable = True

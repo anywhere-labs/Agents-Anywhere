@@ -92,6 +92,8 @@ def read_login_shell_path(shell: str | None = None) -> LoginShellPathResult:
 
 def codex_runtime_environment(
     environment_overrides: Mapping[str, object] | None,
+    *,
+    codex_home: str | None = None,
 ) -> tuple[dict[str, str], LoginShellPathResult]:
     env = dict(os.environ)
     shell_path = read_login_shell_path()
@@ -104,15 +106,16 @@ def codex_runtime_environment(
             shell_path.error,
         )
 
-    if environment_overrides is None:
-        return env, shell_path
+    if environment_overrides is not None:
+        for key, value in environment_overrides.items():
+            if value is None:
+                env.pop(key, None)
+                continue
+            if isinstance(value, str):
+                env[key] = value
 
-    for key, value in environment_overrides.items():
-        if value is None:
-            env.pop(key, None)
-            continue
-        if isinstance(value, str):
-            env[key] = value
+    if codex_home is not None:
+        env["CODEX_HOME"] = codex_home
 
     return env, shell_path
 
@@ -178,7 +181,9 @@ def find_executable_on_path(name: str, path_value: str | None) -> str | None:
     return None
 
 
-def runtime_binary_metadata(selection: CodexRuntimeBinarySelection) -> dict[str, object]:
+def runtime_binary_metadata(
+    selection: CodexRuntimeBinarySelection,
+) -> dict[str, object]:
     metadata: dict[str, object] = {
         "mode": selection.mode,
         "source": selection.source,

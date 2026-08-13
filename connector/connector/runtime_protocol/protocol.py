@@ -42,7 +42,7 @@ class AgentRuntime(ABC):
 
     async def get_runtime_capabilities(self) -> RuntimeCapabilitySet:
         return RuntimeCapabilitySet(
-            runtime=self.identity.runtime,
+            runtime=self.identity.runtime_id,
             revision=0,
             capabilities=(),
             metadata={"source": "runtime.default-empty-capabilities"},
@@ -119,7 +119,7 @@ class AgentRuntime(ABC):
         external_session_id: str | None = None,
     ) -> RuntimeCapabilitySet:
         return RuntimeCapabilitySet(
-            runtime=self.identity.runtime,
+            runtime=self.identity.runtime_id,
             revision=0,
             capabilities=(),
             session_id=session_id,

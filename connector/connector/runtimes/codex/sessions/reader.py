@@ -107,7 +107,10 @@ class CodexSessionReader:
         title = codex_sessions.thread_title(thread_ref)
         cwd = codex_sessions.thread_cwd(thread_ref)
         ordering_time = codex_sessions.thread_ordering_time(thread_ref)
-        session_id = codex_sessions.stable_session_id(self.host.connector_id, thread_id)
+        session_id = codex_sessions.stable_session_id(
+            self.host.session_namespace,
+            thread_id,
+        )
         sync_state = {
             "marker": sync_marker,
             "title": title,
@@ -258,9 +261,7 @@ class CodexSessionReader:
             )
         else:
             thread = dict(result.thread)
-            items = await asyncer.asyncify(
-                codex_timeline.timeline_items_from_thread
-            )(
+            items = await asyncer.asyncify(codex_timeline.timeline_items_from_thread)(
                 session_id=session_id,
                 external_session_id=external_session_id,
                 thread=thread,

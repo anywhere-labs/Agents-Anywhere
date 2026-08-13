@@ -39,7 +39,7 @@ from connector.runtime_protocol import (
     RuntimeConfig,
     RuntimeConfigSchema,
     RuntimeIdentity,
-    RuntimeInventoryItem,
+    RuntimeInstanceSpec,
     RuntimeModelCatalog,
     RuntimeModelItem,
     RuntimeOperationResult,
@@ -48,6 +48,7 @@ from connector.runtime_protocol import (
     RuntimeProvider,
     RuntimeTimelineItem,
     RuntimeTimelineSnapshot,
+    RuntimeTypeDescriptor,
     SessionMeta,
     SessionNotice,
     SessionState,
@@ -269,7 +270,12 @@ class FakeAgentRuntime(AgentRuntime):
 
     @property
     def identity(self) -> RuntimeIdentity:
-        return RuntimeIdentity(runtime=self.runtime_id, runtime_version="test")
+        return RuntimeIdentity(
+            runtime_id=self.runtime_id,
+            runtime_type=self.runtime_id,
+            name=self.runtime_id.title(),
+            runtime_version="test",
+        )
 
     async def start(self) -> None:
         self.started = True
@@ -279,7 +285,11 @@ class FakeAgentRuntime(AgentRuntime):
 
     async def get_config(self) -> RuntimeConfig:
         if self.config is None:
-            return RuntimeConfig(runtime=self.runtime_id, revision=0, values={})
+            return RuntimeConfig(
+                runtime_type=self.runtime_id,
+                revision=0,
+                values={},
+            )
         return self.config
 
     async def list_sessions(
@@ -333,7 +343,9 @@ class FakeAgentRuntime(AgentRuntime):
         query: str | None = None,
         limit: int = 100,
     ) -> RuntimePermissionCatalog:
-        self.calls.append(("runtime.permissionCatalog", {"query": query, "limit": limit}))
+        self.calls.append(
+            ("runtime.permissionCatalog", {"query": query, "limit": limit})
+        )
         return RuntimePermissionCatalog(
             runtime=self.runtime_id,
             revision=8,
@@ -446,7 +458,9 @@ class FakeAgentRuntime(AgentRuntime):
             ),
         )
 
-    async def list_runtime_commands(self, limit: int = 100) -> tuple[RuntimeCommand, ...]:
+    async def list_runtime_commands(
+        self, limit: int = 100
+    ) -> tuple[RuntimeCommand, ...]:
         self.calls.append(("runtime.commands", {"limit": limit}))
         return (
             RuntimeCommand(
@@ -644,7 +658,9 @@ class FakeAgentRuntime(AgentRuntime):
                 },
             )
         )
-        return RuntimeOperationResult(ok=True, result={"steered": True, "turnId": "turn_agent"})
+        return RuntimeOperationResult(
+            ok=True, result={"steered": True, "turnId": "turn_agent"}
+        )
 
     async def interrupt_session(
         self,
@@ -690,10 +706,6 @@ class FakeAgentProvider(RuntimeProvider):
         self._runtime_id = runtime_id
 
     @property
-    def runtime(self) -> str:
-        return self._runtime_id
-
-    @property
     def runtime_type(self) -> str:
         return self._runtime_id
 
@@ -701,18 +713,18 @@ class FakeAgentProvider(RuntimeProvider):
     def display_name(self) -> str:
         return self._runtime_id.title()
 
-    async def discover(self) -> RuntimeInventoryItem:
-        return RuntimeInventoryItem(
-            runtime=self._runtime_id,
+    async def discover(self) -> RuntimeTypeDescriptor:
+        return RuntimeTypeDescriptor(
             runtime_type=self._runtime_id,
             display_name=self.display_name,
+            description=f"{self.display_name} runtime",
             available=True,
-            configured=True,
+            recommended=True,
         )
 
     async def get_config_schema(self) -> RuntimeConfigSchema:
         return RuntimeConfigSchema(
-            runtime=self._runtime_id,
+            runtime_type=self._runtime_id,
             revision=2,
             schema={
                 "type": "object",
@@ -726,7 +738,7 @@ class FakeAgentProvider(RuntimeProvider):
 
     async def validate_config(self, values) -> RuntimeConfig:  # type: ignore[no-untyped-def]
         return RuntimeConfig(
-            runtime=self._runtime_id,
+            runtime_type=self._runtime_id,
             revision=1,
             values=dict(values),
             schema=(await self.get_config_schema()).schema,
@@ -736,17 +748,16 @@ class FakeAgentProvider(RuntimeProvider):
 
     async def create_runtime(
         self,
+        instance: RuntimeInstanceSpec,
         config: RuntimeConfig,
         host: RuntimeHostClient,
     ) -> AgentRuntime:
-        _ = host
+        _ = (instance, host)
         self._runtime.config = config
         return self._runtime
 
     async def stop_runtime(self, runtime: AgentRuntime) -> None:
         await runtime.stop()
-
-
 
 
 class FakeWebSocket:
@@ -862,10 +873,10 @@ class RecordingRuntimeHost(RuntimeHostClient):
 class FakeRuntimeSupervisor:
     def __init__(self, runtime: AgentRuntime) -> None:
         self._runtime = runtime
-        self.runtimes = (runtime.identity.runtime,)
+        self.runtimes = (runtime.identity.runtime_id,)
 
     def resolve_runtime(self, runtime_id: str) -> AgentRuntime:
-        if runtime_id != self._runtime.identity.runtime:
+        if runtime_id != self._runtime.identity.runtime_id:
             raise RuntimeError(f"unknown runtime {runtime_id}")
         return self._runtime
 
@@ -1037,7 +1048,10 @@ def test_connector_projects_inventory_capabilities_to_protocol_ids() -> None:
     assert by_runtime_and_id[("codex", "session.send_message")]["available"] is True
     assert by_runtime_and_id[("codex", "session.steer")]["available"] is True
     assert by_runtime_and_id[("codex", "session.interrupt")]["available"] is True
-    assert by_runtime_and_id[("codex", "session.interaction.approval")]["available"] is True
+    assert (
+        by_runtime_and_id[("codex", "session.interaction.approval")]["available"]
+        is True
+    )
     assert by_runtime_and_id[("codex", "runtime.config")]["available"] is True
     assert by_runtime_and_id[("claude", "catalog.model")]["supported"] is False
     assert by_runtime_and_id[("claude", "catalog.model")]["available"] is False
@@ -1045,7 +1059,9 @@ def test_connector_projects_inventory_capabilities_to_protocol_ids() -> None:
     assert ("unknown-agent", "catalog.model") not in by_runtime_and_id
 
 
-def test_connector_runtime_host_live_notifications_use_websocket_when_connected() -> None:
+def test_connector_runtime_host_live_notifications_use_websocket_when_connected() -> (
+    None
+):
     asyncio.run(_exercise_runtime_host_live_notification_uses_websocket())
 
 
@@ -1102,7 +1118,9 @@ async def _exercise_runtime_host_live_notification_uses_websocket() -> None:
     ]
 
 
-def test_connector_runtime_host_notifications_fallback_to_ingest_without_websocket() -> None:
+def test_connector_runtime_host_notifications_fallback_to_ingest_without_websocket() -> (
+    None
+):
     asyncio.run(_exercise_runtime_host_notification_ingest_fallback())
 
 
@@ -1131,12 +1149,16 @@ async def _exercise_runtime_host_notification_ingest_fallback() -> None:
 
     client._ingest.enqueue = enqueue  # type: ignore[method-assign]
 
-    await client.send_backend_notification("session.meta.upsert", {"sessionId": "sess_1"})
+    await client.send_backend_notification(
+        "session.meta.upsert", {"sessionId": "sess_1"}
+    )
 
     assert enqueued == [("session.meta.upsert", {"sessionId": "sess_1"})]
 
 
-async def _exercise_runtime_sync_pushes_each_session_snapshot_before_next_meta() -> None:
+async def _exercise_runtime_sync_pushes_each_session_snapshot_before_next_meta() -> (
+    None
+):
     class SyncRuntime(FakeAgentRuntime):
         async def list_sessions(
             self,
@@ -1184,7 +1206,9 @@ async def _exercise_runtime_sync_pushes_each_session_snapshot_before_next_meta()
         ingested_batches.append(list(notifications))
         for notification in notifications:
             params = notification["params"]
-            session_id = params.get("sessionId") or params.get("item", {}).get("sessionId")
+            session_id = params.get("sessionId") or params.get("item", {}).get(
+                "sessionId"
+            )
             if notification["method"] == "session.meta.upsert":
                 host.events.append(("meta", session_id))
             elif notification["method"] == "timeline.sync":
@@ -1227,10 +1251,7 @@ async def _exercise_runtime_sync_pushes_each_session_snapshot_before_next_meta()
     ]
     sync_call = next(call for call in runtime.calls if call[0] == "session.sync")
     assert sync_call[1]["limit"] is None
-    assert [
-        notification["method"]
-        for notification in ingested_batches[0]
-    ] == [
+    assert [notification["method"] for notification in ingested_batches[0]] == [
         "session.meta.upsert",
         "timeline.sync",
         "session.state.updated",
@@ -1280,6 +1301,7 @@ async def _exercise_runtime_sync_uses_runtime_timeline_hook_when_available() -> 
                     },
                 )
             )
+
             async def commit() -> None:
                 self.calls.append(("session.commitTimeline", {"sessionId": session_id}))
 
@@ -1439,7 +1461,9 @@ async def _exercise_runtime_sync_skips_active_session_timeline_reads() -> None:
     assert len(ingested_batches) == 1
 
 
-async def _exercise_runtime_sync_continues_after_single_session_ingest_failure() -> None:
+async def _exercise_runtime_sync_continues_after_single_session_ingest_failure() -> (
+    None
+):
     class IsolatedFailureRuntime(FakeAgentRuntime):
         async def list_sessions(
             self,
@@ -1558,10 +1582,13 @@ def test_connector_runtime_discovers_agent_runtime_inventory() -> None:
 def test_default_runtime_providers_use_new_protocol_providers() -> None:
     providers = default_runtime_providers()
 
-    assert tuple(provider.runtime for provider in providers) == ("codex", "claude")
+    assert tuple(provider.runtime_type for provider in providers) == ("codex", "claude")
     assert isinstance(providers[0], CodexProvider)
     assert isinstance(providers[1], ClaudeProvider)
-    assert all(provider.__class__.__module__.startswith("connector.runtimes.") for provider in providers)
+    assert all(
+        provider.__class__.__module__.startswith("connector.runtimes.")
+        for provider in providers
+    )
 
 
 def test_connector_runtime_reads_config_schema() -> None:
@@ -1600,7 +1627,6 @@ def test_preferences_push_sends_only_on_change() -> None:
     asyncio.run(_exercise_preferences_push())
 
 
-
 def test_connector_runtime_reconnects_quietly_on_websocket_close(monkeypatch) -> None:
     asyncio.run(_exercise_websocket_close_reconnect(monkeypatch))
 
@@ -1625,7 +1651,15 @@ async def _exercise_runtime() -> None:
 
     client.send_backend_notification = notify  # type: ignore[method-assign]
     client.agent_runtime_host._notifier = notify  # type: ignore[attr-defined]
-    await client.dispatch("runtime.start", {"runtimeId": "codex", "config": {}})
+    await client.dispatch(
+        "runtime.start",
+        {
+            "runtimeId": "codex",
+            "runtimeType": "codex",
+            "name": "Codex",
+            "config": {},
+        },
+    )
 
     await client.handle_message(
         {
@@ -1675,7 +1709,12 @@ async def _exercise_runtime() -> None:
             "id": "rpc_2",
             "type": "request",
             "method": "session.send_message",
-            "params": {"runtime": "codex", "sessionId": "sess_1", "externalSessionId": "thr_1", "content": "hi"},
+            "params": {
+                "runtime": "codex",
+                "sessionId": "sess_1",
+                "externalSessionId": "thr_1",
+                "content": "hi",
+            },
         }
     )
     assert runtime.calls[-1][0] == "turn.start"
@@ -1717,7 +1756,9 @@ async def _exercise_runtime() -> None:
         "session.state.updated",
         "notice.upsert",
     ]
-    sync_response = next(message for message in ws.messages if message.get("id") == "rpc_4")
+    sync_response = next(
+        message for message in ws.messages if message.get("id") == "rpc_4"
+    )
     assert sync_response["result"] == {
         "accepted": True,
         "background": True,
@@ -1741,7 +1782,9 @@ async def _exercise_runtime() -> None:
         "session.state",
         {"sessionId": "sess_1", "externalSessionId": "thr_1"},
     )
-    assert ws.messages[-1]["result"]["state"]["selections"] == {"model": "sel_model_state"}
+    assert ws.messages[-1]["result"]["state"]["selections"] == {
+        "model": "sel_model_state"
+    }
 
     await client.handle_message(
         {
@@ -1975,7 +2018,9 @@ async def _exercise_runtime() -> None:
         }
     )
     assert runtime.calls[-1] == ("runtime.modelCatalog", {"query": "gpt", "limit": 20})
-    assert ws.messages[-1]["result"]["catalog"]["models"][0]["displayName"] == "GPT Test"
+    assert (
+        ws.messages[-1]["result"]["catalog"]["models"][0]["displayName"] == "GPT Test"
+    )
 
     await client.handle_message(
         {
@@ -1985,8 +2030,14 @@ async def _exercise_runtime() -> None:
             "params": {"runtime": "codex", "query": "read", "limit": 20},
         }
     )
-    assert runtime.calls[-1] == ("runtime.permissionCatalog", {"query": "read", "limit": 20})
-    assert ws.messages[-1]["result"]["catalog"]["permissions"][0]["selectionId"] == "sel_permission_readonly"
+    assert runtime.calls[-1] == (
+        "runtime.permissionCatalog",
+        {"query": "read", "limit": 20},
+    )
+    assert (
+        ws.messages[-1]["result"]["catalog"]["permissions"][0]["selectionId"]
+        == "sel_permission_readonly"
+    )
 
 
 async def _exercise_nonblocking_runtime_rpc() -> None:
@@ -2009,7 +2060,15 @@ async def _exercise_nonblocking_runtime_rpc() -> None:
     client = _client(runtime)
     ws = FakeWebSocket()
     client._rpc.set_connection(ws)  # type: ignore[arg-type]
-    await client.dispatch("runtime.start", {"runtimeId": "codex", "config": {}})
+    await client.dispatch(
+        "runtime.start",
+        {
+            "runtimeId": "codex",
+            "runtimeType": "codex",
+            "name": "Codex",
+            "config": {},
+        },
+    )
 
     client.start_message(
         {
@@ -2238,7 +2297,9 @@ async def _exercise_access_token_refresh() -> None:
     original_client = runtime_module.httpx.AsyncClient
     runtime_module.httpx.AsyncClient = FakeHttpClient  # type: ignore[assignment]
     try:
-        await client.ingest_notifications([{"method": "connector.heartbeat", "params": {}}])
+        await client.ingest_notifications(
+            [{"method": "connector.heartbeat", "params": {}}]
+        )
     finally:
         runtime_module.httpx.AsyncClient = original_client
 
@@ -2297,7 +2358,9 @@ async def _exercise_ingest_network_error_is_explicit() -> None:
             return None
 
         async def post(self, *args: Any, **kwargs: Any) -> Any:
-            request = httpx.Request("POST", "http://127.0.0.1:8000/api/v2/connector/ingest")
+            request = httpx.Request(
+                "POST", "http://127.0.0.1:8000/api/v2/connector/ingest"
+            )
             raise httpx.ConnectError("connection refused", request=request)
 
     client._http_client = FailingHttpClient()  # type: ignore[assignment]
@@ -2334,15 +2397,23 @@ async def _exercise_local_ops(tmp_path) -> None:
     assert write_result["bytesWritten"] == len("created")
     assert (workspace / "created.txt").read_text(encoding="utf-8") == "created"
 
-    list_result = await client.dispatch("fs.readDir", {"root": str(workspace), "path": "."})
-    assert [entry["name"] for entry in list_result["entries"]] == ["created.txt", "hello.txt"]
+    list_result = await client.dispatch(
+        "fs.readDir", {"root": str(workspace), "path": "."}
+    )
+    assert [entry["name"] for entry in list_result["entries"]] == [
+        "created.txt",
+        "hello.txt",
+    ]
 
     fallback_list_result = await client.dispatch(
         "fs.readDir",
         {"root": str(workspace), "path": "missing/deleted"},
     )
     assert fallback_list_result["path"] == str(workspace)
-    assert [entry["name"] for entry in fallback_list_result["entries"]] == ["created.txt", "hello.txt"]
+    assert [entry["name"] for entry in fallback_list_result["entries"]] == [
+        "created.txt",
+        "hello.txt",
+    ]
 
     shell_result = await client.dispatch(
         "shell.exec",
@@ -2374,8 +2445,15 @@ async def _exercise_local_ops(tmp_path) -> None:
             "timeoutMs": 5000,
         },
     )
-    assert task_start == {"taskId": "task_1", "sessionId": "sess_1", "status": "running"}
-    assert notifications[0] == ("shell.task.started", {"taskId": "task_1", "sessionId": "sess_1", "status": "running"})
+    assert task_start == {
+        "taskId": "task_1",
+        "sessionId": "sess_1",
+        "status": "running",
+    }
+    assert notifications[0] == (
+        "shell.task.started",
+        {"taskId": "task_1", "sessionId": "sess_1", "status": "running"},
+    )
     for _ in range(50):
         if len(notifications) >= 2:
             break
@@ -2449,7 +2527,9 @@ async def _exercise_terminal_release_snapshot(tmp_path) -> None:
             break
 
     assert base64.b64decode(snapshot["dataBase64"]).strip() == b"hello"
-    assert snapshot["outputs"] == [{"seq": 1, "dataBase64": base64.b64encode(b"hello\n").decode("ascii")}]
+    assert snapshot["outputs"] == [
+        {"seq": 1, "dataBase64": base64.b64encode(b"hello\n").decode("ascii")}
+    ]
     released = await backend.release({"terminalId": "trm_snapshot"})
     assert released == {"terminalId": "trm_snapshot", "released": True}
     listing = await backend.list({"sessionId": "sess_snapshot"})
@@ -2470,11 +2550,32 @@ async def _exercise_runtime_protocol_routing() -> None:
         )
     )
     client._rpc.set_connection(FakeWebSocket())  # type: ignore[arg-type]
-    await client.dispatch("runtime.start", {"runtimeId": "codex", "config": {}})
-    await client.dispatch("runtime.start", {"runtimeId": "claude", "config": {}})
+    await client.dispatch(
+        "runtime.start",
+        {
+            "runtimeId": "codex",
+            "runtimeType": "codex",
+            "name": "Codex",
+            "config": {},
+        },
+    )
+    await client.dispatch(
+        "runtime.start",
+        {
+            "runtimeId": "claude",
+            "runtimeType": "claude",
+            "name": "Claude",
+            "config": {},
+        },
+    )
 
-    await client.dispatch("session.send_message", {"runtime": "codex", "sessionId": "s1", "content": "hi"})
-    await client.dispatch("session.send_message", {"runtime": "claude", "sessionId": "s2", "content": "hi"})
+    await client.dispatch(
+        "session.send_message", {"runtime": "codex", "sessionId": "s1", "content": "hi"}
+    )
+    await client.dispatch(
+        "session.send_message",
+        {"runtime": "claude", "sessionId": "s2", "content": "hi"},
+    )
     await client.dispatch(
         "session.steer",
         {"runtime": "claude", "sessionId": "s2", "content": "focus"},
@@ -2499,7 +2600,15 @@ async def _exercise_agent_runtime_turn_rpc(tmp_path) -> None:
     agent_runtime = FakeAgentRuntime()
     client = _client(runtime=agent_runtime)
     client._rpc.set_connection(FakeWebSocket())  # type: ignore[arg-type]
-    await client.dispatch("runtime.start", {"runtimeId": "codex", "config": {}})
+    await client.dispatch(
+        "runtime.start",
+        {
+            "runtimeId": "codex",
+            "runtimeType": "codex",
+            "name": "Codex",
+            "config": {},
+        },
+    )
 
     started = await client.dispatch(
         "session.send_message",
@@ -2554,17 +2663,17 @@ async def _exercise_agent_runtime_discovery() -> None:
 
     inventory = await client.dispatch("runtime.discover", {})
 
-    assert inventory["runtimes"] == [
+    assert inventory["runtimeTypes"] == [
         {
-            "runtimeId": "codex",
             "runtimeType": "codex",
             "displayName": "Codex",
+            "description": "Codex runtime",
+            "recommended": True,
+            "recommendationRank": None,
             "discovery": {"available": True},
             "schema": None,
             "uiSchema": None,
             "defaults": {},
-            "status": "available",
-            "configured": True,
             "capabilities": {},
             "metadata": {},
         }
@@ -2574,10 +2683,13 @@ async def _exercise_agent_runtime_discovery() -> None:
 async def _exercise_runtime_config_schema_read() -> None:
     client = _client(runtime=FakeAgentRuntime("codex"))
 
-    result = await client.dispatch("runtime.configSchema", {"runtimeId": "codex"})
+    result = await client.dispatch(
+        "runtime.configSchema",
+        {"runtimeType": "codex"},
+    )
 
     assert result["configSchema"] == {
-        "runtime": "codex",
+        "runtimeType": "codex",
         "revision": 2,
         "schema": {
             "type": "object",
@@ -2596,27 +2708,23 @@ async def _exercise_runtime_config_read() -> None:
     client = _client(runtime=runtime)
     client._rpc.set_connection(FakeWebSocket())  # type: ignore[arg-type]
 
-    stopped = await client.dispatch("runtime.config", {"runtimeId": "codex"})
     await client.dispatch(
         "runtime.start",
         {
             "runtimeId": "codex",
+            "runtimeType": "codex",
+            "name": "Codex",
             "config": {"environment": {"EXAMPLE": "1"}},
             "configRevision": 42,
         },
     )
     running = await client.dispatch("runtime.config", {"runtimeId": "codex"})
 
-    assert stopped == {
-        "runtimeId": "codex",
-        "running": False,
-        "config": None,
-    }
     assert running == {
         "runtimeId": "codex",
         "running": True,
         "config": {
-            "runtime": "codex",
+            "runtimeType": "codex",
             "revision": 42,
             "values": {"environment": {"EXAMPLE": "1"}},
             "schema": {
@@ -2634,7 +2742,10 @@ async def _exercise_runtime_config_read() -> None:
 async def _exercise_unknown_runtime() -> None:
     client = _client()
     try:
-        await client.dispatch("session.send_message", {"runtime": "opencode", "sessionId": "s1", "content": "hi"})
+        await client.dispatch(
+            "session.send_message",
+            {"runtime": "opencode", "sessionId": "s1", "content": "hi"},
+        )
     except RuntimeError as exc:
         assert "opencode" in str(exc)
     else:
@@ -2644,8 +2755,18 @@ async def _exercise_unknown_runtime() -> None:
 async def _exercise_preferences_push() -> None:
     snapshots = [
         {"permissionMode": "default", "model": None, "effort": None, "readAt": "t0"},
-        {"permissionMode": "default", "model": None, "effort": None, "readAt": "t1"},  # readAt churn, no real change
-        {"permissionMode": "bypassPermissions", "model": None, "effort": None, "readAt": "t2"},
+        {
+            "permissionMode": "default",
+            "model": None,
+            "effort": None,
+            "readAt": "t1",
+        },  # readAt churn, no real change
+        {
+            "permissionMode": "bypassPermissions",
+            "model": None,
+            "effort": None,
+            "readAt": "t2",
+        },
     ]
     cursor = iter(snapshots)
 
@@ -2661,7 +2782,9 @@ async def _exercise_preferences_push() -> None:
     client._runtime_sync.send_notification = fake_notify
 
     await client._runtime_sync.push_preferences_if_changed()  # t0 — first read, push
-    await client._runtime_sync.push_preferences_if_changed()  # t1 — only readAt changed, no push
+    await (
+        client._runtime_sync.push_preferences_if_changed()
+    )  # t1 — only readAt changed, no push
     await client._runtime_sync.push_preferences_if_changed()  # t2 — mode changed, push
 
     assert [p[0] for p in pushed] == [
@@ -2670,7 +2793,6 @@ async def _exercise_preferences_push() -> None:
     ]
     assert pushed[0][1]["permissionMode"] == "default"
     assert pushed[1][1]["permissionMode"] == "bypassPermissions"
-
 
 
 async def _exercise_async_shell_tasks(tmp_path) -> None:
@@ -2690,11 +2812,20 @@ async def _exercise_async_shell_tasks(tmp_path) -> None:
             "sessionId": "sess_1",
             "root": str(workspace),
             "cwd": str(workspace),
-            "command": f"{sys.executable} -c \"import time; time.sleep(10)\"",
+            "command": f'{sys.executable} -c "import time; time.sleep(10)"',
             "timeoutMs": 300000,
         },
     )
-    cancel_result = await client.dispatch("shell.task.cancel", {"taskId": "task_cancel", "sessionId": "sess_1"})
+    cancel_result = await client.dispatch(
+        "shell.task.cancel", {"taskId": "task_cancel", "sessionId": "sess_1"}
+    )
 
-    assert cancel_result == {"taskId": "task_cancel", "sessionId": "sess_1", "cancelled": True}
-    assert notifications[-1] == ("shell.task.completed", {"taskId": "task_cancel", "sessionId": "sess_1", "status": "cancelled"})
+    assert cancel_result == {
+        "taskId": "task_cancel",
+        "sessionId": "sess_1",
+        "cancelled": True,
+    }
+    assert notifications[-1] == (
+        "shell.task.completed",
+        {"taskId": "task_cancel", "sessionId": "sess_1", "status": "cancelled"},
+    )

@@ -23,6 +23,18 @@ class RuntimeHostClient(ABC):
     def connector_id(self) -> str:
         raise NotImplementedError
 
+    @property
+    def runtime_id(self) -> str | None:
+        return None
+
+    @property
+    def runtime_type(self) -> str | None:
+        return None
+
+    @property
+    def session_namespace(self) -> str:
+        return self.connector_id
+
     async def session_meta_upsert(
         self,
         session_id: str,

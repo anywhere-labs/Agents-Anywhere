@@ -63,7 +63,7 @@ class CodexRuntime(AgentRuntime):
         )
         self._notices = CodexNoticeRegistry()
         self._pending_messages = PendingClientMessageRegistry(
-            connector_id=self.host.connector_id,
+            connector_id=self.host.session_namespace,
             kv_store=self.client_message_kv,
         )
         self._timeline = CodexTimelineAccumulator(
@@ -111,9 +111,10 @@ class CodexRuntime(AgentRuntime):
     @property
     def identity(self) -> RuntimeIdentity:
         return RuntimeIdentity(
-            runtime="codex",
+            runtime_id="codex",
+            runtime_type="codex",
+            name="Codex",
             runtime_version=self.runtime_version,
-            display_name="Codex",
         )
 
     async def start(self) -> None:
@@ -223,9 +224,7 @@ class CodexRuntime(AgentRuntime):
             state=state,
             has_active_turn=state.session_id in self._active_turn_ids,
         )
-        await self.host.session_capabilities_update(
-            codex_session_capabilities(context)
-        )
+        await self.host.session_capabilities_update(codex_session_capabilities(context))
 
     async def get_session_snapshot(
         self,

@@ -95,7 +95,9 @@ class CodexSdkClient:
         self._model_gateway = model_gateway
         self._handler: NotificationHandler | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
-        self._pending_approval_responses: dict[str, asyncio.Future[Mapping[str, Any]]] = {}
+        self._pending_approval_responses: dict[
+            str, asyncio.Future[Mapping[str, Any]]
+        ] = {}
         self._entered_client: Any | None = None
         self._threads: dict[str, Any] = {}
         self._loaded_thread_ids: set[str] = set()
@@ -683,10 +685,12 @@ def _sdk_config(sdk: Any, config: RuntimeConfig) -> Any:
         return None
     values = config.values
     environment_overrides = values.get("environment")
+    codex_home = values.get("codexHome")
     use_system_codex = values.get("useSystemCodex", True)
     mode = "prefer_system" if use_system_codex is True else "sdk_bundled"
     runtime_environment, shell_path = codex_runtime_environment(
-        environment_overrides if isinstance(environment_overrides, Mapping) else None
+        environment_overrides if isinstance(environment_overrides, Mapping) else None,
+        codex_home=codex_home if isinstance(codex_home, str) else None,
     )
     binary_selection = select_codex_runtime_binary(
         mode,
@@ -810,9 +814,7 @@ def codex_thread_start_params(
         ),
         model=request.model,
         modelProvider=(
-            CODEX_MODEL_GATEWAY_PROVIDER_ID
-            if model_gateway is not None
-            else None
+            CODEX_MODEL_GATEWAY_PROVIDER_ID if model_gateway is not None else None
         ),
         sandbox=codex_thread_sandbox_mode(request.sandbox),
     )
@@ -836,9 +838,7 @@ def codex_thread_resume_params(
         ),
         model=request.model,
         modelProvider=(
-            CODEX_MODEL_GATEWAY_PROVIDER_ID
-            if model_gateway is not None
-            else None
+            CODEX_MODEL_GATEWAY_PROVIDER_ID if model_gateway is not None else None
         ),
         sandbox=codex_thread_sandbox_mode(request.sandbox),
         threadId=request.thread_id,

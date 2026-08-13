@@ -12,15 +12,16 @@ from connector.server.runtime_rpc_params import (
     RuntimeCatalogParams,
     RuntimeConfigParams,
     RuntimeIdParams,
+    RuntimeTypeParams,
     SessionReadParams,
 )
 from connector.server.runtime_rpc_payloads import (
-    agent_inventory_payload,
     capability_set_payload,
     model_catalog_payload,
     permission_catalog_payload,
     runtime_config_payload,
     runtime_config_schema_payload,
+    runtime_type_payload,
 )
 from connector.server.runtime_session_rpc import (
     discover_sessions,
@@ -90,10 +91,10 @@ class RuntimeRpcHandler:
         if method == "runtime.discover":
             return await self.discover_runtimes()
         if method == "runtime.configSchema":
-            parsed = RuntimeIdParams.parse(params)
-            schema = await self.agent_runtime_supervisor.entry(
-                parsed.runtime_id
-            ).provider.get_config_schema()
+            parsed = RuntimeTypeParams.parse(params)
+            schema = await self.agent_runtime_supervisor.provider(
+                parsed.runtime_type
+            ).get_config_schema()
             return {"configSchema": runtime_config_schema_payload(schema)}
         if method == "runtime.config":
             parsed = RuntimeIdParams.parse(params)
@@ -113,7 +114,7 @@ class RuntimeRpcHandler:
         if method == "runtime.validateConfig":
             parsed = RuntimeConfigParams.parse(params)
             await self.agent_runtime_supervisor.validate_config(
-                parsed.runtime_id,
+                parsed.instance,
                 parsed.config,
                 revision=parsed.config_revision,
             )
@@ -121,7 +122,7 @@ class RuntimeRpcHandler:
         if method == "runtime.start":
             parsed = RuntimeConfigParams.parse(params)
             await self.agent_runtime_supervisor.start(
-                parsed.runtime_id,
+                parsed.instance,
                 parsed.config,
                 revision=parsed.config_revision,
             )
@@ -223,7 +224,7 @@ class RuntimeRpcHandler:
 
     async def discover_runtimes(self) -> dict[str, Any]:
         agent_items = await self.agent_runtime_supervisor.discover()
-        return {"runtimes": [agent_inventory_payload(item) for item in agent_items]}
+        return {"runtimeTypes": [runtime_type_payload(item) for item in agent_items]}
 
     def accept_session_sync(self, params: dict[str, Any]) -> dict[str, Any]:
         """Accept a session sync request and finish it in the background.

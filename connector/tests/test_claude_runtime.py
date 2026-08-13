@@ -129,8 +129,9 @@ def test_claude_pending_messages_keep_a_bounded_recent_window() -> None:
 async def _test_claude_runtime_lifecycle_and_config() -> None:
     runtime = _runtime()
 
-    assert runtime.identity.runtime == "claude"
-    assert runtime.identity.display_name == "Claude"
+    assert runtime.identity.runtime_id == "claude"
+    assert runtime.identity.runtime_type == "claude"
+    assert runtime.identity.name == "Claude"
     assert await runtime.get_config() == _config()
 
     await runtime.start()
@@ -1546,7 +1547,7 @@ async def _test_claude_runtime_applies_custom_model_selection_to_sdk_options() -
     runtime = _runtime(
         client=client,
         config=RuntimeConfig(
-            runtime="claude",
+            runtime_type="claude",
             revision=1,
             values={
                 "environment": {},
@@ -1594,7 +1595,7 @@ async def _test_claude_runtime_applies_model_gateway_to_sdk_options() -> None:
     runtime = _runtime(
         client=client,
         config=RuntimeConfig(
-            runtime="claude",
+            runtime_type="claude",
             revision=4,
             values={
                 "environment": {
@@ -1640,7 +1641,7 @@ async def _test_claude_runtime_applies_custom_model_effort_to_sdk_options() -> N
     runtime = _runtime(
         client=client,
         config=RuntimeConfig(
-            runtime="claude",
+            runtime_type="claude",
             revision=1,
             values={
                 "environment": {},
@@ -2600,7 +2601,7 @@ def _default_sdk() -> Any:
 
 def _config() -> RuntimeConfig:
     return RuntimeConfig(
-        runtime="claude",
+        runtime_type="claude",
         revision=1,
         values={"environment": {}},
     )

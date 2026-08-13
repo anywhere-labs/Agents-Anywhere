@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from connector.runtime_protocol import RuntimeAttachment
+from connector.runtime_protocol import RuntimeAttachment, RuntimeInstanceSpec
 
 
 def required_runtime_id(params: dict[str, Any]) -> str:
@@ -11,6 +11,20 @@ def required_runtime_id(params: dict[str, Any]) -> str:
     if not isinstance(runtime_id, str) or not runtime_id:
         raise ValueError("runtimeId is required")
     return runtime_id
+
+
+def required_runtime_type(params: dict[str, Any]) -> str:
+    runtime_type = params.get("runtimeType")
+    if not isinstance(runtime_type, str) or not runtime_type:
+        raise ValueError("runtimeType is required")
+    return runtime_type
+
+
+def required_runtime_name(params: dict[str, Any]) -> str:
+    name = params.get("name")
+    if not isinstance(name, str) or not name.strip():
+        raise ValueError("name is required")
+    return name.strip()
 
 
 def runtime_config(params: dict[str, Any]) -> dict[str, Any]:
@@ -83,7 +97,9 @@ def runtime_attachments(params: dict[str, Any]) -> tuple[RuntimeAttachment, ...]
             or raw.get("content_base64") is not None
         )
         if has_inline_content:
-            raise ValueError("attachment content must be referenced by fileId, not sent as base64")
+            raise ValueError(
+                "attachment content must be referenced by fileId, not sent as base64"
+            )
         file_id = raw.get("fileId") or raw.get("file_id")
         if not isinstance(file_id, str) or not file_id:
             raise ValueError("attachment fileId is required")
@@ -164,15 +180,36 @@ class RuntimeIdParams:
 
 
 @dataclass(frozen=True, slots=True)
+class RuntimeTypeParams:
+    runtime_type: str
+
+    @classmethod
+    def parse(cls, params: dict[str, Any]) -> RuntimeTypeParams:
+        return cls(runtime_type=required_runtime_type(params))
+
+
+@dataclass(frozen=True, slots=True)
 class RuntimeConfigParams:
     runtime_id: str
+    runtime_type: str
+    name: str
     config: dict[str, Any]
     config_revision: int | None = None
+
+    @property
+    def instance(self) -> RuntimeInstanceSpec:
+        return RuntimeInstanceSpec(
+            runtime_id=self.runtime_id,
+            runtime_type=self.runtime_type,
+            name=self.name,
+        )
 
     @classmethod
     def parse(cls, params: dict[str, Any]) -> RuntimeConfigParams:
         return cls(
             runtime_id=required_runtime_id(params),
+            runtime_type=required_runtime_type(params),
+            name=required_runtime_name(params),
             config=runtime_config(params),
             config_revision=optional_positive_int(params, "configRevision"),
         )

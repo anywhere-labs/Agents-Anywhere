@@ -102,7 +102,11 @@ async def _test_codex_sdk_client_delegates_runtime_protocol_methods() -> None:
 
 
 def test_create_sdk_client_prefers_explicit_runtime_factory() -> None:
-    config = RuntimeConfig(runtime="codex", revision=1, values={"environment": {}})
+    config = RuntimeConfig(
+        runtime_type="codex",
+        revision=1,
+        values={"environment": {}},
+    )
     sdk = _FakeSdkModule()
 
     client = _create_sdk_client(sdk, config)
@@ -113,7 +117,7 @@ def test_create_sdk_client_prefers_explicit_runtime_factory() -> None:
 
 def test_create_sdk_client_prefers_async_codex_sdk_entrypoint() -> None:
     config = RuntimeConfig(
-        runtime="codex",
+        runtime_type="codex",
         revision=1,
         values={
             "useSystemCodex": False,
@@ -141,10 +145,17 @@ def test_create_sdk_client_prefers_login_shell_codex_binary(
 
     def runtime_environment(
         environment_overrides: Mapping[str, object] | None,
+        *,
+        codex_home: str | None = None,
     ) -> tuple[dict[str, str], LoginShellPathResult]:
         assert environment_overrides == {"EXAMPLE": "1"}
+        assert codex_home == str(tmp_path / "home")
         return (
-            {"PATH": str(tmp_path), "EXAMPLE": "1"},
+            {
+                "PATH": str(tmp_path),
+                "EXAMPLE": "1",
+                "CODEX_HOME": codex_home,
+            },
             LoginShellPathResult(shell="/bin/zsh", path=str(tmp_path)),
         )
 
@@ -154,10 +165,11 @@ def test_create_sdk_client_prefers_login_shell_codex_binary(
         runtime_environment,
     )
     config = RuntimeConfig(
-        runtime="codex",
+        runtime_type="codex",
         revision=1,
         values={
             "useSystemCodex": True,
+            "codexHome": str(tmp_path / "home"),
             "environment": {"EXAMPLE": "1"},
         },
     )
@@ -168,7 +180,11 @@ def test_create_sdk_client_prefers_login_shell_codex_binary(
     assert isinstance(client, _FakeAsyncCodex)
     assert isinstance(client.config, _FakeCodexConfig)
     assert client.config.codex_bin == str(codex_bin)
-    assert client.config.env == {"PATH": str(tmp_path), "EXAMPLE": "1"}
+    assert client.config.env == {
+        "PATH": str(tmp_path),
+        "EXAMPLE": "1",
+        "CODEX_HOME": str(tmp_path / "home"),
+    }
 
 
 def test_create_sdk_client_prefers_configured_codex_binary(tmp_path: Path) -> None:
@@ -176,7 +192,7 @@ def test_create_sdk_client_prefers_configured_codex_binary(tmp_path: Path) -> No
     codex_bin.write_text("#!/bin/sh\n", encoding="utf-8")
     codex_bin.chmod(0o755)
     config = RuntimeConfig(
-        runtime="codex",
+        runtime_type="codex",
         revision=1,
         values={
             "useSystemCodex": False,
@@ -533,9 +549,7 @@ async def _test_codex_sdk_client_applies_gateway_to_thread_start_and_resume() ->
         model_gateway=gateway,
     )
 
-    await fresh_client.start_thread(
-        CodexStartThreadRequest(model="gateway-model")
-    )
+    await fresh_client.start_thread(CodexStartThreadRequest(model="gateway-model"))
 
     provider = fresh_native.low_level.thread_start_params[0]["config"][
         "model_providers"
@@ -567,9 +581,12 @@ async def _test_codex_sdk_client_applies_gateway_to_thread_start_and_resume() ->
 
     resume = resumed_native.low_level.thread_resume_params[0]
     assert resume["modelProvider"] == "agents_anywhere_gateway"
-    assert resume["config"]["model_providers"]["agents_anywhere_gateway"][
-        "experimental_bearer_token"
-    ] == "gateway-secret"
+    assert (
+        resume["config"]["model_providers"]["agents_anywhere_gateway"][
+            "experimental_bearer_token"
+        ]
+        == "gateway-secret"
+    )
 
 
 class _NativeSdkClient:
@@ -619,7 +636,7 @@ class _FakeSdkModule:
 
 def _sdk_config_values() -> RuntimeConfig:
     return RuntimeConfig(
-        runtime="codex",
+        runtime_type="codex",
         revision=1,
         values={"environment": {}},
     )

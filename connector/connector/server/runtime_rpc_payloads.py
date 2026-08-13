@@ -10,17 +10,17 @@ from connector.runtime_protocol import (
     RuntimeCommandResult,
     RuntimeConfig,
     RuntimeConfigSchema,
-    RuntimeInventoryItem,
     RuntimeModelCatalog,
     RuntimeOperationResult,
     RuntimePermissionCatalog,
+    RuntimeTypeDescriptor,
     SessionNotice,
 )
 
 
 def runtime_config_schema_payload(schema: RuntimeConfigSchema) -> dict[str, Any]:
     return {
-        "runtime": schema.runtime,
+        "runtimeType": schema.runtime_type,
         "revision": schema.revision,
         "schema": dict(schema.schema),
         "uiSchema": dict(schema.ui_schema) if schema.ui_schema is not None else None,
@@ -31,7 +31,7 @@ def runtime_config_schema_payload(schema: RuntimeConfigSchema) -> dict[str, Any]
 
 def runtime_config_payload(config: RuntimeConfig) -> dict[str, Any]:
     return {
-        "runtime": config.runtime,
+        "runtimeType": config.runtime_type,
         "revision": config.revision,
         "values": dict(config.values),
         "schema": dict(config.schema) if config.schema is not None else None,
@@ -137,7 +137,9 @@ def runtime_command_payload(command: RuntimeCommand) -> dict[str, Any]:
         "enabled": command.enabled,
         "disabledReason": command.disabled_reason,
         "acceptsArgs": command.accepts_args,
-        "argsSchema": dict(command.args_schema) if command.args_schema is not None else None,
+        "argsSchema": dict(command.args_schema)
+        if command.args_schema is not None
+        else None,
         "metadata": dict(command.metadata),
     }
 
@@ -259,20 +261,24 @@ def session_meta_payload(session: Any) -> dict[str, Any]:
     }
 
 
-def agent_inventory_payload(item: RuntimeInventoryItem) -> dict[str, Any]:
+def runtime_type_payload(item: RuntimeTypeDescriptor) -> dict[str, Any]:
     return {
-        "runtimeId": item.runtime,
         "runtimeType": item.runtime_type,
         "displayName": item.display_name,
+        "description": item.description,
+        "recommended": item.recommended,
+        "recommendationRank": item.recommendation_rank,
         "discovery": {
             "available": item.available,
             **({"reason": item.reason} if item.reason is not None else {}),
         },
         "schema": item.config_schema.schema if item.config_schema is not None else None,
-        "uiSchema": item.config_schema.ui_schema if item.config_schema is not None else None,
-        "defaults": item.config_schema.defaults if item.config_schema is not None else {},
-        "status": "available" if item.available else "unavailable",
-        "configured": item.configured,
+        "uiSchema": item.config_schema.ui_schema
+        if item.config_schema is not None
+        else None,
+        "defaults": item.config_schema.defaults
+        if item.config_schema is not None
+        else {},
         "capabilities": dict(item.capabilities),
         "metadata": dict(item.metadata),
     }

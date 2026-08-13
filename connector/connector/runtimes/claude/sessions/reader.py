@@ -173,7 +173,10 @@ class ClaudeSessionReader:
         external_session_id: str,
         force: bool,
     ) -> SessionMeta:
-        session_id = stable_session_id(self.host.connector_id, external_session_id)
+        session_id = stable_session_id(
+            self.host.session_namespace,
+            external_session_id,
+        )
         title = _session_title(sdk_session)
         cwd = _string_attr(sdk_session, "cwd", "directory")
         ordering_time = _timestamp_from_epoch(

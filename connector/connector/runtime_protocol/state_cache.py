@@ -32,7 +32,9 @@ class RuntimeSessionStateCache:
     def get(self, session_id: str) -> SessionState | None:
         return self._states.get(session_id)
 
-    def get_by_external_session_id(self, external_session_id: str) -> SessionState | None:
+    def get_by_external_session_id(
+        self, external_session_id: str
+    ) -> SessionState | None:
         session_id = self._session_ids_by_external_id.get(external_session_id)
         if session_id is None:
             return None

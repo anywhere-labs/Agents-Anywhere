@@ -18,11 +18,11 @@ from connector.runtime_protocol import (
     RuntimeConfigSchema,
     RuntimeHostClient,
     RuntimeIdentity,
-    RuntimeInventoryItem,
     RuntimeModelItem,
     RuntimeOperationResult,
     RuntimeProvider,
     RuntimeReasoningItem,
+    RuntimeTypeDescriptor,
     RuntimeUnsupportedError,
     SessionMeta,
     SessionState,
@@ -32,14 +32,15 @@ from connector.runtime_protocol import (
 class MinimalRuntime(AgentRuntime):
     @property
     def identity(self) -> RuntimeIdentity:
-        return RuntimeIdentity(runtime="test", runtime_version="0")
+        return RuntimeIdentity(
+            runtime_id="test-1",
+            runtime_type="test",
+            name="Test 1",
+            runtime_version="0",
+        )
 
 
 class MinimalProvider(RuntimeProvider):
-    @property
-    def runtime(self) -> str:
-        return "test"
-
     @property
     def runtime_type(self) -> str:
         return "test"
@@ -110,10 +111,10 @@ def test_runtime_protocol_default_optional_reads_are_empty() -> None:
     runtime_capabilities = asyncio.run(runtime.get_runtime_capabilities())
     session_capabilities = asyncio.run(runtime.get_session_capabilities("sess_1"))
 
-    assert runtime_capabilities.runtime == "test"
+    assert runtime_capabilities.runtime == "test-1"
     assert runtime_capabilities.revision == 0
     assert runtime_capabilities.capabilities == ()
-    assert session_capabilities.runtime == "test"
+    assert session_capabilities.runtime == "test-1"
     assert session_capabilities.session_id == "sess_1"
     assert session_capabilities.capabilities == ()
 
@@ -195,7 +196,7 @@ def test_runtime_capability_set_represents_session_scope() -> None:
 
 def test_runtime_config_is_representable_without_connector_config() -> None:
     schema = RuntimeConfigSchema(
-        runtime="fake",
+        runtime_type="fake",
         revision=7,
         schema={
             "type": "object",
@@ -207,7 +208,7 @@ def test_runtime_config_is_representable_without_connector_config() -> None:
         defaults={"mode": "auto"},
     )
     config = RuntimeConfig(
-        runtime="fake",
+        runtime_type="fake",
         revision=7,
         values={
             "enabled": True,
@@ -215,23 +216,22 @@ def test_runtime_config_is_representable_without_connector_config() -> None:
         },
         schema=schema.schema,
     )
-    inventory = RuntimeInventoryItem(
-        runtime="fake",
+    descriptor = RuntimeTypeDescriptor(
         runtime_type="fake",
         display_name="Fake",
+        description=None,
         available=True,
-        configured=True,
         capabilities={"commands": True},
         config_schema=schema,
     )
 
-    assert config.runtime == "fake"
+    assert config.runtime_type == "fake"
     assert config.revision == 7
     assert config.values["enabled"] is True
     assert config.schema is not None
-    assert inventory.configured is True
-    assert inventory.capabilities["commands"] is True
-    assert inventory.config_schema == schema
+    assert descriptor.runtime_type == "fake"
+    assert descriptor.capabilities["commands"] is True
+    assert descriptor.config_schema == schema
 
 
 def test_runtime_model_selection_id_rules_are_representable() -> None:

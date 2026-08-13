@@ -7,7 +7,12 @@ from typing import Any
 
 import pytest
 
-from connector.runtime_protocol import RuntimeConfig, RuntimeInvalidRequestError
+from connector.runtime_protocol import (
+    RuntimeConfig,
+    RuntimeInstanceSpec,
+    RuntimeInvalidRequestError,
+)
+from connector.runtimes.codex import provider_config
 from connector.runtimes.codex.provider import CodexProvider
 from connector.runtimes.codex.runtime import CodexRuntime
 from connector.runtimes.codex.sdk.runtime_client import (
@@ -34,7 +39,8 @@ async def _test_codex_provider_requires_sdk_for_runnable_surface() -> None:
     item = await provider.discover()
 
     assert item.available is False
-    assert item.configured is False
+    assert item.runtime_type == "codex"
+    assert item.recommended is True
     assert item.capabilities["commands"] is False
     assert item.capabilities["ipc"] is False
     assert item.metadata["sdk"]["available"] is False
@@ -53,7 +59,8 @@ async def _test_codex_provider_treats_sdk_as_only_active_surface() -> None:
     item = await provider.discover()
 
     assert item.available is True
-    assert item.configured is True
+    assert item.runtime_type == "codex"
+    assert item.recommended is True
     assert item.metadata["sdk"]["available"] is True
     assert item.metadata["runtimeBinary"]["mode"] == "prefer_system"
     assert "appServer" not in item.metadata
@@ -77,6 +84,7 @@ async def _test_codex_provider_schema_exposes_no_ipc_or_app_server_switches() ->
     assert schema.ui_schema["order"] == [
         "useSystemCodex",
         "codexExecutablePath",
+        "codexHome",
         "modelGateway",
         "environment",
         "customModels",
@@ -85,6 +93,7 @@ async def _test_codex_provider_schema_exposes_no_ipc_or_app_server_switches() ->
     assert schema.ui_schema["modelGateway"]["component"] == "modelGateway"
     assert set(schema.schema["properties"]) == {
         "codexExecutablePath",
+        "codexHome",
         "customModels",
         "environment",
         "modelGateway",
@@ -114,6 +123,7 @@ async def _test_codex_provider_schema_exposes_no_ipc_or_app_server_switches() ->
     assert "ipcEnabled" not in schema.schema["properties"]
     assert "executablePath" not in schema.schema["properties"]
     assert schema.ui_schema["codexExecutablePath"]["component"] == "path"
+    assert schema.ui_schema["codexHome"]["component"] == "path"
     assert schema.schema["properties"]["codexExecutablePath"]["metadata"] == {
         "i18n": {
             "labelKey": (
@@ -151,9 +161,10 @@ async def _test_codex_provider_validates_sdk_config() -> None:
         }
     )
 
-    assert config.runtime == "codex"
+    assert config.runtime_type == "codex"
     assert config.values == {
         "useSystemCodex": True,
+        "codexHome": provider_config.effective_codex_home(None),
         "environment": {"EXAMPLE": "1"},
         "customModels": [
             {
@@ -261,6 +272,30 @@ async def _test_codex_provider_ignores_empty_executable_path() -> None:
     config = await provider.validate_config({"codexExecutablePath": "   "})
 
     assert "codexExecutablePath" not in config.values
+
+
+def test_codex_provider_normalizes_explicit_home(tmp_path: Path) -> None:
+    asyncio.run(_test_codex_provider_normalizes_explicit_home(tmp_path))
+
+
+async def _test_codex_provider_normalizes_explicit_home(tmp_path: Path) -> None:
+    provider = CodexProvider(sdk_checker=_available_sdk)
+
+    config = await provider.validate_config({"codexHome": f"  {tmp_path}  "})
+
+    assert config.values["codexHome"] == str(tmp_path.resolve())
+    assert provider.resource_claims(config)[0].kind == "codex_home"
+
+
+def test_codex_provider_rejects_codex_home_environment_override() -> None:
+    asyncio.run(_test_codex_provider_rejects_codex_home_environment_override())
+
+
+async def _test_codex_provider_rejects_codex_home_environment_override() -> None:
+    provider = CodexProvider(sdk_checker=_available_sdk)
+
+    with pytest.raises(RuntimeInvalidRequestError, match="managed by the connector"):
+        await provider.validate_config({"environment": {"CODEX_HOME": "/tmp/x"}})
 
 
 def test_codex_provider_rejects_non_executable_path(tmp_path: Path) -> None:
@@ -376,7 +411,7 @@ async def _test_codex_provider_creates_sdk_runtime() -> None:
     )
     config = await provider.validate_config({})
 
-    runtime = await provider.create_runtime(config, _NoHost())
+    runtime = await provider.create_runtime(_instance(), config, _NoHost())
 
     assert isinstance(runtime, CodexRuntime)
     assert created == [config]
@@ -391,8 +426,9 @@ async def _test_codex_provider_rejects_runtime_with_unavailable_sdk_metadata() -
 
     with pytest.raises(RuntimeInvalidRequestError, match="SDK is not available"):
         await provider.create_runtime(
+            _instance(),
             RuntimeConfig(
-                runtime="codex",
+                runtime_type="codex",
                 revision=1,
                 values={"environment": {}},
                 metadata={"sdk": _missing_sdk()},
@@ -421,6 +457,18 @@ class _NoHost:
     @property
     def connector_id(self) -> str:
         return "conn_test"
+
+    @property
+    def session_namespace(self) -> str:
+        return "conn_test:runtime-codex-1"
+
+
+def _instance() -> RuntimeInstanceSpec:
+    return RuntimeInstanceSpec(
+        runtime_id="runtime-codex-1",
+        runtime_type="codex",
+        name="Codex 1",
+    )
 
 
 class _FakeSdkClient:

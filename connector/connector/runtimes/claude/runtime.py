@@ -79,7 +79,7 @@ class ClaudeRuntime(AgentRuntime):
         self._session_store = ClaudeSessionStore(self._sessions)
         self._session_sync_states = ClaudeSessionSyncStateStore(self.host)
         self._pending_messages = ClaudePendingClientMessageRegistry(
-            connector_id=self.host.connector_id,
+            connector_id=self.host.session_namespace,
             kv_store=self.client_message_kv,
         )
         self._catalogs = ClaudeCatalogReader(config=self.config)
@@ -127,9 +127,10 @@ class ClaudeRuntime(AgentRuntime):
     @property
     def identity(self) -> RuntimeIdentity:
         return RuntimeIdentity(
-            runtime="claude",
+            runtime_id="claude",
+            runtime_type="claude",
+            name="Claude",
             runtime_version=self.runtime_version,
-            display_name="Claude",
         )
 
     async def start(self) -> None:

@@ -9,7 +9,9 @@ from connector.runtime_protocol.host import RuntimeHostClient
 from connector.runtime_protocol.models import (
     RuntimeConfig,
     RuntimeConfigSchema,
-    RuntimeInventoryItem,
+    RuntimeInstanceSpec,
+    RuntimeResourceClaim,
+    RuntimeTypeDescriptor,
 )
 from connector.runtime_protocol.protocol import AgentRuntime
 
@@ -23,11 +25,6 @@ class RuntimeProvider(ABC):
 
     @property
     @abstractmethod
-    def runtime(self) -> str:
-        raise NotImplementedError
-
-    @property
-    @abstractmethod
     def runtime_type(self) -> str:
         raise NotImplementedError
 
@@ -36,7 +33,19 @@ class RuntimeProvider(ABC):
     def display_name(self) -> str:
         raise NotImplementedError
 
-    async def discover(self) -> RuntimeInventoryItem:
+    @property
+    def description(self) -> str | None:
+        return None
+
+    @property
+    def recommended(self) -> bool:
+        return False
+
+    @property
+    def recommendation_rank(self) -> int | None:
+        return None
+
+    async def discover(self) -> RuntimeTypeDescriptor:
         raise RuntimeUnsupportedError("discover")
 
     async def get_config_schema(self) -> RuntimeConfigSchema:
@@ -50,10 +59,20 @@ class RuntimeProvider(ABC):
 
     async def create_runtime(
         self,
+        instance: RuntimeInstanceSpec,
         config: RuntimeConfig,
         host: RuntimeHostClient,
     ) -> AgentRuntime:
         raise RuntimeUnsupportedError("create_runtime")
+
+    def resource_claims(
+        self,
+        config: RuntimeConfig,
+    ) -> tuple[RuntimeResourceClaim, ...]:
+        return ()
+
+    def session_source_key(self, config: RuntimeConfig) -> str | None:
+        return None
 
     async def stop_runtime(self, runtime: AgentRuntime) -> None:
         await runtime.stop()
