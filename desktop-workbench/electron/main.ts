@@ -7,7 +7,7 @@ const APP_NAME = "Agents Anywhere Workbench";
 const WEB_PROTOCOL = "aa-workbench";
 const WEB_HOST = "web";
 const DEFAULT_API_ORIGIN = "https://web.agents-anywhere.com";
-const DEFAULT_API_NAMESPACE = "";
+const DEFAULT_API_NAMESPACE = "/api/v2";
 const API_ROUTE_PREFIXES = [
   "/admin",
   "/agents",
