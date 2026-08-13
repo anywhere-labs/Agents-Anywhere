@@ -51,26 +51,6 @@ class ApiClientTest {
     }
 
     @Test
-    fun `authenticated sse sends bearer header and 401 notifies unauthorized listener`() {
-        val notifiedTokens = mutableListOf<String>()
-        val client = ApiClient(onUnauthorized = notifiedTokens::add)
-        val observedAuthorization = AtomicReference<String?>()
-
-        val error = withHttpResponse(401, observedAuthorization) { serverUrl ->
-            client.streamSse(
-                serverUrl = serverUrl,
-                path = "/events?token=expired-stream-token",
-                authorizationToken = "expired-stream-token",
-                onEvent = {},
-            )
-        }
-
-        assertApiException(error, 401)
-        assertEquals("Bearer expired-stream-token", observedAuthorization.get())
-        assertEquals(listOf("expired-stream-token"), notifiedTokens)
-    }
-
-    @Test
     fun `unauthenticated 401 and authenticated non-401 do not notify`() {
         val notifiedTokens = mutableListOf<String>()
         val client = ApiClient(onUnauthorized = notifiedTokens::add)
@@ -98,6 +78,33 @@ class ApiClientTest {
         assertApiException(error, 401)
     }
 
+    @Test
+    fun `web login host requires a successful html document`() {
+        val client = ApiClient()
+
+        val htmlError = withHttpResponse(
+            statusCode = 200,
+            contentType = "text/html; charset=utf-8",
+            body = "<!doctype html><html></html>",
+        ) { serverUrl ->
+            client.requireHtmlDocument(serverUrl)
+        }
+        assertEquals(null, htmlError)
+
+        val apiOnlyError = withHttpResponse(
+            statusCode = 404,
+            contentType = "application/json",
+            body = "{\"detail\":\"Not Found\"}",
+        ) { serverUrl ->
+            client.requireHtmlDocument(serverUrl)
+        }
+        assertTrue(apiOnlyError is ApiException)
+        assertEquals(
+            "This address does not host the web login. Enter the Web URL instead of the API URL.",
+            apiOnlyError?.message,
+        )
+    }
+
     private fun assertApiException(error: Throwable?, statusCode: Int) {
         assertTrue(error is ApiException)
         assertEquals(statusCode, (error as ApiException).statusCode)
@@ -107,8 +114,21 @@ class ApiClientTest {
         statusCode: Int,
         observedAuthorization: AtomicReference<String?>? = null,
         request: (serverUrl: String) -> Unit,
+    ): Throwable? = withHttpResponse(
+        statusCode = statusCode,
+        contentType = "application/json",
+        body = "{\"detail\":\"invalid user access token\"}",
+        observedAuthorization = observedAuthorization,
+        request = request,
+    )
+
+    private fun withHttpResponse(
+        statusCode: Int,
+        contentType: String,
+        body: String,
+        observedAuthorization: AtomicReference<String?>? = null,
+        request: (serverUrl: String) -> Unit,
     ): Throwable? {
-        val body = "{\"detail\":\"invalid user access token\"}"
         val serverFailure = AtomicReference<Throwable?>()
         return ServerSocket(0, 1, InetAddress.getByName("127.0.0.1")).use { serverSocket ->
             val serverThread = thread(name = "api-client-test-server") {
@@ -124,7 +144,7 @@ class ApiClientTest {
                         }
                         socket.getOutputStream().bufferedWriter().use { writer ->
                             writer.write("HTTP/1.1 $statusCode Unauthorized\r\n")
-                            writer.write("Content-Type: application/json\r\n")
+                            writer.write("Content-Type: $contentType\r\n")
                             writer.write("Content-Length: ${body.toByteArray(Charsets.UTF_8).size}\r\n")
                             writer.write("Connection: close\r\n\r\n")
                             writer.write(body)

@@ -2,20 +2,6 @@ package com.agentsanywhere.app.feature.sessions
 
 import com.agentsanywhere.app.model.AgentSession
 
-data class NewSessionState(
-    val title: String = "New Session",
-    val selectedDeviceId: String? = null,
-    val selectedRuntime: String? = null,
-    val selectedWorkspacePath: String = "~",
-    val homePath: String? = null,
-    val currentPath: String = "~",
-    val pathEntries: List<NewSessionPathEntry> = emptyList(),
-    val isLoadingPath: Boolean = false,
-    val isCreating: Boolean = false,
-    val errorMessage: String? = null,
-    val pathErrorMessage: String? = null,
-)
-
 data class NewSessionWorkspace(
     val title: String,
     val path: String,

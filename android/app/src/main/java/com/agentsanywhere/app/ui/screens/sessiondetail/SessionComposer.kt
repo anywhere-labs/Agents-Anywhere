@@ -101,6 +101,7 @@ internal fun MessageComposer(
     onPickFile: () -> Unit,
     onOpenCamera: () -> Unit,
     onRemoveAttachment: (PendingAttachment) -> Unit,
+    onRetryAttachment: (PendingAttachment) -> Unit,
     onPreviewAttachment: (PendingAttachment) -> Unit,
     onReadOnlyClick: () -> Unit,
     onSend: () -> Unit,
@@ -150,6 +151,7 @@ internal fun MessageComposer(
                     attachments = attachments,
                     darkMode = darkMode,
                     onRemoveAttachment = onRemoveAttachment,
+                    onRetryAttachment = onRetryAttachment,
                     onPreviewAttachment = onPreviewAttachment,
                 )
             }
@@ -247,6 +249,7 @@ private fun PendingAttachmentStrip(
     attachments: List<PendingAttachment>,
     darkMode: Boolean,
     onRemoveAttachment: (PendingAttachment) -> Unit,
+    onRetryAttachment: (PendingAttachment) -> Unit,
     onPreviewAttachment: (PendingAttachment) -> Unit,
 ) {
     val scrollState = rememberScrollState()
@@ -263,6 +266,7 @@ private fun PendingAttachmentStrip(
                 attachment = attachment,
                 darkMode = darkMode,
                 onRemove = { onRemoveAttachment(attachment) },
+                onRetry = { onRetryAttachment(attachment) },
                 onPreview = { onPreviewAttachment(attachment) },
             )
         }
@@ -274,12 +278,14 @@ private fun PendingAttachmentCard(
     attachment: PendingAttachment,
     darkMode: Boolean,
     onRemove: () -> Unit,
+    onRetry: () -> Unit,
     onPreview: () -> Unit,
 ) {
     if (attachment.isImage) {
         PendingImageAttachmentCard(
             attachment = attachment,
             onRemove = onRemove,
+            onRetry = onRetry,
             onPreview = onPreview,
         )
     } else {
@@ -287,6 +293,7 @@ private fun PendingAttachmentCard(
             attachment = attachment,
             darkMode = darkMode,
             onRemove = onRemove,
+            onRetry = onRetry,
         )
     }
 }
@@ -295,6 +302,7 @@ private fun PendingAttachmentCard(
 private fun PendingImageAttachmentCard(
     attachment: PendingAttachment,
     onRemove: () -> Unit,
+    onRetry: () -> Unit,
     onPreview: () -> Unit,
 ) {
     Box(
@@ -313,6 +321,7 @@ private fun PendingImageAttachmentCard(
         AttachmentUploadOverlay(
             state = attachment.uploadState,
             onRemove = onRemove,
+            onRetry = onRetry,
             modifier = Modifier.fillMaxSize(),
         )
     }
@@ -323,6 +332,7 @@ private fun PendingFileAttachmentCard(
     attachment: PendingAttachment,
     darkMode: Boolean,
     onRemove: () -> Unit,
+    onRetry: () -> Unit,
 ) {
     val surface = if (darkMode) Color(0xFF27272A) else Color(0xFFF1F0ED)
     val text = if (darkMode) Color(0xFFF4F4F5) else Color(0xFF242522)
@@ -376,6 +386,7 @@ private fun PendingFileAttachmentCard(
         AttachmentUploadOverlay(
             state = attachment.uploadState,
             onRemove = onRemove,
+            onRetry = onRetry,
             modifier = Modifier.fillMaxSize(),
         )
     }
@@ -385,6 +396,7 @@ private fun PendingFileAttachmentCard(
 private fun AttachmentUploadOverlay(
     state: AttachmentUploadState,
     onRemove: () -> Unit,
+    onRetry: () -> Unit,
     modifier: Modifier,
 ) {
     when (state) {
@@ -398,8 +410,36 @@ private fun AttachmentUploadOverlay(
                 strokeWidth = 5.dp,
             )
         }
-        AttachmentUploadState.Uploaded,
-        AttachmentUploadState.Failed -> Box(modifier = modifier) {
+        AttachmentUploadState.Uploaded -> Box(modifier = modifier) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(6.dp)
+                    .size(36.dp)
+                    .clip(CircleShape)
+                    .background(Color(0xD9262628))
+                    .border(1.dp, Color(0x22FFFFFF), CircleShape)
+                    .noRippleClickable(onClick = onRemove),
+                contentAlignment = Alignment.Center,
+            ) {
+                XGlyph(Color.White, sizeDp = 22)
+            }
+        }
+        AttachmentUploadState.Failed -> Box(
+            modifier = modifier.background(Color.Black.copy(alpha = 0.48f)),
+        ) {
+            Text(
+                text = stringResource(R.string.common_retry),
+                color = Color.White,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(Color(0xCC27272A))
+                    .noRippleClickable(onClick = onRetry)
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+            )
             Box(
                 modifier = Modifier
                     .align(Alignment.TopEnd)

@@ -261,32 +261,13 @@ data class DeviceSetupCredential(
 )
 
 fun RemoteDevice.toAgentDevice(): AgentDevice {
-    val runtimeCount = attachedRuntimes.size
-    val subtitle = when {
-        runtimeCount > 0 -> attachedRuntimes.joinToString(", ") { it.runtimeLabel() }
-        status == "online" -> "Online"
-        else -> "Offline"
-    }
     return AgentDevice(
         id = id,
         name = name,
         deviceOs = deviceOs,
-        subtitle = subtitle,
+        subtitle = if (status == "online") "Online" else "Offline",
         online = status == "online",
-        attachedRuntimes = attachedRuntimes,
         lastSeenAt = lastSeenAt,
         createdAt = createdAt,
     )
-}
-
-private fun String.runtimeLabel(): String {
-    return when (this) {
-        "codex" -> "Codex"
-        "claude" -> "Claude Code"
-        "opencode" -> "OpenCode"
-        "acp" -> "ACP"
-        else -> replaceFirstChar { char ->
-            if (char.isLowerCase()) char.titlecase() else char.toString()
-        }
-    }
 }
