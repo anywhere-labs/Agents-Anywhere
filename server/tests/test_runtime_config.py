@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime
 from typing import Any
 
 import pytest
 from conftest import ApiV2TestClient as TestClient
 
 from agent_server.app import create_app
+from agent_server.core.protocol import ProtocolModelCatalog
 from agent_server.infra.connector_rpc import ConnectorRpcError
 from agent_server.services.connector_ingest import ConnectorIngestService
 from agent_server.services.connector_notifications import ConnectorNotificationService
@@ -302,6 +304,33 @@ def test_two_named_instances_of_one_runtime_type_can_be_created(tmp_path):
         assert params["name"] == response.json()["name"]
         assert isinstance(params["configRevision"], int)
         assert params["configRevision"] > 0
+
+
+def test_runtime_config_revision_uses_updated_at_milliseconds(tmp_path):
+    client, rpc, connector_id, headers = _make_type_client(tmp_path)
+
+    response = client.post(
+        f"/connectors/{connector_id}/runtimes",
+        headers=headers,
+        json={
+            "runtimeType": "codex",
+            "name": "Work Codex",
+            "config": {"codexHome": "/work/.codex"},
+            "active": False,
+        },
+    )
+
+    assert response.status_code == 201, response.text
+    updated_at = datetime.fromisoformat(response.json()["updatedAt"])
+    expected_revision = int(updated_at.timestamp() * 1000)
+    assert rpc.requests[0][1] == "runtime.validateConfig"
+    assert rpc.requests[0][2]["configRevision"] == expected_revision
+    catalog = ProtocolModelCatalog(
+        runtime=response.json()["runtimeId"],
+        revision=expected_revision * 1000 + 3,
+        models=[],
+    )
+    assert catalog.revision == expected_revision * 1000 + 3
 
 
 def test_runtime_instance_names_are_unique_after_normalization(tmp_path):

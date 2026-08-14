@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
-import json
 import secrets
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from typing import Any
 
 from agent_server.core.device_runtime import (
@@ -396,7 +395,7 @@ class DeviceRuntimeService:
                     "runtimeType": runtime.runtimeType,
                     "name": runtime.name,
                     "config": runtime.config,
-                    "configRevision": _config_revision(runtime.config),
+                    "configRevision": _config_revision(runtime),
                 },
                 timeout=90,
             )
@@ -518,7 +517,7 @@ class DeviceRuntimeService:
                     "runtimeType": runtime.runtimeType,
                     "name": runtime.name,
                     "config": config,
-                    "configRevision": _config_revision(config),
+                    "configRevision": _config_revision(runtime),
                 },
                 timeout=90,
             )
@@ -609,11 +608,11 @@ class DeviceRuntimeService:
         )
 
 
-def _config_revision(config: dict[str, Any]) -> int:
-    encoded = json.dumps(
-        config,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode()
-    return max(1, int(hashlib.sha256(encoded).hexdigest()[:13], 16))
+def _config_revision(runtime: DeviceRuntimeView) -> int:
+    try:
+        updated_at = datetime.fromisoformat(runtime.updatedAt)
+    except ValueError:
+        return 1
+    if updated_at.tzinfo is None:
+        updated_at = updated_at.replace(tzinfo=UTC)
+    return max(1, int(updated_at.timestamp() * 1000))
