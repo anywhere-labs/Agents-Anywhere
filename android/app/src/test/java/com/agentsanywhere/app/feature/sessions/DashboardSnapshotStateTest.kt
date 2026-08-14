@@ -73,7 +73,7 @@ class DashboardSnapshotStateTest {
         assertFalse(replaced.isLoading)
     }
 
-    private fun device(id: String) = AgentDevice(id, id, subtitle = "", online = true)
+    private fun device(id: String) = AgentDevice(id, id, online = true)
 
     private fun remoteDevice() = RemoteDevice(
         id = "connector",

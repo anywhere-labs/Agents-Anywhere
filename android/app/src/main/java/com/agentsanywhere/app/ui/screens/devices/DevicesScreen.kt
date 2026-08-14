@@ -33,6 +33,7 @@ import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -45,13 +46,18 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.agentsanywhere.app.R
+import com.agentsanywhere.app.feature.devices.DeviceAgentPreviews
+import com.agentsanywhere.app.feature.devices.DeviceAgentPreviewState
+import com.agentsanywhere.app.feature.devices.DeviceRuntimeList
 import com.agentsanywhere.app.feature.devices.DeviceSetupCredential
+import com.agentsanywhere.app.feature.devices.onlineAgentCount
 import com.agentsanywhere.app.feature.sessions.SessionsState
 import com.agentsanywhere.app.model.AgentDevice
 import com.agentsanywhere.app.ui.designsystem.LocalAAColors
@@ -61,9 +67,9 @@ import com.composables.icons.lucide.ChevronRight
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Plus
 import com.valentinilk.shimmer.shimmer
-import java.time.Duration
-import java.time.Instant
-import java.time.format.DateTimeParseException
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -73,6 +79,7 @@ fun DevicesScreen(
     onRefresh: () -> Unit,
     onOpenDevice: (AgentDevice) -> Unit,
     onBack: (() -> Unit)? = null,
+    agentPreviews: DeviceAgentPreviews,
     onCreateDeviceSetup: suspend (String) -> Result<DeviceSetupCredential>,
     onDeviceCredentialCreated: (DeviceSetupCredential) -> Unit,
     onClaimDevicePairCode: suspend (DeviceSetupCredential, String) -> Result<AgentDevice>,
@@ -146,6 +153,7 @@ fun DevicesScreen(
                             items(devices, key = { it.id }) { device ->
                                 DeviceRow(
                                     device = device,
+                                    agentPreview = agentPreviews.byDeviceId[device.id],
                                     darkMode = darkMode,
                                     onClick = { onOpenDevice(device) },
                                 )
@@ -165,6 +173,57 @@ fun DevicesScreen(
         onDeviceCredentialCreated = onDeviceCredentialCreated,
         onClaimDevicePairCode = onClaimDevicePairCode,
     )
+}
+
+@Composable
+internal fun rememberDeviceAgentPreviews(
+    devices: List<AgentDevice>,
+    isRefreshing: Boolean,
+    refreshKey: Long,
+    onListDeviceRuntimes: suspend (String) -> Result<DeviceRuntimeList>,
+): DeviceAgentPreviews {
+    val onlineDeviceIds = remember(devices) {
+        devices.filter(AgentDevice::online).map(AgentDevice::id).toSet()
+    }
+    val onlineDeviceKey = remember(onlineDeviceIds) {
+        onlineDeviceIds.sorted().joinToString("|")
+    }
+    var previews by remember { mutableStateOf(DeviceAgentPreviews()) }
+
+    LaunchedEffect(onlineDeviceKey, isRefreshing, refreshKey) {
+        val refresh = previews.beginRefresh(onlineDeviceIds)
+        previews = refresh
+        val generation = refresh.generation
+        if (isRefreshing || onlineDeviceIds.isEmpty()) return@LaunchedEffect
+
+        coroutineScope {
+            onlineDeviceIds.forEach { deviceId ->
+                launch {
+                    val result = try {
+                        onListDeviceRuntimes(deviceId)
+                    } catch (error: CancellationException) {
+                        throw error
+                    } catch (error: Exception) {
+                        Result.failure(error)
+                    }
+                    previews = result.fold(
+                        onSuccess = { inventory ->
+                            previews.loaded(
+                                requestGeneration = generation,
+                                deviceId = deviceId,
+                                onlineAgentCount = inventory.onlineAgentCount(),
+                            )
+                        },
+                        onFailure = {
+                            previews.failed(generation, deviceId)
+                        },
+                    )
+                }
+            }
+        }
+    }
+
+    return previews
 }
 
 @Composable
@@ -300,6 +359,7 @@ private fun AddDeviceRow(
 @Composable
 internal fun DeviceRow(
     device: AgentDevice,
+    agentPreview: DeviceAgentPreviewState?,
     darkMode: Boolean,
     onClick: () -> Unit,
 ) {
@@ -361,7 +421,7 @@ internal fun DeviceRow(
                 StatusPill(online = device.online, darkMode = darkMode)
             }
             Text(
-                text = deviceMeta(device),
+                text = deviceAgentPreviewLabel(device, agentPreview),
                 modifier = Modifier.fillMaxWidth(0.84f),
                 color = meta,
                 fontSize = 13.sp,
@@ -470,9 +530,22 @@ private fun LoadingRow(darkMode: Boolean) {
 }
 
 @Composable
-private fun deviceMeta(device: AgentDevice): String {
-    val seen = if (device.online) stringResource(R.string.common_now) else device.lastSeenAt.relativeTimeLabel()
-    return "${device.subtitle} · $seen"
+private fun deviceAgentPreviewLabel(
+    device: AgentDevice,
+    preview: DeviceAgentPreviewState?,
+): String {
+    if (!device.online) return stringResource(R.string.devices_offline)
+    return when (preview) {
+        is DeviceAgentPreviewState.Loaded -> pluralStringResource(
+            R.plurals.devices_agents_online,
+            preview.onlineAgentCount,
+            preview.onlineAgentCount,
+        )
+        DeviceAgentPreviewState.Unavailable -> stringResource(R.string.devices_agent_status_unavailable)
+        DeviceAgentPreviewState.Loading,
+        null,
+        -> stringResource(R.string.devices_agent_status_loading)
+    }
 }
 
 internal fun List<AgentDevice>.sortedForDevicesPage(): List<AgentDevice> {
@@ -481,29 +554,6 @@ internal fun List<AgentDevice>.sortedForDevicesPage(): List<AgentDevice> {
             .thenBy { it.createdAt.orEmpty() }
             .thenBy { it.name.lowercase() },
     )
-}
-
-@Composable
-private fun String?.relativeTimeLabel(): String {
-    if (isNullOrBlank()) return stringResource(R.string.devices_seen_offline)
-    val instant = try {
-        Instant.parse(this)
-    } catch (_: DateTimeParseException) {
-        return stringResource(R.string.devices_seen_offline)
-    }
-    val elapsed = Duration.between(instant, Instant.now()).coerceAtLeast(Duration.ZERO)
-    val minutes = elapsed.toMinutes()
-    val hours = elapsed.toHours()
-    val days = elapsed.toDays()
-    return when {
-        minutes < 1 -> stringResource(R.string.common_now)
-        minutes < 60 -> stringResource(R.string.devices_seen_minutes_ago, minutes)
-        hours < 24 -> stringResource(R.string.devices_seen_hours_ago, hours)
-        days == 1L -> stringResource(R.string.devices_seen_yesterday)
-        days < 30 -> stringResource(R.string.devices_seen_days_ago, days)
-        days < 365 -> stringResource(R.string.devices_seen_months_ago, days / 30)
-        else -> stringResource(R.string.devices_seen_years_ago, days / 365)
-    }
 }
 
 private fun deviceKind(device: AgentDevice): DeviceKind {

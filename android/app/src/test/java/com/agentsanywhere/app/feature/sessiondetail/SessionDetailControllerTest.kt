@@ -62,7 +62,6 @@ class SessionDetailControllerTest {
                 AgentDevice(
                     id = "connector",
                     name = "Device",
-                    subtitle = "",
                     online = true,
                 ),
             )

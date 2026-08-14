@@ -93,6 +93,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.agentsanywhere.app.R
 import com.agentsanywhere.app.api.AuthMeResponse
+import com.agentsanywhere.app.feature.devices.DeviceAgentPreviews
 import com.agentsanywhere.app.feature.sessions.SessionsState
 import com.agentsanywhere.app.feature.sessions.SessionListIndicator
 import com.agentsanywhere.app.feature.sessions.listIndicator
@@ -157,6 +158,7 @@ fun HomeScreen(
     onSetSessionArchived: suspend (String, Boolean) -> Result<AgentSession>,
     onOpenSession: (AgentSession) -> Unit,
     onOpenDevice: (AgentDevice) -> Unit,
+    deviceAgentPreviews: DeviceAgentPreviews,
     onPairDevice: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -203,6 +205,7 @@ fun HomeScreen(
                 onSessionLongPress = { session, bounds -> actionMenu = HomeSessionActionMenu(session, bounds) },
                 onOpenSession = onOpenSession,
                 onOpenDevice = onOpenDevice,
+                deviceAgentPreviews = deviceAgentPreviews,
                 onPairDevice = onPairDevice,
             )
             actionMenu?.let { menu ->
@@ -718,6 +721,7 @@ private fun HomeContent(
     onSessionLongPress: (AgentSession, Rect) -> Unit,
     onOpenSession: (AgentSession) -> Unit,
     onOpenDevice: (AgentDevice) -> Unit,
+    deviceAgentPreviews: DeviceAgentPreviews,
     onPairDevice: () -> Unit,
 ) {
     val colors = LocalAAColors.current
@@ -764,6 +768,7 @@ private fun HomeContent(
                 onSessionLongPress = onSessionLongPress,
                 onOpenSession = onOpenSession,
                 onOpenDevice = onOpenDevice,
+                deviceAgentPreviews = deviceAgentPreviews,
                 onCreateSession = { navigate(AppDestination.NewSession) },
                 onPairDevice = onPairDevice,
             )
@@ -990,6 +995,7 @@ private fun HomeList(
     onSessionLongPress: (AgentSession, Rect) -> Unit,
     onOpenSession: (AgentSession) -> Unit,
     onOpenDevice: (AgentDevice) -> Unit,
+    deviceAgentPreviews: DeviceAgentPreviews,
     onCreateSession: () -> Unit,
     onPairDevice: () -> Unit,
 ) {
@@ -1009,7 +1015,12 @@ private fun HomeList(
             onButtonClick = onPairDevice,
             contentOffsetY = (-32).dp,
         )
-        tab == HomeTab.Devices -> DeviceList(devices = devices, darkMode = darkMode, onOpenDevice = onOpenDevice)
+        tab == HomeTab.Devices -> DeviceList(
+            devices = devices,
+            darkMode = darkMode,
+            agentPreviews = deviceAgentPreviews,
+            onOpenDevice = onOpenDevice,
+        )
         devices.isEmpty() -> AppEmptyState(
             message = stringResource(R.string.home_pair_device_first),
             buttonLabel = stringResource(R.string.home_pair_new_device),
@@ -1191,6 +1202,7 @@ private fun SessionList(
 private fun DeviceList(
     devices: List<AgentDevice>,
     darkMode: Boolean,
+    agentPreviews: DeviceAgentPreviews,
     onOpenDevice: (AgentDevice) -> Unit,
 ) {
     val onlineDevices = remember(devices) { devices.filter { it.online } }
@@ -1215,6 +1227,7 @@ private fun DeviceList(
                 items(onlineDevices, key = { "online-${it.id}" }) { device ->
                     DeviceRow(
                         device = device,
+                        agentPreview = agentPreviews.byDeviceId[device.id],
                         darkMode = darkMode,
                         onClick = { onOpenDevice(device) },
                     )
@@ -1233,6 +1246,7 @@ private fun DeviceList(
                 items(offlineDevices, key = { "offline-${it.id}" }) { device ->
                     DeviceRow(
                         device = device,
+                        agentPreview = null,
                         darkMode = darkMode,
                         onClick = { onOpenDevice(device) },
                     )
