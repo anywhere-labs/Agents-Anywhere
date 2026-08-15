@@ -27,9 +27,14 @@ data class AgentSession(
 
 enum class SessionStatus {
     Idle,
+    Waiting,
+    Pending,
     Running,
+    Stopping,
     WaitingApproval,
     Error,
+    Blocked,
+    Unknown,
 }
 
 data class AgentDevice(

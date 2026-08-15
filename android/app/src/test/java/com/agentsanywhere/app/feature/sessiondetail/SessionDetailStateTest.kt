@@ -26,6 +26,72 @@ import org.json.JSONObject
 
 class SessionDetailStateTest {
     @Test
+    fun snapshotLoadFeedbackPreservesDataAndAlwaysResetsLoadingState() {
+        val original = SessionDetailState(
+            meta = SessionMeta(session = session(connectorOnline = true), errorMessage = "previous"),
+            timeline = SessionTimelineState(
+                messages = listOf(message("kept", "kept", 1, 1, 1)),
+                loadingOlder = true,
+                errorMessage = "previous",
+            ),
+            runtime = SessionRuntimeState(errorMessage = "previous"),
+            capabilities = EffectiveCapabilities(errorMessage = "previous"),
+            notices = RuntimeNotices(errorMessage = "previous"),
+            initialized = true,
+        )
+
+        val loading = original.beginSnapshotLoad(clearErrors = false)
+        assertTrue(loading.meta.isLoading)
+        assertTrue(loading.timeline.isLoading)
+        assertFalse(loading.timeline.loadingOlder)
+        assertEquals("previous", loading.runtime.errorMessage)
+
+        val failed = loading.failSnapshotLoad(null)
+        assertFalse(failed.meta.isLoading)
+        assertFalse(failed.timeline.isLoading)
+        assertFalse(failed.runtime.isLoading)
+        assertFalse(failed.capabilities.isLoading)
+        assertFalse(failed.notices.isLoading)
+        assertEquals(original.session, failed.session)
+        assertEquals(original.messages, failed.messages)
+        assertEquals("previous", failed.timeline.errorMessage)
+
+        val completed = loading.completeSnapshotLoad()
+        assertFalse(completed.meta.isLoading)
+        assertFalse(completed.timeline.isLoading)
+        assertFalse(completed.runtime.isLoading)
+        assertFalse(completed.capabilities.isLoading)
+        assertFalse(completed.notices.isLoading)
+        assertNull(completed.meta.errorMessage)
+        assertNull(completed.timeline.errorMessage)
+        assertNull(completed.runtime.errorMessage)
+        assertNull(completed.capabilities.errorMessage)
+        assertNull(completed.notices.errorMessage)
+        assertEquals(original.messages, completed.messages)
+    }
+
+    @Test
+    fun initialSnapshotRetryClearsPreviousErrorsAndUsesGenericFailure() {
+        val previousFailure = SessionDetailState(
+            meta = SessionMeta(errorMessage = "raw server error"),
+            timeline = SessionTimelineState(errorMessage = "raw server error"),
+            runtime = SessionRuntimeState(errorMessage = "raw server error"),
+            capabilities = EffectiveCapabilities(errorMessage = "raw server error"),
+            notices = RuntimeNotices(errorMessage = "raw server error"),
+        )
+
+        val failed = previousFailure
+            .beginSnapshotLoad(clearErrors = true)
+            .failSnapshotLoad("Could not load messages.")
+
+        assertEquals("Could not load messages.", failed.meta.errorMessage)
+        assertEquals("Could not load messages.", failed.timeline.errorMessage)
+        assertEquals("Could not load messages.", failed.runtime.errorMessage)
+        assertEquals("Could not load messages.", failed.capabilities.errorMessage)
+        assertEquals("Could not load messages.", failed.notices.errorMessage)
+    }
+
+    @Test
     fun realtimeEventsUpdateOnlyTheirOwnerAndDeduplicateByEventId() {
         val controller = SessionDetailController(
             SessionsApi(),
@@ -286,6 +352,30 @@ class SessionDetailStateTest {
         assertEquals("Live", merged.session?.title)
         assertEquals("live", merged.catalogs.model?.runtime)
         assertEquals("live", merged.catalogs.permission?.runtime)
+    }
+
+    @Test
+    fun snapshotMergeKeepsNewerCatalogRevisionFromEitherOwner() {
+        val controller = controller()
+        val snapshot = SessionDetailState(
+            catalogs = RuntimeCatalogs(
+                model = RemoteRuntimeModelCatalog("snapshot-model", 9, emptyList()),
+                permission = RemoteRuntimePermissionCatalog("snapshot-permission", 4, emptyList()),
+            ),
+            initialized = true,
+        )
+        val live = SessionDetailState(
+            catalogs = RuntimeCatalogs(
+                model = RemoteRuntimeModelCatalog("live-model", 8, emptyList()),
+                permission = RemoteRuntimePermissionCatalog("live-permission", 5, emptyList()),
+            ),
+            initialized = true,
+        )
+
+        val merged = controller.mergeSnapshotWithLiveState("session", snapshot, live)
+
+        assertEquals("snapshot-model", merged.catalogs.model?.runtime)
+        assertEquals("live-permission", merged.catalogs.permission?.runtime)
     }
 
     @Test
@@ -900,7 +990,7 @@ class SessionDetailStateTest {
         ).selectionOptions()
 
         assertEquals("model:a", model.validatedSelection("model:a"))
-        assertEquals("model:b:high", model.validatedSelection("missing"))
+        assertNull(model.validatedSelection("missing"))
         assertEquals("permission:read", permission.validatedSelection(null))
         assertNull(emptyList<RuntimeSelectionOption>().validatedSelection("missing"))
     }

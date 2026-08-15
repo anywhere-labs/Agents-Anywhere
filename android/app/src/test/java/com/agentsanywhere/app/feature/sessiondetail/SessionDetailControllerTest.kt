@@ -76,8 +76,8 @@ class SessionDetailControllerTest {
             assertEquals(1L, initial.runtimeCapabilities.revision)
             assertEquals("Initial message", initial.messages.single().text)
             assertEquals("Initial notice", initial.notices.notices.single().title)
-            assertNull(initial.catalogs.model)
-            assertNull(initial.catalogs.permission)
+            assertEquals(99L, initial.catalogs.model?.revision)
+            assertEquals(100L, initial.catalogs.permission?.revision)
 
             val partiallyRefreshed = kotlinx.coroutines.runBlocking {
                 controller.refreshDomains("session", devices, initial)
@@ -204,13 +204,21 @@ class SessionDetailControllerTest {
                 .put("runtimeCapabilities", JSONObject(capabilities(allowed = true)).getJSONObject("capabilitySet"))
                 .put(
                     "catalogs",
-                    JSONObject().put(
-                        "model",
-                        JSONObject()
-                            .put("runtime", "codex")
-                            .put("revision", 99)
-                            .put("models", emptyList<Any>()),
-                    ),
+                    JSONObject()
+                        .put(
+                            "model",
+                            JSONObject()
+                                .put("runtime", "codex")
+                                .put("revision", 99)
+                                .put("models", emptyList<Any>()),
+                        )
+                        .put(
+                            "permission",
+                            JSONObject()
+                                .put("runtime", "codex")
+                                .put("revision", 100)
+                                .put("permissions", emptyList<Any>()),
+                        ),
                 )
                 .put("eventCursor", "seq:1")
                 .put("serverTime", "now")
