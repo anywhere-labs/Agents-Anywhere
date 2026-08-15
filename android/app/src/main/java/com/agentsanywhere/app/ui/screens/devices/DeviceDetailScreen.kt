@@ -36,6 +36,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -46,6 +49,7 @@ import com.agentsanywhere.app.feature.devices.DeviceDetailState
 import com.agentsanywhere.app.feature.devices.DeviceRuntime
 import com.agentsanywhere.app.feature.devices.DeviceRuntimeList
 import com.agentsanywhere.app.feature.devices.DeviceRuntimeManagementState
+import com.agentsanywhere.app.feature.devices.DeviceRuntimeSetupResult
 import com.agentsanywhere.app.feature.devices.DeviceRuntimeStatus
 import com.agentsanywhere.app.feature.devices.deviceDetailState
 import com.agentsanywhere.app.feature.devices.DeviceSetupCredential
@@ -64,9 +68,7 @@ import com.composables.icons.lucide.Check
 import com.composables.icons.lucide.List as ListIcon
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Ellipsis
-import com.composables.icons.lucide.Plus
 import com.composables.icons.lucide.RefreshCw
-import com.composables.icons.lucide.Settings
 import com.composables.icons.lucide.Trash2
 import kotlinx.coroutines.launch
 
@@ -85,7 +87,7 @@ fun DeviceDetailScreen(
     onClaimDevicePairCode: suspend (DeviceSetupCredential, String) -> Result<AgentDevice>,
     onListDeviceRuntimes: suspend (String) -> Result<DeviceRuntimeList>,
     onDiscoverDeviceRuntimes: suspend (String) -> Result<DeviceRuntimeList>,
-    onSaveDeviceRuntimeConfig: suspend (String, String, Map<String, Any?>) -> Result<DeviceRuntime>,
+    onConfigureAndStartDeviceRuntime: suspend (String, String, Map<String, Any?>) -> DeviceRuntimeSetupResult,
     onSetDeviceRuntimeActive: suspend (String, String, Boolean) -> Result<DeviceRuntime>,
     onDeleteDeviceRuntimeConfig: suspend (String, String) -> Result<DeviceRuntime>,
     onBulkSetSessionsArchived: suspend (List<String>, Boolean) -> Result<SessionBatchUpdate>,
@@ -103,8 +105,7 @@ fun DeviceDetailScreen(
     var setupBusy by remember { mutableStateOf(false) }
     var setupError by remember { mutableStateOf<String?>(null) }
     var actionsSheetOpen by remember { mutableStateOf(false) }
-    var addAgentSheetOpen by remember { mutableStateOf(false) }
-    var settingsRuntimeId by remember(selectedDeviceId) { mutableStateOf<String?>(null) }
+    var configureRuntimeId by remember(selectedDeviceId) { mutableStateOf<String?>(null) }
     var runtimeState by remember(selectedDeviceId) {
         mutableStateOf(
             DeviceRuntimeManagementState(
@@ -128,10 +129,10 @@ fun DeviceDetailScreen(
         runtimeState = DeviceRuntimeManagementState(connectorId = connectorId, loading = true)
         onListDeviceRuntimes(connectorId)
             .onSuccess { result -> runtimeState = runtimeState.replace(result) }
-            .onFailure { error ->
+            .onFailure {
                 runtimeState = runtimeState.copy(
                     loading = false,
-                    errorMessage = error.message ?: context.getString(R.string.device_runtime_load_failed),
+                    errorMessage = context.getString(R.string.device_runtime_load_failed),
                 )
             }
     }
@@ -161,11 +162,33 @@ fun DeviceDetailScreen(
         scope.launch {
             onListDeviceRuntimes(connectorId)
                 .onSuccess { result -> runtimeState = runtimeState.replace(result) }
-                .onFailure { error ->
+                .onFailure {
                     runtimeState = runtimeState.copy(
                         loading = false,
-                        errorMessage = error.message ?: context.getString(R.string.device_runtime_load_failed),
+                        errorMessage = context.getString(R.string.device_runtime_load_failed),
                     )
+                }
+        }
+    }
+
+    fun discoverRuntimes() {
+        val device = detail.device ?: return
+        if (!device.online || runtimeState.loading || runtimeState.discovering || runtimeState.pendingRuntimeId != null) return
+        val connectorId = device.id
+        runtimeState = runtimeState.copy(discovering = true, errorMessage = null)
+        scope.launch {
+            onDiscoverDeviceRuntimes(connectorId)
+                .onSuccess { result ->
+                    if (runtimeState.connectorId == connectorId) {
+                        runtimeState = runtimeState.replace(result)
+                    }
+                }
+                .onFailure {
+                    if (runtimeState.connectorId == connectorId) {
+                        runtimeState = runtimeState.discoveryFailed(
+                            context.getString(R.string.device_runtime_discover_failed),
+                        )
+                    }
                 }
         }
     }
@@ -178,10 +201,10 @@ fun DeviceDetailScreen(
                 .onSuccess { updated ->
                     runtimeState = runtimeState.replace(updated).copy(pendingRuntimeId = null)
                 }
-                .onFailure { error ->
+                .onFailure {
                     refreshRuntimesAfterFailure(
                         connectorId = runtime.connectorId,
-                        message = error.message ?: context.getString(R.string.device_runtime_update_failed),
+                        message = context.getString(R.string.device_runtime_update_failed),
                     )
                 }
         }
@@ -243,12 +266,12 @@ fun DeviceDetailScreen(
                     onDeleteDeviceRuntimeConfig(device.id, action.runtime.id)
                         .onSuccess { updated ->
                             runtimeState = runtimeState.replace(updated).copy(pendingRuntimeId = null)
-                            settingsRuntimeId = null
+                            configureRuntimeId = null
                             confirmAction = null
                             actionError = null
                         }
-                        .onFailure { error ->
-                            val message = error.message ?: context.getString(R.string.device_runtime_delete_failed)
+                        .onFailure {
+                            val message = context.getString(R.string.device_runtime_delete_failed)
                             refreshRuntimesAfterFailure(device.id, message)
                             actionError = message
                         }
@@ -323,9 +346,10 @@ fun DeviceDetailScreen(
                     item("agents") {
                         AgentsSection(
                             state = runtimeState,
-                            onAddAgent = { addAgentSheetOpen = true },
+                            deviceOnline = detail.device.online,
+                            onDiscover = ::discoverRuntimes,
                             onRetry = ::reloadRuntimes,
-                            onOpenSettings = { runtime -> settingsRuntimeId = runtime.id },
+                            onConfigure = { runtime -> configureRuntimeId = runtime.id },
                             onSetActive = ::setRuntimeActive,
                             onDeleteConfig = { runtime ->
                                 actionError = null
@@ -469,34 +493,32 @@ fun DeviceDetailScreen(
         )
     }
 
-    if (addAgentSheetOpen && detail.device != null) {
-        AddAgentSheet(
-            device = detail.device,
-            onDismiss = { addAgentSheetOpen = false },
-            onDiscoverDeviceRuntimes = { connectorId ->
-                onDiscoverDeviceRuntimes(connectorId)
-                    .onSuccess { result -> runtimeState = runtimeState.replace(result) }
-            },
-        )
-    }
-
-    val selectedSettingsRuntime = runtimeState.runtimes.firstOrNull { it.id == settingsRuntimeId }
-    if (selectedSettingsRuntime != null && detail.device != null) {
-        DeviceAgentSettingsSheet(
-            device = detail.device,
-            runtime = selectedSettingsRuntime,
-            onDismiss = { settingsRuntimeId = null },
-            onSaveConfig = { connectorId, runtimeId, config ->
-                onSaveDeviceRuntimeConfig(connectorId, runtimeId, config)
-                    .onSuccess { updated ->
-                        runtimeState = runtimeState.replace(updated).copy(pendingRuntimeId = null)
+    val selectedConfigureRuntime = runtimeState.discoveredUnconfiguredRuntimes
+        .firstOrNull { it.id == configureRuntimeId }
+    if (selectedConfigureRuntime != null && detail.device != null) {
+        DeviceRuntimeConfigureSheet(
+            runtime = selectedConfigureRuntime,
+            onDismiss = { configureRuntimeId = null },
+            onConfigureAndStart = { config ->
+                val connectorId = selectedConfigureRuntime.connectorId
+                val runtimeId = selectedConfigureRuntime.id
+                runtimeState = runtimeState.copy(pendingRuntimeId = runtimeId, errorMessage = null)
+                val result = onConfigureAndStartDeviceRuntime(connectorId, runtimeId, config)
+                if (runtimeState.connectorId == connectorId) {
+                    runtimeState = when (result) {
+                        is DeviceRuntimeSetupResult.Success -> runtimeState
+                            .replace(result.runtime)
+                            .copy(pendingRuntimeId = null)
+                        is DeviceRuntimeSetupResult.StartFailed -> runtimeState
+                            .replace(result.configuredRuntime)
+                            .copy(pendingRuntimeId = null)
+                        is DeviceRuntimeSetupResult.SaveFailed -> runtimeState.copy(pendingRuntimeId = null)
                     }
-                    .onFailure { error ->
-                        refreshRuntimesAfterFailure(
-                            connectorId = connectorId,
-                            message = error.message ?: context.getString(R.string.agent_settings_save_failed),
-                        )
+                    if (result is DeviceRuntimeSetupResult.StartFailed) {
+                        showToast(context.getString(R.string.configure_agent_start_failed))
                     }
+                }
+                result
             },
         )
     }
@@ -617,11 +639,12 @@ private fun DeviceStatusTag(online: Boolean, darkMode: Boolean) {
 }
 
 @Composable
-private fun AgentsSection(
+internal fun AgentsSection(
     state: DeviceRuntimeManagementState,
-    onAddAgent: () -> Unit,
+    deviceOnline: Boolean,
+    onDiscover: () -> Unit,
     onRetry: () -> Unit,
-    onOpenSettings: (DeviceRuntime) -> Unit,
+    onConfigure: (DeviceRuntime) -> Unit,
     onSetActive: (DeviceRuntime, Boolean) -> Unit,
     onDeleteConfig: (DeviceRuntime) -> Unit,
 ) {
@@ -629,10 +652,20 @@ private fun AgentsSection(
         title = stringResource(R.string.device_detail_agents_section),
         action = {
             SmallActionButton(
-                icon = Lucide.Plus,
-                label = stringResource(R.string.device_detail_add_agent),
+                icon = Lucide.RefreshCw,
+                label = if (state.discovering) {
+                    stringResource(R.string.device_runtime_discovering_action)
+                } else {
+                    stringResource(R.string.device_runtime_discover_action)
+                },
                 danger = false,
-                onClick = onAddAgent,
+                enabled = deviceOnline && !state.loading && !state.discovering && state.pendingRuntimeId == null,
+                loading = state.discovering,
+                contentDescription = stringResource(
+                    if (state.discovering) R.string.device_runtime_discovering_description
+                    else R.string.device_runtime_discover_description,
+                ),
+                onClick = onDiscover,
             )
         },
     ) {
@@ -649,19 +682,6 @@ private fun AgentsSection(
                     EmptyText(stringResource(R.string.device_runtime_loading))
                 }
             }
-            state.runtimes.isEmpty() -> {
-                EmptyText(
-                    state.errorMessage ?: stringResource(R.string.device_detail_no_agents),
-                )
-                if (state.errorMessage != null) {
-                    SmallActionButton(
-                        icon = Lucide.RefreshCw,
-                        label = stringResource(R.string.common_retry),
-                        danger = false,
-                        onClick = onRetry,
-                    )
-                }
-            }
             else -> {
                 state.errorMessage?.let { message ->
                     Text(
@@ -670,19 +690,54 @@ private fun AgentsSection(
                         fontSize = 12.5.sp,
                         fontWeight = FontWeight.SemiBold,
                         lineHeight = 17.sp,
-                        modifier = Modifier.padding(bottom = 6.dp),
+                        modifier = Modifier.padding(bottom = 8.dp),
                     )
                 }
-                state.runtimes.forEachIndexed { index, runtime ->
-                AgentRow(
-                    runtime = runtime,
-                    pending = state.pendingRuntimeId == runtime.id,
-                    operationsEnabled = state.pendingRuntimeId == null,
-                    onOpenSettings = { onOpenSettings(runtime) },
-                    onSetActive = { active -> onSetActive(runtime, active) },
-                    onDeleteConfig = { onDeleteConfig(runtime) },
-                )
-                    if (index != state.runtimes.lastIndex) DetailDivider()
+                RuntimeSubsectionTitle(stringResource(R.string.device_runtime_configured_section))
+                if (state.configuredRuntimes.isEmpty()) {
+                    EmptyText(stringResource(R.string.device_runtime_no_configured))
+                } else {
+                    state.configuredRuntimes.forEachIndexed { index, runtime ->
+                        ConfiguredAgentRow(
+                            runtime = runtime,
+                            pending = state.pendingRuntimeId == runtime.id,
+                            operationsEnabled = state.pendingRuntimeId == null && !state.discovering,
+                            onSetActive = { active -> onSetActive(runtime, active) },
+                            onDeleteConfig = { onDeleteConfig(runtime) },
+                        )
+                        if (index != state.configuredRuntimes.lastIndex) DetailDivider()
+                    }
+                }
+
+                Spacer(Modifier.height(12.dp))
+                DetailDivider()
+                Spacer(Modifier.height(12.dp))
+
+                RuntimeSubsectionTitle(stringResource(R.string.device_runtime_discovered_section))
+                if (state.discoveredUnconfiguredRuntimes.isEmpty()) {
+                    EmptyText(stringResource(R.string.device_runtime_no_discovered))
+                } else {
+                    state.discoveredUnconfiguredRuntimes.forEachIndexed { index, runtime ->
+                        DiscoveredAgentRow(
+                            runtime = runtime,
+                            pending = state.pendingRuntimeId == runtime.id,
+                            enabled = deviceOnline && state.pendingRuntimeId == null && !state.discovering,
+                            onConfigure = { onConfigure(runtime) },
+                        )
+                        if (index != state.discoveredUnconfiguredRuntimes.lastIndex) DetailDivider()
+                    }
+                }
+
+                if (state.errorMessage != null) {
+                    SmallActionButton(
+                        icon = Lucide.RefreshCw,
+                        label = stringResource(R.string.common_retry),
+                        danger = false,
+                        enabled = !state.loading && !state.discovering && (!state.errorFromDiscovery || deviceOnline),
+                        loading = false,
+                        contentDescription = stringResource(R.string.common_retry),
+                        onClick = if (state.errorFromDiscovery) onDiscover else onRetry,
+                    )
                 }
             }
         }
@@ -690,11 +745,21 @@ private fun AgentsSection(
 }
 
 @Composable
-private fun AgentRow(
+private fun RuntimeSubsectionTitle(title: String) {
+    Text(
+        text = title,
+        color = LocalAAColors.current.muted,
+        fontSize = 13.sp,
+        fontWeight = FontWeight.Bold,
+        modifier = Modifier.padding(bottom = 4.dp),
+    )
+}
+
+@Composable
+private fun ConfiguredAgentRow(
     runtime: DeviceRuntime,
     pending: Boolean,
     operationsEnabled: Boolean,
-    onOpenSettings: () -> Unit,
     onSetActive: (Boolean) -> Unit,
     onDeleteConfig: () -> Unit,
 ) {
@@ -716,7 +781,7 @@ private fun AgentRow(
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                text = runtime.detailMessage ?: runtimeStatusLabel(runtime),
+                text = runtimeStatusLabel(runtime),
                 color = if (runtime.status == DeviceRuntimeStatus.Error) {
                     LocalAAColors.current.errorText
                 } else {
@@ -738,18 +803,96 @@ private fun AgentRow(
             )
         }
         AgentIconButton(
-            icon = Lucide.Settings,
-            contentDescription = stringResource(R.string.device_detail_agent_settings),
-            danger = false,
-            enabled = operationsEnabled && runtime.schema != null,
-            onClick = onOpenSettings,
-        )
-        AgentIconButton(
             icon = Lucide.Trash2,
             contentDescription = stringResource(R.string.device_detail_remove_agent),
             danger = true,
             enabled = operationsEnabled && runtime.configured,
             onClick = onDeleteConfig,
+        )
+    }
+}
+
+@Composable
+private fun DiscoveredAgentRow(
+    runtime: DeviceRuntime,
+    pending: Boolean,
+    enabled: Boolean,
+    onConfigure: () -> Unit,
+) {
+    val colors = LocalAAColors.current
+    val status = if (runtime.discoveryAvailable) {
+        stringResource(R.string.device_runtime_discovered)
+    } else {
+        stringResource(R.string.device_runtime_executable_not_found)
+    }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(64.dp)
+            .padding(vertical = 5.dp)
+            .semantics { stateDescription = status },
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(8.dp)
+                .clip(CircleShape)
+                .background(if (runtime.discoveryAvailable) colors.muted.copy(alpha = 0.55f) else Color(0xFFF59E0B)),
+        )
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = runtime.displayName,
+                color = colors.ink,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = status,
+                color = colors.muted,
+                fontSize = 11.5.sp,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+            )
+        }
+        if (pending) {
+            CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+        } else {
+            ConfigureRuntimeButton(
+                label = stringResource(R.string.configure_agent_action),
+                contentDescription = stringResource(R.string.configure_agent_description, runtime.displayName),
+                enabled = enabled,
+                onClick = onConfigure,
+            )
+        }
+    }
+}
+
+@Composable
+private fun ConfigureRuntimeButton(
+    label: String,
+    contentDescription: String,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    val colors = LocalAAColors.current
+    Box(
+        modifier = Modifier
+            .height(34.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .border(1.dp, colors.border, RoundedCornerShape(8.dp))
+            .semantics { this.contentDescription = contentDescription }
+            .noRippleClickable(enabled = enabled, onClick = onClick)
+            .padding(horizontal = 12.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = label,
+            color = colors.ink.copy(alpha = if (enabled) 1f else 0.4f),
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Bold,
         )
     }
 }
@@ -1206,6 +1349,9 @@ private fun SmallActionButton(
     icon: ImageVector,
     label: String,
     danger: Boolean,
+    enabled: Boolean = true,
+    loading: Boolean = false,
+    contentDescription: String = label,
     onClick: () -> Unit,
 ) {
     val colors = LocalAAColors.current
@@ -1227,21 +1373,30 @@ private fun SmallActionButton(
             .height(34.dp)
             .clip(RoundedCornerShape(6.dp))
             .background(surface)
-            .noRippleClickable(onClick = onClick)
+            .semantics { this.contentDescription = contentDescription }
+            .noRippleClickable(enabled = enabled, onClick = onClick)
             .padding(horizontal = 11.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.Center,
     ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            tint = tint,
-            modifier = Modifier.size(15.dp),
-        )
+        if (loading) {
+            CircularProgressIndicator(
+                color = tint,
+                strokeWidth = 2.dp,
+                modifier = Modifier.size(15.dp),
+            )
+        } else {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = tint.copy(alpha = if (enabled) 1f else 0.4f),
+                modifier = Modifier.size(15.dp),
+            )
+        }
         Spacer(Modifier.width(5.dp))
         Text(
             text = label,
-            color = tint,
+            color = tint.copy(alpha = if (enabled) 1f else 0.4f),
             fontSize = 14.sp,
             fontWeight = FontWeight.Bold,
             maxLines = 1,

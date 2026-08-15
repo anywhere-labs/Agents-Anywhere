@@ -1222,7 +1222,9 @@ private fun DevicePickerSheet(
                 items(devices, key = { it.id }) { device ->
                     SheetChoiceRow(
                         title = device.name,
-                        subtitle = device.subtitle,
+                        subtitle = stringResource(
+                            if (device.online) R.string.devices_online else R.string.devices_offline,
+                        ),
                         selected = device.id == selectedDeviceId,
                         darkMode = darkMode,
                         icon = Lucide.Monitor,

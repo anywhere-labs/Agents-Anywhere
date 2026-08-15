@@ -41,7 +41,6 @@ data class AgentDevice(
     val id: String,
     val name: String,
     val deviceOs: String? = null,
-    val subtitle: String,
     val online: Boolean,
     val lastSeenAt: String? = null,
     val createdAt: String? = null,
