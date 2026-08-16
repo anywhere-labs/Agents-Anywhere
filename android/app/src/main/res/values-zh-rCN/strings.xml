@@ -157,7 +157,7 @@
     <string name="device_runtime_unknown">未知状态</string>
     <string name="device_runtime_unknown_version">版本未知</string>
     <string name="device_runtime_dsh_summary">DSH %1$s · profile %2$s · 原生 Session 存储</string>
-    <string name="device_runtime_dsh_single_writer">同一 DSH Session 不能同时在其他 DSH 实例中运行；外部变更会在 Connector 重新扫描后同步。</string>
+    <string name="device_runtime_dsh_shared_session">AA Web、Android 与 DSH Web 通过同一 Bridge 共享此 DSH Session。</string>
     <string name="device_detail_prepare_setup_failed">无法准备设备设置。</string>
     <string name="device_detail_delete_failed">无法删除设备。</string>
     <string name="device_detail_revoke_failed">无法撤销设备令牌。</string>

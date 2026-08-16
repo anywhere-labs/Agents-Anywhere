@@ -94,6 +94,7 @@ class SessionRepositoryMixin:
         model_selection_id: str | None = None,
         permission_selection_id: str | None = None,
         origin: str = "connector_import",
+        source_state: str | None = None,
     ) -> SessionView:
         has_model_selection_id = model_selection_id is not None
         has_permission_selection_id = permission_selection_id is not None
@@ -143,6 +144,8 @@ class SessionRepositoryMixin:
                         last_synced_at=last_synced_at,
                         source_observed_at=source_observed_at,
                         last_activity_at=last_activity_at,
+                        source_state=source_state or "visible",
+                        source_state_at=now if source_state is not None else None,
                         seq=1,
                         updated_seq=1,
                         created_at=now,
@@ -161,6 +164,9 @@ class SessionRepositoryMixin:
                             sessions_t.c.status,
                             sessions_t.c.model_selection_id,
                             sessions_t.c.permission_selection_id,
+                            sessions_t.c.source_state,
+                            sessions_t.c.archived,
+                            sessions_t.c.dsh_archive_legacy,
                         ).where(sessions_t.c.id == session_id)
                     )
                 ).first()
@@ -188,6 +194,19 @@ class SessionRepositoryMixin:
                     values["model_selection_id"] = model_selection_id
                 if has_permission_selection_id:
                     values["permission_selection_id"] = permission_selection_id
+                if source_state is not None:
+                    values["source_state"] = source_state
+                    values["source_state_at"] = now
+                    values["source_scan_token"] = None
+                if (
+                    runtime == "dsh"
+                    and source_state == "visible"
+                    and current.archived == 1
+                    and current.dsh_archive_legacy == 1
+                ):
+                    values["archived"] = 0
+                    values["archived_at"] = None
+                    values["dsh_archive_legacy"] = 0
                 semantic_changed = any(
                     field in values and values[field] != getattr(current, field)
                     for field in (
@@ -199,6 +218,9 @@ class SessionRepositoryMixin:
                         "status",
                         "model_selection_id",
                         "permission_selection_id",
+                        "source_state",
+                        "archived",
+                        "dsh_archive_legacy",
                     )
                 )
                 if semantic_changed:
@@ -256,7 +278,11 @@ class SessionRepositoryMixin:
         query = (
             select(sessions_t, connectors_t.c.status.label("connector_status"))
             .join(connectors_t, connectors_t.c.id == sessions_t.c.connector_id)
-            .where(connectors_t.c.revoked == 0)
+            .where(
+                connectors_t.c.revoked == 0,
+                (sessions_t.c.runtime != "dsh")
+                | (sessions_t.c.source_state == "visible"),
+            )
             .order_by(sessions_t.c.created_at.desc())
         )
         if user_id is not None:
@@ -269,6 +295,131 @@ class SessionRepositoryMixin:
             key=lambda session: (session.sortAt or "", session.lastItemOrderSeq or -1, session.updatedSeq),
             reverse=True,
         )
+
+    async def begin_dsh_session_inventory(
+        self,
+        connector_id: str,
+        scan_token: str,
+    ) -> None:
+        async with self._engine.begin() as conn:
+            await conn.execute(
+                update(sessions_t)
+                .where(
+                    sessions_t.c.connector_id == connector_id,
+                    sessions_t.c.runtime == "dsh",
+                )
+                .values(source_scan_token=scan_token)
+            )
+
+    async def complete_dsh_session_inventory(
+        self,
+        connector_id: str,
+        scan_token: str,
+        entries: list[dict[str, str | None]],
+        *,
+        complete: bool,
+    ) -> list[str]:
+        now = utc_now()
+        changed: list[str] = []
+        async with self._engine.begin() as conn:
+            rows = (
+                await conn.execute(
+                    select(
+                        sessions_t.c.id,
+                        sessions_t.c.external_session_id,
+                        sessions_t.c.source_state,
+                        sessions_t.c.source_scan_token,
+                        sessions_t.c.archived,
+                        sessions_t.c.dsh_archive_legacy,
+                    ).where(
+                        sessions_t.c.connector_id == connector_id,
+                        sessions_t.c.runtime == "dsh",
+                    )
+                )
+            ).mappings().all()
+            by_id = {str(row["id"]): row for row in rows}
+            by_external_id = {
+                str(row["external_session_id"]): row
+                for row in rows
+                if row["external_session_id"] is not None
+            }
+            observed_ids: set[str] = set()
+            for entry in entries:
+                row = by_id.get(str(entry["session_id"]))
+                external_session_id = entry.get("external_session_id")
+                if row is None and external_session_id is not None:
+                    row = by_external_id.get(external_session_id)
+                if row is None or row["source_scan_token"] != scan_token:
+                    continue
+                session_id = str(row["id"])
+                observed_ids.add(session_id)
+                source_state = str(entry["source_state"])
+                recover_legacy_archive = (
+                    source_state == "visible"
+                    and row["archived"] == 1
+                    and row["dsh_archive_legacy"] == 1
+                )
+                values: dict[str, Any] = {
+                    "source_state": source_state,
+                    "source_state_at": now,
+                    "source_scan_token": None,
+                }
+                if recover_legacy_archive:
+                    values.update(
+                        archived=0,
+                        archived_at=None,
+                        dsh_archive_legacy=0,
+                    )
+                result = await conn.execute(
+                    update(sessions_t)
+                    .where(
+                        sessions_t.c.id == session_id,
+                        sessions_t.c.source_scan_token == scan_token,
+                    )
+                    .values(**values)
+                )
+                if result.rowcount == 0:
+                    continue
+                if row["source_state"] != source_state or recover_legacy_archive:
+                    await self._bump_session(conn, session_id)
+                    changed.append(session_id)
+
+            remaining_rows = [
+                row
+                for row in rows
+                if row["source_scan_token"] == scan_token
+                and str(row["id"]) not in observed_ids
+            ]
+            if complete:
+                for row in remaining_rows:
+                    session_id = str(row["id"])
+                    result = await conn.execute(
+                        update(sessions_t)
+                        .where(
+                            sessions_t.c.id == session_id,
+                            sessions_t.c.source_scan_token == scan_token,
+                        )
+                        .values(
+                            source_state="missing",
+                            source_state_at=now,
+                            source_scan_token=None,
+                        )
+                    )
+                    if result.rowcount == 0:
+                        continue
+                    if row["source_state"] != "missing":
+                        await self._bump_session(conn, session_id)
+                        changed.append(session_id)
+            elif remaining_rows:
+                await conn.execute(
+                    update(sessions_t)
+                    .where(
+                        sessions_t.c.id.in_([str(row["id"]) for row in remaining_rows]),
+                        sessions_t.c.source_scan_token == scan_token,
+                    )
+                    .values(source_scan_token=None)
+                )
+        return changed
 
 
     async def list_running_sessions_for_connector_agent(
@@ -468,6 +619,7 @@ class SessionRepositoryMixin:
                 .values(
                     archived=int(bool(archived)),
                     archived_at=now if archived else None,
+                    dsh_archive_legacy=0,
                     updated_at=now,
                 )
             )
@@ -513,6 +665,7 @@ class SessionRepositoryMixin:
                     .values(
                         archived=int(bool(archived)),
                         archived_at=now if archived else None,
+                        dsh_archive_legacy=0,
                         updated_at=now,
                     )
                 )
@@ -583,6 +736,7 @@ class SessionRepositoryMixin:
                     .values(
                         archived=int(bool(archived)),
                         archived_at=now if archived else None,
+                        dsh_archive_legacy=0,
                         updated_at=now,
                     )
                 )
@@ -747,6 +901,7 @@ class SessionRepositoryMixin:
         source_observed_at: str | None = None,
         last_activity_at: str | None = None,
         mark_read_on_change: bool = False,
+        source_state: str | None = None,
     ) -> SessionView:
         values: dict[str, Any] = {}
         if status is not None:
@@ -763,6 +918,10 @@ class SessionRepositoryMixin:
             values["source_observed_at"] = source_observed_at
         if last_activity_at is not None:
             values["last_activity_at"] = last_activity_at
+        if source_state is not None:
+            values["source_state"] = source_state
+            values["source_state_at"] = utc_now()
+            values["source_scan_token"] = None
         async with self._engine.begin() as conn:
             row = (
                 await conn.execute(
@@ -772,16 +931,32 @@ class SessionRepositoryMixin:
                         sessions_t.c.cwd,
                         sessions_t.c.external_session_id,
                         sessions_t.c.last_activity_at,
+                        sessions_t.c.source_state,
+                        sessions_t.c.runtime,
+                        sessions_t.c.archived,
+                        sessions_t.c.dsh_archive_legacy,
                     ).where(sessions_t.c.id == session_id)
                 )
             ).first()
             if row is None:
                 raise KeyError(session_id)
+            if (
+                row.runtime == "dsh"
+                and source_state == "visible"
+                and row.archived == 1
+                and row.dsh_archive_legacy == 1
+            ):
+                values["archived"] = 0
+                values["archived_at"] = None
+                values["dsh_archive_legacy"] = 0
             semantic_fields = {
                 "status",
                 "title",
                 "cwd",
                 "external_session_id",
+                "source_state",
+                "archived",
+                "dsh_archive_legacy",
             }
             if any(field in values and values[field] != getattr(row, field) for field in semantic_fields):
                 await self._bump_session(

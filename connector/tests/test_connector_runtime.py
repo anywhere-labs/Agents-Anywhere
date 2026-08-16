@@ -1201,6 +1201,10 @@ def test_runtime_sync_continues_after_single_session_ingest_failure() -> None:
     asyncio.run(_exercise_runtime_sync_continues_after_single_session_ingest_failure())
 
 
+def test_runtime_sync_reconciles_complete_dsh_inventory_only() -> None:
+    asyncio.run(_exercise_runtime_sync_reconciles_complete_dsh_inventory_only())
+
+
 async def _exercise_runtime_host_notification_ingest_fallback() -> None:
     client = _client()
     enqueued: list[tuple[str, dict[str, Any]]] = []
@@ -1320,6 +1324,95 @@ async def _exercise_runtime_sync_pushes_each_session_snapshot_before_next_meta()
     ]
     assert ingested_batches[0][0]["params"]["sessionId"] == "sess_changed"
     assert ingested_batches[0][1]["params"]["sessionId"] == "sess_changed"
+
+
+async def _exercise_runtime_sync_reconciles_complete_dsh_inventory_only() -> None:
+    class InventoryRuntime(FakeAgentRuntime):
+        runtime_id = "dsh"
+
+        async def list_sessions(
+            self,
+            limit: int = 100,
+            cursor: str | None = None,
+            force: bool = False,
+        ) -> tuple[SessionMeta, ...]:
+            raise AssertionError("DSH sync must use the complete inventory hook")
+
+        async def list_complete_session_inventory(
+            self,
+            page_size: int = 100,
+            force: bool = False,
+        ) -> tuple[SessionMeta, ...]:
+            self.calls.append(
+                (
+                    "session.inventory",
+                    {"page_size": page_size, "force": force},
+                )
+            )
+            return (
+                SessionMeta(
+                    session_id="sess_dsh_visible",
+                    external_session_id="dsh-visible",
+                    runtime="dsh",
+                    metadata={"sync": {"changed": False}},
+                ),
+                SessionMeta(
+                    session_id="sess_dsh_hidden",
+                    external_session_id="dsh-hidden",
+                    runtime="dsh",
+                    metadata={
+                        "localArchived": True,
+                        "sync": {"changed": False},
+                    },
+                ),
+            )
+
+    runtime = InventoryRuntime(runtime_id="dsh")
+    ingested_batches: list[list[dict[str, Any]]] = []
+
+    async def ingest_notifications(notifications: list[dict[str, Any]]) -> None:
+        ingested_batches.append(list(notifications))
+
+    runner = RuntimeSyncRunner(
+        config=ConnectorConfig(
+            server_url="http://127.0.0.1:8000",
+            connector_id="conn_1",
+            connector_token="token",
+        ),
+        supervisor=FakeRuntimeSupervisor(runtime),  # type: ignore[arg-type]
+        host=RecordingRuntimeHost(),
+        preferences_reader=dict,
+        send_notification=unused_notification_sender,
+        ingest_notifications=ingest_notifications,
+    )
+
+    await runner.sync_existing_once()
+
+    assert [batch[0]["method"] for batch in ingested_batches] == [
+        "session.inventory.begin",
+        "session.inventory.complete",
+    ]
+    begin = ingested_batches[0][0]["params"]
+    complete = ingested_batches[1][0]["params"]
+    assert begin["runtime"] == "dsh"
+    assert len(begin["scanToken"]) == 32
+    assert complete == {
+        "runtime": "dsh",
+        "scanToken": begin["scanToken"],
+        "complete": True,
+        "sessions": [
+            {
+                "sessionId": "sess_dsh_visible",
+                "externalSessionId": "dsh-visible",
+                "sourceState": "visible",
+            },
+            {
+                "sessionId": "sess_dsh_hidden",
+                "externalSessionId": "dsh-hidden",
+                "sourceState": "hidden",
+            },
+        ],
+    }
 
 
 async def _exercise_runtime_sync_uses_runtime_timeline_hook_when_available() -> None:

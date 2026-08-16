@@ -158,7 +158,7 @@
     <string name="device_runtime_unknown">Unknown state</string>
     <string name="device_runtime_unknown_version">unknown version</string>
     <string name="device_runtime_dsh_summary">DSH %1$s · profile %2$s · native session storage</string>
-    <string name="device_runtime_dsh_single_writer">Do not run this DSH session in another DSH instance at the same time. External changes sync after a connector rescan.</string>
+    <string name="device_runtime_dsh_shared_session">AA Web, Android, and DSH Web share this DSH session through the same bridge.</string>
     <string name="device_detail_prepare_setup_failed">Could not prepare device setup.</string>
     <string name="device_detail_delete_failed">Could not delete device.</string>
     <string name="device_detail_revoke_failed">Could not revoke device token.</string>

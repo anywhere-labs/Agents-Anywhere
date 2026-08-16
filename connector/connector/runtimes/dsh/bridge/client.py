@@ -2,14 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
-import signal
 from collections.abc import Awaitable, Callable, Mapping
 from contextlib import suppress
 from typing import Any
 
-from connector.launch import LaunchTarget
 from connector.logging import logger
+from connector.runtimes.dsh.discovery import BridgeEndpoint
 
 MAX_FRAME_BYTES = 8 * 1024 * 1024
 NotificationHandler = Callable[[str, Mapping[str, Any]], Awaitable[None]]
@@ -33,78 +31,60 @@ class BridgeRpcError(RuntimeError):
 
 
 class BridgeClient:
-    """Supervise one DSH stdio JSON-RPC process."""
+    """Connect to one authenticated DSH Web bridge endpoint."""
 
     def __init__(
         self,
         *,
-        target: LaunchTarget,
-        profile: str,
-        environment: Mapping[str, str],
-        cwd: str,
+        endpoint: BridgeEndpoint,
         connector_id: str,
         client_version: str,
         startup_timeout: float,
         request_timeout: float,
-        shutdown_timeout: float,
-        kill_grace: float,
         notification_handler: NotificationHandler,
         exit_handler: ExitHandler,
     ) -> None:
-        self.target = target
-        self.profile = profile
-        self.environment = dict(environment)
-        self.cwd = cwd
+        self.endpoint = endpoint
         self.connector_id = connector_id
         self.client_version = client_version
         self.startup_timeout = startup_timeout
         self.request_timeout = request_timeout
-        self.shutdown_timeout = shutdown_timeout
-        self.kill_grace = kill_grace
         self.notification_handler = notification_handler
         self.exit_handler = exit_handler
-        self.process: asyncio.subprocess.Process | None = None
+        self.reader: asyncio.StreamReader | None = None
+        self.writer: asyncio.StreamWriter | None = None
         self.initialize_result: dict[str, Any] | None = None
         self._pending: dict[str | int, asyncio.Future[Any]] = {}
         self._request_id = 0
         self._write_lock = asyncio.Lock()
         self._reader_task: asyncio.Task[None] | None = None
-        self._stderr_task: asyncio.Task[None] | None = None
-        self._wait_task: asyncio.Task[None] | None = None
         self._notification_tasks: set[asyncio.Task[None]] = set()
         self._early_notifications: list[tuple[str, dict[str, Any]]] = []
         self._closing = False
 
     async def start(self) -> dict[str, Any]:
-        if self.process is not None:
-            raise RuntimeError("DSH bridge process is already started")
+        if self.writer is not None:
+            raise RuntimeError("DSH bridge connection is already started")
         self._closing = False
-        spawn_options: dict[str, Any] = {}
-        if os.name == "posix":
-            spawn_options["start_new_session"] = True
-        self.process = await asyncio.create_subprocess_exec(
-            *self.target.command(("--profile", self.profile)),
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=self.cwd,
-            env=self.environment,
-            limit=MAX_FRAME_BYTES + 1,
-            **spawn_options,
-        )
+        try:
+            self.reader, self.writer = await asyncio.wait_for(
+                asyncio.open_connection(
+                    self.endpoint.host,
+                    self.endpoint.port,
+                    limit=MAX_FRAME_BYTES + 1,
+                ),
+                self.startup_timeout,
+            )
+        except (OSError, TimeoutError) as exc:
+            raise ConnectionError("DSH Web bridge endpoint is unavailable") from exc
         self._reader_task = asyncio.create_task(
-            self._read_stdout(), name="dsh-bridge-stdout"
-        )
-        self._stderr_task = asyncio.create_task(
-            self._read_stderr(), name="dsh-bridge-stderr"
-        )
-        self._wait_task = asyncio.create_task(
-            self._wait_for_exit(), name="dsh-bridge-exit"
+            self._read_frames(), name="dsh-bridge-loopback"
         )
         try:
             result = await self.request(
                 "initialize",
                 {
+                    "authToken": self.endpoint.token,
                     "protocolVersion": "1.0",
                     "runtime": "dsh",
                     "connectorId": self.connector_id,
@@ -116,21 +96,21 @@ class BridgeClient:
                 timeout=self.startup_timeout,
             )
         except BaseException:
-            await self.close(graceful=False)
+            await self.close()
             raise
         if not isinstance(result, dict):
-            await self.close(graceful=False)
+            await self.close()
             raise RuntimeError("DSH bridge initialize result must be an object")
         identity = result.get("identity")
         if not isinstance(identity, dict) or identity.get("runtime") != "dsh":
-            await self.close(graceful=False)
+            await self.close()
             raise RuntimeError("DSH bridge returned an invalid identity")
         protocol_version = identity.get("protocolVersion")
         if (
             not isinstance(protocol_version, str)
             or protocol_version.split(".", 1)[0] != "1"
         ):
-            await self.close(graceful=False)
+            await self.close()
             raise RuntimeError("DSH bridge protocol major is incompatible")
         self.initialize_result = result
         for method, params in self._early_notifications:
@@ -145,11 +125,10 @@ class BridgeClient:
         *,
         timeout: float | None = None,
     ) -> Any:
-        process = self.process
-        if process is None or process.stdin is None or process.returncode is not None:
-            raise RuntimeError("DSH bridge process is not running")
-        if self._closing and method != "shutdown":
-            raise RuntimeError("DSH bridge process is shutting down")
+        if self.writer is None or self.writer.is_closing():
+            raise RuntimeError("DSH bridge connection is not running")
+        if self._closing:
+            raise RuntimeError("DSH bridge connection is closing")
         self._request_id += 1
         request_id = f"aa-{self._request_id}"
         loop = asyncio.get_running_loop()
@@ -183,50 +162,32 @@ class BridgeClient:
             {"jsonrpc": "2.0", "method": method, "params": dict(params or {})}
         )
 
-    async def close(self, *, graceful: bool = True) -> None:
-        process = self.process
-        if process is None:
+    async def close(self) -> None:
+        writer = self.writer
+        if writer is None:
             return
         self._closing = True
-        if graceful and process.returncode is None:
-            with suppress(Exception):
-                await self.request(
-                    "shutdown",
-                    {"reason": "connector-stop"},
-                    timeout=self.shutdown_timeout,
-                )
-        if process.returncode is None:
-            try:
-                await asyncio.wait_for(process.wait(), self.shutdown_timeout)
-            except TimeoutError:
-                self._terminate_process_tree(process)
-                try:
-                    await asyncio.wait_for(process.wait(), self.kill_grace)
-                except TimeoutError:
-                    self._kill_process_tree(process)
-                    await process.wait()
+        writer.close()
+        with suppress(OSError):
+            await writer.wait_closed()
         for future in tuple(self._pending.values()):
             if not future.done():
-                future.set_exception(RuntimeError("DSH bridge process stopped"))
+                future.set_exception(RuntimeError("DSH bridge connection stopped"))
         self._pending.clear()
-        current = asyncio.current_task()
-        tasks = [
-            task
-            for task in (self._reader_task, self._stderr_task, self._wait_task)
-            if task is not None and task is not current
-        ]
-        for task in tasks:
-            task.cancel()
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
+        reader_task = self._reader_task
+        if reader_task is not None and reader_task is not asyncio.current_task():
+            reader_task.cancel()
+            await asyncio.gather(reader_task, return_exceptions=True)
         if self._notification_tasks:
             await asyncio.gather(*self._notification_tasks, return_exceptions=True)
-        self.process = None
+        self.reader = None
+        self.writer = None
+        self._reader_task = None
 
     async def _send(self, payload: Mapping[str, Any]) -> None:
-        process = self.process
-        if process is None or process.stdin is None or process.returncode is not None:
-            raise RuntimeError("DSH bridge process is not running")
+        writer = self.writer
+        if writer is None or writer.is_closing():
+            raise RuntimeError("DSH bridge connection is not running")
         encoded = (
             json.dumps(
                 payload, ensure_ascii=False, separators=(",", ":"), allow_nan=False
@@ -236,26 +197,33 @@ class BridgeClient:
         if len(encoded) > MAX_FRAME_BYTES:
             raise ValueError("DSH bridge request frame exceeds 8 MiB")
         async with self._write_lock:
-            process.stdin.write(encoded)
-            await process.stdin.drain()
+            writer.write(encoded)
+            await writer.drain()
 
-    async def _read_stdout(self) -> None:
-        process = self.process
-        assert process is not None and process.stdout is not None
+    async def _read_frames(self) -> None:
+        reader = self.reader
+        assert reader is not None
         try:
             while True:
-                line = await process.stdout.readline()
+                line = await reader.readline()
                 if not line:
                     return
                 if len(line) > MAX_FRAME_BYTES:
-                    raise RuntimeError("DSH bridge stdout frame exceeds 8 MiB")
+                    raise RuntimeError("DSH bridge response frame exceeds 8 MiB")
                 self._handle_frame(line)
-        except (ValueError, json.JSONDecodeError, RuntimeError) as exc:
+        except (ValueError, UnicodeError, json.JSONDecodeError, RuntimeError) as exc:
             logger.error(
                 "DSH bridge protocol failure error_type={}", exc.__class__.__name__
             )
-            if process.returncode is None:
-                self._kill_process_tree(process)
+            writer = self.writer
+            if writer is not None:
+                writer.close()
+        finally:
+            for future in tuple(self._pending.values()):
+                if not future.done():
+                    future.set_exception(RuntimeError("DSH bridge connection closed"))
+            if not self._closing:
+                await self.exit_handler(None)
 
     def _handle_frame(self, line: bytes) -> None:
         value = json.loads(line.decode("utf-8"))
@@ -342,41 +310,3 @@ class BridgeClient:
                 method,
                 error.__class__.__name__,
             )
-
-    async def _read_stderr(self) -> None:
-        process = self.process
-        assert process is not None and process.stderr is not None
-        while True:
-            line = await process.stderr.readline()
-            if not line:
-                return
-            # Do not forward user content or local paths from an untrusted child.
-            logger.debug(
-                "DSH bridge diagnostic received bytes={}", min(len(line), 65_536)
-            )
-
-    async def _wait_for_exit(self) -> None:
-        process = self.process
-        assert process is not None
-        return_code = await process.wait()
-        for future in tuple(self._pending.values()):
-            if not future.done():
-                future.set_exception(RuntimeError("DSH bridge process exited"))
-        if not self._closing:
-            await self.exit_handler(return_code)
-
-    @staticmethod
-    def _terminate_process_tree(process: asyncio.subprocess.Process) -> None:
-        if os.name == "posix" and process.pid is not None:
-            with suppress(ProcessLookupError):
-                os.killpg(process.pid, signal.SIGTERM)
-            return
-        process.terminate()
-
-    @staticmethod
-    def _kill_process_tree(process: asyncio.subprocess.Process) -> None:
-        if os.name == "posix" and process.pid is not None:
-            with suppress(ProcessLookupError):
-                os.killpg(process.pid, signal.SIGKILL)
-            return
-        process.kill()

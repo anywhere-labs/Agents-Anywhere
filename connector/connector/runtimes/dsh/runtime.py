@@ -5,10 +5,8 @@ import hashlib
 from collections.abc import Mapping
 from contextlib import suppress
 from dataclasses import dataclass, field, replace
-from pathlib import Path
 from typing import Any
 
-from connector.launch import LaunchTarget
 from connector.runtime_protocol import (
     AgentRuntime,
     PreparedSessionTimelineSync,
@@ -33,10 +31,12 @@ from connector.runtime_protocol import (
     SessionState,
 )
 from connector.runtime_protocol.host import RuntimeHostClient
-from connector.runtimes.dsh import provider_config
+from connector.runtimes.dsh import discovery
 from connector.runtimes.dsh.bridge import BridgeClient, BridgeRpcError
 from connector.runtimes.dsh.bridge import models as bridge_models
 from connector.runtimes.session_identity import stable_runtime_session_id
+
+DSH_SESSION_INVENTORY_LIMIT = 10_000
 
 
 @dataclass(slots=True)
@@ -57,6 +57,7 @@ class DshRuntime(AgentRuntime):
     _stopping: bool = field(default=False, init=False)
     _restart_attempts: int = field(default=0, init=False)
     _restart_task: asyncio.Task[None] | None = field(default=None, init=False)
+    _connect_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False)
     _notification_locks: dict[str, asyncio.Lock] = field(
         default_factory=dict, init=False
     )
@@ -73,7 +74,7 @@ class DshRuntime(AgentRuntime):
 
     async def start(self) -> None:
         self._stopping = False
-        await self._start_client()
+        await self._ensure_client()
 
     async def stop(self) -> None:
         self._stopping = True
@@ -123,13 +124,78 @@ class DshRuntime(AgentRuntime):
         cursor: str | None = None,
         force: bool = False,
     ) -> tuple[SessionMeta, ...]:
+        sessions, _next_cursor = await self._list_session_page(
+            limit=limit,
+            cursor=cursor,
+            force=force,
+        )
+        return sessions
+
+    async def list_complete_session_inventory(
+        self,
+        page_size: int = 100,
+        force: bool = False,
+    ) -> tuple[SessionMeta, ...]:
+        sessions: list[SessionMeta] = []
+        session_ids: set[str] = set()
+        external_session_ids: set[str] = set()
+        seen_cursors: set[str] = set()
+        cursor: str | None = None
+        while True:
+            page, next_cursor = await self._list_session_page(
+                limit=page_size,
+                cursor=cursor,
+                force=force,
+            )
+            for session in page:
+                external_session_id = session.external_session_id
+                if session.session_id in session_ids or (
+                    external_session_id is not None
+                    and external_session_id in external_session_ids
+                ):
+                    raise RuntimeUpstreamError(
+                        "DSH session.list returned a duplicate Session"
+                    )
+                session_ids.add(session.session_id)
+                if external_session_id is not None:
+                    external_session_ids.add(external_session_id)
+                sessions.append(session)
+                if len(sessions) > DSH_SESSION_INVENTORY_LIMIT:
+                    raise RuntimeUpstreamError(
+                        f"DSH session inventory exceeds {DSH_SESSION_INVENTORY_LIMIT} entries"
+                    )
+            if next_cursor is None:
+                return tuple(sessions)
+            if not page:
+                raise RuntimeUpstreamError(
+                    "DSH session.list returned an empty page with nextCursor"
+                )
+            if next_cursor in seen_cursors:
+                raise RuntimeUpstreamError(
+                    "DSH session.list returned a repeated nextCursor"
+                )
+            seen_cursors.add(next_cursor)
+            cursor = next_cursor
+
+    async def _list_session_page(
+        self,
+        *,
+        limit: int,
+        cursor: str | None,
+        force: bool,
+    ) -> tuple[tuple[SessionMeta, ...], str | None]:
         params: dict[str, Any] = {"limit": limit, "force": force}
         if cursor is not None:
             params["cursor"] = cursor
         result = await self._request("session.list", params)
         raw_sessions = result.get("sessions") if isinstance(result, Mapping) else result
+        next_cursor = result.get("nextCursor") if isinstance(result, Mapping) else None
         if not isinstance(raw_sessions, list):
             raise RuntimeUpstreamError("DSH session.list result is invalid")
+        if next_cursor is not None and (
+            not isinstance(next_cursor, str) or not next_cursor
+        ):
+            raise RuntimeUpstreamError("DSH session.list nextCursor is invalid")
         sessions: list[SessionMeta] = []
         for raw in raw_sessions:
             if not isinstance(raw, Mapping):
@@ -149,6 +215,19 @@ class DshRuntime(AgentRuntime):
             data = dict(raw)
             data["sessionId"] = platform_id
             metadata = _safe_metadata(data.get("metadata"))
+            for key in (
+                "hidden",
+                "localArchived",
+                "local_archived",
+                "localDeleted",
+                "local_deleted",
+                "resumeSupported",
+                "resumable",
+                "localState",
+                "local_state",
+            ):
+                if key in data:
+                    metadata[key] = data[key]
             revision = data.get("revision")
             if isinstance(revision, str) and revision:
                 metadata["revision"] = revision
@@ -157,7 +236,11 @@ class DshRuntime(AgentRuntime):
                 previous_revision = (
                     previous.get("revision") if isinstance(previous, Mapping) else None
                 )
-                changed = force or previous_revision != revision
+                changed = (
+                    force
+                    or platform_id not in self._known_sessions
+                    or previous_revision != revision
+                )
                 metadata["sync"] = {
                     "key": sync_key,
                     "revision": revision,
@@ -170,7 +253,7 @@ class DshRuntime(AgentRuntime):
             session = bridge_models.session_meta(data)
             self._known_sessions[session.session_id] = session.external_session_id
             sessions.append(session)
-        return tuple(sessions)
+        return tuple(sessions), next_cursor
 
     async def get_session_snapshot(
         self,
@@ -241,7 +324,12 @@ class DshRuntime(AgentRuntime):
             "session.getState",
             _session_params(session_id, external_session_id),
         )
-        return None if result is None else bridge_models.session_state(result)
+        if result is None:
+            return None
+        state = bridge_models.session_state(result)
+        if not _is_concurrent_writer_state(state):
+            self._concurrent_writer_sessions.discard(session_id)
+        return state
 
     async def get_session_notices(
         self,
@@ -425,37 +513,29 @@ class DshRuntime(AgentRuntime):
 
     async def _start_client(self) -> None:
         values = dict(self.config.values)
-        target_data = self.config.metadata.get("launchTarget")
-        if not isinstance(target_data, Mapping):
-            raise RuntimeUnavailableError("DSH executable was not resolved")
         try:
-            target = LaunchTarget(
-                source=str(target_data["source"]),
-                path=str(target_data["path"]),
-                launcher=str(target_data.get("launcher") or "direct"),  # type: ignore[arg-type]
-            )
-        except KeyError as exc:
+            endpoint = discovery.load_endpoint(values)
+        except (OSError, ValueError) as exc:
             raise RuntimeUnavailableError(
-                "DSH executable metadata is incomplete"
+                "DSH Web bridge endpoint is unavailable; start dsh web"
             ) from exc
-        dsh_home = values.get("dshHome")
-        cwd = str(Path(dsh_home).parent if isinstance(dsh_home, str) else Path.home())
         client = BridgeClient(
-            target=target,
-            profile=str(values["profile"]),
-            environment=provider_config.child_environment(values),
-            cwd=cwd,
+            endpoint=endpoint,
             connector_id=self.host.connector_id,
             client_version=self.client_version,
             startup_timeout=int(values["startupTimeoutMs"]) / 1000,
             request_timeout=int(values["requestTimeoutMs"]) / 1000,
-            shutdown_timeout=int(values["shutdownTimeoutMs"]) / 1000,
-            kill_grace=int(values["killGraceMs"]) / 1000,
             notification_handler=self._handle_notification,
             exit_handler=self._handle_exit,
         )
         self._client = client
-        result = await client.start()
+        try:
+            result = await client.start()
+        except BaseException:
+            if self._client is client:
+                self._client = None
+            await client.close()
+            raise
         identity = result["identity"]
         metadata = dict(self.config.metadata)
         bridge_version = identity.get("bridgeVersion")
@@ -473,7 +553,24 @@ class DshRuntime(AgentRuntime):
             display_name="DeepSeek Harness",
             protocol_version=str(identity.get("protocolVersion") or "1.0"),
         )
-        await self._publish_bootstrap()
+        try:
+            await self._publish_bootstrap()
+        except BaseException:
+            if self._client is client:
+                self._client = None
+            await client.close()
+            raise
+        self._restart_attempts = 0
+
+    async def _ensure_client(self) -> None:
+        if self._client is not None:
+            return
+        async with self._connect_lock:
+            if self._client is not None:
+                return
+            if self._stopping:
+                raise RuntimeUnavailableError("DSH bridge is stopping")
+            await self._start_client()
 
     async def _publish_bootstrap(self) -> None:
         await self.host.runtime_capabilities_update(
@@ -489,10 +586,11 @@ class DshRuntime(AgentRuntime):
         method: str,
         params: Mapping[str, Any] | None = None,
     ) -> Any:
-        client = self._client
-        if client is None:
-            raise RuntimeUnavailableError("DSH bridge is not running")
         try:
+            await self._ensure_client()
+            client = self._client
+            if client is None:
+                raise RuntimeUnavailableError("DSH bridge is not running")
             return await client.request(method, params)
         except BridgeRpcError as exc:
             if exc.bridge_code == "DSH_CONCURRENT_WRITER_DETECTED":
@@ -782,7 +880,7 @@ class DshRuntime(AgentRuntime):
             self._restart_attempts += 1
             await asyncio.sleep(delay)
             try:
-                await self._start_client()
+                await self._ensure_client()
                 await self.list_sessions(limit=500, force=True)
                 return
             except Exception as exc:  # noqa: BLE001
@@ -933,6 +1031,14 @@ def _safe_error_details(value: Any) -> dict[str, Any]:
         return {}
     allowed = {"method", "bridgeCode", "retryable", "exitCode", "attempt", "errorType"}
     return {str(key): item for key, item in value.items() if key in allowed}
+
+
+def _is_concurrent_writer_state(state: SessionState) -> bool:
+    return (
+        state.status == "error"
+        and isinstance(state.error, Mapping)
+        and state.error.get("code") == "DSH_CONCURRENT_WRITER_DETECTED"
+    )
 
 
 def _sha256(value: str) -> str:

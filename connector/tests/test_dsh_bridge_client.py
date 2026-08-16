@@ -1,37 +1,68 @@
 from __future__ import annotations
 
 import asyncio
-import os
+import json
 from pathlib import Path
 
-from connector.launch import launch_target
 from connector.runtimes.dsh.bridge.client import BridgeClient
+from connector.runtimes.dsh.discovery import BridgeEndpoint
 
 
-def test_bridge_client_handshake_notification_and_shutdown(tmp_path: Path) -> None:
-    child = tmp_path / "fake-dsh"
-    child.write_text(
-        """#!/usr/bin/env python3
-import json
-import sys
-for line in sys.stdin:
-    request = json.loads(line)
-    method = request.get('method')
-    if method == 'initialize':
-        print(json.dumps({'jsonrpc':'2.0','method':'runtime.capabilities.update','params':{'runtime':'dsh','revision':'1','capabilities':[]}}), flush=True)
-        print(json.dumps({'jsonrpc':'2.0','id':request['id'],'result':{'identity':{'runtime':'dsh','runtimeVersion':'test','protocolVersion':'1.0'}}}), flush=True)
-    elif method == 'ping':
-        print(json.dumps({'jsonrpc':'2.0','id':request['id'],'result':{'nonce':request['params'].get('nonce')}}), flush=True)
-    elif method == 'shutdown':
-        print(json.dumps({'jsonrpc':'2.0','id':request['id'],'result':{'ok':True}}), flush=True)
-        break
-"""
-    )
-    os.chmod(child, 0o700)
-
+def test_bridge_client_handshake_notification_and_disconnect(tmp_path: Path) -> None:
     async def run() -> None:
         notifications: list[tuple[str, dict[str, object]]] = []
         exits: list[int | None] = []
+        saw_token = False
+
+        async def handle(
+            reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+        ) -> None:
+            nonlocal saw_token
+            while line := await reader.readline():
+                request = json.loads(line)
+                method = request.get("method")
+                if method == "initialize":
+                    saw_token = request["params"].get("authToken") == "test-token"
+                    writer.write(
+                        json.dumps(
+                            {
+                                "jsonrpc": "2.0",
+                                "method": "runtime.capabilities.update",
+                                "params": {
+                                    "runtime": "dsh",
+                                    "revision": "1",
+                                    "capabilities": [],
+                                },
+                            }
+                        ).encode()
+                        + b"\n"
+                    )
+                    response = {
+                        "jsonrpc": "2.0",
+                        "id": request["id"],
+                        "result": {
+                            "identity": {
+                                "runtime": "dsh",
+                                "runtimeVersion": "test",
+                                "protocolVersion": "1.0",
+                            }
+                        },
+                    }
+                elif method == "ping":
+                    response = {
+                        "jsonrpc": "2.0",
+                        "id": request["id"],
+                        "result": {"nonce": request["params"].get("nonce")},
+                    }
+                else:
+                    continue
+                writer.write(json.dumps(response).encode() + b"\n")
+                await writer.drain()
+            writer.close()
+            await writer.wait_closed()
+
+        server = await asyncio.start_server(handle, "127.0.0.1", 0)
+        address = server.sockets[0].getsockname()
 
         async def notification(method: str, params: dict[str, object]) -> None:
             notifications.append((method, params))
@@ -40,26 +71,32 @@ for line in sys.stdin:
             exits.append(code)
 
         client = BridgeClient(
-            target=launch_target("test", str(child)),
-            profile="aa",
-            environment=dict(os.environ),
-            cwd=str(tmp_path),
+            endpoint=BridgeEndpoint(
+                host="127.0.0.1",
+                port=address[1],
+                token="test-token",
+                pid=1,
+                path=tmp_path / "endpoint.json",
+            ),
             connector_id="connector-test",
             client_version="test",
             startup_timeout=2,
             request_timeout=2,
-            shutdown_timeout=2,
-            kill_grace=1,
             notification_handler=notification,
             exit_handler=exited,
         )
-        initialized = await client.start()
-        assert initialized["identity"]["runtime"] == "dsh"
-        assert await client.request("ping", {"nonce": "n1"}) == {"nonce": "n1"}
-        await asyncio.sleep(0)
-        assert notifications[0][0] == "runtime.capabilities.update"
-        await client.close()
-        assert exits == []
+        try:
+            initialized = await client.start()
+            assert initialized["identity"]["runtime"] == "dsh"
+            assert await client.request("ping", {"nonce": "n1"}) == {"nonce": "n1"}
+            await asyncio.sleep(0)
+            assert notifications[0][0] == "runtime.capabilities.update"
+            assert saw_token is True
+            await client.close()
+            assert exits == []
+        finally:
+            server.close()
+            await server.wait_closed()
 
     asyncio.run(run())
 
@@ -75,16 +112,17 @@ def test_bridge_client_observes_notification_handler_failure(tmp_path: Path) -> 
             return None
 
         client = BridgeClient(
-            target=launch_target("test", str(tmp_path / "unused-dsh")),
-            profile="aa",
-            environment=dict(os.environ),
-            cwd=str(tmp_path),
+            endpoint=BridgeEndpoint(
+                host="127.0.0.1",
+                port=1,
+                token="test-token",
+                pid=1,
+                path=tmp_path / "endpoint.json",
+            ),
             connector_id="connector-test",
             client_version="test",
             startup_timeout=2,
             request_timeout=2,
-            shutdown_timeout=2,
-            kill_grace=1,
             notification_handler=notification,
             exit_handler=exited,
         )

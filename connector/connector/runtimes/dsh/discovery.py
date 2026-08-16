@@ -1,86 +1,56 @@
 from __future__ import annotations
 
-import asyncio
+import json
 import os
-import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from connector.launch import LaunchTarget, launch_target
-from connector.runtimes.dsh.provider_config import child_environment
+from connector.runtimes.dsh import provider_config
+
+
+@dataclass(frozen=True, slots=True)
+class BridgeEndpoint:
+    host: str
+    port: int
+    token: str
+    pid: int
+    path: Path
 
 
 @dataclass(frozen=True, slots=True)
 class DshDiscovery:
     available: bool
     configured: bool
-    target: LaunchTarget | None
-    version: str | None = None
+    endpoint: BridgeEndpoint | None
     bridge_version: str | None = None
     reason: str | None = None
     metadata: dict[str, Any] | None = None
 
 
-def resolve_target(
-    values: dict[str, Any],
-    environment: dict[str, str] | None = None,
-) -> LaunchTarget | None:
-    configured = values.get("executablePath")
-    if isinstance(configured, str) and configured:
-        path = str(Path(configured).expanduser())
-        if not Path(path).is_file() or (os.name != "nt" and not os.access(path, os.X_OK)):
-            return None
-        return launch_target("configured", path)
-    found = shutil.which(
-        "dsh",
-        path=(environment or child_environment(values)).get("PATH"),
-    )
-    return launch_target("path", found) if found else None
-
-
 async def discover(values: dict[str, Any]) -> DshDiscovery:
-    environment = child_environment(values)
-    target = resolve_target(values, environment)
-    if target is None:
-        reason = "configured DSH executable is missing or not executable" if values.get("executablePath") else "dsh executable was not found on PATH"
-        return DshDiscovery(False, False, None, reason=reason)
-    timeout = values["startupTimeoutMs"] / 1000
-    version_result = await _probe(target, ("--version",), environment, timeout)
-    if version_result[0] != 0:
-        return DshDiscovery(False, False, target, reason="dsh --version failed")
-    version = _first_nonempty_line(version_result[1])
-    profile = values["profile"]
-    default_dump = await _probe(
-        target,
-        ("--profile", profile, "--dump-default-config"),
-        environment,
-        timeout,
-    )
-    if default_dump[0] != 0:
-        return DshDiscovery(False, False, target, version=version, reason=f"DSH profile {profile!r} is unavailable or invalid")
-    if "agents-anywhere-bridge" not in default_dump[1]:
-        return DshDiscovery(False, False, target, version=version, reason=f"DSH profile {profile!r} does not contain the Agents Anywhere bridge")
-    effective_dump = await _probe(
-        target,
-        ("--profile", profile, "--dump-config"),
-        environment,
-        timeout,
-    )
-    if effective_dump[0] != 0:
-        return DshDiscovery(False, False, target, version=version, reason=f"DSH profile {profile!r} effective config is invalid")
-    required = ("agents-anywhere-bridge", "session-persistence", "agents")
-    missing = [item for item in required if item not in effective_dump[1]]
-    if missing:
-        return DshDiscovery(False, False, target, version=version, reason="DSH profile is missing required services")
+    try:
+        endpoint = load_endpoint(values)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        return DshDiscovery(
+            False,
+            False,
+            None,
+            reason=f"Start dsh web with the Agents Anywhere plugin ({exc})",
+        )
+    if not _process_exists(endpoint.pid):
+        return DshDiscovery(
+            False,
+            False,
+            None,
+            reason="The DSH Web bridge endpoint is stale; restart dsh web",
+        )
     return DshDiscovery(
         True,
         True,
-        target,
-        version=version,
+        endpoint,
         metadata={
-            "executable": Path(target.path).name,
-            "profile": profile,
+            "endpoint": str(endpoint.path),
             "storageMode": "dsh-native",
             "sameSessionWriterLimit": 1,
             "crossProcessWriterExclusion": False,
@@ -88,32 +58,31 @@ async def discover(values: dict[str, Any]) -> DshDiscovery:
     )
 
 
-async def _probe(
-    target: LaunchTarget,
-    args: tuple[str, ...],
-    environment: dict[str, str],
-    timeout: float,
-) -> tuple[int, str, str]:
+def load_endpoint(values: dict[str, Any]) -> BridgeEndpoint:
+    path = provider_config.endpoint_path(values)
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(raw, dict) or raw.get("version") != 1:
+        raise ValueError("bridge endpoint has an unsupported version")
+    host = raw.get("host")
+    port = raw.get("port")
+    token = raw.get("token")
+    pid = raw.get("pid")
+    if host != "127.0.0.1":
+        raise ValueError("bridge endpoint is not loopback-only")
+    if not isinstance(port, int) or isinstance(port, bool) or not 1 <= port <= 65_535:
+        raise ValueError("bridge endpoint port is invalid")
+    if not isinstance(token, str) or not token:
+        raise ValueError("bridge endpoint token is missing")
+    if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
+        raise ValueError("bridge endpoint process is invalid")
+    return BridgeEndpoint(host=host, port=port, token=token, pid=pid, path=path)
+
+
+def _process_exists(pid: int) -> bool:
     try:
-        process = await asyncio.create_subprocess_exec(
-            *target.command(args),
-            stdin=asyncio.subprocess.DEVNULL,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            env=environment,
-        )
-        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout)
-    except TimeoutError:
-        if "process" in locals():
-            process.kill()
-            await process.wait()
-        return 124, "", "probe timed out"
-    return process.returncode or 0, _decode_limited(stdout), _decode_limited(stderr)
-
-
-def _decode_limited(value: bytes, limit: int = 262_144) -> str:
-    return value[:limit].decode("utf-8", errors="replace")
-
-
-def _first_nonempty_line(value: str) -> str | None:
-    return next((line.strip() for line in value.splitlines() if line.strip()), None)
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True

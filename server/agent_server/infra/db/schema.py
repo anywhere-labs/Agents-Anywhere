@@ -263,6 +263,10 @@ sessions = Table(
     Column("pinned_at", Text),
     Column("archived", Integer, nullable=False, server_default="0"),
     Column("archived_at", Text),
+    Column("dsh_archive_legacy", Integer, nullable=False, server_default="0"),
+    Column("source_state", Text, nullable=False, server_default="visible"),
+    Column("source_state_at", Text),
+    Column("source_scan_token", Text),
     Column("last_read_seq", Integer, nullable=False, server_default="0"),
     Column("timeline_reset_seq", Integer, nullable=False, server_default="0"),
     Column("last_synced_at", Text),
@@ -272,6 +276,12 @@ sessions = Table(
     Column("updated_seq", Integer, nullable=False),
     Column("created_at", Text, nullable=False),
     Column("updated_at", Text, nullable=False),
+    Index(
+        "idx_sessions_connector_runtime_source_state",
+        "connector_id",
+        "runtime",
+        "source_state",
+    ),
 )
 
 

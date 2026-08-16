@@ -460,8 +460,6 @@
       "runtimeNotReported": "Connector 当前没有上报这个 Runtime。",
       "runtimeIssue": "异常",
       "unknownVersion": "未知",
-      "dshRuntimeSummary": "DSH {version} · profile {profile} · 原生 Session 存储",
-      "dshSingleWriterWarning": "同一 DSH Session 不能同时在 Agents Anywhere 与其他 DSH 实例中运行；外部变更会在 Connector 重新扫描后同步。",
       "runtimeStatus": {
         "stopped": "已停止",
         "discovering": "正在发现",

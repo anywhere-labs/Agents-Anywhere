@@ -17,7 +17,16 @@ from connector.runtime_protocol.host import RuntimeHostClient
 from connector.runtimes.dsh import discovery, provider_config
 from connector.runtimes.dsh.runtime import DshRuntime
 
-DSH_CONFIG_SCHEMA_REVISION = 1
+DSH_CONFIG_SCHEMA_REVISION = 2
+LEGACY_CONFIG_KEYS = frozenset(
+    {
+        "environment",
+        "executablePath",
+        "killGraceMs",
+        "profile",
+        "shutdownTimeoutMs",
+    }
+)
 Discovery = Callable[[dict[str, Any]], Awaitable[discovery.DshDiscovery]]
 
 
@@ -32,7 +41,7 @@ class DshProvider(RuntimeProvider):
 
     @property
     def runtime_type(self) -> str:
-        return "local-process"
+        return "local-service"
 
     @property
     def display_name(self) -> str:
@@ -43,12 +52,10 @@ class DshProvider(RuntimeProvider):
         result = await self._discoverer(values)
         self._last_discovery = result
         metadata = dict(result.metadata or {})
-        if result.version:
-            metadata["dshVersion"] = result.version
         metadata.update(
             {
                 "protocolVersion": "1.0",
-                "profile": values["profile"],
+                "profile": "web",
                 "storageMode": "dsh-native",
                 "sameSessionWriterLimit": 1,
                 "crossProcessWriterExclusion": False,
@@ -73,20 +80,13 @@ class DshProvider(RuntimeProvider):
             schema=provider_config.dsh_config_schema(),
             ui_schema={
                 "order": [
-                    "executablePath",
-                    "profile",
                     "dshHome",
-                    "environment",
                     "startupTimeoutMs",
                     "requestTimeoutMs",
-                    "shutdownTimeoutMs",
-                    "killGraceMs",
                     "maxRestartAttempts",
                     "restartBackoffMs",
                 ],
-                "environment": {"component": "secretKeyValue", "writeOnly": True},
                 "dshHome": {"component": "path"},
-                "executablePath": {"component": "path"},
             },
             defaults=provider_config.default_config_values(),
             metadata={
@@ -97,7 +97,9 @@ class DshProvider(RuntimeProvider):
         )
 
     async def validate_config(self, values: Mapping[str, Any]) -> RuntimeConfig:
-        raw = dict(values)
+        raw = {
+            key: value for key, value in values.items() if key not in LEGACY_CONFIG_KEYS
+        }
         schema_info = await self.get_config_schema()
         errors = sorted(
             Draft202012Validator(schema_info.schema).iter_errors(raw),
@@ -111,25 +113,18 @@ class DshProvider(RuntimeProvider):
         normalized = provider_config.normalized_config_values(raw)
         result = await self._discoverer(normalized)
         self._last_discovery = result
-        if not result.available or not result.configured or result.target is None:
+        if not result.available or not result.configured or result.endpoint is None:
             raise RuntimeInvalidRequestError(result.reason or "DSH is unavailable")
         metadata = dict(result.metadata or {})
         metadata.update(
             {
-                "dshVersion": result.version,
                 "protocolVersion": "1.0",
-                "profile": normalized["profile"],
+                "profile": "web",
                 "storageMode": "dsh-native",
                 "sameSessionWriterLimit": 1,
                 "crossProcessWriterExclusion": False,
-                "launchTarget": {
-                    "source": result.target.source,
-                    "path": result.target.path,
-                    "launcher": result.target.launcher,
-                },
             }
         )
-        # Environment values are never copied into metadata or returned diagnostics.
         return RuntimeConfig(
             runtime=self.runtime,
             revision=DSH_CONFIG_SCHEMA_REVISION,

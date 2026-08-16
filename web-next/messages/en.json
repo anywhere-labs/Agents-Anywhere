@@ -460,8 +460,6 @@
       "runtimeNotReported": "This runtime is not currently reported by the connector.",
       "runtimeIssue": "Issue",
       "unknownVersion": "unknown",
-      "dshRuntimeSummary": "DSH {version} · profile {profile} · native session storage",
-      "dshSingleWriterWarning": "Do not run the same DSH session in Agents Anywhere and another DSH instance at the same time. External changes appear after a connector rescan.",
       "runtimeStatus": {
         "stopped": "Stopped",
         "discovering": "Discovering",

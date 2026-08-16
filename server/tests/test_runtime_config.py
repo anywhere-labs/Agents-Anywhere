@@ -166,7 +166,9 @@ def _make_client(tmp_path) -> tuple[TestClient, FakeRpc, str, dict[str, str]]:
     rpc = FakeRpc(_inventory())
     app.state.rpc = rpc
     app.state.device_runtime_service = DeviceRuntimeService(app.state.store, rpc)
-    asyncio.run(app.state.device_runtime_service.ingest_inventory(connector_id, rpc.inventory))
+    asyncio.run(
+        app.state.device_runtime_service.ingest_inventory(connector_id, rpc.inventory)
+    )
     return client, rpc, connector_id, headers
 
 
@@ -356,7 +358,9 @@ def test_activation_and_deactivation_drive_connector_lifecycle(tmp_path):
     client, rpc, connector_id, headers = _make_client(tmp_path)
     config_url = f"{_runtime_url(connector_id)}/config"
     active_url = f"{_runtime_url(connector_id)}/active"
-    assert client.put(config_url, headers=headers, json={"config": {}}).status_code == 200
+    assert (
+        client.put(config_url, headers=headers, json={"config": {}}).status_code == 200
+    )
     rpc.requests.clear()
 
     activated = client.put(active_url, headers=headers, json={"active": True})
@@ -376,8 +380,13 @@ def test_removed_agent_catalog_route_does_not_start_runtime(tmp_path):
     client, rpc, connector_id, headers = _make_client(tmp_path)
     config_url = f"{_runtime_url(connector_id)}/config"
     active_url = f"{_runtime_url(connector_id)}/active"
-    assert client.put(config_url, headers=headers, json={"config": {}}).status_code == 200
-    assert client.put(active_url, headers=headers, json={"active": True}).status_code == 200
+    assert (
+        client.put(config_url, headers=headers, json={"config": {}}).status_code == 200
+    )
+    assert (
+        client.put(active_url, headers=headers, json={"active": True}).status_code
+        == 200
+    )
     asyncio.run(
         client.app.state.store.set_device_runtime_status(
             connector_id,
@@ -401,8 +410,13 @@ def test_connector_runtime_scoped_reads_start_active_runtime_before_rpc(tmp_path
     client, rpc, connector_id, headers = _make_client(tmp_path)
     config_url = f"{_runtime_url(connector_id)}/config"
     active_url = f"{_runtime_url(connector_id)}/active"
-    assert client.put(config_url, headers=headers, json={"config": {}}).status_code == 200
-    assert client.put(active_url, headers=headers, json={"active": True}).status_code == 200
+    assert (
+        client.put(config_url, headers=headers, json={"config": {}}).status_code == 200
+    )
+    assert (
+        client.put(active_url, headers=headers, json={"active": True}).status_code
+        == 200
+    )
     asyncio.run(
         client.app.state.store.set_device_runtime_status(
             connector_id,
@@ -430,11 +444,19 @@ def test_connector_runtime_scoped_reads_start_active_runtime_before_rpc(tmp_path
     )
 
     assert capabilities.status_code == 200, capabilities.text
-    assert capabilities.json()["capabilitySet"]["capabilities"][0]["capabilityId"] == "runtime.config"
+    assert (
+        capabilities.json()["capabilitySet"]["capabilities"][0]["capabilityId"]
+        == "runtime.config"
+    )
     assert model_catalog.status_code == 200, model_catalog.text
-    assert model_catalog.json()["catalog"]["models"][0]["selectionId"] == "sel_model_test"
+    assert (
+        model_catalog.json()["catalog"]["models"][0]["selectionId"] == "sel_model_test"
+    )
     assert permission_catalog.status_code == 200, permission_catalog.text
-    assert permission_catalog.json()["catalog"]["permissions"][0]["selectionId"] == "sel_permission_ask"
+    assert (
+        permission_catalog.json()["catalog"]["permissions"][0]["selectionId"]
+        == "sel_permission_ask"
+    )
     assert commands.status_code == 200, commands.text
     assert commands.json()["commands"][0]["id"] == "runtime-status"
     assert [request[1] for request in rpc.requests] == [
@@ -453,8 +475,13 @@ def test_session_sync_starts_active_runtime_before_sync_rpc(tmp_path):
     client, rpc, connector_id, headers = _make_client(tmp_path)
     config_url = f"{_runtime_url(connector_id)}/config"
     active_url = f"{_runtime_url(connector_id)}/active"
-    assert client.put(config_url, headers=headers, json={"config": {}}).status_code == 200
-    assert client.put(active_url, headers=headers, json={"active": True}).status_code == 200
+    assert (
+        client.put(config_url, headers=headers, json={"config": {}}).status_code == 200
+    )
+    assert (
+        client.put(active_url, headers=headers, json={"active": True}).status_code
+        == 200
+    )
     session_response = client.post(
         "/sessions",
         headers=headers,
@@ -491,8 +518,13 @@ def test_session_runtime_catalog_reads_start_active_runtime_before_rpc(tmp_path)
     client, rpc, connector_id, headers = _make_client(tmp_path)
     config_url = f"{_runtime_url(connector_id)}/config"
     active_url = f"{_runtime_url(connector_id)}/active"
-    assert client.put(config_url, headers=headers, json={"config": {}}).status_code == 200
-    assert client.put(active_url, headers=headers, json={"active": True}).status_code == 200
+    assert (
+        client.put(config_url, headers=headers, json={"config": {}}).status_code == 200
+    )
+    assert (
+        client.put(active_url, headers=headers, json={"active": True}).status_code
+        == 200
+    )
     session_response = client.post(
         "/sessions",
         headers=headers,
@@ -545,8 +577,13 @@ def test_editing_active_config_restarts_runtime(tmp_path):
     client, rpc, connector_id, headers = _make_client(tmp_path)
     config_url = f"{_runtime_url(connector_id)}/config"
     active_url = f"{_runtime_url(connector_id)}/active"
-    assert client.put(config_url, headers=headers, json={"config": {}}).status_code == 200
-    assert client.put(active_url, headers=headers, json={"active": True}).status_code == 200
+    assert (
+        client.put(config_url, headers=headers, json={"config": {}}).status_code == 200
+    )
+    assert (
+        client.put(active_url, headers=headers, json={"active": True}).status_code
+        == 200
+    )
     rpc.requests.clear()
 
     response = client.put(
@@ -571,7 +608,9 @@ def test_editing_active_config_restarts_runtime(tmp_path):
 def test_start_failure_remains_configured_active_and_visible_as_error(tmp_path):
     client, rpc, connector_id, headers = _make_client(tmp_path)
     config_url = f"{_runtime_url(connector_id)}/config"
-    assert client.put(config_url, headers=headers, json={"config": {}}).status_code == 200
+    assert (
+        client.put(config_url, headers=headers, json={"config": {}}).status_code == 200
+    )
     rpc.errors["runtime.start"] = ConnectorRpcError("start_failed", "runtime exited")
 
     response = client.put(
@@ -589,10 +628,71 @@ def test_start_failure_remains_configured_active_and_visible_as_error(tmp_path):
     assert runtime["error"]["code"] == "start_failed"
 
 
+def test_reconcile_active_forwards_persisted_config_after_schema_upgrade(tmp_path):
+    client, rpc, connector_id, headers = _make_client(tmp_path)
+    store = client.app.state.store
+    runtime_service = client.app.state.device_runtime_service
+    upgraded_inventory = _inventory()
+    upgraded_inventory["runtimes"][0]["schema"]["properties"] = {}
+    upgraded_inventory["runtimes"][0]["uiSchema"] = {}
+    asyncio.run(runtime_service.ingest_inventory(connector_id, upgraded_inventory))
+    asyncio.run(
+        store.set_device_runtime_config(
+            connector_id,
+            "codex",
+            {"executablePath": "/legacy/codex"},
+        )
+    )
+    asyncio.run(store.set_device_runtime_active(connector_id, "codex", True))
+    rpc.requests.clear()
+
+    asyncio.run(runtime_service.reconcile_active(connector_id))
+
+    runtime = client.get(
+        f"/connectors/{connector_id}/runtimes", headers=headers
+    ).json()["runtimes"][0]
+    assert runtime["status"] == "running"
+    assert [request[1] for request in rpc.requests] == ["runtime.start"]
+    _assert_runtime_start_config_revision(
+        rpc.requests[0][2],
+        {"executablePath": "/legacy/codex"},
+    )
+
+
+def test_inventory_refresh_preserves_active_runtime_error(tmp_path):
+    client, rpc, connector_id, headers = _make_client(tmp_path)
+    store = client.app.state.store
+    runtime_service = client.app.state.device_runtime_service
+    asyncio.run(store.set_device_runtime_config(connector_id, "codex", {}))
+    asyncio.run(store.set_device_runtime_active(connector_id, "codex", True))
+    asyncio.run(
+        store.set_device_runtime_status(
+            connector_id,
+            "codex",
+            "error",
+            error={"code": "start_failed", "message": "runtime exited"},
+        )
+    )
+
+    asyncio.run(runtime_service.apply_status(connector_id, "codex", "available"))
+    asyncio.run(runtime_service.ingest_inventory(connector_id, rpc.inventory))
+
+    runtime = client.get(
+        f"/connectors/{connector_id}/runtimes", headers=headers
+    ).json()["runtimes"][0]
+    assert runtime["status"] == "error"
+    assert runtime["error"] == {
+        "code": "start_failed",
+        "message": "runtime exited",
+    }
+
+
 def test_delete_running_config_stops_then_returns_to_unconfigured(tmp_path):
     client, rpc, connector_id, headers = _make_client(tmp_path)
     config_url = f"{_runtime_url(connector_id)}/config"
-    assert client.put(config_url, headers=headers, json={"config": {}}).status_code == 200
+    assert (
+        client.put(config_url, headers=headers, json={"config": {}}).status_code == 200
+    )
     assert (
         client.put(
             f"{_runtime_url(connector_id)}/active",
@@ -616,8 +716,13 @@ def test_deactivation_settles_sessions_without_persisted_notices(tmp_path):
     client, _, connector_id, headers = _make_client(tmp_path)
     config_url = f"{_runtime_url(connector_id)}/config"
     active_url = f"{_runtime_url(connector_id)}/active"
-    assert client.put(config_url, headers=headers, json={"config": {}}).status_code == 200
-    assert client.put(active_url, headers=headers, json={"active": True}).status_code == 200
+    assert (
+        client.put(config_url, headers=headers, json={"config": {}}).status_code == 200
+    )
+    assert (
+        client.put(active_url, headers=headers, json={"active": True}).status_code
+        == 200
+    )
 
     store = client.app.state.store
     session = asyncio.run(
@@ -648,4 +753,7 @@ def test_explicit_discovery_stops_runtime_that_server_has_not_activated(tmp_path
 
     assert response.status_code == 200, response.text
     assert response.json()["runtimes"][0]["status"] == "stopped"
-    assert [request[1] for request in rpc.requests] == ["runtime.discover", "runtime.stop"]
+    assert [request[1] for request in rpc.requests] == [
+        "runtime.discover",
+        "runtime.stop",
+    ]

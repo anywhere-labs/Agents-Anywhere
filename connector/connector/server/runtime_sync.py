@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import secrets
 import time
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -77,7 +78,18 @@ class RuntimeSyncRunner:
                     "existing session sync runtime started runtime={}", runtime_id
                 )
                 await self.push_runtime_catalogs(runtime)
-                sessions = await runtime.list_sessions(limit=100, force=False)
+                dsh_scan_token: str | None = None
+                if runtime_id == "dsh":
+                    dsh_scan_token = secrets.token_hex(16)
+                    await self._ingest_scanner_notifications(
+                        [_dsh_inventory_begin_notification(dsh_scan_token)]
+                    )
+                    sessions = await runtime.list_complete_session_inventory(
+                        page_size=100,
+                        force=False,
+                    )
+                else:
+                    sessions = await runtime.list_sessions(limit=100, force=False)
                 timeline_sync_count = sum(
                     1 for session in sessions if session_requires_timeline_sync(session)
                 )
@@ -107,6 +119,15 @@ class RuntimeSyncRunner:
                             session.external_session_id,
                         )
                         continue
+                if dsh_scan_token is not None:
+                    await self._ingest_scanner_notifications(
+                        [
+                            _dsh_inventory_complete_notification(
+                                dsh_scan_token,
+                                sessions,
+                            )
+                        ]
+                    )
                 logger.info(
                     "existing session sync runtime completed runtime={} sessions={} elapsed_ms={:.1f}",
                     runtime_id,
@@ -354,6 +375,59 @@ def _session_meta_notification(session: SessionMeta) -> dict[str, Any]:
             }
         ),
     }
+
+
+def _dsh_inventory_begin_notification(scan_token: str) -> dict[str, Any]:
+    return {
+        "method": "session.inventory.begin",
+        "params": {
+            "runtime": "dsh",
+            "scanToken": scan_token,
+        },
+    }
+
+
+def _dsh_inventory_complete_notification(
+    scan_token: str,
+    sessions: tuple[SessionMeta, ...],
+) -> dict[str, Any]:
+    return {
+        "method": "session.inventory.complete",
+        "params": {
+            "runtime": "dsh",
+            "scanToken": scan_token,
+            "complete": True,
+            "sessions": [
+                _drop_none(
+                    {
+                        "sessionId": session.session_id,
+                        "externalSessionId": session.external_session_id,
+                        "sourceState": _dsh_inventory_source_state(session),
+                    }
+                )
+                for session in sessions
+            ],
+        },
+    }
+
+
+def _dsh_inventory_source_state(session: SessionMeta) -> str:
+    metadata = session.metadata
+    if any(
+        metadata.get(key) is True
+        for key in (
+            "hidden",
+            "localArchived",
+            "local_archived",
+            "localDeleted",
+            "local_deleted",
+        )
+    ):
+        return "hidden"
+    if metadata.get("resumeSupported") is False or metadata.get("resumable") is False:
+        return "hidden"
+    local_state = metadata.get("localState") or metadata.get("local_state")
+    return "hidden" if local_state in {"archived", "deleted", "unresumable"} else "visible"
 
 
 def _timeline_sync_notification(snapshot: RuntimeTimelineSnapshot) -> dict[str, Any]:

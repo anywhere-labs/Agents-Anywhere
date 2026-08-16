@@ -70,6 +70,13 @@ class AgentRuntime(ABC):
     ) -> tuple[SessionMeta, ...]:
         raise RuntimeUnsupportedError("list_sessions")
 
+    async def list_complete_session_inventory(
+        self,
+        page_size: int = 100,
+        force: bool = False,
+    ) -> tuple[SessionMeta, ...]:
+        raise RuntimeUnsupportedError("list_complete_session_inventory")
+
     async def get_session_snapshot(
         self,
         session_id: str,

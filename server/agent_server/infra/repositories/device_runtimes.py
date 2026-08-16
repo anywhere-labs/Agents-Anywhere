@@ -49,7 +49,10 @@ class DeviceRuntimeRepositoryMixin:
             for runtime in runtimes:
                 existing = (
                     await conn.execute(
-                        select(device_runtimes_t.c.runtime_id).where(
+                        select(
+                            device_runtimes_t.c.runtime_id,
+                            device_runtimes_t.c.active,
+                        ).where(
                             device_runtimes_t.c.connector_id == connector_id,
                             device_runtimes_t.c.runtime_id == runtime.runtimeId,
                         )
@@ -65,7 +68,6 @@ class DeviceRuntimeRepositoryMixin:
                     ),
                     "config_schema_json": _json_dumps(runtime.schema_),
                     "ui_schema_json": _json_dumps(runtime.uiSchema),
-                    "status": runtime.status,
                     "last_discovered_at": now,
                     "updated_at": now,
                 }
@@ -77,10 +79,13 @@ class DeviceRuntimeRepositoryMixin:
                             config_json=None,
                             active=0,
                             error_json=None,
+                            status=runtime.status,
                             **values,
                         )
                     )
                 else:
+                    if not bool(existing.active):
+                        values["status"] = runtime.status
                     await conn.execute(
                         update(device_runtimes_t)
                         .where(
@@ -103,7 +108,10 @@ class DeviceRuntimeRepositoryMixin:
             .where(
                 device_runtimes_t.c.connector_id == connector_id,
                 connectors_t.c.revoked == 0,
-                or_(device_runtimes_t.c.present == 1, device_runtimes_t.c.config_json.is_not(None)),
+                or_(
+                    device_runtimes_t.c.present == 1,
+                    device_runtimes_t.c.config_json.is_not(None),
+                ),
             )
             .order_by(device_runtimes_t.c.display_name, device_runtimes_t.c.runtime_id)
         )

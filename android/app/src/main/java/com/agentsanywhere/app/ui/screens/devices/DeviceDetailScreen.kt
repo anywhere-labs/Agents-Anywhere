@@ -765,7 +765,7 @@ private fun ConfiguredAgentRow(
     onDeleteConfig: () -> Unit,
 ) {
     val dshNative = runtime.metadata["storageMode"] == "dsh-native"
-    val singleWriterWarning = dshNative && runtime.metadata["crossProcessWriterExclusion"] == false
+    val sharedSessionInfo = dshNative && runtime.metadata["crossProcessWriterExclusion"] == false
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -794,10 +794,10 @@ private fun ConfiguredAgentRow(
                     fontSize = 11.sp,
                 )
             }
-            if (singleWriterWarning) {
+            if (sharedSessionInfo) {
                 Text(
-                    text = stringResource(R.string.device_runtime_dsh_single_writer),
-                    color = Color(0xFFB45309),
+                    text = stringResource(R.string.device_runtime_dsh_shared_session),
+                    color = LocalAAColors.current.muted,
                     fontSize = 11.sp,
                 )
             }

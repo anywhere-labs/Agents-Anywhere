@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 from conftest import ApiV2TestClient as TestClient
+from sqlalchemy import text
 from starlette.websockets import WebSocketDisconnect
 
 from agent_server.api.sessions_terminal import _send_terminal_ws_error
@@ -5869,6 +5870,72 @@ def test_connector_ingest_archives_local_hidden_session_meta(tmp_path):
     assert state.json()["session"]["archivedAt"] is not None
 
 
+def test_connector_ingest_dsh_hidden_state_is_reversible_without_archiving(tmp_path):
+    client = make_client(tmp_path)
+    _, access_token, _, headers = create_connector_and_session(client)
+    connector_headers = {"Authorization": f"Bearer {access_token}"}
+
+    hidden = client.post(
+        "/connector/ingest",
+        headers=connector_headers,
+        json={
+            "notifications": [
+                {
+                    "method": "session.meta.upsert",
+                    "params": {
+                        "sessionId": "sess_dsh_hidden",
+                        "runtime": "dsh",
+                        "externalSessionId": "dsh_hidden",
+                        "title": "DSH hidden",
+                        "cwd": "/repo",
+                        "metadata": {"localArchived": True},
+                    },
+                }
+            ]
+        },
+    )
+
+    assert hidden.status_code == 200, hidden.text
+    hidden_snapshot = client.get("/sessions/sess_dsh_hidden/snapshot", headers=headers)
+    assert hidden_snapshot.status_code == 200, hidden_snapshot.text
+    assert hidden_snapshot.json()["session"]["archived"] is False
+    listed_ids = {
+        session.id
+        for session in asyncio.run(client.app.state.store.list_sessions(user_id=ADMIN_USER))
+    }
+    assert "sess_dsh_hidden" not in listed_ids
+
+    visible = client.post(
+        "/connector/ingest",
+        headers=connector_headers,
+        json={
+            "notifications": [
+                {
+                    "method": "session.meta.upsert",
+                    "params": {
+                        "sessionId": "sess_dsh_hidden",
+                        "runtime": "dsh",
+                        "externalSessionId": "dsh_hidden",
+                        "title": "DSH visible again",
+                        "cwd": "/repo",
+                        "metadata": {"local_state": "active", "hidden": False},
+                    },
+                }
+            ]
+        },
+    )
+
+    assert visible.status_code == 200, visible.text
+    visible_snapshot = client.get("/sessions/sess_dsh_hidden/snapshot", headers=headers)
+    assert visible_snapshot.status_code == 200, visible_snapshot.text
+    assert visible_snapshot.json()["session"]["archived"] is False
+    listed_ids = {
+        session.id
+        for session in asyncio.run(client.app.state.store.list_sessions(user_id=ADMIN_USER))
+    }
+    assert "sess_dsh_hidden" in listed_ids
+
+
 def test_connector_ingest_ordered_meta_then_timeline_creates_session_before_items(tmp_path):
     client = make_client(tmp_path)
     _, access_token, _, headers = create_connector_and_session(client)
@@ -6032,6 +6099,220 @@ def test_connector_ingest_does_not_overwrite_platform_archive_state(tmp_path):
     state = session_view_for_assertions(client, session_id, headers)
     assert state["session"]["archived"] is True
     assert state["session"]["archivedAt"] is not None
+
+
+def test_dsh_complete_inventory_tracks_missing_without_changing_user_archive(tmp_path):
+    client = make_client(tmp_path)
+    _, access_token, _, headers = create_connector_and_session(client)
+    connector_headers = {"Authorization": f"Bearer {access_token}"}
+
+    seeded = client.post(
+        "/connector/ingest",
+        headers=connector_headers,
+        json={
+            "notifications": [
+                {
+                    "method": "session.meta.upsert",
+                    "params": {
+                        "sessionId": session_id,
+                        "runtime": "dsh",
+                        "externalSessionId": external_id,
+                        "title": session_id,
+                        "cwd": "/repo",
+                    },
+                }
+                for session_id, external_id in (
+                    ("sess_dsh_kept", "dsh-kept"),
+                    ("sess_dsh_missing", "dsh-missing"),
+                )
+            ]
+        },
+    )
+    assert seeded.status_code == 200, seeded.text
+
+    archived = client.post(
+        "/sessions/archive",
+        headers=headers,
+        json=["sess_dsh_kept"],
+    )
+    assert archived.status_code == 200, archived.text
+
+    scan_token = "dsh-inventory-scan-token-0001"
+    reconciled = client.post(
+        "/connector/ingest",
+        headers=connector_headers,
+        json={
+            "notifications": [
+                {
+                    "method": "session.inventory.begin",
+                    "params": {"runtime": "dsh", "scanToken": scan_token},
+                },
+                {
+                    "method": "session.inventory.complete",
+                    "params": {
+                        "runtime": "dsh",
+                        "scanToken": scan_token,
+                        "complete": True,
+                        "sessions": [
+                            {
+                                "sessionId": "sess_dsh_kept",
+                                "externalSessionId": "dsh-kept",
+                                "sourceState": "visible",
+                            }
+                        ],
+                    },
+                },
+            ]
+        },
+    )
+    assert reconciled.status_code == 200, reconciled.text
+    assert reconciled.json()["accepted"] == 2
+
+    listed_ids = {
+        session.id
+        for session in asyncio.run(client.app.state.store.list_sessions(user_id=ADMIN_USER))
+    }
+    assert "sess_dsh_kept" in listed_ids
+    assert "sess_dsh_missing" not in listed_ids
+    kept = client.get("/sessions/sess_dsh_kept/snapshot", headers=headers)
+    missing = client.get("/sessions/sess_dsh_missing/snapshot", headers=headers)
+    assert kept.status_code == 200, kept.text
+    assert missing.status_code == 200, missing.text
+    assert kept.json()["session"]["archived"] is True
+    assert missing.json()["session"]["archived"] is False
+
+    next_scan_token = "dsh-inventory-scan-token-0002"
+    reappeared = client.post(
+        "/connector/ingest",
+        headers=connector_headers,
+        json={
+            "notifications": [
+                {
+                    "method": "session.inventory.begin",
+                    "params": {"runtime": "dsh", "scanToken": next_scan_token},
+                },
+                {
+                    "method": "session.inventory.complete",
+                    "params": {
+                        "runtime": "dsh",
+                        "scanToken": next_scan_token,
+                        "complete": True,
+                        "sessions": [
+                            {
+                                "sessionId": "sess_dsh_kept",
+                                "externalSessionId": "dsh-kept",
+                                "sourceState": "visible",
+                            },
+                            {
+                                "sessionId": "sess_dsh_missing",
+                                "externalSessionId": "dsh-missing",
+                                "sourceState": "visible",
+                            },
+                        ],
+                    },
+                },
+            ]
+        },
+    )
+    assert reappeared.status_code == 200, reappeared.text
+
+    listed_ids = {
+        session.id
+        for session in asyncio.run(client.app.state.store.list_sessions(user_id=ADMIN_USER))
+    }
+    assert {"sess_dsh_kept", "sess_dsh_missing"}.issubset(listed_ids)
+    kept = client.get("/sessions/sess_dsh_kept/snapshot", headers=headers)
+    assert kept.status_code == 200, kept.text
+    assert kept.json()["session"]["archived"] is True
+
+
+def test_dsh_visible_inventory_recovers_legacy_archive_but_preserves_user_archive(tmp_path):
+    client = make_client(tmp_path)
+    _, access_token, _, headers = create_connector_and_session(client)
+    connector_headers = {"Authorization": f"Bearer {access_token}"}
+
+    seeded = client.post(
+        "/connector/ingest",
+        headers=connector_headers,
+        json={
+            "notifications": [
+                {
+                    "method": "session.meta.upsert",
+                    "params": {
+                        "sessionId": session_id,
+                        "runtime": "dsh",
+                        "externalSessionId": external_id,
+                        "title": session_id,
+                    },
+                }
+                for session_id, external_id in (
+                    ("sess_dsh_legacy_archive", "dsh-legacy-archive"),
+                    ("sess_dsh_user_archive", "dsh-user-archive"),
+                )
+            ]
+        },
+    )
+    assert seeded.status_code == 200, seeded.text
+
+    async def mark_archives() -> None:
+        async with client.app.state.store.engine.begin() as connection:
+            await connection.execute(
+                text(
+                    "UPDATE sessions SET archived = 1, archived_at = :now, "
+                    "dsh_archive_legacy = 1 WHERE id = 'sess_dsh_legacy_archive'"
+                ),
+                {"now": "2026-08-16T00:00:00Z"},
+            )
+
+    asyncio.run(mark_archives())
+    user_archived = client.post(
+        "/sessions/archive",
+        headers=headers,
+        json=["sess_dsh_user_archive"],
+    )
+    assert user_archived.status_code == 200, user_archived.text
+
+    scan_token = "dsh-legacy-archive-recovery"
+    reconciled = client.post(
+        "/connector/ingest",
+        headers=connector_headers,
+        json={
+            "notifications": [
+                {
+                    "method": "session.inventory.begin",
+                    "params": {"runtime": "dsh", "scanToken": scan_token},
+                },
+                {
+                    "method": "session.inventory.complete",
+                    "params": {
+                        "runtime": "dsh",
+                        "scanToken": scan_token,
+                        "complete": True,
+                        "sessions": [
+                            {
+                                "sessionId": "sess_dsh_legacy_archive",
+                                "externalSessionId": "dsh-legacy-archive",
+                                "sourceState": "visible",
+                            },
+                            {
+                                "sessionId": "sess_dsh_user_archive",
+                                "externalSessionId": "dsh-user-archive",
+                                "sourceState": "visible",
+                            },
+                        ],
+                    },
+                },
+            ]
+        },
+    )
+    assert reconciled.status_code == 200, reconciled.text
+
+    legacy = client.get("/sessions/sess_dsh_legacy_archive/snapshot", headers=headers)
+    user = client.get("/sessions/sess_dsh_user_archive/snapshot", headers=headers)
+    assert legacy.status_code == 200, legacy.text
+    assert user.status_code == 200, user.text
+    assert legacy.json()["session"]["archived"] is False
+    assert user.json()["session"]["archived"] is True
 
 
 def test_connector_http_ingest_accepts_state_update_before_external_id(tmp_path):

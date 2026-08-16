@@ -142,6 +142,21 @@ class ConnectorNotificationRepository(
 ):
     async def clear_active_run(self, session_id: str) -> None: ...
 
+    async def begin_dsh_session_inventory(
+        self,
+        connector_id: str,
+        scan_token: str,
+    ) -> None: ...
+
+    async def complete_dsh_session_inventory(
+        self,
+        connector_id: str,
+        scan_token: str,
+        entries: list[dict[str, str | None]],
+        *,
+        complete: bool,
+    ) -> list[str]: ...
+
     async def get_session_runtime(self, session_id: str) -> str | None: ...
 
     async def record_connector_activity(self, connector_id: str) -> None: ...
