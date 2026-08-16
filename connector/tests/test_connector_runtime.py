@@ -67,13 +67,17 @@ from connector.server.auth import ConnectorAuthenticationError
 from connector.server.capabilities import protocol_capabilities_from_inventory
 from connector.server.client import BackendRpcClient
 from connector.server.errors import ConnectorNetworkError
-from connector.server.ingest import coalesce_timeline_item_upserts
+from connector.server.ingest import (
+    ConnectorIngestRejectedError,
+    coalesce_timeline_item_upserts,
+)
+from connector.server.protocol_revision import ProtocolRevisionClock
 from connector.server.rpc import (
     RPC_LOG_REDACTED,
     RPC_LOG_TRUNCATED,
     sanitize_rpc_log_value,
 )
-from connector.server.runtime_sync import RuntimeSyncRunner
+from connector.server.runtime_sync import RuntimeSyncRunner, _timeline_sync_notification
 
 
 def test_rpc_log_payload_sanitizer_redacts_secrets_and_bounds_size() -> None:
@@ -333,7 +337,9 @@ class FakeAgentRuntime(AgentRuntime):
         query: str | None = None,
         limit: int = 100,
     ) -> RuntimePermissionCatalog:
-        self.calls.append(("runtime.permissionCatalog", {"query": query, "limit": limit}))
+        self.calls.append(
+            ("runtime.permissionCatalog", {"query": query, "limit": limit})
+        )
         return RuntimePermissionCatalog(
             runtime=self.runtime_id,
             revision=8,
@@ -446,7 +452,9 @@ class FakeAgentRuntime(AgentRuntime):
             ),
         )
 
-    async def list_runtime_commands(self, limit: int = 100) -> tuple[RuntimeCommand, ...]:
+    async def list_runtime_commands(
+        self, limit: int = 100
+    ) -> tuple[RuntimeCommand, ...]:
         self.calls.append(("runtime.commands", {"limit": limit}))
         return (
             RuntimeCommand(
@@ -644,7 +652,9 @@ class FakeAgentRuntime(AgentRuntime):
                 },
             )
         )
-        return RuntimeOperationResult(ok=True, result={"steered": True, "turnId": "turn_agent"})
+        return RuntimeOperationResult(
+            ok=True, result={"steered": True, "turnId": "turn_agent"}
+        )
 
     async def interrupt_session(
         self,
@@ -745,8 +755,6 @@ class FakeAgentProvider(RuntimeProvider):
 
     async def stop_runtime(self, runtime: AgentRuntime) -> None:
         await runtime.stop()
-
-
 
 
 class FakeWebSocket:
@@ -938,6 +946,47 @@ def test_connector_runtime_host_keeps_turn_data_inside_runtime() -> None:
     asyncio.run(_exercise_session_only_server_notifications())
 
 
+def test_runtime_scanner_keeps_turn_markers_out_of_server_timeline() -> None:
+    snapshot = RuntimeTimelineSnapshot(
+        session_id="sess_1",
+        external_session_id="external_1",
+        runtime="dsh",
+        items=(
+            RuntimeTimelineItem(
+                id="turn_start_1",
+                session_id="sess_1",
+                type="turn.start",
+                status="running",
+                order_seq=1,
+                content_hash="sha256:start",
+            ),
+            RuntimeTimelineItem(
+                id="message_1",
+                session_id="sess_1",
+                type="message",
+                status="done",
+                role="assistant",
+                order_seq=2,
+                content_hash="sha256:message",
+                content={"kind": "markdown", "text": "hello"},
+            ),
+            RuntimeTimelineItem(
+                id="turn_end_1",
+                session_id="sess_1",
+                type="turn.end",
+                status="done",
+                order_seq=3,
+                content_hash="sha256:end",
+            ),
+        ),
+        complete=True,
+    )
+
+    notification = _timeline_sync_notification(snapshot)
+
+    assert [item["id"] for item in notification["params"]["items"]] == ["message_1"]
+
+
 def test_connector_config_saves_and_loads_local_json(tmp_path) -> None:
     path = tmp_path / "connector.json"
     config = ConnectorConfig(
@@ -1003,6 +1052,7 @@ def test_connector_projects_inventory_capabilities_to_protocol_ids() -> None:
                         "startTurn": True,
                         "steerTurn": True,
                         "interruptTurn": True,
+                        "commands": True,
                         "interactions": True,
                     },
                 },
@@ -1017,13 +1067,29 @@ def test_connector_projects_inventory_capabilities_to_protocol_ids() -> None:
                     },
                 },
                 {
+                    "runtimeId": "dsh",
+                    "status": "running",
+                    "configured": True,
+                    "schema": {"type": "object"},
+                    "capabilities": {
+                        "modelCatalog": True,
+                        "permissionCatalog": True,
+                        "startTurn": True,
+                        "steerTurn": True,
+                        "interruptTurn": True,
+                        "commands": True,
+                        "interactions": True,
+                    },
+                },
+                {
                     "runtimeId": "unknown-agent",
                     "status": "available",
                     "configured": True,
                     "capabilities": {"modelCatalog": True},
                 },
             ]
-        }
+        },
+        revision=42,
     )
 
     by_runtime_and_id = {
@@ -1037,15 +1103,26 @@ def test_connector_projects_inventory_capabilities_to_protocol_ids() -> None:
     assert by_runtime_and_id[("codex", "session.send_message")]["available"] is True
     assert by_runtime_and_id[("codex", "session.steer")]["available"] is True
     assert by_runtime_and_id[("codex", "session.interrupt")]["available"] is True
-    assert by_runtime_and_id[("codex", "session.interaction.approval")]["available"] is True
+    assert (
+        by_runtime_and_id[("codex", "session.interaction.approval")]["available"]
+        is True
+    )
     assert by_runtime_and_id[("codex", "runtime.config")]["available"] is True
     assert by_runtime_and_id[("claude", "catalog.model")]["supported"] is False
     assert by_runtime_and_id[("claude", "catalog.model")]["available"] is False
     assert by_runtime_and_id[("claude", "catalog.permission")]["available"] is True
+    assert by_runtime_and_id[("dsh", "session.send_message")]["available"] is True
+    assert by_runtime_and_id[("dsh", "session.steer")]["available"] is True
+    assert by_runtime_and_id[("dsh", "session.interrupt")]["available"] is True
+    assert by_runtime_and_id[("dsh", "session.commands")]["available"] is True
+    assert by_runtime_and_id[("dsh", "runtime.config")]["available"] is True
     assert ("unknown-agent", "catalog.model") not in by_runtime_and_id
+    assert payload["revision"] == 42
 
 
-def test_connector_runtime_host_live_notifications_use_websocket_when_connected() -> None:
+def test_connector_runtime_host_live_notifications_use_websocket_when_connected() -> (
+    None
+):
     asyncio.run(_exercise_runtime_host_live_notification_uses_websocket())
 
 
@@ -1102,7 +1179,9 @@ async def _exercise_runtime_host_live_notification_uses_websocket() -> None:
     ]
 
 
-def test_connector_runtime_host_notifications_fallback_to_ingest_without_websocket() -> None:
+def test_connector_runtime_host_notifications_fallback_to_ingest_without_websocket() -> (
+    None
+):
     asyncio.run(_exercise_runtime_host_notification_ingest_fallback())
 
 
@@ -1131,12 +1210,16 @@ async def _exercise_runtime_host_notification_ingest_fallback() -> None:
 
     client._ingest.enqueue = enqueue  # type: ignore[method-assign]
 
-    await client.send_backend_notification("session.meta.upsert", {"sessionId": "sess_1"})
+    await client.send_backend_notification(
+        "session.meta.upsert", {"sessionId": "sess_1"}
+    )
 
     assert enqueued == [("session.meta.upsert", {"sessionId": "sess_1"})]
 
 
-async def _exercise_runtime_sync_pushes_each_session_snapshot_before_next_meta() -> None:
+async def _exercise_runtime_sync_pushes_each_session_snapshot_before_next_meta() -> (
+    None
+):
     class SyncRuntime(FakeAgentRuntime):
         async def list_sessions(
             self,
@@ -1184,7 +1267,9 @@ async def _exercise_runtime_sync_pushes_each_session_snapshot_before_next_meta()
         ingested_batches.append(list(notifications))
         for notification in notifications:
             params = notification["params"]
-            session_id = params.get("sessionId") or params.get("item", {}).get("sessionId")
+            session_id = params.get("sessionId") or params.get("item", {}).get(
+                "sessionId"
+            )
             if notification["method"] == "session.meta.upsert":
                 host.events.append(("meta", session_id))
             elif notification["method"] == "timeline.sync":
@@ -1227,10 +1312,7 @@ async def _exercise_runtime_sync_pushes_each_session_snapshot_before_next_meta()
     ]
     sync_call = next(call for call in runtime.calls if call[0] == "session.sync")
     assert sync_call[1]["limit"] is None
-    assert [
-        notification["method"]
-        for notification in ingested_batches[0]
-    ] == [
+    assert [notification["method"] for notification in ingested_batches[0]] == [
         "session.meta.upsert",
         "timeline.sync",
         "session.state.updated",
@@ -1280,6 +1362,7 @@ async def _exercise_runtime_sync_uses_runtime_timeline_hook_when_available() -> 
                     },
                 )
             )
+
             async def commit() -> None:
                 self.calls.append(("session.commitTimeline", {"sessionId": session_id}))
 
@@ -1439,7 +1522,9 @@ async def _exercise_runtime_sync_skips_active_session_timeline_reads() -> None:
     assert len(ingested_batches) == 1
 
 
-async def _exercise_runtime_sync_continues_after_single_session_ingest_failure() -> None:
+async def _exercise_runtime_sync_continues_after_single_session_ingest_failure() -> (
+    None
+):
     class IsolatedFailureRuntime(FakeAgentRuntime):
         async def list_sessions(
             self,
@@ -1523,6 +1608,10 @@ def test_connector_ingest_network_error_is_explicit() -> None:
     asyncio.run(_exercise_ingest_network_error_is_explicit())
 
 
+def test_connector_ingest_rejection_is_explicit() -> None:
+    asyncio.run(_exercise_ingest_rejection_is_explicit())
+
+
 def test_connector_runtime_dispatches_local_fs_and_shell(tmp_path) -> None:
     asyncio.run(_exercise_local_ops(tmp_path))
 
@@ -1558,10 +1647,17 @@ def test_connector_runtime_discovers_agent_runtime_inventory() -> None:
 def test_default_runtime_providers_use_new_protocol_providers() -> None:
     providers = default_runtime_providers()
 
-    assert tuple(provider.runtime for provider in providers) == ("codex", "claude")
+    assert tuple(provider.runtime for provider in providers) == (
+        "codex",
+        "claude",
+        "dsh",
+    )
     assert isinstance(providers[0], CodexProvider)
     assert isinstance(providers[1], ClaudeProvider)
-    assert all(provider.__class__.__module__.startswith("connector.runtimes.") for provider in providers)
+    assert all(
+        provider.__class__.__module__.startswith("connector.runtimes.")
+        for provider in providers
+    )
 
 
 def test_connector_runtime_reads_config_schema() -> None:
@@ -1600,9 +1696,12 @@ def test_preferences_push_sends_only_on_change() -> None:
     asyncio.run(_exercise_preferences_push())
 
 
-
 def test_connector_runtime_reconnects_quietly_on_websocket_close(monkeypatch) -> None:
     asyncio.run(_exercise_websocket_close_reconnect(monkeypatch))
+
+
+def test_runtime_sync_task_survives_websocket_reconnect(monkeypatch) -> None:
+    asyncio.run(_exercise_runtime_sync_task_survives_websocket_reconnect(monkeypatch))
 
 
 def test_connector_runtime_stops_on_auth_websocket_close(monkeypatch) -> None:
@@ -1675,7 +1774,12 @@ async def _exercise_runtime() -> None:
             "id": "rpc_2",
             "type": "request",
             "method": "session.send_message",
-            "params": {"runtime": "codex", "sessionId": "sess_1", "externalSessionId": "thr_1", "content": "hi"},
+            "params": {
+                "runtime": "codex",
+                "sessionId": "sess_1",
+                "externalSessionId": "thr_1",
+                "content": "hi",
+            },
         }
     )
     assert runtime.calls[-1][0] == "turn.start"
@@ -1717,7 +1821,9 @@ async def _exercise_runtime() -> None:
         "session.state.updated",
         "notice.upsert",
     ]
-    sync_response = next(message for message in ws.messages if message.get("id") == "rpc_4")
+    sync_response = next(
+        message for message in ws.messages if message.get("id") == "rpc_4"
+    )
     assert sync_response["result"] == {
         "accepted": True,
         "background": True,
@@ -1741,7 +1847,9 @@ async def _exercise_runtime() -> None:
         "session.state",
         {"sessionId": "sess_1", "externalSessionId": "thr_1"},
     )
-    assert ws.messages[-1]["result"]["state"]["selections"] == {"model": "sel_model_state"}
+    assert ws.messages[-1]["result"]["state"]["selections"] == {
+        "model": "sel_model_state"
+    }
 
     await client.handle_message(
         {
@@ -1975,7 +2083,9 @@ async def _exercise_runtime() -> None:
         }
     )
     assert runtime.calls[-1] == ("runtime.modelCatalog", {"query": "gpt", "limit": 20})
-    assert ws.messages[-1]["result"]["catalog"]["models"][0]["displayName"] == "GPT Test"
+    assert (
+        ws.messages[-1]["result"]["catalog"]["models"][0]["displayName"] == "GPT Test"
+    )
 
     await client.handle_message(
         {
@@ -1985,8 +2095,14 @@ async def _exercise_runtime() -> None:
             "params": {"runtime": "codex", "query": "read", "limit": 20},
         }
     )
-    assert runtime.calls[-1] == ("runtime.permissionCatalog", {"query": "read", "limit": 20})
-    assert ws.messages[-1]["result"]["catalog"]["permissions"][0]["selectionId"] == "sel_permission_readonly"
+    assert runtime.calls[-1] == (
+        "runtime.permissionCatalog",
+        {"query": "read", "limit": 20},
+    )
+    assert (
+        ws.messages[-1]["result"]["catalog"]["permissions"][0]["selectionId"]
+        == "sel_permission_readonly"
+    )
 
 
 async def _exercise_nonblocking_runtime_rpc() -> None:
@@ -2149,6 +2265,73 @@ async def _exercise_websocket_close_reconnect(monkeypatch) -> None:
     assert sleeps == [0]
 
 
+async def _exercise_runtime_sync_task_survives_websocket_reconnect(monkeypatch) -> None:
+    client = _client()
+    client._protocol_revision_clock = ProtocolRevisionClock(lambda: 100)
+    sync_started = asyncio.Event()
+    sync_calls = 0
+    notifications: list[tuple[str, dict[str, Any]]] = []
+
+    class EmptyWebSocket:
+        def __aiter__(self) -> EmptyWebSocket:
+            return self
+
+        async def __anext__(self) -> str:
+            raise StopAsyncIteration
+
+    class WebSocketContext:
+        async def __aenter__(self) -> EmptyWebSocket:
+            return EmptyWebSocket()
+
+        async def __aexit__(self, *args: object) -> None:
+            return None
+
+    async def ensure_access_token(*, force: bool = False) -> str:
+        _ = force
+        return "access-token"
+
+    async def discover_runtimes() -> dict[str, list[Any]]:
+        return {"runtimes": []}
+
+    async def send_notification(method: str, params: dict[str, Any]) -> None:
+        notifications.append((method, params))
+
+    async def sync_existing_loop() -> None:
+        nonlocal sync_calls
+        sync_calls += 1
+        sync_started.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(client, "ensure_access_token", ensure_access_token)
+    monkeypatch.setattr(client._dispatcher, "discover_runtimes", discover_runtimes)
+    monkeypatch.setattr(client, "send_notification", send_notification)
+    monkeypatch.setattr(client._runtime_sync, "sync_existing_loop", sync_existing_loop)
+    monkeypatch.setattr(
+        "connector.server.client.websockets.connect",
+        lambda *args, **kwargs: WebSocketContext(),
+    )
+
+    try:
+        await client.run_once()
+        await sync_started.wait()
+        first_task = client._runtime_sync_task
+        assert first_task is not None and not first_task.done()
+
+        await client.run_once()
+
+        assert client._runtime_sync_task is first_task
+        assert sync_calls == 1
+        assert [
+            params["revision"]
+            for method, params in notifications
+            if method == "protocol.capabilitiesUpdated"
+        ] == [100, 101]
+    finally:
+        if client._runtime_sync_task is not None:
+            client._runtime_sync_task.cancel()
+            await asyncio.gather(client._runtime_sync_task, return_exceptions=True)
+
+
 async def _exercise_websocket_auth_close_stops(monkeypatch) -> None:
     client = _client(reconnect_seconds=0)
     calls = 0
@@ -2238,7 +2421,9 @@ async def _exercise_access_token_refresh() -> None:
     original_client = runtime_module.httpx.AsyncClient
     runtime_module.httpx.AsyncClient = FakeHttpClient  # type: ignore[assignment]
     try:
-        await client.ingest_notifications([{"method": "connector.heartbeat", "params": {}}])
+        await client.ingest_notifications(
+            [{"method": "connector.heartbeat", "params": {}}]
+        )
     finally:
         runtime_module.httpx.AsyncClient = original_client
 
@@ -2297,7 +2482,9 @@ async def _exercise_ingest_network_error_is_explicit() -> None:
             return None
 
         async def post(self, *args: Any, **kwargs: Any) -> Any:
-            request = httpx.Request("POST", "http://127.0.0.1:8000/api/v2/connector/ingest")
+            request = httpx.Request(
+                "POST", "http://127.0.0.1:8000/api/v2/connector/ingest"
+            )
             raise httpx.ConnectError("connection refused", request=request)
 
     client._http_client = FailingHttpClient()  # type: ignore[assignment]
@@ -2305,6 +2492,52 @@ async def _exercise_ingest_network_error_is_explicit() -> None:
 
     with pytest.raises(ConnectorNetworkError, match="backend ingest request failed"):
         await client.ingest_notifications([{"method": "terminal.output", "params": {}}])
+
+
+async def _exercise_ingest_rejection_is_explicit() -> None:
+    client = _client()
+
+    async def access_token(_force: bool) -> str:
+        return "access-token"
+
+    class RejectedResponse:
+        status_code = 200
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, Any]:
+            return {
+                "accepted": 0,
+                "rejected": [
+                    {
+                        "index": 0,
+                        "method": "timeline.sync",
+                        "code": "notification_failed",
+                        "message": "invalid timeline item",
+                        "errorType": "ValidationError",
+                    }
+                ],
+                "serverTime": "2026-08-15T00:00:00Z",
+            }
+
+    class FakeHttpClient:
+        async def aclose(self) -> None:
+            return None
+
+        async def post(self, *args: Any, **kwargs: Any) -> RejectedResponse:
+            return RejectedResponse()
+
+    client._ingest._access_token_provider = access_token
+    client._http_client = FakeHttpClient()  # type: ignore[assignment]
+
+    with pytest.raises(
+        ConnectorIngestRejectedError,
+        match="first method=timeline.sync code=notification_failed",
+    ):
+        await client.ingest_notifications(
+            [{"method": "timeline.sync", "params": {"sessionId": "sess_1"}}]
+        )
 
 
 async def _exercise_local_ops(tmp_path) -> None:
@@ -2334,15 +2567,23 @@ async def _exercise_local_ops(tmp_path) -> None:
     assert write_result["bytesWritten"] == len("created")
     assert (workspace / "created.txt").read_text(encoding="utf-8") == "created"
 
-    list_result = await client.dispatch("fs.readDir", {"root": str(workspace), "path": "."})
-    assert [entry["name"] for entry in list_result["entries"]] == ["created.txt", "hello.txt"]
+    list_result = await client.dispatch(
+        "fs.readDir", {"root": str(workspace), "path": "."}
+    )
+    assert [entry["name"] for entry in list_result["entries"]] == [
+        "created.txt",
+        "hello.txt",
+    ]
 
     fallback_list_result = await client.dispatch(
         "fs.readDir",
         {"root": str(workspace), "path": "missing/deleted"},
     )
     assert fallback_list_result["path"] == str(workspace)
-    assert [entry["name"] for entry in fallback_list_result["entries"]] == ["created.txt", "hello.txt"]
+    assert [entry["name"] for entry in fallback_list_result["entries"]] == [
+        "created.txt",
+        "hello.txt",
+    ]
 
     shell_result = await client.dispatch(
         "shell.exec",
@@ -2374,8 +2615,15 @@ async def _exercise_local_ops(tmp_path) -> None:
             "timeoutMs": 5000,
         },
     )
-    assert task_start == {"taskId": "task_1", "sessionId": "sess_1", "status": "running"}
-    assert notifications[0] == ("shell.task.started", {"taskId": "task_1", "sessionId": "sess_1", "status": "running"})
+    assert task_start == {
+        "taskId": "task_1",
+        "sessionId": "sess_1",
+        "status": "running",
+    }
+    assert notifications[0] == (
+        "shell.task.started",
+        {"taskId": "task_1", "sessionId": "sess_1", "status": "running"},
+    )
     for _ in range(50):
         if len(notifications) >= 2:
             break
@@ -2449,7 +2697,9 @@ async def _exercise_terminal_release_snapshot(tmp_path) -> None:
             break
 
     assert base64.b64decode(snapshot["dataBase64"]).strip() == b"hello"
-    assert snapshot["outputs"] == [{"seq": 1, "dataBase64": base64.b64encode(b"hello\n").decode("ascii")}]
+    assert snapshot["outputs"] == [
+        {"seq": 1, "dataBase64": base64.b64encode(b"hello\n").decode("ascii")}
+    ]
     released = await backend.release({"terminalId": "trm_snapshot"})
     assert released == {"terminalId": "trm_snapshot", "released": True}
     listing = await backend.list({"sessionId": "sess_snapshot"})
@@ -2473,8 +2723,13 @@ async def _exercise_runtime_protocol_routing() -> None:
     await client.dispatch("runtime.start", {"runtimeId": "codex", "config": {}})
     await client.dispatch("runtime.start", {"runtimeId": "claude", "config": {}})
 
-    await client.dispatch("session.send_message", {"runtime": "codex", "sessionId": "s1", "content": "hi"})
-    await client.dispatch("session.send_message", {"runtime": "claude", "sessionId": "s2", "content": "hi"})
+    await client.dispatch(
+        "session.send_message", {"runtime": "codex", "sessionId": "s1", "content": "hi"}
+    )
+    await client.dispatch(
+        "session.send_message",
+        {"runtime": "claude", "sessionId": "s2", "content": "hi"},
+    )
     await client.dispatch(
         "session.steer",
         {"runtime": "claude", "sessionId": "s2", "content": "focus"},
@@ -2634,7 +2889,10 @@ async def _exercise_runtime_config_read() -> None:
 async def _exercise_unknown_runtime() -> None:
     client = _client()
     try:
-        await client.dispatch("session.send_message", {"runtime": "opencode", "sessionId": "s1", "content": "hi"})
+        await client.dispatch(
+            "session.send_message",
+            {"runtime": "opencode", "sessionId": "s1", "content": "hi"},
+        )
     except RuntimeError as exc:
         assert "opencode" in str(exc)
     else:
@@ -2644,8 +2902,18 @@ async def _exercise_unknown_runtime() -> None:
 async def _exercise_preferences_push() -> None:
     snapshots = [
         {"permissionMode": "default", "model": None, "effort": None, "readAt": "t0"},
-        {"permissionMode": "default", "model": None, "effort": None, "readAt": "t1"},  # readAt churn, no real change
-        {"permissionMode": "bypassPermissions", "model": None, "effort": None, "readAt": "t2"},
+        {
+            "permissionMode": "default",
+            "model": None,
+            "effort": None,
+            "readAt": "t1",
+        },  # readAt churn, no real change
+        {
+            "permissionMode": "bypassPermissions",
+            "model": None,
+            "effort": None,
+            "readAt": "t2",
+        },
     ]
     cursor = iter(snapshots)
 
@@ -2661,7 +2929,9 @@ async def _exercise_preferences_push() -> None:
     client._runtime_sync.send_notification = fake_notify
 
     await client._runtime_sync.push_preferences_if_changed()  # t0 — first read, push
-    await client._runtime_sync.push_preferences_if_changed()  # t1 — only readAt changed, no push
+    await (
+        client._runtime_sync.push_preferences_if_changed()
+    )  # t1 — only readAt changed, no push
     await client._runtime_sync.push_preferences_if_changed()  # t2 — mode changed, push
 
     assert [p[0] for p in pushed] == [
@@ -2670,7 +2940,6 @@ async def _exercise_preferences_push() -> None:
     ]
     assert pushed[0][1]["permissionMode"] == "default"
     assert pushed[1][1]["permissionMode"] == "bypassPermissions"
-
 
 
 async def _exercise_async_shell_tasks(tmp_path) -> None:
@@ -2690,11 +2959,20 @@ async def _exercise_async_shell_tasks(tmp_path) -> None:
             "sessionId": "sess_1",
             "root": str(workspace),
             "cwd": str(workspace),
-            "command": f"{sys.executable} -c \"import time; time.sleep(10)\"",
+            "command": f'{sys.executable} -c "import time; time.sleep(10)"',
             "timeoutMs": 300000,
         },
     )
-    cancel_result = await client.dispatch("shell.task.cancel", {"taskId": "task_cancel", "sessionId": "sess_1"})
+    cancel_result = await client.dispatch(
+        "shell.task.cancel", {"taskId": "task_cancel", "sessionId": "sess_1"}
+    )
 
-    assert cancel_result == {"taskId": "task_cancel", "sessionId": "sess_1", "cancelled": True}
-    assert notifications[-1] == ("shell.task.completed", {"taskId": "task_cancel", "sessionId": "sess_1", "status": "cancelled"})
+    assert cancel_result == {
+        "taskId": "task_cancel",
+        "sessionId": "sess_1",
+        "cancelled": True,
+    }
+    assert notifications[-1] == (
+        "shell.task.completed",
+        {"taskId": "task_cancel", "sessionId": "sess_1", "status": "cancelled"},
+    )

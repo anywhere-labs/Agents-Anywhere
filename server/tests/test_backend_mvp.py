@@ -129,7 +129,39 @@ def seed_codex_permission_catalog(app: Any, connector_id: str) -> str:
     return selection_id
 
 
-def create_connector_and_session(client: TestClient, user_id: str = ADMIN_USER):
+def seed_runtime_capabilities(
+    app: Any,
+    connector_id: str,
+    runtime: str,
+    *capability_ids: str,
+) -> None:
+    asyncio.run(
+        app.state.store.update_protocol_capabilities(
+            connector_id,
+            {
+                "revision": 1,
+                "capabilities": [
+                    {
+                        "capabilityId": capability_id,
+                        "version": "1",
+                        "scope": "runtime",
+                        "runtime": runtime,
+                        "supported": True,
+                        "available": True,
+                        "allowed": True,
+                    }
+                    for capability_id in capability_ids
+                ],
+            },
+        )
+    )
+
+
+def create_connector_and_session(
+    client: TestClient,
+    user_id: str = ADMIN_USER,
+    runtime: str = "codex",
+):
     headers = auth_headers(client, user_id=user_id)
     connector_response = client.post("/connectors", headers=headers, json={"name": "dev"})
     assert connector_response.status_code == 200
@@ -145,13 +177,31 @@ def create_connector_and_session(client: TestClient, user_id: str = ADMIN_USER):
     assert auth_response.status_code == 200
     access_token = auth_response.json()["accessToken"]
 
+    seed_runtime_capabilities(
+        client.app,
+        connector_id,
+        runtime,
+        "session.send_message",
+        "session.interrupt",
+        "session.steer",
+        "session.commands",
+        "session.interaction.approval",
+        "catalog.model",
+        "catalog.permission",
+        *([] if runtime == "dsh" else ["runtime.attachment"]),
+    )
+
     session_response = client.post(
         "/sessions",
         headers=headers,
         json={
             "connectorId": connector_id,
-            "runtime": "codex",
-            "externalSessionId": f"thr_{connector_id}_demo",
+            "runtime": runtime,
+            "externalSessionId": (
+                f"thr_{connector_id}_demo"
+                if runtime == "codex"
+                else f"{runtime}_{connector_id}_demo"
+            ),
             "title": "Demo",
             "cwd": "/repo",
         },
@@ -495,6 +545,13 @@ def test_session_create_and_start_preallocates_session_and_passes_selections(tmp
     connector_response = client.post("/connectors", headers=headers, json={"name": "dev"})
     connector_id = connector_response.json()["connector"]["id"]
     model_selection_id = seed_codex_model_catalog(app, connector_id)
+    seed_runtime_capabilities(
+        app,
+        connector_id,
+        "codex",
+        "runtime.attachment",
+        "catalog.model",
+    )
 
     class FakeCreateAndStartRpc:
         def __init__(self) -> None:
@@ -1671,6 +1728,7 @@ def test_session_runtime_command_list_reads_full_runtime_commands(tmp_path):
     connector_id, _access_token, session_id, headers = create_connector_and_session(client)
     fake_rpc = FakeLocalRpc()
     client.app.state.rpc = fake_rpc
+    client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
 
     response = client.get(
         f"/sessions/{session_id}/runtime/commands",
@@ -1698,6 +1756,7 @@ def test_session_command_execute_calls_runtime(tmp_path):
     connector_id, _access_token, session_id, headers = create_connector_and_session(client)
     fake_rpc = FakeLocalRpc()
     client.app.state.rpc = fake_rpc
+    client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
 
     response = client.post(
         f"/sessions/{session_id}/runtime/commands",
@@ -1731,6 +1790,7 @@ def test_session_runtime_command_execute_calls_runtime(tmp_path):
     connector_id, _access_token, session_id, headers = create_connector_and_session(client)
     fake_rpc = FakeLocalRpc()
     client.app.state.rpc = fake_rpc
+    client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
 
     response = client.post(
         f"/sessions/{session_id}/runtime/commands",
@@ -1786,8 +1846,9 @@ def test_session_command_returns_runtime_rpc_error(tmp_path):
     client = make_client(tmp_path)
     _connector_id, _access_token, session_id, headers = create_connector_and_session(client)
     fake_rpc = FakeLocalRpc()
-    fake_rpc.fail = True  # type: ignore[attr-defined]
     client.app.state.rpc = fake_rpc
+    client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
+    fake_rpc.fail = True  # type: ignore[attr-defined]
 
     response = client.post(
         f"/sessions/{session_id}/runtime/commands",
@@ -3877,13 +3938,18 @@ def test_patch_session_selections_routes_to_runtime_and_reads_live_state(tmp_pat
                 "revision": 1,
                 "capabilities": [
                     {
-                        "capabilityId": "catalog.model",
+                        "capabilityId": capability_id,
                         "scope": "runtime",
                         "runtime": "codex",
                         "supported": True,
                         "available": True,
                         "allowed": True,
                     }
+                    for capability_id in (
+                        "catalog.model",
+                        "catalog.permission",
+                        "session.send_message",
+                    )
                 ],
             },
         )
@@ -4251,6 +4317,19 @@ def _create_claude_session(client, connector_id, headers, fake_rpc):
         return session.id
 
     session_id = asyncio.run(_seed())
+    seed_runtime_capabilities(
+        client.app,
+        connector_id,
+        "claude",
+        "session.send_message",
+        "session.interrupt",
+        "session.steer",
+        "session.commands",
+        "session.interaction.approval",
+        "catalog.model",
+        "catalog.permission",
+        "runtime.attachment",
+    )
     client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
     return session_id
 
@@ -4316,6 +4395,7 @@ def test_steer_routes_running_codex_session_without_turn_id(tmp_path):
     fake_rpc = FakeLocalRpc()
     client.app.state.rpc = fake_rpc
     asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
+    seed_runtime_capabilities(client.app, connector_id, "codex", "session.steer")
     client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
     fake_rpc.runtime_states[session_id] = {
         "sessionId": session_id,
@@ -4348,12 +4428,76 @@ def test_steer_routes_running_codex_session_without_turn_id(tmp_path):
     assert asyncio.run(client.app.state.store.get_active_run(session_id)) is None
 
 
+def test_running_dsh_steer_is_routed_by_capability(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, _, session_id, headers = create_connector_and_session(
+        client,
+        runtime="dsh",
+    )
+    fake_rpc = FakeLocalRpc()
+    client.app.state.rpc = fake_rpc
+    asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
+    seed_runtime_capabilities(client.app, connector_id, "dsh", "session.steer")
+    client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
+    fake_rpc.runtime_states[session_id] = {
+        "sessionId": session_id,
+        "runtime": "dsh",
+        "externalSessionId": f"dsh_{connector_id}_demo",
+        "status": "running",
+        "selections": {},
+        "metadata": {},
+    }
+
+    response = client.post(
+        f"/sessions/{session_id}/runtime/steer",
+        headers=headers,
+        json={"content": "focus on the bridge"},
+    )
+
+    assert response.status_code == 200, response.text
+    params = wait_for_rpc_method(fake_rpc, "session.steer")[2]
+    assert params["runtime"] == "dsh"
+    assert params["externalSessionId"] == f"dsh_{connector_id}_demo"
+
+
+def test_dsh_attachment_without_capability_never_calls_connector(tmp_path):
+    client = make_client(tmp_path)
+    headers = auth_headers(client)
+    connector = client.post("/connectors", headers=headers, json={"name": "dsh"})
+    connector_id = connector.json()["connector"]["id"]
+    fake_rpc = FakeLocalRpc()
+    client.app.state.rpc = fake_rpc
+
+    response = client.post(
+        "/sessions/create-and-start",
+        headers=headers,
+        json={
+            "connectorId": connector_id,
+            "runtime": "dsh",
+            "content": "read this",
+            "attachments": [
+                {
+                    "fileId": "file-inline",
+                    "name": "note.txt",
+                    "mediaType": "text/plain",
+                    "size": 1,
+                    "contentBase64": "eA==",
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 409
+    assert fake_rpc.requests == []
+
+
 def test_steer_rejects_idle_session_and_turn_overrides(tmp_path):
     client = make_client(tmp_path)
     connector_id, _, session_id, headers = create_connector_and_session(client)
     fake_rpc = FakeLocalRpc()
     client.app.state.rpc = fake_rpc
     asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
+    seed_runtime_capabilities(client.app, connector_id, "codex", "session.steer")
     client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
 
     idle_response = client.post(
@@ -5347,6 +5491,7 @@ def test_interaction_respond_carries_runtime(tmp_path):
     ingest_pending_command_approval(client, access_token, session_id)
     fake_rpc = FakeApprovalRpc()
     client.app.state.rpc = fake_rpc
+    client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
     notice_id = interaction_notice_id(client, session_id, headers, "approval")
 
     response = client.post(
@@ -5373,6 +5518,7 @@ def test_runtime_notice_respond_carries_runtime(tmp_path):
     ingest_pending_command_approval(client, access_token, session_id)
     fake_rpc = FakeApprovalRpc()
     client.app.state.rpc = fake_rpc
+    client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
     notice_id = interaction_notice_id(client, session_id, headers, "approval")
 
     list_response = client.get(f"/sessions/{session_id}/runtime/notices", headers=headers)
@@ -5401,6 +5547,7 @@ def test_runtime_notice_respond_returns_not_found_rpc_payload(tmp_path):
     client = make_client(tmp_path)
     _connector_id, _access_token, session_id, headers = create_connector_and_session(client)
     client.app.state.rpc = FakeApprovalRpc(gone=True)
+    client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
 
     response = client.post(
         f"/sessions/{session_id}/runtime/notices/notice_missing/respond",

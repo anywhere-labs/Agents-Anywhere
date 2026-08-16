@@ -29,6 +29,7 @@ import {
   timelineClientMessageId,
   withServerAttachments,
 } from "@/components/session/optimistic-timeline"
+import { runtimeLabel } from "@/components/session/session-utils"
 
 // ─── Panel / page types ───────────────────────────────────────
 
@@ -220,14 +221,6 @@ function isDashboardSnapshotMessage(value: unknown): value is DashboardSnapshotM
     Array.isArray(message.connectors) &&
     Array.isArray(message.sessions)
   )
-}
-
-function runtimeLabel(runtime: string): string {
-  if (runtime === "codex") return "Codex"
-  if (runtime === "claude") return "Claude"
-  if (runtime === "opencode") return "OpenCode"
-  if (runtime === "cursor") return "Cursor"
-  return runtime.slice(0, 1).toUpperCase() + runtime.slice(1)
 }
 
 function relativeSessionTime(session: RealSessionView): string {

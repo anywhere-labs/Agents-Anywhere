@@ -7,6 +7,14 @@ from dataclasses import dataclass
 from typing import Any
 
 from agent_server.core.api_namespace import api_v2_path
+from agent_server.core.capabilities import (
+    CATALOG_MODEL,
+    CATALOG_PERMISSION,
+    RUNTIME_ATTACHMENT,
+    SESSION_INTERRUPT,
+    SESSION_SEND_MESSAGE,
+    SESSION_STEER,
+)
 from agent_server.core.models import (
     InlineAttachmentRef,
     MessageCreateRequest,
@@ -19,6 +27,7 @@ from agent_server.core.models import (
     SessionSteerRequest,
     SessionView,
 )
+from agent_server.core.protocol import ProtocolCapabilitySet
 from agent_server.core.utc import utc_now
 from agent_server.infra.connector_rpc import (
     ConnectorOfflineError,
@@ -26,6 +35,9 @@ from agent_server.infra.connector_rpc import (
     ConnectorRpcManager,
 )
 from agent_server.services.repository_ports import SessionRunRepository
+from agent_server.services.effective_capabilities import (
+    derive_session_effective_capabilities,
+)
 
 
 class SessionRunError(RuntimeError):
@@ -109,6 +121,13 @@ class SessionRunService:
             raise SessionRunNotFoundError("connector not found") from None
         if not await self._manager.is_online(payload.connectorId):
             raise SessionRunConflictError("connector is offline")
+        if payload.attachments:
+            await self._require_runtime_capability(
+                payload.connectorId,
+                payload.runtime,
+                RUNTIME_ATTACHMENT,
+                user_id=user_id,
+            )
 
         selections = _selections_from_mapping(payload.selections)
         session = await self._store.create_session(
@@ -179,14 +198,16 @@ class SessionRunService:
             )
             raise SessionRunUpstreamError("connector did not return a session result")
         external_session_id = connector_result.get("externalSessionId")
-        if payload.runtime != "claude" and not isinstance(external_session_id, str):
+        if external_session_id is not None and (
+            not isinstance(external_session_id, str) or not external_session_id
+        ):
             await self._mark_create_and_start_failed(
                 session.id,
                 runtime=payload.runtime,
                 code="missing_external_session_id",
-                message="connector did not return an external session id",
+                message="connector returned an invalid external session id",
             )
-            raise SessionRunUpstreamError("connector did not return an external session id")
+            raise SessionRunUpstreamError("connector returned an invalid external session id")
         await self._store.start_active_run(
             session_id=session.id,
             runtime=payload.runtime,
@@ -235,6 +256,11 @@ class SessionRunService:
             raise SessionRunConflictError("session is read-only until takeover is enabled")
         if not await self._manager.is_online(session.connectorId):
             raise SessionRunConflictError("connector is offline")
+        await self._require_session_capability(
+            session,
+            SESSION_SEND_MESSAGE,
+            user_id=user_id,
+        )
         runtime_status = await self._read_runtime_status(session)
         if runtime_status != "idle":
             raise SessionRunConflictError(f"session is {runtime_status}")
@@ -250,6 +276,11 @@ class SessionRunService:
         if payload.clientMessageId:
             params["clientMessageId"] = payload.clientMessageId
         if payload.attachments:
+            await self._require_session_capability(
+                session,
+                RUNTIME_ATTACHMENT,
+                user_id=user_id,
+            )
             attachment_payloads = await self._attachment_payloads(
                 session_id=session_id,
                 user_id=user_id,
@@ -330,6 +361,16 @@ class SessionRunService:
             raise SessionRunConflictError("session is read-only until takeover is enabled")
         if not await self._manager.is_online(session.connectorId):
             raise SessionRunConflictError("connector is offline")
+        for selection_type, capability_id in (
+            ("model", CATALOG_MODEL),
+            ("permission", CATALOG_PERMISSION),
+        ):
+            if selection_type in payload.selections:
+                await self._require_session_capability(
+                    session,
+                    capability_id,
+                    user_id=user_id,
+                )
         params: dict[str, Any] = {
             "sessionId": session_id,
             "runtime": session.runtime,
@@ -376,10 +417,13 @@ class SessionRunService:
             raise SessionRunConflictError(
                 "session is read-only until takeover is enabled"
             )
-        if session.runtime != "codex":
-            raise SessionRunConflictError("session runtime does not support steer")
         if not await self._manager.is_online(session.connectorId):
             raise SessionRunConflictError("connector is offline")
+        await self._require_session_capability(
+            session,
+            SESSION_STEER,
+            user_id=user_id,
+        )
         runtime_status = await self._read_runtime_status(session)
         if runtime_status != "running":
             raise SessionRunConflictError("session is not running")
@@ -397,6 +441,11 @@ class SessionRunService:
         if payload.clientMessageId:
             params["clientMessageId"] = payload.clientMessageId
         if payload.attachments:
+            await self._require_session_capability(
+                session,
+                RUNTIME_ATTACHMENT,
+                user_id=user_id,
+            )
             attachment_payloads = await self._attachment_payloads(
                 session_id=session_id,
                 user_id=user_id,
@@ -418,6 +467,70 @@ class SessionRunService:
         except ConnectorRpcError as exc:
             raise SessionRunUpstreamError(exc.message or exc.code) from exc
         return RpcResponsePayload(ok=True, result=result)
+
+    async def _require_runtime_capability(
+        self,
+        connector_id: str,
+        runtime: str,
+        capability_id: str,
+        *,
+        user_id: str,
+    ) -> None:
+        capability_set = ProtocolCapabilitySet.model_validate(
+            await self._store.get_protocol_capabilities(
+                connector_id,
+                user_id=user_id,
+            )
+        )
+        capability = next(
+            (
+                item
+                for item in capability_set.capabilities
+                if item.runtime == runtime
+                and item.scope == "runtime"
+                and item.capabilityId == capability_id
+            ),
+            None,
+        )
+        if capability is None or not (
+            capability.supported and capability.available and capability.allowed
+        ):
+            raise SessionRunConflictError(
+                f"runtime capability is unavailable: {capability_id}"
+            )
+
+    async def _require_session_capability(
+        self,
+        session: SessionView,
+        capability_id: str,
+        *,
+        user_id: str,
+    ) -> None:
+        capability_set = ProtocolCapabilitySet.model_validate(
+            await self._store.get_protocol_capabilities(
+                session.connectorId,
+                user_id=user_id,
+            )
+        )
+        online_session = session.model_copy(update={"connectorStatus": "online"})
+        effective = derive_session_effective_capabilities(
+            session=online_session,
+            runtime_capabilities=capability_set,
+        )
+        capability = next(
+            (
+                item
+                for item in effective.capabilities
+                if item.capabilityId == capability_id
+            ),
+            None,
+        )
+        if capability is None or not (
+            capability.supported and capability.available and capability.allowed
+        ):
+            raise SessionRunConflictError(
+                f"session capability is unavailable: {capability_id}"
+            )
 
     async def _attachment_payloads(
         self,
@@ -515,6 +628,12 @@ class SessionRunService:
             raise SessionRunNotFoundError("session not found") from None
         if require_takeover and not session.takeover:
             raise SessionRunConflictError("session is read-only until takeover is enabled")
+        if require_takeover:
+            await self._require_session_capability(
+                session,
+                SESSION_INTERRUPT,
+                user_id=user_id,
+            )
         params: dict[str, Any] = {
             "sessionId": session_id,
             "runtime": session.runtime,

@@ -28,7 +28,8 @@
                 "codex",
                 "claude",
                 "opencode",
-                "acp"
+                "acp",
+                "dsh"
               ],
               "type": "string"
             },

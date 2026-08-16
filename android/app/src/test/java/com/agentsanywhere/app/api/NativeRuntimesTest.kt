@@ -7,8 +7,8 @@ class NativeRuntimesTest {
     @Test
     fun `only server-returned v2 native runtimes enter Android state`() {
         assertEquals(
-            listOf("claude", "codex"),
-            listOf("codex", "acp", "claude", "opencode", "codex")
+            listOf("codex", "claude", "dsh"),
+            listOf("dsh", "codex", "acp", "claude", "opencode", "codex")
                 .supportedV2NativeRuntimes(),
         )
     }

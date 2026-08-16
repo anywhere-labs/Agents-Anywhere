@@ -313,6 +313,7 @@ def test_v2_0_database_upgrades_through_current_revision(tmp_path) -> None:
         ("v2_7", "v2_8"),
         ("v2_8", "v2_9"),
         ("v2_9", "v2_10"),
+        ("v2_10", "v2_11"),
     ],
 )
 def test_every_adjacent_schema_upgrade(
@@ -484,6 +485,32 @@ def test_v2_10_adds_timeline_reset_watermark(tmp_path) -> None:
             assert connection.execute(
                 text("SELECT version_num FROM alembic_version")
             ).scalar_one() == "v2_10"
+    finally:
+        engine.dispose()
+
+
+def test_v2_11_adds_dsh_facts_and_runtime_metadata(tmp_path) -> None:
+    path = tmp_path / "v2_11-dsh.sqlite3"
+    upgrade_database(db_url=_sqlite_url(path), revision="v2_10")
+
+    upgrade_database(db_url=_sqlite_url(path), revision="v2_11")
+
+    engine = create_engine(f"sqlite:///{path}")
+    try:
+        inspector = inspect(engine)
+        fact_columns = {
+            column["name"]
+            for column in inspector.get_columns("dashboard_user_daily_facts")
+        }
+        runtime_columns = {
+            column["name"] for column in inspector.get_columns("device_runtimes")
+        }
+        assert "dsh_agents" in fact_columns
+        assert "inventory_metadata_json" in runtime_columns
+        with engine.connect() as connection:
+            assert connection.execute(
+                text("SELECT version_num FROM alembic_version")
+            ).scalar_one() == "v2_11"
     finally:
         engine.dispose()
 

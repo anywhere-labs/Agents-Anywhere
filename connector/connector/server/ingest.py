@@ -24,6 +24,10 @@ HttpClientGetter = Callable[[], httpx.AsyncClient | None]
 HttpClientFactory = Callable[[httpx.Timeout | float], httpx.AsyncClient]
 
 
+class ConnectorIngestRejectedError(RuntimeError):
+    """The backend accepted the HTTP request but rejected notifications inside it."""
+
+
 class ConnectorIngestClient:
     def __init__(
         self,
@@ -65,7 +69,9 @@ class ConnectorIngestClient:
                 if remaining <= 0:
                     break
                 try:
-                    item = await asyncio.wait_for(self._notify_queue.get(), timeout=remaining)
+                    item = await asyncio.wait_for(
+                        self._notify_queue.get(), timeout=remaining
+                    )
                 except asyncio.TimeoutError:
                     break
                 except asyncio.CancelledError:
@@ -84,7 +90,10 @@ class ConnectorIngestClient:
                     exc,
                 )
             except Exception:  # noqa: BLE001
-                logger.exception("connector ingest flush failed (dropped {} notifications)", len(batch))
+                logger.exception(
+                    "connector ingest flush failed (dropped {} notifications)",
+                    len(batch),
+                )
 
     async def post_batch(self, notifications: list[dict[str, Any]]) -> None:
         if not notifications:
@@ -99,23 +108,32 @@ class ConnectorIngestClient:
             client = self._http_client_factory(60)
         try:
             try:
-                response = await self._post_ingest_batch(client, access_token, notifications)
+                response = await self._post_ingest_batch(
+                    client, access_token, notifications
+                )
             except httpx.RequestError as exc:
                 raise ConnectorNetworkError(
                     f"backend ingest request failed: {exc}"
                 ) from exc
             if getattr(response, "status_code", None) == 401:
-                logger.warning("connector ingest token rejected; refreshing access token and retrying")
+                logger.warning(
+                    "connector ingest token rejected; refreshing access token and retrying"
+                )
                 access_token = await self._access_token_provider(True)
                 try:
-                    response = await self._post_ingest_batch(client, access_token, notifications)
+                    response = await self._post_ingest_batch(
+                        client, access_token, notifications
+                    )
                 except httpx.RequestError as exc:
                     raise ConnectorNetworkError(
                         f"backend ingest retry failed: {exc}"
                     ) from exc
                 if getattr(response, "status_code", None) == 401:
-                    raise ConnectorAuthenticationError("connector credential no longer valid")
+                    raise ConnectorAuthenticationError(
+                        "connector credential no longer valid"
+                    )
             response.raise_for_status()
+            _raise_for_rejected_notifications(response)
         finally:
             if owned:
                 await client.aclose()
@@ -134,7 +152,40 @@ class ConnectorIngestClient:
         )
 
 
-def coalesce_timeline_item_upserts(notifications: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _raise_for_rejected_notifications(response: httpx.Response) -> None:
+    json_reader = getattr(response, "json", None)
+    if not callable(json_reader):
+        return
+    try:
+        payload = json_reader()
+    except ValueError:
+        return
+    if not isinstance(payload, dict):
+        return
+    rejected = payload.get("rejected")
+    if not isinstance(rejected, list) or not rejected:
+        return
+    first = rejected[0] if isinstance(rejected[0], dict) else {}
+    method = first.get("method") if isinstance(first.get("method"), str) else "unknown"
+    code = (
+        first.get("code")
+        if isinstance(first.get("code"), str)
+        else "notification_rejected"
+    )
+    message = (
+        first.get("message")
+        if isinstance(first.get("message"), str)
+        else "backend rejected connector notification"
+    )
+    raise ConnectorIngestRejectedError(
+        f"backend ingest rejected {len(rejected)} notification(s); "
+        f"first method={method} code={code}: {message}"
+    )
+
+
+def coalesce_timeline_item_upserts(
+    notifications: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
     """Keep only the newest upsert per timeline item inside one outbound batch."""
     latest_index_by_key: dict[tuple[str, str], int] = {}
     dropped: set[int] = set()

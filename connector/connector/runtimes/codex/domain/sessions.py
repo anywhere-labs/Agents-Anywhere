@@ -5,12 +5,11 @@ import json
 from collections.abc import Mapping
 from typing import Any
 
+from connector.runtimes.session_identity import stable_runtime_session_id
+
 
 def stable_session_id(connector_id: str, thread_id: str) -> str:
-    digest = hashlib.sha256(f"{connector_id}:codex:{thread_id}".encode()).hexdigest()[
-        :24
-    ]
-    return f"sess_codex_{digest}"
+    return stable_runtime_session_id(connector_id, "codex", thread_id)
 
 
 def thread_id_from_result(value: dict[str, Any]) -> str | None:

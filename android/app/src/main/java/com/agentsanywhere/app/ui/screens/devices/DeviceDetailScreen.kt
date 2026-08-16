@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -763,10 +764,12 @@ private fun ConfiguredAgentRow(
     onSetActive: (Boolean) -> Unit,
     onDeleteConfig: () -> Unit,
 ) {
+    val dshNative = runtime.metadata["storageMode"] == "dsh-native"
+    val singleWriterWarning = dshNative && runtime.metadata["crossProcessWriterExclusion"] == false
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(72.dp)
+            .heightIn(min = 72.dp)
             .padding(vertical = 5.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -780,6 +783,24 @@ private fun ConfiguredAgentRow(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
+            if (dshNative) {
+                Text(
+                    text = stringResource(
+                        R.string.device_runtime_dsh_summary,
+                        runtime.metadata["dshVersion"] as? String ?: stringResource(R.string.device_runtime_unknown_version),
+                        runtime.metadata["profile"] as? String ?: "aa",
+                    ),
+                    color = LocalAAColors.current.muted,
+                    fontSize = 11.sp,
+                )
+            }
+            if (singleWriterWarning) {
+                Text(
+                    text = stringResource(R.string.device_runtime_dsh_single_writer),
+                    color = Color(0xFFB45309),
+                    fontSize = 11.sp,
+                )
+            }
             Text(
                 text = runtimeStatusLabel(runtime),
                 color = if (runtime.status == DeviceRuntimeStatus.Error) {

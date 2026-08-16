@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agents-anywhere.dev/contracts/dsh-bridge/1.0/response.schema.json",
+  "title": "DSH bridge response",
+  "type": "object",
+  "required": ["jsonrpc", "id"],
+  "properties": {
+    "jsonrpc": { "const": "2.0" },
+    "id": { "oneOf": [{ "type": "string", "minLength": 1 }, { "type": "integer", "minimum": -9007199254740991, "maximum": 9007199254740991 }] },
+    "result": {},
+    "error": {
+      "type": "object",
+      "required": ["code", "message", "data"],
+      "properties": {
+        "code": { "enum": [-32700, -32600, -32601, -32602, -32603, -32001, -32002, -32003, -32004, -32005, -32006, -32007, -32008, -32009, -32010, -32011, -32012] },
+        "message": { "type": "string", "minLength": 1 },
+        "data": {
+          "type": "object",
+          "required": ["code", "retryable"],
+          "properties": {
+            "code": { "type": "string", "minLength": 1 },
+            "retryable": { "type": "boolean" },
+            "sessionId": { "type": "string", "minLength": 1 },
+            "externalSessionId": { "type": "string", "minLength": 1 },
+            "details": { "type": "object" }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "oneOf": [
+    { "required": ["result"], "not": { "required": ["error"] } },
+    { "required": ["error"], "not": { "required": ["result"] } }
+  ],
+  "additionalProperties": false
+}

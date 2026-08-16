@@ -1228,6 +1228,8 @@ fun SessionDetailScreen(
         !takeoverEnabled -> stringResource(R.string.session_read_only_placeholder)
         state.session != null && !connectorOnline -> stringResource(R.string.session_device_offline_placeholder)
         state.runtime.errorMessage != null -> state.runtime.errorMessage.orEmpty()
+        state.runtime.error?.get("code") == "DSH_CONCURRENT_WRITER_DETECTED" ->
+            stringResource(R.string.session_dsh_concurrent_writer)
         state.runtime.status == SessionRuntimeStatus.Unknown -> stringResource(R.string.session_runtime_state_unknown)
         state.runtime.status == SessionRuntimeStatus.Error -> stringResource(R.string.session_runtime_state_error)
         canUseSteer && !canUseSendMessage -> stringResource(R.string.session_reply_to, replyTarget)

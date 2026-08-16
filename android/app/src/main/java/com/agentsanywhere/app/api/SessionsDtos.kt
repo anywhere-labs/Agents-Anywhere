@@ -173,6 +173,7 @@ data class RemoteTimelineItem(
     val updatedSeq: Int,
     val createdAt: String,
     val updatedAt: String?,
+    val contentHash: String = "",
 )
 
 data class RemoteRpcResponse(

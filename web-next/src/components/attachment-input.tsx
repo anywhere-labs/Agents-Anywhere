@@ -40,6 +40,7 @@ type AttachmentButtonProps = {
   onAttach: (files: AttachedFile[]) => void
   isDragging: boolean
   className?: string
+  disabled?: boolean
 }
 
 type AttachmentPreviewListProps = {
@@ -182,6 +183,7 @@ export function AttachmentButton({
   onAttach,
   isDragging,
   className,
+  disabled = false,
 }: AttachmentButtonProps) {
   const t = useTranslations("dashboard.new")
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -208,7 +210,7 @@ export function AttachmentButton({
         size="icon"
         aria-label={t("attach")}
         className={cn("text-muted-foreground", isDragging && "text-primary", className)}
-        disabled={attachments.length >= MAX_ATTACHMENT_FILES}
+        disabled={disabled || attachments.length >= MAX_ATTACHMENT_FILES}
         onClick={() => fileInputRef.current?.click()}
       >
         <Paperclip className="size-4" />

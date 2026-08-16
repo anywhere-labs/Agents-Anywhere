@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import time
 from dataclasses import dataclass, field
 
 from connector.runtime_protocol import RuntimeTimelineItem
+from connector.runtimes.session_identity import stable_runtime_session_id
 
 
 @dataclass(slots=True)
@@ -51,7 +51,4 @@ class ClaudeSession:
 
 
 def stable_session_id(connector_id: str, external_session_id: str) -> str:
-    digest = hashlib.sha256(
-        f"{connector_id}:claude:{external_session_id}".encode()
-    ).hexdigest()[:24]
-    return f"sess_claude_{digest}"
+    return stable_runtime_session_id(connector_id, "claude", external_session_id)

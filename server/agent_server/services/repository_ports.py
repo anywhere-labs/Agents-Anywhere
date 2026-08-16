@@ -274,6 +274,13 @@ class SessionRunRepository(
     TimelineEffectRepository,
     Protocol,
 ):
+    async def get_protocol_capabilities(
+        self,
+        connector_id: str,
+        *,
+        user_id: str | None = None,
+    ) -> dict[str, Any]: ...
+
     async def clear_active_run(self, session_id: str) -> None: ...
 
     async def create_session(self, **values: Any) -> SessionView: ...

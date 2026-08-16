@@ -53,6 +53,7 @@ device_runtimes = Table(
     Column("display_name", Text, nullable=False),
     Column("present", Integer, nullable=False, server_default="1"),
     Column("discovery_json", Text, nullable=False),
+    Column("inventory_metadata_json", Text, nullable=False, server_default="{}"),
     Column("config_schema_json", Text),
     Column("ui_schema_json", Text),
     # NULL means the runtime has not been configured. An empty JSON object is
@@ -345,6 +346,7 @@ dashboard_user_daily_facts = Table(
     Column("unknown_devices", Integer, nullable=False, server_default="0"),
     Column("codex_agents", Integer, nullable=False, server_default="0"),
     Column("claude_agents", Integer, nullable=False, server_default="0"),
+    Column("dsh_agents", Integer, nullable=False, server_default="0"),
     Column("last_activity_at", Text),
     Column("computed_at", Text, nullable=False),
     PrimaryKeyConstraint("date", "user_id"),

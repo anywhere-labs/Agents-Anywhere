@@ -155,6 +155,9 @@
     <string name="device_runtime_stopping">停止中</string>
     <string name="device_runtime_error">运行时错误</string>
     <string name="device_runtime_unknown">未知状态</string>
+    <string name="device_runtime_unknown_version">版本未知</string>
+    <string name="device_runtime_dsh_summary">DSH %1$s · profile %2$s · 原生 Session 存储</string>
+    <string name="device_runtime_dsh_single_writer">同一 DSH Session 不能同时在其他 DSH 实例中运行；外部变更会在 Connector 重新扫描后同步。</string>
     <string name="device_detail_prepare_setup_failed">无法准备设备设置。</string>
     <string name="device_detail_delete_failed">无法删除设备。</string>
     <string name="device_detail_revoke_failed">无法撤销设备令牌。</string>
@@ -382,6 +385,7 @@
     <string name="session_runtime_settings_title">模型配置</string>
     <string name="session_runtime_mode_effort">模式与推理强度</string>
     <string name="session_runtime_no_settings">暂无可用设置</string>
+    <string name="session_dsh_concurrent_writer">请先停止其他正在运行此 DSH Session 的实例，等待其退出后刷新。</string>
     <string name="session_runtime_permission_mode">权限模式</string>
     <string name="session_runtime_effort_for">%1$s 的推理强度</string>
     <string name="runtime_permission_accept_edits">允许编辑</string>

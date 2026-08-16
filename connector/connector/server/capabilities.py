@@ -5,6 +5,7 @@ from typing import Any
 KNOWN_RUNTIME_CAPABILITY_IDS = {
     "codex",
     "claude",
+    "dsh",
     "opencode",
     "acp",
 }
@@ -16,6 +17,7 @@ _RUNTIME_CAPABILITY_MAP: tuple[tuple[str, str], ...] = (
     ("startTurn", "session.send_message"),
     ("steerTurn", "session.steer"),
     ("interruptTurn", "session.interrupt"),
+    ("commands", "session.commands"),
     ("interactions", "session.interaction.approval"),
     ("attachments", "runtime.attachment"),
 )

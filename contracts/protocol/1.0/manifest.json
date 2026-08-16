@@ -5,7 +5,7 @@
       "model": "ProtocolHandshakeRequest",
       "path": "schemas/handshake-request.schema.json",
       "pydanticMode": "validation",
-      "sha256": "7ce363ee96280f35e1e9e7055da6a006481498543b8cfe6898f83ee4b593230c",
+      "sha256": "4b3ecb673e0cdf0de8f2e7872dab1e0b7d177bb002dd58cf00a49a4c875c890b",
       "slug": "handshake-request"
     },
     {
@@ -21,7 +21,7 @@
       "model": "ProtocolCapabilitySet",
       "path": "schemas/capability-set.schema.json",
       "pydanticMode": "validation",
-      "sha256": "c43e9b931155d5300647a232f493d9883af424edbdd0249ecad752736d7cc8c1",
+      "sha256": "499205f4365bcc36b017e877a93fe015e7c8b7fd9c184a0eaefa91e2ea3de4a8",
       "slug": "capability-set"
     },
     {
@@ -29,7 +29,7 @@
       "model": "ProtocolCapabilitiesResponse",
       "path": "schemas/capabilities-response.schema.json",
       "pydanticMode": "serialization",
-      "sha256": "0e1678b69ff55a30cdfafa6ca2b1d148340757c76fda6b1195dd315efbf93faa",
+      "sha256": "19544e9e32a56b3a3499516dee966812416bc046d6b45fc2bd80aafa7b887f79",
       "slug": "capabilities-response"
     },
     {
@@ -37,7 +37,7 @@
       "model": "ProtocolModelCatalog",
       "path": "schemas/model-catalog.schema.json",
       "pydanticMode": "validation",
-      "sha256": "7f45c68fd723b21d3acab03306e34da91972ca6e048a80389381fe817871f87e",
+      "sha256": "6fe940e6bf74c3f03a94dc30efbc0dff54c60685303717aa4bbf683edf638c7f",
       "slug": "model-catalog"
     },
     {
@@ -45,7 +45,7 @@
       "model": "ProtocolModelCatalogResponse",
       "path": "schemas/model-catalog-response.schema.json",
       "pydanticMode": "serialization",
-      "sha256": "d6667179a66f91bd2fd7e1be56e4f88e49a07914edc128c84581adf676bb24d1",
+      "sha256": "c8c10ad82d3c0c718eb85a261e359700982f35dc92766cd546888b2ba640d86f",
       "slug": "model-catalog-response"
     },
     {
@@ -53,7 +53,7 @@
       "model": "ProtocolPermissionCatalog",
       "path": "schemas/permission-catalog.schema.json",
       "pydanticMode": "validation",
-      "sha256": "d0ee06c3231787c34213424508419910e1bff1e55d4a397cdfa95b83a695a9ac",
+      "sha256": "858d99a6ea0a8913eace426bb5ba42d5a353bd64d926d6007148adab7a2a3b86",
       "slug": "permission-catalog"
     },
     {
@@ -61,7 +61,7 @@
       "model": "ProtocolPermissionCatalogResponse",
       "path": "schemas/permission-catalog-response.schema.json",
       "pydanticMode": "serialization",
-      "sha256": "7528f0e96b37872090fa15beb88c6776b9c83f3e2219f1686e5462dc877ed2c8",
+      "sha256": "d1e725eb5603308ec2f06c2facae645edf631b2281e98df791f8558232214d80",
       "slug": "permission-catalog-response"
     },
     {
@@ -69,7 +69,7 @@
       "model": "ProtocolSessionSnapshotResponse",
       "path": "schemas/session-snapshot-response.schema.json",
       "pydanticMode": "serialization",
-      "sha256": "c945b63af2d3294b9af565f06dd0333bb61ca2f49f4ac01b4b209f891e585965",
+      "sha256": "6380fe134df82cd2208f5afc01b91a5d2d9c43670b6fb83d661bde9de2ba2b3a",
       "slug": "session-snapshot-response"
     },
     {

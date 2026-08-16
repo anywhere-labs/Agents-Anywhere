@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agents-anywhere.dev/contracts/dsh-bridge/1.0/initialize-result.schema.json",
+  "type": "object",
+  "required": ["identity", "storage", "features"],
+  "properties": {
+    "identity": {
+      "type": "object",
+      "required": ["runtime", "runtimeVersion", "bridgeVersion", "protocolVersion", "displayName"],
+      "properties": {
+        "runtime": { "const": "dsh" },
+        "runtimeVersion": { "type": "string", "minLength": 1 },
+        "bridgeVersion": { "type": "string", "minLength": 1 },
+        "protocolVersion": { "pattern": "^1\\.[0-9]+$" },
+        "displayName": { "const": "DeepSeek Harness" }
+      },
+      "additionalProperties": true
+    },
+    "storage": {
+      "type": "object",
+      "required": ["mode", "sameSessionWriterLimit", "crossProcessWriterExclusion"],
+      "properties": {
+        "mode": { "const": "dsh-native" },
+        "sameSessionWriterLimit": { "const": 1 },
+        "crossProcessWriterExclusion": { "const": false }
+      },
+      "additionalProperties": true
+    },
+    "features": {
+      "type": "object",
+      "required": ["attachments", "sessionDiscovery", "timelineSuffixRead", "approval", "userQuestions"],
+      "properties": {
+        "attachments": { "const": false },
+        "sessionDiscovery": { "type": "boolean" },
+        "timelineSuffixRead": { "type": "boolean" },
+        "approval": { "type": "boolean" },
+        "userQuestions": { "type": "boolean" }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

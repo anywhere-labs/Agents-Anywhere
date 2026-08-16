@@ -124,6 +124,7 @@ export function SessionComposer({
   const canUseModelCatalog = capabilityIsUsable(effectiveCapabilities, CAPABILITY.modelCatalog)
   const canUsePermissionCatalog = capabilityIsUsable(effectiveCapabilities, CAPABILITY.permissionCatalog)
   const canUseEffortCatalog = capabilityIsUsable(effectiveCapabilities, CAPABILITY.effortCatalog)
+  const canUseAttachments = capabilityIsUsable(effectiveCapabilities, CAPABILITY.attachment)
   const canSend =
     canUseSendMessage &&
     !creatingSession &&
@@ -264,7 +265,12 @@ export function SessionComposer({
     onCommandQueryChange(showCommandMenu ? commandQuery : null)
   }, [commandQuery, onCommandQueryChange, showCommandMenu])
   const canSubmitCommand = commandQuery !== null && attachments.length === 0 && canRunCommand
-  const canSubmitMessage = canSend && session.takeover && hasInput
+  const canSubmitMessage =
+    canSend &&
+    session.takeover &&
+    hasInput &&
+    (attachments.length === 0 || canUseAttachments)
+  const concurrentWriter = runtimeState?.error?.code === "DSH_CONCURRENT_WRITER_DETECTED"
 
   const submit = async () => {
     if (!hasInput) return
@@ -306,6 +312,11 @@ export function SessionComposer({
     >
       <DragOverlay isDragging={isDragging} />
       <div className="mx-auto w-full max-w-3xl space-y-2">
+        {concurrentWriter ? (
+          <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+            {tSession("dshConcurrentWriter")}
+          </div>
+        ) : null}
         <div
           ref={composerRef}
           className={cn(
@@ -375,7 +386,13 @@ export function SessionComposer({
               onAttach={add}
               isDragging={isDragging}
               className="size-8"
+              disabled={!canUseAttachments}
             />
+            {attachments.length > 0 && !canUseAttachments ? (
+              <span className="px-2 text-xs text-amber-600 dark:text-amber-400">
+                {tNew("attachmentsUnsupported")}
+              </span>
+            ) : null}
             {hasSelectors ? (
               compactSelectors ? (
                 <SelectionSettingsDrawer

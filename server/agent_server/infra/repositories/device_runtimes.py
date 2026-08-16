@@ -60,6 +60,9 @@ class DeviceRuntimeRepositoryMixin:
                     "display_name": runtime.displayName,
                     "present": 1,
                     "discovery_json": _json_dumps(runtime.discovery),
+                    "inventory_metadata_json": _json_dumps(
+                        _public_runtime_metadata(runtime.metadata)
+                    ),
                     "config_schema_json": _json_dumps(runtime.schema_),
                     "ui_schema_json": _json_dumps(runtime.uiSchema),
                     "status": runtime.status,
@@ -230,6 +233,7 @@ def _runtime_row(row: Any) -> dict[str, Any]:
         "active": bool(row["active"]),
         "status": str(row["status"]),
         "discovery": _json_loads(row["discovery_json"]) or {},
+        "metadata": _json_loads(row["inventory_metadata_json"]) or {},
         "schema": _json_loads(row["config_schema_json"]),
         "uiSchema": _json_loads(row["ui_schema_json"]) or {},
         "config": _json_loads(row["config_json"]),
@@ -237,3 +241,16 @@ def _runtime_row(row: Any) -> dict[str, Any]:
         "lastDiscoveredAt": str(row["last_discovered_at"]),
         "updatedAt": str(row["updated_at"]),
     }
+
+
+def _public_runtime_metadata(value: dict[str, Any]) -> dict[str, Any]:
+    allowed = {
+        "protocolVersion",
+        "profile",
+        "storageMode",
+        "sameSessionWriterLimit",
+        "crossProcessWriterExclusion",
+        "dshVersion",
+        "bridgeVersion",
+    }
+    return {key: item for key, item in value.items() if key in allowed}

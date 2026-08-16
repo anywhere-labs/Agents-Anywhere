@@ -767,6 +767,19 @@ export function DevicePage() {
                             {!runtime.present ? (
                               <p className="mt-0.5 text-xs text-muted-foreground">{t("runtimeNotReported")}</p>
                             ) : null}
+                            {runtime.metadata.storageMode === "dsh-native" ? (
+                              <p className="mt-0.5 text-xs text-muted-foreground">
+                                {t("dshRuntimeSummary", {
+                                  version: typeof runtime.metadata.dshVersion === "string" ? runtime.metadata.dshVersion : t("unknownVersion"),
+                                  profile: typeof runtime.metadata.profile === "string" ? runtime.metadata.profile : "aa",
+                                })}
+                              </p>
+                            ) : null}
+                            {runtime.metadata.storageMode === "dsh-native" && runtime.metadata.crossProcessWriterExclusion === false ? (
+                              <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
+                                {t("dshSingleWriterWarning")}
+                              </p>
+                            ) : null}
                           </div>
                           <div className="flex shrink-0 items-center gap-2">
                             <Button

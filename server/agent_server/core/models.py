@@ -4,7 +4,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-RuntimeName = Literal["codex", "claude", "opencode", "acp"]
+RuntimeName = Literal["codex", "claude", "opencode", "acp", "dsh"]
 ConnectorStatus = Literal["offline", "online"]
 ConnectorDeviceOs = Literal["macos", "windows", "linux"]
 SessionStatus = Literal[

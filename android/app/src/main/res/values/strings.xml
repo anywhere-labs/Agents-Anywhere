@@ -156,6 +156,9 @@
     <string name="device_runtime_stopping">Stopping</string>
     <string name="device_runtime_error">Runtime error</string>
     <string name="device_runtime_unknown">Unknown state</string>
+    <string name="device_runtime_unknown_version">unknown version</string>
+    <string name="device_runtime_dsh_summary">DSH %1$s · profile %2$s · native session storage</string>
+    <string name="device_runtime_dsh_single_writer">Do not run this DSH session in another DSH instance at the same time. External changes sync after a connector rescan.</string>
     <string name="device_detail_prepare_setup_failed">Could not prepare device setup.</string>
     <string name="device_detail_delete_failed">Could not delete device.</string>
     <string name="device_detail_revoke_failed">Could not revoke device token.</string>
@@ -383,6 +386,7 @@
     <string name="session_runtime_settings_title">Model settings</string>
     <string name="session_runtime_mode_effort">Mode &amp; effort</string>
     <string name="session_runtime_no_settings">No settings available</string>
+    <string name="session_dsh_concurrent_writer">Stop the other process using this DSH session, wait for it to exit, then refresh.</string>
     <string name="session_runtime_permission_mode">Permission mode</string>
     <string name="session_runtime_effort_for">Effort for %1$s</string>
     <string name="runtime_permission_accept_edits">Accept edits</string>

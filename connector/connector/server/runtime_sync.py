@@ -73,7 +73,9 @@ class RuntimeSyncRunner:
             runtime_started_at = time.monotonic()
             try:
                 runtime = self.supervisor.resolve_runtime(runtime_id)
-                logger.info("existing session sync runtime started runtime={}", runtime_id)
+                logger.info(
+                    "existing session sync runtime started runtime={}", runtime_id
+                )
                 await self.push_runtime_catalogs(runtime)
                 sessions = await runtime.list_sessions(limit=100, force=False)
                 timeline_sync_count = sum(
@@ -170,7 +172,10 @@ class RuntimeSyncRunner:
         )
         if state is not None and state.status in ACTIVE_SESSION_SYNC_SKIP_STATUSES:
             active_update = (session, state)
-            if self._last_active_session_updates.get(session.session_id) == active_update:
+            if (
+                self._last_active_session_updates.get(session.session_id)
+                == active_update
+            ):
                 logger.debug(
                     "existing session sync suppressed unchanged active session runtime={} session_id={} status={}",
                     session.runtime,
@@ -280,7 +285,9 @@ class RuntimeSyncRunner:
         except RuntimeUnsupportedError:
             pass
         try:
-            permission_catalog = await runtime.list_permission_catalog(query=None, limit=200)
+            permission_catalog = await runtime.list_permission_catalog(
+                query=None, limit=200
+            )
             await self.host.permission_catalog_update(permission_catalog)
         except RuntimeUnsupportedError:
             pass
@@ -350,6 +357,9 @@ def _session_meta_notification(session: SessionMeta) -> dict[str, Any]:
 
 
 def _timeline_sync_notification(snapshot: RuntimeTimelineSnapshot) -> dict[str, Any]:
+    server_items = tuple(
+        item for item in snapshot.items if item.type not in {"turn.start", "turn.end"}
+    )
     return {
         "method": "timeline.sync",
         "params": _drop_none(
@@ -357,7 +367,9 @@ def _timeline_sync_notification(snapshot: RuntimeTimelineSnapshot) -> dict[str, 
                 "sessionId": snapshot.session_id,
                 "runtime": snapshot.runtime,
                 "externalSessionId": snapshot.external_session_id,
-                "items": [_runtime_timeline_item_payload(item) for item in snapshot.items],
+                "items": [
+                    _runtime_timeline_item_payload(item) for item in server_items
+                ],
                 "complete": snapshot.complete,
                 "metadata": dict(snapshot.metadata),
             }
