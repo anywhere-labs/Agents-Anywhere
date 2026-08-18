@@ -1,7 +1,0 @@
-- insert:
-    - id: agents-anywhere-bridge
-      name: '@agents-anywhere/dsh-bridge'
-      config:
-        stateRoot: !!js dshHomePath('aa', 'bridge')
-        maxFrameBytes: 8388608
-        shutdownTimeoutMs: 10000
