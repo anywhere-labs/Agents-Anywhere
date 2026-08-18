@@ -390,8 +390,16 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
 
   // ── Fetch data from mock API ──────────────────────────────
   const initialLoadDoneRef = React.useRef(false)
+  const lastDashboardSnapshotKeyRef = React.useRef<string | null>(null)
 
   const applyDashboardSnapshot = React.useCallback((message: DashboardSnapshotMessage) => {
+    const snapshotKey = stableJson({
+      connectors: message.connectors,
+      sessions: message.sessions,
+    })
+    if (lastDashboardSnapshotKeyRef.current === snapshotKey) return
+    lastDashboardSnapshotKeyRef.current = snapshotKey
+
     const nextConnectors = message.connectors.map(mapConnector)
     const nextSessions = sortSessionViews(message.sessions.map(mapSession))
     setConnectors((current) => sameStableValue(current, nextConnectors) ? current : nextConnectors)
@@ -431,6 +439,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
 
   React.useEffect(() => {
     initialLoadDoneRef.current = false
+    lastDashboardSnapshotKeyRef.current = null
     setIsLoading(true)
   }, [authSession?.accessToken])
 
@@ -452,6 +461,19 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     let socket: WebSocket | null = null
     let reconnectTimer: number | null = null
     let fallbackTimer: number | null = null
+    let snapshotFrame: number | null = null
+    let pendingSnapshot: DashboardSnapshotMessage | null = null
+
+    const scheduleDashboardSnapshot = (message: DashboardSnapshotMessage) => {
+      pendingSnapshot = message
+      if (snapshotFrame !== null) return
+      snapshotFrame = window.requestAnimationFrame(() => {
+        snapshotFrame = null
+        const snapshot = pendingSnapshot
+        pendingSnapshot = null
+        if (!cancelled && snapshot) applyDashboardSnapshot(snapshot)
+      })
+    }
 
     const scheduleInitialFallback = () => {
       if (cancelled || initialLoadDoneRef.current || fallbackTimer !== null) return
@@ -478,7 +500,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
               window.clearTimeout(fallbackTimer)
               fallbackTimer = null
             }
-            applyDashboardSnapshot(message)
+            scheduleDashboardSnapshot(message)
           } catch { /* ignore malformed */ }
         }
         socket.onclose = () => {
@@ -510,6 +532,8 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       socket?.close()
       if (reconnectTimer !== null) window.clearTimeout(reconnectTimer)
       if (fallbackTimer !== null) window.clearTimeout(fallbackTimer)
+      if (snapshotFrame !== null) window.cancelAnimationFrame(snapshotFrame)
+      pendingSnapshot = null
     }
   }, [applyDashboardSnapshot, authSession?.accessToken, fetchData])
 
