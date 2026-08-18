@@ -43,7 +43,12 @@ internal fun RemoteSession.toAgentSession(devicesById: Map<String, AgentDevice>)
         lastReadSeq = lastReadSeq,
         takeover = takeover,
         connectorOnline = connectorStatus == "online",
-        live = statusValue == SessionStatus.Running || statusValue == SessionStatus.WaitingApproval,
+        live = statusValue in setOf(
+            SessionStatus.Waiting,
+            SessionStatus.Pending,
+            SessionStatus.Running,
+            SessionStatus.WaitingApproval,
+        ),
         sortKey = sortAt ?: lastActivityAt ?: lastItemAt ?: "",
         updatedSeq = updatedSeq,
     )
@@ -52,7 +57,7 @@ internal fun RemoteSession.toAgentSession(devicesById: Map<String, AgentDevice>)
 private fun summaryText(status: SessionStatus, cwd: String?, connectorStatus: String): String {
     return when {
         status == SessionStatus.WaitingApproval -> "Waiting for approval."
-        status == SessionStatus.Running -> "Running now."
+        status in setOf(SessionStatus.Waiting, SessionStatus.Pending, SessionStatus.Running) -> "Running now."
         status == SessionStatus.Error -> "Needs attention."
         !cwd.isNullOrBlank() -> cwd
         connectorStatus == "offline" -> "Device is offline."
@@ -62,19 +67,29 @@ private fun summaryText(status: SessionStatus, cwd: String?, connectorStatus: St
 
 private fun String.toSessionStatus(): SessionStatus {
     return when (this) {
+        "idle" -> SessionStatus.Idle
+        "waiting" -> SessionStatus.Waiting
+        "pending" -> SessionStatus.Pending
         "running" -> SessionStatus.Running
+        "stopping" -> SessionStatus.Stopping
         "waiting_approval" -> SessionStatus.WaitingApproval
         "error" -> SessionStatus.Error
-        else -> SessionStatus.Idle
+        "blocked" -> SessionStatus.Blocked
+        else -> SessionStatus.Unknown
     }
 }
 
 private fun SessionStatus.statusLabel(): String {
     return when (this) {
         SessionStatus.Idle -> "Idle"
+        SessionStatus.Waiting -> "Waiting"
+        SessionStatus.Pending -> "Pending"
         SessionStatus.Running -> "Running"
+        SessionStatus.Stopping -> "Stopping"
         SessionStatus.WaitingApproval -> "Approval"
         SessionStatus.Error -> "Error"
+        SessionStatus.Blocked -> "Blocked"
+        SessionStatus.Unknown -> "Unknown"
     }
 }
 

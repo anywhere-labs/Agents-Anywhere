@@ -1,8 +1,16 @@
 package com.agentsanywhere.app.api
 
 import java.net.URI
+import java.util.concurrent.ConcurrentHashMap
 
 private const val API_NAMESPACE = "/api/v2"
+
+private enum class ApiRouteStyle {
+    Namespaced,
+    Legacy,
+}
+
+private val apiRouteStyles = ConcurrentHashMap<String, ApiRouteStyle>()
 
 internal fun apiPath(path: String): String {
     val normalized = if (path.startsWith("/")) path else "/$path"
@@ -21,7 +29,41 @@ internal fun apiUrl(serverUrl: String, path: String): String {
     val origin = requireNotNull(normalizeServerOrigin(serverUrl)) {
         "Server URL must be an HTTP(S) origin."
     }
-    return "$origin${apiPath(path)}"
+    return when (apiRouteStyles[origin]) {
+        ApiRouteStyle.Legacy -> "$origin${legacyApiPath(path)}"
+        else -> "$origin${apiPath(path)}"
+    }
+}
+
+internal fun apiUrlCandidates(serverUrl: String, path: String): List<String> {
+    val origin = requireNotNull(normalizeServerOrigin(serverUrl)) {
+        "Server URL must be an HTTP(S) origin."
+    }
+    return when (apiRouteStyles[origin]) {
+        ApiRouteStyle.Namespaced -> listOf("$origin${apiPath(path)}")
+        ApiRouteStyle.Legacy -> listOf("$origin${legacyApiPath(path)}")
+        null -> listOf(
+            "$origin${apiPath(path)}",
+            "$origin${legacyApiPath(path)}",
+        )
+    }
+}
+
+internal fun rememberApiUrl(serverUrl: String, resolvedUrl: String) {
+    val origin = normalizeServerOrigin(serverUrl) ?: return
+    val resolvedPath = runCatching { URI(resolvedUrl).rawPath.orEmpty() }.getOrDefault("")
+    apiRouteStyles[origin] = if (
+        resolvedPath == API_NAMESPACE || resolvedPath.startsWith("$API_NAMESPACE/")
+    ) {
+        ApiRouteStyle.Namespaced
+    } else {
+        ApiRouteStyle.Legacy
+    }
+}
+
+internal fun usesLegacyApiRoute(serverUrl: String): Boolean {
+    val origin = normalizeServerOrigin(serverUrl) ?: return false
+    return apiRouteStyles[origin] == ApiRouteStyle.Legacy
 }
 
 internal fun webSocketApiUrl(serverUrl: String, path: String): String {
@@ -61,6 +103,15 @@ internal fun normalizeServerOrigin(serverUrl: String): String? {
     return runCatching {
         URI(scheme, null, host, parsed.port, null, null, null).toString().trimEnd('/')
     }.getOrNull()
+}
+
+private fun legacyApiPath(path: String): String {
+    val normalized = if (path.startsWith("/")) path else "/$path"
+    return when {
+        normalized == API_NAMESPACE -> "/"
+        normalized.startsWith("$API_NAMESPACE/") -> normalized.removePrefix(API_NAMESPACE)
+        else -> normalized
+    }
 }
 
 private fun usesLocalNetworkHost(host: String): Boolean {

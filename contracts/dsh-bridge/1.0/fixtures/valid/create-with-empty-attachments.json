@@ -1,0 +1,13 @@
+{
+  "jsonrpc": "2.0",
+  "id": "create-1",
+  "method": "session.createAndStart",
+  "params": {
+    "sessionId": "sess_platform_1",
+    "content": "hello",
+    "cwd": "/workspace/project",
+    "selections": {},
+    "attachments": [],
+    "clientMessageId": "client-message-1"
+  }
+}

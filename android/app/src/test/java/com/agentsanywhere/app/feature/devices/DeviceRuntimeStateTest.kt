@@ -5,6 +5,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import kotlinx.coroutines.runBlocking
 
 class DeviceRuntimeStateTest {
     @Test
@@ -13,6 +14,7 @@ class DeviceRuntimeStateTest {
             connectorId = "connector",
             runtimes = listOf(runtime("old")),
             loading = true,
+            pendingRuntimeId = "old",
             errorMessage = "old error",
         )
 
@@ -26,6 +28,7 @@ class DeviceRuntimeStateTest {
 
         assertEquals(listOf("codex", "claude"), next.runtimes.map { it.id })
         assertFalse(next.loading)
+        assertNull(next.pendingRuntimeId)
         assertNull(next.errorMessage)
     }
 
@@ -40,6 +43,90 @@ class DeviceRuntimeStateTest {
 
         assertTrue(next.runtimes.first { it.id == "codex" }.active)
         assertEquals(2, next.runtimes.size)
+    }
+
+    @Test
+    fun runtimeSectionsUseConfiguredAndPresentAsTheirOnlySourceOfTruth() {
+        val configuredMissing = runtime("configured-missing").copy(present = false)
+        val discovered = runtime("discovered").copy(configured = false, present = true)
+        val absent = runtime("absent").copy(configured = false, present = false)
+        val state = DeviceRuntimeManagementState(
+            runtimes = listOf(absent, discovered, configuredMissing),
+        )
+
+        assertEquals(listOf("configured-missing"), state.configuredRuntimes.map { it.id })
+        assertEquals(listOf("discovered"), state.discoveredUnconfiguredRuntimes.map { it.id })
+    }
+
+    @Test
+    fun runtimeSectionsKeepNativePriorityAndDiscoveryAvailabilityDefaultsToTrue() {
+        val other = runtime("other").copy(configured = false)
+        val claude = runtime("claude").copy(configured = false, discovery = mapOf("available" to false))
+        val codex = runtime("codex").copy(configured = false)
+        val state = DeviceRuntimeManagementState(runtimes = listOf(other, claude, codex))
+
+        assertEquals(
+            listOf("codex", "claude", "other"),
+            state.discoveredUnconfiguredRuntimes.map { it.id },
+        )
+        assertTrue(codex.discoveryAvailable)
+        assertFalse(claude.discoveryAvailable)
+    }
+
+    @Test
+    fun discoveryFailurePreservesInventoryAndClearsProgress() {
+        val state = DeviceRuntimeManagementState(
+            runtimes = listOf(runtime("codex")),
+            discovering = true,
+        )
+
+        val next = state.discoveryFailed("friendly failure")
+
+        assertEquals(listOf("codex"), next.runtimes.map { it.id })
+        assertFalse(next.discovering)
+        assertEquals("friendly failure", next.errorMessage)
+        assertTrue(next.errorFromDiscovery)
+    }
+
+    @Test
+    fun configureAndStartStopsWhenSaveFails() = runBlocking {
+        var started = false
+        val result = configureAndStartRuntime(
+            saveConfig = { Result.failure(IllegalStateException("save")) },
+            startRuntime = {
+                started = true
+                Result.success(runtime("codex", active = true))
+            },
+        )
+
+        assertTrue(result is DeviceRuntimeSetupResult.SaveFailed)
+        assertFalse(started)
+    }
+
+    @Test
+    fun configureAndStartPreservesConfiguredRuntimeWhenStartFails() = runBlocking {
+        val configured = runtime("codex").copy(configured = true, active = false)
+        val result = configureAndStartRuntime(
+            saveConfig = { Result.success(configured) },
+            startRuntime = { Result.failure(IllegalStateException("start")) },
+        )
+
+        assertTrue(result is DeviceRuntimeSetupResult.StartFailed)
+        assertEquals(
+            configured,
+            (result as DeviceRuntimeSetupResult.StartFailed).configuredRuntime,
+        )
+    }
+
+    @Test
+    fun configureAndStartReturnsActivatedRuntimeOnSuccess() = runBlocking {
+        val active = runtime("codex", active = true)
+        val result = configureAndStartRuntime(
+            saveConfig = { Result.success(runtime("codex")) },
+            startRuntime = { Result.success(active) },
+        )
+
+        assertEquals(DeviceRuntimeSetupResult.Success(active), result)
     }
 
     @Test

@@ -410,6 +410,11 @@ export function TaskComposer() {
     CAPABILITY.permissionCatalog,
     selectedAgent,
   )
+  const canUseAttachments = capabilityIsUsable(
+    runtimeCapabilities,
+    CAPABILITY.attachment,
+    selectedAgent,
+  )
 
   const models = React.useMemo(
     () => modelCatalog?.models.map((item) => ({
@@ -516,6 +521,7 @@ export function TaskComposer() {
     !catalogsLoading &&
     (!requiresModelSelection || Boolean(selectedModelSelection)) &&
     (!requiresPermissionSelection || Boolean(selectedPermissionSelection)) &&
+    (attachments.length === 0 || canUseAttachments) &&
     (prompt.trim().length > 0 || attachments.length > 0)
   const selectorsLoading =
     runtimeInventoryLoading || (
@@ -530,6 +536,7 @@ export function TaskComposer() {
     if (catalogsLoading) return
     if (requiresModelSelection && !selectedModelSelection) return
     if (requiresPermissionSelection && !selectedPermissionSelection) return
+    if (attachments.length > 0 && !canUseAttachments) return
     const localSessionId = createClientId("session")
     const clientMessageId = createClientId("msg")
     const messageText = prompt.trim() || t("attachmentOnlyPrompt")
@@ -695,7 +702,13 @@ export function TaskComposer() {
               attachments={attachments}
               onAttach={add}
               isDragging={isDragging}
+              disabled={!canUseAttachments}
             />
+            {attachments.length > 0 && !canUseAttachments ? (
+              <span className="px-2 text-xs text-amber-600 dark:text-amber-400">
+                {t("attachmentsUnsupported")}
+              </span>
+            ) : null}
 
             {selectorsLoading ? (
               <>

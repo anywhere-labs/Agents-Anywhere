@@ -1,10 +1,12 @@
 package com.agentsanywhere.app.api
 
+import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.net.InetAddress
 import java.net.ServerSocket
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.concurrent.thread
 
@@ -105,6 +107,52 @@ class ApiClientTest {
         )
     }
 
+    @Test
+    fun `json request falls back to legacy route after namespaced method not allowed`() {
+        val requests = CopyOnWriteArrayList<String>()
+        val responses = listOf(
+            TestHttpResponse(405, "application/json", "{\"detail\":\"Method Not Allowed\"}"),
+            TestHttpResponse(200, "application/json", "{\"status\":\"pending\"}"),
+        )
+
+        withHttpResponses(responses, requests) { serverUrl ->
+            val response = ApiClient().postJson(
+                serverUrl = serverUrl,
+                path = "/auth/mobile-login/request",
+                body = JSONObject().put("loginToken", "token"),
+            )
+
+            assertEquals("pending", response.getString("status"))
+            assertEquals(
+                listOf(
+                    "/api/v2/auth/mobile-login/request",
+                    "/auth/mobile-login/request",
+                ),
+                requests,
+            )
+            assertEquals(
+                "$serverUrl/auth/mobile-login/status",
+                apiUrl(serverUrl, "/auth/mobile-login/status"),
+            )
+        }
+    }
+
+    @Test
+    fun `json request falls back when static host returns html`() {
+        val requests = CopyOnWriteArrayList<String>()
+        val responses = listOf(
+            TestHttpResponse(200, "text/html; charset=utf-8", "<!DOCTYPE html><html></html>"),
+            TestHttpResponse(200, "application/json", "{\"serverTime\":\"now\"}"),
+        )
+
+        withHttpResponses(responses, requests) { serverUrl ->
+            val response = ApiClient().getJson(serverUrl, "/auth/config")
+
+            assertEquals("now", response.getString("serverTime"))
+            assertEquals(listOf("/api/v2/auth/config", "/auth/config"), requests)
+        }
+    }
+
     private fun assertApiException(error: Throwable?, statusCode: Int) {
         assertTrue(error is ApiException)
         assertEquals(statusCode, (error as ApiException).statusCode)
@@ -162,4 +210,49 @@ class ApiClientTest {
             result.exceptionOrNull()
         }
     }
+
+    private fun withHttpResponses(
+        responses: List<TestHttpResponse>,
+        requests: CopyOnWriteArrayList<String>,
+        request: (serverUrl: String) -> Unit,
+    ) {
+        val serverFailure = AtomicReference<Throwable?>()
+        ServerSocket(0, 10, InetAddress.getByName("127.0.0.1")).use { serverSocket ->
+            val serverUrl = "http://${serverSocket.inetAddress.hostAddress}:${serverSocket.localPort}"
+            val worker = thread(name = "api-client-fallback-test-server") {
+                runCatching {
+                    responses.forEach { response ->
+                        serverSocket.accept().use { socket ->
+                            val reader = socket.getInputStream().bufferedReader()
+                            val requestLine = reader.readLine()
+                            requests += requestLine.split(' ')[1].substringBefore('?')
+                            while (true) {
+                                val line = reader.readLine() ?: break
+                                if (line.isEmpty()) break
+                            }
+                            val body = response.body.toByteArray(Charsets.UTF_8)
+                            socket.getOutputStream().bufferedWriter().use { writer ->
+                                writer.write("HTTP/1.1 ${response.statusCode} Test\r\n")
+                                writer.write("Content-Type: ${response.contentType}\r\n")
+                                writer.write("Content-Length: ${body.size}\r\n")
+                                writer.write("Connection: close\r\n\r\n")
+                                writer.write(response.body)
+                            }
+                        }
+                    }
+                }.onFailure(serverFailure::set)
+            }
+
+            request(serverUrl)
+            worker.join(2_000)
+            assertTrue("Test server did not finish.", !worker.isAlive)
+            serverFailure.get()?.let { throw AssertionError("Test server failed.", it) }
+        }
+    }
+
+    private data class TestHttpResponse(
+        val statusCode: Int,
+        val contentType: String,
+        val body: String,
+    )
 }

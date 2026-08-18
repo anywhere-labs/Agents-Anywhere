@@ -32,6 +32,7 @@ data class RemoteDeviceRuntime(
     val active: Boolean,
     val status: RemoteDeviceRuntimeStatus,
     val discovery: Map<String, Any?>,
+    val metadata: Map<String, Any?> = emptyMap(),
     val schema: Map<String, Any?>?,
     val uiSchema: Map<String, Any?>,
     val config: Map<String, Any?>?,

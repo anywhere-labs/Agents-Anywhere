@@ -1,0 +1,11 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "initialize",
+  "params": {
+    "protocolVersion": "1.0",
+    "runtime": "dsh",
+    "connectorId": "connector_123",
+    "clientInfo": { "name": "agents-anywhere-connector", "version": "0.1.7.2" }
+  }
+}

@@ -45,7 +45,7 @@ internal fun mergeRemoteTimelineItems(
         item.toTimelineMessages().map { it.copy(orderSeq = orderSeq) }
     }
     val messages = if (replace) {
-        sortTimelineMessages(incomingMessages, orderingItems)
+        reconcileDshAssistantActivity(sortTimelineMessages(incomingMessages, orderingItems))
     } else {
         mergeTimelineMessages(currentMessages, incomingMessages, orderingItems)
     }
@@ -116,6 +116,10 @@ private fun RemoteTimelineItem.toMessage(): TimelineMessage {
         revision = revision,
         updatedSeq = updatedSeq,
         clientMessageId = source.text("clientMessageId"),
+        contentHash = contentHash,
+        sourceRuntime = source.text("runtime"),
+        sourceItemType = source.text("itemType"),
+        sourceReplacedBy = source.text("replacedBy"),
     )
 }
 
@@ -524,8 +528,51 @@ internal fun mergeTimelineMessages(
         } else {
             currentGroup
         }
-    }.let { sortTimelineMessages(it, orderingItems) }
+    }.let { reconcileDshAssistantActivity(sortTimelineMessages(it, orderingItems)) }
 }
+
+private fun reconcileDshAssistantActivity(messages: List<TimelineMessage>): List<TimelineMessage> {
+    val sourceItemIds = messages.mapTo(mutableSetOf()) { it.sourceItemId }
+    val supersededSourceIds = messages.mapNotNullTo(mutableSetOf()) { message ->
+        message.sourceReplacedBy
+            ?.takeIf { replacementId -> replacementId in sourceItemIds }
+            ?.let { message.sourceItemId }
+    }
+
+    messages.forEachIndexed { finalIndex, finalMessage ->
+        if (!finalMessage.isCompletedDshAssistantMessage()) return@forEachIndexed
+
+        for (candidateIndex in finalIndex - 1 downTo 0) {
+            val candidate = messages[candidateIndex]
+            if (candidate.type == "message" && candidate.author == MessageAuthor.User) break
+            if (!candidate.isCompletedDshAssistantMessage()) continue
+            if (candidate.contentHash.isBlank() || candidate.contentHash != finalMessage.contentHash) continue
+
+            val nativeReplacement = candidate.sourceItemType == "assistant_activity" &&
+                finalMessage.sourceItemType == "message"
+            val legacyReplacement = candidate.sourceItemType == null &&
+                finalMessage.sourceItemType == null &&
+                candidate.revision > 1 &&
+                finalMessage.revision == 1
+            if (!nativeReplacement && !legacyReplacement) continue
+
+            supersededSourceIds += candidate.sourceItemId
+            break
+        }
+    }
+
+    return if (supersededSourceIds.isEmpty()) {
+        messages
+    } else {
+        messages.filterNot { it.sourceItemId in supersededSourceIds }
+    }
+}
+
+private fun TimelineMessage.isCompletedDshAssistantMessage(): Boolean =
+    type == "message" &&
+        author == MessageAuthor.Agent &&
+        sourceRuntime == "dsh" &&
+        status == "done"
 
 internal data class OptimisticTimelineMerge(
     val messages: List<TimelineMessage>,

@@ -1,0 +1,80 @@
+{
+  "sessionIds": [
+    {
+      "connectorId": "connector_123",
+      "externalSessionId": "dsh-session-id",
+      "sessionId": "sess_dsh_62c4d9d6d438a080662cfd23"
+    },
+    {
+      "connectorId": "连接器:一",
+      "externalSessionId": "会话/α:beta",
+      "sessionId": "sess_dsh_eeeae7f7ee399588bbee9b45"
+    },
+    {
+      "connectorId": "c",
+      "externalSessionId": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "sessionId": "sess_dsh_e8c1655eb91c42a8496ee039"
+    }
+  ],
+  "modelSelections": [
+    {
+      "provider": "deepseek-official",
+      "model": "deepseek-v4-flash",
+      "effort": null,
+      "selectionId": "dsh:model:WyJkZWVwc2Vlay1vZmZpY2lhbCIsImRlZXBzZWVrLXY0LWZsYXNoIixudWxsXQ"
+    },
+    {
+      "provider": "提供者:一",
+      "model": "模型/α beta",
+      "effort": "high",
+      "selectionId": "dsh:model:WyLmj5DkvpvogIU65LiAIiwi5qih5Z6LL86xIGJldGEiLCJoaWdoIl0"
+    }
+  ],
+  "permissionSelections": [
+    {
+      "preset": "workspace-write",
+      "selectionId": "dsh:permission:d29ya3NwYWNlLXdyaXRl"
+    },
+    {
+      "preset": "预设:只读/安全",
+      "selectionId": "dsh:permission:6aKE6K6-OuWPquivuy_lronlhag"
+    }
+  ],
+  "timelineIds": [
+    {
+      "externalSessionId": "dsh-session-id",
+      "projectionKind": "message",
+      "businessId": "message-1",
+      "itemId": "dsh_0457fb1df3b1437dd1c9f40d1d351dd5f47e5ac8d71d86a6ea7c1f9f50ffa3fa"
+    },
+    {
+      "externalSessionId": "会话/α",
+      "projectionKind": "tool_call",
+      "businessId": "调用:1",
+      "itemId": "dsh_3ed4367dc9fbf051ef64633b84ff06a20c27d3f177defbf612bb2538559b69e7"
+    }
+  ],
+  "contentHashes": [
+    {
+      "type": "message",
+      "status": "done",
+      "role": "user",
+      "content": { "kind": "text", "text": "你好" },
+      "contentHash": "sha256:9112741bd982a4d18053b204c84004945f09bbb20f73e3d62177f88bb75e9ac4"
+    },
+    {
+      "type": "tool",
+      "status": "done",
+      "role": "tool",
+      "content": { "kind": "tool_call", "title": "检查", "input": { "b": 2, "a": 1 } },
+      "contentHash": "sha256:1f4185aee56555e268528c9bddc079b76a41cf0561b8f95782280c7a96f2105e"
+    },
+    {
+      "type": "system",
+      "status": "interrupted",
+      "role": "system",
+      "content": { "kind": "turn_end", "message": "stopped" },
+      "contentHash": "sha256:6ad17d3dcf93f19535929fb19586b82d941fa79cfed0d4e32952341da1b4aed5"
+    }
+  ]
+}

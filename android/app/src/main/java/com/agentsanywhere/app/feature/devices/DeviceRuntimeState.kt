@@ -20,6 +20,7 @@ data class DeviceRuntime(
     val active: Boolean,
     val status: DeviceRuntimeStatus,
     val discovery: Map<String, Any?>,
+    val metadata: Map<String, Any?> = emptyMap(),
     val schema: Map<String, Any?>?,
     val uiSchema: Map<String, Any?>,
     val config: Map<String, Any?>?,
@@ -34,6 +35,9 @@ data class DeviceRuntime(
 
     val canActivate: Boolean
         get() = present && configured
+
+    val discoveryAvailable: Boolean
+        get() = discovery["available"] != false
 }
 
 enum class DeviceRuntimeStatus {
@@ -53,15 +57,28 @@ data class DeviceRuntimeManagementState(
     val connectorId: String? = null,
     val runtimes: List<DeviceRuntime> = emptyList(),
     val loading: Boolean = false,
+    val discovering: Boolean = false,
     val pendingRuntimeId: String? = null,
     val errorMessage: String? = null,
+    val errorFromDiscovery: Boolean = false,
 ) {
+    val configuredRuntimes: List<DeviceRuntime>
+        get() = runtimes.filter(DeviceRuntime::configured).sortedWith(deviceRuntimeComparator)
+
+    val discoveredUnconfiguredRuntimes: List<DeviceRuntime>
+        get() = runtimes
+            .filter { it.present && !it.configured }
+            .sortedWith(deviceRuntimeComparator)
+
     fun replace(result: DeviceRuntimeList): DeviceRuntimeManagementState {
         return copy(
             connectorId = result.connectorId,
             runtimes = result.runtimes.sortedWith(deviceRuntimeComparator),
             loading = false,
+            discovering = false,
+            pendingRuntimeId = null,
             errorMessage = null,
+            errorFromDiscovery = false,
         )
     }
 
@@ -75,8 +92,37 @@ data class DeviceRuntimeManagementState(
             connectorId = runtime.connectorId,
             runtimes = next.sortedWith(deviceRuntimeComparator),
             errorMessage = null,
+            errorFromDiscovery = false,
         )
     }
+
+    fun discoveryFailed(message: String): DeviceRuntimeManagementState {
+        return copy(
+            discovering = false,
+            errorMessage = message,
+            errorFromDiscovery = true,
+        )
+    }
+}
+
+sealed interface DeviceRuntimeSetupResult {
+    data class Success(val runtime: DeviceRuntime) : DeviceRuntimeSetupResult
+    data class SaveFailed(val cause: Throwable) : DeviceRuntimeSetupResult
+    data class StartFailed(
+        val configuredRuntime: DeviceRuntime,
+        val cause: Throwable,
+    ) : DeviceRuntimeSetupResult
+}
+
+internal suspend fun configureAndStartRuntime(
+    saveConfig: suspend () -> Result<DeviceRuntime>,
+    startRuntime: suspend () -> Result<DeviceRuntime>,
+): DeviceRuntimeSetupResult {
+    val configured = saveConfig().getOrElse { return DeviceRuntimeSetupResult.SaveFailed(it) }
+    return startRuntime().fold(
+        onSuccess = { DeviceRuntimeSetupResult.Success(it) },
+        onFailure = { DeviceRuntimeSetupResult.StartFailed(configured, it) },
+    )
 }
 
 data class RuntimeEnvironmentVariable(
@@ -178,6 +224,7 @@ internal fun RemoteDeviceRuntime.toDeviceRuntime(): DeviceRuntime {
         active = active,
         status = status.toDeviceRuntimeStatus(),
         discovery = discovery,
+        metadata = metadata,
         schema = schema,
         uiSchema = uiSchema,
         config = config,
@@ -191,6 +238,7 @@ private val deviceRuntimeComparator = compareBy<DeviceRuntime> {
     when (it.id) {
         "codex" -> 0
         "claude" -> 1
+        "dsh" -> 2
         else -> 99
     }
 }.thenBy { it.displayName.lowercase() }

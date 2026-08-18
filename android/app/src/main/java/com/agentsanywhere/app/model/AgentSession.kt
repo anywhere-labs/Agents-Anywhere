@@ -27,16 +27,20 @@ data class AgentSession(
 
 enum class SessionStatus {
     Idle,
+    Waiting,
+    Pending,
     Running,
+    Stopping,
     WaitingApproval,
     Error,
+    Blocked,
+    Unknown,
 }
 
 data class AgentDevice(
     val id: String,
     val name: String,
     val deviceOs: String? = null,
-    val subtitle: String,
     val online: Boolean,
     val lastSeenAt: String? = null,
     val createdAt: String? = null,

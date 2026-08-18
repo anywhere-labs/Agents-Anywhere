@@ -49,10 +49,10 @@ import androidx.compose.ui.unit.sp
 import com.agentsanywhere.app.R
 import com.agentsanywhere.app.feature.devices.DeviceRuntime
 import com.agentsanywhere.app.feature.devices.DeviceRuntimeConfigDraft
+import com.agentsanywhere.app.feature.devices.DeviceRuntimeSetupResult
 import com.agentsanywhere.app.feature.devices.RuntimeConfigValidationError
 import com.agentsanywhere.app.feature.devices.RuntimeEnvironmentVariable
 import com.agentsanywhere.app.feature.devices.toConfigDraft
-import com.agentsanywhere.app.model.AgentDevice
 import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 import com.agentsanywhere.app.ui.designsystem.noRippleClickable
 import com.composables.icons.lucide.Lucide
@@ -62,22 +62,21 @@ import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun DeviceAgentSettingsSheet(
-    device: AgentDevice,
+internal fun DeviceRuntimeConfigureSheet(
     runtime: DeviceRuntime,
     onDismiss: () -> Unit,
-    onSaveConfig: suspend (String, String, Map<String, Any?>) -> Result<DeviceRuntime>,
+    onConfigureAndStart: suspend (Map<String, Any?>) -> DeviceRuntimeSetupResult,
 ) {
     val colors = LocalAAColors.current
     val context = LocalContext.current
     val darkMode = colors.canvas == Color(0xFF09090B)
     val bodyMaxHeight = (LocalConfiguration.current.screenHeightDp * 0.58f).dp
     val scope = rememberCoroutineScope()
-    var draft by remember(device.id, runtime.id, runtime.updatedAt) {
+    var draft by remember(runtime.connectorId, runtime.id, runtime.updatedAt) {
         mutableStateOf(runtime.toConfigDraft())
     }
-    var saving by remember(device.id, runtime.id) { mutableStateOf(false) }
-    var saveError by remember(device.id, runtime.id) { mutableStateOf<String?>(null) }
+    var saving by remember(runtime.connectorId, runtime.id) { mutableStateOf(false) }
+    var saveError by remember(runtime.connectorId, runtime.id) { mutableStateOf<String?>(null) }
     val validationError = draft.validationError()
 
     fun save() {
@@ -85,11 +84,13 @@ internal fun DeviceAgentSettingsSheet(
         saving = true
         saveError = null
         scope.launch {
-            onSaveConfig(device.id, runtime.id, draft.toConfig())
-                .onSuccess { onDismiss() }
-                .onFailure { error ->
-                    saveError = error.message ?: context.getString(R.string.agent_settings_save_failed)
+            when (onConfigureAndStart(draft.toConfig())) {
+                is DeviceRuntimeSetupResult.Success,
+                is DeviceRuntimeSetupResult.StartFailed -> onDismiss()
+                is DeviceRuntimeSetupResult.SaveFailed -> {
+                    saveError = context.getString(R.string.configure_agent_save_failed)
                 }
+            }
             saving = false
         }
     }
@@ -131,7 +132,7 @@ internal fun DeviceAgentSettingsSheet(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = stringResource(R.string.agent_settings_title),
+                        text = stringResource(R.string.configure_agent_title),
                         color = colors.ink,
                         fontSize = 20.sp,
                         fontWeight = FontWeight.ExtraBold,
@@ -149,6 +150,7 @@ internal fun DeviceAgentSettingsSheet(
                     icon = Lucide.X,
                     contentDescription = stringResource(R.string.common_close),
                     danger = false,
+                    enabled = !saving,
                     onClick = onDismiss,
                 )
             }
@@ -161,7 +163,7 @@ internal fun DeviceAgentSettingsSheet(
             ) {
                 if (draft.fieldOrder.isEmpty()) {
                     Text(
-                        text = stringResource(R.string.agent_settings_none),
+                        text = stringResource(R.string.configure_agent_no_fields),
                         color = colors.muted,
                         fontSize = 13.sp,
                     )
@@ -200,9 +202,9 @@ internal fun DeviceAgentSettingsSheet(
                 )
                 SheetTextButton(
                     label = if (saving) {
-                        stringResource(R.string.agent_settings_saving)
+                        stringResource(R.string.configure_agent_configuring)
                     } else {
-                        stringResource(R.string.agent_settings_save)
+                        stringResource(R.string.configure_agent_configure_and_start)
                     },
                     enabled = !saving && validationError == null,
                     primary = true,
@@ -221,12 +223,12 @@ private fun RuntimePathField(
     onValueChange: (String) -> Unit,
 ) {
     RuntimeFieldLabel(
-        title = stringResource(R.string.agent_settings_executable_path),
-        description = stringResource(R.string.agent_settings_executable_path_description),
+        title = stringResource(R.string.runtime_config_executable_path),
+        description = stringResource(R.string.runtime_config_executable_path_description),
     )
     RuntimeTextInput(
         value = value,
-        placeholder = stringResource(R.string.agent_settings_executable_path_placeholder),
+        placeholder = stringResource(R.string.runtime_config_executable_path_placeholder),
         enabled = enabled,
         monospace = true,
         onValueChange = onValueChange,
@@ -241,8 +243,8 @@ private fun RuntimeEnvironmentFields(
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         RuntimeFieldLabel(
-            title = stringResource(R.string.agent_settings_environment),
-            description = stringResource(R.string.agent_settings_environment_description),
+            title = stringResource(R.string.runtime_config_environment),
+            description = stringResource(R.string.runtime_config_environment_description),
         )
         variables.forEachIndexed { index, variable ->
             EnvironmentVariableEditor(
@@ -257,7 +259,7 @@ private fun RuntimeEnvironmentFields(
             )
         }
         SheetTextButton(
-            label = stringResource(R.string.agent_settings_add_variable),
+            label = stringResource(R.string.runtime_config_add_variable),
             enabled = enabled,
             primary = false,
             modifier = Modifier.fillMaxWidth(),
@@ -288,7 +290,7 @@ private fun EnvironmentVariableEditor(
         ) {
             RuntimeTextInput(
                 value = variable.key,
-                placeholder = stringResource(R.string.agent_settings_environment_name),
+                placeholder = stringResource(R.string.runtime_config_environment_name),
                 enabled = enabled,
                 monospace = true,
                 modifier = Modifier.weight(1f),
@@ -312,7 +314,7 @@ private fun EnvironmentVariableEditor(
         }
         RuntimeTextInput(
             value = variable.value,
-            placeholder = stringResource(R.string.agent_settings_environment_value),
+            placeholder = stringResource(R.string.runtime_config_environment_value),
             enabled = enabled && !variable.removeInheritedValue,
             monospace = true,
             onValueChange = { onChange(variable.copy(value = it)) },
@@ -323,7 +325,7 @@ private fun EnvironmentVariableEditor(
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
             Text(
-                text = stringResource(R.string.agent_settings_environment_unset),
+                text = stringResource(R.string.runtime_config_environment_unset),
                 color = colors.muted,
                 fontSize = 12.5.sp,
                 fontWeight = FontWeight.SemiBold,
@@ -406,9 +408,9 @@ private fun RuntimeTextInput(
 private fun validationErrorMessage(error: RuntimeConfigValidationError): String {
     return stringResource(
         when (error) {
-            RuntimeConfigValidationError.BlankName -> R.string.agent_settings_environment_blank_name
-            RuntimeConfigValidationError.InvalidName -> R.string.agent_settings_environment_invalid_name
-            RuntimeConfigValidationError.DuplicateName -> R.string.agent_settings_environment_duplicate_name
+            RuntimeConfigValidationError.BlankName -> R.string.runtime_config_environment_blank_name
+            RuntimeConfigValidationError.InvalidName -> R.string.runtime_config_environment_invalid_name
+            RuntimeConfigValidationError.DuplicateName -> R.string.runtime_config_environment_duplicate_name
         },
     )
 }

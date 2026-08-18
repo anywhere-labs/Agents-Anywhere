@@ -54,7 +54,7 @@ import {
   preserveOptimisticItems,
   timelineClientMessageId,
 } from "@/components/session/optimistic-timeline"
-import { recordsOf, runtimeLabel, sortTimelineItems, textOf } from "@/components/session/session-utils"
+import { recordsOf, runtimeLabel, textOf } from "@/components/session/session-utils"
 import { useWorkspace } from "@/components/workspace-context"
 
 type SessionDetailProps = {
@@ -133,7 +133,7 @@ function sessionStateFromSnapshot(snapshot: SessionSnapshotResponse): SessionRem
   return {
     session: snapshot.session,
     state: snapshot.state ?? null,
-    items: sortTimelineItems(snapshot.timeline.items),
+    items: mergeTimelineItems([], snapshot.timeline.items),
     notices: snapshot.notices,
     nextSeq: snapshot.timeline.nextSeq,
     hasMore: snapshot.timeline.hasMore,

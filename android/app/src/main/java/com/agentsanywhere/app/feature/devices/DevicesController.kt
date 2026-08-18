@@ -1,5 +1,6 @@
 package com.agentsanywhere.app.feature.devices
 
+import android.util.Log
 import com.agentsanywhere.app.api.ApiException
 import com.agentsanywhere.app.api.DevicesApi
 import com.agentsanywhere.app.api.RemoteDevice
@@ -191,6 +192,31 @@ class DevicesController(
         }
     }
 
+    suspend fun configureAndStartDeviceRuntime(
+        connectorId: String,
+        runtime: String,
+        config: Map<String, Any?>,
+    ): DeviceRuntimeSetupResult {
+        return configureAndStartRuntime(
+            saveConfig = { saveDeviceRuntimeConfig(connectorId, runtime, config) },
+            startRuntime = { setDeviceRuntimeActive(connectorId, runtime, true) },
+        ).also { result ->
+            when (result) {
+                is DeviceRuntimeSetupResult.SaveFailed -> Log.w(
+                    TAG,
+                    "Runtime configuration failed for $runtime on $connectorId",
+                    result.cause,
+                )
+                is DeviceRuntimeSetupResult.StartFailed -> Log.w(
+                    TAG,
+                    "Runtime activation failed after configuration for $runtime on $connectorId",
+                    result.cause,
+                )
+                is DeviceRuntimeSetupResult.Success -> Unit
+            }
+        }
+    }
+
     suspend fun setDeviceRuntimeActive(
         connectorId: String,
         runtime: String,
@@ -252,6 +278,10 @@ class DevicesController(
         val accessToken: String,
     )
 
+    private companion object {
+        const val TAG = "DevicesController"
+    }
+
 }
 
 data class DeviceSetupCredential(
@@ -265,7 +295,6 @@ fun RemoteDevice.toAgentDevice(): AgentDevice {
         id = id,
         name = name,
         deviceOs = deviceOs,
-        subtitle = if (status == "online") "Online" else "Offline",
         online = status == "online",
         lastSeenAt = lastSeenAt,
         createdAt = createdAt,

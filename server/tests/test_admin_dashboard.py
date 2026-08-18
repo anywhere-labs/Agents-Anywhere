@@ -194,10 +194,12 @@ def test_admin_dashboard_overview_builds_daily_snapshot(tmp_path):
     assert {item["key"]: item["value"] for item in body["agentBreakdown"]} == {
         "codex": 1.0,
         "claude": 1.0,
+        "dsh": 0.0,
     }
     assert {item["key"]: item["value"] for item in body["sessionAgentBreakdown"]} == {
         "codex": 1.0,
         "claude": 1.0,
+        "dsh": 0.0,
     }
     assert body["settings"]["intensity"] == {"basis": "messages", "lightMax": 1, "mediumMax": 2}
     assert body["settings"]["histogramBins"]["messages"] == [0, 1]
@@ -286,11 +288,56 @@ def test_admin_dashboard_ignores_connector_history_for_usage_metrics(tmp_path):
     assert {item["key"]: item["value"] for item in body["sessionAgentBreakdown"]} == {
         "codex": 0.0,
         "claude": 0.0,
+        "dsh": 0.0,
     }
     assert {item["key"]: item["value"] for item in body["agentBreakdown"]} == {
         "codex": 1.0,
         "claude": 0.0,
+        "dsh": 0.0,
     }
+
+
+def test_admin_dashboard_counts_dsh_separately(tmp_path):
+    client = make_client(tmp_path)
+    store = client.app.state.store
+    headers = register_admin(client)
+    connector_id = create_connector(client, headers, "admin-dsh")
+    current = today()
+
+    async def seed() -> None:
+        await store.set_connector_status(connector_id, "offline", device_os="linux")
+        await configure_runtime(store, connector_id, "dsh")
+        session = await store.upsert_connector_session(
+            connector_id=connector_id,
+            session_id="sess_admin_dsh",
+            runtime="dsh",
+            external_session_id="dsh-native-session",
+            title="Admin DSH",
+            cwd="/repo",
+            status="idle",
+            origin="platform",
+        )
+        await store.upsert_timeline_item(
+            session_id=session.id,
+            item=_platform_user_message(session.id, 1, "dsh", "cm_dsh_1"),
+        )
+
+    asyncio.run(seed())
+    response = client.get(
+        "/admin/dashboard/overview",
+        headers=headers,
+        params={"from": current, "to": current},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert {item["key"]: item["value"] for item in body["agentBreakdown"]} == {
+        "codex": 0.0,
+        "claude": 0.0,
+        "dsh": 1.0,
+    }
+    assert {
+        item["key"]: item["value"] for item in body["sessionAgentBreakdown"]
+    } == {"codex": 0.0, "claude": 0.0, "dsh": 1.0}
 
 
 def test_admin_dashboard_settings_drive_segments(tmp_path):

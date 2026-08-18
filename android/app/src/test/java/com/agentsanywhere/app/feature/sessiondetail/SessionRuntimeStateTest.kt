@@ -5,6 +5,7 @@ import com.agentsanywhere.app.api.RemoteRuntimeModelCatalog
 import com.agentsanywhere.app.api.RemoteRuntimeReasoning
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -51,6 +52,64 @@ class SessionRuntimeStateTest {
         )
         val options = catalog.selectionOptions()
         assertEquals("model-high", options.validatedSelection("model-high"))
-        assertEquals("model-low", options.validatedSelection("missing"))
+        assertEquals("Model · High", options.first { it.selectionId == "model-high" }.label)
+        assertEquals("model-low", options.validatedSelection(null))
+        assertNull(options.validatedSelection("missing"))
+    }
+
+    @Test
+    fun takeoverGatesComposerAndRuntimeSelectionInteraction() {
+        assertFalse(sessionComposerEnabled(false, true, true, true, true))
+        assertTrue(sessionComposerEnabled(true, true, true, false, false))
+        assertFalse(sessionComposerEnabled(true, false, true, true, true))
+        assertFalse(runtimeSelectionEnabled(false, true))
+        assertTrue(runtimeSelectionEnabled(true, true))
+        assertFalse(runtimeSelectionEnabled(true, false))
+    }
+
+    @Test
+    fun codexPermissionIdsMapToWebTranslationsAndExtensionsRemainUntranslated() {
+        assertEquals(RuntimePermissionTranslation.RequestApproval, runtimePermissionTranslation("codex", "request_approval"))
+        assertEquals(RuntimePermissionTranslation.AutoReview, runtimePermissionTranslation("codex", "auto_review"))
+        assertEquals(RuntimePermissionTranslation.FullAccess, runtimePermissionTranslation("codex", "full_access"))
+        assertNull(runtimePermissionTranslation("custom", "custom_permission"))
+    }
+
+    @Test
+    fun claudePermissionsMapByRuntimeOrWebI18nKey() {
+        assertEquals(
+            RuntimePermissionTranslation.ClaudeDefault,
+            runtimePermissionTranslation("claude", "default"),
+        )
+        assertEquals(
+            RuntimePermissionTranslation.ClaudeAcceptEdits,
+            runtimePermissionTranslation("claude-code", "acceptEdits"),
+        )
+        assertEquals(
+            RuntimePermissionTranslation.ClaudePlan,
+            runtimePermissionTranslation(
+                runtime = "future-runtime",
+                permissionId = "future-id",
+                metadata = mapOf(
+                    "i18n" to mapOf(
+                        "labelKey" to "dashboard.new.permissionModes.claude.plan.label",
+                    ),
+                ),
+            ),
+        )
+        assertNull(runtimePermissionTranslation("codex", "default"))
+    }
+
+    @Test
+    fun connectorImplementationErrorsAreClassifiedAsInternal() {
+        assertTrue(
+            isInternalRuntimeError(
+                "openai_codex.errors.InvalidRequestError: JSON-RPC error -32600: " +
+                    "thread id already has an active writer",
+            ),
+        )
+        assertTrue(isInternalRuntimeError("Traceback (most recent call last):"))
+        assertFalse(isInternalRuntimeError("The device is offline."))
+        assertFalse(isInternalRuntimeError(null))
     }
 }

@@ -63,6 +63,7 @@ class DeviceRuntimeView(BaseModel):
     active: bool
     status: RuntimeStatus
     discovery: dict[str, Any]
+    metadata: dict[str, Any] = Field(default_factory=dict)
     schema_: dict[str, Any] | None = Field(default=None, alias="schema")
     uiSchema: dict[str, Any]
     config: dict[str, Any] | None

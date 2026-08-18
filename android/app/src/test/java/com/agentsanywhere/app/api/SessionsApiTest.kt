@@ -269,6 +269,7 @@ class SessionsApiTest {
 
             assertEquals("session/one", history.sessionId)
             assertEquals(3, history.items.single().revision)
+            assertEquals("sha256:hello", history.items.single().contentHash)
             assertEquals("2026-08-10T00:00:02Z", history.items.single().updatedAt)
             assertFalse(history.hasMore)
             assertEquals(12, changes.nextSeq)
@@ -276,6 +277,13 @@ class SessionsApiTest {
             assertEquals("future_status", snapshot.state?.status)
             assertEquals("model-selection", snapshot.state?.selections?.get("model"))
             assertNull(snapshot.state?.selections?.get("permission"))
+            assertEquals(7L, snapshot.catalogs.model?.revision)
+            assertEquals("model-selection", snapshot.catalogs.model?.models?.single()?.selectionId)
+            assertEquals(8L, snapshot.catalogs.permission?.revision)
+            assertEquals(
+                "permission-selection",
+                snapshot.catalogs.permission?.permissions?.single()?.selectionId,
+            )
             assertEquals(4L, snapshot.effectiveCapabilities.revision)
             assertEquals("future.capability", snapshot.effectiveCapabilities.capabilities.last().capabilityId)
             assertEquals("notice-1", snapshot.notices.single().noticeId)
@@ -876,6 +884,7 @@ class SessionsApiTest {
             .put("source", JSONObject().put("runtime", "codex"))
             .put("orderSeq", 40)
             .put("revision", 3)
+            .put("contentHash", "sha256:hello")
             .put("updatedSeq", 9)
             .put("createdAt", "2026-08-10T00:00:01Z")
             .put("updatedAt", "2026-08-10T00:00:02Z")

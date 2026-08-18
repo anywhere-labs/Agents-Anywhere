@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agents-anywhere.dev/contracts/dsh-bridge/1.0/capability-set.schema.json",
+  "type": "object",
+  "required": ["runtime", "revision", "capabilities"],
+  "properties": {
+    "runtime": { "const": "dsh" },
+    "revision": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+    "sessionId": { "type": "string", "minLength": 1 },
+    "capabilities": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["capabilityId", "scope", "runtime", "supported", "available", "allowed"],
+        "properties": {
+          "capabilityId": { "enum": ["session.send_message", "session.interrupt", "session.steer", "session.interaction.approval", "runtime.config", "catalog.model", "catalog.permission", "catalog.effort", "session.commands"] },
+          "scope": { "enum": ["runtime", "session"] },
+          "runtime": { "const": "dsh" },
+          "supported": { "type": "boolean" },
+          "available": { "type": "boolean" },
+          "allowed": { "type": "boolean" }
+        },
+        "additionalProperties": true
+      }
+    },
+    "metadata": { "type": "object" }
+  },
+  "additionalProperties": true
+}

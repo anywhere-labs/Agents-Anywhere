@@ -7,6 +7,7 @@ from agent_server.core.protocol import ProtocolCapability, ProtocolCapabilitySet
 SESSION_SEND_MESSAGE: Final = "session.send_message"
 SESSION_INTERRUPT: Final = "session.interrupt"
 SESSION_STEER: Final = "session.steer"
+SESSION_COMMANDS: Final = "session.commands"
 SESSION_INTERACTION_APPROVAL: Final = "session.interaction.approval"
 RUNTIME_ATTACHMENT: Final = "runtime.attachment"
 RUNTIME_CONFIG: Final = "runtime.config"

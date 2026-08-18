@@ -28,6 +28,11 @@ from agent_server.core.events import (
     events_from_invalidation,
     protocol_event,
 )
+from agent_server.core.capabilities import (
+    SESSION_COMMANDS,
+    SESSION_INTERACTION_APPROVAL,
+    capability_is_usable,
+)
 from agent_server.core.models import (
     BulkArchiveResponse,
     InteractionRespondRequest,
@@ -871,6 +876,29 @@ async def disable_takeover(
 # Frontend performs fuzzy matching locally after reading the full runtime list.
 
 
+async def _require_session_action_capability(
+    db: Store,
+    manager: ConnectorRpcManager,
+    session: SessionView,
+    capability_id: str,
+    *,
+    user_id: str,
+) -> None:
+    effective_session = await with_effective_session_connector_status(manager, session)
+    runtime_capabilities = ProtocolCapabilitySet.model_validate(
+        await db.get_protocol_capabilities(session.connectorId, user_id=user_id)
+    )
+    effective = derive_session_effective_capabilities(
+        session=effective_session,
+        runtime_capabilities=runtime_capabilities,
+    )
+    if not capability_is_usable(effective, capability_id):
+        raise HTTPException(
+            status_code=409,
+            detail=f"session capability is unavailable: {capability_id}",
+        )
+
+
 @router.get("/{session_id}/runtime/commands", response_model=SessionCommandListResponse)
 async def list_session_runtime_commands(
     session_id: str,
@@ -882,6 +910,13 @@ async def list_session_runtime_commands(
         session = await db.get_session(session_id, user_id=user_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="session not found") from None
+    await _require_session_action_capability(
+        db,
+        manager,
+        session,
+        SESSION_COMMANDS,
+        user_id=user_id,
+    )
     params: dict[str, Any] = {
         "sessionId": session.id,
         "runtime": session.runtime,
@@ -927,6 +962,13 @@ async def execute_session_command(
         session = await db.get_session(session_id, user_id=user_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="session not found") from None
+    await _require_session_action_capability(
+        db,
+        manager,
+        session,
+        SESSION_COMMANDS,
+        user_id=user_id,
+    )
     params: dict[str, Any] = {
         "sessionId": session.id,
         "runtime": session.runtime,
@@ -1112,6 +1154,13 @@ async def respond_interaction(
         session = await db.get_session(session_id, user_id=user_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="session not found") from None
+    await _require_session_action_capability(
+        db,
+        manager,
+        session,
+        SESSION_INTERACTION_APPROVAL,
+        user_id=user_id,
+    )
     input_data = await interaction_input_with_runtime_notice_context(
         manager=manager,
         session=session,
