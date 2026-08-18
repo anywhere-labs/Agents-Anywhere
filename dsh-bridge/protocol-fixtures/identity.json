@@ -1,0 +1,36 @@
+{
+  "modelSelections": [
+    {
+      "provider": "deepseek-official",
+      "model": "deepseek-v4-flash",
+      "reasoningEffort": null,
+      "selectionId": "dsh:model:WyJkZWVwc2Vlay1vZmZpY2lhbCIsImRlZXBzZWVrLXY0LWZsYXNoIixudWxsXQ"
+    },
+    {
+      "provider": "提供商:一",
+      "model": "模型/甲",
+      "reasoningEffort": null,
+      "selectionId": "dsh:model:WyLmj5DkvpvllYY65LiAIiwi5qih5Z6LL-eUsiIsbnVsbF0"
+    }
+  ],
+  "permissionSelections": [
+    {
+      "preset": "workspace-write",
+      "selectionId": "dsh:permission:d29ya3NwYWNlLXdyaXRl"
+    }
+  ],
+  "timeline": {
+    "externalSessionId": "aa-session",
+    "projectionKind": "message",
+    "businessId": "msg-1",
+    "itemId": "dsh_1b44fb75409aaf21797dd98c2f5edbfa7935f50b3404d47df11b2985840533c4"
+  },
+  "contentHash": {
+    "value": {
+      "text": "你好",
+      "role": "user"
+    },
+    "canonicalJson": "{\"role\":\"user\",\"text\":\"你好\"}",
+    "sha256": "d15fdad1e2d9d6600708b3196d06b3c03fed91e5dda43bb4ebfcd53a2c97b09c"
+  }
+}
