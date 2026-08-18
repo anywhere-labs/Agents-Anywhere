@@ -83,6 +83,6 @@ pnpm pack --dry-run
 - AA 当前不会根据后续的 `hidden=false` 自动取消已有归档；已在 AA 中归档的普通会话需要手动取消归档一次。
 - 多客户端 user-question 镜像只在目标 DSH 提供 observer 扩展时启用；DSH Desktop 仍可处理原生问题。
 
-## 来源
+## 维护
 
-该插件最初由 [`xipian1216/dsh-aa-bridge`](https://github.com/xipian1216/dsh-aa-bridge) 实现，已从上游提交 `282f7b45d640869696cd9e106e15f91938dc13e6` 迁入本目录。后续代码和发布由 Agents Anywhere 仓库统一维护。
+插件代码、Issue、版本和发布均由 [`anywhere-labs/Agents-Anywhere`](https://github.com/anywhere-labs/Agents-Anywhere) 仓库的 `dsh-bridge/` 目录统一维护。
