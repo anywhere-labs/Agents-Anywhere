@@ -1,0 +1,219 @@
+"use client"
+
+import * as React from "react"
+import { Check, ChevronDown, ChevronRight, Settings2 } from "lucide-react"
+
+import { Button } from "@/components/ui/button"
+import {
+  Drawer,
+  DrawerContent,
+  DrawerDescription,
+  DrawerHeader,
+  DrawerTitle,
+  DrawerTrigger,
+} from "@/components/ui/drawer"
+import { Separator } from "@/components/ui/separator"
+import { cn } from "@/lib/utils"
+
+export type SelectionOption = {
+  id: string
+  label: string
+  description?: string | null
+}
+
+export type ModelSelectionOption = SelectionOption & {
+  reasoningItems: SelectionOption[]
+}
+
+export function SelectionSettingsDrawer({
+  disabled,
+  permissionDisabled = false,
+  modelDisabled = false,
+  reasoningDisabled = false,
+  buttonLabel,
+  title,
+  description,
+  permissionLabel,
+  modelLabel,
+  reasoningLabel,
+  permissionItems,
+  selectedPermission,
+  onPermissionChange,
+  modelItems,
+  selectedModel,
+  selectedReasoning,
+  onModelChange,
+}: {
+  disabled?: boolean
+  permissionDisabled?: boolean
+  modelDisabled?: boolean
+  reasoningDisabled?: boolean
+  buttonLabel: string
+  title: string
+  description?: string
+  permissionLabel: string
+  modelLabel: string
+  reasoningLabel: string
+  permissionItems: SelectionOption[]
+  selectedPermission: string
+  onPermissionChange: (id: string) => void
+  modelItems: ModelSelectionOption[]
+  selectedModel: string
+  selectedReasoning: string
+  onModelChange: (modelId: string, reasoningId: string) => void
+}) {
+  const [open, setOpen] = React.useState(false)
+  const [expandedModelId, setExpandedModelId] = React.useState<string | null>(null)
+
+  const setDrawerOpen = (nextOpen: boolean) => {
+    setOpen(nextOpen)
+    if (!nextOpen) setExpandedModelId(null)
+  }
+
+  return (
+    <Drawer open={open} onOpenChange={setDrawerOpen} direction="bottom">
+      <DrawerTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          disabled={disabled}
+          className="h-8 gap-1.5 rounded-xl px-2.5 text-muted-foreground"
+        >
+          <Settings2 className="size-3.5" />
+          <span className="text-foreground">{buttonLabel}</span>
+        </Button>
+      </DrawerTrigger>
+      <DrawerContent>
+        <DrawerHeader>
+          <DrawerTitle>{title}</DrawerTitle>
+          {description ? <DrawerDescription>{description}</DrawerDescription> : null}
+        </DrawerHeader>
+        <div className="flex max-h-[58vh] flex-col gap-5 overflow-y-auto px-4 pb-4">
+          {modelItems.length > 0 ? (
+            <SelectionSection title={modelLabel}>
+              {modelItems.map((model) => {
+                const hasReasoning = model.reasoningItems.length > 0
+                const expanded = expandedModelId === model.id
+                return (
+                  <div key={model.id} className="flex flex-col gap-1">
+                    <SelectionRow
+                      selected={selectedModel === model.id}
+                      label={model.label}
+                      disabled={modelDisabled}
+                      trailing={hasReasoning
+                        ? expanded
+                          ? <ChevronDown className="size-4" />
+                          : <ChevronRight className="size-4" />
+                        : null}
+                      onClick={() => {
+                        if (hasReasoning) {
+                          setExpandedModelId(expanded ? null : model.id)
+                          return
+                        }
+                        onModelChange(model.id, "")
+                        setDrawerOpen(false)
+                      }}
+                    />
+                    {expanded ? (
+                      <div className="ml-7 flex flex-col gap-1 border-l border-border pl-2">
+                        <p className="px-3 py-1 text-xs font-medium text-muted-foreground">
+                          {reasoningLabel}
+                        </p>
+                        {model.reasoningItems.map((reasoning) => (
+                          <SelectionRow
+                            key={reasoning.id}
+                            selected={selectedModel === model.id && selectedReasoning === reasoning.id}
+                            label={reasoning.label}
+                            disabled={modelDisabled || reasoningDisabled}
+                            onClick={() => {
+                              onModelChange(model.id, reasoning.id)
+                              setDrawerOpen(false)
+                            }}
+                          />
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                )
+              })}
+            </SelectionSection>
+          ) : null}
+
+          {permissionItems.length > 0 && modelItems.length > 0 ? <Separator /> : null}
+
+          {permissionItems.length > 0 ? (
+            <SelectionSection title={permissionLabel}>
+              {permissionItems.map((item) => (
+                <SelectionRow
+                  key={item.id}
+                  selected={selectedPermission === item.id}
+                  label={item.label}
+                  helper={item.description ?? undefined}
+                  disabled={permissionDisabled}
+                  onClick={() => {
+                    onPermissionChange(item.id)
+                    setDrawerOpen(false)
+                  }}
+                />
+              ))}
+            </SelectionSection>
+          ) : null}
+        </div>
+      </DrawerContent>
+    </Drawer>
+  )
+}
+
+function SelectionSection({
+  title,
+  children,
+}: {
+  title: string
+  children: React.ReactNode
+}) {
+  return (
+    <section className="flex flex-col gap-2">
+      <div className="flex min-h-7 items-center justify-between gap-2 px-1">
+        <h3 className="text-sm font-medium text-foreground">{title}</h3>
+      </div>
+      <div className="flex flex-col gap-1">{children}</div>
+    </section>
+  )
+}
+
+function SelectionRow({
+  selected,
+  label,
+  helper,
+  trailing,
+  disabled = false,
+  onClick,
+}: {
+  selected: boolean
+  label: string
+  helper?: string
+  trailing?: React.ReactNode
+  disabled?: boolean
+  onClick: () => void
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={cn(
+        "flex min-h-10 w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm transition-colors",
+        selected ? "bg-accent text-accent-foreground" : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
+        disabled && "cursor-not-allowed opacity-50 hover:bg-transparent hover:text-muted-foreground",
+      )}
+    >
+      <Check className={cn("size-4 shrink-0", selected ? "opacity-100" : "opacity-0")} />
+      <span className="min-w-0 flex-1">
+        <span className="block truncate font-medium">{label}</span>
+        {helper ? <span className="block truncate text-xs opacity-70">{helper}</span> : null}
+      </span>
+      {trailing ? <span className="shrink-0 text-muted-foreground">{trailing}</span> : null}
+    </button>
+  )
+}
