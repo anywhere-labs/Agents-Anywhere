@@ -502,7 +502,7 @@ class SessionsController(
 
 internal fun validateNewSessionDraft(draft: NewSessionCreateDraft): String? {
     if (draft.connectorId.isBlank()) return "Choose a connector before starting."
-    if (draft.runtime !in setOf("codex", "claude")) return "Choose a supported runtime before starting."
+    if (!draft.runtime.isSupportedV2NativeRuntime()) return "Choose a supported runtime before starting."
     if (draft.content.isBlank() && draft.attachments.isEmpty()) return "Enter a message or attach a file before starting."
     if (draft.clientMessageId.isBlank()) return "The client message ID is missing."
     if (draft.attachments.size > MAX_CREATE_ATTACHMENTS) return "You can attach up to $MAX_CREATE_ATTACHMENTS files."

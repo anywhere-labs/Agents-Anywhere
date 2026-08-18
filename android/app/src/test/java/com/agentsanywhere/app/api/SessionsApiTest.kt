@@ -269,6 +269,7 @@ class SessionsApiTest {
 
             assertEquals("session/one", history.sessionId)
             assertEquals(3, history.items.single().revision)
+            assertEquals("sha256:hello", history.items.single().contentHash)
             assertEquals("2026-08-10T00:00:02Z", history.items.single().updatedAt)
             assertFalse(history.hasMore)
             assertEquals(12, changes.nextSeq)
@@ -883,6 +884,7 @@ class SessionsApiTest {
             .put("source", JSONObject().put("runtime", "codex"))
             .put("orderSeq", 40)
             .put("revision", 3)
+            .put("contentHash", "sha256:hello")
             .put("updatedSeq", 9)
             .put("createdAt", "2026-08-10T00:00:01Z")
             .put("updatedAt", "2026-08-10T00:00:02Z")

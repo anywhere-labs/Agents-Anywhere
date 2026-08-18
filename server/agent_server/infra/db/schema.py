@@ -53,6 +53,7 @@ device_runtimes = Table(
     Column("display_name", Text, nullable=False),
     Column("present", Integer, nullable=False, server_default="1"),
     Column("discovery_json", Text, nullable=False),
+    Column("inventory_metadata_json", Text, nullable=False, server_default="{}"),
     Column("config_schema_json", Text),
     Column("ui_schema_json", Text),
     # NULL means the runtime has not been configured. An empty JSON object is
@@ -262,6 +263,10 @@ sessions = Table(
     Column("pinned_at", Text),
     Column("archived", Integer, nullable=False, server_default="0"),
     Column("archived_at", Text),
+    Column("dsh_archive_legacy", Integer, nullable=False, server_default="0"),
+    Column("source_state", Text, nullable=False, server_default="visible"),
+    Column("source_state_at", Text),
+    Column("source_scan_token", Text),
     Column("last_read_seq", Integer, nullable=False, server_default="0"),
     Column("timeline_reset_seq", Integer, nullable=False, server_default="0"),
     Column("last_synced_at", Text),
@@ -271,6 +276,12 @@ sessions = Table(
     Column("updated_seq", Integer, nullable=False),
     Column("created_at", Text, nullable=False),
     Column("updated_at", Text, nullable=False),
+    Index(
+        "idx_sessions_connector_runtime_source_state",
+        "connector_id",
+        "runtime",
+        "source_state",
+    ),
 )
 
 
@@ -345,6 +356,7 @@ dashboard_user_daily_facts = Table(
     Column("unknown_devices", Integer, nullable=False, server_default="0"),
     Column("codex_agents", Integer, nullable=False, server_default="0"),
     Column("claude_agents", Integer, nullable=False, server_default="0"),
+    Column("dsh_agents", Integer, nullable=False, server_default="0"),
     Column("last_activity_at", Text),
     Column("computed_at", Text, nullable=False),
     PrimaryKeyConstraint("date", "user_id"),

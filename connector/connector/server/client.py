@@ -28,6 +28,7 @@ from connector.server.capabilities import protocol_capabilities_from_inventory
 from connector.server.dispatch import ConnectorRequestDispatcher
 from connector.server.errors import ConnectorNetworkError
 from connector.server.ingest import ConnectorIngestClient
+from connector.server.protocol_revision import ProtocolRevisionClock
 from connector.server.rpc import ConnectorRpcChannel, ConnectorWebSocketFrameTooLarge
 from connector.server.runtime_host import ConnectorRuntimeHost
 from connector.server.runtime_sync import RuntimeSyncRunner
@@ -81,6 +82,7 @@ class BackendRpcClient:
         self._terminal_relay = TerminalRelayRunner(config.server_url, self.local_ops)
         self._background_tasks: set[asyncio.Task[Any]] = set()
         self._rpc = ConnectorRpcChannel()
+        self._protocol_revision_clock = ProtocolRevisionClock()
         # Persistent HTTP client: a long-lived connection pool eliminates the
         # 5–10ms TCP/TLS setup that the old `async with AsyncClient(...)`
         # per-call pattern paid on every notification.
@@ -109,9 +111,10 @@ class BackendRpcClient:
             supervisor=self.agent_runtime_supervisor,
             host=self.agent_runtime_host,
             preferences_reader=self._preferences_reader,
-            send_notification=self.send_notification,
+            send_notification=self.send_backend_notification,
             ingest_notifications=self.ingest_notifications,
         )
+        self._runtime_sync_task: asyncio.Task[None] | None = None
 
     async def run_forever(self) -> None:
         self._http_client = self._new_http_client(timeout=60)
@@ -166,10 +169,18 @@ class BackendRpcClient:
                     await asyncio.sleep(self.config.reconnect_seconds)
         finally:
             flush_task.cancel()
+            if self._runtime_sync_task is not None:
+                self._runtime_sync_task.cancel()
             try:
                 await flush_task
             except (asyncio.CancelledError, Exception):
                 pass
+            if self._runtime_sync_task is not None:
+                try:
+                    await self._runtime_sync_task
+                except (asyncio.CancelledError, Exception):
+                    pass
+                self._runtime_sync_task = None
             if self._http_client is not None:
                 await self._http_client.aclose()
                 self._http_client = None
@@ -193,18 +204,25 @@ class BackendRpcClient:
             await self.send_notification("runtime.inventoryUpdated", inventory)
             await self.send_notification(
                 "protocol.capabilitiesUpdated",
-                protocol_capabilities_from_inventory(inventory),
+                protocol_capabilities_from_inventory(
+                    inventory,
+                    revision=self._protocol_revision_clock.next(),
+                ),
             )
             heartbeat_task = asyncio.create_task(self._heartbeat_loop())
-            sync_task = asyncio.create_task(self._runtime_sync.sync_existing_loop())
-            logger.info("connector startup complete; runtime sync started in background")
+            if self._runtime_sync_task is None or self._runtime_sync_task.done():
+                self._runtime_sync_task = asyncio.create_task(
+                    self._runtime_sync.sync_existing_loop()
+                )
+            logger.info(
+                "connector startup complete; runtime sync started in background"
+            )
             try:
                 async for raw_message in ws:
                     message = json.loads(raw_message)
                     self.start_message(message)
             finally:
                 heartbeat_task.cancel()
-                sync_task.cancel()
                 self._rpc.clear_connection()
 
     async def authenticate(self) -> str:
@@ -235,7 +253,11 @@ class BackendRpcClient:
             try:
                 await self.send_notification(method, params)
                 return
-            except (RuntimeError, ConnectionClosed, ConnectorWebSocketFrameTooLarge) as exc:
+            except (
+                RuntimeError,
+                ConnectionClosed,
+                ConnectorWebSocketFrameTooLarge,
+            ) as exc:
                 logger.warning(
                     "backend websocket notification failed; falling back to ingest method={} error={}",
                     method,

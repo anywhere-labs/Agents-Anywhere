@@ -49,7 +49,10 @@ class DeviceRuntimeRepositoryMixin:
             for runtime in runtimes:
                 existing = (
                     await conn.execute(
-                        select(device_runtimes_t.c.runtime_id).where(
+                        select(
+                            device_runtimes_t.c.runtime_id,
+                            device_runtimes_t.c.active,
+                        ).where(
                             device_runtimes_t.c.connector_id == connector_id,
                             device_runtimes_t.c.runtime_id == runtime.runtimeId,
                         )
@@ -60,9 +63,11 @@ class DeviceRuntimeRepositoryMixin:
                     "display_name": runtime.displayName,
                     "present": 1,
                     "discovery_json": _json_dumps(runtime.discovery),
+                    "inventory_metadata_json": _json_dumps(
+                        _public_runtime_metadata(runtime.metadata)
+                    ),
                     "config_schema_json": _json_dumps(runtime.schema_),
                     "ui_schema_json": _json_dumps(runtime.uiSchema),
-                    "status": runtime.status,
                     "last_discovered_at": now,
                     "updated_at": now,
                 }
@@ -74,10 +79,13 @@ class DeviceRuntimeRepositoryMixin:
                             config_json=None,
                             active=0,
                             error_json=None,
+                            status=runtime.status,
                             **values,
                         )
                     )
                 else:
+                    if not bool(existing.active):
+                        values["status"] = runtime.status
                     await conn.execute(
                         update(device_runtimes_t)
                         .where(
@@ -100,7 +108,10 @@ class DeviceRuntimeRepositoryMixin:
             .where(
                 device_runtimes_t.c.connector_id == connector_id,
                 connectors_t.c.revoked == 0,
-                or_(device_runtimes_t.c.present == 1, device_runtimes_t.c.config_json.is_not(None)),
+                or_(
+                    device_runtimes_t.c.present == 1,
+                    device_runtimes_t.c.config_json.is_not(None),
+                ),
             )
             .order_by(device_runtimes_t.c.display_name, device_runtimes_t.c.runtime_id)
         )
@@ -230,6 +241,7 @@ def _runtime_row(row: Any) -> dict[str, Any]:
         "active": bool(row["active"]),
         "status": str(row["status"]),
         "discovery": _json_loads(row["discovery_json"]) or {},
+        "metadata": _json_loads(row["inventory_metadata_json"]) or {},
         "schema": _json_loads(row["config_schema_json"]),
         "uiSchema": _json_loads(row["ui_schema_json"]) or {},
         "config": _json_loads(row["config_json"]),
@@ -237,3 +249,16 @@ def _runtime_row(row: Any) -> dict[str, Any]:
         "lastDiscoveredAt": str(row["last_discovered_at"]),
         "updatedAt": str(row["updated_at"]),
     }
+
+
+def _public_runtime_metadata(value: dict[str, Any]) -> dict[str, Any]:
+    allowed = {
+        "protocolVersion",
+        "profile",
+        "storageMode",
+        "sameSessionWriterLimit",
+        "crossProcessWriterExclusion",
+        "dshVersion",
+        "bridgeVersion",
+    }
+    return {key: item for key, item in value.items() if key in allowed}

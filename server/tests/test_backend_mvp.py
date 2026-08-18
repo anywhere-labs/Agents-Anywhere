@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 from conftest import ApiV2TestClient as TestClient
+from sqlalchemy import text
 from starlette.websockets import WebSocketDisconnect
 
 from agent_server.api.sessions_terminal import _send_terminal_ws_error
@@ -129,7 +130,39 @@ def seed_codex_permission_catalog(app: Any, connector_id: str) -> str:
     return selection_id
 
 
-def create_connector_and_session(client: TestClient, user_id: str = ADMIN_USER):
+def seed_runtime_capabilities(
+    app: Any,
+    connector_id: str,
+    runtime: str,
+    *capability_ids: str,
+) -> None:
+    asyncio.run(
+        app.state.store.update_protocol_capabilities(
+            connector_id,
+            {
+                "revision": 1,
+                "capabilities": [
+                    {
+                        "capabilityId": capability_id,
+                        "version": "1",
+                        "scope": "runtime",
+                        "runtime": runtime,
+                        "supported": True,
+                        "available": True,
+                        "allowed": True,
+                    }
+                    for capability_id in capability_ids
+                ],
+            },
+        )
+    )
+
+
+def create_connector_and_session(
+    client: TestClient,
+    user_id: str = ADMIN_USER,
+    runtime: str = "codex",
+):
     headers = auth_headers(client, user_id=user_id)
     connector_response = client.post("/connectors", headers=headers, json={"name": "dev"})
     assert connector_response.status_code == 200
@@ -145,13 +178,31 @@ def create_connector_and_session(client: TestClient, user_id: str = ADMIN_USER):
     assert auth_response.status_code == 200
     access_token = auth_response.json()["accessToken"]
 
+    seed_runtime_capabilities(
+        client.app,
+        connector_id,
+        runtime,
+        "session.send_message",
+        "session.interrupt",
+        "session.steer",
+        "session.commands",
+        "session.interaction.approval",
+        "catalog.model",
+        "catalog.permission",
+        *([] if runtime == "dsh" else ["runtime.attachment"]),
+    )
+
     session_response = client.post(
         "/sessions",
         headers=headers,
         json={
             "connectorId": connector_id,
-            "runtime": "codex",
-            "externalSessionId": f"thr_{connector_id}_demo",
+            "runtime": runtime,
+            "externalSessionId": (
+                f"thr_{connector_id}_demo"
+                if runtime == "codex"
+                else f"{runtime}_{connector_id}_demo"
+            ),
             "title": "Demo",
             "cwd": "/repo",
         },
@@ -495,6 +546,13 @@ def test_session_create_and_start_preallocates_session_and_passes_selections(tmp
     connector_response = client.post("/connectors", headers=headers, json={"name": "dev"})
     connector_id = connector_response.json()["connector"]["id"]
     model_selection_id = seed_codex_model_catalog(app, connector_id)
+    seed_runtime_capabilities(
+        app,
+        connector_id,
+        "codex",
+        "runtime.attachment",
+        "catalog.model",
+    )
 
     class FakeCreateAndStartRpc:
         def __init__(self) -> None:
@@ -1671,6 +1729,7 @@ def test_session_runtime_command_list_reads_full_runtime_commands(tmp_path):
     connector_id, _access_token, session_id, headers = create_connector_and_session(client)
     fake_rpc = FakeLocalRpc()
     client.app.state.rpc = fake_rpc
+    client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
 
     response = client.get(
         f"/sessions/{session_id}/runtime/commands",
@@ -1698,6 +1757,7 @@ def test_session_command_execute_calls_runtime(tmp_path):
     connector_id, _access_token, session_id, headers = create_connector_and_session(client)
     fake_rpc = FakeLocalRpc()
     client.app.state.rpc = fake_rpc
+    client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
 
     response = client.post(
         f"/sessions/{session_id}/runtime/commands",
@@ -1731,6 +1791,7 @@ def test_session_runtime_command_execute_calls_runtime(tmp_path):
     connector_id, _access_token, session_id, headers = create_connector_and_session(client)
     fake_rpc = FakeLocalRpc()
     client.app.state.rpc = fake_rpc
+    client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
 
     response = client.post(
         f"/sessions/{session_id}/runtime/commands",
@@ -1786,8 +1847,9 @@ def test_session_command_returns_runtime_rpc_error(tmp_path):
     client = make_client(tmp_path)
     _connector_id, _access_token, session_id, headers = create_connector_and_session(client)
     fake_rpc = FakeLocalRpc()
-    fake_rpc.fail = True  # type: ignore[attr-defined]
     client.app.state.rpc = fake_rpc
+    client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
+    fake_rpc.fail = True  # type: ignore[attr-defined]
 
     response = client.post(
         f"/sessions/{session_id}/runtime/commands",
@@ -3877,13 +3939,18 @@ def test_patch_session_selections_routes_to_runtime_and_reads_live_state(tmp_pat
                 "revision": 1,
                 "capabilities": [
                     {
-                        "capabilityId": "catalog.model",
+                        "capabilityId": capability_id,
                         "scope": "runtime",
                         "runtime": "codex",
                         "supported": True,
                         "available": True,
                         "allowed": True,
                     }
+                    for capability_id in (
+                        "catalog.model",
+                        "catalog.permission",
+                        "session.send_message",
+                    )
                 ],
             },
         )
@@ -4251,6 +4318,19 @@ def _create_claude_session(client, connector_id, headers, fake_rpc):
         return session.id
 
     session_id = asyncio.run(_seed())
+    seed_runtime_capabilities(
+        client.app,
+        connector_id,
+        "claude",
+        "session.send_message",
+        "session.interrupt",
+        "session.steer",
+        "session.commands",
+        "session.interaction.approval",
+        "catalog.model",
+        "catalog.permission",
+        "runtime.attachment",
+    )
     client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
     return session_id
 
@@ -4316,6 +4396,7 @@ def test_steer_routes_running_codex_session_without_turn_id(tmp_path):
     fake_rpc = FakeLocalRpc()
     client.app.state.rpc = fake_rpc
     asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
+    seed_runtime_capabilities(client.app, connector_id, "codex", "session.steer")
     client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
     fake_rpc.runtime_states[session_id] = {
         "sessionId": session_id,
@@ -4348,12 +4429,76 @@ def test_steer_routes_running_codex_session_without_turn_id(tmp_path):
     assert asyncio.run(client.app.state.store.get_active_run(session_id)) is None
 
 
+def test_running_dsh_steer_is_routed_by_capability(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, _, session_id, headers = create_connector_and_session(
+        client,
+        runtime="dsh",
+    )
+    fake_rpc = FakeLocalRpc()
+    client.app.state.rpc = fake_rpc
+    asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
+    seed_runtime_capabilities(client.app, connector_id, "dsh", "session.steer")
+    client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
+    fake_rpc.runtime_states[session_id] = {
+        "sessionId": session_id,
+        "runtime": "dsh",
+        "externalSessionId": f"dsh_{connector_id}_demo",
+        "status": "running",
+        "selections": {},
+        "metadata": {},
+    }
+
+    response = client.post(
+        f"/sessions/{session_id}/runtime/steer",
+        headers=headers,
+        json={"content": "focus on the bridge"},
+    )
+
+    assert response.status_code == 200, response.text
+    params = wait_for_rpc_method(fake_rpc, "session.steer")[2]
+    assert params["runtime"] == "dsh"
+    assert params["externalSessionId"] == f"dsh_{connector_id}_demo"
+
+
+def test_dsh_attachment_without_capability_never_calls_connector(tmp_path):
+    client = make_client(tmp_path)
+    headers = auth_headers(client)
+    connector = client.post("/connectors", headers=headers, json={"name": "dsh"})
+    connector_id = connector.json()["connector"]["id"]
+    fake_rpc = FakeLocalRpc()
+    client.app.state.rpc = fake_rpc
+
+    response = client.post(
+        "/sessions/create-and-start",
+        headers=headers,
+        json={
+            "connectorId": connector_id,
+            "runtime": "dsh",
+            "content": "read this",
+            "attachments": [
+                {
+                    "fileId": "file-inline",
+                    "name": "note.txt",
+                    "mediaType": "text/plain",
+                    "size": 1,
+                    "contentBase64": "eA==",
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 409
+    assert fake_rpc.requests == []
+
+
 def test_steer_rejects_idle_session_and_turn_overrides(tmp_path):
     client = make_client(tmp_path)
     connector_id, _, session_id, headers = create_connector_and_session(client)
     fake_rpc = FakeLocalRpc()
     client.app.state.rpc = fake_rpc
     asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
+    seed_runtime_capabilities(client.app, connector_id, "codex", "session.steer")
     client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
 
     idle_response = client.post(
@@ -5347,6 +5492,7 @@ def test_interaction_respond_carries_runtime(tmp_path):
     ingest_pending_command_approval(client, access_token, session_id)
     fake_rpc = FakeApprovalRpc()
     client.app.state.rpc = fake_rpc
+    client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
     notice_id = interaction_notice_id(client, session_id, headers, "approval")
 
     response = client.post(
@@ -5373,6 +5519,7 @@ def test_runtime_notice_respond_carries_runtime(tmp_path):
     ingest_pending_command_approval(client, access_token, session_id)
     fake_rpc = FakeApprovalRpc()
     client.app.state.rpc = fake_rpc
+    client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
     notice_id = interaction_notice_id(client, session_id, headers, "approval")
 
     list_response = client.get(f"/sessions/{session_id}/runtime/notices", headers=headers)
@@ -5401,6 +5548,7 @@ def test_runtime_notice_respond_returns_not_found_rpc_payload(tmp_path):
     client = make_client(tmp_path)
     _connector_id, _access_token, session_id, headers = create_connector_and_session(client)
     client.app.state.rpc = FakeApprovalRpc(gone=True)
+    client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
 
     response = client.post(
         f"/sessions/{session_id}/runtime/notices/notice_missing/respond",
@@ -5722,6 +5870,72 @@ def test_connector_ingest_archives_local_hidden_session_meta(tmp_path):
     assert state.json()["session"]["archivedAt"] is not None
 
 
+def test_connector_ingest_dsh_hidden_state_is_reversible_without_archiving(tmp_path):
+    client = make_client(tmp_path)
+    _, access_token, _, headers = create_connector_and_session(client)
+    connector_headers = {"Authorization": f"Bearer {access_token}"}
+
+    hidden = client.post(
+        "/connector/ingest",
+        headers=connector_headers,
+        json={
+            "notifications": [
+                {
+                    "method": "session.meta.upsert",
+                    "params": {
+                        "sessionId": "sess_dsh_hidden",
+                        "runtime": "dsh",
+                        "externalSessionId": "dsh_hidden",
+                        "title": "DSH hidden",
+                        "cwd": "/repo",
+                        "metadata": {"localArchived": True},
+                    },
+                }
+            ]
+        },
+    )
+
+    assert hidden.status_code == 200, hidden.text
+    hidden_snapshot = client.get("/sessions/sess_dsh_hidden/snapshot", headers=headers)
+    assert hidden_snapshot.status_code == 200, hidden_snapshot.text
+    assert hidden_snapshot.json()["session"]["archived"] is False
+    listed_ids = {
+        session.id
+        for session in asyncio.run(client.app.state.store.list_sessions(user_id=ADMIN_USER))
+    }
+    assert "sess_dsh_hidden" not in listed_ids
+
+    visible = client.post(
+        "/connector/ingest",
+        headers=connector_headers,
+        json={
+            "notifications": [
+                {
+                    "method": "session.meta.upsert",
+                    "params": {
+                        "sessionId": "sess_dsh_hidden",
+                        "runtime": "dsh",
+                        "externalSessionId": "dsh_hidden",
+                        "title": "DSH visible again",
+                        "cwd": "/repo",
+                        "metadata": {"local_state": "active", "hidden": False},
+                    },
+                }
+            ]
+        },
+    )
+
+    assert visible.status_code == 200, visible.text
+    visible_snapshot = client.get("/sessions/sess_dsh_hidden/snapshot", headers=headers)
+    assert visible_snapshot.status_code == 200, visible_snapshot.text
+    assert visible_snapshot.json()["session"]["archived"] is False
+    listed_ids = {
+        session.id
+        for session in asyncio.run(client.app.state.store.list_sessions(user_id=ADMIN_USER))
+    }
+    assert "sess_dsh_hidden" in listed_ids
+
+
 def test_connector_ingest_ordered_meta_then_timeline_creates_session_before_items(tmp_path):
     client = make_client(tmp_path)
     _, access_token, _, headers = create_connector_and_session(client)
@@ -5885,6 +6099,220 @@ def test_connector_ingest_does_not_overwrite_platform_archive_state(tmp_path):
     state = session_view_for_assertions(client, session_id, headers)
     assert state["session"]["archived"] is True
     assert state["session"]["archivedAt"] is not None
+
+
+def test_dsh_complete_inventory_tracks_missing_without_changing_user_archive(tmp_path):
+    client = make_client(tmp_path)
+    _, access_token, _, headers = create_connector_and_session(client)
+    connector_headers = {"Authorization": f"Bearer {access_token}"}
+
+    seeded = client.post(
+        "/connector/ingest",
+        headers=connector_headers,
+        json={
+            "notifications": [
+                {
+                    "method": "session.meta.upsert",
+                    "params": {
+                        "sessionId": session_id,
+                        "runtime": "dsh",
+                        "externalSessionId": external_id,
+                        "title": session_id,
+                        "cwd": "/repo",
+                    },
+                }
+                for session_id, external_id in (
+                    ("sess_dsh_kept", "dsh-kept"),
+                    ("sess_dsh_missing", "dsh-missing"),
+                )
+            ]
+        },
+    )
+    assert seeded.status_code == 200, seeded.text
+
+    archived = client.post(
+        "/sessions/archive",
+        headers=headers,
+        json=["sess_dsh_kept"],
+    )
+    assert archived.status_code == 200, archived.text
+
+    scan_token = "dsh-inventory-scan-token-0001"
+    reconciled = client.post(
+        "/connector/ingest",
+        headers=connector_headers,
+        json={
+            "notifications": [
+                {
+                    "method": "session.inventory.begin",
+                    "params": {"runtime": "dsh", "scanToken": scan_token},
+                },
+                {
+                    "method": "session.inventory.complete",
+                    "params": {
+                        "runtime": "dsh",
+                        "scanToken": scan_token,
+                        "complete": True,
+                        "sessions": [
+                            {
+                                "sessionId": "sess_dsh_kept",
+                                "externalSessionId": "dsh-kept",
+                                "sourceState": "visible",
+                            }
+                        ],
+                    },
+                },
+            ]
+        },
+    )
+    assert reconciled.status_code == 200, reconciled.text
+    assert reconciled.json()["accepted"] == 2
+
+    listed_ids = {
+        session.id
+        for session in asyncio.run(client.app.state.store.list_sessions(user_id=ADMIN_USER))
+    }
+    assert "sess_dsh_kept" in listed_ids
+    assert "sess_dsh_missing" not in listed_ids
+    kept = client.get("/sessions/sess_dsh_kept/snapshot", headers=headers)
+    missing = client.get("/sessions/sess_dsh_missing/snapshot", headers=headers)
+    assert kept.status_code == 200, kept.text
+    assert missing.status_code == 200, missing.text
+    assert kept.json()["session"]["archived"] is True
+    assert missing.json()["session"]["archived"] is False
+
+    next_scan_token = "dsh-inventory-scan-token-0002"
+    reappeared = client.post(
+        "/connector/ingest",
+        headers=connector_headers,
+        json={
+            "notifications": [
+                {
+                    "method": "session.inventory.begin",
+                    "params": {"runtime": "dsh", "scanToken": next_scan_token},
+                },
+                {
+                    "method": "session.inventory.complete",
+                    "params": {
+                        "runtime": "dsh",
+                        "scanToken": next_scan_token,
+                        "complete": True,
+                        "sessions": [
+                            {
+                                "sessionId": "sess_dsh_kept",
+                                "externalSessionId": "dsh-kept",
+                                "sourceState": "visible",
+                            },
+                            {
+                                "sessionId": "sess_dsh_missing",
+                                "externalSessionId": "dsh-missing",
+                                "sourceState": "visible",
+                            },
+                        ],
+                    },
+                },
+            ]
+        },
+    )
+    assert reappeared.status_code == 200, reappeared.text
+
+    listed_ids = {
+        session.id
+        for session in asyncio.run(client.app.state.store.list_sessions(user_id=ADMIN_USER))
+    }
+    assert {"sess_dsh_kept", "sess_dsh_missing"}.issubset(listed_ids)
+    kept = client.get("/sessions/sess_dsh_kept/snapshot", headers=headers)
+    assert kept.status_code == 200, kept.text
+    assert kept.json()["session"]["archived"] is True
+
+
+def test_dsh_visible_inventory_recovers_legacy_archive_but_preserves_user_archive(tmp_path):
+    client = make_client(tmp_path)
+    _, access_token, _, headers = create_connector_and_session(client)
+    connector_headers = {"Authorization": f"Bearer {access_token}"}
+
+    seeded = client.post(
+        "/connector/ingest",
+        headers=connector_headers,
+        json={
+            "notifications": [
+                {
+                    "method": "session.meta.upsert",
+                    "params": {
+                        "sessionId": session_id,
+                        "runtime": "dsh",
+                        "externalSessionId": external_id,
+                        "title": session_id,
+                    },
+                }
+                for session_id, external_id in (
+                    ("sess_dsh_legacy_archive", "dsh-legacy-archive"),
+                    ("sess_dsh_user_archive", "dsh-user-archive"),
+                )
+            ]
+        },
+    )
+    assert seeded.status_code == 200, seeded.text
+
+    async def mark_archives() -> None:
+        async with client.app.state.store.engine.begin() as connection:
+            await connection.execute(
+                text(
+                    "UPDATE sessions SET archived = 1, archived_at = :now, "
+                    "dsh_archive_legacy = 1 WHERE id = 'sess_dsh_legacy_archive'"
+                ),
+                {"now": "2026-08-16T00:00:00Z"},
+            )
+
+    asyncio.run(mark_archives())
+    user_archived = client.post(
+        "/sessions/archive",
+        headers=headers,
+        json=["sess_dsh_user_archive"],
+    )
+    assert user_archived.status_code == 200, user_archived.text
+
+    scan_token = "dsh-legacy-archive-recovery"
+    reconciled = client.post(
+        "/connector/ingest",
+        headers=connector_headers,
+        json={
+            "notifications": [
+                {
+                    "method": "session.inventory.begin",
+                    "params": {"runtime": "dsh", "scanToken": scan_token},
+                },
+                {
+                    "method": "session.inventory.complete",
+                    "params": {
+                        "runtime": "dsh",
+                        "scanToken": scan_token,
+                        "complete": True,
+                        "sessions": [
+                            {
+                                "sessionId": "sess_dsh_legacy_archive",
+                                "externalSessionId": "dsh-legacy-archive",
+                                "sourceState": "visible",
+                            },
+                            {
+                                "sessionId": "sess_dsh_user_archive",
+                                "externalSessionId": "dsh-user-archive",
+                                "sourceState": "visible",
+                            },
+                        ],
+                    },
+                },
+            ]
+        },
+    )
+    assert reconciled.status_code == 200, reconciled.text
+
+    legacy = client.get("/sessions/sess_dsh_legacy_archive/snapshot", headers=headers)
+    user = client.get("/sessions/sess_dsh_user_archive/snapshot", headers=headers)
+    assert legacy.status_code == 200, legacy.text
+    assert user.status_code == 200, user.text
+    assert legacy.json()["session"]["archived"] is False
+    assert user.json()["session"]["archived"] is True
 
 
 def test_connector_http_ingest_accepts_state_update_before_external_id(tmp_path):

@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agents-anywhere.dev/contracts/dsh-bridge/1.0/notification.schema.json",
+  "title": "DSH bridge notification",
+  "type": "object",
+  "required": ["jsonrpc", "method", "params"],
+  "properties": {
+    "jsonrpc": { "const": "2.0" },
+    "method": {
+      "enum": [
+        "session.meta.upsert", "session.state.update",
+        "runtime.capabilities.update", "session.capabilities.update",
+        "catalog.model.update", "catalog.permission.update", "timeline.sync",
+        "timeline.item.upsert", "notice.upsert", "runtime.error",
+        "$/cancelRequest"
+      ]
+    },
+    "params": { "type": "object" }
+  },
+  "not": { "required": ["id"] },
+  "additionalProperties": false
+}

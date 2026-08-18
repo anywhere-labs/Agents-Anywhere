@@ -50,6 +50,60 @@ class SessionTimelineProjectionTest {
         assertEquals(emptyList<TimelineMessage>(), merged.pending)
     }
 
+    @Test
+    fun dshFinalAssistantMessageReplacesLiveActivityImmediately() {
+        val activity = item("activity", orderSeq = 2, updatedSeq = 2).copy(
+            revision = 3,
+            contentHash = "sha256:same-reply",
+            source = JSONObject()
+                .put("runtime", "dsh")
+                .put("itemType", "assistant_activity"),
+        )
+        val final = item("final", orderSeq = 3, updatedSeq = 3).copy(
+            contentHash = "sha256:same-reply",
+            source = JSONObject()
+                .put("runtime", "dsh")
+                .put("itemType", "message"),
+        )
+
+        val live = mergeRemoteTimelineItems(
+            currentOrdering = emptyList(),
+            currentMessages = emptyList(),
+            incoming = listOf(activity),
+            replace = false,
+        )
+        val completed = mergeRemoteTimelineItems(
+            currentOrdering = live.orderingItems,
+            currentMessages = live.messages,
+            incoming = listOf(final),
+            replace = false,
+        )
+
+        assertEquals(listOf("final"), completed.messages.map { it.id })
+    }
+
+    @Test
+    fun identicalDshRepliesAcrossUserTurnRemainDistinct() {
+        val first = item("first", orderSeq = 1, updatedSeq = 1).copy(
+            contentHash = "sha256:same-reply",
+            source = JSONObject().put("runtime", "dsh").put("itemType", "message"),
+        )
+        val user = item("user", orderSeq = 2, updatedSeq = 2).copy(role = "user")
+        val second = item("second", orderSeq = 3, updatedSeq = 3).copy(
+            contentHash = "sha256:same-reply",
+            source = JSONObject().put("runtime", "dsh").put("itemType", "message"),
+        )
+
+        val projection = mergeRemoteTimelineItems(
+            currentOrdering = emptyList(),
+            currentMessages = emptyList(),
+            incoming = listOf(first, user, second),
+            replace = true,
+        )
+
+        assertEquals(listOf("first", "user", "second"), projection.messages.map { it.id })
+    }
+
     private fun item(
         id: String,
         orderSeq: Int,

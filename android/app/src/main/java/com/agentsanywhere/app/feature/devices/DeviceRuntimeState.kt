@@ -20,6 +20,7 @@ data class DeviceRuntime(
     val active: Boolean,
     val status: DeviceRuntimeStatus,
     val discovery: Map<String, Any?>,
+    val metadata: Map<String, Any?> = emptyMap(),
     val schema: Map<String, Any?>?,
     val uiSchema: Map<String, Any?>,
     val config: Map<String, Any?>?,
@@ -223,6 +224,7 @@ internal fun RemoteDeviceRuntime.toDeviceRuntime(): DeviceRuntime {
         active = active,
         status = status.toDeviceRuntimeStatus(),
         discovery = discovery,
+        metadata = metadata,
         schema = schema,
         uiSchema = uiSchema,
         config = config,
@@ -236,6 +238,7 @@ private val deviceRuntimeComparator = compareBy<DeviceRuntime> {
     when (it.id) {
         "codex" -> 0
         "claude" -> 1
+        "dsh" -> 2
         else -> 99
     }
 }.thenBy { it.displayName.lowercase() }

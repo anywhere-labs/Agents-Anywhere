@@ -313,6 +313,9 @@ def test_v2_0_database_upgrades_through_current_revision(tmp_path) -> None:
         ("v2_7", "v2_8"),
         ("v2_8", "v2_9"),
         ("v2_9", "v2_10"),
+        ("v2_10", "v2_11"),
+        ("v2_11", "v2_12"),
+        ("v2_12", "v2_13"),
     ],
 )
 def test_every_adjacent_schema_upgrade(
@@ -484,6 +487,144 @@ def test_v2_10_adds_timeline_reset_watermark(tmp_path) -> None:
             assert connection.execute(
                 text("SELECT version_num FROM alembic_version")
             ).scalar_one() == "v2_10"
+    finally:
+        engine.dispose()
+
+
+def test_v2_11_adds_dsh_facts_and_runtime_metadata(tmp_path) -> None:
+    path = tmp_path / "v2_11-dsh.sqlite3"
+    upgrade_database(db_url=_sqlite_url(path), revision="v2_10")
+
+    upgrade_database(db_url=_sqlite_url(path), revision="v2_11")
+
+    engine = create_engine(f"sqlite:///{path}")
+    try:
+        inspector = inspect(engine)
+        fact_columns = {
+            column["name"]
+            for column in inspector.get_columns("dashboard_user_daily_facts")
+        }
+        runtime_columns = {
+            column["name"] for column in inspector.get_columns("device_runtimes")
+        }
+        assert "dsh_agents" in fact_columns
+        assert "inventory_metadata_json" in runtime_columns
+        with engine.connect() as connection:
+            assert connection.execute(
+                text("SELECT version_num FROM alembic_version")
+            ).scalar_one() == "v2_11"
+    finally:
+        engine.dispose()
+
+
+def test_v2_12_adds_dsh_source_state_without_rewriting_archives(tmp_path) -> None:
+    path = tmp_path / "v2_12-dsh-source-state.sqlite3"
+    upgrade_database(db_url=_sqlite_url(path), revision="v2_11")
+    engine = create_engine(f"sqlite:///{path}")
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO connectors "
+                    "(id, user_id, name, status, token_hash, token_prefix, revoked, created_at, updated_at) "
+                    "VALUES ('conn_dsh_source', 'user_dsh_source', 'DSH', 'offline', "
+                    "'hash', 'cxt_', 0, :now, :now)"
+                ),
+                {"now": "2026-08-16T00:00:00Z"},
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO sessions "
+                    "(id, connector_id, runtime, origin, status, takeover, pinned, archived, "
+                    "last_read_seq, seq, updated_seq, created_at, updated_at) "
+                    "VALUES ('sess_dsh_source', 'conn_dsh_source', 'dsh', 'connector_import', "
+                    "'idle', 0, 0, 1, 0, 1, 1, :now, :now)"
+                ),
+                {"now": "2026-08-16T00:00:00Z"},
+            )
+    finally:
+        engine.dispose()
+
+    upgrade_database(db_url=_sqlite_url(path), revision="v2_12")
+
+    engine = create_engine(f"sqlite:///{path}")
+    try:
+        columns = {column["name"] for column in inspect(engine).get_columns("sessions")}
+        assert {"source_state", "source_state_at", "source_scan_token"}.issubset(columns)
+        with engine.connect() as connection:
+            row = connection.execute(
+                text(
+                    "SELECT archived, source_state, source_state_at, source_scan_token "
+                    "FROM sessions WHERE id = 'sess_dsh_source'"
+                )
+            ).one()
+            assert tuple(row) == (1, "visible", None, None)
+            assert connection.execute(
+                text("SELECT version_num FROM alembic_version")
+            ).scalar_one() == "v2_12"
+    finally:
+        engine.dispose()
+
+
+def test_v2_13_marks_only_existing_dsh_archives_as_legacy(tmp_path) -> None:
+    path = tmp_path / "v2_13-dsh-legacy-archive.sqlite3"
+    upgrade_database(db_url=_sqlite_url(path), revision="v2_12")
+    engine = create_engine(f"sqlite:///{path}")
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO connectors "
+                    "(id, user_id, name, status, token_hash, token_prefix, revoked, created_at, updated_at) "
+                    "VALUES ('conn_dsh_legacy', 'user_dsh_legacy', 'DSH', 'offline', "
+                    "'hash', 'cxt_', 0, :now, :now)"
+                ),
+                {"now": "2026-08-16T00:00:00Z"},
+            )
+            for session_id, runtime, archived in (
+                ("sess_dsh_archived", "dsh", 1),
+                ("sess_dsh_active", "dsh", 0),
+                ("sess_codex_archived", "codex", 1),
+            ):
+                connection.execute(
+                    text(
+                        "INSERT INTO sessions "
+                        "(id, connector_id, runtime, origin, status, takeover, pinned, archived, "
+                        "last_read_seq, seq, updated_seq, created_at, updated_at) "
+                        "VALUES (:id, 'conn_dsh_legacy', :runtime, 'connector_import', "
+                        "'idle', 0, 0, :archived, 0, 1, 1, :now, :now)"
+                    ),
+                    {
+                        "id": session_id,
+                        "runtime": runtime,
+                        "archived": archived,
+                        "now": "2026-08-16T00:00:00Z",
+                    },
+                )
+    finally:
+        engine.dispose()
+
+    upgrade_database(db_url=_sqlite_url(path), revision="v2_13")
+
+    engine = create_engine(f"sqlite:///{path}")
+    try:
+        columns = {column["name"] for column in inspect(engine).get_columns("sessions")}
+        assert "dsh_archive_legacy" in columns
+        with engine.connect() as connection:
+            rows = connection.execute(
+                text(
+                    "SELECT id, archived, dsh_archive_legacy FROM sessions "
+                    "ORDER BY id"
+                )
+            ).all()
+            assert [tuple(row) for row in rows] == [
+                ("sess_codex_archived", 1, 0),
+                ("sess_dsh_active", 0, 0),
+                ("sess_dsh_archived", 1, 1),
+            ]
+            assert connection.execute(
+                text("SELECT version_num FROM alembic_version")
+            ).scalar_one() == "v2_13"
     finally:
         engine.dispose()
 

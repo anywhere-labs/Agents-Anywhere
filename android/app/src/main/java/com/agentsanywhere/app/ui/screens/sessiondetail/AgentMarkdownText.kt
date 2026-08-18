@@ -64,6 +64,7 @@ import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import com.agentsanywhere.app.R
 import com.agentsanywhere.app.ui.designsystem.noRippleClickable
@@ -552,8 +553,11 @@ private fun SelectableMarkdownCodeBlock(
     RegisterSessionSelectionCopyToken(token = token, replacement = code)
 
     BoxWithConstraints(Modifier.fillMaxWidth()) {
-        val placeholderWidth = with(density) { maxWidth.toSp() }
-        val placeholderHeight = with(density) { height.toSp() }
+        // Anchor placeholder geometry to a physical 1.dp font unit so device
+        // font scaling cannot enlarge the embedded code panel.
+        val layoutUnitFontSize = with(density) { 1.dp.toSp() }
+        val placeholderWidth = maxWidth.value.em
+        val placeholderHeight = height.value.em
         val text = remember(token) {
             buildAnnotatedString {
                 appendInlineContent(token, token)
@@ -576,7 +580,7 @@ private fun SelectableMarkdownCodeBlock(
             modifier = Modifier.fillMaxWidth(),
             style = TextStyle(
                 color = Color.Transparent,
-                fontSize = 1.sp,
+                fontSize = layoutUnitFontSize,
                 lineHeight = placeholderHeight,
             ),
             inlineContent = inlineContent,

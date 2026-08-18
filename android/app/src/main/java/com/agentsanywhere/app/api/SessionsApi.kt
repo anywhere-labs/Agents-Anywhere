@@ -833,6 +833,7 @@ class SessionsApi(
             updatedSeq = optInt("updatedSeq", 0),
             createdAt = optString("createdAt", ""),
             updatedAt = optNullableString("updatedAt"),
+            contentHash = optString("contentHash", ""),
         )
     }
 

@@ -6,6 +6,8 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import Any
 
+from loguru import logger
+
 from agent_server.core.device_runtime import (
     DeviceRuntimeView,
     RuntimeConfigValidationError,
@@ -174,7 +176,6 @@ class DeviceRuntimeService:
                     )
                 if not await self._manager.is_online(connector_id):
                     raise DeviceRuntimeOfflineError("connector is offline")
-                self._validate(runtime.config, self._schema(runtime))
                 await self._store.set_device_runtime_active(
                     connector_id, runtime_id, True
                 )
@@ -214,7 +215,6 @@ class DeviceRuntimeService:
             )
             if current.status == "running":
                 return current
-            self._validate(current.config, self._schema(current))
             started = await self._start_locked(current)
             await self._publish(connector_id, "runtime.ensure_running")
             return started
@@ -270,6 +270,15 @@ class DeviceRuntimeService:
         }:
             raise ValueError(f"unsupported runtime status: {status}")
         try:
+            current = DeviceRuntimeView.model_validate(
+                await self._store.get_device_runtime(connector_id, runtime_id)
+            )
+            if current.active and status in {
+                "discovering",
+                "available",
+                "unavailable",
+            }:
+                return current
             runtime = DeviceRuntimeView.model_validate(
                 await self._store.set_device_runtime_status(
                     connector_id,
@@ -310,9 +319,16 @@ class DeviceRuntimeService:
                 if current.config is None:
                     continue
                 try:
-                    self._validate(current.config, self._schema(current))
                     await self._start_locked(current)
-                except DeviceRuntimeError:
+                except DeviceRuntimeError as exc:
+                    logger.warning(
+                        "active runtime reconciliation failed "
+                        "connector_id={} runtime_id={} error_code={} error={}",
+                        connector_id,
+                        current.runtimeId,
+                        exc.code,
+                        exc.message,
+                    )
                     continue
         await self._publish(connector_id, "runtime.reconciled")
 

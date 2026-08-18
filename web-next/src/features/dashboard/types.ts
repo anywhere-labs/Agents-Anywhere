@@ -62,6 +62,7 @@ export type DeviceRuntimeView = {
   active: boolean;
   status: DeviceRuntimeStatus;
   discovery: Record<string, unknown>;
+  metadata: Record<string, unknown>;
   schema: Record<string, unknown> | null;
   uiSchema: Record<string, unknown>;
   config: Record<string, unknown> | null;

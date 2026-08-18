@@ -7,7 +7,8 @@
             "codex",
             "claude",
             "opencode",
-            "acp"
+            "acp",
+            "dsh"
           ],
           "title": "Runtime",
           "type": "string"

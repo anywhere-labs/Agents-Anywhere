@@ -83,6 +83,7 @@ class ConnectorIngestService:
         protocol_capabilities_changed = False
         runtime_scoped_capabilities_changed = False
         saw_runtime_inventory = False
+        saw_dsh_session_inventory_complete = False
         for index, notification in enumerate(payload.notifications):
             try:
                 effect = await self.apply_ingest_notification(
@@ -113,6 +114,8 @@ class ConnectorIngestService:
                 continue
             if notification.method == "runtime.statusChanged":
                 continue
+            if notification.method == "session.inventory.complete":
+                saw_dsh_session_inventory_complete = True
             effects.append(effect)
             if notification.method == "protocol.capabilitiesUpdated":
                 protocol_capabilities_changed = (
@@ -154,6 +157,13 @@ class ConnectorIngestService:
                 self._timeline_broker,
                 connector_id=connector_id,
                 reason="runtime.capabilities",
+            )
+        if saw_dsh_session_inventory_complete:
+            await publish_dashboard_changed(
+                self._store,
+                self._timeline_broker,
+                connector_id=connector_id,
+                reason="dsh.session.inventory",
             )
         if saw_runtime_inventory:
             import asyncio
@@ -215,6 +225,13 @@ class ConnectorIngestService:
             params=params,
         )
         await self._publish_effects([effect])
+        if method == "session.inventory.complete":
+            await publish_dashboard_changed(
+                self._store,
+                self._timeline_broker,
+                connector_id=connector_id,
+                reason="dsh.session.inventory",
+            )
         if method == "protocol.capabilitiesUpdated" and effect.protocol_changed:
             await publish_connector_session_capabilities(
                 self._store,
