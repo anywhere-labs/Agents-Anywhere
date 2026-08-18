@@ -16,7 +16,7 @@ const MAX_FRAME_BYTES = 32 * 1024 * 1024;
 const BRIDGE_VERSION = '0.1.0';
 const RUNTIME_CAPABILITIES_REVISION = 1;
 const DSH_RUNTIME_VERSION = createRequire(import.meta.url)('@deepseek-ai/dsh-agent/package.json').version;
-/** Agents Anywhere SDK service hosted by the DSH Web process. */
+/** Agents Anywhere SDK service hosted by the DSH Desktop process. */
 export class AgentsAnywhereBridgeService extends Service {
     static Config = z.object({
         stateRoot: z.string().required(),
@@ -140,11 +140,11 @@ export class AgentsAnywhereBridgeService extends Service {
             throw new BridgeError('INVALID_PARAMS', '$/cancelRequest requires a valid id.', { retryable: false });
         this.activeRequests.get(`${typeof id}:${String(id)}`)?.abort(new Error('request cancelled by Connector'));
     }
-    /** Reset connection state after a Connector disconnect without stopping DSH Web. */
+    /** Reset connection state after a Connector disconnect without stopping DSH Desktop. */
     async eof() {
         await this.disconnected('connector-eof');
     }
-    /** Log an unrecoverable connection failure without stopping DSH Web. */
+    /** Log an unrecoverable connection failure without stopping DSH Desktop. */
     async fatal(error) {
         this.ctx.logger.warn(`Agents Anywhere bridge connection failed: ${error.data.code}`);
     }

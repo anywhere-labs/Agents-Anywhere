@@ -60,7 +60,7 @@ export interface MessageOperation {
   selections?: RequestedSelections
 }
 
-/** Browser prompt part forwarded from a DSH Web follower. */
+/** Prompt part forwarded from a DSH Desktop follower. */
 export type ApiPromptPart =
   | { type: 'text'; text: string }
   | { type: 'image'; mediaType: ImageMediaType; data: string; name?: string }

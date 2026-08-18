@@ -19,7 +19,7 @@ export interface Config {
     maxCommandLimit?: number;
     maxPendingInteractions?: number;
 }
-/** Agents Anywhere SDK service hosted by the DSH Web process. */
+/** Agents Anywhere SDK service hosted by the DSH Desktop process. */
 export declare class AgentsAnywhereBridgeService extends Service implements LoopbackServerHandler {
     static Config: z<Config>;
     static inject: string[];
@@ -47,9 +47,9 @@ export declare class AgentsAnywhereBridgeService extends Service implements Loop
     request(frame: JsonRpcRequest): Promise<unknown>;
     /** Handle supported Connector notifications. */
     notification(frame: JsonRpcNotification): Promise<void>;
-    /** Reset connection state after a Connector disconnect without stopping DSH Web. */
+    /** Reset connection state after a Connector disconnect without stopping DSH Desktop. */
     eof(): Promise<void>;
-    /** Log an unrecoverable connection failure without stopping DSH Web. */
+    /** Log an unrecoverable connection failure without stopping DSH Desktop. */
     fatal(error: BridgeError): Promise<void>;
     /** Abort connection-scoped work and permit the next authenticated Connector. */
     disconnected(reason: string): Promise<void>;

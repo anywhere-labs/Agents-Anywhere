@@ -36,14 +36,14 @@ async def discover(values: dict[str, Any]) -> DshDiscovery:
             False,
             False,
             None,
-            reason=f"Start dsh web with the Agents Anywhere plugin ({exc})",
+            reason=f"Start DSH Desktop with the Agents Anywhere plugin ({exc})",
         )
     if not _process_exists(endpoint.pid):
         return DshDiscovery(
             False,
             False,
             None,
-            reason="The DSH Web bridge endpoint is stale; restart dsh web",
+            reason="The DSH Desktop bridge endpoint is stale; restart DSH Desktop",
         )
     return DshDiscovery(
         True,

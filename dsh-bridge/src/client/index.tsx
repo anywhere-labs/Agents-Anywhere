@@ -1,4 +1,4 @@
-/** Browser entry for the Agents Anywhere bridge status surface. */
+/** DSH Desktop client entry for the Agents Anywhere bridge status surface. */
 
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 import type { SessionListState } from '@deepseek-ai/dsh-client-runtime/client'
@@ -8,7 +8,7 @@ import { useState, type CSSProperties } from 'react'
 /** Client services required by the status entry. */
 export const inject = ['slots', 'sessions']
 
-/** Register a visible AA Bridge status control in the global Web shell. */
+/** Register a visible AA Bridge status control in the DSH Desktop shell. */
 export function apply(ctx: ClientContext): void {
   ctx.slots.inject('shell.overlay', () => ctx.slots.register({
     name: 'shell.overlay',
@@ -29,7 +29,7 @@ function AgentsAnywhereBridgeStatus({ useSessions }: StatusProps & { ctx: Client
       {open && (
         <section style={panelStyle} role="status" aria-label="Agents Anywhere Bridge 状态">
           <strong style={titleStyle}>Agents Anywhere Bridge</strong>
-          <span style={copyStyle}>SDK 服务已由 DSH Web 托管</span>
+          <span style={copyStyle}>SDK 服务已由 DSH Desktop 托管</span>
           <span style={hintStyle}>Agents Anywhere Connector 通过本机端点连接此进程。</span>
           <span style={hintStyle}>{sessionId === undefined ? '当前未选择会话。' : `当前会话：${sessionId}`}</span>
         </section>

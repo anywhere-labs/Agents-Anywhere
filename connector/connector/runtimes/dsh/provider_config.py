@@ -21,7 +21,7 @@ def dsh_config_schema() -> dict[str, Any]:
                 "type": "string",
                 "minLength": 1,
                 "title": "DSH home",
-                "description": "Optional absolute DSH_HOME used by the running DSH Web process.",
+                "description": "Optional absolute DSH_HOME used by the running DSH Desktop process.",
             },
             "startupTimeoutMs": {
                 **positive_timeout,

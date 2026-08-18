@@ -9,7 +9,7 @@ window.__ModuleLoader__.load({
 		//#region src/client/index.tsx
 		/** Client services required by the status entry. */
 		const inject = ["slots", "sessions"];
-		/** Register a visible AA Bridge status control in the global Web shell. */
+		/** Register a visible AA Bridge status control in the DSH Desktop shell. */
 		function apply(ctx) {
 			ctx.slots.inject("shell.overlay", () => ctx.slots.register({
 				name: "shell.overlay",
@@ -37,7 +37,7 @@ window.__ModuleLoader__.load({
 						}),
 						/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 							style: copyStyle,
-							children: "SDK 服务已由 DSH Web 托管"
+							children: "SDK 服务已由 DSH Desktop 托管"
 						}),
 						/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 							style: hintStyle,

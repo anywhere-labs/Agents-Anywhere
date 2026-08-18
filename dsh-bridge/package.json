@@ -1,7 +1,7 @@
 {
   "name": "@agents-anywhere/dsh-bridge",
   "version": "0.1.0",
-  "description": "Agents Anywhere bridge and Web status UI for DeepSeek Harness",
+  "description": "Agents Anywhere bridge and Desktop status UI for DeepSeek Harness",
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/types/index.d.ts",

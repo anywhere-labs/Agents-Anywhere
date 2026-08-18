@@ -69,7 +69,7 @@ interface ResolvedConfig {
   maxPendingInteractions: number
 }
 
-/** Agents Anywhere SDK service hosted by the DSH Web process. */
+/** Agents Anywhere SDK service hosted by the DSH Desktop process. */
 export class AgentsAnywhereBridgeService extends Service implements LoopbackServerHandler {
   static Config: z<Config> = z.object({
     stateRoot: z.string().required(),
@@ -220,12 +220,12 @@ export class AgentsAnywhereBridgeService extends Service implements LoopbackServ
     this.activeRequests.get(`${typeof id}:${String(id)}`)?.abort(new Error('request cancelled by Connector'))
   }
 
-  /** Reset connection state after a Connector disconnect without stopping DSH Web. */
+  /** Reset connection state after a Connector disconnect without stopping DSH Desktop. */
   async eof(): Promise<void> {
     await this.disconnected('connector-eof')
   }
 
-  /** Log an unrecoverable connection failure without stopping DSH Web. */
+  /** Log an unrecoverable connection failure without stopping DSH Desktop. */
   async fatal(error: BridgeError): Promise<void> {
     this.ctx.logger.warn(`Agents Anywhere bridge connection failed: ${error.data.code}`)
   }

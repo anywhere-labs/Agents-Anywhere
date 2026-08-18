@@ -517,7 +517,7 @@ class DshRuntime(AgentRuntime):
             endpoint = discovery.load_endpoint(values)
         except (OSError, ValueError) as exc:
             raise RuntimeUnavailableError(
-                "DSH Web bridge endpoint is unavailable; start dsh web"
+                "DSH Desktop bridge endpoint is unavailable; start DSH Desktop"
             ) from exc
         client = BridgeClient(
             endpoint=endpoint,

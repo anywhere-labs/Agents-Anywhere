@@ -31,7 +31,7 @@ class BridgeRpcError(RuntimeError):
 
 
 class BridgeClient:
-    """Connect to one authenticated DSH Web bridge endpoint."""
+    """Connect to one authenticated DSH Desktop bridge endpoint."""
 
     def __init__(
         self,
@@ -76,7 +76,7 @@ class BridgeClient:
                 self.startup_timeout,
             )
         except (OSError, TimeoutError) as exc:
-            raise ConnectionError("DSH Web bridge endpoint is unavailable") from exc
+            raise ConnectionError("DSH Desktop bridge endpoint is unavailable") from exc
         self._reader_task = asyncio.create_task(
             self._read_frames(), name="dsh-bridge-loopback"
         )
