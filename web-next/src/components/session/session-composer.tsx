@@ -40,6 +40,7 @@ import {
   permissionIdForSelectionId,
   selectionIdForModelCatalog,
   selectionIdForPermissionCatalog,
+  visiblePermissionItems,
 } from "@/components/session/catalog-selection"
 import { SelectionSettingsDrawer } from "@/components/session/selection-settings-drawer"
 import { CAPABILITY, capabilityIsUsable, findCapability } from "@/components/session/capabilities"
@@ -148,13 +149,13 @@ export function SessionComposer({
   const [selectedPermissionMode, setSelectedPermissionMode] = React.useState("")
   const [selectedModel, setSelectedModel] = React.useState("")
   const [selectedReasoning, setSelectedReasoning] = React.useState("")
-  const permissionItems = permissionCatalog?.permissions.map((item) => ({
+  const permissionItems = visiblePermissionItems(permissionCatalog).map((item) => ({
     id: item.id,
     label: catalogI18nText(tNew, item.metadata, "labelKey", item.displayName),
     description: catalogI18nText(tNew, item.metadata, "descriptionKey", item.description),
     default: item.default,
     selectionId: item.selectionId,
-  })) ?? []
+  }))
   const modelItems = modelCatalog?.models.map((item) => ({
     id: item.id,
     label: modelCatalogDisplayName(

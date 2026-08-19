@@ -30,6 +30,7 @@ import {
   useAttachments,
 } from "@/components/attachment-input"
 import { buildOptimisticUserMessage } from "@/components/session/optimistic-timeline"
+import { visiblePermissionItems } from "@/components/session/catalog-selection"
 import { WorkspacePicker, type WorkspaceSelection } from "@/components/workspace-picker"
 import { useWorkspace } from "@/components/workspace-context"
 import { useAuth } from "@/components/auth/auth-context"
@@ -440,13 +441,13 @@ export function TaskComposer() {
   const selectedModelItem = models.find((item) => item.id === selectedModel)
   const reasoningOptions = selectedModelItem?.reasoningItems ?? []
   const permissionOptions = React.useMemo(
-    () => permissionCatalog?.permissions.map((item) => ({
+    () => visiblePermissionItems(permissionCatalog).map((item) => ({
       id: item.id,
       label: catalogI18nText(t, item.metadata, "labelKey", item.displayName),
       description: catalogI18nText(t, item.metadata, "descriptionKey", item.description),
       default: item.default,
       selectionId: item.selectionId,
-    })) ?? [],
+    })),
     [permissionCatalog, t],
   )
 

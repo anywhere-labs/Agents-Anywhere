@@ -93,6 +93,7 @@ import com.agentsanywhere.app.feature.sessiondetail.SESSION_NOTICE_RESPONSE_CAPA
 import com.agentsanywhere.app.feature.sessiondetail.SESSION_PERMISSION_CATALOG_CAPABILITY
 import com.agentsanywhere.app.feature.sessiondetail.SESSION_SEND_MESSAGE_CAPABILITY
 import com.agentsanywhere.app.feature.sessiondetail.SESSION_STEER_CAPABILITY
+import com.agentsanywhere.app.feature.sessiondetail.isVisiblePermissionPreset
 import com.agentsanywhere.app.feature.sessiondetail.selectionOptions
 import com.agentsanywhere.app.feature.sessiondetail.sessionComposerEnabled
 import com.agentsanywhere.app.feature.sessiondetail.validatedSelection
@@ -1110,7 +1111,9 @@ fun SessionDetailScreen(
     val permissionLocalizer = runtimePermissionLocalizer()
     val permissionOptions = if (isPreparedSession) {
         preparedPermissionCatalog?.permissions
-            ?.filter { it.selectionId.isNotBlank() }
+            ?.filter {
+                it.selectionId.isNotBlank() && isVisiblePermissionPreset(it.id, it.selectionId)
+            }
             ?.map { permission ->
                 val localized = permissionLocalizer.localize(
                     runtime = preparedPermissionCatalog?.runtime.orEmpty(),

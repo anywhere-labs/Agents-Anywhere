@@ -2,6 +2,8 @@ package com.agentsanywhere.app.feature.sessiondetail
 
 import com.agentsanywhere.app.api.RemoteRuntimeModel
 import com.agentsanywhere.app.api.RemoteRuntimeModelCatalog
+import com.agentsanywhere.app.api.RemoteRuntimePermission
+import com.agentsanywhere.app.api.RemoteRuntimePermissionCatalog
 import com.agentsanywhere.app.api.RemoteRuntimeReasoning
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -55,6 +57,45 @@ class SessionRuntimeStateTest {
         assertEquals("Model · High", options.first { it.selectionId == "model-high" }.label)
         assertEquals("model-low", options.validatedSelection(null))
         assertNull(options.validatedSelection("missing"))
+    }
+
+    @Test
+    fun permissionSelectionOptionsExcludeCustomState() {
+        val options = RemoteRuntimePermissionCatalog(
+            runtime = "dsh",
+            revision = 1,
+            permissions = listOf(
+                RemoteRuntimePermission(
+                    "read-only",
+                    "permission:read-only",
+                    "read-only",
+                    null,
+                    false,
+                    emptyMap(),
+                ),
+                RemoteRuntimePermission(
+                    "custom",
+                    "permission:custom",
+                    "Custom",
+                    "Current settings",
+                    false,
+                    emptyMap(),
+                ),
+                RemoteRuntimePermission(
+                    "workspace-write",
+                    "permission:workspace-write",
+                    "workspace-write",
+                    null,
+                    true,
+                    emptyMap(),
+                ),
+            ),
+        ).selectionOptions()
+
+        assertEquals(
+            listOf("permission:read-only", "permission:workspace-write"),
+            options.map { it.selectionId },
+        )
     }
 
     @Test

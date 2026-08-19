@@ -402,7 +402,7 @@ internal fun RemoteRuntimeModelCatalog.selectionOptions(): List<RuntimeSelection
 
 internal fun RemoteRuntimePermissionCatalog.selectionOptions(): List<RuntimeSelectionOption> =
     permissions
-        .filter { it.selectionId.isNotBlank() }
+        .filter { it.selectionId.isNotBlank() && isVisiblePermissionPreset(it.id, it.selectionId) }
         .map {
             RuntimeSelectionOption(
                 selectionId = it.selectionId,
@@ -412,6 +412,14 @@ internal fun RemoteRuntimePermissionCatalog.selectionOptions(): List<RuntimeSele
             )
         }
         .distinctBy { it.selectionId }
+
+internal fun isVisiblePermissionPreset(id: String, selectionId: String): Boolean {
+    val normalizedId = id.trim().lowercase()
+    val normalizedSelectionId = selectionId.trim().lowercase()
+    return normalizedId != "custom" &&
+        normalizedSelectionId != "custom" &&
+        !normalizedSelectionId.endsWith(":custom")
+}
 
 internal fun List<RuntimeSelectionOption>.validatedSelection(hint: String?): String? {
     val explicitSelection = hint?.takeIf(String::isNotBlank)

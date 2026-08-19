@@ -4,7 +4,22 @@ import type {
   ProtocolModelCatalog,
   ProtocolModelItem,
   ProtocolPermissionCatalog,
+  ProtocolPermissionItem,
 } from "@/features/dashboard/types"
+
+const CUSTOM_PERMISSION_ID = "custom"
+
+export function visiblePermissionItems(
+  catalog: ProtocolPermissionCatalog | null | undefined,
+): ProtocolPermissionItem[] {
+  return catalog?.permissions.filter((item) => {
+    const permissionId = item.id.trim().toLowerCase()
+    const selectionId = item.selectionId.trim().toLowerCase()
+    return permissionId !== CUSTOM_PERMISSION_ID &&
+      selectionId !== CUSTOM_PERMISSION_ID &&
+      !selectionId.endsWith(`:${CUSTOM_PERMISSION_ID}`)
+  }) ?? []
+}
 
 export function catalogI18nText(
   translate: (key: string) => string,
