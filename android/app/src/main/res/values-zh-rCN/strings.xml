@@ -372,6 +372,8 @@
     <string name="session_output">输出</string>
     <string name="session_no_output">没有输出</string>
     <string name="session_no_preview">暂无预览</string>
+    <string name="session_unknown_activity">未知活动：%1$s</string>
+    <string name="session_tool_summary_reasoning">%1$d 条推理</string>
     <string name="session_tool_summary_commands">执行了 %1$d 条指令</string>
     <string name="session_tool_summary_changed_files">修改了 %1$d 个文件</string>
     <string name="session_tool_summary_created_files">创建了 %1$d 个文件</string>

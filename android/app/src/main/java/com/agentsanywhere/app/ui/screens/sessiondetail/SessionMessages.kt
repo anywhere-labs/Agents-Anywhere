@@ -90,7 +90,7 @@ private val SessionWelcomeFontFamily = FontFamily(
     Font(R.font.newsreader_opsz_wght, FontWeight(650)),
 )
 
-private sealed interface TimelineRenderItem {
+internal sealed interface TimelineRenderItem {
     val key: String
     val messages: List<TimelineMessage>
 
@@ -100,7 +100,7 @@ private sealed interface TimelineRenderItem {
     }
 
     data class ToolRun(override val messages: List<TimelineMessage>) : TimelineRenderItem {
-        override val key: String = "tool-run:${messages.joinToString(":") { it.id }}"
+        override val key: String = "tool-run:${messages.firstOrNull()?.id ?: "unknown"}"
     }
 }
 
@@ -474,7 +474,7 @@ private fun AgentReplyCopyAction(
     }
 }
 
-private fun groupTimelineMessages(messages: List<TimelineMessage>): List<TimelineRenderItem> {
+internal fun groupTimelineMessages(messages: List<TimelineMessage>): List<TimelineRenderItem> {
     val result = mutableListOf<TimelineRenderItem>()
     val pendingTools = mutableListOf<TimelineMessage>()
 
@@ -534,9 +534,11 @@ private fun TimelineMessage.agentCopyText(): String {
 }
 
 private fun TimelineMessage.isToolRunItem(): Boolean {
-    return kind == TimelineMessageKind.Command ||
+    return kind == TimelineMessageKind.Reasoning ||
+        kind == TimelineMessageKind.Command ||
         kind == TimelineMessageKind.FileChange ||
-        kind == TimelineMessageKind.ToolCall
+        kind == TimelineMessageKind.ToolCall ||
+        kind == TimelineMessageKind.Artifact
 }
 
 internal fun diagnosticTimelineText(message: TimelineMessage): String {
@@ -568,11 +570,16 @@ private fun ToolRunGroup(
 ) {
     val primary = if (darkMode) Color(0xFFFAFAFA) else Color(0xFF2B2C29)
     val muted = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF7C7B76)
+    val destructive = Color(0xFFF87171)
     val surface = if (darkMode) Color(0x1018181B) else Color(0x14F1F0ED)
+    val active = messages.any { it.status.isActivityActive() }
+    val failed = messages.any { it.status.isActivityFailure() }
+    val activityColor = if (failed) destructive else muted
     val haptic = LocalHapticFeedback.current
-    var expanded by remember(messages.joinToString(":") { it.id }) { mutableStateOf(false) }
-    var cardTop by remember(messages.joinToString(":") { it.id }) { mutableStateOf<Float?>(null) }
-    var lockedTop by remember(messages.joinToString(":") { it.id }) { mutableStateOf<Float?>(null) }
+    val groupKey = messages.firstOrNull()?.id ?: "unknown"
+    var expanded by remember(groupKey) { mutableStateOf(false) }
+    var cardTop by remember(groupKey) { mutableStateOf<Float?>(null) }
+    var lockedTop by remember(groupKey) { mutableStateOf<Float?>(null) }
 
     fun toggleExpanded() {
         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -611,15 +618,16 @@ private fun ToolRunGroup(
             )
             Text(
                 text = toolRunSummary(messages),
-                modifier = Modifier.weight(1f),
-                color = muted,
+                modifier = Modifier
+                    .weight(1f)
+                    .then(if (active) Modifier.shimmer() else Modifier),
+                color = activityColor,
                 fontSize = 13.sp,
                 fontWeight = FontWeight.Bold,
                 fontFamily = FontFamily.Monospace,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            CompactStatusPill(label = toolRunStatus(messages), darkMode = darkMode)
         }
         return
     }
@@ -640,55 +648,81 @@ private fun ToolRunGroup(
             ChevronDownGlyph(muted)
             Text(
                 text = toolRunSummary(messages),
-                modifier = Modifier.weight(1f),
-                color = primary,
+                modifier = Modifier
+                    .weight(1f)
+                    .then(if (active) Modifier.shimmer() else Modifier),
+                color = if (failed) destructive else primary,
                 fontSize = 13.sp,
                 fontWeight = FontWeight.Bold,
                 fontFamily = FontFamily.Monospace,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            CompactStatusPill(label = toolRunStatus(messages), darkMode = darkMode)
         }
         messages.forEach { message ->
-            ToolActivityCard(
-                message = message,
-                darkMode = darkMode,
-                listState = listState,
-                embedded = true,
-            )
+            if (message.kind == TimelineMessageKind.Reasoning) {
+                ReasoningSection(message = message, darkMode = darkMode)
+            } else {
+                ToolActivityCard(
+                    message = message,
+                    darkMode = darkMode,
+                    listState = listState,
+                    embedded = true,
+                )
+            }
         }
     }
+}
+
+internal data class TimelineActivitySummary(
+    val reasoning: Int,
+    val commands: Int,
+    val changedFiles: Int,
+    val createdFiles: Int,
+    val total: Int,
+)
+
+internal fun summarizeTimelineActivities(messages: List<TimelineMessage>): TimelineActivitySummary {
+    return TimelineActivitySummary(
+        reasoning = messages.count { it.kind == TimelineMessageKind.Reasoning },
+        commands = messages.count { it.kind == TimelineMessageKind.Command },
+        changedFiles = messages.count {
+            it.kind == TimelineMessageKind.FileChange && it.title != "Added"
+        },
+        createdFiles = messages.count {
+            it.kind == TimelineMessageKind.FileChange && it.title == "Added"
+        },
+        total = messages.size,
+    )
 }
 
 @Composable
 private fun toolRunSummary(messages: List<TimelineMessage>): String {
-    val commands = messages.count { it.kind == TimelineMessageKind.Command }
-    val fileChanges = messages.count { it.kind == TimelineMessageKind.FileChange && it.title != "Added" }
-    val createdFiles = messages.count { it.kind == TimelineMessageKind.FileChange && it.title == "Added" }
-    val tools = messages.count { it.kind == TimelineMessageKind.ToolCall }
+    val summary = summarizeTimelineActivities(messages)
     val parts = buildList {
-        if (commands > 0) add(stringResource(R.string.session_tool_summary_commands, commands))
-        if (fileChanges > 0) add(stringResource(R.string.session_tool_summary_changed_files, fileChanges))
-        if (createdFiles > 0) add(stringResource(R.string.session_tool_summary_created_files, createdFiles))
-        if (tools > 0) add(stringResource(R.string.session_tool_summary_items, tools))
+        if (summary.reasoning > 0) {
+            add(stringResource(R.string.session_tool_summary_reasoning, summary.reasoning))
+        }
+        if (summary.commands > 0) {
+            add(stringResource(R.string.session_tool_summary_commands, summary.commands))
+        }
+        if (summary.changedFiles > 0) {
+            add(stringResource(R.string.session_tool_summary_changed_files, summary.changedFiles))
+        }
+        if (summary.createdFiles > 0) {
+            add(stringResource(R.string.session_tool_summary_created_files, summary.createdFiles))
+        }
     }
     return parts.joinToString(", ").ifBlank {
-        stringResource(R.string.session_tool_summary_items, messages.size)
+        stringResource(R.string.session_tool_summary_items, summary.total)
     }
 }
 
-private fun toolRunStatus(messages: List<TimelineMessage>): String {
-    return when {
-        messages.any { it.status == "failed" } -> "Failed"
-        messages.any { it.status == "running" } -> "Running"
-        messages.any { it.status == "pending" } -> "Pending"
-        messages.any { it.status == "waiting_approval" } -> "Approval"
-        messages.any { it.status == "cancelled" } -> "Cancelled"
-        messages.any { it.status == "interrupted" } -> "Stopped"
-        else -> "Done"
-    }
-}
+private fun String.isActivityActive(): Boolean =
+    this == "pending" || this == "running" || this == "waiting_approval"
+
+private fun String.isActivityFailure(): Boolean =
+    this == "failed" || this == "cancelled" || this == "interrupted"
 
 @Composable
 private fun WorkingIndicator(label: String, darkMode: Boolean) {
@@ -1140,7 +1174,11 @@ private fun ToolActivityCard(
     val border = if (darkMode) Color(0xFF27272A) else Color(0xFFE4E1DB)
     val primary = if (darkMode) Color(0xFFFAFAFA) else Color(0xFF2B2C29)
     val muted = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF7C7B76)
+    val destructive = Color(0xFFF87171)
     val collapsedSurface = if (darkMode) Color(0x1018181B) else Color(0x12F1F0ED)
+    val active = message.status.isActivityActive()
+    val failed = message.status.isActivityFailure()
+    val activityColor = if (failed) destructive else primary
     val expandable = message.kind == TimelineMessageKind.Command ||
         message.kind == TimelineMessageKind.FileChange ||
         (message.kind == TimelineMessageKind.ToolCall && message.hasToolCallDetail)
@@ -1201,7 +1239,7 @@ private fun ToolActivityCard(
             if (message.kind != TimelineMessageKind.ToolCall) {
                 Text(
                     text = message.title,
-                    color = muted,
+                    color = if (failed) destructive else muted,
                     fontSize = 13.sp,
                     fontWeight = FontWeight.Bold,
                     maxLines = 1,
@@ -1209,15 +1247,16 @@ private fun ToolActivityCard(
             }
             Text(
                 text = target,
-                modifier = Modifier.weight(1f),
-                color = primary,
+                modifier = Modifier
+                    .weight(1f)
+                    .then(if (active) Modifier.shimmer() else Modifier),
+                color = activityColor,
                 fontSize = if (message.kind == TimelineMessageKind.FileChange) 13.sp else 12.sp,
                 fontWeight = FontWeight.Bold,
                 fontFamily = if (message.kind == TimelineMessageKind.FileChange) FontFamily.SansSerif else FontFamily.Monospace,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            CompactStatusPill(label = message.badge.ifBlank { message.status }, darkMode = darkMode)
         }
         if (expanded && expandable) {
             DisableSelection {
@@ -1274,7 +1313,9 @@ private fun ToolActivityDetailCard(
 
 private fun TimelineMessage.toolSummaryTarget(): String {
     return if (kind == TimelineMessageKind.ToolCall) {
-        title.ifBlank { text }
+        listOf(title.ifBlank { text }, subtitle)
+            .filter(String::isNotBlank)
+            .joinToString(" ")
     } else {
         subtitle.ifBlank { text }.ifBlank { title }
     }
@@ -1441,29 +1482,6 @@ private fun PngToolIcon(
 }
 
 @Composable
-private fun CompactStatusPill(label: String, darkMode: Boolean) {
-    Row(
-        modifier = Modifier
-            .height(20.dp)
-            .widthIn(min = 40.dp)
-            .clip(CircleShape)
-            .background(if (darkMode) Color(0xFF27272A) else Color(0xFFE4E2DD))
-            .padding(horizontal = 8.dp),
-        horizontalArrangement = Arrangement.Center,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            text = label,
-            color = if (darkMode) Color(0xFFD4D4D8) else Color(0xFF6F6E69),
-            fontSize = 11.sp,
-            lineHeight = 11.sp,
-            fontWeight = FontWeight.Bold,
-            maxLines = 1,
-        )
-    }
-}
-
-@Composable
 private fun ToolPlaceholder(
     message: TimelineMessage,
     darkMode: Boolean,
@@ -1475,6 +1493,14 @@ private fun ToolPlaceholder(
         darkMode -> Color(0xFFA1A1AA)
         else -> Color(0xFF7C7B76)
     }
+    val label = if (message.kind == TimelineMessageKind.Diagnostic) {
+        stringResource(
+            R.string.session_unknown_activity,
+            message.text.ifBlank { message.type }.replace('_', ' '),
+        )
+    } else {
+        message.text.ifBlank { message.type }
+    }
     Row(
         modifier = Modifier.padding(horizontal = 4.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -1482,7 +1508,7 @@ private fun ToolPlaceholder(
     ) {
         SparklesGlyph(muted)
         Text(
-            text = message.text.ifBlank { message.type },
+            text = label,
             modifier = Modifier.weight(1f, fill = false),
             color = muted,
             fontSize = 13.sp,

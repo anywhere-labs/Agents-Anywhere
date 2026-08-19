@@ -373,6 +373,8 @@
     <string name="session_output">Output</string>
     <string name="session_no_output">No output</string>
     <string name="session_no_preview">No preview</string>
+    <string name="session_unknown_activity">Unknown activity: %1$s</string>
+    <string name="session_tool_summary_reasoning">%1$d reasoning steps</string>
     <string name="session_tool_summary_commands">Ran %1$d commands</string>
     <string name="session_tool_summary_changed_files">Changed %1$d files</string>
     <string name="session_tool_summary_created_files">Created %1$d files</string>

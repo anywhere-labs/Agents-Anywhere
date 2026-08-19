@@ -104,6 +104,124 @@ class SessionTimelineProjectionTest {
         assertEquals(listOf("first", "user", "second"), projection.messages.map { it.id })
     }
 
+    @Test
+    fun blankAssistantMessageKeepsOrderingWithoutRenderingDiagnosticRow() {
+        val blank = item("blank", orderSeq = 1, updatedSeq = 1).copy(
+            text = "",
+            content = JSONObject().put("kind", "markdown").put("text", ""),
+            source = JSONObject().put("runtime", "dsh").put("itemType", "assistant_activity"),
+        )
+
+        val projection = mergeRemoteTimelineItems(
+            currentOrdering = emptyList(),
+            currentMessages = emptyList(),
+            incoming = listOf(blank),
+            replace = true,
+        )
+
+        assertEquals(listOf("blank"), projection.orderingItems.map { it.id })
+        assertEquals(emptyList<TimelineMessage>(), projection.messages)
+    }
+
+    @Test
+    fun markdownAssistantMessageRendersNormally() {
+        val markdown = item("markdown", orderSeq = 1, updatedSeq = 1).copy(
+            text = "",
+            content = JSONObject().put("kind", "markdown").put("text", "**hello**"),
+        )
+
+        val projection = mergeRemoteTimelineItems(
+            currentOrdering = emptyList(),
+            currentMessages = emptyList(),
+            incoming = listOf(markdown),
+            replace = true,
+        )
+
+        assertEquals(TimelineMessageKind.Text, projection.messages.single().kind)
+        assertEquals("**hello**", projection.messages.single().text)
+    }
+
+    @Test
+    fun messageWithTextRendersEvenWhenContentKindIsNew() {
+        val message = item("future-message", orderSeq = 1, updatedSeq = 1).copy(
+            text = "",
+            content = JSONObject().put("kind", "future_markdown").put("text", "hello"),
+        )
+
+        val projection = mergeRemoteTimelineItems(
+            currentOrdering = emptyList(),
+            currentMessages = emptyList(),
+            incoming = listOf(message),
+            replace = true,
+        )
+
+        assertEquals(1, projection.messages.size)
+        assertEquals(TimelineMessageKind.Text, projection.messages.single().kind)
+        assertEquals("hello", projection.messages.single().text)
+    }
+
+    @Test
+    fun dshToolTitleUsesProjectedTitleBeforeProtocolKind() {
+        val tool = item("tool", orderSeq = 1, updatedSeq = 1).copy(
+            type = "tool",
+            text = "",
+            content = JSONObject()
+                .put("kind", "tool_call")
+                .put("title", "bash")
+                .put("input", JSONObject().put("command", "pwd && ls -la")),
+        )
+
+        val projection = mergeRemoteTimelineItems(
+            currentOrdering = emptyList(),
+            currentMessages = emptyList(),
+            incoming = listOf(tool),
+            replace = true,
+        )
+
+        assertEquals("bash", projection.messages.single().title)
+        assertEquals("pwd && ls -la", projection.messages.single().subtitle)
+        assertEquals(TimelineMessageKind.ToolCall, projection.messages.single().kind)
+    }
+
+    @Test
+    fun toolResultKeepsCompactWebCompatibleFallbackTitle() {
+        val result = item("tool-result", orderSeq = 1, updatedSeq = 1).copy(
+            type = "tool",
+            role = "tool",
+            text = "",
+            content = JSONObject().put("kind", "tool_result").put("output", "ok"),
+        )
+
+        val projection = mergeRemoteTimelineItems(
+            currentOrdering = emptyList(),
+            currentMessages = emptyList(),
+            incoming = listOf(result),
+            replace = true,
+        )
+
+        assertEquals("tool_result", projection.messages.single().title)
+        assertEquals("ok", projection.messages.single().body)
+    }
+
+    @Test
+    fun diffArtifactIsRetainedForOrderingButNotRendered() {
+        val diff = item("diff", orderSeq = 1, updatedSeq = 1).copy(
+            type = "artifact",
+            text = "",
+            content = JSONObject().put("kind", "diff").put("text", "@@ -1 +1 @@"),
+        )
+
+        val projection = mergeRemoteTimelineItems(
+            currentOrdering = emptyList(),
+            currentMessages = emptyList(),
+            incoming = listOf(diff),
+            replace = true,
+        )
+
+        assertEquals(listOf("diff"), projection.orderingItems.map { it.id })
+        assertEquals(emptyList<TimelineMessage>(), projection.messages)
+    }
+
     private fun item(
         id: String,
         orderSeq: Int,
