@@ -1,6 +1,10 @@
 "use client"
 
-import type { ProtocolModelCatalog, ProtocolPermissionCatalog } from "@/features/dashboard/types"
+import type {
+  ProtocolModelCatalog,
+  ProtocolModelItem,
+  ProtocolPermissionCatalog,
+} from "@/features/dashboard/types"
 
 export function catalogI18nText(
   translate: (key: string) => string,
@@ -20,6 +24,26 @@ export function catalogI18nText(
   } catch {
     return fallback ?? ""
   }
+}
+
+export function modelCatalogDisplayName(
+  item: ProtocolModelItem,
+  models: readonly ProtocolModelItem[],
+  label: string,
+  defaultReasoningLabel: string,
+): string {
+  const provider = metadataString(item.metadata, "provider")
+  const model = metadataString(item.metadata, "model")
+  if (!provider || !model || item.metadata.reasoningEffort !== null) return label
+
+  const hasExplicitReasoningVariant = models.some((candidate) =>
+    metadataString(candidate.metadata, "provider") === provider &&
+    metadataString(candidate.metadata, "model") === model &&
+    typeof candidate.metadata.reasoningEffort === "string" &&
+    candidate.metadata.reasoningEffort.length > 0,
+  )
+  if (!hasExplicitReasoningVariant || label.endsWith(` · ${defaultReasoningLabel}`)) return label
+  return `${label} · ${defaultReasoningLabel}`
 }
 
 export function selectionIdForModelCatalog(
@@ -67,4 +91,9 @@ export function permissionIdForSelectionId(
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+function metadataString(metadata: Record<string, unknown>, key: string): string | null {
+  const value = metadata[key]
+  return typeof value === "string" && value.length > 0 ? value : null
 }

@@ -387,6 +387,7 @@
     <string name="session_runtime_select_model">Select model</string>
     <string name="session_runtime_settings_title">Model settings</string>
     <string name="session_runtime_mode_effort">Mode &amp; effort</string>
+    <string name="session_runtime_effort_default">Default</string>
     <string name="session_runtime_no_settings">No settings available</string>
     <string name="session_dsh_concurrent_writer">Stop the other process using this DSH session, wait for it to exit, then refresh.</string>
     <string name="session_runtime_permission_mode">Permission mode</string>

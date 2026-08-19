@@ -8,6 +8,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any
 
 from connector.runtime_protocol import (
+    CAPABILITY_CATALOG_PERMISSION,
     AgentRuntime,
     PreparedSessionTimelineSync,
     RuntimeAttachment,
@@ -357,6 +358,32 @@ class DshRuntime(AgentRuntime):
             ),
             connector_id=self.host.connector_id,
         )
+        if not any(
+            capability.capability_id == CAPABILITY_CATALOG_PERMISSION
+            for capability in capabilities.capabilities
+        ):
+            runtime_capabilities = await self.get_runtime_capabilities()
+            permission_capability = next(
+                (
+                    capability
+                    for capability in runtime_capabilities.capabilities
+                    if capability.capability_id == CAPABILITY_CATALOG_PERMISSION
+                ),
+                None,
+            )
+            if permission_capability is not None:
+                capabilities = replace(
+                    capabilities,
+                    revision=max(capabilities.revision, runtime_capabilities.revision),
+                    capabilities=(
+                        *capabilities.capabilities,
+                        replace(
+                            permission_capability,
+                            scope="session",
+                            session_id=session_id,
+                        ),
+                    ),
+                )
         return self._disable_writes_for_conflict(capabilities, session_id)
 
     async def create_and_start_session(

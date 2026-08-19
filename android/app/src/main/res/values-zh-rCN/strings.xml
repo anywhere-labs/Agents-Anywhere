@@ -386,6 +386,7 @@
     <string name="session_runtime_select_model">选择模型</string>
     <string name="session_runtime_settings_title">模型配置</string>
     <string name="session_runtime_mode_effort">模式与推理强度</string>
+    <string name="session_runtime_effort_default">默认</string>
     <string name="session_runtime_no_settings">暂无可用设置</string>
     <string name="session_dsh_concurrent_writer">请先停止其他正在运行此 DSH Session 的实例，等待其退出后刷新。</string>
     <string name="session_runtime_permission_mode">权限模式</string>

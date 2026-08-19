@@ -35,6 +35,7 @@ import type {
 import { useTranslations } from "next-intl"
 import {
   catalogI18nText,
+  modelCatalogDisplayName,
   modelIdsForSelectionId,
   permissionIdForSelectionId,
   selectionIdForModelCatalog,
@@ -122,7 +123,11 @@ export function SessionComposer({
   const canUseInterrupt = capabilityIsUsable(effectiveCapabilities, CAPABILITY.interrupt)
   const interruptCapability = findCapability(effectiveCapabilities, CAPABILITY.interrupt)
   const canUseModelCatalog = capabilityIsUsable(effectiveCapabilities, CAPABILITY.modelCatalog)
-  const canUsePermissionCatalog = capabilityIsUsable(effectiveCapabilities, CAPABILITY.permissionCatalog)
+  const canUsePermissionCatalog = capabilityIsUsable(
+    effectiveCapabilities,
+    CAPABILITY.permissionCatalog,
+    session.runtime,
+  )
   const canUseEffortCatalog = capabilityIsUsable(effectiveCapabilities, CAPABILITY.effortCatalog)
   const canUseAttachments = capabilityIsUsable(effectiveCapabilities, CAPABILITY.attachment)
   const canSend =
@@ -152,7 +157,12 @@ export function SessionComposer({
   })) ?? []
   const modelItems = modelCatalog?.models.map((item) => ({
     id: item.id,
-    label: catalogI18nText(tNew, item.metadata, "labelKey", item.displayName),
+    label: modelCatalogDisplayName(
+      item,
+      modelCatalog.models,
+      catalogI18nText(tNew, item.metadata, "labelKey", item.displayName),
+      tNew("defaultReasoning"),
+    ),
     default: item.default,
     selectionId: item.selectionId,
     reasoningItems: item.reasoningItems.map((reasoning) => ({

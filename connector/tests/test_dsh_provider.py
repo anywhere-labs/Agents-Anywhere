@@ -149,6 +149,49 @@ class _StateRuntime(DshRuntime):
         }
 
 
+class _CapabilitiesRuntime(DshRuntime):
+    async def _request(self, method: str, params: Any = None) -> Any:
+        if method == "session.getCapabilities":
+            return {
+                "sessionId": params["sessionId"],
+                "externalSessionId": params["externalSessionId"],
+                "runtime": "dsh",
+                "revision": 2,
+                "capabilities": [
+                    {
+                        "capabilityId": "session.send_message",
+                        "scope": "session",
+                        "sessionId": params["sessionId"],
+                        "supported": True,
+                        "available": True,
+                        "allowed": True,
+                    }
+                ],
+            }
+        if method == "runtime.getCapabilities":
+            return {
+                "runtime": "dsh",
+                "revision": 3,
+                "capabilities": [
+                    {
+                        "capabilityId": "catalog.permission",
+                        "scope": "runtime",
+                        "supported": True,
+                        "available": True,
+                        "allowed": True,
+                    },
+                    {
+                        "capabilityId": "catalog.model",
+                        "scope": "runtime",
+                        "supported": True,
+                        "available": True,
+                        "allowed": True,
+                    },
+                ],
+            }
+        raise AssertionError(f"unexpected method: {method}")
+
+
 class _StartTurnRuntime(DshRuntime):
     async def _request(self, method: str, params: Any = None) -> Any:
         assert method == "session.startTurn"
@@ -368,6 +411,34 @@ def test_dsh_non_conflict_state_releases_cached_writer_block() -> None:
         assert state is not None
         assert state.status == "idle"
         assert "sess_1" not in runtime._concurrent_writer_sessions
+
+    asyncio.run(run())
+
+
+def test_dsh_session_capabilities_inherit_permission_catalog_only() -> None:
+    async def run() -> None:
+        runtime = _CapabilitiesRuntime(
+            config=RuntimeConfig(runtime="dsh", revision=1),
+            host=_Host(),  # type: ignore[arg-type]
+        )
+
+        capability_set = await runtime.get_session_capabilities(
+            "sess_1",
+            "session-external",
+        )
+
+        capabilities = {
+            capability.capability_id: capability
+            for capability in capability_set.capabilities
+        }
+        permission = capabilities["catalog.permission"]
+        assert permission.scope == "session"
+        assert permission.session_id == "sess_1"
+        assert permission.supported is True
+        assert permission.available is True
+        assert permission.allowed is True
+        assert "catalog.model" not in capabilities
+        assert capability_set.revision == 3
 
     asyncio.run(run())
 

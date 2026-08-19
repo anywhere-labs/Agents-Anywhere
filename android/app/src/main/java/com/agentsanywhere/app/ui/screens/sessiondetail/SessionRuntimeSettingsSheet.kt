@@ -73,10 +73,11 @@ internal fun SessionRuntimeSettingsSheet(
     val selectedPermissionLabel = permissionOptions
         .firstOrNull { it.selectionId == selectedPermissionId }
         ?.label
-    val selectedEffortLabel = selectedModelGroup
+    val selectedModelOption = selectedModelGroup
         ?.options
         ?.firstOrNull { it.selectionId == selectedModelId }
-        ?.effortLabel
+    val selectedEffortLabel = selectedModelOption?.effortLabel
+        ?: selectedModelOption?.let { stringResource(R.string.session_runtime_effort_default) }
     ModalBottomSheet(
         onDismissRequest = { if (!busy) onDismiss() },
         sheetState = sheetState,
@@ -312,7 +313,7 @@ private fun EffortSelectionSection(
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(
-                        option.effortLabel ?: option.label,
+                        option.effortLabel ?: stringResource(R.string.session_runtime_effort_default),
                         color = if (selected) colors.ink else colors.muted,
                         fontSize = 11.5.sp,
                         fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
