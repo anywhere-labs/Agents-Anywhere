@@ -10,8 +10,6 @@ export const zh = {
   // Header / shell
   'heading.title': 'Agent 远程',
   'heading.subtitle': 'Agents Anywhere，让你用手机随时控制 DSH',
-  'page.title': 'Agents Anywhere',
-  'page.subtitle': '把 DSH 进程通过 Connector 暴露到手机和 Web',
   'action.close': '关闭',
   'action.copy': '复制',
 
@@ -140,8 +138,6 @@ export const en = {
   // Header / shell
   'heading.title': 'Agent Remote',
   'heading.subtitle': 'Agents Anywhere lets you control DSH on your device, right from your phone',
-  'page.title': 'Agents Anywhere',
-  'page.subtitle': 'Expose the running DSH process to the Agents Anywhere mobile and web apps',
   'action.close': 'Close',
   'action.copy': 'Copy',
 

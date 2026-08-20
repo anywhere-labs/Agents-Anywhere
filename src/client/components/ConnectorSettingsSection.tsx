@@ -39,8 +39,8 @@ export function ConnectorSettingsSection({ t }: ShellProps): JSX.Element {
     <section style={pageStyle} aria-labelledby="dsh-aa-connector-heading">
       <header style={headerStyle}>
         <div style={titleColumnStyle}>
-          <h2 id="dsh-aa-connector-heading" style={headingStyle}>{t('page.title')}</h2>
-          <p style={subtitleStyle}>{t('page.subtitle')}</p>
+          <h2 id="dsh-aa-connector-heading" style={headingStyle}>{t('heading.title')}</h2>
+          <p style={subtitleStyle}>{t('heading.subtitle')}</p>
         </div>
       </header>
 

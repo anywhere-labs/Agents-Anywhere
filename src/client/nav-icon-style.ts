@@ -1,11 +1,20 @@
 /**
  * One-shot DOM patcher that finds the settings-shell nav row whose label text
  * matches our plugin and replaces its default icon with the Agents Anywhere
- * logo. Implemented with a MutationObserver because the DSH settings shell
- * renders nav rows lazily and exposes no stable data attribute we can target
- * from CSS alone.
+ * logo.
  *
- * Themes: we swap two pre-baked SVG data URLs based on the theme attribute
+ * The DSH settings shell renders each nav row as:
+ *
+ *   <button class="<hashed>_navCell ...">
+ *     <svg class="<hashed>_navIcon">…</svg>
+ *     <span class="<hashed>_navLabel">Agent 远程</span>
+ *   </button>
+ *
+ * The CSS module class prefixes are hashed and not a stable contract, so we
+ * locate the row by walking up from the `<span>` whose text contains our
+ * label and matching the parent button.
+ *
+ * Themes: two pre-baked SVG data URLs are swapped based on the theme attribute
  * the DSH theme plugin applies (`body[data-ds-dark-theme]`).
  */
 
@@ -19,21 +28,11 @@ function buildLogoSvg(bg: string, fg: string): string {
 const LIGHT_ICON_URL = "url(\"data:image/svg+xml;utf8," + buildLogoSvg("%231f1f1f", "%23ffffff") + "\")"
 const DARK_ICON_URL = "url(\"data:image/svg+xml;utf8," + buildLogoSvg("%23f5f5f5", "%231f1f1f") + "\")"
 
-/** Locale strings that identify our nav row across languages. */
-const NAV_LABEL_MARKERS = ['Agent远程', 'Agent Remote']
-
-/** Container element roles that the settings shell uses for nav rows. */
-const ROW_SELECTOR = 'button, a, [role="tab"], [role="button"], [role="menuitem"], li'
+/** Locale strings that uniquely identify our nav row across languages. */
+const NAV_LABEL_MARKERS = ['Agent 远程', 'Agent Remote']
 
 /** Marker class we attach once the row has been patched. */
 const PATCHED_CLASS = 'dsh-aa-connector-nav-patched'
-
-/** Selector for the default icon element(s) we want to hide inside the row. */
-const ICON_SELECTOR =
-  'svg, i[class*="icon"], .icon, [class*="Icon"], img, [aria-hidden="true"]'
-
-/** Selector we use to locate the icon's *position* — keep the first one. */
-const FIRST_ICON_SELECTOR = 'svg, i, .icon, [class*="icon"], img, [aria-hidden="true"]'
 
 interface PatcherState {
   observer: MutationObserver | null
@@ -51,35 +50,56 @@ export function startNavIconPatcher(): void {
   applyThemeStyle()
 
   const scan = (): void => {
-    const rows = document.querySelectorAll<HTMLElement>(ROW_SELECTOR)
-    rows.forEach(patchRow)
+    // Walk every <span> in the document; if its text matches our label,
+    // climb to its enclosing <button> (or role=tab) and patch it.
+    const spans = document.querySelectorAll<HTMLElement>('span')
+    spans.forEach((span) => {
+      const text = (span.textContent ?? '').trim()
+      if (text.length === 0) return
+      if (!NAV_LABEL_MARKERS.includes(text)) return
+      // Climb to the closest interactive nav-row container.
+      const row = closestNavRow(span)
+      if (row === null) return
+      patchRow(row)
+    })
   }
 
-  // First pass — many shells render synchronously, so the row is already in
-  // the DOM when this effect runs.
+  // First pass — many shells render synchronously.
   scan()
 
-  // Subsequent passes — catch the nav row when the user opens the settings panel.
+  // Subsequent passes — catch the row when the user opens the settings panel.
   const observer = new MutationObserver(() => scan())
   observer.observe(document.body, { childList: true, subtree: true })
   STATE.observer = observer
 }
 
+function closestNavRow(start: HTMLElement): HTMLElement | null {
+  let cursor: HTMLElement | null = start.parentElement
+  while (cursor !== null) {
+    const tag = cursor.tagName.toLowerCase()
+    if (
+      tag === 'button'
+      || tag === 'a'
+      || cursor.getAttribute('role') === 'tab'
+      || cursor.getAttribute('role') === 'button'
+    ) {
+      return cursor
+    }
+    cursor = cursor.parentElement
+  }
+  return null
+}
+
 function patchRow(row: HTMLElement): void {
   if (STATE.matchedRows.has(row)) return
-  const text = row.textContent ?? ''
-  const isOurs = NAV_LABEL_MARKERS.some((marker) => text.includes(marker))
-  if (!isOurs) return
-
   STATE.matchedRows.add(row)
   row.classList.add(PATCHED_CLASS)
 
-  // Hide any default icon inside the row. We keep the label intact.
-  const candidates = row.querySelectorAll<HTMLElement>(ICON_SELECTOR)
-  candidates.forEach((el) => {
-    // Skip our own marker span (if we run twice somehow).
-    if (el.dataset.aaConnectorNavIcon === 'true') return
-    el.style.setProperty('display', 'none', 'important')
+  // Hide every direct svg child — the DSH nav row has exactly one (the gear).
+  // We use `> svg` rather than `.querySelector` so we don't bury our own
+  // injection later in nested nodes.
+  row.querySelectorAll<SVGElement>(':scope > svg').forEach((svg) => {
+    svg.style.setProperty('display', 'none', 'important')
   })
 
   // Inject the Agents Anywhere logo as a leading marker span.
@@ -90,8 +110,8 @@ function patchRow(row: HTMLElement): void {
   icon.style.cssText = [
     'display: inline-block',
     'flex-shrink: 0',
-    'width: 18px',
-    'height: 18px',
+    'width: 16px',
+    'height: 16px',
     'margin-right: 8px',
     'background-image: ' + LIGHT_ICON_URL,
     'background-size: contain',
@@ -99,7 +119,6 @@ function patchRow(row: HTMLElement): void {
     'background-position: center',
     'vertical-align: middle',
   ].join(';')
-  // Insert before the first child so the icon leads the label.
   row.insertBefore(icon, row.firstChild)
 }
 
