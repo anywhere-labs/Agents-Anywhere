@@ -1,0 +1,265 @@
+/**
+ * Bilingual copy for the Agents Anywhere settings section.
+ *
+ * Chinese is the source-of-truth key set; the English dictionary is `satisfies`-
+ * constrained so missing keys fail the typecheck. The {seconds} placeholder is
+ * the only interpolation token used; everything else is verbatim text.
+ */
+
+export const zh = {
+  // Header / shell
+  'heading.title': 'Agent 远程',
+  'heading.subtitle': 'Agents Anywhere，让你用手机随时控制 DSH',
+  'page.title': 'Agents Anywhere',
+  'page.subtitle': '把 DSH 进程通过 Connector 暴露到手机和 Web',
+  'action.close': '关闭',
+  'action.copy': '复制',
+
+  // Tabs
+  'tabs.label': 'Agents Anywhere 设置分区',
+  'tabs.overview': '概览',
+  'tabs.pairing': '配对与设备',
+  'tabs.logs': '实时日志',
+  'tabs.environment': '高级与环境',
+
+  // Overview
+  'overview.title': '运行状态',
+  'overview.description': 'Connector 子进程与 AA Server 连接的整体指标。',
+  'overview.start': '启动 Connector',
+  'overview.stop': '停止',
+  'overview.restart': '重启',
+  'overview.runtime.title': '进程内 Bridge 端点',
+  'overview.runtime.port': '监听端口',
+  'overview.runtime.portPending': '尚未绑定',
+  'overview.runtime.pid': '进程 PID',
+  'overview.runtime.push': '推送通道',
+  'overview.device.title': '当前配对设备',
+  'overview.device.empty': '暂未配对 — 在「配对与设备」标签开始配对。',
+  'overview.device.name': '设备名称',
+  'overview.device.id': '设备 ID',
+  'overview.device.paired': '配对时间',
+
+  // Runtime / connection status
+  'runtime.stopped': '已停止',
+  'runtime.starting': '正在启动',
+  'runtime.running': '运行中',
+  'runtime.error': '异常',
+  'connection.disconnected': '未连接',
+  'connection.connecting': '正在连接',
+  'connection.connected': '已连接',
+  'connection.reconnecting': '重连中',
+
+  // Pairing
+  'pairing.title': '设备配对',
+  'pairing.description': '配置 AA Server 地址并完成首次配对以启用远程控制。',
+  'pairing.server.label': 'AA Server',
+  'pairing.server.placeholder': 'https://api.anywhere.app.com',
+  'pairing.code.label': '请在手机端输入 6 位配对码',
+  'pairing.expiresIn': '剩余 {seconds} 秒',
+  'pairing.expired': '配对码已过期，请重新生成。',
+  'pairing.claim.label': '认领链接',
+  'pairing.claim.hint': '在浏览器中打开此链接，或用手机 App 扫描二维码完成认领。',
+  'pairing.start': '开始配对',
+  'pairing.repair': '重新配对',
+  'pairing.cancel': '取消配对',
+  'pairing.clear': '清除凭据',
+  'pairing.device.title': '已配对设备',
+  'pairing.device.name': '设备名称',
+  'pairing.device.id': '设备 ID',
+  'pairing.device.paired': '配对时间',
+  'pairing.status.idle': '未配对',
+  'pairing.status.starting': '正在请求配对码',
+  'pairing.status.waiting': '等待设备认领',
+  'pairing.status.claimed': '已认领并连接',
+  'pairing.status.cancelled': '已取消',
+  'pairing.status.error': '配对失败',
+
+  // Logs
+  'logs.title': '实时日志',
+  'logs.description': '滚动展示 Connector 子进程与 Bridge 端的日志流。',
+  'logs.copy': '复制全部',
+  'logs.clear': '清空',
+  'logs.follow': '自动滚到底部',
+  'logs.empty': '当前过滤条件下没有日志。',
+  'logs.filter.all': '全部',
+  'logs.filter.debug': 'Debug',
+  'logs.filter.info': 'Info',
+  'logs.filter.warn': 'Warn',
+  'logs.filter.error': 'Error',
+
+  // Environment — autostart
+  'environment.autostart.title': '启动行为',
+  'environment.autostart.description': 'DSH Desktop 启动时的 Connector 自动管理策略。',
+  'environment.autostart.label': 'DSH Desktop 启动时自动运行 Connector',
+  'environment.autostart.hint': '关闭后需在「概览」手动启动。',
+
+  // Environment — uv
+  'environment.uv.title': 'uv 运行时分发',
+  'environment.uv.description': 'Connector 启动时使用的 uv 解释器来源。',
+  'environment.uv.source': '解析来源',
+  'environment.uv.path': '可执行路径',
+  'environment.uv.pathDefault': '随 NPM 分发包内置的 uv',
+  'environment.uv.version': '版本',
+  'environment.uv.sourceNpmBundled': 'NPM 内置',
+  'environment.uv.sourceSystem': '系统 PATH',
+  'environment.uv.sourceDownloaded': '用户目录下载',
+  'environment.uv.sourceCustom': '自定义',
+  'environment.uv.sourceUnresolved': '未解析',
+  'environment.uv.hintNpmBundled': '随插件一起发布的原生二进制，开箱即用。',
+  'environment.uv.hintSystem': '复用系统中已安装的 uv，需要 0.5+ 版本。',
+  'environment.uv.hintDownloaded': '首次启动时自动下载至 ~/.agents-anywhere/bin。',
+  'environment.uv.hintCustom': '使用 UV_PATH 环境变量指向的自定义二进制。',
+  'environment.uv.hintUnresolved': '请检查网络或重新安装 uv。',
+
+  // Environment — Python
+  'environment.python.title': 'Python 运行时',
+  'environment.python.description': 'Connector 子进程使用的 Python 解释器，由 uv 自动托管。',
+  'environment.python.status': '状态',
+  'environment.python.version': '版本',
+  'environment.python.pendingHint': 'uv 正在后台下载并解压 Python 解释器…',
+  'environment.python.statusReady': '就绪',
+  'environment.python.statusPending': '准备中',
+  'environment.python.statusError': '异常',
+
+  // Environment — PyPI mirror
+  'environment.mirror.title': 'PyPI 镜像源',
+  'environment.mirror.description': '加速 Connector 依赖下载，国内网络推荐使用清华大学镜像。',
+  'environment.mirror.label': '首选镜像',
+
+  // Environment — data dir
+  'environment.data.title': '数据目录',
+  'environment.data.description': 'Connector 的所有持久化文件（配置、日志、缓存）所在目录。',
+  'environment.data.dir': '目录路径',
+  'environment.data.copy': '复制路径',
+  'environment.data.open': '在文件管理器中打开',
+} as const
+
+export type AgentsAnywhereConnectorLocaleKey = keyof typeof zh
+
+export const en = {
+  // Header / shell
+  'heading.title': 'Agent Remote',
+  'heading.subtitle': 'Agents Anywhere lets you control DSH on your device, right from your phone',
+  'page.title': 'Agents Anywhere',
+  'page.subtitle': 'Expose the running DSH process to the Agents Anywhere mobile and web apps',
+  'action.close': 'Close',
+  'action.copy': 'Copy',
+
+  // Tabs
+  'tabs.label': 'Agents Anywhere sections',
+  'tabs.overview': 'Overview',
+  'tabs.pairing': 'Pairing & Device',
+  'tabs.logs': 'Live Logs',
+  'tabs.environment': 'Settings & Environment',
+
+  // Overview
+  'overview.title': 'Runtime status',
+  'overview.description': 'Overall indicators for the Connector subprocess and the AA Server link.',
+  'overview.start': 'Start Connector',
+  'overview.stop': 'Stop',
+  'overview.restart': 'Restart',
+  'overview.runtime.title': 'In-process Bridge endpoint',
+  'overview.runtime.port': 'Bound port',
+  'overview.runtime.portPending': 'Not bound yet',
+  'overview.runtime.pid': 'Process PID',
+  'overview.runtime.push': 'Push channel',
+  'overview.device.title': 'Paired device',
+  'overview.device.empty': 'Not paired — start the pairing flow from the Pairing tab.',
+  'overview.device.name': 'Device name',
+  'overview.device.id': 'Device ID',
+  'overview.device.paired': 'Paired at',
+
+  // Runtime / connection status
+  'runtime.stopped': 'Stopped',
+  'runtime.starting': 'Starting',
+  'runtime.running': 'Running',
+  'runtime.error': 'Error',
+  'connection.disconnected': 'Disconnected',
+  'connection.connecting': 'Connecting',
+  'connection.connected': 'Connected',
+  'connection.reconnecting': 'Reconnecting',
+
+  // Pairing
+  'pairing.title': 'Device pairing',
+  'pairing.description': 'Configure the AA Server address and complete the first pairing to enable remote control.',
+  'pairing.server.label': 'AA Server',
+  'pairing.server.placeholder': 'https://api.anywhere.app.com',
+  'pairing.code.label': 'Enter the 6-character code on the mobile app',
+  'pairing.expiresIn': '{seconds} seconds left',
+  'pairing.expired': 'Pairing code expired — please generate a new one.',
+  'pairing.claim.label': 'Claim URL',
+  'pairing.claim.hint': 'Open this URL in a browser or scan the QR code from the mobile app to claim the session.',
+  'pairing.start': 'Start pairing',
+  'pairing.repair': 'Pair a new device',
+  'pairing.cancel': 'Cancel pairing',
+  'pairing.clear': 'Clear credentials',
+  'pairing.device.title': 'Paired device',
+  'pairing.device.name': 'Device name',
+  'pairing.device.id': 'Device ID',
+  'pairing.device.paired': 'Paired at',
+  'pairing.status.idle': 'Not paired',
+  'pairing.status.starting': 'Requesting pairing code',
+  'pairing.status.waiting': 'Waiting for device claim',
+  'pairing.status.claimed': 'Claimed and connected',
+  'pairing.status.cancelled': 'Cancelled',
+  'pairing.status.error': 'Pairing failed',
+
+  // Logs
+  'logs.title': 'Live logs',
+  'logs.description': 'Scrolling stream of Connector subprocess and Bridge logs.',
+  'logs.copy': 'Copy all',
+  'logs.clear': 'Clear',
+  'logs.follow': 'Follow tail',
+  'logs.empty': 'No log entries match the current filter.',
+  'logs.filter.all': 'All',
+  'logs.filter.debug': 'Debug',
+  'logs.filter.info': 'Info',
+  'logs.filter.warn': 'Warn',
+  'logs.filter.error': 'Error',
+
+  // Environment — autostart
+  'environment.autostart.title': 'Startup behavior',
+  'environment.autostart.description': 'How DSH Desktop should treat the Connector on launch.',
+  'environment.autostart.label': 'Start Connector automatically when DSH Desktop launches',
+  'environment.autostart.hint': 'When disabled, start the Connector manually from the Overview tab.',
+
+  // Environment — uv
+  'environment.uv.title': 'uv runtime distribution',
+  'environment.uv.description': 'Where the uv binary that drives the Connector comes from.',
+  'environment.uv.source': 'Resolution source',
+  'environment.uv.path': 'Executable path',
+  'environment.uv.pathDefault': 'Bundled inside the NPM package',
+  'environment.uv.version': 'Version',
+  'environment.uv.sourceNpmBundled': 'NPM bundled',
+  'environment.uv.sourceSystem': 'System PATH',
+  'environment.uv.sourceDownloaded': 'User directory download',
+  'environment.uv.sourceCustom': 'Custom',
+  'environment.uv.sourceUnresolved': 'Unresolved',
+  'environment.uv.hintNpmBundled': 'Native binary shipped with the plugin — zero setup.',
+  'environment.uv.hintSystem': 'Reuses a uv already installed on the system; requires 0.5+.',
+  'environment.uv.hintDownloaded': 'Auto-downloaded on first launch into ~/.agents-anywhere/bin.',
+  'environment.uv.hintCustom': 'Picked up from the UV_PATH environment variable.',
+  'environment.uv.hintUnresolved': 'Check the network and try reinstalling uv.',
+
+  // Environment — Python
+  'environment.python.title': 'Python runtime',
+  'environment.python.description': 'Python interpreter the Connector subprocess uses; managed by uv.',
+  'environment.python.status': 'Status',
+  'environment.python.version': 'Version',
+  'environment.python.pendingHint': 'uv is downloading and extracting the Python interpreter in the background…',
+  'environment.python.statusReady': 'Ready',
+  'environment.python.statusPending': 'Preparing',
+  'environment.python.statusError': 'Error',
+
+  // Environment — PyPI mirror
+  'environment.mirror.title': 'PyPI mirror',
+  'environment.mirror.description': 'Accelerate Connector dependency downloads — Tsinghua is recommended in mainland China.',
+  'environment.mirror.label': 'Preferred mirror',
+
+  // Environment — data dir
+  'environment.data.title': 'Data directory',
+  'environment.data.description': 'All persistent files written by the Connector (config, logs, cache).',
+  'environment.data.dir': 'Directory path',
+  'environment.data.copy': 'Copy path',
+  'environment.data.open': 'Open in file manager',
+} as const satisfies Record<AgentsAnywhereConnectorLocaleKey, string>
