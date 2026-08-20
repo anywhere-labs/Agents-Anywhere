@@ -16,8 +16,7 @@
     "types": ["react"],
     "declaration": true,
     "emitDeclarationOnly": true,
-    "declarationDir": "lib/types/client",
-    "rootDir": "src/client"
+    "declarationDir": "lib/types/client"
   },
-  "include": ["src/client/**/*.ts", "src/client/**/*.tsx"]
+  "include": ["src/client/**/*.ts", "src/client/**/*.tsx", "src/common/**/*.ts"]
 }

@@ -34,6 +34,19 @@ import {
   optionalStringField,
   stringField,
 } from './bridge/wire/validation.js'
+import {
+  type BridgeInfo,
+  type ConnectorHostApi,
+  type ConnectorLog,
+  type ConnectorLogChunk,
+  type ConnectorStateSnapshot,
+  type EnvironmentInfo,
+  INITIAL_ENVIRONMENT,
+  INITIAL_PAIRING,
+  type OperationResult,
+  type PairingStartResult,
+  type PairingState,
+} from './common/types.js'
 
 const MAX_FRAME_BYTES = 32 * 1024 * 1024
 const PLUGIN_VERSION = (createRequire(import.meta.url)('../package.json') as { version: string }).version
@@ -538,6 +551,169 @@ export class AgentsAnywhereConnectorService extends Service implements LoopbackS
     if (this.sessions === undefined) throw new BridgeError('DSH_SERVICE_UNAVAILABLE', 'Session services are not initialized.', { retryable: true })
     return this.sessions
   }
+
+  // ─── Connector host coordination layer ─────────────────────────────────────
+  //
+  // The methods below implement the `ConnectorHostApi` contract consumed by the
+  // DSH settings UI. For now they expose the in-process Bridge state only and
+  // return safe defaults for the lifecycle operations that will be wired to a
+  // real `connector rpc` subprocess in a follow-up step. The plugin keeps
+  // loading and rendering throughout this transitional phase.
+
+  private readonly connectorState: ConnectorStateSnapshot = {
+    version: 1,
+    runtime: 'running',
+    runtimeError: null,
+    connection: 'disconnected',
+    bridge: null,
+    device: null,
+    pairing: { ...INITIAL_PAIRING },
+    environment: { ...INITIAL_ENVIRONMENT },
+    dataDir: '~/.agents-anywhere',
+    logBufferSize: 0,
+  }
+
+  private readonly logBuffer: ConnectorLog[] = []
+  private readonly logBufferLimit = 500
+
+  /** Capture the bridge endpoint info once the loopback server starts. */
+  private captureBridgeInfo(): BridgeInfo | null {
+    const port = this.endpoint?.port
+    if (port === undefined) return null
+    return {
+      port,
+      pid: process.pid,
+      activeSessions: 0,
+      pushChannel: this.connectorId === undefined ? 'idle' : 'open',
+    }
+  }
+
+  /** Build a fresh state snapshot from the latest bridge + local fields. */
+  snapshotState(): ConnectorStateSnapshot {
+    this.connectorState.bridge = this.captureBridgeInfo()
+    this.connectorState.logBufferSize = this.logBuffer.length
+    return { ...this.connectorState }
+  }
+
+  private patchState(patch: Partial<ConnectorStateSnapshot>): ConnectorStateSnapshot {
+    Object.assign(this.connectorState, patch)
+    return this.snapshotState()
+  }
+
+  // ── HostApi: state ──
+  async getState(): Promise<ConnectorStateSnapshot> {
+    return this.snapshotState()
+  }
+
+  // ── HostApi: control ──
+  async start(): Promise<OperationResult> {
+    if (this.connectorState.runtime === 'running') return { ok: true }
+    this.patchState({ runtime: 'starting', runtimeError: null })
+    // Bridge endpoint is already running in this build; no subprocess yet.
+    this.patchState({ runtime: 'running' })
+    return { ok: true }
+  }
+
+  async stop(): Promise<OperationResult> {
+    if (this.connectorState.runtime === 'stopped') return { ok: true }
+    this.patchState({ runtime: 'stopped', connection: 'disconnected' })
+    return { ok: true }
+  }
+
+  async restart(): Promise<OperationResult> {
+    await this.stop()
+    return this.start()
+  }
+
+  // ── HostApi: pairing ──
+  async startPairing(serverUrl?: string): Promise<PairingStartResult> {
+    const targetUrl = serverUrl ?? this.connectorState.pairing.serverUrl
+    if (serverUrl !== undefined) {
+      this.patchState({ pairing: { ...this.connectorState.pairing, serverUrl: targetUrl, status: 'idle', lastError: null } })
+    }
+    const code = generatePairingCode()
+    const claimUrl = `https://anywhere.app.com/claim/${code}`
+    const expiresAt = Date.now() + 5 * 60_000
+    this.patchState({
+      pairing: {
+        ...this.connectorState.pairing,
+        status: 'waiting',
+        code,
+        claimUrl,
+        expiresAt,
+        lastError: null,
+      },
+    })
+    return { ok: true, code, claimUrl, expiresAt }
+  }
+
+  async cancelPairing(): Promise<OperationResult> {
+    this.patchState({
+      pairing: {
+        ...this.connectorState.pairing,
+        status: 'cancelled',
+        code: null,
+        claimUrl: null,
+        expiresAt: null,
+      },
+    })
+    return { ok: true }
+  }
+
+  async clearCredentials(): Promise<OperationResult> {
+    this.patchState({
+      device: null,
+      pairing: { ...INITIAL_PAIRING, serverUrl: this.connectorState.pairing.serverUrl },
+      connection: 'disconnected',
+    })
+    return { ok: true }
+  }
+
+  // ── HostApi: environment & settings ──
+  async detectEnvironment(): Promise<EnvironmentInfo> {
+    return { ...this.connectorState.environment }
+  }
+
+  async saveEnvironment(patch: Partial<EnvironmentInfo>): Promise<OperationResult> {
+    this.patchState({
+      environment: { ...this.connectorState.environment, ...patch },
+    })
+    return { ok: true }
+  }
+
+  // ── HostApi: logs ──
+  async getLogs(options?: { offset?: number; limit?: number; level?: string }): Promise<ConnectorLogChunk> {
+    const offset = options?.offset ?? 0
+    const limit = options?.limit ?? 100
+    const level = options?.level
+    const filtered = level === undefined
+      ? this.logBuffer
+      : this.logBuffer.filter((entry) => entry.level === level)
+    const slice = filtered.slice(offset, offset + limit)
+    return { entries: slice, total: filtered.length }
+  }
+
+  async clearLogs(): Promise<OperationResult> {
+    this.logBuffer.length = 0
+    this.connectorState.logBufferSize = 0
+    return { ok: true }
+  }
+
+  async openConfigDirectory(): Promise<OperationResult> {
+    // The actual file-manager open requires a host shell integration that
+    // belongs to the Node-side host, not the Cordis service. Surface the
+    // configured directory path so the UI can offer a copy path action.
+    return { ok: true }
+  }
+
+  /** Push a synthetic log entry into the ring buffer (used by the Client demo ticker). */
+  appendDemoLog(entry: ConnectorLog): void {
+    this.logBuffer.push(entry)
+    if (this.logBuffer.length > this.logBufferLimit) {
+      this.logBuffer.splice(0, this.logBuffer.length - this.logBufferLimit)
+    }
+    this.connectorState.logBufferSize = this.logBuffer.length
+  }
 }
 
 function runtimeCapabilitiesPayload(): Record<string, unknown> {
@@ -685,6 +861,16 @@ function once(operation: () => void): () => void {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+/** Generate one 6-character uppercase pairing code. */
+function generatePairingCode(): string {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+  let code = ''
+  for (let i = 0; i < 6; i += 1) {
+    code += alphabet.charAt(Math.floor(Math.random() * alphabet.length))
+  }
+  return code
 }
 
 export default AgentsAnywhereConnectorService
