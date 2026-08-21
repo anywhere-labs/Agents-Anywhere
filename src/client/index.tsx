@@ -25,11 +25,16 @@ export const NAV_SECTION_ID = 'agents-anywhere'
 /**
  * Client services required by the Agents Anywhere settings entry.
  *
+ * `connection` is the DSH wire carrier — the slot's `inject` face closes
+ * over the surrounding Cordis context to build the HostApi proxy, which
+ * needs to call `ctx.connection.call(...)`. Without declaring `connection`
+ * here, the proxy throws on access.
+ *
  * NOTE: do NOT add a `default` export here. The Cordis plugin loader's
  * `unwrapExports` would hoist it onto the plugin object, and a default
  * function loses the `inject` metadata Cordis reads via `plugin.inject`.
  */
-export const inject = ['slots', 'sessions', 'locale']
+export const inject = ['slots', 'sessions', 'locale', 'connection']
 
 /** Register the Agents Anywhere settings page inside DSH's settings panel. */
 export function apply(ctx: ClientContext): void {
