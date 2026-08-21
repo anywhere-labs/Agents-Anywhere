@@ -34,12 +34,41 @@ interface OverviewCardProps {
  */
 export function OverviewCard({ state, actions, t }: OverviewCardProps): JSX.Element {
   const [pairOpen, setPairOpen] = useState(false)
+  const [installing, setInstalling] = useState(false)
   const isPaired = state.device !== null
   const runtimeTone = runtimeToneOf(state.runtime)
   const credentialTone = credentialToneOf(state)
+  const cliReady = state.anywhereCliInstalled
 
   return (
     <>
+      {!cliReady && (
+        <Card title={t('overview.install.title')} description={t('overview.install.description')}>
+          <div style={installRowStyle}>
+            <button
+              type="button"
+              style={{
+                ...buttonPrimary,
+                ...(installing ? disabledButtonStyle : null),
+              }}
+              onClick={() => {
+                if (installing) return
+                setInstalling(true)
+                void actions.installAnywhereCli().finally(() => { setInstalling(false) })
+              }}
+              disabled={installing}
+            >
+              {installing ? t('overview.install.running') : t('overview.install.button')}
+            </button>
+            {state.anywhereCliVersion !== null && (
+              <span style={installedHintStyle}>
+                {t('overview.installed', { version: state.anywhereCliVersion })}
+              </span>
+            )}
+          </div>
+        </Card>
+      )}
+
       <Card>
         <section style={metricsGridStyle}>
           <MetricCard
@@ -68,7 +97,7 @@ export function OverviewCard({ state, actions, t }: OverviewCardProps): JSX.Elem
               ...(state.runtime === 'starting' ? disabledButtonStyle : null),
             }}
             onClick={() => { void actions.start() }}
-            disabled={state.runtime === 'starting'}
+            disabled={state.runtime === 'starting' || !cliReady}
           >
             {t('overview.start')}
           </button>
@@ -84,7 +113,7 @@ export function OverviewCard({ state, actions, t }: OverviewCardProps): JSX.Elem
             type="button"
             style={buttonSecondary}
             onClick={() => { void actions.restart() }}
-            disabled={state.runtime === 'starting'}
+            disabled={state.runtime === 'starting' || !cliReady}
           >
             {t('overview.restart')}
           </button>
@@ -320,6 +349,18 @@ const controlRowStyle: CSSProperties = {
   display: 'flex',
   gap: 8,
   flexWrap: 'wrap',
+}
+
+const installRowStyle: CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 12,
+  flexWrap: 'wrap',
+}
+
+const installedHintStyle: CSSProperties = {
+  fontSize: 12,
+  color: 'var(--dsw-alias-text-tertiary)',
 }
 
 const actionsGridStyle: CSSProperties = {

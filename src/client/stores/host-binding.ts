@@ -48,6 +48,8 @@ export function createHostApi(connection: HostConnection): ConnectorHostApi {
     clearCredentials: () => call<OperationResult>('clearCredentials'),
     detectEnvironment: () => call<EnvironmentInfo>('detectEnvironment'),
     saveEnvironment: (patch) => call<OperationResult>('saveEnvironment', { patch }),
+    detectAnywhereCli: () => call<import('../../common/types.js').AnywhereCliStatus>('detectAnywhereCli'),
+    installAnywhereCli: () => call<OperationResult>('installAnywhereCli'),
     getLogs: (options) =>
       call<ConnectorLogChunk>('getLogs', options === undefined ? {} : { options }),
     clearLogs: () => call<OperationResult>('clearLogs'),

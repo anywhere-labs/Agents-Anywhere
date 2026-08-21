@@ -549,6 +549,8 @@ export class AgentsAnywhereConnectorService extends Service implements LoopbackS
     environment: { ...INITIAL_ENVIRONMENT },
     dataDir: '~/.agents-anywhere',
     logBufferSize: 0,
+    anywhereCliInstalled: false,
+    anywhereCliVersion: null,
   }
 
   private readonly logBuffer: ConnectorLog[] = []
@@ -607,6 +609,15 @@ export class AgentsAnywhereConnectorService extends Service implements LoopbackS
 
   // ── HostApi: state ──
   async getState(): Promise<ConnectorStateSnapshot> {
+    // Refresh the anywhere-cli detection so the UI sees a current install
+    // status without needing a separate call. The detection is cheap (one
+    // `uv tool list` exec) and isolated from the main connector subprocess.
+    try {
+      const status = await this.coordinator.detectAnywhereCli()
+      this.coordinator.injectDetectionResult(status)
+    } catch {
+      // Detection failures are non-fatal — keep the cached snapshot.
+    }
     return this.snapshotState()
   }
 
@@ -650,6 +661,15 @@ export class AgentsAnywhereConnectorService extends Service implements LoopbackS
 
   async saveEnvironment(patch: Partial<EnvironmentInfo>): Promise<OperationResult> {
     return this.coordinator.saveEnvironment(patch)
+  }
+
+  // ── HostApi: anywhere-cli lifecycle ──
+  async detectAnywhereCli(): Promise<import('./common/types.js').AnywhereCliStatus> {
+    return this.coordinator.detectAnywhereCli()
+  }
+
+  async installAnywhereCli(): Promise<OperationResult> {
+    return this.coordinator.installAnywhereCli()
   }
 
   // ── HostApi: logs ──

@@ -20,7 +20,9 @@
  */
 
 import { EventEmitter } from 'node:events'
+import { execFileSync } from 'node:child_process'
 import {
+  type AnywhereCliStatus,
   type BridgeInfo,
   type ConnectorHostApi,
   type ConnectorLog,
@@ -127,7 +129,7 @@ export class ConnectorCoordinator extends EventEmitter implements ConnectorHostA
 
     const spec: CommandSpec = {
       command: resolution.uvPath,
-      args: ['run', '--directory', this.cwd, 'anywhere-cli', 'start'],
+      args: ['tool', 'run', 'anywhere-cli', 'start'],
       env: buildConnectorEnv(this.snapshot.environment),
       cwd: this.cwd,
     }
@@ -338,6 +340,112 @@ export class ConnectorCoordinator extends EventEmitter implements ConnectorHostA
     return { ok: false, error: message }
   }
 
+  // ── anywhere-cli installation ─────────────────────────────────────────────
+  //
+  // The plugin does not bundle the anywhere-cli Python project; users run
+  // `uv tool install anywhere-cli` once and the plugin spawns it via
+  // `uv tool run anywhere-cli start`. These two methods surface the
+  // install status and the install action through the Host API so the
+  // settings UI can show a one-click install button when the tool is
+  // missing.
+
+  async detectAnywhereCli(): Promise<AnywhereCliStatus> {
+    const resolution = this.envDetectorFactory().resolve()
+    if (resolution.uvPath === null) {
+      const status: AnywhereCliStatus = {
+        installed: false,
+        version: null,
+        uvPath: null,
+        rawOutput: resolution.notes.join('; '),
+      }
+      return status
+    }
+    try {
+      const output = execFileSync(resolution.uvPath, ['tool', 'list'], {
+        stdio: ['ignore', 'pipe', 'ignore'],
+        timeout: 5_000,
+      }).toString()
+      const parsed = parseAnywhereCliList(output)
+      return {
+        installed: parsed.installed,
+        version: parsed.version,
+        uvPath: resolution.uvPath,
+        rawOutput: output.slice(0, 2_000),
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      return {
+        installed: false,
+        version: null,
+        uvPath: resolution.uvPath,
+        rawOutput: message,
+      }
+    }
+  }
+
+  /**
+   * Apply a fresh detection result to the cached snapshot without
+   * triggering a UI-bound dispatch — used by the HostApi `getState` to
+   * refresh the cached install flag before responding.
+   */
+  injectDetectionResult(status: AnywhereCliStatus): void {
+    this.snapshot = {
+      ...this.snapshot,
+      anywhereCliInstalled: status.installed,
+      anywhereCliVersion: status.version,
+    }
+  }
+
+  async installAnywhereCli(): Promise<OperationResult> {
+    const resolution = this.envDetectorFactory().resolve()
+    if (resolution.uvPath === null) {
+      const message = `uv not found (${resolution.notes.join('; ')})`
+      this.updateSnapshot({ runtimeError: message })
+      return { ok: false, error: message }
+    }
+
+    const spec: CommandSpec = {
+      command: resolution.uvPath,
+      args: ['tool', 'install', 'anywhere-cli'],
+      env: buildConnectorEnv(this.snapshot.environment),
+    }
+
+    return new Promise<OperationResult>((resolve) => {
+      let settled = false
+      const finish = (result: OperationResult): void => {
+        if (settled) return
+        settled = true
+        resolve(result)
+      }
+      const tempRunner = new ProcessRunner({ gracefulStopMs: 30_000 })
+      tempRunner.on('log', (entry) => this.handleRunnerLog(entry))
+      tempRunner.on('state', (state) => {
+        if (state === 'crashed') {
+          void this.detectAnywhereCli().then((status) => {
+            finish(status.installed
+              ? { ok: true }
+              : { ok: false, error: '`uv tool install anywhere-cli` failed; check logs' })
+          })
+        }
+      })
+      tempRunner.on('error', (error) => {
+        finish({ ok: false, error: error.message })
+      })
+      const started = tempRunner.start(spec)
+      if (!started) {
+        finish({ ok: false, error: 'install subprocess refused to start' })
+        return
+      }
+      // Watchdog: if the install finishes without an exit event, treat as done.
+      // `uv tool install` is short-lived; poll via getState after a short delay.
+      setTimeout(() => {
+        void this.detectAnywhereCli().then((status) => {
+          finish(status.installed ? { ok: true } : { ok: false, error: 'install timed out' })
+        })
+      }, 30_000)
+    })
+  }
+
   private updateSnapshot(patch: Partial<ConnectorStateSnapshot>): void {
     this.snapshot = { ...this.snapshot, ...patch, logBufferSize: this.logs.length }
     this.emit('state', this.getSnapshot())
@@ -356,6 +464,8 @@ function initialSnapshot(): ConnectorStateSnapshot {
     environment: { ...INITIAL_ENVIRONMENT },
     dataDir: '~/.agents-anywhere',
     logBufferSize: 0,
+    anywhereCliInstalled: false,
+    anywhereCliVersion: null,
   }
 }
 
@@ -370,6 +480,30 @@ function buildConnectorEnv(env: EnvironmentInfo): Record<string, string> {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+/**
+ * Parse the output of `uv tool list` to find the anywhere-cli entry. Output
+ * looks like:
+ *
+ *   anywhere-cli v0.1.7
+ *   - python 3.12
+ *   - requests ...
+ *
+ * `uv tool list --format json` is more reliable but requires uv >= 0.4; the
+ * line parser works for every released version and is what the desktop-next
+ * build ships with.
+ */
+function parseAnywhereCliList(output: string): { installed: boolean; version: string | null } {
+  const lines = output.split(/\r?\n/)
+  for (const line of lines) {
+    const trimmed = line.trim()
+    if (!trimmed.startsWith('anywhere-cli')) continue
+    const match = /^anywhere-cli(?:\s+v?([\w.+-]+))?/.exec(trimmed)
+    if (match === null) continue
+    return { installed: true, version: match[1] ?? null }
+  }
+  return { installed: false, version: null }
 }
 
 // --- Runtime guards for `unknown` payloads -------------------------------

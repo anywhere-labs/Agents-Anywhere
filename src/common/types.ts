@@ -62,6 +62,18 @@ export interface ConnectorLog {
   readonly message: string
 }
 
+/** Result of probing whether the anywhere-cli tool is installed. */
+export interface AnywhereCliStatus {
+  /** True when `uv tool list` reports the anywhere-cli entry. */
+  installed: boolean
+  /** Detected version string, if any. */
+  version: string | null
+  /** uv path used to probe. */
+  uvPath: string | null
+  /** Captured output from `uv tool list` (truncated). */
+  rawOutput: string
+}
+
 export interface DeviceBinding {
   readonly deviceId: string
   readonly deviceName: string
@@ -129,6 +141,10 @@ export interface ConnectorStateSnapshot {
   environment: EnvironmentInfo
   dataDir: string
   logBufferSize: number
+  /** True when `uv tool list` reports `anywhere-cli` as installed. */
+  anywhereCliInstalled: boolean
+  /** Detected version of the installed anywhere-cli (or null). */
+  anywhereCliVersion: string | null
 }
 
 // ─── Host RPC contract ────────────────────────────────────────────────────
@@ -155,6 +171,12 @@ export interface ConnectorHostApi {
   // ── Environment & settings ──
   detectEnvironment(): Promise<EnvironmentInfo>
   saveEnvironment(patch: Partial<EnvironmentInfo>): Promise<OperationResult>
+
+  // ── Connector CLI management ──
+  /** Probe whether `anywhere-cli` is installed via `uv tool list`. */
+  detectAnywhereCli(): Promise<AnywhereCliStatus>
+  /** Install `anywhere-cli` via `uv tool install anywhere-cli`. Streams logs. */
+  installAnywhereCli(): Promise<OperationResult>
 
   // ── Logs ──
   getLogs(options?: { offset?: number; limit?: number; level?: string }): Promise<ConnectorLogChunk>

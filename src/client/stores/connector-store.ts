@@ -13,6 +13,7 @@
 
 import { useCallback, useEffect, useMemo, useReducer, useRef } from 'react'
 import {
+  type AnywhereCliStatus,
   type BridgeInfo,
   type ConnectionState,
   type ConnectorHostApi,
@@ -48,6 +49,10 @@ export interface ConnectorState {
   dataDir: string
   /** Last host-call failure, surfaced in the Overview card. */
   lastError: string | null
+  /** True when `uv tool list` reports the anywhere-cli entry. */
+  anywhereCliInstalled: boolean
+  /** Detected version of the installed anywhere-cli (or null). */
+  anywhereCliVersion: string | null
 }
 
 type Action =
@@ -71,6 +76,8 @@ function reducer(state: ConnectorState, action: Action): ConnectorState {
         logs: state.logs, // logs come from getLogs, not getState
         dataDir: action.snapshot.dataDir,
         lastError: null,
+        anywhereCliInstalled: action.snapshot.anywhereCliInstalled,
+        anywhereCliVersion: action.snapshot.anywhereCliVersion,
       }
     case 'runtime-error':
       return { ...state, runtimeError: action.message }
@@ -110,6 +117,8 @@ function defaultState(): ConnectorState {
     logs: [],
     dataDir: '~/.agents-anywhere',
     lastError: null,
+    anywhereCliInstalled: false,
+    anywhereCliVersion: null,
   }
 }
 
@@ -126,6 +135,8 @@ export interface ConnectorActions {
   updateEnvironment(patch: Partial<EnvironmentInfo>): Promise<void>
   clearLogs(): Promise<void>
   refresh(): Promise<void>
+  detectAnywhereCli(): Promise<void>
+  installAnywhereCli(): Promise<void>
 }
 
 /**
@@ -246,6 +257,23 @@ export function useConnectorStore(host: ConnectorHostApi): {
     clearLogs: async () => {
       try {
         await host.clearLogs()
+      } catch (error) {
+        dispatch({ type: 'runtime-error', message: errorMessage(error) })
+      }
+      await refresh()
+    },
+    detectAnywhereCli: async () => {
+      try {
+        await host.detectAnywhereCli()
+      } catch (error) {
+        dispatch({ type: 'runtime-error', message: errorMessage(error) })
+      }
+      await refresh()
+    },
+    installAnywhereCli: async () => {
+      try {
+        const result = await host.installAnywhereCli()
+        if (!result.ok) dispatch({ type: 'runtime-error', message: result.error ?? 'install failed' })
       } catch (error) {
         dispatch({ type: 'runtime-error', message: errorMessage(error) })
       }
