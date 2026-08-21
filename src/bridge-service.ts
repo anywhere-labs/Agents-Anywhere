@@ -47,6 +47,7 @@ import {
   type PairingStartResult,
   type PairingState,
 } from './common/types.js'
+import { ConnectorCoordinator } from './manager/connector-coordinator.js'
 
 const MAX_FRAME_BYTES = 32 * 1024 * 1024
 const PLUGIN_VERSION = (createRequire(import.meta.url)('../package.json') as { version: string }).version
@@ -128,30 +129,6 @@ export class AgentsAnywhereConnectorService extends Service implements LoopbackS
   private shuttingDown = false
   private shutdownPromise: Promise<Record<string, unknown>> | undefined
   private disposeRegistrations: (() => void) | undefined
-
-  /**
-   * Construct the service without claiming process streams.
-   * @param ctx - Fully composed DSH base context.
-   * @param config - Schema-validated plugin configuration.
-   */
-  constructor(ctx: Context, config: Config) {
-    super(ctx, 'agentsAnywhereConnector')
-    const bridge = config.bridge
-    if (bridge === undefined || bridge.stateRoot === undefined || !isAbsolute(bridge.stateRoot)) {
-      throw new Error('agents-anywhere bridge stateRoot must be an absolute path')
-    }
-    this.config = {
-      stateRoot: resolve(bridge.stateRoot),
-      maxFrameBytes: bridge.maxFrameBytes ?? 8 * 1024 * 1024,
-      readRequestTimeoutMs: bridge.readRequestTimeoutMs ?? 30_000,
-      writeRequestTimeoutMs: bridge.writeRequestTimeoutMs ?? 60_000,
-      shutdownTimeoutMs: bridge.shutdownTimeoutMs ?? 15_000,
-      maxListLimit: bridge.maxListLimit ?? 500,
-      maxCommandLimit: bridge.maxCommandLimit ?? 200,
-      maxPendingInteractions: bridge.maxPendingInteractions ?? 64,
-    }
-    this.metadata = new MetadataStore(this.config.stateRoot)
-  }
 
   /** Validate composition, register reversible resources, and start the loopback endpoint. */
   async [Service.init](): Promise<void> {
@@ -555,10 +532,11 @@ export class AgentsAnywhereConnectorService extends Service implements LoopbackS
   // ─── Connector host coordination layer ─────────────────────────────────────
   //
   // The methods below implement the `ConnectorHostApi` contract consumed by the
-  // DSH settings UI. For now they expose the in-process Bridge state only and
-  // return safe defaults for the lifecycle operations that will be wired to a
-  // real `connector rpc` subprocess in a follow-up step. The plugin keeps
-  // loading and rendering throughout this transitional phase.
+  // DSH settings UI. The actual subprocess + JSON-RPC client live in
+  // `ConnectorCoordinator`; this service hosts the coordinator lazily and
+  // surfaces its state snapshot to the UI. The plugin keeps loading even when
+  // `uv` is not installed — `start()` simply reports the missing binary
+  // instead of throwing.
 
   private readonly connectorState: ConnectorStateSnapshot = {
     version: 1,
@@ -575,6 +553,8 @@ export class AgentsAnywhereConnectorService extends Service implements LoopbackS
 
   private readonly logBuffer: ConnectorLog[] = []
   private readonly logBufferLimit = 500
+  private readonly coordinator: ConnectorCoordinator
+  private coordinatorWired = false
 
   /** Capture the bridge endpoint info once the loopback server starts. */
   private captureBridgeInfo(): BridgeInfo | null {
@@ -588,16 +568,41 @@ export class AgentsAnywhereConnectorService extends Service implements LoopbackS
     }
   }
 
-  /** Build a fresh state snapshot from the latest bridge + local fields. */
-  snapshotState(): ConnectorStateSnapshot {
-    this.connectorState.bridge = this.captureBridgeInfo()
-    this.connectorState.logBufferSize = this.logBuffer.length
-    return { ...this.connectorState }
+  /**
+   * Construct the service without claiming process streams.
+   * @param ctx - Fully composed DSH base context.
+   * @param config - Schema-validated plugin configuration.
+   */
+  constructor(ctx: Context, config: Config) {
+    super(ctx, 'agentsAnywhereConnector')
+    const bridge = config.bridge
+    if (bridge === undefined || bridge.stateRoot === undefined || !isAbsolute(bridge.stateRoot)) {
+      throw new Error('agents-anywhere bridge stateRoot must be an absolute path')
+    }
+    this.config = {
+      stateRoot: resolve(bridge.stateRoot),
+      maxFrameBytes: bridge.maxFrameBytes ?? 8 * 1024 * 1024,
+      readRequestTimeoutMs: bridge.readRequestTimeoutMs ?? 30_000,
+      writeRequestTimeoutMs: bridge.writeRequestTimeoutMs ?? 60_000,
+      shutdownTimeoutMs: bridge.shutdownTimeoutMs ?? 15_000,
+      maxListLimit: bridge.maxListLimit ?? 500,
+      maxCommandLimit: bridge.maxCommandLimit ?? 200,
+      maxPendingInteractions: bridge.maxPendingInteractions ?? 64,
+    }
+    this.metadata = new MetadataStore(this.config.stateRoot)
+    this.coordinator = new ConnectorCoordinator({ cwd: this.config.stateRoot })
   }
 
   private patchState(patch: Partial<ConnectorStateSnapshot>): ConnectorStateSnapshot {
     Object.assign(this.connectorState, patch)
-    return this.snapshotState()
+    this.connectorState.bridge = this.captureBridgeInfo()
+    return { ...this.connectorState }
+  }
+
+  /** Build a fresh state snapshot from the latest bridge + local fields. */
+  snapshotState(): ConnectorStateSnapshot {
+    this.connectorState.bridge = this.captureBridgeInfo()
+    return { ...this.connectorState }
   }
 
   // ── HostApi: state ──
@@ -607,103 +612,57 @@ export class AgentsAnywhereConnectorService extends Service implements LoopbackS
 
   // ── HostApi: control ──
   async start(): Promise<OperationResult> {
-    if (this.connectorState.runtime === 'running') return { ok: true }
-    this.patchState({ runtime: 'starting', runtimeError: null })
-    // Bridge endpoint is already running in this build; no subprocess yet.
-    this.patchState({ runtime: 'running' })
-    return { ok: true }
+    this.wireCoordinatorEvents()
+    const result = await this.coordinator.start()
+    return result
   }
 
   async stop(): Promise<OperationResult> {
-    if (this.connectorState.runtime === 'stopped') return { ok: true }
-    this.patchState({ runtime: 'stopped', connection: 'disconnected' })
-    return { ok: true }
+    this.wireCoordinatorEvents()
+    return this.coordinator.stop()
   }
 
   async restart(): Promise<OperationResult> {
-    await this.stop()
-    return this.start()
+    this.wireCoordinatorEvents()
+    return this.coordinator.restart()
   }
 
   // ── HostApi: pairing ──
   async startPairing(serverUrl?: string): Promise<PairingStartResult> {
-    const targetUrl = serverUrl ?? this.connectorState.pairing.serverUrl
-    if (serverUrl !== undefined) {
-      this.patchState({ pairing: { ...this.connectorState.pairing, serverUrl: targetUrl, status: 'idle', lastError: null } })
-    }
-    const code = generatePairingCode()
-    const claimUrl = `https://anywhere.app.com/claim/${code}`
-    const expiresAt = Date.now() + 5 * 60_000
-    this.patchState({
-      pairing: {
-        ...this.connectorState.pairing,
-        status: 'waiting',
-        code,
-        claimUrl,
-        expiresAt,
-        lastError: null,
-      },
-    })
-    return { ok: true, code, claimUrl, expiresAt }
+    this.wireCoordinatorEvents()
+    return this.coordinator.startPairing(serverUrl)
   }
 
   async cancelPairing(): Promise<OperationResult> {
-    this.patchState({
-      pairing: {
-        ...this.connectorState.pairing,
-        status: 'cancelled',
-        code: null,
-        claimUrl: null,
-        expiresAt: null,
-      },
-    })
-    return { ok: true }
+    this.wireCoordinatorEvents()
+    return this.coordinator.cancelPairing()
   }
 
   async clearCredentials(): Promise<OperationResult> {
-    this.patchState({
-      device: null,
-      pairing: { ...INITIAL_PAIRING, serverUrl: this.connectorState.pairing.serverUrl },
-      connection: 'disconnected',
-    })
-    return { ok: true }
+    this.wireCoordinatorEvents()
+    return this.coordinator.clearCredentials()
   }
 
   // ── HostApi: environment & settings ──
   async detectEnvironment(): Promise<EnvironmentInfo> {
-    return { ...this.connectorState.environment }
+    return this.coordinator.detectEnvironment()
   }
 
   async saveEnvironment(patch: Partial<EnvironmentInfo>): Promise<OperationResult> {
-    this.patchState({
-      environment: { ...this.connectorState.environment, ...patch },
-    })
-    return { ok: true }
+    return this.coordinator.saveEnvironment(patch)
   }
 
   // ── HostApi: logs ──
   async getLogs(options?: { offset?: number; limit?: number; level?: string }): Promise<ConnectorLogChunk> {
-    const offset = options?.offset ?? 0
-    const limit = options?.limit ?? 100
-    const level = options?.level
-    const filtered = level === undefined
-      ? this.logBuffer
-      : this.logBuffer.filter((entry) => entry.level === level)
-    const slice = filtered.slice(offset, offset + limit)
-    return { entries: slice, total: filtered.length }
+    return this.coordinator.getLogs(options)
   }
 
   async clearLogs(): Promise<OperationResult> {
-    this.logBuffer.length = 0
-    this.connectorState.logBufferSize = 0
-    return { ok: true }
+    return this.coordinator.clearLogs()
   }
 
   async openConfigDirectory(): Promise<OperationResult> {
-    // The actual file-manager open requires a host shell integration that
-    // belongs to the Node-side host, not the Cordis service. Surface the
-    // configured directory path so the UI can offer a copy path action.
-    return { ok: true }
+    return this.coordinator.openConfigDirectory()
   }
 
   /** Push a synthetic log entry into the ring buffer (used by the Client demo ticker). */
@@ -713,6 +672,35 @@ export class AgentsAnywhereConnectorService extends Service implements LoopbackS
       this.logBuffer.splice(0, this.logBuffer.length - this.logBufferLimit)
     }
     this.connectorState.logBufferSize = this.logBuffer.length
+  }
+
+  /**
+   * Forward coordinator events into the bridge-service state snapshot so
+   * `snapshotState()` reflects the live subprocess on every read.
+   */
+  private wireCoordinatorEvents(): void {
+    if (this.coordinatorWired) return
+    this.coordinatorWired = true
+    this.coordinator.on('state', (snapshot) => {
+      Object.assign(this.connectorState, {
+        runtime: snapshot.runtime,
+        runtimeError: snapshot.runtimeError,
+        connection: snapshot.connection,
+        bridge: snapshot.bridge,
+        device: snapshot.device,
+        pairing: snapshot.pairing,
+        environment: snapshot.environment,
+        dataDir: snapshot.dataDir,
+        logBufferSize: snapshot.logBufferSize,
+      })
+    })
+    this.coordinator.on('log', (entry) => {
+      this.logBuffer.push(entry)
+      if (this.logBuffer.length > this.logBufferLimit) {
+        this.logBuffer.splice(0, this.logBuffer.length - this.logBufferLimit)
+      }
+      this.connectorState.logBufferSize = this.logBuffer.length
+    })
   }
 }
 
