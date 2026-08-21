@@ -54,7 +54,7 @@ export function LogViewer({ state, actions, t }: LogViewerProps): JSX.Element {
           <button type="button" style={buttonSecondary} onClick={() => copyAll(filtered, t)}>
             {t('logs.copy')}
           </button>
-          <button type="button" style={buttonGhost} onClick={() => actions.clearLogs()}>
+          <button type="button" style={buttonGhost} onClick={() => { void actions.clearLogs() }}>
             {t('logs.clear')}
           </button>
         </>

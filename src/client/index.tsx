@@ -4,9 +4,11 @@ import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
+import type { ConnectorHostApi } from '../common/types.js'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 import { ConnectorSettingsSection } from './components/ConnectorSettingsSection.js'
 import { en, zh, type AgentsAnywhereConnectorLocaleKey } from './locales.js'
+import { createHostApi } from './stores/host-binding.js'
 import { startNavIconPatcher } from './nav-icon-style.js'
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
@@ -38,17 +40,29 @@ export function apply(ctx: ClientContext): void {
   // replaces its default icon with the Agents Anywhere logo.
   ctx.effect(() => {
     startNavIconPatcher()
-    return () => {
-      // Patch is idempotent; observer is cleaned up by the browser on dispose.
-    }
+    return () => undefined
   }, 'agentsAnywhereConnector: nav icon')
 
+  // Snapshot the outer Cordis context so the slot inject face can pull the
+  // wire connection off it. The shell calls our section entry through the
+  // registered Component, which can only see props the inject face returns.
+  const outerCtx = ctx
   ctx.slots.inject('settings.section', () => ctx.slots.register({
     name: 'settings.section',
     id: NAV_SECTION_ID,
     order: 60,
     label: () => ctx.locale.bind(LOCALE_NS)('heading.title'),
     locale: LOCALE_NS,
+    inject: (): { host: ConnectorHostApi } => {
+      const connection = (outerCtx as unknown as { connection?: unknown }).connection
+      if (connection === undefined || typeof (connection as { call?: unknown }).call !== 'function') {
+        // No wire yet — the section will still render with a "host unavailable"
+        // placeholder state because useConnectorStore skips RPC when host is
+        // undefined. The UI shows the default snapshot until the wire comes up.
+        return { host: undefined as unknown as ConnectorHostApi }
+      }
+      return { host: createHostApi(connection as { call<TResult>(api: string, method: string, params: Record<string, unknown>): Promise<TResult> }) }
+    },
   }, ConnectorSettingsSectionShell))
 }
 
@@ -56,12 +70,15 @@ export function apply(ctx: ClientContext): void {
 interface SectionShellProps {
   close: () => void
   t: TranslateNS<typeof LOCALE_NS>
+  /** Injected face returned by the slot registration: a Host API proxy or undefined. */
+  host?: ConnectorHostApi
 }
 
 /**
  * Thin shell wrapper. The settings shell injects `t` automatically because
- * the registration declares `locale:`.
+ * the registration declares `locale:`; `host` is supplied by the slot's
+ * `inject` face.
  */
-function ConnectorSettingsSectionShell({ close, t }: SectionShellProps): JSX.Element {
-  return <ConnectorSettingsSection close={close} t={t} />
+function ConnectorSettingsSectionShell({ close, t, host }: SectionShellProps): JSX.Element {
+  return <ConnectorSettingsSection close={close} t={t} host={host} />
 }

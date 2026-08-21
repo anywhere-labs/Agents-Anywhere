@@ -9,12 +9,18 @@ import {
   inputBase,
 } from './Card.js'
 import {
-  PYPI_MIRROR_OPTIONS,
   type ConnectorActions,
   type ConnectorState,
-  type UvSource,
   type PythonStatus,
+  type UvSource,
 } from '../stores/connector-store.js'
+
+const PYPI_MIRROR_OPTIONS: ReadonlyArray<{ id: string; label: string; url: string }> = [
+  { id: 'tsinghua', label: '清华大学开源软件镜像', url: 'https://pypi.tuna.tsinghua.edu.cn/simple' },
+  { id: 'aliyun', label: '阿里云 PyPI 镜像', url: 'https://mirrors.aliyun.com/pypi/simple/' },
+  { id: 'tencent', label: '腾讯云 PyPI 镜像', url: 'https://mirrors.cloud.tencent.com/pypi/simple/' },
+  { id: 'official', label: 'PyPI 官方源', url: 'https://pypi.org/simple' },
+]
 
 const LOCALE_NS = 'dsh-aa-connector'
 
@@ -38,7 +44,7 @@ export function EnvironmentCard({ state, actions, t }: EnvironmentCardProps): JS
           <input
             type="checkbox"
             checked={env.autoStart}
-            onChange={(event) => actions.updateEnvironment({ autoStart: event.target.checked })}
+            onChange={(event) => { void actions.updateEnvironment({ autoStart: event.target.checked }) }}
             style={checkboxStyle}
           />
           <span style={toggleLabelStyle}>{t('environment.autostart.label')}</span>
@@ -88,12 +94,12 @@ export function EnvironmentCard({ state, actions, t }: EnvironmentCardProps): JS
           id="aa-pypi-mirror"
           style={{ ...inputBase, appearance: 'none', cursor: 'pointer' }}
           value={env.pypiMirror}
-          onChange={(event) => actions.updateEnvironment({ pypiMirror: event.target.value })}
+          onChange={(event) => { void actions.updateEnvironment({ pypiMirror: event.target.value }) }}
         >
-          {PYPI_MIRROR_OPTIONS.map(option => (
+          {PYPI_MIRROR_OPTIONS.map((option: { id: string; label: string; url: string }) => (
             <option key={option.id} value={option.url}>{option.label}</option>
           ))}
-          {!PYPI_MIRROR_OPTIONS.some(option => option.url === env.pypiMirror) && (
+          {!PYPI_MIRROR_OPTIONS.some((option: { id: string; label: string; url: string }) => option.url === env.pypiMirror) && (
             <option value={env.pypiMirror}>{env.pypiMirror}</option>
           )}
         </select>

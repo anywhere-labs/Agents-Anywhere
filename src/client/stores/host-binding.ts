@@ -1,63 +1,62 @@
 /**
  * Wire-bound handle to the Agents Anywhere Host API.
  *
- * The hook returns a typed surface that proxies every method through
- * `ctx.connection.call` against the registered `agentsAnywhereConnector`
- * Cordis entry. Callers receive Promises that resolve with the typed DTO.
+ * Built lazily from a `connection` handle (the DSH wire carrier). The
+ * returned surface is `ConnectorHostApi`-shaped so consumers get full type
+ * safety at the call site.
  *
- * NOTE: the cards in this milestone still drive their UI off the local
- * `useConnectorStore` (mock data); switching them to the live host is the
- * follow-up step. The hook exists so the wire contract is in place and
- * exercises the `ConnectorHostApi` types against the real shape.
+ * The factory is invoked from the slot's `inject` face so it can be wired
+ * into the section component's props without exposing the raw Cordis
+ * context to the renderer.
  */
 
-import { useMemo } from 'react'
-import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 import type {
   ConnectorHostApi,
+  ConnectorLogChunk,
   ConnectorStateSnapshot,
   EnvironmentInfo,
   OperationResult,
   PairingStartResult,
-  ConnectorLogChunk,
 } from '../../common/types.js'
+
+export type HostConnection = {
+  call<TResult>(apiName: string, method: string, params: Record<string, unknown>): Promise<TResult>
+}
 
 const HOST_API_NAME = 'agentsAnywhereConnector'
 
 /**
- * Lazy proxy that turns method calls into `ctx.connection.call(...)`. The
- * returned surface is `ConnectorHostApi`-shaped so consumers get full type
- * safety at the call site.
+ * Build a typed `ConnectorHostApi` proxy backed by the DSH wire connection.
+ * The returned object is safe to keep in component props; it memoizes the
+ * proxy functions on first construction.
  */
-export function useHostApi(ctx: ClientContext): ConnectorHostApi {
-  return useMemo<ConnectorHostApi>(() => {
-    const call = <TResult>(method: string, params: Record<string, unknown> = {}): Promise<TResult> => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const connection = (ctx as any).connection
-      if (connection === undefined) {
-        return Promise.reject(new Error('DSH connection service unavailable'))
-      }
-      if (typeof connection.call !== 'function') {
-        return Promise.reject(new Error('DSH connection does not expose call()'))
-      }
-      return Promise.resolve(connection.call(HOST_API_NAME, method, params)) as Promise<TResult>
-    }
+export function createHostApi(connection: HostConnection): ConnectorHostApi {
+  const call = <TResult>(method: string, params: Record<string, unknown> = {}): Promise<TResult> => {
+    return Promise.resolve(
+      connection.call<TResult>(HOST_API_NAME, method, params),
+    ) as Promise<TResult>
+  }
 
-    return {
-      getState: () => call<ConnectorStateSnapshot>('getState'),
-      start: () => call<OperationResult>('start'),
-      stop: () => call<OperationResult>('stop'),
-      restart: () => call<OperationResult>('restart'),
-      startPairing: (serverUrl) =>
-        call<PairingStartResult>('startPairing', serverUrl === undefined ? {} : { serverUrl }),
-      cancelPairing: () => call<OperationResult>('cancelPairing'),
-      clearCredentials: () => call<OperationResult>('clearCredentials'),
-      detectEnvironment: () => call<EnvironmentInfo>('detectEnvironment'),
-      saveEnvironment: (patch) => call<OperationResult>('saveEnvironment', { patch }),
-      getLogs: (options) =>
-        call<ConnectorLogChunk>('getLogs', options === undefined ? {} : { options }),
-      clearLogs: () => call<OperationResult>('clearLogs'),
-      openConfigDirectory: () => call<OperationResult>('openConfigDirectory'),
-    }
-  }, [ctx])
+  return {
+    getState: () => call<ConnectorStateSnapshot>('getState'),
+    start: () => call<OperationResult>('start'),
+    stop: () => call<OperationResult>('stop'),
+    restart: () => call<OperationResult>('restart'),
+    startPairing: (serverUrl) =>
+      call<PairingStartResult>('startPairing', serverUrl === undefined ? {} : { serverUrl }),
+    cancelPairing: () => call<OperationResult>('cancelPairing'),
+    clearCredentials: () => call<OperationResult>('clearCredentials'),
+    detectEnvironment: () => call<EnvironmentInfo>('detectEnvironment'),
+    saveEnvironment: (patch) => call<OperationResult>('saveEnvironment', { patch }),
+    getLogs: (options) =>
+      call<ConnectorLogChunk>('getLogs', options === undefined ? {} : { options }),
+    clearLogs: () => call<OperationResult>('clearLogs'),
+    openConfigDirectory: () => call<OperationResult>('openConfigDirectory'),
+  }
 }
+
+/**
+ * Convenience hook that pulls a `ConnectorHostApi` off the section's
+ * `host` prop and memoizes it. Components consume it like a normal hook.
+ */
+export type HostProp = ConnectorHostApi | undefined

@@ -38,7 +38,7 @@ export function PairingCard({ state, actions, t }: PairingCardProps): JSX.Elemen
           value={serverDraft}
           placeholder={t('pairing.server.placeholder')}
           onChange={(event) => setServerDraft(event.target.value)}
-          onBlur={() => actions.setServerUrl(serverDraft)}
+          onBlur={() => { void actions.setServerUrl(serverDraft) }}
           disabled={busy}
           style={{ ...inputBase, flex: 1, opacity: busy ? 0.6 : 1 }}
         />
@@ -85,25 +85,25 @@ export function PairingCard({ state, actions, t }: PairingCardProps): JSX.Elemen
 
       <div style={actionsRowStyle}>
         {state.pairing.status === 'idle' || state.pairing.status === 'cancelled' || state.pairing.status === 'error' ? (
-          <button type="button" style={buttonPrimary} onClick={() => actions.startPairing()}>
+          <button type="button" style={buttonPrimary} onClick={() => { void actions.startPairing() }}>
             {t('pairing.start')}
           </button>
         ) : null}
 
         {state.pairing.status === 'claimed' ? (
-          <button type="button" style={buttonSecondary} onClick={() => actions.startPairing()}>
+          <button type="button" style={buttonSecondary} onClick={() => { void actions.startPairing() }}>
             {t('pairing.repair')}
           </button>
         ) : null}
 
         {busy && (
-          <button type="button" style={buttonSecondary} onClick={() => actions.cancelPairing()}>
+          <button type="button" style={buttonSecondary} onClick={() => { void actions.cancelPairing() }}>
             {t('pairing.cancel')}
           </button>
         )}
 
         {state.device !== null && (
-          <button type="button" style={buttonGhost} onClick={() => actions.clearCredentials()}>
+          <button type="button" style={buttonGhost} onClick={() => { void actions.clearCredentials() }}>
             {t('pairing.clear')}
           </button>
         )}

@@ -1,11 +1,12 @@
 import type { CSSProperties } from 'react'
 import { useState } from 'react'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
+import type { ConnectorHostApi } from '../../common/types.js'
 import { OverviewCard } from './OverviewCard.js'
 import { PairingCard } from './PairingCard.js'
 import { LogViewer } from './LogViewer.js'
 import { EnvironmentCard } from './EnvironmentCard.js'
-import { useConnectorStore, useDemoStateMachine } from '../stores/connector-store.js'
+import { useConnectorStore } from '../stores/connector-store.js'
 import type { AgentsAnywhereConnectorLocaleKey } from '../locales.js'
 
 const LOCALE_NS = 'dsh-aa-connector'
@@ -15,6 +16,8 @@ export type SectionTab = 'overview' | 'pairing' | 'logs' | 'environment'
 /** Owner props supplied by the settings shell to every section entry. */
 export interface ConnectorSettingsSectionProps {
   close: () => void
+  /** Host API proxy supplied by the slot's `inject` face (undefined until the wire comes up). */
+  host?: ConnectorHostApi | undefined
 }
 
 interface ShellProps extends ConnectorSettingsSectionProps {
@@ -30,9 +33,8 @@ interface ShellProps extends ConnectorSettingsSectionProps {
  * close button. The `close` prop is still accepted (and is part of the
  * SettingsSectionOwnerProps contract) for flows that leave settings.
  */
-export function ConnectorSettingsSection({ t }: ShellProps): JSX.Element {
-  const { state, actions } = useConnectorStore()
-  useDemoStateMachine(actions)
+export function ConnectorSettingsSection({ t, host }: ShellProps): JSX.Element {
+  const { state, actions } = useConnectorStore(host as ConnectorHostApi)
   const [tab, setTab] = useState<SectionTab>('overview')
 
   return (

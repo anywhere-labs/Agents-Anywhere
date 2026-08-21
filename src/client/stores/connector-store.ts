@@ -1,365 +1,271 @@
 /**
- * Local UI state for the Agents Anywhere settings surface.
+ * Host-backed connector state store.
  *
- * The four cards (Overview / Pairing / Logs / Environment) all read from one
- * reducer-backed store so toggling tabs never loses scrollback, pairing flow
- * survives a navigation, and mocked actions update the same view the future
- * Host RPC will drive.
+ * Exposes the same `state` / `actions` shape the four cards already consume,
+ * but every action now proxies through `useHostApi(ctx)` against the
+ * `agentsAnywhereConnector` Cordis service. A short polling loop keeps the
+ * snapshot fresh (push events from the host will replace polling once the
+ * bridge wire starts forwarding `connector/state-changed` notifications).
  *
- * No external state library: the store is a single `useReducer` keyed by a
- * monotonically incrementing version so memo selectors stay cheap.
+ * On any host error the store keeps the previous snapshot and surfaces the
+ * message via `runtimeError` so the Overview card can show it.
  */
 
-import { useEffect, useMemo, useReducer, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useReducer, useRef } from 'react'
+import {
+  type BridgeInfo,
+  type ConnectionState,
+  type ConnectorHostApi,
+  type ConnectorLog,
+  type ConnectorRuntimeState,
+  type ConnectorStateSnapshot,
+  type DeviceBinding,
+  type EnvironmentInfo,
+  type LogLevel,
+  type PairingState,
+  type PairingStatus,
+  type PythonStatus,
+  type UvSource,
+} from '../../common/types.js'
 
-export type ConnectorRuntimeState = 'stopped' | 'starting' | 'running' | 'error'
-export type ConnectionState = 'disconnected' | 'connecting' | 'connected' | 'reconnecting'
-export type PairingStatus = 'idle' | 'starting' | 'waiting' | 'claimed' | 'cancelled' | 'error'
-export type PythonStatus = 'pending' | 'ready' | 'error'
-export type UvSource = 'custom' | 'system' | 'npm-bundled' | 'downloaded' | 'unresolved'
+// Re-export the shared types under the legacy aliases the cards import.
+export type { ConnectorRuntimeState, PairingStatus, PythonStatus, UvSource, LogLevel }
+export type { BridgeInfo, ConnectionState, DeviceBinding, EnvironmentInfo, PairingState, ConnectorLog }
 
-export type LogLevel = 'debug' | 'info' | 'warn' | 'error'
-
-export interface ConnectorLog {
-  readonly id: string
-  readonly time: number
-  readonly level: LogLevel
-  readonly logger: string
-  readonly message: string
-}
-
-export interface DeviceBinding {
-  readonly deviceId: string
-  readonly deviceName: string
-  readonly pairedAt: number
-}
-
-export interface BridgeInfo {
-  readonly port: number
-  readonly pid: number
-  readonly activeSessions: number
-  readonly pushChannel: 'open' | 'idle' | 'closed'
-}
-
-export interface EnvironmentSettings {
-  autoStart: boolean
-  uvSource: UvSource
-  uvPath: string | null
-  uvVersion: string | null
-  pythonStatus: PythonStatus
-  pythonVersion: string | null
-  pypiMirror: string
-}
-
-export interface PairingState {
-  status: PairingStatus
-  code: string | null
-  claimUrl: string | null
-  expiresAt: number | null
-  serverUrl: string
-  lastError: string | null
-}
-
+/**
+ * The cards consume a slightly wider shape than the wire DTO (they also
+ * expect an in-memory `logs` array). This type is the on-screen projection.
+ */
 export interface ConnectorState {
-  version: number
   runtime: ConnectorRuntimeState
   runtimeError: string | null
   connection: ConnectionState
   bridge: BridgeInfo | null
   device: DeviceBinding | null
   pairing: PairingState
-  environment: EnvironmentSettings
+  environment: EnvironmentInfo
   logs: ConnectorLog[]
   dataDir: string
+  /** Last host-call failure, surfaced in the Overview card. */
+  lastError: string | null
 }
 
 type Action =
-  | { type: 'runtime/start' }
-  | { type: 'runtime/running'; bridge: BridgeInfo }
-  | { type: 'runtime/error'; message: string }
-  | { type: 'runtime/stop' }
-  | { type: 'connection/set'; state: ConnectionState }
-  | { type: 'pairing/set-server'; serverUrl: string }
-  | { type: 'pairing/start' }
-  | { type: 'pairing/waiting'; code: string; claimUrl: string; expiresAt: number }
-  | { type: 'pairing/claimed'; device: DeviceBinding }
-  | { type: 'pairing/cancel' }
-  | { type: 'pairing/error'; message: string }
-  | { type: 'pairing/clear-credentials' }
-  | { type: 'environment/set'; patch: Partial<EnvironmentSettings> }
-  | { type: 'logs/append'; entry: ConnectorLog }
-  | { type: 'logs/clear' }
-
-const PYPI_MIRRORS: Record<string, string> = {
-  tsinghua: 'https://pypi.tuna.tsinghua.edu.cn/simple',
-  aliyun: 'https://mirrors.aliyun.com/pypi/simple/',
-  tencent: 'https://mirrors.cloud.tencent.com/pypi/simple/',
-  official: 'https://pypi.org/simple',
-}
-
-export const PYPI_MIRROR_OPTIONS: ReadonlyArray<{ id: keyof typeof PYPI_MIRRORS; label: string; url: string }> = [
-  { id: 'tsinghua', label: '清华大学开源软件镜像', url: PYPI_MIRRORS.tsinghua! },
-  { id: 'aliyun', label: '阿里云 PyPI 镜像', url: PYPI_MIRRORS.aliyun! },
-  { id: 'tencent', label: '腾讯云 PyPI 镜像', url: PYPI_MIRRORS.tencent! },
-  { id: 'official', label: 'PyPI 官方源', url: PYPI_MIRRORS.official! },
-]
-
-function nowMs(): number {
-  return Date.now()
-}
-
-function freshId(): string {
-  return Math.random().toString(36).slice(2, 10)
-}
-
-const INITIAL_STATE: ConnectorState = {
-  version: 0,
-  runtime: 'stopped',
-  runtimeError: null,
-  connection: 'disconnected',
-  bridge: null,
-  device: null,
-  pairing: {
-    status: 'idle',
-    code: null,
-    claimUrl: null,
-    expiresAt: null,
-    serverUrl: 'https://api.anywhere.app.com',
-    lastError: null,
-  },
-  environment: {
-    autoStart: true,
-    uvSource: 'npm-bundled',
-    uvPath: null,
-    uvVersion: 'uv 0.6.14',
-    pythonStatus: 'ready',
-    pythonVersion: 'Python 3.12.6',
-    pypiMirror: PYPI_MIRRORS.tsinghua!,
-  },
-  logs: [
-    {
-      id: freshId(),
-      time: nowMs() - 60_000,
-      level: 'info',
-      logger: 'bridge',
-      message: 'Loopback endpoint bound to 127.0.0.1:54321 (token issued, descriptor published).',
-    },
-    {
-      id: freshId(),
-      time: nowMs() - 45_000,
-      level: 'debug',
-      logger: 'catalog',
-      message: 'Model catalog refreshed (4 enabled, 0 disabled).',
-    },
-    {
-      id: freshId(),
-      time: nowMs() - 30_000,
-      level: 'info',
-      logger: 'session',
-      message: 'Workspace backfill complete: 2 session(s) grouped, 0 failed.',
-    },
-    {
-      id: freshId(),
-      time: nowMs() - 18_000,
-      level: 'warn',
-      logger: 'env',
-      message: 'Connector CLI not managed yet — uv resolution and subprocess control arrive in a follow-up step.',
-    },
-  ],
-  dataDir: '~/.agents-anywhere',
-}
+  | { type: 'hydrate'; snapshot: ConnectorStateSnapshot }
+  | { type: 'runtime-error'; message: string }
+  | { type: 'pairing-error'; message: string }
+  | { type: 'logs-append'; entries: ConnectorLog[] }
+  | { type: 'logs-clear' }
 
 function reducer(state: ConnectorState, action: Action): ConnectorState {
   switch (action.type) {
-    case 'runtime/start':
-      return { ...state, version: state.version + 1, runtime: 'starting', runtimeError: null }
-    case 'runtime/running':
+    case 'hydrate':
       return {
-        ...state,
-        version: state.version + 1,
-        runtime: 'running',
-        runtimeError: null,
-        bridge: action.bridge,
+        runtime: action.snapshot.runtime,
+        runtimeError: action.snapshot.runtimeError,
+        connection: action.snapshot.connection,
+        bridge: action.snapshot.bridge,
+        device: action.snapshot.device,
+        pairing: action.snapshot.pairing,
+        environment: action.snapshot.environment,
+        logs: state.logs, // logs come from getLogs, not getState
+        dataDir: action.snapshot.dataDir,
+        lastError: null,
       }
-    case 'runtime/error':
-      return {
-        ...state,
-        version: state.version + 1,
-        runtime: 'error',
-        runtimeError: action.message,
-      }
-    case 'runtime/stop':
-      return {
-        ...state,
-        version: state.version + 1,
-        runtime: 'stopped',
-        runtimeError: null,
-        bridge: null,
-        connection: 'disconnected',
-      }
-    case 'connection/set':
-      return { ...state, version: state.version + 1, connection: action.state }
-    case 'pairing/set-server':
-      return {
-        ...state,
-        version: state.version + 1,
-        pairing: { ...state.pairing, serverUrl: action.serverUrl },
-      }
-    case 'pairing/start':
-      return {
-        ...state,
-        version: state.version + 1,
-        pairing: { ...state.pairing, status: 'starting', lastError: null },
-      }
-    case 'pairing/waiting':
-      return {
-        ...state,
-        version: state.version + 1,
-        pairing: {
-          ...state.pairing,
-          status: 'waiting',
-          code: action.code,
-          claimUrl: action.claimUrl,
-          expiresAt: action.expiresAt,
-          lastError: null,
-        },
-      }
-    case 'pairing/claimed':
-      return {
-        ...state,
-        version: state.version + 1,
-        pairing: { ...state.pairing, status: 'claimed', code: null, claimUrl: null, expiresAt: null },
-        device: action.device,
-        connection: 'connected',
-      }
-    case 'pairing/cancel':
-      return {
-        ...state,
-        version: state.version + 1,
-        pairing: { ...state.pairing, status: 'cancelled', code: null, claimUrl: null, expiresAt: null },
-      }
-    case 'pairing/error':
-      return {
-        ...state,
-        version: state.version + 1,
-        pairing: { ...state.pairing, status: 'error', lastError: action.message, code: null, claimUrl: null, expiresAt: null },
-      }
-    case 'pairing/clear-credentials':
-      return {
-        ...state,
-        version: state.version + 1,
-        device: null,
-        connection: 'disconnected',
-        pairing: { ...state.pairing, status: 'idle', lastError: null },
-      }
-    case 'environment/set':
-      return {
-        ...state,
-        version: state.version + 1,
-        environment: { ...state.environment, ...action.patch },
-      }
-    case 'logs/append':
-      return {
-        ...state,
-        version: state.version + 1,
-        logs: [...state.logs, action.entry].slice(-500),
-      }
-    case 'logs/clear':
-      return { ...state, version: state.version + 1, logs: [] }
+    case 'runtime-error':
+      return { ...state, runtimeError: action.message }
+    case 'pairing-error':
+      return { ...state, pairing: { ...state.pairing, lastError: action.message } }
+    case 'logs-append':
+      return { ...state, logs: [...state.logs, ...action.entries].slice(-500) }
+    case 'logs-clear':
+      return { ...state, logs: [] }
   }
 }
 
-/** React hook returning the connector state plus a typed dispatch surface. */
-export function useConnectorStore(): {
+function defaultState(): ConnectorState {
+  return {
+    runtime: 'stopped',
+    runtimeError: null,
+    connection: 'disconnected',
+    bridge: null,
+    device: null,
+    pairing: {
+      status: 'idle',
+      code: null,
+      claimUrl: null,
+      expiresAt: null,
+      serverUrl: 'https://api.anywhere.app.com',
+      lastError: null,
+    },
+    environment: {
+      autoStart: true,
+      uvSource: 'npm-bundled',
+      uvPath: null,
+      uvVersion: 'uv 0.6.14',
+      pythonStatus: 'ready',
+      pythonVersion: 'Python 3.12.6',
+      pypiMirror: 'https://pypi.tuna.tsinghua.edu.cn/simple',
+    },
+    logs: [],
+    dataDir: '~/.agents-anywhere',
+    lastError: null,
+  }
+}
+
+const POLL_INTERVAL_MS = 2_000
+
+export interface ConnectorActions {
+  start(): Promise<void>
+  stop(): Promise<void>
+  restart(): Promise<void>
+  setServerUrl(serverUrl: string): Promise<void>
+  startPairing(): Promise<void>
+  cancelPairing(): Promise<void>
+  clearCredentials(): Promise<void>
+  updateEnvironment(patch: Partial<EnvironmentInfo>): Promise<void>
+  clearLogs(): Promise<void>
+  refresh(): Promise<void>
+}
+
+/**
+ * Primary hook: returns a `state` snapshot plus async `actions` that proxy to
+ * the Host. Safe to call multiple times; each call returns its own store.
+ *
+ * The Host proxy is passed in (typically resolved by the section's slot
+ * `inject` face) so this hook stays decoupled from the Cordis context.
+ */
+export function useConnectorStore(host: ConnectorHostApi): {
   state: ConnectorState
   actions: ConnectorActions
 } {
-  const [state, dispatch] = useReducer(reducer, INITIAL_STATE)
+  const [state, dispatch] = useReducer(reducer, undefined, defaultState)
+  const mounted = useRef(true)
+
+  const refresh = useCallback(async (): Promise<void> => {
+    if (host === undefined) return
+    try {
+      const [snapshot, logs] = await Promise.all([
+        host.getState(),
+        host.getLogs({ offset: 0, limit: 100 }).catch(() => ({ entries: [], total: 0 })),
+      ])
+      if (!mounted.current) return
+      dispatch({ type: 'hydrate', snapshot })
+      dispatch({ type: 'logs-clear' })
+      dispatch({ type: 'logs-append', entries: logs.entries })
+    } catch (error) {
+      if (!mounted.current) return
+      const message = errorMessage(error)
+      dispatch({ type: 'runtime-error', message })
+    }
+  }, [host])
+
+  // Initial + polling.
+  useEffect(() => {
+    mounted.current = true
+    void refresh()
+    const timer = setInterval(() => { void refresh() }, POLL_INTERVAL_MS)
+    return () => {
+      mounted.current = false
+      clearInterval(timer)
+    }
+  }, [refresh])
 
   const actions = useMemo<ConnectorActions>(() => ({
-    startRuntime: () => dispatch({ type: 'runtime/start' }),
-    runtimeRunning: (bridge: BridgeInfo) => dispatch({ type: 'runtime/running', bridge }),
-    runtimeError: (message: string) => dispatch({ type: 'runtime/error', message }),
-    stopRuntime: () => dispatch({ type: 'runtime/stop' }),
-    setConnection: (connection: ConnectionState) => dispatch({ type: 'connection/set', state: connection }),
-    setServerUrl: (serverUrl: string) => dispatch({ type: 'pairing/set-server', serverUrl }),
-    startPairing: () => dispatch({ type: 'pairing/start' }),
-    pairingWaiting: (code: string, claimUrl: string, expiresAt: number) =>
-      dispatch({ type: 'pairing/waiting', code, claimUrl, expiresAt }),
-    pairingClaimed: (device: DeviceBinding) => dispatch({ type: 'pairing/claimed', device }),
-    cancelPairing: () => dispatch({ type: 'pairing/cancel' }),
-    pairingError: (message: string) => dispatch({ type: 'pairing/error', message }),
-    clearCredentials: () => dispatch({ type: 'pairing/clear-credentials' }),
-    updateEnvironment: (patch: Partial<EnvironmentSettings>) => dispatch({ type: 'environment/set', patch }),
-    appendLog: (entry: ConnectorLog) => dispatch({ type: 'logs/append', entry }),
-    clearLogs: () => dispatch({ type: 'logs/clear' }),
-  }), [])
+    refresh: () => refresh(),
+    start: async () => {
+      try {
+        const result = await host.start()
+        if (!result.ok) dispatch({ type: 'runtime-error', message: result.error ?? 'unknown error' })
+        await refresh()
+      } catch (error) {
+        dispatch({ type: 'runtime-error', message: errorMessage(error) })
+      }
+    },
+    stop: async () => {
+      try {
+        const result = await host.stop()
+        if (!result.ok) dispatch({ type: 'runtime-error', message: result.error ?? 'unknown error' })
+        await refresh()
+      } catch (error) {
+        dispatch({ type: 'runtime-error', message: errorMessage(error) })
+      }
+    },
+    restart: async () => {
+      try {
+        const result = await host.restart()
+        if (!result.ok) dispatch({ type: 'runtime-error', message: result.error ?? 'unknown error' })
+        await refresh()
+      } catch (error) {
+        dispatch({ type: 'runtime-error', message: errorMessage(error) })
+      }
+    },
+    setServerUrl: async (serverUrl) => {
+      // Persisted server URL — refresh will pull it back via getState once
+      // the host picks it up. (The startPairing call also carries it.)
+      try {
+        await host.startPairing(serverUrl)
+      } catch (error) {
+        dispatch({ type: 'pairing-error', message: errorMessage(error) })
+      }
+      await refresh()
+    },
+    startPairing: async () => {
+      try {
+        const result = await host.startPairing()
+        if (!result.ok) dispatch({ type: 'pairing-error', message: result.error ?? 'unknown error' })
+        await refresh()
+      } catch (error) {
+        dispatch({ type: 'pairing-error', message: errorMessage(error) })
+      }
+    },
+    cancelPairing: async () => {
+      try {
+        await host.cancelPairing()
+      } catch (error) {
+        dispatch({ type: 'pairing-error', message: errorMessage(error) })
+      }
+      await refresh()
+    },
+    clearCredentials: async () => {
+      try {
+        await host.clearCredentials()
+      } catch (error) {
+        dispatch({ type: 'pairing-error', message: errorMessage(error) })
+      }
+      await refresh()
+    },
+    updateEnvironment: async (patch) => {
+      try {
+        await host.saveEnvironment(patch)
+      } catch (error) {
+        dispatch({ type: 'runtime-error', message: errorMessage(error) })
+      }
+      await refresh()
+    },
+    clearLogs: async () => {
+      try {
+        await host.clearLogs()
+      } catch (error) {
+        dispatch({ type: 'runtime-error', message: errorMessage(error) })
+      }
+      await refresh()
+    },
+  }), [host, refresh])
 
   return { state, actions }
 }
 
-export interface ConnectorActions {
-  startRuntime(): void
-  runtimeRunning(bridge: BridgeInfo): void
-  runtimeError(message: string): void
-  stopRuntime(): void
-  setConnection(connection: ConnectionState): void
-  setServerUrl(serverUrl: string): void
-  startPairing(): void
-  pairingWaiting(code: string, claimUrl: string, expiresAt: number): void
-  pairingClaimed(device: DeviceBinding): void
-  cancelPairing(): void
-  pairingError(message: string): void
-  clearCredentials(): void
-  updateEnvironment(patch: Partial<EnvironmentSettings>): void
-  appendLog(entry: ConnectorLog): void
-  clearLogs(): void
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
 }
 
 /**
- * Demo-only ticker that pings the store with a realistic state transition once
- * per few seconds. Drop the call when the real Host RPC is wired up.
+ * Compatibility no-op — kept only because `ConnectorSettingsSection` still
+ * imports it. With the host-backed store the demo ticker is unnecessary;
+ * the polling loop in `useConnectorStore` already supplies the cadence.
  */
-export function useDemoStateMachine(actions: ConnectorActions): void {
-  const counter = useRef(0)
-  const started = useRef(false)
-
-  useEffect(() => {
-    if (started.current) return
-    started.current = true
-    const timer = setInterval(() => {
-      counter.current += 1
-      const tick = counter.current
-      if (tick === 1) {
-        actions.runtimeRunning({ port: 54321, pid: 4242, activeSessions: 3, pushChannel: 'open' })
-        actions.appendLog({
-          id: freshId(),
-          time: nowMs(),
-          level: 'info',
-          logger: 'bridge',
-          message: 'Bridge ready: dsh runtime exposed at 127.0.0.1:54321.',
-        })
-      } else if (tick === 2) {
-        actions.setConnection('connecting')
-        actions.appendLog({
-          id: freshId(),
-          time: nowMs(),
-          level: 'info',
-          logger: 'connector',
-          message: 'Pairing channel opening against https://api.anywhere.app.com …',
-        })
-      } else if (tick === 3) {
-        actions.setConnection('connected')
-        actions.appendLog({
-          id: freshId(),
-          time: nowMs(),
-          level: 'info',
-          logger: 'connector',
-          message: 'WebSocket link established (region: cn-hangzhou).',
-        })
-      }
-      if (tick >= 4) clearInterval(timer)
-    }, 1800)
-    return () => clearInterval(timer)
-  }, [actions])
+export function useDemoStateMachine(_actions: unknown): void {
+  // Intentionally empty: the real Host pushes state via the polling loop
+  // wired into `useConnectorStore`. The old demo timer is replaced.
 }

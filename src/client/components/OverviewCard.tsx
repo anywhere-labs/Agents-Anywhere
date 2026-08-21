@@ -49,7 +49,7 @@ export function OverviewCard({ state, actions, t }: OverviewCardProps): JSX.Elem
             ...(state.runtime === 'running' ? buttonSecondary : buttonPrimary),
             ...(state.runtime === 'starting' ? disabledButtonStyle : null),
           }}
-          onClick={() => actions.startRuntime()}
+          onClick={() => { void actions.start() }}
           disabled={state.runtime === 'starting'}
         >
           {t('overview.start')}
@@ -57,7 +57,7 @@ export function OverviewCard({ state, actions, t }: OverviewCardProps): JSX.Elem
         <button
           type="button"
           style={buttonSecondary}
-          onClick={() => actions.stopRuntime()}
+          onClick={() => { void actions.stop() }}
           disabled={state.runtime === 'stopped' || state.runtime === 'starting'}
         >
           {t('overview.stop')}
@@ -65,10 +65,7 @@ export function OverviewCard({ state, actions, t }: OverviewCardProps): JSX.Elem
         <button
           type="button"
           style={buttonSecondary}
-          onClick={() => {
-            actions.stopRuntime()
-            window.setTimeout(() => actions.startRuntime(), 200)
-          }}
+          onClick={() => { void actions.restart() }}
           disabled={state.runtime === 'starting'}
         >
           {t('overview.restart')}
