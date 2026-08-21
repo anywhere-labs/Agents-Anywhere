@@ -74,6 +74,12 @@ export interface BridgeConfig {
   maxListLimit?: number
   maxCommandLimit?: number
   maxPendingInteractions?: number
+  /**
+   * Working directory for the spawned `anywhere-cli start` subprocess.
+   * Defaults to the bundled `src/connector-source/` shipped with the plugin
+   * so users do not need to clone the connector project separately.
+   */
+  connectorCwd?: string
 }
 
 interface ResolvedBridgeConfig {
@@ -85,6 +91,7 @@ interface ResolvedBridgeConfig {
   maxListLimit: number
   maxCommandLimit: number
   maxPendingInteractions: number
+  connectorCwd: string
 }
 
 /** Agents Anywhere host service embedded inside the DSH Web/Desktop process. */
@@ -99,6 +106,7 @@ export class AgentsAnywhereConnectorService extends Service implements LoopbackS
       maxListLimit: z.natural().min(1).default(500),
       maxCommandLimit: z.natural().min(1).default(200),
       maxPendingInteractions: z.natural().min(1).default(64),
+      connectorCwd: z.string(),
     }).required(),
   })
 
@@ -549,8 +557,6 @@ export class AgentsAnywhereConnectorService extends Service implements LoopbackS
     environment: { ...INITIAL_ENVIRONMENT },
     dataDir: '~/.agents-anywhere',
     logBufferSize: 0,
-    anywhereCliInstalled: false,
-    anywhereCliVersion: null,
   }
 
   private readonly logBuffer: ConnectorLog[] = []
@@ -581,6 +587,7 @@ export class AgentsAnywhereConnectorService extends Service implements LoopbackS
     if (bridge === undefined || bridge.stateRoot === undefined || !isAbsolute(bridge.stateRoot)) {
       throw new Error('agents-anywhere bridge stateRoot must be an absolute path')
     }
+    const connectorCwd = resolve(bridge.connectorCwd ?? defaultConnectorCwd())
     this.config = {
       stateRoot: resolve(bridge.stateRoot),
       maxFrameBytes: bridge.maxFrameBytes ?? 8 * 1024 * 1024,
@@ -590,9 +597,10 @@ export class AgentsAnywhereConnectorService extends Service implements LoopbackS
       maxListLimit: bridge.maxListLimit ?? 500,
       maxCommandLimit: bridge.maxCommandLimit ?? 200,
       maxPendingInteractions: bridge.maxPendingInteractions ?? 64,
+      connectorCwd,
     }
     this.metadata = new MetadataStore(this.config.stateRoot)
-    this.coordinator = new ConnectorCoordinator({ cwd: this.config.stateRoot })
+    this.coordinator = new ConnectorCoordinator({ cwd: this.config.connectorCwd })
   }
 
   private patchState(patch: Partial<ConnectorStateSnapshot>): ConnectorStateSnapshot {
@@ -609,15 +617,6 @@ export class AgentsAnywhereConnectorService extends Service implements LoopbackS
 
   // ── HostApi: state ──
   async getState(): Promise<ConnectorStateSnapshot> {
-    // Refresh the anywhere-cli detection so the UI sees a current install
-    // status without needing a separate call. The detection is cheap (one
-    // `uv tool list` exec) and isolated from the main connector subprocess.
-    try {
-      const status = await this.coordinator.detectAnywhereCli()
-      this.coordinator.injectDetectionResult(status)
-    } catch {
-      // Detection failures are non-fatal — keep the cached snapshot.
-    }
     return this.snapshotState()
   }
 
@@ -661,15 +660,6 @@ export class AgentsAnywhereConnectorService extends Service implements LoopbackS
 
   async saveEnvironment(patch: Partial<EnvironmentInfo>): Promise<OperationResult> {
     return this.coordinator.saveEnvironment(patch)
-  }
-
-  // ── HostApi: anywhere-cli lifecycle ──
-  async detectAnywhereCli(): Promise<import('./common/types.js').AnywhereCliStatus> {
-    return this.coordinator.detectAnywhereCli()
-  }
-
-  async installAnywhereCli(): Promise<OperationResult> {
-    return this.coordinator.installAnywhereCli()
   }
 
   // ── HostApi: logs ──
@@ -879,6 +869,20 @@ function generatePairingCode(): string {
     code += alphabet.charAt(Math.floor(Math.random() * alphabet.length))
   }
   return code
+}
+
+/**
+ * Default working directory for the bundled `anywhere-cli` Python project.
+ * Resolves `<plugin_root>/src/connector-source/` from the location of the
+ * compiled bridge-service.js so the subprocess spawns in the right place
+ * regardless of where DSH installs the plugin on disk.
+ */
+function defaultConnectorCwd(): string {
+  // `import.meta.url` looks like `file:///path/to/lib/bridge-service.js` in
+  // the compiled bundle. The connector source ships at `<plugin>/src/connector-source/`
+  // which sits one level above `lib/`.
+  const here = new URL(import.meta.url)
+  return new URL('../connector-source/', here).pathname
 }
 
 export default AgentsAnywhereConnectorService

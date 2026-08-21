@@ -1,0 +1,473 @@
+from __future__ import annotations
+
+import asyncio
+import base64
+import errno
+import os
+import time
+from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+
+from connector.local.common import (
+    Notify,
+    nearest_existing_dir,
+    required_string,
+    resolve_path,
+    workspace_root,
+)
+from connector.local.terminal_records import append_scrollback, terminal_view
+
+TerminalOutput = Callable[[str, dict[str, Any]], Awaitable[None]]
+TERMINAL_SCROLLBACK_MAX_BYTES = 512 * 1024
+TERMINAL_IDLE_TTL_SECONDS = 30 * 60
+TERMINAL_CLOSED_TTL_SECONDS = 15 * 60
+TERMINAL_MAX_RECORDS = 32
+TERMINAL_REAPER_POLL_SECONDS = 30
+
+
+class TerminalBackend:
+    def __init__(
+        self,
+        notify: Notify | None = None,
+        *,
+        idle_ttl_seconds: float | None = None,
+        closed_ttl_seconds: float | None = None,
+        reaper_poll_seconds: float | None = None,
+    ) -> None:
+        self.notify = notify
+        self._terminals: dict[str, dict[str, Any]] = {}
+        self._idle_ttl_seconds = _env_float(
+            "AGENT_CONNECTOR_TERMINAL_IDLE_TTL_SECONDS",
+            TERMINAL_IDLE_TTL_SECONDS,
+            idle_ttl_seconds,
+        )
+        self._closed_ttl_seconds = _env_float(
+            "AGENT_CONNECTOR_TERMINAL_CLOSED_TTL_SECONDS",
+            TERMINAL_CLOSED_TTL_SECONDS,
+            closed_ttl_seconds,
+        )
+        self._reaper_poll_seconds = max(
+            0.1,
+            _env_float(
+                "AGENT_CONNECTOR_TERMINAL_REAPER_POLL_SECONDS",
+                TERMINAL_REAPER_POLL_SECONDS,
+                reaper_poll_seconds,
+            ),
+        )
+
+    async def create(
+        self,
+        params: dict[str, Any],
+        *,
+        output: TerminalOutput | None = None,
+    ) -> dict[str, Any]:
+        self._gc()
+        root = workspace_root(params)
+        raw_cwd = params.get("cwd")
+        if isinstance(raw_cwd, str) and raw_cwd.strip():
+            cwd = resolve_path(root, raw_cwd)
+        else:
+            cwd = root
+        cwd = nearest_existing_dir(cwd, fallback=root)
+        terminal_id = required_string(params, "terminalId")
+        session_id = required_string(params, "sessionId")
+        cols = int(params.get("cols") or 80)
+        rows = int(params.get("rows") or 24)
+        label = params.get("label")
+        if not isinstance(label, str) or not label.strip():
+            label = "Shell"
+        command = params.get("command")
+        raw_args = params.get("args")
+        if command is not None and not isinstance(command, str):
+            raise ValueError("command must be a string")
+        args: list[str] = []
+        if raw_args is not None:
+            if not isinstance(raw_args, list) or not all(isinstance(arg, str) for arg in raw_args):
+                raise ValueError("args must be a list of strings")
+            args = list(raw_args)
+        shell_cmd = self._default_shell(params.get("shell"))
+        argv = [command, *args] if isinstance(command, str) and command.strip() else self._default_argv(shell_cmd)
+        env_override = params.get("env") or {}
+        env = {**os.environ}
+        env.setdefault("TERM", "xterm-256color")
+        env.setdefault("COLORTERM", "truecolor")
+        for k, v in env_override.items():
+            if isinstance(k, str) and isinstance(v, str):
+                env[k] = v
+        if terminal_id in self._terminals:
+            raise ValueError(f"terminal already exists: {terminal_id}")
+
+        pty = self._spawn(argv, cwd=cwd, env=env, rows=rows, cols=cols)
+        now_mono = time.monotonic()
+        record: dict[str, Any] = {
+            "id": terminal_id,
+            "sessionId": session_id,
+            "pty": pty,
+            "cols": cols,
+            "rows": rows,
+            "label": label.strip(),
+            "cwd": str(cwd),
+            "shell": shell_cmd,
+            "command": command,
+            "args": args,
+            "closed": False,
+            "status": "running",
+            "exitCode": None,
+            "createdAt": datetime.now(UTC).isoformat(),
+            "createdAtMono": now_mono,
+            "lastActivityAtMono": now_mono,
+            "closedAt": None,
+            "closedAtMono": None,
+            "scrollback": bytearray(),
+            "scrollbackBaseSeq": 0,
+            "chunks": [],
+            "chunksBytes": 0,
+            "seq": 0,
+            "output": output,
+        }
+        record["task"] = asyncio.create_task(self._pump_terminal_output(record))
+        record["reaperTask"] = asyncio.create_task(self._reap_terminal(record))
+        self._terminals[terminal_id] = record
+        return {
+            "terminalId": terminal_id,
+            "sessionId": session_id,
+            "label": record["label"],
+            "purpose": "user",
+            "pid": self._pid(pty),
+            "cwd": str(cwd),
+            "cols": cols,
+            "rows": rows,
+            "shell": shell_cmd,
+            "command": command,
+            "args": args,
+            "status": record["status"],
+            "exitCode": record["exitCode"],
+            "scrollbackBytes": 0,
+            "scrollbackSeq": 0,
+            "createdAt": record["createdAt"],
+        }
+
+    async def write(self, params: dict[str, Any]) -> dict[str, Any]:
+        self._gc()
+        terminal_id = required_string(params, "terminalId")
+        record = self._terminals.get(terminal_id)
+        if record is None:
+            raise KeyError(f"terminal not found: {terminal_id}")
+        if record["closed"]:
+            raise ValueError(f"terminal already closed: {terminal_id}")
+        data_b64 = required_string(params, "dataBase64")
+        try:
+            data = base64.b64decode(data_b64)
+        except Exception as exc:
+            raise ValueError("dataBase64 must be valid base64") from exc
+        self._touch(record)
+        await asyncio.to_thread(self._write_all, record["pty"], data)
+        return {"terminalId": terminal_id, "bytesWritten": len(data)}
+
+    async def resize(self, params: dict[str, Any]) -> dict[str, Any]:
+        self._gc()
+        terminal_id = required_string(params, "terminalId")
+        record = self._terminals.get(terminal_id)
+        if record is None:
+            return {"terminalId": terminal_id, "closed": True}
+        cols = int(params.get("cols") or record["cols"])
+        rows = int(params.get("rows") or record["rows"])
+        cols = max(1, min(500, cols))
+        rows = max(1, min(200, rows))
+        try:
+            self._setwinsize(record["pty"], rows, cols)
+        except OSError:
+            pass
+        self._touch(record)
+        record["cols"] = cols
+        record["rows"] = rows
+        return {"terminalId": terminal_id, "cols": cols, "rows": rows}
+
+    async def close(self, params: dict[str, Any]) -> dict[str, Any]:
+        self._gc()
+        terminal_id = required_string(params, "terminalId")
+        record = self._terminals.get(terminal_id)
+        if record is None:
+            return {"terminalId": terminal_id, "closed": True}
+        await self._kill_terminal(record)
+        self._forget_terminal(terminal_id)
+        return {"terminalId": terminal_id, "closed": True}
+
+    async def rename(self, params: dict[str, Any]) -> dict[str, Any]:
+        self._gc()
+        terminal_id = required_string(params, "terminalId")
+        record = self._terminals.get(terminal_id)
+        if record is None:
+            raise KeyError(f"terminal not found: {terminal_id}")
+        label = required_string(params, "label").strip()
+        if not label:
+            raise ValueError("label is required")
+        record["label"] = label
+        return self._terminal_view(record)
+
+    async def release(self, params: dict[str, Any]) -> dict[str, Any]:
+        self._gc()
+        terminal_id = required_string(params, "terminalId")
+        record = self._terminals.get(terminal_id)
+        if record is None:
+            return {"terminalId": terminal_id, "released": True}
+        record["output"] = None
+        return {"terminalId": terminal_id, "released": True}
+
+    async def list(self, params: dict[str, Any]) -> dict[str, Any]:
+        self._gc()
+        session_id = params.get("sessionId")
+        items: list[dict[str, Any]] = []
+        for record in self._terminals.values():
+            if session_id is not None and record["sessionId"] != session_id:
+                continue
+            items.append(self._terminal_view(record))
+        return {"terminals": items}
+
+    async def snapshot(self, params: dict[str, Any]) -> dict[str, Any]:
+        self._gc()
+        terminal_id = required_string(params, "terminalId")
+        record = self._terminals.get(terminal_id)
+        if record is None:
+            raise KeyError(f"terminal not found: {terminal_id}")
+        from_seq = int(params.get("fromSeq") or 0)
+        outputs = [
+            {"seq": chunk["seq"], "dataBase64": chunk["dataBase64"]}
+            for chunk in record["chunks"]
+            if chunk["seq"] > from_seq
+        ]
+        return {
+            "terminal": self._terminal_view(record),
+            "baseSeq": record["scrollbackBaseSeq"],
+            "seq": record["seq"],
+            "dataBase64": base64.b64encode(bytes(record["scrollback"])).decode("ascii"),
+            "outputs": outputs,
+        }
+
+    async def _pump_terminal_output(self, record: dict[str, Any]) -> None:
+        pty = record["pty"]
+        loop = asyncio.get_running_loop()
+        try:
+            while True:
+                try:
+                    data = await loop.run_in_executor(None, self._read, pty)
+                except OSError as exc:
+                    if exc.errno in (errno.EIO,):
+                        break
+                    raise
+                if not data:
+                    break
+                self._touch(record)
+                record["seq"] += 1
+                append_scrollback(record, data, TERMINAL_SCROLLBACK_MAX_BYTES)
+                await self._notify(
+                    "terminal.output",
+                    {
+                        "terminalId": record["id"],
+                        "sessionId": record["sessionId"],
+                        "seq": record["seq"],
+                        "dataBase64": base64.b64encode(data).decode("ascii"),
+                    },
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            await self._notify(
+                "terminal.exited",
+                {
+                    "terminalId": record["id"],
+                    "sessionId": record["sessionId"],
+                    "exitCode": None,
+                    "reason": f"pump_error: {exc.__class__.__name__}: {exc}",
+                },
+            )
+            await self._cleanup_terminal(record)
+            return
+        exit_code = self._wait_exit_code(pty)
+        record["exitCode"] = exit_code
+        await self._notify(
+            "terminal.exited",
+            {
+                "terminalId": record["id"],
+                "sessionId": record["sessionId"],
+                "exitCode": exit_code,
+                "reason": "exit",
+            },
+        )
+        await self._cleanup_terminal(record)
+
+    async def _kill_terminal(self, record: dict[str, Any]) -> None:
+        if not record["closed"]:
+            pty = record["pty"]
+            self._terminate(pty)
+            task = record.get("task")
+            if isinstance(task, asyncio.Task):
+                task.cancel()
+            await self._cleanup_terminal(record)
+
+    async def _cleanup_terminal(self, record: dict[str, Any]) -> None:
+        if record["closed"]:
+            return
+        record["closed"] = True
+        record["status"] = "exited"
+        record["closedAt"] = time.time()
+        record["closedAtMono"] = time.monotonic()
+        self._close(record["pty"])
+
+    async def _reap_terminal(self, record: dict[str, Any]) -> None:
+        terminal_id = record["id"]
+        try:
+            while self._terminals.get(terminal_id) is record:
+                now = time.monotonic()
+                if record["closed"]:
+                    closed_at = record.get("closedAtMono")
+                    if not isinstance(closed_at, (int, float)):
+                        closed_at = now
+                    if self._closed_ttl_seconds <= 0 or now - closed_at >= self._closed_ttl_seconds:
+                        self._forget_terminal(terminal_id)
+                        return
+                    await asyncio.sleep(
+                        min(
+                            self._reaper_poll_seconds,
+                            max(0.1, closed_at + self._closed_ttl_seconds - now),
+                        )
+                    )
+                    continue
+
+                last_activity_at = record.get("lastActivityAtMono")
+                if not isinstance(last_activity_at, (int, float)):
+                    last_activity_at = record.get("createdAtMono") or now
+                if self._idle_ttl_seconds <= 0:
+                    await asyncio.sleep(self._reaper_poll_seconds)
+                    continue
+                idle_for = now - last_activity_at
+                if idle_for >= self._idle_ttl_seconds:
+                    await self._expire_idle_terminal(record)
+                    return
+                await asyncio.sleep(
+                    min(
+                        self._reaper_poll_seconds,
+                        max(0.1, self._idle_ttl_seconds - idle_for),
+                    )
+                )
+        except asyncio.CancelledError:
+            raise
+
+    async def _expire_idle_terminal(self, record: dict[str, Any]) -> None:
+        if record["closed"] or self._terminals.get(record["id"]) is not record:
+            return
+        try:
+            await self._notify(
+                "terminal.exited",
+                {
+                    "terminalId": record["id"],
+                    "sessionId": record["sessionId"],
+                    "exitCode": None,
+                    "reason": "idle_timeout",
+                },
+            )
+        finally:
+            await self._kill_terminal(record)
+            self._forget_terminal(record["id"])
+
+    async def _notify(self, method: str, params: dict[str, Any]) -> None:
+        terminal_id = params.get("terminalId")
+        if isinstance(terminal_id, str):
+            record = self._terminals.get(terminal_id)
+            output = record.get("output") if record is not None else None
+            if output is not None:
+                await output(method, params)
+                return
+        if self.notify is not None:
+            await self.notify(method, params)
+
+    def _terminal_view(self, record: dict[str, Any]) -> dict[str, Any]:
+        return terminal_view(record, self._pid(record["pty"]))
+
+    def _gc(self) -> None:
+        now = time.monotonic()
+        for terminal_id, record in list(self._terminals.items()):
+            if not record["closed"]:
+                continue
+            closed_at = record.get("closedAtMono")
+            if isinstance(closed_at, (int, float)) and now - closed_at > self._closed_ttl_seconds:
+                self._forget_terminal(terminal_id)
+        if len(self._terminals) <= TERMINAL_MAX_RECORDS:
+            return
+        closed_records = sorted(
+            (record for record in self._terminals.values() if record["closed"]),
+            key=lambda record: record.get("closedAtMono") or record.get("createdAtMono") or 0,
+        )
+        for record in closed_records:
+            if len(self._terminals) <= TERMINAL_MAX_RECORDS:
+                break
+            self._forget_terminal(record["id"])
+
+    def _touch(self, record: dict[str, Any]) -> None:
+        record["lastActivityAtMono"] = time.monotonic()
+
+    def _forget_terminal(self, terminal_id: str) -> None:
+        record = self._terminals.pop(terminal_id, None)
+        if record is None:
+            return
+        reaper_task = record.get("reaperTask")
+        try:
+            current_task = asyncio.current_task()
+        except RuntimeError:
+            current_task = None
+        if isinstance(reaper_task, asyncio.Task) and reaper_task is not current_task:
+            reaper_task.cancel()
+
+    def _default_shell(self, requested: Any) -> str:
+        if isinstance(requested, str) and requested.strip():
+            return requested
+        return os.environ.get("SHELL") or "/bin/bash"
+
+    def _default_argv(self, shell_cmd: str) -> list[str]:
+        return [shell_cmd, "-l"] if shell_cmd.endswith(("bash", "zsh", "sh")) else [shell_cmd]
+
+    def _spawn(self, argv: list[str], *, cwd: Path, env: dict[str, str], rows: int, cols: int) -> Any:
+        raise NotImplementedError
+
+    def _read(self, pty: Any) -> bytes:
+        raise NotImplementedError
+
+    def _write_all(self, pty: Any, data: bytes) -> None:
+        raise NotImplementedError
+
+    def _setwinsize(self, pty: Any, rows: int, cols: int) -> None:
+        raise NotImplementedError
+
+    def _terminate(self, pty: Any) -> None:
+        raise NotImplementedError
+
+    def _close(self, pty: Any) -> None:
+        raise NotImplementedError
+
+    def _wait_exit_code(self, pty: Any) -> int | None:
+        raise NotImplementedError
+
+    def _pid(self, pty: Any) -> int | None:
+        return getattr(pty, "pid", None)
+
+
+def _env_float(name: str, default: float, override: float | None) -> float:
+    if override is not None:
+        return max(0.0, float(override))
+    raw = os.environ.get(name)
+    if raw is None:
+        return float(default)
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        return float(default)
+
+
+def default_terminal_backend(notify: Notify | None = None) -> TerminalBackend:
+    from connector.local.terminal_platforms import (
+        default_terminal_backend as platform_default_terminal_backend,
+    )
+
+    return platform_default_terminal_backend(notify)
