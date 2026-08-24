@@ -211,6 +211,16 @@ export class AgentsAnywhereConnectorService extends TypertRemoteService implemen
       const endpoint = new LoopbackJsonRpcServer(this.config.stateRoot, this.config.maxFrameBytes, this)
       this.endpoint = endpoint
       await endpoint.start()
+
+      // Auto-start the connector when `autoStart` is enabled (default on). This
+      // re-spawns `anywhere-cli rpc` and re-reads the saved credential, so the
+      // paired device + running state survive a DSH restart without the user
+      // having to click Start again.
+      if (this.connectorState.environment.autoStart) {
+        void this.start().catch((error: unknown) => {
+          this.ctx.logger.warn(`Agents Anywhere connector auto-start failed: ${errorMessage(error)}`)
+        })
+      }
     } catch (error: unknown) {
       await this.shutdownCore('service-init-failed')
       throw error

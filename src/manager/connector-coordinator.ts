@@ -21,6 +21,7 @@
 
 import { EventEmitter } from 'node:events'
 import { existsSync, unlinkSync } from 'node:fs'
+import { randomUUID } from 'node:crypto'
 import os from 'node:os'
 import path from 'node:path'
 import {
@@ -401,14 +402,13 @@ export class ConnectorCoordinator extends EventEmitter implements ConnectorHostA
         return
       }
       case 'connector/log': {
-        if (isConnectorLog(params)) {
-          this.handleRunnerLog({
-            id: params.id,
-            time: params.time,
-            level: params.level,
-            logger: params.logger,
-            message: params.message,
-          })
+        const log = mapLogFromPython(params)
+        if (log !== null) {
+          this.logs.push(log)
+          if (this.logs.length > LOG_BUFFER_LIMIT) {
+            this.logs.splice(0, this.logs.length - LOG_BUFFER_LIMIT)
+          }
+          this.emit('log', log)
         }
         return
       }
@@ -542,12 +542,42 @@ function mapPairingStatus(status: unknown): PairingState['status'] {
   }
 }
 
-function isConnectorLog(value: unknown): value is ConnectorLog {
-  if (value === null || typeof value !== 'object') return false
+/**
+ * Map a `connector/log` notification from `anywhere-cli rpc` into the plugin's
+ * `ConnectorLog` shape. The Python loguru sink emits
+ * `{ time: ISO string, level: "INFO", name, message }` — not the camelCase
+ * `{ id, time: ms, level: 'info', logger }` shape the client expects, so the
+ * fields are converted here instead of being forwarded verbatim.
+ */
+function mapLogFromPython(value: unknown): ConnectorLog | null {
+  if (value === null || typeof value !== 'object') return null
   const candidate = value as Record<string, unknown>
-  return typeof candidate.id === 'string'
-    && typeof candidate.message === 'string'
-    && typeof candidate.level === 'string'
+  if (typeof candidate.message !== 'string') return null
+
+  const parsedTime = typeof candidate.time === 'string' ? Date.parse(candidate.time) : NaN
+  const time = Number.isFinite(parsedTime) ? parsedTime : Date.now()
+  return {
+    id: randomUUID(),
+    time,
+    level: mapLogLevel(candidate.level),
+    logger: typeof candidate.name === 'string' ? candidate.name : 'connector',
+    message: candidate.message,
+  }
+}
+
+function mapLogLevel(level: unknown): ConnectorLog['level'] {
+  switch (typeof level === 'string' ? level.toUpperCase() : '') {
+    case 'DEBUG':
+      return 'debug'
+    case 'WARN':
+    case 'WARNING':
+      return 'warn'
+    case 'ERROR':
+    case 'CRITICAL':
+      return 'error'
+    default:
+      return 'info'
+  }
 }
 
 export type { UvResolutionResult }
