@@ -156,6 +156,18 @@ class ConnectorController:
         await self._emit_state()
         return payload
 
+    async def clear_credentials(self, _params: Any = None) -> dict[str, Any]:
+        await self.stop()
+        try:
+            self.config_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        self._auth_failed = False
+        self._last_error = None
+        logger.info("cleared connector credentials path={}", self.config_path)
+        await self._emit_state()
+        return self.get_state()
+
     async def shutdown(self) -> None:
         if self._pairing_task is not None and not self._pairing_task.done():
             self._pairing_task.cancel()

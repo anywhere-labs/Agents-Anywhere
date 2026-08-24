@@ -6,6 +6,7 @@ import { OverviewCard } from './OverviewCard.js'
 import { LogViewer } from './LogViewer.js'
 import { EnvironmentCard } from './EnvironmentCard.js'
 import { useConnectorStore } from '../stores/connector-store.js'
+import { Button } from './Card.js'
 import type { AgentsAnywhereConnectorLocaleKey } from '../locales.js'
 
 const LOCALE_NS = 'dsh-aa-connector'
@@ -32,6 +33,7 @@ interface ShellProps extends ConnectorSettingsSectionProps {
 export function ConnectorSettingsSection({ t, host }: ShellProps): JSX.Element {
   const { state, actions } = useConnectorStore(host as ConnectorHostApi)
   const [tab, setTab] = useState<SectionTab>('overview')
+  const [followTail, setFollowTail] = useState(true)
 
   return (
     <section style={pageStyle} aria-labelledby="dsh-aa-connector-heading">
@@ -40,6 +42,41 @@ export function ConnectorSettingsSection({ t, host }: ShellProps): JSX.Element {
           <h2 id="dsh-aa-connector-heading" style={headingStyle}>{t('heading.title')}</h2>
           <p style={subtitleStyle}>{t('heading.subtitle')}</p>
         </div>
+        {tab === 'overview' && (
+          <div style={headerControlsStyle}>
+            <Button variant="secondary" onClick={() => { void actions.refresh() }}>
+              {t('overview.refresh')}
+            </Button>
+            <Button variant="secondary" onClick={() => { void actions.restart() }} disabled={state.runtime === 'starting'}>
+              {t('overview.restart')}
+            </Button>
+            {state.runtime === 'running' ? (
+              <Button variant="primary" onClick={() => { void actions.stop() }}>
+                {t('overview.stop')}
+              </Button>
+            ) : (
+              <Button variant="primary" onClick={() => { void actions.start() }} disabled={state.runtime === 'starting'}>
+                {t('overview.start')}
+              </Button>
+            )}
+          </div>
+        )}
+        {tab === 'logs' && (
+          <div style={headerControlsStyle}>
+            <label style={followLabelStyle}>
+              <input
+                type="checkbox"
+                checked={followTail}
+                onChange={(event) => setFollowTail(event.target.checked)}
+                style={followCheckboxStyle}
+              />
+              {t('logs.follow')}
+            </label>
+            <Button variant="secondary" onClick={() => { void actions.clearLogs() }}>
+              {t('logs.clear')}
+            </Button>
+          </div>
+        )}
       </header>
 
       <nav role="tablist" aria-label={t('tabs.label')} style={tabListStyle}>
@@ -50,7 +87,7 @@ export function ConnectorSettingsSection({ t, host }: ShellProps): JSX.Element {
 
       <div role="tabpanel" style={panelStyle}>
         {tab === 'overview' && <OverviewCard state={state} actions={actions} t={t} />}
-        {tab === 'logs' && <LogViewer state={state} actions={actions} t={t} />}
+        {tab === 'logs' && <LogViewer state={state} followTail={followTail} t={t} />}
         {tab === 'environment' && <EnvironmentCard state={state} actions={actions} t={t} />}
       </div>
     </section>
@@ -89,7 +126,7 @@ const pageStyle: CSSProperties = {
   flexDirection: 'column',
   gap: 18,
   padding: '24px 28px',
-  color: 'var(--dsw-alias-text-primary)',
+  color: 'var(--dsw-alias-label-primary)',
   fontFamily: 'inherit',
   minWidth: 0,
 }
@@ -97,8 +134,27 @@ const pageStyle: CSSProperties = {
 const headerStyle: CSSProperties = {
   display: 'flex',
   alignItems: 'flex-start',
-  justifyContent: 'flex-start',
+  justifyContent: 'space-between',
   gap: 16,
+}
+
+const headerControlsStyle: CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 8,
+  flexWrap: 'wrap',
+}
+
+const followLabelStyle: CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 6,
+  fontSize: 12,
+  color: 'var(--dsw-alias-label-secondary)',
+}
+
+const followCheckboxStyle: CSSProperties = {
+  margin: 0,
 }
 
 const titleColumnStyle: CSSProperties = {
@@ -113,13 +169,13 @@ const headingStyle: CSSProperties = {
   fontSize: 22,
   fontWeight: 600,
   lineHeight: 1.25,
-  color: 'var(--dsw-alias-text-primary)',
+  color: 'var(--dsw-alias-label-primary)',
 }
 
 const subtitleStyle: CSSProperties = {
   margin: 0,
   fontSize: 13,
-  color: 'var(--dsw-alias-text-secondary)',
+  color: 'var(--dsw-alias-label-secondary)',
 }
 
 const tabListStyle: CSSProperties = {
@@ -135,7 +191,7 @@ const tabInactiveStyle: CSSProperties = {
   background: 'transparent',
   fontSize: 13,
   fontWeight: 500,
-  color: 'var(--dsw-alias-text-secondary)',
+  color: 'var(--dsw-alias-label-secondary)',
   cursor: 'pointer',
   borderBottom: '2px solid transparent',
   whiteSpace: 'nowrap',
@@ -143,8 +199,8 @@ const tabInactiveStyle: CSSProperties = {
 
 const tabActiveStyle: CSSProperties = {
   ...tabInactiveStyle,
-  color: 'var(--dsw-alias-text-primary)',
-  borderBottom: '2px solid var(--dsw-alias-text-primary)',
+  color: 'var(--dsw-alias-label-primary)',
+  borderBottom: '2px solid var(--dsw-alias-label-primary)',
 }
 
 const panelStyle: CSSProperties = {

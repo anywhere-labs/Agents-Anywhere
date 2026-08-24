@@ -75,7 +75,7 @@ describe('ProcessRunner', () => {
     expect(runner.start({ command: 'node', args: ['-e', '0'] })).toBe(false)
   })
 
-  it('emits one log entry per newline-terminated chunk and tags stderr as error', () => {
+  it('ignores stdout (JSON-RPC stream) and emits stderr as error logs', () => {
     const runner = new ProcessRunner()
     const received: Array<{ level: string; message: string }> = []
     runner.on('log', (entry) => received.push({ level: entry.level, message: entry.message }))
@@ -84,13 +84,14 @@ describe('ProcessRunner', () => {
     const child = activeChild
     if (child === null) throw new Error('child not created')
 
-    child.stdout.write('ready\n')
+    // stdout carries the JSON-RPC protocol stream, consumed by RpcClient, and
+    // must NOT surface as logs — only stderr is a log source.
+    child.stdout.write('{"jsonrpc":"2.0","method":"connector/state"}\n')
     child.stderr.write('boom\n')
     child.emit('exit', 0, null)
 
-    expect(received.length).toBe(2)
-    expect(received[0]).toEqual({ level: 'info', message: 'ready' })
-    expect(received[1]).toEqual({ level: 'error', message: 'boom' })
+    expect(received.length).toBe(1)
+    expect(received[0]).toEqual({ level: 'error', message: 'boom' })
   })
 
   it('drops to crashed when the child exits non-zero', async () => {

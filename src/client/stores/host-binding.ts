@@ -1,40 +1,48 @@
 /**
  * Wire-bound handle to the Agents Anywhere Host API.
  *
- * Built lazily from a `connection` handle (the DSH wire carrier). The
- * returned surface is `ConnectorHostApi`-shaped so consumers get full type
- * safety at the call site.
- *
- * The factory is invoked from the slot's `inject` face so it can be wired
- * into the section component's props without exposing the raw Cordis
- * context to the renderer.
+ * The DSH browser exposes the host connection as `ctx.connection`, whose
+ * `rpc` field is a `ClientConnectionRpc` with the signature
+ * `call(channel, endpoint, payload, signal?) => Promise<RpcResult<unknown>>`.
+ * We call the shared `/api` channel through the Typert Gateway: the Host
+ * service binds the `agentsAnywhereConnector` namespace, so the endpoint is
+ * `agentsAnywhereConnector/<method>` and the payload is `{ args }`. We unwrap
+ * the `RpcResult` envelope (`{ ok, value } | { ok, error }`) into plain
+ * `Promise<T>` / thrown `Error`, which is what the connector store consumes.
  */
 
-import type {
-  ConnectorHostApi,
-  ConnectorLogChunk,
-  ConnectorStateSnapshot,
-  EnvironmentInfo,
-  OperationResult,
-  PairingStartResult,
+import {
+  type ConnectorHostApi,
+  type ConnectorLogChunk,
+  type ConnectorStateSnapshot,
+  type EnvironmentInfo,
+  type OperationResult,
+  type PairingStartResult,
 } from '../../common/types.js'
 
-export type HostConnection = {
-  call<TResult>(apiName: string, method: string, params: Record<string, unknown>): Promise<TResult>
+/** The Typert namespace bound by `AgentsAnywhereConnectorService`. */
+const HOST_NAMESPACE = 'agentsAnywhereConnector'
+
+/** Structural view of `ClientConnectionRpc` (avoids a hard type dependency). */
+export type HostRpc = {
+  call(
+    channel: string,
+    endpoint: string,
+    payload: unknown,
+    signal?: AbortSignal,
+  ): Promise<{ ok: boolean; value?: unknown; error?: { message?: string } }>
 }
 
-const HOST_API_NAME = 'agentsAnywhereConnector'
-
 /**
- * Build a typed `ConnectorHostApi` proxy backed by the DSH wire connection.
- * The returned object is safe to keep in component props; it memoizes the
- * proxy functions on first construction.
+ * Build a typed `ConnectorHostApi` proxy backed by the DSH `connection.rpc`.
+ * Every method resolves to the Host's `RpcResult.value`, or rejects with the
+ * Host's `error.message`.
  */
-export function createHostApi(connection: HostConnection): ConnectorHostApi {
-  const call = <TResult>(method: string, params: Record<string, unknown> = {}): Promise<TResult> => {
-    return Promise.resolve(
-      connection.call<TResult>(HOST_API_NAME, method, params),
-    ) as Promise<TResult>
+export function createHostApi(rpc: HostRpc): ConnectorHostApi {
+  const call = async <TResult>(method: string, args: Record<string, unknown> = {}): Promise<TResult> => {
+    const result = await rpc.call('/api', `${HOST_NAMESPACE}/${method}`, { args })
+    if (result.ok === true) return result.value as TResult
+    throw new Error(result.error?.message ?? 'connector host rpc failed')
   }
 
   return {
@@ -48,8 +56,6 @@ export function createHostApi(connection: HostConnection): ConnectorHostApi {
     clearCredentials: () => call<OperationResult>('clearCredentials'),
     detectEnvironment: () => call<EnvironmentInfo>('detectEnvironment'),
     saveEnvironment: (patch) => call<OperationResult>('saveEnvironment', { patch }),
-    detectAnywhereCli: () => call<import('../../common/types.js').AnywhereCliStatus>('detectAnywhereCli'),
-    installAnywhereCli: () => call<OperationResult>('installAnywhereCli'),
     getLogs: (options) =>
       call<ConnectorLogChunk>('getLogs', options === undefined ? {} : { options }),
     clearLogs: () => call<OperationResult>('clearLogs'),

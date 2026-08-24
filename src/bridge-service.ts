@@ -1,6 +1,9 @@
-import { dirname, isAbsolute, relative, resolve } from 'node:path'
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { createRequire } from 'node:module'
+import { existsSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { Context, Service } from '@deepseek-ai/cordis'
+import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import z from '@deepseek-ai/schemastery'
 import { SESSION_FORMAT_VERSION, SessionId } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-agent'
@@ -95,7 +98,7 @@ interface ResolvedBridgeConfig {
 }
 
 /** Agents Anywhere host service embedded inside the DSH Web/Desktop process. */
-export class AgentsAnywhereConnectorService extends Service implements LoopbackServerHandler {
+export class AgentsAnywhereConnectorService extends TypertRemoteService implements LoopbackServerHandler {
   static Config: z<Config> = z.object({
     bridge: z.object({
       stateRoot: z.string().required(),
@@ -140,6 +143,19 @@ export class AgentsAnywhereConnectorService extends Service implements LoopbackS
 
   /** Validate composition, register reversible resources, and start the loopback endpoint. */
   async [Service.init](): Promise<void> {
+    // Register the connector control surface with the strict Typert registry
+    // so the `/api` channel resolves `agentsAnywhereConnector/*` endpoints
+    // regardless of the gateway's SRC discovery cache. `typert` is root-scoped.
+    try {
+      const typert = (this.ctx.root as unknown as { get(name: string): unknown }).get('typert') as unknown as { register(contribution: unknown): unknown } | undefined
+      if (typert === undefined || typeof typert.register !== 'function') {
+        this.ctx.logger.warn('Agents Anywhere: typert registry unavailable, connector endpoints fall back to SRC discovery')
+      } else {
+        typert.register(buildTypertContribution())
+      }
+    } catch (error: unknown) {
+      this.ctx.logger.warn(`Agents Anywhere Typert registration failed: ${errorMessage(error)}`)
+    }
     this.ctx.effect(() => async () => {
       await this.shutdownCore('service-dispose')
     }, 'agentsAnywhereConnector.lifecycle()')
@@ -615,62 +631,81 @@ export class AgentsAnywhereConnectorService extends Service implements LoopbackS
     return { ...this.connectorState }
   }
 
-  // ── HostApi: state ──
+  // ── HostApi (Typert Remote) ──────────────────────────────────────────────
+  //
+  // These methods are exposed to the browser over DSH's shared `/api` RPC
+  // channel through the Typert Gateway. `TypertRemoteService` (the base class)
+  // binds the `agentsAnywhereConnector` namespace; each `@Remote('<name>')`
+  // decorator exports the method as the endpoint `<namespace>/<name>`. The
+  // client calls `connection.rpc.call('/api', 'agentsAnywhereConnector/<name>',
+  // { args })`.
+
+  @Remote('getState')
   async getState(): Promise<ConnectorStateSnapshot> {
     return this.snapshotState()
   }
 
-  // ── HostApi: control ──
+  @Remote('start')
   async start(): Promise<OperationResult> {
     this.wireCoordinatorEvents()
     const result = await this.coordinator.start()
     return result
   }
 
+  @Remote('stop')
   async stop(): Promise<OperationResult> {
     this.wireCoordinatorEvents()
     return this.coordinator.stop()
   }
 
+  @Remote('restart')
   async restart(): Promise<OperationResult> {
     this.wireCoordinatorEvents()
     return this.coordinator.restart()
   }
 
   // ── HostApi: pairing ──
+  @Remote('startPairing')
   async startPairing(serverUrl?: string): Promise<PairingStartResult> {
     this.wireCoordinatorEvents()
     return this.coordinator.startPairing(serverUrl)
   }
 
+  @Remote('cancelPairing')
   async cancelPairing(): Promise<OperationResult> {
     this.wireCoordinatorEvents()
     return this.coordinator.cancelPairing()
   }
 
+  @Remote('clearCredentials')
   async clearCredentials(): Promise<OperationResult> {
     this.wireCoordinatorEvents()
     return this.coordinator.clearCredentials()
   }
 
   // ── HostApi: environment & settings ──
+  @Remote('detectEnvironment')
   async detectEnvironment(): Promise<EnvironmentInfo> {
     return this.coordinator.detectEnvironment()
   }
 
+  @Remote('saveEnvironment')
   async saveEnvironment(patch: Partial<EnvironmentInfo>): Promise<OperationResult> {
     return this.coordinator.saveEnvironment(patch)
   }
 
   // ── HostApi: logs ──
+  @Remote('getLogs')
   async getLogs(options?: { offset?: number; limit?: number; level?: string }): Promise<ConnectorLogChunk> {
     return this.coordinator.getLogs(options)
   }
 
+  @Remote('clearLogs')
   async clearLogs(): Promise<OperationResult> {
     return this.coordinator.clearLogs()
   }
 
+  @Remote('openConfigDirectory')
   async openConfigDirectory(): Promise<OperationResult> {
     return this.coordinator.openConfigDirectory()
   }
@@ -861,6 +896,59 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
+/**
+ * Build a minimal generated-style Typert contribution so the connector control
+ * endpoints resolve through the strict `typert.local` registry, independent of
+ * the gateway's SRC discovery cache. Descriptors mirror the SRC shape: direct
+ * invocation, JSON wire fields, `src-json` result codec.
+ */
+function buildTypertContribution(): unknown {
+  const noArg = (method: string) => ({
+    id: `src:agentsAnywhereConnector#${method}`,
+    service: 'agentsAnywhereConnector',
+    namespace: 'agentsAnywhereConnector',
+    method,
+    invocation: { kind: 'direct' },
+    parameters: [],
+    result: { mode: 'src-json' },
+  })
+  const withArg = (method: string, arg: string, optional: boolean) => ({
+    id: `src:agentsAnywhereConnector#${method}`,
+    service: 'agentsAnywhereConnector',
+    namespace: 'agentsAnywhereConnector',
+    method,
+    invocation: { kind: 'direct' },
+    parameters: [{
+      name: arg,
+      wire: arg,
+      source: 'json',
+      codec: { mode: 'src-json' },
+      ...(optional ? { acceptsUndefined: true } : {}),
+    }],
+    result: { mode: 'src-json' },
+  })
+  return {
+    package: '@agents-anywhere/dsh-aa-connector',
+    face: 'host',
+    schemas: [],
+    model: { services: [], events: [], objects: [] },
+    invocations: [
+      noArg('getState'),
+      noArg('start'),
+      noArg('stop'),
+      noArg('restart'),
+      withArg('startPairing', 'serverUrl', true),
+      noArg('cancelPairing'),
+      noArg('clearCredentials'),
+      noArg('detectEnvironment'),
+      withArg('saveEnvironment', 'patch', false),
+      withArg('getLogs', 'options', true),
+      noArg('clearLogs'),
+      noArg('openConfigDirectory'),
+    ],
+  }
+}
+
 /** Generate one 6-character uppercase pairing code. */
 function generatePairingCode(): string {
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
@@ -877,11 +965,37 @@ function generatePairingCode(): string {
  * compiled bridge-service.js so the subprocess spawns in the right place
  * regardless of where DSH installs the plugin on disk.
  */
+/**
+ * Resolve the `anywhere-cli` Python project directory.
+ *
+ * Resolution order (first directory that contains `pyproject.toml` wins):
+ *
+ *   1. The bundle-included `src/connector-source/` — only present when this
+ *      plugin was installed as part of a vendored full checkout (the `tsdown`
+ *      build emits `lib/bridge-service.js` alongside the source tree).
+ *   2. A sibling `Agents-Anywhere/connector/` directory — typical for dev
+ *      workspaces that clone the upstream repo next to the plugin checkout.
+ *   3. `<process.cwd()>/Agents-Anywhere/connector` — the layout DSH hands
+ *      to the cordis plugin loader when launching from the upstream repo.
+ *
+ * Falls back to the bundle directory so misconfigured installs get a clear
+ * "no pyproject.toml" surface rather than a silent cwd-mismatch crash.
+ */
 function defaultConnectorCwd(): string {
-  // `import.meta.url` looks like `file:///path/to/lib/bridge-service.js` in
-  // the compiled bundle. The connector source ships at `<plugin>/src/connector-source/`
-  // which sits one level above `lib/`.
   const here = new URL(import.meta.url)
+  const candidates: string[] = [
+    new URL('../connector-source/', here).pathname,
+  ]
+  // Walk up from the installed plugin location looking for `Agents-Anywhere/connector`.
+  const herePath = fileURLToPath(here)
+  for (let cursor = dirname(herePath); cursor !== '/' && cursor !== '.'; cursor = dirname(cursor)) {
+    candidates.push(resolve(cursor, 'Agents-Anywhere', 'connector'))
+  }
+  // Always also try cwd.
+  candidates.push(resolve(process.cwd(), 'Agents-Anywhere', 'connector'))
+  for (const candidate of candidates) {
+    if (existsSync(join(candidate, 'pyproject.toml'))) return candidate
+  }
   return new URL('../connector-source/', here).pathname
 }
 

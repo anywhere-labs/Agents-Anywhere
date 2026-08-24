@@ -1,11 +1,10 @@
 import type { CSSProperties } from 'react'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 import {
+  Button,
   Card,
   KeyValueRow,
   StatusPill,
-  buttonGhost,
-  buttonSecondary,
   inputBase,
 } from './Card.js'
 import {
@@ -111,13 +110,25 @@ export function EnvironmentCard({ state, actions, t }: EnvironmentCardProps): JS
           label={t('environment.data.dir')}
           value={<code style={codeStyle}>{state.dataDir}</code>}
         />
-        <div>
-          <button type="button" style={buttonSecondary} onClick={() => copyToClipboard(state.dataDir, t)}>
+        <div style={dataActionRowStyle}>
+          <Button variant="secondary" onClick={() => copyToClipboard(state.dataDir, t)}>
             {t('environment.data.copy')}
-          </button>
-          <button type="button" style={buttonGhost} onClick={() => undefined}>
+          </Button>
+          <Button variant="ghost" onClick={() => undefined}>
             {t('environment.data.open')}
-          </button>
+          </Button>
+        </div>
+      </Card>
+
+      <Card title={t('credential.clear.title')} description={t('credential.clear.description')}>
+        <div>
+          <Button
+            variant="secondary"
+            onClick={() => { void actions.clearCredentials() }}
+            disabled={state.device === null && state.pairing.code === null}
+          >
+            {t('credential.clear.action')}
+          </Button>
         </div>
       </Card>
     </>
@@ -206,7 +217,7 @@ const toggleRowStyle: CSSProperties = {
 
 const toggleLabelStyle: CSSProperties = {
   fontSize: 13,
-  color: 'var(--dsw-alias-text-primary, #1f1f1f)',
+  color: 'var(--dsw-alias-label-primary, #1f1f1f)',
 }
 
 const checkboxStyle: CSSProperties = {
@@ -219,12 +230,12 @@ const hintStyle: CSSProperties = {
   margin: 0,
   fontSize: 11,
   lineHeight: 1.5,
-  color: 'var(--dsw-alias-text-tertiary, #9a9a9a)',
+  color: 'var(--dsw-alias-label-tertiary, #9a9a9a)',
 }
 
 const mirrorLabelStyle: CSSProperties = {
   fontSize: 12,
-  color: 'var(--dsw-alias-text-secondary, #6b6b6b)',
+  color: 'var(--dsw-alias-label-secondary, #6b6b6b)',
 }
 
 const codeStyle: CSSProperties = {
@@ -232,5 +243,11 @@ const codeStyle: CSSProperties = {
   fontSize: 12,
   padding: '1px 6px',
   borderRadius: 4,
-  background: 'var(--dsw-alias-bg-surface-2, rgba(127, 127, 127, 0.08))',
+  background: 'var(--dsw-alias-bg-layer-2, rgba(127, 127, 127, 0.08))',
+}
+
+const dataActionRowStyle: CSSProperties = {
+  display: 'flex',
+  gap: 8,
+  flexWrap: 'wrap',
 }

@@ -70,6 +70,7 @@ export declare interface ProcessRunner {
 const DEFAULT_GRACEFUL_STOP_MS = 5_000
 const STARTUP_TIMEOUT_MS = 30_000
 const LINE_FLUSH_INTERVAL_MS = 50
+const STDOUT_LOG_INTERVAL_MS = 250
 
 export class ProcessRunner extends EventEmitter {
   private current: ChildProcess | null = null
@@ -106,7 +107,10 @@ export class ProcessRunner extends EventEmitter {
       child = spawn(spec.command, [...spec.args], {
         cwd,
         env,
-        stdio: ['ignore', 'pipe', 'pipe'],
+        // stdin MUST be a pipe: the JSON-RPC client writes request frames
+        // to it. `ignore` would silently drop every send, causing the
+        // handshake to time out with "rpc client: stdin unavailable".
+        stdio: ['pipe', 'pipe', 'pipe'],
         detached: process.platform !== 'win32',
         windowsHide: true,
       })
@@ -120,8 +124,13 @@ export class ProcessRunner extends EventEmitter {
     this.stdoutBuffer = ''
     this.stderrBuffer = ''
 
+    // stdout carries the JSON-RPC protocol stream and is consumed exclusively
+    // by `RpcClient` (via `runnerToTransport`). We must NOT treat it as logs:
+    // Python's pairing poll re-emits `connector/state` on every tick, and
+    // surfacing each one through the log pipeline floods the host event loop.
+    // Drain it here only to avoid backpressure; stderr is the only log source.
     child.stdout?.setEncoding('utf8')
-    child.stdout?.on('data', (chunk: string) => this.handleStreamChunk('stdout', chunk))
+    child.stdout?.resume()
     child.stderr?.setEncoding('utf8')
     child.stderr?.on('data', (chunk: string) => this.handleStreamChunk('stderr', chunk))
 
@@ -182,6 +191,10 @@ export class ProcessRunner extends EventEmitter {
 
   /** Stop + drop references. Safe to call multiple times. */
   async dispose(): Promise<void> {
+    if (this.flushTimer !== null) {
+      clearTimeout(this.flushTimer)
+      this.flushTimer = null
+    }
     await this.stop()
     this.removeAllListeners()
   }
@@ -189,25 +202,42 @@ export class ProcessRunner extends EventEmitter {
   private handleStreamChunk(stream: 'stdout' | 'stderr', chunk: string): void {
     if (stream === 'stdout') {
       this.stdoutBuffer += chunk
-      this.drainBuffer('stdout')
+      this.drainBuffer('stdout', this.stdoutBuffer)
     } else {
       this.stderrBuffer += chunk
-      this.drainBuffer('stderr')
+      this.drainBuffer('stderr', this.stderrBuffer)
     }
   }
 
-  private drainBuffer(stream: 'stdout' | 'stderr'): void {
-    const source = stream === 'stdout' ? this.stdoutBuffer : this.stderrBuffer
+  /**
+   * Drain complete lines from `source` immediately, then coalesce any
+   * remaining partial line until the stream goes quiet for at least one
+   * STDOUT_LOG_INTERVAL_MS window. The previous implementation scheduled a
+   * `setTimeout` for *every* chunk — when Python sends back-to-back JSON-RPC
+   * notifications in a single stdout write, each one spawned its own timer,
+   * and the timers kept the event loop permanently busy, eventually locking
+   * the entire host.
+   */
+  private drainBuffer(stream: 'stdout' | 'stderr', source: string): void {
     let newlineIndex = source.indexOf('\n')
     while (newlineIndex !== -1) {
       const line = source.slice(0, newlineIndex).replace(/\r$/, '')
       if (stream === 'stdout') this.stdoutBuffer = source.slice(newlineIndex + 1)
       else this.stderrBuffer = source.slice(newlineIndex + 1)
-      this.emitLog(stream, line)
+      if (line.length > 0) this.emitLog(stream, line)
       newlineIndex = (stream === 'stdout' ? this.stdoutBuffer : this.stderrBuffer).indexOf('\n')
     }
-    // Flush partial lines after a short idle so partial tail chunks surface.
-    setTimeout((): void => {
+    // Coalesce partial trailing lines into a single timer that resets on
+    // each chunk so we flush once the stream goes quiet.
+    this.schedulePartialFlush(stream)
+  }
+
+  private flushTimer: NodeJS.Timeout | null = null
+
+  private schedulePartialFlush(stream: 'stdout' | 'stderr'): void {
+    if (this.flushTimer !== null) clearTimeout(this.flushTimer)
+    this.flushTimer = setTimeout(() => {
+      this.flushTimer = null
       if (stream === 'stdout' && this.stdoutBuffer.length > 0) {
         const line = this.stdoutBuffer
         this.stdoutBuffer = ''
@@ -217,7 +247,7 @@ export class ProcessRunner extends EventEmitter {
         this.stderrBuffer = ''
         this.emitLog('stderr', line)
       }
-    }, LINE_FLUSH_INTERVAL_MS)
+    }, STDOUT_LOG_INTERVAL_MS)
   }
 
   private flushBuffers(): void {

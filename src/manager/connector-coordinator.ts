@@ -20,9 +20,10 @@
  */
 
 import { EventEmitter } from 'node:events'
-import { execFileSync } from 'node:child_process'
+import { existsSync, unlinkSync } from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import {
-  type AnywhereCliStatus,
   type BridgeInfo,
   type ConnectorHostApi,
   type ConnectorLog,
@@ -46,6 +47,8 @@ export interface CoordinatorOptions {
   cwd?: string
   /** Subprocess graceful-stop deadline; forwarded to the runner. */
   gracefulStopMs?: number
+  /** Absolute path to the connector credential JSON (`connector.json`). */
+  configPath?: string
 }
 
 export interface CoordinatorEvents {
@@ -69,6 +72,7 @@ export class ConnectorCoordinator extends EventEmitter implements ConnectorHostA
   private readonly logs: ConnectorLog[] = []
   private envDetectorFactory: () => EnvDetector
   private readonly cwd: string
+  private readonly configPath: string
   private teardownInFlight = false
 
   constructor(options: CoordinatorOptions = {}) {
@@ -80,6 +84,7 @@ export class ConnectorCoordinator extends EventEmitter implements ConnectorHostA
     )
     this.envDetectorFactory = options.envDetectorFactory ?? (() => new EnvDetector())
     this.cwd = options.cwd ?? process.cwd()
+    this.configPath = options.configPath ?? path.join(os.homedir(), '.agents-anywhere', 'connector.json')
     this.snapshot = initialSnapshot()
     this.runner.on('state', (state) => this.handleRunnerState(state))
     this.runner.on('log', (entry) => this.handleRunnerLog(entry))
@@ -102,26 +107,45 @@ export class ConnectorCoordinator extends EventEmitter implements ConnectorHostA
   async getState(): Promise<ConnectorStateSnapshot> {
     if (this.client !== null) {
       try {
-        const remote = await this.client.send<ConnectorStateSnapshot>('connector.getState')
-        this.snapshot = { ...this.snapshot, ...remote, logBufferSize: this.logs.length }
+        const remote = await this.client.send<unknown>('connector.getState')
+        if (isPythonState(remote)) {
+          this.snapshot = { ...this.snapshot, ...mapRuntimeFromPython(remote), logBufferSize: this.logs.length }
+        }
       } catch {
-        // Fall through to local snapshot.
+        // Fall through to the local snapshot.
       }
     }
     return this.getSnapshot()
   }
 
   async start(): Promise<OperationResult> {
-    if (this.snapshot.runtime === 'running' || this.snapshot.runtime === 'starting') {
+    const ensured = await this.ensureRpcProcess()
+    if (!ensured.ok) return ensured
+    const client = this.client
+    if (client === null) return this.failStart('connector rpc is unavailable')
+    try {
+      await client.send('connector.start', undefined)
+      this.updateSnapshot({ runtime: 'running', connection: 'connected' })
       return { ok: true }
+    } catch (error) {
+      return { ok: false, error: errorMessage(error) }
     }
+  }
+
+  /**
+   * Ensure the `anywhere-cli rpc` control plane is running and handshaken.
+   * Spawns it on first use and leaves an already-running process untouched.
+   * The `rpc` subcommand serves the JSON-RPC control API over stdio (the
+   * `start` subcommand does not — it only runs the connector daemon directly).
+   */
+  private async ensureRpcProcess(): Promise<OperationResult> {
+    if (this.client !== null) return { ok: true }
+    if (this.snapshot.runtime === 'starting') return { ok: true }
     this.updateSnapshot({ runtime: 'starting', runtimeError: null, connection: 'connecting' })
 
     const resolution = this.envDetectorFactory().resolve()
     if (resolution.uvPath === null) {
-      return this.failStart(
-        `uv not found (${resolution.notes.map((n) => n).join('; ')})`,
-      )
+      return this.failStart(`uv not found (${resolution.notes.join('; ')})`)
     }
     if (this.cwd === undefined || this.cwd === '') {
       return this.failStart('plugin cwd unavailable')
@@ -129,7 +153,7 @@ export class ConnectorCoordinator extends EventEmitter implements ConnectorHostA
 
     const spec: CommandSpec = {
       command: resolution.uvPath,
-      args: ['tool', 'run', 'anywhere-cli', 'start'],
+      args: ['run', '--directory', this.cwd, 'anywhere-cli', 'rpc', '--config', this.configPath],
       env: buildConnectorEnv(this.snapshot.environment),
       cwd: this.cwd,
     }
@@ -144,16 +168,30 @@ export class ConnectorCoordinator extends EventEmitter implements ConnectorHostA
     this.client.on('error', (error) => this.handleRpcError(error))
 
     try {
-      const remote = await this.client.send<ConnectorStateSnapshot>('connector.getState', undefined)
-      this.snapshot = { ...remote, logBufferSize: this.logs.length }
+      const remote = await this.client.send<unknown>('connector.getState', undefined)
+      if (isPythonState(remote)) {
+        this.snapshot = { ...this.snapshot, ...mapRuntimeFromPython(remote), logBufferSize: this.logs.length }
+      }
     } catch (error) {
+      // The RPC transport may have died before the handshake completed. Wait
+      // a short moment for late stderr lines to flush through the runner,
+      // then tear down and report the cause with whatever stderr tail we can
+      // surface so the UI message is not just "rpc client closed".
+      await new Promise<void>((resolve) => {
+        const wait = setTimeout(resolve, 300)
+        const stopWait = (): void => { clearTimeout(wait); resolve() }
+        const handler = (): void => stopWait()
+        this.runner.once('state', handler)
+        stopWait()
+      })
       await this.runner.stop()
       this.client?.close()
       this.client = null
-      return this.failStart(`rpc handshake failed: ${errorMessage(error)}`)
+      const stderrTail = this.logs.filter((entry) => entry.level === 'error').slice(-3).map((entry) => entry.message).join(' | ')
+      const detail = stderrTail.length > 0 ? `${errorMessage(error)} (stderr: ${stderrTail})` : errorMessage(error)
+      return this.failStart(`rpc handshake failed: ${detail}`)
     }
 
-    this.updateSnapshot({ runtime: 'running', connection: 'connected' })
     return { ok: true }
   }
 
@@ -183,17 +221,36 @@ export class ConnectorCoordinator extends EventEmitter implements ConnectorHostA
   }
 
   async startPairing(serverUrl?: string): Promise<PairingStartResult> {
-    if (serverUrl !== undefined && serverUrl.length > 0) {
-      this.updateSnapshot({ pairing: { ...this.snapshot.pairing, serverUrl } })
+    const targetUrl = serverUrl !== undefined && serverUrl.length > 0 ? serverUrl : this.snapshot.pairing.serverUrl
+    if (targetUrl.length > 0 && targetUrl !== this.snapshot.pairing.serverUrl) {
+      this.updateSnapshot({ pairing: { ...this.snapshot.pairing, serverUrl: targetUrl } })
     }
-    if (this.client === null) {
-      return { ok: false, error: 'connector is not running' }
+    const ensured = await this.ensureRpcProcess()
+    if (!ensured.ok) {
+      const message = ensured.error ?? 'connector rpc unavailable'
+      this.failPairing(message)
+      return { ok: false, error: message }
+    }
+    const client = this.client
+    if (client === null) {
+      this.failPairing('connector rpc is unavailable')
+      return { ok: false, error: 'connector rpc is unavailable' }
     }
     try {
-      return await this.client.send<PairingStartResult>('connector.startPairing', { serverUrl: this.snapshot.pairing.serverUrl })
+      // The pairing code arrives asynchronously via the `connector/pairing`
+      // notification; the immediate response only confirms the request.
+      await client.send('connector.startPairing', { server: targetUrl })
+      return { ok: true }
     } catch (error) {
-      return { ok: false, error: errorMessage(error) }
+      const message = errorMessage(error)
+      this.failPairing(message)
+      return { ok: false, error: message }
     }
+  }
+
+  /** Persist a pairing failure into the snapshot so the UI can surface it. */
+  private failPairing(message: string): void {
+    this.updateSnapshot({ pairing: { ...this.snapshot.pairing, status: 'error', lastError: message } })
   }
 
   async cancelPairing(): Promise<OperationResult> {
@@ -207,16 +264,22 @@ export class ConnectorCoordinator extends EventEmitter implements ConnectorHostA
   }
 
   async clearCredentials(): Promise<OperationResult> {
-    if (this.client === null) {
-      this.updateSnapshot({ device: null, pairing: { ...INITIAL_PAIRING, serverUrl: this.snapshot.pairing.serverUrl } })
-      return { ok: true }
+    if (this.client !== null) {
+      try {
+        await this.client.send('connector.clearCredentials', undefined)
+      } catch (error) {
+        return { ok: false, error: errorMessage(error) }
+      }
+    } else {
+      // No live RPC process — delete the persisted credential file directly.
+      try {
+        if (existsSync(this.configPath)) unlinkSync(this.configPath)
+      } catch (error) {
+        return { ok: false, error: errorMessage(error) }
+      }
     }
-    try {
-      await this.client.send('connector.clearCredentials', undefined)
-      return { ok: true }
-    } catch (error) {
-      return { ok: false, error: errorMessage(error) }
-    }
+    this.updateSnapshot({ device: null, pairing: { ...INITIAL_PAIRING, serverUrl: this.snapshot.pairing.serverUrl } })
+    return { ok: true }
   }
 
   async detectEnvironment(): Promise<EnvironmentInfo> {
@@ -269,7 +332,11 @@ export class ConnectorCoordinator extends EventEmitter implements ConnectorHostA
           this.updateSnapshot({ runtime: 'running' })
           break
         case 'crashed': {
-          this.updateSnapshot({ runtime: 'error', connection: 'disconnected' })
+          this.updateSnapshot({
+            runtime: 'error',
+            connection: 'disconnected',
+            runtimeError: this.snapshot.runtimeError ?? 'connector subprocess crashed',
+          })
           break
         }
         case 'stopped':
@@ -296,20 +363,40 @@ export class ConnectorCoordinator extends EventEmitter implements ConnectorHostA
       this.logs.splice(0, this.logs.length - LOG_BUFFER_LIMIT)
     }
     this.emit('log', log)
+    // Surface process-level stderr as a runtime error so the UI can show
+    // what killed the subprocess (uv not installed, dependency missing,
+    // Python traceback, etc.).
+    if (entry.level === 'error') {
+      this.updateSnapshot({ runtimeError: entry.message })
+    }
   }
 
   private handleNotification(method: string, params: unknown): void {
     switch (method) {
       case 'connector/state': {
-        if (isStateSnapshot(params)) {
-          this.snapshot = { ...params, logBufferSize: this.logs.length }
+        if (isPythonState(params)) {
+          // Dedup high-frequency `connector/state` notifications against the
+          // current snapshot. Python's control loop fires the same payload
+          // back-to-back (poll + emit_state pairs); emitting every duplicate
+          // floods the snapshot diff pipeline and ties up the event loop.
+          const next = mapRuntimeFromPython(params)
+          const previous = this.snapshot
+          const unchanged =
+            previous.runtime === next.runtime &&
+            previous.connection === next.connection &&
+            previous.runtimeError === next.runtimeError &&
+            previous.device?.deviceId === next.device?.deviceId &&
+            previous.device?.deviceName === next.device?.deviceName
+          if (unchanged) return
+          this.snapshot = { ...this.snapshot, ...next, logBufferSize: this.logs.length }
           this.emit('state', this.getSnapshot())
+          return
         }
         return
       }
       case 'connector/pairing': {
-        if (isPairingState(params)) {
-          this.updateSnapshot({ pairing: params })
+        if (isPythonPairing(params)) {
+          this.updateSnapshot({ pairing: mapPairingFromPython(params, this.snapshot.pairing) })
         }
         return
       }
@@ -340,112 +427,6 @@ export class ConnectorCoordinator extends EventEmitter implements ConnectorHostA
     return { ok: false, error: message }
   }
 
-  // ── anywhere-cli installation ─────────────────────────────────────────────
-  //
-  // The plugin does not bundle the anywhere-cli Python project; users run
-  // `uv tool install anywhere-cli` once and the plugin spawns it via
-  // `uv tool run anywhere-cli start`. These two methods surface the
-  // install status and the install action through the Host API so the
-  // settings UI can show a one-click install button when the tool is
-  // missing.
-
-  async detectAnywhereCli(): Promise<AnywhereCliStatus> {
-    const resolution = this.envDetectorFactory().resolve()
-    if (resolution.uvPath === null) {
-      const status: AnywhereCliStatus = {
-        installed: false,
-        version: null,
-        uvPath: null,
-        rawOutput: resolution.notes.join('; '),
-      }
-      return status
-    }
-    try {
-      const output = execFileSync(resolution.uvPath, ['tool', 'list'], {
-        stdio: ['ignore', 'pipe', 'ignore'],
-        timeout: 5_000,
-      }).toString()
-      const parsed = parseAnywhereCliList(output)
-      return {
-        installed: parsed.installed,
-        version: parsed.version,
-        uvPath: resolution.uvPath,
-        rawOutput: output.slice(0, 2_000),
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      return {
-        installed: false,
-        version: null,
-        uvPath: resolution.uvPath,
-        rawOutput: message,
-      }
-    }
-  }
-
-  /**
-   * Apply a fresh detection result to the cached snapshot without
-   * triggering a UI-bound dispatch — used by the HostApi `getState` to
-   * refresh the cached install flag before responding.
-   */
-  injectDetectionResult(status: AnywhereCliStatus): void {
-    this.snapshot = {
-      ...this.snapshot,
-      anywhereCliInstalled: status.installed,
-      anywhereCliVersion: status.version,
-    }
-  }
-
-  async installAnywhereCli(): Promise<OperationResult> {
-    const resolution = this.envDetectorFactory().resolve()
-    if (resolution.uvPath === null) {
-      const message = `uv not found (${resolution.notes.join('; ')})`
-      this.updateSnapshot({ runtimeError: message })
-      return { ok: false, error: message }
-    }
-
-    const spec: CommandSpec = {
-      command: resolution.uvPath,
-      args: ['tool', 'install', 'anywhere-cli'],
-      env: buildConnectorEnv(this.snapshot.environment),
-    }
-
-    return new Promise<OperationResult>((resolve) => {
-      let settled = false
-      const finish = (result: OperationResult): void => {
-        if (settled) return
-        settled = true
-        resolve(result)
-      }
-      const tempRunner = new ProcessRunner({ gracefulStopMs: 30_000 })
-      tempRunner.on('log', (entry) => this.handleRunnerLog(entry))
-      tempRunner.on('state', (state) => {
-        if (state === 'crashed') {
-          void this.detectAnywhereCli().then((status) => {
-            finish(status.installed
-              ? { ok: true }
-              : { ok: false, error: '`uv tool install anywhere-cli` failed; check logs' })
-          })
-        }
-      })
-      tempRunner.on('error', (error) => {
-        finish({ ok: false, error: error.message })
-      })
-      const started = tempRunner.start(spec)
-      if (!started) {
-        finish({ ok: false, error: 'install subprocess refused to start' })
-        return
-      }
-      // Watchdog: if the install finishes without an exit event, treat as done.
-      // `uv tool install` is short-lived; poll via getState after a short delay.
-      setTimeout(() => {
-        void this.detectAnywhereCli().then((status) => {
-          finish(status.installed ? { ok: true } : { ok: false, error: 'install timed out' })
-        })
-      }, 30_000)
-    })
-  }
-
   private updateSnapshot(patch: Partial<ConnectorStateSnapshot>): void {
     this.snapshot = { ...this.snapshot, ...patch, logBufferSize: this.logs.length }
     this.emit('state', this.getSnapshot())
@@ -464,8 +445,6 @@ function initialSnapshot(): ConnectorStateSnapshot {
     environment: { ...INITIAL_ENVIRONMENT },
     dataDir: '~/.agents-anywhere',
     logBufferSize: 0,
-    anywhereCliInstalled: false,
-    anywhereCliVersion: null,
   }
 }
 
@@ -482,47 +461,85 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
-/**
- * Parse the output of `uv tool list` to find the anywhere-cli entry. Output
- * looks like:
- *
- *   anywhere-cli v0.1.7
- *   - python 3.12
- *   - requests ...
- *
- * `uv tool list --format json` is more reliable but requires uv >= 0.4; the
- * line parser works for every released version and is what the desktop-next
- * build ships with.
- */
-function parseAnywhereCliList(output: string): { installed: boolean; version: string | null } {
-  const lines = output.split(/\r?\n/)
-  for (const line of lines) {
-    const trimmed = line.trim()
-    if (!trimmed.startsWith('anywhere-cli')) continue
-    const match = /^anywhere-cli(?:\s+v?([\w.+-]+))?/.exec(trimmed)
-    if (match === null) continue
-    return { installed: true, version: match[1] ?? null }
-  }
-  return { installed: false, version: null }
-}
-
 // --- Runtime guards for `unknown` payloads -------------------------------
 
-function isStateSnapshot(value: unknown): value is ConnectorStateSnapshot {
-  if (value === null || typeof value !== 'object') return false
-  const candidate = value as Record<string, unknown>
-  return (
-    typeof candidate.runtime === 'string'
-    && typeof candidate.connection === 'string'
-    && typeof candidate.pairing === 'object'
-    && typeof candidate.environment === 'object'
-  )
+/** Loose view of the `connector.getState` response from `anywhere-cli rpc`. */
+interface PythonConnectorState {
+  status?: unknown
+  running?: unknown
+  authFailed?: unknown
+  lastError?: unknown
+  configPath?: unknown
+  runtimePath?: unknown
+  hasConfig?: unknown
 }
 
-function isPairingState(value: unknown): value is PairingState {
+/** Loose view of a `connector/pairing` notification payload. */
+interface PythonPairingPayload {
+  status?: unknown
+  serverUrl?: unknown
+  code?: unknown
+  pairingId?: unknown
+  error?: unknown
+}
+
+function isPythonState(value: unknown): value is PythonConnectorState {
+  if (value === null || typeof value !== 'object') return false
+  const candidate = value as Record<string, unknown>
+  return typeof candidate.status === 'string' && typeof candidate.running === 'boolean'
+}
+
+function isPythonPairing(value: unknown): value is PythonPairingPayload {
   if (value === null || typeof value !== 'object') return false
   const candidate = value as Record<string, unknown>
   return typeof candidate.status === 'string'
+}
+
+/** Map the `anywhere-cli rpc` state payload onto the plugin's runtime fields. */
+function mapRuntimeFromPython(state: PythonConnectorState): Partial<ConnectorStateSnapshot> {
+  const running = state.running === true
+  const failed = state.status === 'error' || state.status === 'expired credential'
+  return {
+    runtime: running ? 'running' : failed ? 'error' : 'stopped',
+    connection: running ? 'connected' : 'disconnected',
+    runtimeError: typeof state.lastError === 'string' ? state.lastError : null,
+    // The connector only knows "credentials saved" (hasConfig); it does not
+    // expose a device name/id/pairedAt. Surface a minimal binding so the UI's
+    // paired/unpaired metric stays correct.
+    device: state.hasConfig === true
+      ? { deviceId: 'connector', deviceName: 'Connector', pairedAt: 0 }
+      : null,
+  }
+}
+
+/** Map a `connector/pairing` payload onto the plugin's `PairingState`. */
+function mapPairingFromPython(payload: PythonPairingPayload, prev: PairingState): PairingState {
+  return {
+    ...prev,
+    status: mapPairingStatus(payload.status),
+    code: typeof payload.code === 'string' ? payload.code : null,
+    claimUrl: null,
+    expiresAt: null,
+    serverUrl: typeof payload.serverUrl === 'string' ? payload.serverUrl : prev.serverUrl,
+    lastError: typeof payload.error === 'string' ? payload.error : null,
+  }
+}
+
+function mapPairingStatus(status: unknown): PairingState['status'] {
+  switch (status) {
+    case 'starting':
+      return 'starting'
+    case 'waiting':
+      return 'waiting'
+    case 'claimed':
+      return 'claimed'
+    case 'cancelled':
+      return 'cancelled'
+    case 'error':
+      return 'error'
+    default:
+      return 'cancelled'
+  }
 }
 
 function isConnectorLog(value: unknown): value is ConnectorLog {

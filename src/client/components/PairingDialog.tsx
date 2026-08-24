@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { CSSProperties } from 'react'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
-import { buttonPrimary, buttonSecondary, buttonGhost, codeSurface, inputBase } from './Card.js'
+import { Button, codeSurface, inputBase } from './Card.js'
 import type { ConnectorActions, ConnectorState } from '../stores/connector-store.js'
 
 const LOCALE_NS = 'dsh-aa-connector'
@@ -92,13 +92,9 @@ export function PairingDialog({ open, onOpenChange, state, actions, t }: Pairing
             <span style={labelStyle}>{t('pairing.claim.label')}</span>
             <div style={claimRowStyle}>
               <code style={codeSurfaceStyle}>{state.pairing.claimUrl}</code>
-              <button
-                type="button"
-                style={buttonGhost}
-                onClick={() => { void copy(state.pairing.claimUrl ?? '', 'claim') }}
-              >
+              <Button variant="ghost" onClick={() => { void copy(state.pairing.claimUrl ?? '', 'claim') }}>
                 {copyState === 'claim' ? '✓' : t('action.copy')}
-              </button>
+              </Button>
             </div>
             <p style={hintStyle}>{t('pairing.claim.hint')}</p>
           </div>
@@ -109,46 +105,26 @@ export function PairingDialog({ open, onOpenChange, state, actions, t }: Pairing
         )}
 
         <footer style={footerStyle}>
-          <button type="button" style={buttonSecondary} onClick={() => onOpenChange(false)}>
+          <Button variant="secondary" onClick={() => onOpenChange(false)}>
             {t('action.cancel')}
-          </button>
+          </Button>
           {state.pairing.status === 'waiting' || state.pairing.status === 'starting' ? (
-            <button
-              type="button"
-              style={buttonSecondary}
-              onClick={() => { void actions.cancelPairing() }}
-            >
+            <Button variant="secondary" onClick={() => { void actions.cancelPairing() }}>
               {t('pairing.cancel')}
-            </button>
+            </Button>
           ) : state.pairing.code !== null ? (
-            <button
-              type="button"
-              style={buttonPrimary}
-              onClick={() => { void actions.startPairing() }}
-            >
+            <Button variant="primary" onClick={() => { void actions.startPairing() }}>
               {t('pairing.repair')}
-            </button>
+            </Button>
           ) : (
-            <button
-              type="button"
-              style={{
-                ...buttonPrimary,
-                ...(serverDraft.trim().length === 0 ? disabledStyle : null),
-              }}
-              onClick={() => { void actions.startPairing() }}
-              disabled={serverDraft.trim().length === 0}
-            >
+            <Button variant="primary" onClick={() => { void actions.startPairing() }} disabled={serverDraft.trim().length === 0}>
               {t('pairing.start')}
-            </button>
+            </Button>
           )}
           {state.pairing.code !== null && (
-            <button
-              type="button"
-              style={buttonGhost}
-              onClick={() => { void copy(state.pairing.code ?? '', 'code') }}
-            >
+            <Button variant="ghost" onClick={() => { void copy(state.pairing.code ?? '', 'code') }}>
               {copyState === 'code' ? '✓' : t('action.copy')}
-            </button>
+            </Button>
           )}
         </footer>
       </div>
@@ -181,8 +157,8 @@ const backdropStyle: CSSProperties = {
 const sheetStyle: CSSProperties = {
   width: '100%',
   maxWidth: 480,
-  background: 'var(--dsw-alias-bg-surface-1)',
-  color: 'var(--dsw-alias-text-primary)',
+  background: 'var(--dsw-alias-bg-layer-1)',
+  color: 'var(--dsw-alias-label-primary)',
   border: '1px solid var(--dsw-alias-border-l2)',
   borderRadius: 12,
   padding: 20,
@@ -210,13 +186,13 @@ const titleStyle: CSSProperties = {
   margin: 0,
   fontSize: 16,
   fontWeight: 600,
-  color: 'var(--dsw-alias-text-primary)',
+  color: 'var(--dsw-alias-label-primary)',
 }
 
 const subtitleStyle: CSSProperties = {
   margin: 0,
   fontSize: 12,
-  color: 'var(--dsw-alias-text-secondary)',
+  color: 'var(--dsw-alias-label-secondary)',
 }
 
 const closeButtonStyle: CSSProperties = {
@@ -225,7 +201,7 @@ const closeButtonStyle: CSSProperties = {
   fontSize: 22,
   lineHeight: 1,
   cursor: 'pointer',
-  color: 'var(--dsw-alias-text-secondary)',
+  color: 'var(--dsw-alias-label-secondary)',
 }
 
 const serverBlockStyle: CSSProperties = {
@@ -236,7 +212,7 @@ const serverBlockStyle: CSSProperties = {
 
 const labelStyle: CSSProperties = {
   fontSize: 12,
-  color: 'var(--dsw-alias-text-secondary)',
+  color: 'var(--dsw-alias-label-secondary)',
 }
 
 const codeBlockStyle: CSSProperties = {
@@ -245,13 +221,13 @@ const codeBlockStyle: CSSProperties = {
   gap: 6,
   padding: 14,
   borderRadius: 10,
-  background: 'var(--dsw-alias-bg-warning-soft)',
-  border: '1px dashed var(--dsw-alias-border-warning)',
+  background: 'var(--dsw-alias-state-warn-tertiary)',
+  border: '1px dashed var(--dsw-alias-state-warn-primary)',
 }
 
 const codeLabelStyle: CSSProperties = {
   fontSize: 12,
-  color: 'var(--dsw-alias-text-warning)',
+  color: 'var(--dsw-alias-state-warn-primary)',
   fontWeight: 500,
 }
 
@@ -265,7 +241,7 @@ const codeStyle: CSSProperties = {
 
 const countdownStyle: CSSProperties = {
   fontSize: 12,
-  color: 'var(--dsw-alias-text-warning)',
+  color: 'var(--dsw-alias-state-warn-primary)',
 }
 
 const claimBlockStyle: CSSProperties = {
@@ -292,15 +268,15 @@ const codeSurfaceStyle: CSSProperties = {
 const hintStyle: CSSProperties = {
   margin: 0,
   fontSize: 11,
-  color: 'var(--dsw-alias-text-tertiary)',
+  color: 'var(--dsw-alias-label-tertiary)',
 }
 
 const errorBoxStyle: CSSProperties = {
   padding: '8px 12px',
   borderRadius: 8,
-  border: '1px solid var(--dsw-alias-border-error)',
-  background: 'var(--dsw-alias-bg-error-soft)',
-  color: 'var(--dsw-alias-text-error)',
+  border: '1px solid var(--dsw-alias-state-error-primary)',
+  background: 'var(--dsw-alias-state-error-secondary)',
+  color: 'var(--dsw-alias-state-error-primary)',
   fontSize: 12,
   lineHeight: 1.5,
 }
@@ -310,11 +286,6 @@ const footerStyle: CSSProperties = {
   gap: 8,
   flexWrap: 'wrap',
   justifyContent: 'flex-end',
-}
-
-const disabledStyle: CSSProperties = {
-  opacity: 0.5,
-  cursor: 'not-allowed',
 }
 
 // Mark `COUNTDOWN_TICK_MS` as intentionally retained for future interval use.

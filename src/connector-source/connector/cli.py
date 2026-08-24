@@ -175,6 +175,7 @@ async def _rpc(args: argparse.Namespace) -> None:
         "connector.restart": controller.restart,
         "connector.startPairing": controller.start_pairing,
         "connector.cancelPairing": controller.cancel_pairing,
+        "connector.clearCredentials": controller.clear_credentials,
     }
     log_level = "DEBUG" if args.debug else "INFO"
     log_sink = install_rpc_log_sink(

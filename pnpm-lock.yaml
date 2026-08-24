@@ -59,6 +59,9 @@ importers:
       '@deepseek-ai/dsh-session-title':
         specifier: 0.1.0-rc.7
         version: 0.1.0-rc.7(54a387d0d580a07b8dbef208df0b04c2)
+      '@deepseek-ai/dsh-typert-protocol':
+        specifier: 0.1.0-rc.7
+        version: 0.1.0-rc.7(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-invariants@0.1.0-rc.7(@deepseek-ai/cordis@4.0.1))
       '@deepseek-ai/dsh-user-approval':
         specifier: 0.1.0-rc.7
         version: 0.1.0-rc.7(6b8cefd624fd84694a941b103cc9b3fb)

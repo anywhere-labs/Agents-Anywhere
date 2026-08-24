@@ -102,22 +102,22 @@ function patchRow(row: HTMLElement): void {
     svg.style.setProperty('display', 'none', 'important')
   })
 
-  // Inject the Agents Anywhere logo as a leading marker span.
+  // Inject the Agents Anywhere logo as a leading marker span. The DSH nav
+  // cell is `display: flex; gap: 8px`, so the spacing between icon and label
+  // must come from that gap — NOT from a margin here, or the icon drifts out
+  // of alignment with the shell's own nav rows.
   if (row.querySelector('[data-aa-connector-nav-icon="true"]') !== null) return
   const icon = document.createElement('span')
   icon.dataset.aaConnectorNavIcon = 'true'
   icon.setAttribute('aria-hidden', 'true')
   icon.style.cssText = [
-    'display: inline-block',
-    'flex-shrink: 0',
+    'flex: none',
     'width: 16px',
     'height: 16px',
-    'margin-right: 8px',
     'background-image: ' + LIGHT_ICON_URL,
     'background-size: contain',
     'background-repeat: no-repeat',
     'background-position: center',
-    'vertical-align: middle',
   ].join(';')
   row.insertBefore(icon, row.firstChild)
 }

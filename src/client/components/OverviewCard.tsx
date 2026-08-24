@@ -1,13 +1,8 @@
 import type { CSSProperties } from 'react'
 import { useState } from 'react'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
-import {
-  Card,
-  StatusPill,
-  buttonPrimary,
-  buttonSecondary,
-} from './Card.js'
 import { PairingDialog } from './PairingDialog.js'
+import { PasteCredentialsDialog } from './PasteCredentialsDialog.js'
 import type {
   ConnectorActions,
   ConnectorState,
@@ -17,6 +12,8 @@ import type {
 
 const LOCALE_NS = 'dsh-aa-connector'
 
+type MetricTone = 'default' | 'success' | 'error'
+
 interface OverviewCardProps {
   state: ConnectorState
   actions: ConnectorActions
@@ -24,131 +21,68 @@ interface OverviewCardProps {
 }
 
 /**
- * Overview tab — merged runtime + pairing/device surface.
+ * Overview tab — mirrors the desktop-next overview view exactly:
  *
- * Mirrors the desktop-next overview layout:
- *   1. Two metric cards (Connector / Credential)
- *   2. Action-card grid (Start pairing / Re-pair / Clear credentials)
- *   3. Inline Start / Stop / Restart control row
- *   4. Pairing flow opens a modal dialog (extracted to PairingDialog)
+ *   1. Two metric cards side-by-side (Connector / Credential), each with a
+ *      tone-colored value and border.
+ *   2. A stacked action-card list (Start pairing / Paste credentials) below a
+ *      top border, matching desktop-next's `border-t pt-5` section.
+ *
+ * Runtime start/stop/restart controls live in the section header, and
+ * credential clearing lives in the Environment tab — matching how desktop-next
+ * places those outside the Overview body.
  */
 export function OverviewCard({ state, actions, t }: OverviewCardProps): JSX.Element {
   const [pairOpen, setPairOpen] = useState(false)
-  const [installing, setInstalling] = useState(false)
+  const [pasteOpen, setPasteOpen] = useState(false)
   const isPaired = state.device !== null
-  const runtimeTone = runtimeToneOf(state.runtime)
+  const runtimeTone = runtimeToneOf(state.runtime, state.connection)
   const credentialTone = credentialToneOf(state)
-  const cliReady = state.anywhereCliInstalled
 
   return (
     <>
-      {!cliReady && (
-        <Card title={t('overview.install.title')} description={t('overview.install.description')}>
-          <div style={installRowStyle}>
-            <button
-              type="button"
-              style={{
-                ...buttonPrimary,
-                ...(installing ? disabledButtonStyle : null),
-              }}
-              onClick={() => {
-                if (installing) return
-                setInstalling(true)
-                void actions.installAnywhereCli().finally(() => { setInstalling(false) })
-              }}
-              disabled={installing}
-            >
-              {installing ? t('overview.install.running') : t('overview.install.button')}
-            </button>
-            {state.anywhereCliVersion !== null && (
-              <span style={installedHintStyle}>
-                {t('overview.installed', { version: state.anywhereCliVersion })}
-              </span>
-            )}
-          </div>
-        </Card>
-      )}
+      <section style={metricsGridStyle}>
+        <MetricCard
+          title={t('overview.metric.connector.title')}
+          value={runtimeLabel(state.runtime, state.connection, t)}
+          detail={runtimeDetail(state.runtime, state.connection, t)}
+          tone={runtimeTone}
+        />
+        <MetricCard
+          title={t('overview.metric.credential.title')}
+          value={credentialLabel(state, t)}
+          detail={credentialDetail(state, t)}
+          tone={credentialTone}
+        />
+      </section>
 
-      <Card>
-        <section style={metricsGridStyle}>
-          <MetricCard
-            title={t('overview.metric.connector.title')}
-            value={runtimeLabel(state.runtime, state.connection, t)}
-            detail={runtimeDetail(state.runtime, state.connection, t)}
-            tone={runtimeTone}
-          />
-          <MetricCard
-            title={t('overview.metric.credential.title')}
-            value={credentialLabel(state, t)}
-            detail={credentialDetail(state, t)}
-            tone={credentialTone}
-          />
-        </section>
-
-        {state.runtimeError !== null && (
-          <div style={errorBoxStyle}>{state.runtimeError}</div>
-        )}
-
-        <section style={controlRowStyle}>
-          <button
-            type="button"
-            style={{
-              ...(state.runtime === 'running' ? buttonSecondary : buttonPrimary),
-              ...(state.runtime === 'starting' ? disabledButtonStyle : null),
-            }}
-            onClick={() => { void actions.start() }}
-            disabled={state.runtime === 'starting' || !cliReady}
-          >
-            {t('overview.start')}
-          </button>
-          <button
-            type="button"
-            style={buttonSecondary}
-            onClick={() => { void actions.stop() }}
-            disabled={state.runtime === 'stopped' || state.runtime === 'starting'}
-          >
-            {t('overview.stop')}
-          </button>
-          <button
-            type="button"
-            style={buttonSecondary}
-            onClick={() => { void actions.restart() }}
-            disabled={state.runtime === 'starting' || !cliReady}
-          >
-            {t('overview.restart')}
-          </button>
-        </section>
-      </Card>
-
-      <Card>
-        <section style={actionsGridStyle}>
-          <ActionCard
-            title={isPaired ? t('overview.action.repair.title') : t('overview.action.pair.title')}
-            description={isPaired ? t('overview.action.repair.description') : t('overview.action.pair.description')}
-            onClick={() => setPairOpen(true)}
-            icon="plus"
-          />
-          <ActionCard
-            title={t('overview.action.clear.title')}
-            description={t('overview.action.clear.description')}
-            onClick={() => { void actions.clearCredentials() }}
-            icon="trash"
-            disabled={!isPaired && !state.pairing.code}
-          />
-        </section>
-      </Card>
-
-      {isPaired && (
-        <Card title={t('overview.device.title')}>
-          <DeviceRows state={state} t={t} />
-        </Card>
-      )}
+      <section style={actionsSectionStyle}>
+        <ActionCard
+          icon="plus"
+          title={isPaired ? t('overview.action.repair.title') : t('overview.action.pair.title')}
+          description={isPaired ? t('overview.action.repair.description') : t('overview.action.pair.description')}
+          onClick={() => setPairOpen(true)}
+        />
+        <ActionCard
+          icon="clipboard"
+          title={t('overview.action.paste.title')}
+          description={t('overview.action.paste.description')}
+          onClick={() => setPasteOpen(true)}
+        />
+      </section>
 
       <PairingDialog
         open={pairOpen}
         onOpenChange={setPairOpen}
         state={state}
         actions={actions}
+        t={t}
+      />
+      <PasteCredentialsDialog
+        open={pasteOpen}
+        onOpenChange={setPasteOpen}
+        actions={actions}
+        onPairingStarted={() => setPairOpen(true)}
         t={t}
       />
     </>
@@ -159,16 +93,14 @@ interface MetricCardProps {
   title: string
   value: string
   detail: string
-  tone: 'neutral' | 'success' | 'warn' | 'error' | 'info'
+  tone: MetricTone
 }
 
 function MetricCard({ title, value, detail, tone }: MetricCardProps): JSX.Element {
   return (
-    <div style={metricCardStyle}>
-      <div style={metricHeaderStyle}>
-        <span style={metricTitleStyle}>{title}</span>
-        <StatusPill tone={tone}>{value}</StatusPill>
-      </div>
+    <div style={{ ...metricCardStyle, borderColor: metricBorderColor(tone) }}>
+      <span style={metricTitleStyle}>{title}</span>
+      <span style={{ ...metricValueStyle, color: metricValueColor(tone) }}>{value}</span>
       <p style={metricDetailStyle}>{detail}</p>
     </div>
   )
@@ -178,54 +110,28 @@ interface ActionCardProps {
   title: string
   description: string
   onClick: () => void
-  icon: 'plus' | 'trash'
-  disabled?: boolean
+  icon: 'plus' | 'clipboard'
 }
 
-function ActionCard({ title, description, onClick, icon, disabled }: ActionCardProps): JSX.Element {
+function ActionCard({ title, description, onClick, icon }: ActionCardProps): JSX.Element {
+  const [hovered, setHovered] = useState(false)
   return (
     <button
       type="button"
       style={{
         ...actionCardStyle,
-        ...(disabled ? disabledButtonStyle : null),
+        ...(hovered ? actionCardHoverStyle : null),
       }}
       onClick={onClick}
-      disabled={disabled === true}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
     >
       <div style={actionIconStyle} aria-hidden="true">
-        {icon === 'plus' ? <PlusGlyph /> : <TrashGlyph />}
+        {icon === 'plus' ? <PlusGlyph /> : <ClipboardGlyph />}
       </div>
       <div style={actionTitleStyle}>{title}</div>
       <p style={actionDescriptionStyle}>{description}</p>
     </button>
-  )
-}
-
-function DeviceRows({ state, t }: { state: ConnectorState; t: TranslateNS<typeof LOCALE_NS> }): JSX.Element {
-  if (state.device === null) {
-    return <p style={deviceEmptyStyle}>{t('overview.device.empty')}</p>
-  }
-  const device = state.device
-  return (
-    <div style={deviceGridStyle}>
-      <DeviceRow label={t('overview.device.name')} value={device.deviceName} />
-      <DeviceRow label={t('overview.device.id')} value={device.deviceId} mono />
-      <DeviceRow label={t('overview.device.paired')} value={formatTime(device.pairedAt)} />
-      <DeviceRow label={t('overview.device.server')} value={state.pairing.serverUrl} mono />
-    </div>
-  )
-}
-
-function DeviceRow({ label, value, mono }: { label: string; value: string; mono?: boolean }): JSX.Element {
-  return (
-    <div style={deviceRowStyle}>
-      <span style={deviceLabelStyle}>{label}</span>
-      <span style={{
-        ...deviceValueStyle,
-        ...(mono ? monoStyle : null),
-      }}>{value}</span>
-    </div>
   )
 }
 
@@ -237,30 +143,45 @@ function PlusGlyph(): JSX.Element {
   )
 }
 
-function TrashGlyph(): JSX.Element {
+function ClipboardGlyph(): JSX.Element {
   return (
     <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-      <path d="M3 4h10M6 4V3a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v1M5 4l.5 8a1 1 0 0 0 1 .9h3a1 1 0 0 0 1-.9L11 4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+      <rect x="4" y="3" width="11" height="12" rx="2" stroke="currentColor" strokeWidth="1.4" />
+      <path d="M6.5 3V2.5A1.5 1.5 0 0 1 8 1h3a1.5 1.5 0 0 1 1.5 1.5V3" stroke="currentColor" strokeWidth="1.4" />
     </svg>
   )
 }
 
-function runtimeToneOf(state: ConnectorRuntimeState): 'neutral' | 'success' | 'warn' | 'error' | 'info' {
-  switch (state) {
-    case 'running':
-      return 'success'
-    case 'starting':
-      return 'warn'
-    case 'stopped':
-      return 'neutral'
+function runtimeToneOf(runtime: ConnectorRuntimeState, connection: ConnectionState): MetricTone {
+  if (runtime === 'error') return 'error'
+  if (runtime === 'running' && connection === 'connected') return 'success'
+  return 'default'
+}
+
+function credentialToneOf(state: ConnectorState): MetricTone {
+  return state.device === null ? 'default' : 'success'
+}
+
+function metricBorderColor(tone: MetricTone): string {
+  switch (tone) {
+    case 'success':
+      return 'var(--dsw-alias-state-success-primary)'
     case 'error':
-      return 'error'
+      return 'var(--dsw-alias-state-error-primary)'
+    default:
+      return 'var(--dsw-alias-border-l2)'
   }
 }
 
-function credentialToneOf(state: ConnectorState): 'neutral' | 'success' | 'warn' | 'error' | 'info' {
-  if (state.device === null) return 'neutral'
-  return 'success'
+function metricValueColor(tone: MetricTone): string {
+  switch (tone) {
+    case 'success':
+      return 'var(--dsw-alias-state-success-primary)'
+    case 'error':
+      return 'var(--dsw-alias-state-error-primary)'
+    default:
+      return 'var(--dsw-alias-label-primary)'
+  }
 }
 
 function runtimeLabel(runtime: ConnectorRuntimeState, connection: ConnectionState, t: TranslateNS<typeof LOCALE_NS>): string {
@@ -291,161 +212,89 @@ function credentialDetail(state: ConnectorState, t: TranslateNS<typeof LOCALE_NS
   return t('overview.metric.credential.detail.paired')
 }
 
-function formatTime(ms: number): string {
-  return new Date(ms).toLocaleString()
-}
-
 const metricsGridStyle: CSSProperties = {
   display: 'grid',
-  gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+  gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
   gap: 12,
-  marginBottom: 14,
 }
 
 const metricCardStyle: CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
-  gap: 8,
-  padding: 14,
-  borderRadius: 10,
+  gap: 6,
+  padding: '16px 20px',
+  borderRadius: 12,
   border: '1px solid var(--dsw-alias-border-l2)',
-  background: 'var(--dsw-alias-bg-surface-2)',
-}
-
-const metricHeaderStyle: CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'space-between',
-  gap: 8,
+  background: 'var(--dsw-alias-bg-layer-1)',
 }
 
 const metricTitleStyle: CSSProperties = {
-  fontSize: 12,
-  textTransform: 'uppercase',
-  letterSpacing: 0.5,
-  color: 'var(--dsw-alias-text-secondary)',
-  fontWeight: 500,
+  fontSize: 13,
+  color: 'var(--dsw-alias-label-secondary)',
+}
+
+const metricValueStyle: CSSProperties = {
+  fontSize: 20,
+  fontWeight: 600,
+  lineHeight: 1.3,
 }
 
 const metricDetailStyle: CSSProperties = {
   margin: 0,
   fontSize: 12,
   lineHeight: 1.5,
-  color: 'var(--dsw-alias-text-tertiary)',
+  color: 'var(--dsw-alias-label-tertiary)',
 }
 
-const errorBoxStyle: CSSProperties = {
-  padding: '8px 12px',
-  borderRadius: 8,
-  border: '1px solid var(--dsw-alias-border-error)',
-  background: 'var(--dsw-alias-bg-error-soft)',
-  color: 'var(--dsw-alias-text-error)',
-  fontSize: 12,
-  lineHeight: 1.5,
-  marginBottom: 12,
-}
-
-const controlRowStyle: CSSProperties = {
-  display: 'flex',
-  gap: 8,
-  flexWrap: 'wrap',
-}
-
-const installRowStyle: CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  gap: 12,
-  flexWrap: 'wrap',
-}
-
-const installedHintStyle: CSSProperties = {
-  fontSize: 12,
-  color: 'var(--dsw-alias-text-tertiary)',
-}
-
-const actionsGridStyle: CSSProperties = {
+const actionsSectionStyle: CSSProperties = {
   display: 'grid',
-  gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
   gap: 12,
+  marginTop: 12,
+  borderTop: '1px solid var(--dsw-alias-border-l2)',
+  paddingTop: 20,
 }
 
 const actionCardStyle: CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
-  gap: 6,
-  padding: 14,
+  gap: 4,
+  padding: 20,
   textAlign: 'left',
   border: '1px solid var(--dsw-alias-border-l2)',
   borderRadius: 10,
-  background: 'var(--dsw-alias-bg-surface-2)',
-  color: 'var(--dsw-alias-text-primary)',
+  background: 'var(--dsw-alias-bg-layer-1)',
+  color: 'var(--dsw-alias-label-primary)',
   cursor: 'pointer',
   font: 'inherit',
   transition: 'background 120ms ease, border-color 120ms ease',
+}
+
+const actionCardHoverStyle: CSSProperties = {
+  background: 'var(--dsw-alias-interactive-bg-hover)',
 }
 
 const actionIconStyle: CSSProperties = {
   display: 'inline-flex',
   alignItems: 'center',
   justifyContent: 'center',
-  width: 32,
-  height: 32,
+  width: 36,
+  height: 36,
   borderRadius: 8,
   border: '1px solid var(--dsw-alias-border-l2)',
-  background: 'var(--dsw-alias-bg-surface-1)',
-  color: 'var(--dsw-alias-text-primary)',
-  marginBottom: 4,
+  background: 'var(--dsw-alias-bg-layer-2)',
+  color: 'var(--dsw-alias-label-primary)',
+  marginBottom: 12,
 }
 
 const actionTitleStyle: CSSProperties = {
   fontSize: 14,
-  fontWeight: 600,
-  color: 'var(--dsw-alias-text-primary)',
+  fontWeight: 500,
+  color: 'var(--dsw-alias-label-primary)',
 }
 
 const actionDescriptionStyle: CSSProperties = {
   margin: 0,
-  fontSize: 12,
+  fontSize: 14,
   lineHeight: 1.5,
-  color: 'var(--dsw-alias-text-tertiary)',
-}
-
-const deviceEmptyStyle: CSSProperties = {
-  margin: 0,
-  fontSize: 12,
-  color: 'var(--dsw-alias-text-tertiary)',
-}
-
-const deviceGridStyle: CSSProperties = {
-  display: 'flex',
-  flexDirection: 'column',
-  gap: 8,
-}
-
-const deviceRowStyle: CSSProperties = {
-  display: 'grid',
-  gridTemplateColumns: '120px 1fr',
-  gap: 12,
-  alignItems: 'baseline',
-}
-
-const deviceLabelStyle: CSSProperties = {
-  fontSize: 12,
-  color: 'var(--dsw-alias-text-secondary)',
-}
-
-const deviceValueStyle: CSSProperties = {
-  fontSize: 13,
-  color: 'var(--dsw-alias-text-primary)',
-  wordBreak: 'break-all',
-}
-
-const monoStyle: CSSProperties = {
-  fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-  fontSize: 12,
-}
-
-const disabledButtonStyle: CSSProperties = {
-  opacity: 0.5,
-  cursor: 'not-allowed',
+  color: 'var(--dsw-alias-label-secondary)',
 }
