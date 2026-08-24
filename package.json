@@ -21,6 +21,7 @@
     "lib/**/*.js",
     "lib/**/*.js.map",
     "lib/types/**/*.d.ts",
+    "src/connector-source/**/*",
     "cordis.patch.yml",
     "README.md",
     "LICENSE"

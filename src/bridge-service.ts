@@ -970,23 +970,18 @@ function generatePairingCode(): string {
 }
 
 /**
- * Default working directory for the bundled `anywhere-cli` Python project.
- * Resolves `<plugin_root>/src/connector-source/` from the location of the
- * compiled bridge-service.js so the subprocess spawns in the right place
- * regardless of where DSH installs the plugin on disk.
- */
-/**
  * Resolve the `anywhere-cli` Python project directory.
  *
  * Resolution order (first directory that contains `pyproject.toml` wins):
  *
- *   1. The bundle-included `src/connector-source/` — only present when this
- *      plugin was installed as part of a vendored full checkout (the `tsdown`
- *      build emits `lib/bridge-service.js` alongside the source tree).
- *   2. A sibling `Agents-Anywhere/connector/` directory — typical for dev
- *      workspaces that clone the upstream repo next to the plugin checkout.
- *   3. `<process.cwd()>/Agents-Anywhere/connector` — the layout DSH hands
- *      to the cordis plugin loader when launching from the upstream repo.
+ *   1. The bundle-included `src/connector-source/` — ships with the plugin so
+ *      end users never need a separate checkout. `import.meta.url` points at
+ *      `lib/bridge-service.js`, so `../src/connector-source/` is the sibling
+ *      source tree one level above `lib/`.
+ *   2. A sibling `Agents-Anywhere/connector/` directory — dev workspaces that
+ *      clone the upstream repo next to the plugin checkout.
+ *   3. `<process.cwd()>/Agents-Anywhere/connector` — the layout DSH hands to
+ *      the cordis plugin loader when launching from the upstream repo.
  *
  * Falls back to the bundle directory so misconfigured installs get a clear
  * "no pyproject.toml" surface rather than a silent cwd-mismatch crash.
@@ -994,7 +989,7 @@ function generatePairingCode(): string {
 function defaultConnectorCwd(): string {
   const here = new URL(import.meta.url)
   const candidates: string[] = [
-    new URL('../connector-source/', here).pathname,
+    new URL('../src/connector-source/', here).pathname,
   ]
   // Walk up from the installed plugin location looking for `Agents-Anywhere/connector`.
   const herePath = fileURLToPath(here)
@@ -1006,7 +1001,7 @@ function defaultConnectorCwd(): string {
   for (const candidate of candidates) {
     if (existsSync(join(candidate, 'pyproject.toml'))) return candidate
   }
-  return new URL('../connector-source/', here).pathname
+  return new URL('../src/connector-source/', here).pathname
 }
 
 export default AgentsAnywhereConnectorService

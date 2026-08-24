@@ -69,14 +69,12 @@ export declare interface ProcessRunner {
 
 const DEFAULT_GRACEFUL_STOP_MS = 5_000
 const STARTUP_TIMEOUT_MS = 30_000
-const LINE_FLUSH_INTERVAL_MS = 50
-const STDOUT_LOG_INTERVAL_MS = 250
 
 export class ProcessRunner extends EventEmitter {
   private current: ChildProcess | null = null
   private state: RunnerState = 'stopped'
-  private stdoutBuffer = ''
   private stderrBuffer = ''
+  private stderrDrainScheduled = false
   private readonly gracefulStopMs: number
 
   constructor(options: { gracefulStopMs?: number } = {}) {
@@ -121,7 +119,6 @@ export class ProcessRunner extends EventEmitter {
     }
 
     this.current = child
-    this.stdoutBuffer = ''
     this.stderrBuffer = ''
 
     // stdout carries the JSON-RPC protocol stream and is consumed exclusively
@@ -191,70 +188,42 @@ export class ProcessRunner extends EventEmitter {
 
   /** Stop + drop references. Safe to call multiple times. */
   async dispose(): Promise<void> {
-    if (this.flushTimer !== null) {
-      clearTimeout(this.flushTimer)
-      this.flushTimer = null
-    }
     await this.stop()
     this.removeAllListeners()
   }
 
   private handleStreamChunk(stream: 'stdout' | 'stderr', chunk: string): void {
-    if (stream === 'stdout') {
-      this.stdoutBuffer += chunk
-      this.drainBuffer('stdout', this.stdoutBuffer)
-    } else {
+    // stderr is the only log source (stdout is drained by RpcClient). Append
+    // and drain asynchronously so a flood of stderr lines — uv printing install
+    // progress on first launch — cannot starve the event loop and freeze the UI.
+    if (stream === 'stderr') {
       this.stderrBuffer += chunk
-      this.drainBuffer('stderr', this.stderrBuffer)
+      this.scheduleStderrDrain()
     }
   }
 
-  /**
-   * Drain complete lines from `source` immediately, then coalesce any
-   * remaining partial line until the stream goes quiet for at least one
-   * STDOUT_LOG_INTERVAL_MS window. The previous implementation scheduled a
-   * `setTimeout` for *every* chunk — when Python sends back-to-back JSON-RPC
-   * notifications in a single stdout write, each one spawned its own timer,
-   * and the timers kept the event loop permanently busy, eventually locking
-   * the entire host.
-   */
-  private drainBuffer(stream: 'stdout' | 'stderr', source: string): void {
-    let newlineIndex = source.indexOf('\n')
+  private scheduleStderrDrain(): void {
+    if (this.stderrDrainScheduled) return
+    this.stderrDrainScheduled = true
+    setImmediate(() => {
+      this.stderrDrainScheduled = false
+      this.drainStderrBuffer()
+    })
+  }
+
+  private drainStderrBuffer(): void {
+    let newlineIndex = this.stderrBuffer.indexOf('\n')
     while (newlineIndex !== -1) {
-      const line = source.slice(0, newlineIndex).replace(/\r$/, '')
-      if (stream === 'stdout') this.stdoutBuffer = source.slice(newlineIndex + 1)
-      else this.stderrBuffer = source.slice(newlineIndex + 1)
-      if (line.length > 0) this.emitLog(stream, line)
-      newlineIndex = (stream === 'stdout' ? this.stdoutBuffer : this.stderrBuffer).indexOf('\n')
+      const line = this.stderrBuffer.slice(0, newlineIndex).replace(/\r$/, '')
+      this.stderrBuffer = this.stderrBuffer.slice(newlineIndex + 1)
+      if (line.length > 0) this.emitLog('stderr', line)
+      newlineIndex = this.stderrBuffer.indexOf('\n')
     }
-    // Coalesce partial trailing lines into a single timer that resets on
-    // each chunk so we flush once the stream goes quiet.
-    this.schedulePartialFlush(stream)
-  }
-
-  private flushTimer: NodeJS.Timeout | null = null
-
-  private schedulePartialFlush(stream: 'stdout' | 'stderr'): void {
-    if (this.flushTimer !== null) clearTimeout(this.flushTimer)
-    this.flushTimer = setTimeout(() => {
-      this.flushTimer = null
-      if (stream === 'stdout' && this.stdoutBuffer.length > 0) {
-        const line = this.stdoutBuffer
-        this.stdoutBuffer = ''
-        this.emitLog('stdout', line)
-      } else if (stream === 'stderr' && this.stderrBuffer.length > 0) {
-        const line = this.stderrBuffer
-        this.stderrBuffer = ''
-        this.emitLog('stderr', line)
-      }
-    }, STDOUT_LOG_INTERVAL_MS)
   }
 
   private flushBuffers(): void {
-    if (this.stdoutBuffer.length > 0) {
-      this.emitLog('stdout', this.stdoutBuffer)
-      this.stdoutBuffer = ''
-    }
+    // Drain any complete lines first, then flush the trailing partial line.
+    this.drainStderrBuffer()
     if (this.stderrBuffer.length > 0) {
       this.emitLog('stderr', this.stderrBuffer)
       this.stderrBuffer = ''

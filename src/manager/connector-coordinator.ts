@@ -106,7 +106,11 @@ export class ConnectorCoordinator extends EventEmitter implements ConnectorHostA
   }
 
   async getState(): Promise<ConnectorStateSnapshot> {
-    if (this.client !== null) {
+    // While the subprocess is still starting (e.g. uv installing dependencies
+    // on first launch), the RPC handshake would hang and block the UI poll.
+    // Return the local snapshot immediately so the UI keeps rendering the
+    // "initializing" state until the handshake completes.
+    if (this.client !== null && this.snapshot.runtime !== 'starting') {
       try {
         const remote = await this.client.send<unknown>('connector.getState')
         if (isPythonState(remote)) {
@@ -364,12 +368,12 @@ export class ConnectorCoordinator extends EventEmitter implements ConnectorHostA
       this.logs.splice(0, this.logs.length - LOG_BUFFER_LIMIT)
     }
     this.emit('log', log)
-    // Surface process-level stderr as a runtime error so the UI can show
-    // what killed the subprocess (uv not installed, dependency missing,
-    // Python traceback, etc.).
-    if (entry.level === 'error') {
-      this.updateSnapshot({ runtimeError: entry.message })
-    }
+    // Deliberately do NOT call updateSnapshot here. `uv run` streams its whole
+    // install progress to stderr while it first downloads + builds the venv,
+    // and every one of those lines is tagged `error` by ProcessRunner. Turning
+    // each line into a snapshot update floods the event loop and freezes the
+    // host during that first install. Real failures surface through failStart
+    // and handleRpcError instead.
   }
 
   private handleNotification(method: string, params: unknown): void {
@@ -448,12 +452,22 @@ function initialSnapshot(): ConnectorStateSnapshot {
   }
 }
 
-function buildConnectorEnv(env: EnvironmentInfo): Record<string, string> {
+function buildConnectorEnv(_env: EnvironmentInfo): Record<string, string> {
+  // Keep uv's project virtualenv OUT of the bundled source tree. If uv created
+  // `.venv` inside `src/connector-source/`, the plugin package would grow a
+  // runtime artifact and the "no cached bytecode/virtualenv" invariant breaks.
+  // Pointing uv at a data-dir venv keeps the source tree clean and read-only.
+  //
+  // NOTE: intentionally no `UV_DEFAULT_INDEX` here. A hard-coded mirror
+  // (e.g. the Tsinghua index) stalls `uv run` on networks that cannot reach
+  // it, which freezes the auto-start path. uv's default index is used instead.
+  const venvDir = path.join(os.homedir(), '.agents-anywhere', 'connector-venv')
   return {
-    AA_SERVER_URL: env.pypiMirror,
-    AA_DATA_DIR: '~/.agents-anywhere',
-    AA_PYPI_MIRROR: env.pypiMirror,
-    AA_AUTO_START: env.autoStart ? '1' : '0',
+    UV_PROJECT_ENVIRONMENT: venvDir,
+    // Prevent Python from writing __pycache__ into the bundled source tree
+    // while running `connector/*.py` — keeps the plugin directory clean and
+    // the "no cached bytecode" invariant true even after a live run.
+    PYTHONDONTWRITEBYTECODE: '1',
   }
 }
 

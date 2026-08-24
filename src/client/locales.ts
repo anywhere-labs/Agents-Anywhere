@@ -32,7 +32,7 @@ export const zh = {
   'overview.metric.connector.detail.connected': '正在与 AA Server 通信',
   'overview.metric.connector.detail.idle': '未运行',
   'overview.metric.connector.detail.error': '运行异常',
-  'overview.metric.connector.detail.starting': '正在启动',
+  'overview.metric.connector.detail.starting': '首次启动正在安装 Python 依赖，请稍候…',
   'overview.metric.credential.title': '凭据',
   'overview.metric.credential.detail.paired': '已配对，可远程控制',
   'overview.metric.credential.detail.unpaired': '未配对，先在下方开始配对',
@@ -57,7 +57,7 @@ export const zh = {
 
   // Runtime / connection status
   'runtime.stopped': '已停止',
-  'runtime.starting': '正在启动',
+  'runtime.starting': '初始化中',
   'runtime.running': '运行中',
   'runtime.error': '异常',
   'connection.disconnected': '未连接',
@@ -188,7 +188,7 @@ export const en = {
   'overview.metric.connector.detail.connected': 'Communicating with the AA server',
   'overview.metric.connector.detail.idle': 'Not running',
   'overview.metric.connector.detail.error': 'Runtime error',
-  'overview.metric.connector.detail.starting': 'Starting',
+  'overview.metric.connector.detail.starting': 'Installing Python dependencies on first launch…',
   'overview.metric.credential.title': 'Credential',
   'overview.metric.credential.detail.paired': 'Paired — remote control ready',
   'overview.metric.credential.detail.unpaired': 'Not paired — start the flow below',
@@ -213,7 +213,7 @@ export const en = {
 
   // Runtime / connection status
   'runtime.stopped': 'Stopped',
-  'runtime.starting': 'Starting',
+  'runtime.starting': 'Initializing',
   'runtime.running': 'Running',
   'runtime.error': 'Error',
   'connection.disconnected': 'Disconnected',
