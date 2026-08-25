@@ -466,9 +466,22 @@ def test_connector_runtime_scoped_reads_start_active_runtime_before_rpc(tmp_path
         "runtime.permissionCatalog",
         "runtime.commands",
     ]
-    assert rpc.requests[2][2] == {"runtime": "codex", "limit": 200}
-    assert rpc.requests[3][2] == {"runtime": "codex", "limit": 200}
-    assert rpc.requests[4][2] == {"runtime": "codex", "limit": 100}
+    assert rpc.requests[1][2] == {"runtime": "codex", "runtimeId": "codex"}
+    assert rpc.requests[2][2] == {
+        "runtime": "codex",
+        "runtimeId": "codex",
+        "limit": 200,
+    }
+    assert rpc.requests[3][2] == {
+        "runtime": "codex",
+        "runtimeId": "codex",
+        "limit": 200,
+    }
+    assert rpc.requests[4][2] == {
+        "runtime": "codex",
+        "runtimeId": "codex",
+        "limit": 100,
+    }
 
 
 def test_session_sync_starts_active_runtime_before_sync_rpc(tmp_path):
@@ -765,3 +778,4 @@ def test_explicit_discovery_stops_runtime_that_server_has_not_activated(tmp_path
         "runtime.discover",
         "runtime.stop",
     ]
+    assert rpc.requests[0][2] == {"supportedControlVersions": ["2.0", "1.0"]}

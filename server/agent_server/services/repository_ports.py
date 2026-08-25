@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, Protocol
 
 from agent_server.core.catalogs import CatalogType, CatalogUpdateOutcome
+from agent_server.core.device_runtime import RuntimeInventoryItem, RuntimeTypeDescriptor
 from agent_server.core.models import (
     ConnectorView,
     SessionRuntimeState,
@@ -238,6 +239,23 @@ class DeviceRuntimeRepository(
         runtime_id: str,
     ) -> dict[str, Any]: ...
 
+    async def create_device_runtime(
+        self,
+        connector_id: str,
+        *,
+        runtime_type: str,
+        name: str,
+        config: dict[str, Any] | None,
+        active: bool,
+    ) -> dict[str, Any]: ...
+
+    async def get_connector_runtime_control_version(
+        self,
+        connector_id: str,
+        *,
+        user_id: str | None = None,
+    ) -> str: ...
+
     async def get_connector_runtime_type(
         self,
         connector_id: str,
@@ -281,8 +299,21 @@ class DeviceRuntimeRepository(
     async def replace_device_runtime_inventory(
         self,
         connector_id: str,
-        runtimes: list[Any],
+        runtimes: list[RuntimeInventoryItem],
     ) -> list[dict[str, Any]]: ...
+
+    async def replace_connector_runtime_types(
+        self,
+        connector_id: str,
+        runtime_types: list[RuntimeTypeDescriptor],
+    ) -> list[dict[str, Any]]: ...
+
+    async def rename_device_runtime(
+        self,
+        connector_id: str,
+        runtime_id: str,
+        name: str,
+    ) -> dict[str, Any]: ...
 
     async def set_device_runtime_active(
         self,
