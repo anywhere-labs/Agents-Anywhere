@@ -112,6 +112,13 @@ export interface OperationResult {
   error?: string
 }
 
+/** Connector credentials pasted from the web console (or a pairing payload). */
+export interface ConnectorCredentials {
+  serverUrl: string
+  connectorId: string
+  connectorToken: string
+}
+
 // ─── State snapshot ───────────────────────────────────────────────────────
 
 /**
@@ -151,6 +158,7 @@ export interface ConnectorHostApi {
   startPairing(serverUrl?: string): Promise<PairingStartResult>
   cancelPairing(): Promise<OperationResult>
   clearCredentials(): Promise<OperationResult>
+  saveCredentials(credentials: ConnectorCredentials): Promise<OperationResult>
 
   // ── Environment & settings ──
   detectEnvironment(): Promise<EnvironmentInfo>

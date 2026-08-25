@@ -14,6 +14,7 @@ import { useCallback, useEffect, useMemo, useReducer, useRef } from 'react'
 import {
   type BridgeInfo,
   type ConnectionState,
+  type ConnectorCredentials,
   type ConnectorHostApi,
   type ConnectorLog,
   type ConnectorRuntimeState,
@@ -122,6 +123,7 @@ export interface ConnectorActions {
   startPairing(): Promise<void>
   cancelPairing(): Promise<void>
   clearCredentials(): Promise<void>
+  saveCredentials(credentials: ConnectorCredentials): Promise<void>
   updateEnvironment(patch: Partial<EnvironmentInfo>): Promise<void>
   clearLogs(): Promise<void>
   refresh(): Promise<void>
@@ -239,6 +241,19 @@ export function useConnectorStore(host: ConnectorHostApi): {
           dispatch({ type: 'pairing-error', message: errorMessage(error) })
         }
         await refresh()
+      },
+      saveCredentials: async (credentials) => {
+        try {
+          const result = await requireHost().saveCredentials(credentials)
+          if (!result.ok) {
+            dispatch({ type: 'pairing-error', message: result.error ?? 'unknown error' })
+            throw new Error(result.error ?? 'unknown error')
+          }
+          await refresh()
+        } catch (error) {
+          dispatch({ type: 'pairing-error', message: errorMessage(error) })
+          throw error
+        }
       },
       updateEnvironment: async (patch) => {
         try {

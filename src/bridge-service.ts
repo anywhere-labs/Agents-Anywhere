@@ -39,6 +39,7 @@ import {
 } from './bridge/wire/validation.js'
 import {
   type BridgeInfo,
+  type ConnectorCredentials,
   type ConnectorHostApi,
   type ConnectorLog,
   type ConnectorLogChunk,
@@ -143,19 +144,6 @@ export class AgentsAnywhereConnectorService extends TypertRemoteService implemen
 
   /** Validate composition, register reversible resources, and start the loopback endpoint. */
   async [Service.init](): Promise<void> {
-    // Register the connector control surface with the strict Typert registry
-    // so the `/api` channel resolves `agentsAnywhereConnector/*` endpoints
-    // regardless of the gateway's SRC discovery cache. `typert` is root-scoped.
-    try {
-      const typert = (this.ctx.root as unknown as { get(name: string): unknown }).get('typert') as unknown as { register(contribution: unknown): unknown } | undefined
-      if (typert === undefined || typeof typert.register !== 'function') {
-        this.ctx.logger.warn('Agents Anywhere: typert registry unavailable, connector endpoints fall back to SRC discovery')
-      } else {
-        typert.register(buildTypertContribution())
-      }
-    } catch (error: unknown) {
-      this.ctx.logger.warn(`Agents Anywhere Typert registration failed: ${errorMessage(error)}`)
-    }
     this.ctx.effect(() => async () => {
       await this.shutdownCore('service-dispose')
     }, 'agentsAnywhereConnector.lifecycle()')
@@ -609,6 +597,19 @@ export class AgentsAnywhereConnectorService extends TypertRemoteService implemen
    */
   constructor(ctx: Context, config: Config) {
     super(ctx, 'agentsAnywhereConnector')
+    // Register the connector control surface with the strict Typert registry
+    // so `/api/agentsAnywhereConnector/*` resolves independently of the
+    // gateway's SRC discovery (which computes its claim cache from `ctx.get`,
+    // a strict call that can miss a still-loading service). This is the same
+    // `ctx.inject(['typert'], …)` idiom used by dsh-agent / dsh-api-remotes.
+    this.ctx.inject(['typert'], (typeCtx) => {
+      try {
+        const typert = typeCtx.typert as unknown as { register(contribution: unknown): unknown }
+        typert.register(buildTypertContribution())
+      } catch (error: unknown) {
+        this.ctx.logger.warn(`Agents Anywhere Typert registration failed: ${errorMessage(error)}`)
+      }
+    })
     const bridge = config.bridge
     if (bridge === undefined || bridge.stateRoot === undefined || !isAbsolute(bridge.stateRoot)) {
       throw new Error('agents-anywhere bridge stateRoot must be an absolute path')
@@ -691,6 +692,12 @@ export class AgentsAnywhereConnectorService extends TypertRemoteService implemen
   async clearCredentials(): Promise<OperationResult> {
     this.wireCoordinatorEvents()
     return this.coordinator.clearCredentials()
+  }
+
+  @Remote('saveCredentials')
+  async saveCredentials(credentials: ConnectorCredentials): Promise<OperationResult> {
+    this.wireCoordinatorEvents()
+    return this.coordinator.saveCredentials(credentials)
   }
 
   // ── HostApi: environment & settings ──
@@ -950,6 +957,7 @@ function buildTypertContribution(): unknown {
       withArg('startPairing', 'serverUrl', true),
       noArg('cancelPairing'),
       noArg('clearCredentials'),
+      withArg('saveCredentials', 'credentials', false),
       noArg('detectEnvironment'),
       withArg('saveEnvironment', 'patch', false),
       withArg('getLogs', 'options', true),

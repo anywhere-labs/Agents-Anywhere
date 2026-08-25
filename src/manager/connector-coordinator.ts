@@ -26,6 +26,7 @@ import os from 'node:os'
 import path from 'node:path'
 import {
   type BridgeInfo,
+  type ConnectorCredentials,
   type ConnectorHostApi,
   type ConnectorLog,
   type ConnectorLogChunk,
@@ -285,6 +286,33 @@ export class ConnectorCoordinator extends EventEmitter implements ConnectorHostA
     }
     this.updateSnapshot({ device: null, pairing: { ...INITIAL_PAIRING, serverUrl: this.snapshot.pairing.serverUrl } })
     return { ok: true }
+  }
+
+  async saveCredentials(credentials: ConnectorCredentials): Promise<OperationResult> {
+    const ensured = await this.ensureRpcProcess()
+    if (!ensured.ok) return ensured
+    const client = this.client
+    if (client === null) return { ok: false, error: 'connector rpc is unavailable' }
+    try {
+      await client.send('connector.saveConfig', {
+        serverUrl: credentials.serverUrl,
+        connectorId: credentials.connectorId,
+        connectorToken: credentials.connectorToken,
+      })
+      // Reflect the saved credential as a paired device immediately.
+      this.updateSnapshot({
+        device: { deviceId: credentials.connectorId, deviceName: 'Connector', pairedAt: Date.now() },
+        pairing: { ...this.snapshot.pairing, serverUrl: credentials.serverUrl, status: 'claimed', code: null },
+      })
+      // Use `restart` rather than `start`: a leftover connector-runtime file
+      // from a previous run makes a bare `start` throw ConnectorAlreadyRunningError.
+      // `restart` stops first (which clears that file) and then starts fresh.
+      await client.send('connector.restart', undefined)
+      this.updateSnapshot({ runtime: 'running', connection: 'connected' })
+      return { ok: true }
+    } catch (error) {
+      return { ok: false, error: errorMessage(error) }
+    }
   }
 
   async detectEnvironment(): Promise<EnvironmentInfo> {

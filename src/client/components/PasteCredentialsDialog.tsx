@@ -3,6 +3,7 @@ import type { CSSProperties } from 'react'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 import { Button } from './Card.js'
 import type { ConnectorActions } from '../stores/connector-store.js'
+import type { ConnectorCredentials } from '../../common/types.js'
 
 const LOCALE_NS = 'dsh-aa-connector'
 
@@ -17,9 +18,10 @@ interface PasteCredentialsDialogProps {
 
 /**
  * Paste-credentials modal — mirrors desktop-next's "Paste credentials" flow.
- * Accepts a server address or pairing request, extracts the server URL, then
- * starts pairing. Full credential import is not part of this plugin's host
- * contract yet, so anything that isn't a server URL is rejected with a hint.
+ * Accepts either full connector credentials (base64 payload or a
+ * `start --server-url … --connector-id … --connector-token …` command) or a
+ * server address / pairing request; the former saves the credential, the
+ * latter starts the pairing flow.
  */
 export function PasteCredentialsDialog({ open, onOpenChange, actions, onPairingStarted, t }: PasteCredentialsDialogProps): JSX.Element | null {
   const [draft, setDraft] = useState('')
@@ -37,19 +39,26 @@ export function PasteCredentialsDialog({ open, onOpenChange, actions, onPairingS
   if (!open) return null
 
   async function submit(): Promise<void> {
-    const serverUrl = extractServerUrl(draft)
-    if (serverUrl === null) {
+    const parsed = parseCredentialsText(draft)
+    if (parsed === null) {
       setError(draft.trim().length === 0 ? t('paste.error.empty') : t('paste.error.invalid'))
       return
     }
     setBusy(true)
     try {
-      await actions.setServerUrl(serverUrl)
-      await actions.startPairing()
-      onOpenChange(false)
-      onPairingStarted()
-    } catch {
-      setError(t('paste.error.invalid'))
+      if (parsed.kind === 'credentials') {
+        await actions.saveCredentials(parsed.credentials)
+        onOpenChange(false)
+      } else {
+        await actions.setServerUrl(parsed.server)
+        await actions.startPairing()
+        onOpenChange(false)
+        onPairingStarted()
+      }
+    } catch (error) {
+      // Show the real failure (e.g. connector.start rejected) rather than the
+      // generic "unrecognized" message — parse failures return earlier.
+      setError(error instanceof Error && error.message ? error.message : t('paste.error.invalid'))
     } finally {
       setBusy(false)
     }
@@ -102,6 +111,106 @@ export function PasteCredentialsDialog({ open, onOpenChange, actions, onPairingS
       </div>
     </div>
   )
+}
+
+type ParsedPaste =
+  | { kind: 'credentials'; credentials: ConnectorCredentials }
+  | { kind: 'pair'; server: string }
+
+/** Parse a pasted credential payload / command / URL into an action. */
+function parseCredentialsText(text: string): ParsedPaste | null {
+  const trimmed = text.trim()
+  if (trimmed.length === 0) return null
+
+  // 1. Base64 connector-credentials payload (web console format).
+  const payload = parseBase64Credentials(trimmed)
+  if (payload === 'invalid') return null
+  if (payload !== null) return { kind: 'credentials', credentials: payload }
+
+  // 2. Shell command: `start --server-url … --connector-id … --connector-token …`
+  //    or `pair <url>`.
+  const parts = splitShell(trimmed)
+  const commandIndex = parts.findIndex((part) => part === 'start' || part === 'pair' || part === 'login')
+  if (commandIndex >= 0) {
+    const command = parts[commandIndex]
+    const arg = (name: string): string | undefined => {
+      const index = parts.indexOf(name)
+      return index >= 0 ? parts[index + 1] : undefined
+    }
+    if (command === 'start') {
+      const serverUrl = (arg('--server-url') ?? '').replace(/\/+$/, '')
+      const connectorId = arg('--connector-id') ?? ''
+      const connectorToken = arg('--connector-token') ?? ''
+      if (serverUrl && connectorId && connectorToken) {
+        return { kind: 'credentials', credentials: { serverUrl, connectorId, connectorToken } }
+      }
+      return null
+    }
+    const server = arg('--server-url') ?? parts[commandIndex + 1] ?? ''
+    if (server) return { kind: 'pair', server }
+    return null
+  }
+
+  // 3. Plain URL or bare hostname.
+  const server = extractServerUrl(trimmed)
+  if (server !== null) return { kind: 'pair', server }
+
+  return null
+}
+
+/** Decode a base64 `agents-anywhere.connector-credentials` payload. */
+function parseBase64Credentials(input: string): ConnectorCredentials | null | 'invalid' {
+  const compact = input.replace(/\s/g, '')
+  if (!compact || compact.length % 4 === 1 || !/^[A-Za-z0-9+/]+={0,2}$/.test(compact)) return null
+  try {
+    const binary = atob(compact)
+    const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0))
+    const payload = JSON.parse(new TextDecoder().decode(bytes)) as Record<string, unknown>
+    const serverUrl = typeof payload.serverUrl === 'string' ? payload.serverUrl.trim().replace(/\/+$/, '') : ''
+    const connectorId = typeof payload.connectorId === 'string' ? payload.connectorId.trim() : ''
+    const connectorToken = typeof payload.connectorToken === 'string' ? payload.connectorToken.trim() : ''
+    if (
+      payload.type !== 'agents-anywhere.connector-credentials'
+      || payload.version !== 1
+      || !/^https?:\/\//i.test(serverUrl)
+      || !connectorId
+      || !connectorToken
+    ) {
+      return payload.type === 'agents-anywhere.connector-credentials' ? 'invalid' : null
+    }
+    return { serverUrl, connectorId, connectorToken }
+  } catch {
+    return null
+  }
+}
+
+/** Split a shell-style command line into tokens, honoring single/double quotes. */
+function splitShell(input: string): string[] {
+  const parts: string[] = []
+  let current = ''
+  let quote: "'" | '"' | null = null
+  for (let index = 0; index < input.length; index += 1) {
+    const char = input[index] ?? ''
+    if (quote) {
+      if (char === quote) quote = null
+      else current += char
+      continue
+    }
+    if (char === "'" || char === '"') {
+      quote = char
+      continue
+    }
+    if (/\s/.test(char)) {
+      if (current) {
+        parts.push(current)
+        current = ''
+      }
+      continue
+    }
+    current += char
+  }
+  if (current) parts.push(current)
+  return parts
 }
 
 /** Extract the first `http(s)://` URL, or coerce a bare hostname into one. */

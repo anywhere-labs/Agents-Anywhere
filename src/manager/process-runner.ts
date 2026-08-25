@@ -231,13 +231,14 @@ export class ProcessRunner extends EventEmitter {
   }
 
   private emitLog(stream: 'stdout' | 'stderr', line: string): void {
-    if (line.trim().length === 0) return
+    const clean = stripAnsi(line)
+    if (clean.trim().length === 0) return
     this.emit('log', {
       id: randomUUID(),
       time: Date.now(),
-      level: stream === 'stderr' ? 'error' : 'info',
+      level: stream === 'stderr' ? classifyStderrLevel(clean) : 'info',
       logger: 'connector',
-      message: line,
+      message: clean,
     })
   }
 
@@ -246,6 +247,19 @@ export class ProcessRunner extends EventEmitter {
     this.state = next
     this.emit('state', next)
   }
+}
+
+/** Strip ANSI escape sequences and carriage returns from a stderr line. */
+function stripAnsi(line: string): string {
+  return line.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '').replace(/\r/g, '')
+}
+
+/** Heuristically grade a stderr line: uv streams install progress to stderr,
+ *  which is informational, not an error. */
+function classifyStderrLevel(line: string): ConnectorLogLevel {
+  if (/(?:^|\b)(error|traceback|exception|critical|fatal|failed|no such file|not found)(?:\b|:)/i.test(line)) return 'error'
+  if (/(?:^|\b)(warn(?:ing)?|deprecat(?:ed|ion))(?:\b|:)/i.test(line)) return 'warn'
+  return 'info'
 }
 
 function sendTerminate(child: ChildProcess): void {

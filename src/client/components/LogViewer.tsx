@@ -17,12 +17,11 @@ interface LogViewerProps {
 }
 
 /**
- * Live log view — mirrors desktop-next's LogsView body exactly:
+ * Live log view — mirrors desktop-next's LogsView body:
  *
  *   1. A full-height panel (no card chrome), with an empty state centered
  *      when there are no entries.
- *   2. A thin `N / total`-style count bar along the top.
- *   3. A monospace, 3-column scroll list: time / level / message.
+ *   2. A monospace, 3-column scroll list: time / level / message.
  *
  * Level coloring follows desktop-next: `error` → red, `warn` → amber, the
  * rest muted. Clear / follow-tail controls live in the section header, not
@@ -48,7 +47,6 @@ export function LogViewer({ state, followTail, t }: LogViewerProps): JSX.Element
 
   return (
     <div style={containerStyle}>
-      <div style={countBarStyle}>{logs.length}</div>
       <div ref={scrollRef} style={consoleStyle}>
         {logs.map((entry) => <LogRow key={entry.id} entry={entry} />)}
       </div>
@@ -102,16 +100,9 @@ const emptyStyle: CSSProperties = {
   color: 'var(--dsw-alias-label-secondary)',
 }
 
-const countBarStyle: CSSProperties = {
-  borderBottom: '1px solid var(--dsw-alias-border-l2)',
-  padding: '6px 4px',
-  fontSize: 12,
-  color: 'var(--dsw-alias-label-secondary)',
-}
-
 const consoleStyle: CSSProperties = {
   flex: 1,
-  minHeight: 360,
+  minHeight: 0,
   overflowY: 'auto',
   padding: '10px 4px',
   fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',

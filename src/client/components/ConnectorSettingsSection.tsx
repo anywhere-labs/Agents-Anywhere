@@ -129,6 +129,11 @@ const pageStyle: CSSProperties = {
   color: 'var(--dsw-alias-label-primary)',
   fontFamily: 'inherit',
   minWidth: 0,
+  // Fill the DSH settings `.options` scroll area so the header + tabs stay
+  // fixed and only the tab panel below them scrolls.
+  height: '100%',
+  minHeight: 0,
+  boxSizing: 'border-box',
 }
 
 const headerStyle: CSSProperties = {
@@ -208,4 +213,7 @@ const panelStyle: CSSProperties = {
   flexDirection: 'column',
   gap: 16,
   minWidth: 0,
+  flex: 1,
+  minHeight: 0,
+  overflowY: 'auto',
 }

@@ -75,7 +75,7 @@ describe('ProcessRunner', () => {
     expect(runner.start({ command: 'node', args: ['-e', '0'] })).toBe(false)
   })
 
-  it('ignores stdout (JSON-RPC stream) and emits stderr as error logs', () => {
+  it('ignores stdout and grades stderr lines by content', () => {
     const runner = new ProcessRunner()
     const received: Array<{ level: string; message: string }> = []
     runner.on('log', (entry) => received.push({ level: entry.level, message: entry.message }))
@@ -87,11 +87,15 @@ describe('ProcessRunner', () => {
     // stdout carries the JSON-RPC protocol stream, consumed by RpcClient, and
     // must NOT surface as logs — only stderr is a log source.
     child.stdout.write('{"jsonrpc":"2.0","method":"connector/state"}\n')
-    child.stderr.write('boom\n')
+    // Plain stderr (uv install progress) is informational, not an error.
+    child.stderr.write('Resolved 42 packages in 12ms\n')
+    // A line that looks like a real failure grades as error.
+    child.stderr.write('Traceback (most recent call last): boom\n')
     child.emit('exit', 0, null)
 
-    expect(received.length).toBe(1)
-    expect(received[0]).toEqual({ level: 'error', message: 'boom' })
+    expect(received.length).toBe(2)
+    expect(received[0]).toEqual({ level: 'info', message: 'Resolved 42 packages in 12ms' })
+    expect(received[1]).toEqual({ level: 'error', message: 'Traceback (most recent call last): boom' })
   })
 
   it('drops to crashed when the child exits non-zero', async () => {

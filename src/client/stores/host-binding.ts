@@ -12,6 +12,7 @@
  */
 
 import {
+  type ConnectorCredentials,
   type ConnectorHostApi,
   type ConnectorLogChunk,
   type ConnectorStateSnapshot,
@@ -54,6 +55,7 @@ export function createHostApi(rpc: HostRpc): ConnectorHostApi {
       call<PairingStartResult>('startPairing', serverUrl === undefined ? {} : { serverUrl }),
     cancelPairing: () => call<OperationResult>('cancelPairing'),
     clearCredentials: () => call<OperationResult>('clearCredentials'),
+    saveCredentials: (credentials: ConnectorCredentials) => call<OperationResult>('saveCredentials', { credentials }),
     detectEnvironment: () => call<EnvironmentInfo>('detectEnvironment'),
     saveEnvironment: (patch) => call<OperationResult>('saveEnvironment', { patch }),
     getLogs: (options) =>
