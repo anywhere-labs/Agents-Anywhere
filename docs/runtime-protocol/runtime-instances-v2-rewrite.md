@@ -1,7 +1,6 @@
 # Runtime Instances v2 Rewrite
 
-Status: implemented and verified on `codex/runtime-instances-v2`; pending merge
-to `v2`.
+Status: implemented, verified, and merged into `v2` on 2026-08-26.
 
 This plan replaces direct integration of `codex/runtime-instances`. The old
 branch remains a behavior reference, but its commits must not be merged or
