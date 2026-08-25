@@ -25,4 +25,8 @@ def runtime_catalog_revision(
     revision = (
         config_revision * CATALOG_CONFIG_REVISION_FACTOR + static_catalog_revision
     )
-    return min(revision, MAX_CONFIG_REVISION)
+    if revision > MAX_CONFIG_REVISION:
+        raise ValueError(
+            "combined catalog revision exceeds the JavaScript safe integer limit"
+        )
+    return revision

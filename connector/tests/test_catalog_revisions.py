@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import pytest
+
 from connector.runtime_protocol import MAX_CONFIG_REVISION
-from connector.runtimes.catalog_revisions import runtime_catalog_revision
+from connector.runtimes.catalog_revisions import (
+    CATALOG_CONFIG_REVISION_FACTOR,
+    runtime_catalog_revision,
+)
 
 
 def test_millisecond_config_revision_produces_js_safe_catalog_revision() -> None:
@@ -12,8 +16,35 @@ def test_millisecond_config_revision_produces_js_safe_catalog_revision() -> None
     assert revision <= MAX_CONFIG_REVISION
 
 
-def test_max_config_revision_saturates_at_js_safe_catalog_boundary() -> None:
-    assert runtime_catalog_revision(MAX_CONFIG_REVISION, 999) == MAX_CONFIG_REVISION
+def test_largest_composable_catalog_revision_reaches_js_safe_boundary() -> None:
+    config_revision, static_revision = divmod(
+        MAX_CONFIG_REVISION,
+        CATALOG_CONFIG_REVISION_FACTOR,
+    )
+
+    assert (
+        runtime_catalog_revision(config_revision, static_revision)
+        == MAX_CONFIG_REVISION
+    )
+
+
+@pytest.mark.parametrize(
+    ("config_revision", "static_revision"),
+    [
+        (
+            MAX_CONFIG_REVISION // CATALOG_CONFIG_REVISION_FACTOR,
+            MAX_CONFIG_REVISION % CATALOG_CONFIG_REVISION_FACTOR + 1,
+        ),
+        (MAX_CONFIG_REVISION // CATALOG_CONFIG_REVISION_FACTOR + 1, 0),
+        (MAX_CONFIG_REVISION, 999),
+    ],
+)
+def test_catalog_revision_rejects_unrepresentable_combinations(
+    config_revision: int,
+    static_revision: int,
+) -> None:
+    with pytest.raises(ValueError, match="combined catalog revision"):
+        runtime_catalog_revision(config_revision, static_revision)
 
 
 @pytest.mark.parametrize(
