@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+
 from connector.launch import LaunchTarget
 from connector.runtime_protocol import RuntimeInvalidRequestError
 from connector.runtimes.claude.provider import ClaudeProvider
