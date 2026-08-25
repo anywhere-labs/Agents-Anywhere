@@ -28,6 +28,10 @@ from agent_server.core.models import (
     SessionView,
 )
 from agent_server.core.protocol import ProtocolCapabilitySet
+from agent_server.core.runtime_identity import (
+    SessionRuntimeBindingError,
+    resolve_session_runtime_binding,
+)
 from agent_server.core.utc import utc_now
 from agent_server.infra.connector_rpc import (
     ConnectorOfflineError,
@@ -379,6 +383,15 @@ class SessionRunService:
         state = result.get("state")
         if not isinstance(state, dict):
             return "idle"
+        try:
+            resolve_session_runtime_binding(
+                state,
+                session_id=session.id,
+                runtime_type=session.runtime,
+                runtime_id=_session_runtime_id(session),
+            )
+        except SessionRuntimeBindingError as exc:
+            raise SessionRunUpstreamError(str(exc)) from exc
         status = state.get("status")
         if status in {
             "idle",
@@ -444,11 +457,14 @@ class SessionRunService:
             raise SessionRunUpstreamError(
                 str(message or code or "runtime rejected selection update")
             )
-        state = _runtime_state_from_selection_result(
-            session,
-            payload.selections,
-            result,
-        )
+        try:
+            state = _runtime_state_from_selection_result(
+                session,
+                payload.selections,
+                result,
+            )
+        except SessionRuntimeBindingError as exc:
+            raise SessionRunUpstreamError(str(exc)) from exc
         return state, result if isinstance(result, dict) else None
 
     async def steer_session(
@@ -792,12 +808,17 @@ def _runtime_state_from_selection_result(
     now = utc_now()
     raw_state = result.get("state") if isinstance(result, dict) else None
     if isinstance(raw_state, dict):
+        session_id, runtime, runtime_id = resolve_session_runtime_binding(
+            raw_state,
+            session_id=session.id,
+            runtime_type=session.runtime,
+            runtime_id=_session_runtime_id(session),
+        )
         return SessionRuntimeState.model_validate(
             {
-                "sessionId": raw_state.get("sessionId") or session.id,
-                "runtime": raw_state.get("runtime") or session.runtime,
-                "runtimeId": raw_state.get("runtimeId")
-                or _session_runtime_id(session),
+                "sessionId": session_id,
+                "runtime": runtime,
+                "runtimeId": runtime_id,
                 "externalSessionId": raw_state.get("externalSessionId")
                 or session.externalSessionId,
                 "status": raw_state.get("status") or "idle",

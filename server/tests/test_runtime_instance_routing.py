@@ -13,6 +13,7 @@ from agent_server.infra.repositories.facade import Store
 from agent_server.services.connector_notifications import (
     InteractionNotificationHandler,
     NotificationValidationError,
+    RuntimeCatalogNotificationHandler,
     TimelineNotificationHandler,
 )
 
@@ -294,6 +295,72 @@ def test_notice_notification_rejects_runtime_instance_rebinding() -> None:
         )
 
     assert raised.value.code == "session_runtime_mismatch"
+
+
+@pytest.mark.parametrize(
+    ("runtime", "catalog_type", "items_key"),
+    [
+        ("claude", "model", "models"),
+        ("dsh", "permission", "permissions"),
+    ],
+)
+def test_legacy_runtime_catalog_uses_catalog_runtime_as_compatibility_identity(
+    runtime: str,
+    catalog_type: str,
+    items_key: str,
+) -> None:
+    session = SessionView(
+        id=f"sess_{runtime}",
+        connectorId="conn_a",
+        connectorStatus="online",
+        runtime=runtime,  # type: ignore[arg-type]
+        runtimeId=runtime,
+        status="idle",
+        takeover=False,
+        updatedSeq=1,
+    )
+
+    class Repository:
+        def __init__(self) -> None:
+            self.updated: dict[str, Any] | None = None
+
+        async def update_protocol_catalog(
+            self,
+            connector_id: str,
+            **values: Any,
+        ) -> str:
+            self.updated = {"connector_id": connector_id, **values}
+            return "accepted"
+
+        async def list_sessions_for_connector(
+            self,
+            connector_id: str,
+        ) -> list[SessionView]:
+            assert connector_id == "conn_a"
+            return [session]
+
+    repository = Repository()
+    handler = RuntimeCatalogNotificationHandler(repository)  # type: ignore[arg-type]
+    effect = asyncio.run(
+        handler.apply(
+            connector_id="conn_a",
+            method="runtime.catalog.updated",
+            params={
+                "catalogType": catalog_type,
+                "catalog": {
+                    "runtime": runtime,
+                    "revision": 1,
+                    items_key: [],
+                },
+            },
+        )
+    )
+
+    assert repository.updated is not None
+    assert repository.updated["runtime"] == runtime
+    assert repository.updated["runtime_id"] == runtime
+    assert effect is not None
+    assert effect.session_ids == [session.id]
 
 
 async def _insert_connector(store: Store, connector_id: str) -> None:

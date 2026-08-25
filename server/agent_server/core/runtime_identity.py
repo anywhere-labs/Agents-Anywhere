@@ -12,6 +12,7 @@ from __future__ import annotations
 import re
 import secrets
 import unicodedata
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import NewType, Self
 
@@ -34,6 +35,10 @@ _RESERVED_RUNTIME_TYPE_PREFIX = "rti_"
 
 class RuntimeIdentityError(ValueError):
     """Raised when a runtime identity value is not canonical or valid."""
+
+
+class SessionRuntimeBindingError(ValueError):
+    """Raised when a Connector response conflicts with its bound session."""
 
 
 def validate_runtime_type(value: str) -> RuntimeTypeId:
@@ -187,6 +192,32 @@ def legacy_runtime_identity(runtime_type: str) -> RuntimeIdentity:
         runtime_type=validated_type,
         runtime_id=RuntimeInstanceId(validated_type),
     )
+
+
+def resolve_session_runtime_binding(
+    payload: Mapping[str, object],
+    *,
+    session_id: str,
+    runtime_type: str,
+    runtime_id: str,
+) -> tuple[str, str, str]:
+    """Validate explicit wire identity and fill only fields that are absent."""
+
+    identity = RuntimeIdentity.create(
+        runtime_type=runtime_type,
+        runtime_id=runtime_id,
+    )
+    expected = {
+        "sessionId": session_id,
+        "runtime": str(identity.runtime_type),
+        "runtimeId": str(identity.runtime_id),
+    }
+    for field, expected_value in expected.items():
+        if field in payload and payload[field] != expected_value:
+            raise SessionRuntimeBindingError(
+                f"connector returned {field} that does not match the session binding"
+            )
+    return expected["sessionId"], expected["runtime"], expected["runtimeId"]
 
 
 def _validate_identity_pair(

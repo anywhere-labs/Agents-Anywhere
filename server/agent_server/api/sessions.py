@@ -66,6 +66,10 @@ from agent_server.core.protocol import (
     ProtocolTimelineResponse,
     ProtocolTimelineSnapshot,
 )
+from agent_server.core.runtime_identity import (
+    SessionRuntimeBindingError,
+    resolve_session_runtime_binding,
+)
 from agent_server.core.utc import utc_now
 from agent_server.deps import (
     current_user_id,
@@ -1389,7 +1393,10 @@ async def read_runtime_state_from_connector(
     raw_state = result.get("state")
     if not isinstance(raw_state, dict):
         return None
-    return runtime_state_from_rpc_payload(raw_state, session)
+    try:
+        return runtime_state_from_rpc_payload(raw_state, session)
+    except SessionRuntimeBindingError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 async def read_session_capabilities_from_connector(
@@ -1600,12 +1607,17 @@ def runtime_state_from_rpc_payload(
     session: SessionView,
 ) -> SessionRuntimeState:
     now = utc_now()
+    session_id, runtime, runtime_id = resolve_session_runtime_binding(
+        raw_state,
+        session_id=session.id,
+        runtime_type=session.runtime,
+        runtime_id=_session_runtime_id(session),
+    )
     return SessionRuntimeState.model_validate(
         {
-            "sessionId": raw_state.get("sessionId") or session.id,
-            "runtime": raw_state.get("runtime") or session.runtime,
-            "runtimeId": raw_state.get("runtimeId")
-            or _session_runtime_id(session),
+            "sessionId": session_id,
+            "runtime": runtime,
+            "runtimeId": runtime_id,
             "externalSessionId": raw_state.get("externalSessionId")
             or session.externalSessionId,
             "status": raw_state.get("status") or "idle",

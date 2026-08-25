@@ -10,7 +10,9 @@ from agent_server.core.models import (
     ConnectorIngestResponse,
     ConnectorNotification,
     SessionRuntimeState,
+    SessionView,
 )
+from agent_server.core.runtime_identity import resolve_session_runtime_binding
 from agent_server.core.utc import utc_now
 from agent_server.infra.timeline_broker import TimelineBroker
 from agent_server.services.connector_notifications import (
@@ -338,8 +340,9 @@ class ConnectorIngestService:
                 envelope["items"] = bucket["items"]
             runtime_state: SessionRuntimeState | None = None
             if bucket["runtime_state"]:
+                bound_session = await self._store.get_session(session_id)
                 runtime_state = runtime_state_from_ingest_effect(
-                    session_id,
+                    bound_session,
                     next_seq,
                     bucket["runtime_state"],
                 )
@@ -438,15 +441,22 @@ class ConnectorIngestService:
 
 
 def runtime_state_from_ingest_effect(
-    session_id: str,
+    session: SessionView,
     next_seq: int,
     raw_state: dict[str, Any],
 ) -> SessionRuntimeState:
     now = utc_now()
+    session_id, runtime, runtime_id = resolve_session_runtime_binding(
+        raw_state,
+        session_id=session.id,
+        runtime_type=session.runtime,
+        runtime_id=session.runtimeId or session.runtime,
+    )
     return SessionRuntimeState.model_validate(
         {
-            "sessionId": raw_state.get("sessionId") or session_id,
-            "runtime": raw_state.get("runtime") or "codex",
+            "sessionId": session_id,
+            "runtime": runtime,
+            "runtimeId": runtime_id,
             "externalSessionId": raw_state.get("externalSessionId"),
             "status": raw_state.get("status") or "idle",
             "selections": raw_state.get("selections")
@@ -479,6 +489,7 @@ def runtime_state_fingerprint(value: SessionRuntimeState) -> dict[str, Any]:
     return {
         "sessionId": value.sessionId,
         "runtime": value.runtime,
+        "runtimeId": value.runtimeId,
         "externalSessionId": value.externalSessionId,
         "status": value.status,
         "selections": value.selections,

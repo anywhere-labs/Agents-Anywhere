@@ -222,7 +222,7 @@ class RuntimeCatalogNotificationHandler:
 
         catalog_type = runtime_catalog_type_from_params(params)
         catalog = runtime_catalog_from_params(catalog_type, params)
-        runtime, runtime_id = runtime_identity_from_params(params)
+        runtime, runtime_id = runtime_catalog_identity_from_params(params, catalog)
         if catalog.runtime != runtime:
             raise NotificationValidationError(
                 "invalid_runtime_catalog",
@@ -983,6 +983,20 @@ def runtime_identity_from_params(params: dict[str, Any]) -> tuple[str, str]:
             str(exc),
         ) from exc
     return str(identity.runtime_type), str(identity.runtime_id)
+
+
+def runtime_catalog_identity_from_params(
+    params: dict[str, Any],
+    catalog: ProtocolModelCatalog | ProtocolPermissionCatalog,
+) -> tuple[str, str]:
+    if "runtime" not in params and "runtimeId" not in params:
+        return runtime_identity_from_params(
+            {
+                "runtime": catalog.runtime,
+                "runtimeId": catalog.runtime,
+            }
+        )
+    return runtime_identity_from_params(params)
 
 
 async def interaction_runtime_identity_from_params(

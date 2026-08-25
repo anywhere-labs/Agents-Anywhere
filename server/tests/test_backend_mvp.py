@@ -13,6 +13,7 @@ from starlette.websockets import WebSocketDisconnect
 
 from agent_server.api.sessions_terminal import _send_terminal_ws_error
 from agent_server.app import create_app
+from agent_server.core.models import SessionRuntimeState
 from agent_server.core.protocol import protocol_selection_id
 from agent_server.infra.connector_rpc import (
     ConnectorOfflineError,
@@ -949,6 +950,72 @@ def test_session_state_updated_pushes_ephemeral_runtime_state(tmp_path):
     assert state.json()["state"]["status"] == "running"
 
 
+def test_named_session_state_notification_refreshes_cache_and_pushes_runtime_id(
+    tmp_path,
+):
+    client = make_client(tmp_path)
+    connector_id, access_token, _session_id, headers = create_connector_and_session(
+        client
+    )
+    named_session_id = "sess_named_runtime"
+    asyncio.run(
+        client.app.state.store.upsert_connector_session(
+            connector_id=connector_id,
+            session_id=named_session_id,
+            runtime="codex",
+            runtime_id="rti_work",
+            external_session_id=None,
+        )
+    )
+    asyncio.run(
+        client.app.state.session_runtime_state_cache.put(
+            SessionRuntimeState(
+                sessionId=named_session_id,
+                runtime="codex",
+                runtimeId="codex",
+                status="running",
+                updatedSeq=0,
+                createdAt="2026-08-26T00:00:00Z",
+                updatedAt="2026-08-26T00:00:00Z",
+            )
+        )
+    )
+    ticket = ws_ticket(client, named_session_id, headers)
+
+    with client.websocket_connect(
+        f"/sessions/{named_session_id}/ws?ticket={ticket}"
+    ) as ws:
+        assert ws.receive_json()["type"] == "session.subscribed"
+        response = client.post(
+            "/connector/ingest",
+            headers={"Authorization": f"Bearer {access_token}"},
+            json={
+                "notifications": [
+                    {
+                        "method": "session.state.updated",
+                        "params": {
+                            "sessionId": named_session_id,
+                            "runtime": "codex",
+                            "runtimeId": "rti_work",
+                            "status": "running",
+                            "selections": {},
+                        },
+                    }
+                ]
+            },
+        )
+        assert response.status_code == 200, response.text
+        event = receive_session_ws_event(ws, "runtime.state.updated")
+
+    assert event["payload"]["state"]["runtime"] == "codex"
+    assert event["payload"]["state"]["runtimeId"] == "rti_work"
+    cached = asyncio.run(
+        client.app.state.session_runtime_state_cache.get(named_session_id)
+    )
+    assert cached is not None
+    assert cached.runtimeId == "rti_work"
+
+
 def test_session_list_projects_cached_runtime_status(tmp_path):
     client = make_client(tmp_path)
     _connector_id, access_token, session_id, headers = create_connector_and_session(client)
@@ -1844,6 +1911,30 @@ def test_session_runtime_state_and_capabilities_read_from_runtime(tmp_path):
         "session.state",
         "session.capabilities",
     ]
+
+
+def test_session_runtime_state_rejects_connector_identity_mismatch(tmp_path):
+    client = make_client(tmp_path)
+    _connector_id, _access_token, session_id, headers = create_connector_and_session(
+        client
+    )
+    fake_rpc = FakeLocalRpc()
+    fake_rpc.runtime_states[session_id] = {
+        "sessionId": session_id,
+        "runtime": "codex",
+        "runtimeId": "rti_other",
+        "status": "idle",
+        "selections": {},
+    }
+    client.app.state.rpc = fake_rpc
+
+    response = client.get(
+        f"/sessions/{session_id}/runtime/state",
+        headers=headers,
+    )
+
+    assert response.status_code == 502
+    assert "runtimeId" in response.json()["detail"]
 
 
 def test_session_command_returns_runtime_rpc_error(tmp_path):
@@ -4045,6 +4136,52 @@ def test_patch_session_selections_does_not_persist_runtime_rejection(tmp_path):
     state = client.get(f"/sessions/{session_id}/runtime/state", headers=headers)
     if state.status_code == 200:
         assert state.json()["state"]["selections"] == {}
+
+
+def test_patch_session_selections_rejects_connector_identity_mismatch(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, _, session_id, headers = create_connector_and_session(client)
+
+    class MismatchedSelectionRpc(FakeLocalRpc):
+        async def request(
+            self,
+            connector_id: str,
+            method: str,
+            params: dict[str, Any],
+            *,
+            timeout: float = 30,
+        ) -> Any:
+            if method == "session.selections.update":
+                self.requests.append((connector_id, method, params, timeout))
+                return {
+                    "ok": True,
+                    "state": {
+                        "sessionId": "sess_other",
+                        "runtime": params["runtime"],
+                        "runtimeId": params["runtimeId"],
+                        "status": "idle",
+                        "selections": params["selections"],
+                    },
+                }
+            return await super().request(
+                connector_id,
+                method,
+                params,
+                timeout=timeout,
+            )
+
+    client.app.state.rpc = MismatchedSelectionRpc()
+    asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
+    client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
+
+    response = client.patch(
+        f"/sessions/{session_id}/runtime/selections",
+        headers=headers,
+        json={"selections": {"model": "sel_model_mismatch"}},
+    )
+
+    assert response.status_code == 502
+    assert "sessionId" in response.json()["detail"]
 
 
 def test_send_message_rejects_legacy_model_fields(tmp_path):

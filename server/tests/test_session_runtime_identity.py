@@ -9,6 +9,10 @@ from agent_server.core.models import (
     SessionRuntimeState,
     SessionView,
 )
+from agent_server.core.runtime_identity import (
+    SessionRuntimeBindingError,
+    resolve_session_runtime_binding,
+)
 
 
 def test_session_requests_default_to_the_compatibility_instance() -> None:
@@ -90,3 +94,44 @@ def test_session_views_and_states_emit_dual_identity() -> None:
     assert state.runtime == "codex"
     assert state.runtimeId == "rti_work"
     assert state.runtimeType == "codex"
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("sessionId", "sess_other"),
+        ("runtime", "claude"),
+        ("runtimeId", "rti_other"),
+    ],
+)
+def test_connector_runtime_binding_rejects_explicit_mismatch(
+    field: str,
+    value: str,
+) -> None:
+    with pytest.raises(SessionRuntimeBindingError, match=field):
+        resolve_session_runtime_binding(
+            {field: value},
+            session_id="sess_1",
+            runtime_type="codex",
+            runtime_id="rti_work",
+        )
+
+
+def test_connector_runtime_binding_fills_only_missing_identity() -> None:
+    assert resolve_session_runtime_binding(
+        {},
+        session_id="sess_1",
+        runtime_type="codex",
+        runtime_id="rti_work",
+    ) == ("sess_1", "codex", "rti_work")
+
+    assert resolve_session_runtime_binding(
+        {
+            "sessionId": "sess_1",
+            "runtime": "codex",
+            "runtimeId": "rti_work",
+        },
+        session_id="sess_1",
+        runtime_type="codex",
+        runtime_id="rti_work",
+    ) == ("sess_1", "codex", "rti_work")
