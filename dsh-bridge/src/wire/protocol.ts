@@ -32,3 +32,17 @@ export type RequestMethod = typeof REQUEST_METHODS[number]
 
 export const INBOUND_NOTIFICATION_METHODS = ['$/cancelRequest'] as const
 export type InboundNotificationMethod = typeof INBOUND_NOTIFICATION_METHODS[number]
+
+export const OUTBOUND_NOTIFICATION_METHODS = [
+  'session.meta.upsert',
+  'session.state.update',
+  'runtime.capabilities.update',
+  'session.capabilities.update',
+  'catalog.model.update',
+  'catalog.permission.update',
+  'timeline.sync',
+  'timeline.item.upsert',
+  'notice.upsert',
+  'runtime.error',
+] as const
+export type OutboundNotificationMethod = typeof OUTBOUND_NOTIFICATION_METHODS[number]

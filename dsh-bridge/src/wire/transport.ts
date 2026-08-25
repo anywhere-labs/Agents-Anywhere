@@ -2,6 +2,7 @@ import { once } from 'node:events'
 import type { Readable, Writable } from 'node:stream'
 import { BridgeError, publicError } from './errors.js'
 import { MAX_FRAME_BYTES } from './protocol.js'
+import type { OutboundNotificationMethod } from './protocol.js'
 import type {
   InboundFrame,
   JsonRpcFailure,
@@ -47,7 +48,7 @@ export class NdjsonTransport {
     this.input.pause()
   }
 
-  notify(method: string, params: Record<string, unknown>): Promise<void> {
+  notify(method: OutboundNotificationMethod, params: Record<string, unknown>): Promise<void> {
     return this.enqueue({ jsonrpc: '2.0', method, params })
   }
 

@@ -68,6 +68,15 @@ export function optionalStringField(value: Record<string, unknown>, key: string)
   return candidate
 }
 
+export function optionalBooleanField(value: Record<string, unknown>, key: string): boolean | undefined {
+  const candidate = value[key]
+  if (candidate === undefined) return undefined
+  if (typeof candidate !== 'boolean') {
+    throw new BridgeError('INVALID_PARAMS', `${key} must be a boolean when present.`, { retryable: false })
+  }
+  return candidate
+}
+
 export function objectField(value: Record<string, unknown>, key: string): Record<string, unknown> {
   const candidate = value[key]
   if (!isRecord(candidate)) {

@@ -2,6 +2,7 @@ import { createHash, randomBytes, timingSafeEqual } from 'node:crypto'
 import { createServer, type Server, type Socket } from 'node:net'
 import { BridgeError } from './errors.js'
 import { MAX_FRAME_BYTES } from './protocol.js'
+import type { OutboundNotificationMethod } from './protocol.js'
 import { NdjsonTransport } from './transport.js'
 import type {
   BridgeRequestHandler,
@@ -39,6 +40,7 @@ interface Connection {
 export class LoopbackJsonRpcServer {
   private readonly token = randomBytes(32).toString('base64url')
   private readonly processLock: ProcessLock
+  private readonly ownsProcessLock: boolean
   private server: Server | undefined
   private owner: Connection | undefined
   private readonly pending = new Set<Connection>()
@@ -49,14 +51,16 @@ export class LoopbackJsonRpcServer {
     private readonly layout: StateLayout,
     private readonly authenticationDeadlineMs: number,
     private readonly handler: BridgeRequestHandler,
+    externallyManagedLock?: ProcessLock,
   ) {
-    this.processLock = new ProcessLock(layout.lockPath, layout.dshHome)
+    this.processLock = externallyManagedLock ?? new ProcessLock(layout.lockPath, layout.dshHome)
+    this.ownsProcessLock = externallyManagedLock === undefined
   }
 
   async start(): Promise<EndpointRecord> {
     if (this.server !== undefined) throw new Error('loopback server is already started')
     this.stopping = false
-    await this.processLock.acquire()
+    if (this.ownsProcessLock) await this.processLock.acquire()
     const server = createServer(socket => this.accept(socket))
     this.server = server
     try {
@@ -83,7 +87,7 @@ export class LoopbackJsonRpcServer {
     } catch (error: unknown) {
       server.close()
       this.server = undefined
-      await this.processLock.release()
+      if (this.ownsProcessLock) await this.processLock.release()
       throw error
     }
   }
@@ -107,15 +111,19 @@ export class LoopbackJsonRpcServer {
       await removeRegularFile(this.layout.endpointPath)
     }
     this.endpoint = undefined
-    await this.processLock.release()
+    if (this.ownsProcessLock) await this.processLock.release()
   }
 
-  async notify(method: string, params: Record<string, unknown>): Promise<void> {
+  async notify(method: OutboundNotificationMethod, params: Record<string, unknown>): Promise<void> {
     const owner = this.owner
     if (owner === undefined || owner.closed || !owner.authenticated) {
       throw new BridgeError('NOT_INITIALIZED', 'No authenticated Connector owns the bridge.', { retryable: true })
     }
     await owner.transport.notify(method, params)
+  }
+
+  async flush(): Promise<void> {
+    await this.owner?.transport.flush()
   }
 
   private accept(socket: Socket): void {

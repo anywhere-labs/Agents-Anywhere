@@ -7,6 +7,7 @@ import type { FormatsPlugin } from 'ajv-formats'
 import { describe, expect, it } from 'vitest'
 import { DECLARED_RPC_CODES } from '../src/wire/errors.js'
 import { REQUEST_METHODS } from '../src/wire/protocol.js'
+import { INBOUND_NOTIFICATION_METHODS, OUTBOUND_NOTIFICATION_METHODS } from '../src/wire/protocol.js'
 import {
   initializeResultPayload,
   runtimeCapabilitiesPayload,
@@ -46,6 +47,15 @@ describe('shared DSH bridge contract', () => {
       properties: { method: { enum: string[] } }
     }
     expect([...REQUEST_METHODS]).toEqual(schema.properties.method.enum)
+  })
+
+  it('keeps inbound and outbound notification methods equal to the schema enum', async () => {
+    const schema = await json('schemas/notification.schema.json') as {
+      properties: { method: { enum: string[] } }
+    }
+    expect([...OUTBOUND_NOTIFICATION_METHODS, ...INBOUND_NOTIFICATION_METHODS]).toEqual(
+      schema.properties.method.enum,
+    )
   })
 
   it('implements every numeric error code declared by the response schema', async () => {

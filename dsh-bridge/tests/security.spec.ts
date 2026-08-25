@@ -32,14 +32,16 @@ describe('DSH_HOME security', () => {
 
   it('allows only one Bridge process lock for one DSH_HOME', async () => {
     const home = await temporaryHome()
-    const layout = await prepareStateLayout(home, join(home, 'agents-anywhere', 'bridge'))
-    const first = new ProcessLock(layout.lockPath, layout.dshHome)
-    const second = new ProcessLock(layout.lockPath, layout.dshHome)
+    const firstLayout = await prepareStateLayout(home, join(home, 'agents-anywhere', 'bridge'))
+    const secondLayout = await prepareStateLayout(home, join(home, 'another-bridge-state'))
+    expect(firstLayout.lockPath).toBe(secondLayout.lockPath)
+    const first = new ProcessLock(firstLayout.lockPath, firstLayout.dshHome)
+    const second = new ProcessLock(secondLayout.lockPath, secondLayout.dshHome)
     await first.acquire()
     await expect(second.acquire()).rejects.toThrow(/already running|owns this DSH_HOME/u)
     await first.release()
     await second.acquire()
-    expect(JSON.parse(await readFile(layout.lockPath, 'utf8'))).toMatchObject({
+    expect(JSON.parse(await readFile(secondLayout.lockPath, 'utf8'))).toMatchObject({
       version: 1,
       pid: process.pid,
       dshHome: await realpath(home),

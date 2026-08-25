@@ -26,7 +26,9 @@ export async function prepareStateLayout(dshHomeInput: string, stateRootInput: s
     dshHome,
     stateRoot,
     endpointPath: resolve(stateRoot, 'endpoint.json'),
-    lockPath: resolve(stateRoot, 'bridge.lock'),
+    // The lock belongs to the canonical DSH_HOME, not to a configurable state
+    // subdirectory. Two bridge configs for the same Host must still contend.
+    lockPath: resolve(dshHome, '.agents-anywhere-dsh-bridge.lock'),
   }
 }
 
