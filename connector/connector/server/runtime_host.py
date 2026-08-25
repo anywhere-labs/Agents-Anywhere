@@ -141,6 +141,8 @@ class ConnectorRuntimeHost(RuntimeHostClient):
         await self._notify_server(
             "runtime.catalog.updated",
             {
+                "runtime": catalog.runtime,
+                "runtimeId": catalog.runtime_id or catalog.runtime,
                 "catalogType": "model",
                 "catalog": model_catalog_payload(catalog),
             },
@@ -159,6 +161,8 @@ class ConnectorRuntimeHost(RuntimeHostClient):
         await self._notify_server(
             "runtime.catalog.updated",
             {
+                "runtime": catalog.runtime,
+                "runtimeId": catalog.runtime_id or catalog.runtime,
                 "catalogType": "permission",
                 "catalog": permission_catalog_payload(catalog),
             },
