@@ -1,0 +1,89 @@
+name: DSH Bridge
+
+on:
+  pull_request:
+    paths:
+      - dsh-bridge/**
+      - contracts/dsh-bridge/1.0/**
+      - .github/workflows/dsh-bridge.yml
+  push:
+    branches:
+      - main
+      - v2
+    paths:
+      - dsh-bridge/**
+      - contracts/dsh-bridge/1.0/**
+      - .github/workflows/dsh-bridge.yml
+  release:
+    types:
+      - published
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dsh-bridge-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'release' }}
+
+jobs:
+  verify:
+    name: Verify package
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: dsh-bridge
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.19.0
+      - name: Enable Corepack
+        run: corepack enable
+      - name: Install immutable dependencies
+        run: yarn install --immutable
+      - name: Typecheck
+        run: yarn typecheck
+      - name: Lint
+        run: yarn lint
+      - name: Test
+        run: yarn test
+      - name: Pack and install tarball
+        run: yarn pack:check
+
+  publish:
+    name: Publish package
+    if: github.event_name == 'release' && startsWith(github.event.release.tag_name, 'dsh-bridge-v')
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write
+    defaults:
+      run:
+        working-directory: dsh-bridge
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.19.0
+          registry-url: https://registry.npmjs.org
+      - name: Enable Corepack
+        run: corepack enable
+      - name: Install immutable dependencies
+        run: yarn install --immutable
+      - name: Match release tag to package version
+        run: |
+          package_version="$(node -p 'require("./package.json").version')"
+          test "${GITHUB_REF_NAME}" = "dsh-bridge-v${package_version}"
+      - name: Publish with provenance
+        run: npm publish --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
