@@ -18,6 +18,7 @@ import { cn } from "@/lib/utils"
 import { defaultFilter, type FilterValue, type SessionStatus } from "@/lib/demo-api"
 import { useWorkspace } from "@/components/workspace-context"
 import { useTranslations } from "next-intl"
+import { runtimeLabel } from "@/components/session/session-utils"
 
 export function SessionFilterMenu() {
   const { filter, setFilter, connectors, sessions } = useWorkspace()
@@ -80,7 +81,7 @@ export function SessionFilterMenu() {
           label={t("filters.agents")}
           options={[
             { value: "all", label: t("filters.allAgents") },
-            ...runtimes.map((r) => ({ value: r, label: r })),
+            ...runtimes.map((runtime) => ({ value: runtime, label: runtimeLabel(runtime) })),
           ]}
           value={filter.runtime}
           onSelect={(v) => update({ runtime: v })}

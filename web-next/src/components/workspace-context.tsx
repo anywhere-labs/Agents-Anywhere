@@ -29,7 +29,6 @@ import {
   timelineClientMessageId,
   withServerAttachments,
 } from "@/components/session/optimistic-timeline"
-import { runtimeLabel } from "@/components/session/session-utils"
 
 // ─── Panel / page types ───────────────────────────────────────
 
@@ -139,7 +138,7 @@ function mapSession(session: RealSessionView): SessionView {
     id: session.id,
     connectorId: session.connectorId,
     connectorStatus: session.connectorStatus,
-    runtime: runtimeLabel(session.runtime),
+    runtime: session.runtime,
     externalSessionId: session.externalSessionId,
     title: session.title || "Untitled session",
     cwd: session.cwd,

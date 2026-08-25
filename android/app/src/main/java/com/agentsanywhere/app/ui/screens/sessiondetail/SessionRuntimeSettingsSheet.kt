@@ -73,10 +73,11 @@ internal fun SessionRuntimeSettingsSheet(
     val selectedPermissionLabel = permissionOptions
         .firstOrNull { it.selectionId == selectedPermissionId }
         ?.label
-    val selectedEffortLabel = selectedModelGroup
+    val defaultEffortLabel = stringResource(R.string.session_runtime_effort_default)
+    val selectedModelOption = selectedModelGroup
         ?.options
         ?.firstOrNull { it.selectionId == selectedModelId }
-        ?.effortLabel
+    val selectedEffortLabel = selectedModelOption?.effortDisplayLabel(defaultEffortLabel)
     ModalBottomSheet(
         onDismissRequest = { if (!busy) onDismiss() },
         sheetState = sheetState,
@@ -179,6 +180,9 @@ private val RuntimeSelectionOption.modelLabel: String
 private val RuntimeSelectionOption.effortLabel: String?
     get() = label.substringAfter(" · ", "").takeIf(String::isNotBlank)
 
+internal fun RuntimeSelectionOption.effortDisplayLabel(defaultLabel: String): String =
+    effortLabel ?: defaultLabel
+
 private fun List<RuntimeSelectionOption>.groupByModelLabel(): List<ModelOptionGroup> =
     groupBy(RuntimeSelectionOption::modelLabel).map { (label, options) -> ModelOptionGroup(label, options) }
 
@@ -279,6 +283,7 @@ private fun EffortSelectionSection(
     onSelect: (String) -> Unit,
 ) {
     val colors = LocalAAColors.current
+    val defaultEffortLabel = stringResource(R.string.session_runtime_effort_default)
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(
             stringResource(R.string.session_runtime_effort_for, modelLabel),
@@ -312,7 +317,7 @@ private fun EffortSelectionSection(
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(
-                        option.effortLabel ?: option.label,
+                        option.effortDisplayLabel(defaultEffortLabel),
                         color = if (selected) colors.ink else colors.muted,
                         fontSize = 11.5.sp,
                         fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,

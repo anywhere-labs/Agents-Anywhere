@@ -8,8 +8,7 @@ from typing import Any
 
 import pytest
 
-from connector.runtime_protocol import RuntimeInvalidRequestError
-from connector.runtime_protocol import RuntimeConfig
+from connector.runtime_protocol import RuntimeConfig, RuntimeInvalidRequestError
 from connector.runtimes.dsh.discovery import BridgeEndpoint, DshDiscovery
 from connector.runtimes.dsh.provider import DshProvider
 from connector.runtimes.dsh.runtime import DshRuntime
@@ -147,6 +146,54 @@ class _StateRuntime(DshRuntime):
             "status": "idle",
             "selections": {},
         }
+
+
+class _CapabilitiesRuntime(DshRuntime):
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.requests: list[str] = []
+
+    async def _request(self, method: str, params: Any = None) -> Any:
+        self.requests.append(method)
+        if method == "session.getCapabilities":
+            return {
+                "sessionId": params["sessionId"],
+                "externalSessionId": params["externalSessionId"],
+                "runtime": "dsh",
+                "revision": 2,
+                "capabilities": [
+                    {
+                        "capabilityId": "session.send_message",
+                        "scope": "session",
+                        "sessionId": params["sessionId"],
+                        "supported": True,
+                        "available": True,
+                        "allowed": True,
+                    }
+                ],
+            }
+        if method == "runtime.getCapabilities":
+            return {
+                "runtime": "dsh",
+                "revision": 3,
+                "capabilities": [
+                    {
+                        "capabilityId": "catalog.permission",
+                        "scope": "runtime",
+                        "supported": True,
+                        "available": True,
+                        "allowed": True,
+                    },
+                    {
+                        "capabilityId": "catalog.model",
+                        "scope": "runtime",
+                        "supported": True,
+                        "available": True,
+                        "allowed": True,
+                    },
+                ],
+            }
+        raise AssertionError(f"unexpected method: {method}")
 
 
 class _StartTurnRuntime(DshRuntime):
@@ -368,6 +415,38 @@ def test_dsh_non_conflict_state_releases_cached_writer_block() -> None:
         assert state is not None
         assert state.status == "idle"
         assert "sess_1" not in runtime._concurrent_writer_sessions
+
+    asyncio.run(run())
+
+
+def test_dsh_session_capabilities_inherit_permission_catalog_only() -> None:
+    async def run() -> None:
+        runtime = _CapabilitiesRuntime(
+            config=RuntimeConfig(runtime="dsh", revision=1),
+            host=_Host(),  # type: ignore[arg-type]
+        )
+
+        capability_set = await runtime.get_session_capabilities(
+            "sess_1",
+            "session-external",
+        )
+
+        capabilities = {
+            capability.capability_id: capability
+            for capability in capability_set.capabilities
+        }
+        permission = capabilities["catalog.permission"]
+        assert permission.scope == "session"
+        assert permission.session_id == "sess_1"
+        assert permission.supported is True
+        assert permission.available is True
+        assert permission.allowed is True
+        assert "catalog.model" not in capabilities
+        assert capability_set.revision == 3
+        assert runtime.requests == [
+            "session.getCapabilities",
+            "runtime.getCapabilities",
+        ]
 
     asyncio.run(run())
 

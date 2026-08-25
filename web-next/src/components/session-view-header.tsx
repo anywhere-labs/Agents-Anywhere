@@ -15,6 +15,7 @@ import type { SessionMemorySnapshot } from "@/components/session-detail"
 import { cn } from "@/lib/utils"
 import { useTranslations } from "next-intl"
 import type { SessionView as SessionViewModel } from "@/lib/demo-api"
+import { runtimeLabel } from "@/components/session/session-utils"
 
 type PanelIcon = React.ComponentType<React.SVGProps<SVGSVGElement>>
 
@@ -209,7 +210,8 @@ function SessionMetaBadge({
   exporting?: boolean
 }) {
   const t = useTranslations("dashboard.session")
-  const label = `${connectorName ?? session.connectorId}/${session.runtime}`
+  const displayRuntime = runtimeLabel(session.runtime)
+  const label = `${connectorName ?? session.connectorId}/${displayRuntime}`
   const timelineSummary = memorySnapshot
     ? t("timelineSummary", { count: memorySnapshot.items.length, seq: memorySnapshot.nextSeq })
     : t("memoryLoading")
@@ -218,7 +220,7 @@ function SessionMetaBadge({
     : t("memoryLoading")
   const rows = [
     [t("device"), connectorName ?? session.connectorId],
-    [t("runtime"), session.runtime],
+    [t("runtime"), displayRuntime],
     [t("status"), `${memorySnapshot?.state?.status ?? memorySnapshot?.session.status ?? session.status} · ${session.connectorStatus}`],
     [t("workspace"), memorySnapshot?.session.cwd ?? session.cwd ?? t("none")],
     [t("sessionId"), session.id],

@@ -48,6 +48,7 @@ import type {
 import { useTranslations } from "next-intl"
 import {
   catalogI18nText,
+  modelCatalogDisplayName,
   modelIdsForSelectionId,
   permissionIdForSelectionId,
   selectionIdForModelCatalog,
@@ -419,7 +420,12 @@ export function TaskComposer() {
   const models = React.useMemo(
     () => modelCatalog?.models.map((item) => ({
       id: item.id,
-      label: catalogI18nText(t, item.metadata, "labelKey", item.displayName),
+      label: modelCatalogDisplayName(
+        item,
+        modelCatalog.models,
+        catalogI18nText(t, item.metadata, "labelKey", item.displayName),
+        t("defaultReasoning"),
+      ),
       default: item.default,
       selectionId: item.selectionId,
       reasoningItems: item.reasoningItems.map((reasoning) => ({
