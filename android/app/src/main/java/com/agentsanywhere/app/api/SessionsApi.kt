@@ -26,7 +26,10 @@ class SessionsApi(
     ): RemoteSessionCreateResponse {
         val body = JSONObject().apply {
             put("connectorId", request.connectorId)
-            put("runtime", request.runtime)
+            put("runtime", request.runtimeType)
+            request.runtimeId.takeIf { it.isNotBlank() && it != request.runtimeType }?.let {
+                put("runtimeId", it)
+            }
             put("content", request.content)
             request.title?.takeIf(String::isNotBlank)?.let { put("title", it) }
             request.cwd?.takeIf(String::isNotBlank)?.let { put("cwd", it) }
@@ -532,11 +535,21 @@ class SessionsApi(
     }
 
     private fun JSONObject.toRemoteSession(): RemoteSession {
+        val runtime = optNullableString("runtime")
+            ?: optNullableString("runtimeType")
+            ?: "codex"
+        val runtimeType = optNullableString("runtimeType") ?: runtime
+        val runtimeId = optNullableString("runtimeId") ?: runtime
+        val runtimeName = optNullableString("runtimeName")
+            ?: optNullableString("runtimeDisplayName")
+            ?: optNullableString("displayName")
+            ?: optNullableString("name")
+            ?: runtimeType
         return RemoteSession(
             id = getString("id"),
             connectorId = getString("connectorId"),
             connectorStatus = optString("connectorStatus", "offline"),
-            runtime = optString("runtime", "codex"),
+            runtime = runtimeType,
             externalSessionId = optNullableString("externalSessionId"),
             title = optNullableString("title"),
             cwd = optNullableString("cwd"),
@@ -555,6 +568,9 @@ class SessionsApi(
             lastItemOrderSeq = optNullableInt("lastItemOrderSeq"),
             sortAt = optNullableString("sortAt"),
             updatedSeq = optInt("updatedSeq", 0),
+            runtimeId = runtimeId,
+            runtimeType = runtimeType,
+            runtimeName = runtimeName,
         )
     }
 
@@ -592,8 +608,9 @@ class SessionsApi(
     private fun JSONObject.toRemoteSessionSnapshot(): RemoteSessionSnapshot {
         val timeline = optJSONObject("timeline") ?: JSONObject()
         val catalogs = optJSONObject("catalogs")
+        val session = getJSONObject("session").toRemoteSession()
         return RemoteSessionSnapshot(
-            session = getJSONObject("session").toRemoteSession(),
+            session = session,
             state = optJSONObject("state")?.toRemoteSessionRuntimeState(),
             timeline = RemoteSessionTimelineSnapshot(
                 items = timeline.optJSONArray("items").toObjectList { toRemoteTimelineItem() },
@@ -604,8 +621,9 @@ class SessionsApi(
             effectiveCapabilities = optJSONObject("effectiveCapabilities").toRemoteRuntimeCapabilitySet(),
             runtimeCapabilities = optJSONObject("runtimeCapabilities").toRemoteRuntimeCapabilitySet(),
             catalogs = RemoteSessionRuntimeCatalogs(
-                model = catalogs?.optJSONObject("model")?.toRemoteRuntimeModelCatalog(),
-                permission = catalogs?.optJSONObject("permission")?.toRemoteRuntimePermissionCatalog(),
+                model = catalogs?.optJSONObject("model")?.toRemoteRuntimeModelCatalog(session.runtimeId),
+                permission = catalogs?.optJSONObject("permission")
+                    ?.toRemoteRuntimePermissionCatalog(session.runtimeId),
             ),
             eventCursor = optString("eventCursor", "seq:0"),
             serverTime = optNullableString("serverTime"),
@@ -620,9 +638,19 @@ class SessionsApi(
     }
 
     private fun JSONObject.toRemoteSessionRuntimeState(): RemoteSessionRuntimeState {
+        val runtime = optNullableString("runtime")
+            ?: optNullableString("runtimeType")
+            ?: ""
+        val runtimeType = optNullableString("runtimeType") ?: runtime
+        val runtimeId = optNullableString("runtimeId") ?: runtime
+        val runtimeName = optNullableString("runtimeName")
+            ?: optNullableString("runtimeDisplayName")
+            ?: optNullableString("displayName")
+            ?: optNullableString("name")
+            ?: runtimeType
         return RemoteSessionRuntimeState(
             sessionId = optString("sessionId", ""),
-            runtime = optString("runtime", ""),
+            runtime = runtimeType,
             externalSessionId = optNullableString("externalSessionId"),
             status = optString("status", "unknown").ifBlank { "unknown" },
             selections = optJSONObject("selections").toMap().mapValues { (_, value) -> value as? String },
@@ -632,6 +660,9 @@ class SessionsApi(
             updatedSeq = optInt("updatedSeq", 0),
             createdAt = optNullableString("createdAt"),
             updatedAt = optNullableString("updatedAt"),
+            runtimeId = runtimeId,
+            runtimeType = runtimeType,
+            runtimeName = runtimeName,
         )
     }
 
@@ -663,58 +694,21 @@ class SessionsApi(
             allowed = optBoolean("allowed", true),
             unavailableReason = optNullableString("unavailableReason"),
             parameters = optJSONObject("parameters").toMap(),
+            runtimeId = optNullableString("runtimeId"),
+            runtimeType = optNullableString("runtimeType") ?: optNullableString("runtime"),
         )
     }
 
-    private fun JSONObject.toRemoteRuntimeModelCatalog(): RemoteRuntimeModelCatalog {
-        return RemoteRuntimeModelCatalog(
-            runtime = optString("runtime", ""),
-            revision = optLong("revision", 0L),
-            models = optJSONArray("models").toObjectList { toRemoteRuntimeModel() },
-        )
+    private fun JSONObject.toRemoteRuntimeModelCatalog(
+        fallbackRuntimeId: String? = null,
+    ): RemoteRuntimeModelCatalog {
+        return parseRemoteRuntimeModelCatalog(fallbackRuntimeId)
     }
 
-    private fun JSONObject.toRemoteRuntimeModel(): RemoteRuntimeModel {
-        return RemoteRuntimeModel(
-            id = optString("id", ""),
-            selectionId = optNullableString("selectionId"),
-            displayName = optString("displayName", ""),
-            description = optNullableString("description"),
-            default = optBoolean("default", false),
-            reasoningItems = optJSONArray("reasoningItems").toObjectList { toRemoteRuntimeReasoning() },
-            metadata = optJSONObject("metadata").toMap(),
-        )
-    }
-
-    private fun JSONObject.toRemoteRuntimeReasoning(): RemoteRuntimeReasoning {
-        return RemoteRuntimeReasoning(
-            id = optString("id", ""),
-            selectionId = optString("selectionId", ""),
-            fullModelId = optNullableString("fullModelId"),
-            displayName = optString("displayName", ""),
-            description = optNullableString("description"),
-            default = optBoolean("default", false),
-            metadata = optJSONObject("metadata").toMap(),
-        )
-    }
-
-    private fun JSONObject.toRemoteRuntimePermissionCatalog(): RemoteRuntimePermissionCatalog {
-        return RemoteRuntimePermissionCatalog(
-            runtime = optString("runtime", ""),
-            revision = optLong("revision", 0L),
-            permissions = optJSONArray("permissions").toObjectList { toRemoteRuntimePermission() },
-        )
-    }
-
-    private fun JSONObject.toRemoteRuntimePermission(): RemoteRuntimePermission {
-        return RemoteRuntimePermission(
-            id = optString("id", ""),
-            selectionId = optString("selectionId", ""),
-            displayName = optString("displayName", ""),
-            description = optNullableString("description"),
-            default = optBoolean("default", false),
-            metadata = optJSONObject("metadata").toMap(),
-        )
+    private fun JSONObject.toRemoteRuntimePermissionCatalog(
+        fallbackRuntimeId: String? = null,
+    ): RemoteRuntimePermissionCatalog {
+        return parseRemoteRuntimePermissionCatalog(fallbackRuntimeId)
     }
 
     private fun JSONObject.toRemoteRuntimeNoticeListResponse(): RemoteRuntimeNoticeListResponse {

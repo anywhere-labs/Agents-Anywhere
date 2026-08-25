@@ -36,10 +36,22 @@ data class NewSessionRuntimeCapabilities(
     val capabilities: List<NewSessionRuntimeCapability>,
     val serverTime: String?,
 ) {
-    fun find(capabilityId: String, runtimeId: String): NewSessionRuntimeCapability? {
+    fun find(
+        capabilityId: String,
+        runtimeId: String,
+        runtimeType: String? = null,
+    ): NewSessionRuntimeCapability? {
         val matches = capabilities.filter { it.capabilityId == capabilityId }
-        return matches.firstOrNull { it.runtime == runtimeId }
-            ?: matches.firstOrNull { it.runtime == null }
+        return matches.firstOrNull { it.runtimeId == runtimeId }
+            ?: matches.firstOrNull { it.runtimeId == null && it.runtime == runtimeId }
+            ?: runtimeType?.let { expectedType ->
+                matches.firstOrNull {
+                    it.runtimeId == null && (it.runtimeType ?: it.runtime) == expectedType
+                }
+            }
+            ?: matches.firstOrNull {
+                it.runtimeId == null && it.runtimeType == null && it.runtime == null
+            }
     }
 }
 
@@ -54,6 +66,8 @@ data class NewSessionRuntimeCapability(
     val allowed: Boolean,
     val unavailableReason: String?,
     val parameters: Map<String, Any?>,
+    val runtimeId: String? = null,
+    val runtimeType: String? = runtime,
 ) {
     val usable: Boolean
         get() = supported && available && allowed
@@ -64,6 +78,8 @@ data class NewSessionModelCatalog(
     val revision: Long,
     val models: List<NewSessionModel>,
     val serverTime: String?,
+    val runtimeId: String = runtime,
+    val runtimeType: String = runtime,
 )
 
 data class NewSessionModel(
@@ -74,6 +90,8 @@ data class NewSessionModel(
     val default: Boolean,
     val reasoningItems: List<NewSessionReasoning>,
     val metadata: Map<String, Any?>,
+    val enabled: Boolean = true,
+    val disabledReason: String? = null,
 )
 
 data class NewSessionReasoning(
@@ -84,6 +102,8 @@ data class NewSessionReasoning(
     val description: String?,
     val default: Boolean,
     val metadata: Map<String, Any?>,
+    val enabled: Boolean = true,
+    val disabledReason: String? = null,
 )
 
 data class NewSessionPermissionCatalog(
@@ -91,6 +111,8 @@ data class NewSessionPermissionCatalog(
     val revision: Long,
     val permissions: List<NewSessionPermission>,
     val serverTime: String?,
+    val runtimeId: String = runtime,
+    val runtimeType: String = runtime,
 )
 
 data class NewSessionPermission(
@@ -100,6 +122,8 @@ data class NewSessionPermission(
     val description: String?,
     val default: Boolean,
     val metadata: Map<String, Any?>,
+    val enabled: Boolean = true,
+    val disabledReason: String? = null,
 )
 
 data class NewSessionRemoteData<T>(
@@ -160,18 +184,18 @@ data class NewSessionRuntimeSelectionState(
         get() = runtimes.firstOrNull { it.id == selectedRuntimeId }
 
     val selectedModel: NewSessionModel?
-        get() = modelCatalog.data?.models?.firstOrNull { it.id == selectedModelId }
+        get() = modelCatalog.data?.models?.firstOrNull { it.id == selectedModelId && it.enabled }
 
     val reasoningOptions: List<NewSessionReasoning>
         get() = selectedModel?.reasoningItems
-            ?.filter { it.id.isNotBlank() && it.selectionId.isNotBlank() }
+            ?.filter { it.enabled && it.id.isNotBlank() && it.selectionId.isNotBlank() }
             .orEmpty()
 
     val selectedReasoning: NewSessionReasoning?
         get() = reasoningOptions.firstOrNull { it.id == selectedReasoningId }
 
     val selectedPermission: NewSessionPermission?
-        get() = permissionCatalog.data?.permissions?.firstOrNull { it.id == selectedPermissionId }
+        get() = permissionCatalog.data?.permissions?.firstOrNull { it.id == selectedPermissionId && it.enabled }
 
     val selectedModelSelectionId: String?
         get() {
@@ -192,13 +216,13 @@ data class NewSessionRuntimeSelectionState(
         )
 
     val modelCapability: NewSessionRuntimeCapability?
-        get() = selectedRuntimeId?.let { runtimeId ->
-            capabilities.data?.find(MODEL_CATALOG_CAPABILITY, runtimeId)
+        get() = selectedRuntime?.let { runtime ->
+            capabilities.data?.find(MODEL_CATALOG_CAPABILITY, runtime.id, runtime.type)
         }
 
     val permissionCapability: NewSessionRuntimeCapability?
-        get() = selectedRuntimeId?.let { runtimeId ->
-            capabilities.data?.find(PERMISSION_CATALOG_CAPABILITY, runtimeId)
+        get() = selectedRuntime?.let { runtime ->
+            capabilities.data?.find(PERMISSION_CATALOG_CAPABILITY, runtime.id, runtime.type)
         }
 
     val canUseModelCatalog: Boolean
@@ -214,13 +238,13 @@ data class NewSessionRuntimeSelectionState(
             if (!capabilities.fresh) return false
             if (canUseModelCatalog) {
                 if (!modelCatalog.fresh) return false
-                val hasModels = modelCatalog.data?.models?.any { it.hasValidSelection() } == true
+                val hasModels = modelCatalog.data?.models?.any { it.enabled && it.hasValidSelection() } == true
                 if (hasModels && selectedModelSelectionId == null) return false
             }
             if (canUsePermissionCatalog) {
                 if (!permissionCatalog.fresh) return false
                 val hasPermissions = permissionCatalog.data?.permissions
-                    ?.any { it.id.isNotBlank() && it.selectionId.isNotBlank() } == true
+                    ?.any { it.enabled && it.id.isNotBlank() && it.selectionId.isNotBlank() } == true
                 if (hasPermissions && selectedPermissionSelectionId == null) return false
             }
             return true
@@ -294,8 +318,9 @@ data class NewSessionRuntimeSelectionState(
         value: NewSessionRuntimeCapabilities,
     ): NewSessionRuntimeSelectionState {
         if (requestKey != key) return this
-        val modelCapability = value.find(MODEL_CATALOG_CAPABILITY, key.runtimeId)
-        val permissionCapability = value.find(PERMISSION_CATALOG_CAPABILITY, key.runtimeId)
+        val runtimeType = selectedRuntime?.type
+        val modelCapability = value.find(MODEL_CATALOG_CAPABILITY, key.runtimeId, runtimeType)
+        val permissionCapability = value.find(PERMISSION_CATALOG_CAPABILITY, key.runtimeId, runtimeType)
         return copy(
             capabilities = capabilities.succeed(value),
             modelCatalog = if (modelCapability?.usable == true) {
@@ -358,11 +383,11 @@ data class NewSessionRuntimeSelectionState(
         val hint = selectionHints[NewSessionRuntimeScope(key.connectorId, key.runtimeId)]?.permission
             ?: selectedPermissionSelectionId
         val selected = value.permissions.firstOrNull {
-            it.selectionId.isNotBlank() && it.selectionId == hint
+            it.enabled && it.selectionId.isNotBlank() && it.selectionId == hint
         } ?: value.permissions.firstOrNull {
-            it.id.isNotBlank() && it.selectionId.isNotBlank() && it.default
+            it.enabled && it.id.isNotBlank() && it.selectionId.isNotBlank() && it.default
         } ?: value.permissions.firstOrNull {
-            it.id.isNotBlank() && it.selectionId.isNotBlank()
+            it.enabled && it.id.isNotBlank() && it.selectionId.isNotBlank()
         }
         val next = copy(
             permissionCatalog = permissionCatalog.succeed(value),
@@ -380,11 +405,13 @@ data class NewSessionRuntimeSelectionState(
     }
 
     fun selectModel(modelId: String): NewSessionRuntimeSelectionState {
-        val model = modelCatalog.data?.models?.firstOrNull { it.id == modelId } ?: return this
+        val model = modelCatalog.data?.models?.firstOrNull {
+            it.id == modelId && it.enabled && it.hasValidSelection()
+        } ?: return this
         val reasoningId = model.reasoningItems.firstOrNull {
-            it.id.isNotBlank() && it.selectionId.isNotBlank() && it.default
+            it.enabled && it.id.isNotBlank() && it.selectionId.isNotBlank() && it.default
         }?.id ?: model.reasoningItems.firstOrNull {
-            it.id.isNotBlank() && it.selectionId.isNotBlank()
+            it.enabled && it.id.isNotBlank() && it.selectionId.isNotBlank()
         }?.id
         val next = copy(selectedModelId = model.id, selectedReasoningId = reasoningId)
         return next.copy(selectionHints = next.rememberCurrentSelections())
@@ -398,7 +425,7 @@ data class NewSessionRuntimeSelectionState(
 
     fun selectPermission(permissionId: String): NewSessionRuntimeSelectionState {
         val valid = permissionCatalog.data?.permissions?.any {
-            it.id == permissionId && it.selectionId.isNotBlank()
+            it.enabled && it.id == permissionId && it.selectionId.isNotBlank()
         } == true
         if (!valid) return this
         val next = copy(selectedPermissionId = permissionId)
@@ -421,32 +448,32 @@ private data class ModelSelection(
 
 private fun NewSessionModelCatalog.defaultSelection(hint: String?): ModelSelection? {
     if (!hint.isNullOrBlank()) {
-        models.forEach { model ->
+        models.filter { it.enabled }.forEach { model ->
             val validReasoning = model.reasoningItems.filter {
-                it.id.isNotBlank() && it.selectionId.isNotBlank()
+                it.enabled && it.id.isNotBlank() && it.selectionId.isNotBlank()
             }
             validReasoning.firstOrNull { it.selectionId == hint }?.let {
                 return ModelSelection(model.id, it.id)
             }
-            if (validReasoning.isEmpty() && model.selectionId == hint && model.id.isNotBlank()) {
+            if (!model.hasReasoningSelections() && model.selectionId == hint && model.id.isNotBlank()) {
                 return ModelSelection(model.id, null)
             }
         }
     }
-    models.forEach { model ->
+    models.filter { it.enabled }.forEach { model ->
         model.reasoningItems.firstOrNull {
-            it.id.isNotBlank() && it.selectionId.isNotBlank() && it.default
+            it.enabled && it.id.isNotBlank() && it.selectionId.isNotBlank() && it.default
         }?.let { return ModelSelection(model.id, it.id) }
     }
-    models.firstOrNull { it.id.isNotBlank() && it.default && it.hasValidSelection() }?.let { model ->
+    models.firstOrNull { it.enabled && it.id.isNotBlank() && it.default && it.hasValidSelection() }?.let { model ->
         val reasoning = model.reasoningItems.firstOrNull {
-            it.id.isNotBlank() && it.selectionId.isNotBlank()
+            it.enabled && it.id.isNotBlank() && it.selectionId.isNotBlank()
         }
         return ModelSelection(model.id, reasoning?.id)
     }
-    models.firstOrNull { it.id.isNotBlank() && it.hasValidSelection() }?.let { model ->
+    models.firstOrNull { it.enabled && it.id.isNotBlank() && it.hasValidSelection() }?.let { model ->
         val reasoning = model.reasoningItems.firstOrNull {
-            it.id.isNotBlank() && it.selectionId.isNotBlank()
+            it.enabled && it.id.isNotBlank() && it.selectionId.isNotBlank()
         }
         return ModelSelection(model.id, reasoning?.id)
     }
@@ -454,9 +481,15 @@ private fun NewSessionModelCatalog.defaultSelection(hint: String?): ModelSelecti
 }
 
 private fun NewSessionModel.hasValidSelection(): Boolean {
-    return selectionId?.isNotBlank() == true || reasoningItems.any {
-        it.id.isNotBlank() && it.selectionId.isNotBlank()
+    return if (hasReasoningSelections()) {
+        reasoningItems.any { it.enabled && it.id.isNotBlank() && it.selectionId.isNotBlank() }
+    } else {
+        selectionId?.isNotBlank() == true
     }
+}
+
+private fun NewSessionModel.hasReasoningSelections(): Boolean {
+    return reasoningItems.any { it.id.isNotBlank() && it.selectionId.isNotBlank() }
 }
 
 internal fun RemoteRuntimeCapabilities.toNewSessionRuntimeCapabilities(): NewSessionRuntimeCapabilities {
@@ -475,6 +508,8 @@ internal fun RemoteRuntimeCapabilities.toNewSessionRuntimeCapabilities(): NewSes
                 allowed = it.allowed,
                 unavailableReason = it.unavailableReason,
                 parameters = it.parameters,
+                runtimeId = it.runtimeId,
+                runtimeType = it.runtimeType,
             )
         },
         serverTime = serverTime,
@@ -501,12 +536,18 @@ internal fun RemoteRuntimeModelCatalogResponse.toNewSessionModelCatalog(): NewSe
                         description = it.description,
                         default = it.default,
                         metadata = it.metadata,
+                        enabled = it.enabled,
+                        disabledReason = it.disabledReason,
                     )
                 },
                 metadata = model.metadata,
+                enabled = model.enabled,
+                disabledReason = model.disabledReason,
             )
         },
         serverTime = serverTime,
+        runtimeId = catalog.runtimeId,
+        runtimeType = catalog.runtimeType,
     )
 }
 
@@ -522,8 +563,12 @@ internal fun RemoteRuntimePermissionCatalogResponse.toNewSessionPermissionCatalo
                 description = it.description,
                 default = it.default,
                 metadata = it.metadata,
+                enabled = it.enabled,
+                disabledReason = it.disabledReason,
             )
         },
         serverTime = serverTime,
+        runtimeId = catalog.runtimeId,
+        runtimeType = catalog.runtimeType,
     )
 }

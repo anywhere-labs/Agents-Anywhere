@@ -55,6 +55,8 @@ class SessionsApiTest {
                         ),
                     ),
                     clientMessageId = "client-message-1",
+                    runtimeId = "rti_codex_work_01",
+                    runtimeType = "codex",
                 ),
             )
 
@@ -65,6 +67,7 @@ class SessionsApiTest {
             val body = JSONObject(request.body)
             assertEquals("connector/one", body.getString("connectorId"))
             assertEquals("codex", body.getString("runtime"))
+            assertEquals("rti_codex_work_01", body.getString("runtimeId"))
             assertEquals("Task title", body.getString("title"))
             assertEquals("/workspace", body.getString("cwd"))
             assertEquals("First message", body.getString("content"))
@@ -167,7 +170,32 @@ class SessionsApiTest {
             assertEquals(7, session.lastReadSeq)
             assertEquals(9, session.lastItemOrderSeq)
             assertEquals("codex", session.runtime)
+            assertEquals("codex", session.runtimeId)
+            assertEquals("codex", session.runtimeType)
         }
+    }
+
+    @Test
+    fun sessionIdentityUsesNamedInstanceFieldsAndFallsBackForOldServers() {
+        val api = SessionsApi()
+        val legacyJson = JSONObject(sessionResponse("legacy")).getJSONObject("session")
+        val legacy = api.parseSession(legacyJson)
+
+        assertEquals("codex", legacy.runtime)
+        assertEquals("codex", legacy.runtimeId)
+        assertEquals("codex", legacy.runtimeType)
+        assertEquals("codex", legacy.runtimeName)
+
+        val named = api.parseSession(
+            JSONObject(legacyJson.toString())
+                .put("runtimeId", "rti_codex_work_01")
+                .put("runtimeType", "codex")
+                .put("runtimeName", "Work Codex"),
+        )
+        assertEquals("codex", named.runtime)
+        assertEquals("rti_codex_work_01", named.runtimeId)
+        assertEquals("codex", named.runtimeType)
+        assertEquals("Work Codex", named.runtimeName)
     }
 
     @Test
@@ -275,9 +303,12 @@ class SessionsApiTest {
             assertEquals(12, changes.nextSeq)
 
             assertEquals("future_status", snapshot.state?.status)
+            assertEquals("rti_codex_work_01", snapshot.session.runtimeId)
+            assertEquals("Work Codex", snapshot.session.runtimeName)
             assertEquals("model-selection", snapshot.state?.selections?.get("model"))
             assertNull(snapshot.state?.selections?.get("permission"))
             assertEquals(7L, snapshot.catalogs.model?.revision)
+            assertEquals("rti_codex_work_01", snapshot.catalogs.model?.runtimeId)
             assertEquals("model-selection", snapshot.catalogs.model?.models?.single()?.selectionId)
             assertEquals(8L, snapshot.catalogs.permission?.revision)
             assertEquals(
@@ -638,8 +669,12 @@ class SessionsApiTest {
     }
 
     private fun snapshotResponse(): String {
+        val session = JSONObject(sessionResponse("session/one")).getJSONObject("session")
+            .put("runtimeId", "rti_codex_work_01")
+            .put("runtimeType", "codex")
+            .put("runtimeName", "Work Codex")
         return JSONObject()
-            .put("session", JSONObject(sessionResponse("session/one")).getJSONObject("session"))
+            .put("session", session)
             .put("state", JSONObject(runtimeStateResponse("future_status")).getJSONObject("state"))
             .put(
                 "timeline",

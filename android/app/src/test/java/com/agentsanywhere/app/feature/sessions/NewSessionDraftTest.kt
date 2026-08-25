@@ -15,6 +15,9 @@ class NewSessionDraftTest {
             deviceName = "Mac",
             runtimeLabel = "Codex",
             knownSessionIds = setOf("existing"),
+            runtimeId = "rti_codex_work_01",
+            runtimeType = "codex",
+            runtimeName = "Work Codex",
         )
 
         val preview = draft.previewSession()
@@ -22,6 +25,9 @@ class NewSessionDraftTest {
         assertEquals(NewSessionDraft.LOCAL_NEW_SESSION_ID, preview.id)
         assertEquals("device-1", preview.connectorId)
         assertEquals("codex", preview.runtime)
+        assertEquals("rti_codex_work_01", preview.runtimeId)
+        assertEquals("codex", preview.runtimeType)
+        assertEquals("Work Codex", preview.runtimeName)
         assertEquals("/workspace", preview.cwd)
         assertTrue(preview.takeover)
     }
@@ -38,6 +44,8 @@ class NewSessionDraftTest {
             runtimeLabel = "Codex",
             knownSessionIds = setOf("existing"),
             selections = selections,
+            runtimeId = "rti_codex_work_01",
+            runtimeType = "codex",
         )
 
         val request = prepared.firstMessageRequest(
@@ -49,6 +57,9 @@ class NewSessionDraftTest {
         assertEquals("fix the tests", request.content)
         assertEquals("gpt-5.6:high", request.selections.model)
         assertEquals("full-access", request.selections.permission)
+        assertEquals("codex", request.runtime)
+        assertEquals("rti_codex_work_01", request.runtimeId)
+        assertEquals("codex", request.runtimeType)
         assertEquals(setOf("existing"), request.knownSessionIds)
     }
 }

@@ -170,7 +170,7 @@ class DevicesController(
 
     suspend fun saveDeviceRuntimeConfig(
         connectorId: String,
-        runtime: String,
+        runtimeId: String,
         config: Map<String, Any?>,
     ): Result<DeviceRuntime> {
         val auth = authSession()
@@ -182,7 +182,7 @@ class DevicesController(
                     serverUrl = auth.serverUrl,
                     authorizationToken = auth.accessToken,
                     deviceId = connectorId,
-                    runtime = runtime,
+                    runtimeId = runtimeId,
                     config = config,
                 ).toDeviceRuntime()
             }.recoverCatching { error ->
@@ -194,22 +194,22 @@ class DevicesController(
 
     suspend fun configureAndStartDeviceRuntime(
         connectorId: String,
-        runtime: String,
+        runtimeId: String,
         config: Map<String, Any?>,
     ): DeviceRuntimeSetupResult {
         return configureAndStartRuntime(
-            saveConfig = { saveDeviceRuntimeConfig(connectorId, runtime, config) },
-            startRuntime = { setDeviceRuntimeActive(connectorId, runtime, true) },
+            saveConfig = { saveDeviceRuntimeConfig(connectorId, runtimeId, config) },
+            startRuntime = { setDeviceRuntimeActive(connectorId, runtimeId, true) },
         ).also { result ->
             when (result) {
                 is DeviceRuntimeSetupResult.SaveFailed -> Log.w(
                     TAG,
-                    "Runtime configuration failed for $runtime on $connectorId",
+                    "Runtime configuration failed for $runtimeId on $connectorId",
                     result.cause,
                 )
                 is DeviceRuntimeSetupResult.StartFailed -> Log.w(
                     TAG,
-                    "Runtime activation failed after configuration for $runtime on $connectorId",
+                    "Runtime activation failed after configuration for $runtimeId on $connectorId",
                     result.cause,
                 )
                 is DeviceRuntimeSetupResult.Success -> Unit
@@ -219,7 +219,7 @@ class DevicesController(
 
     suspend fun setDeviceRuntimeActive(
         connectorId: String,
-        runtime: String,
+        runtimeId: String,
         active: Boolean,
     ): Result<DeviceRuntime> {
         val auth = authSession()
@@ -231,7 +231,7 @@ class DevicesController(
                     serverUrl = auth.serverUrl,
                     authorizationToken = auth.accessToken,
                     deviceId = connectorId,
-                    runtime = runtime,
+                    runtimeId = runtimeId,
                     active = active,
                 ).toDeviceRuntime()
             }.recoverCatching { error ->
@@ -243,7 +243,7 @@ class DevicesController(
 
     suspend fun deleteDeviceRuntimeConfig(
         connectorId: String,
-        runtime: String,
+        runtimeId: String,
     ): Result<DeviceRuntime> {
         val auth = authSession()
             ?: return Result.failure(IllegalStateException("Sign in again to delete runtime configuration."))
@@ -254,7 +254,7 @@ class DevicesController(
                     serverUrl = auth.serverUrl,
                     authorizationToken = auth.accessToken,
                     deviceId = connectorId,
-                    runtime = runtime,
+                    runtimeId = runtimeId,
                 ).toDeviceRuntime()
             }.recoverCatching { error ->
                 if (error is ApiException) throw error

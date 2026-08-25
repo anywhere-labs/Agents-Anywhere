@@ -224,7 +224,10 @@ private fun ModelSelectionSection(
 ) {
     val options = groups.map { group ->
         val current = group.options.firstOrNull { it.selectionId == selectedId }
-        current ?: group.options.firstOrNull { it.default } ?: group.options.first()
+        current
+            ?: group.options.firstOrNull { it.enabled && it.default }
+            ?: group.options.firstOrNull { it.enabled }
+            ?: group.options.first()
     }.map { option -> option.copy(label = option.modelLabel) }
     RuntimeSettingsSection(
         title = stringResource(R.string.session_runtime_settings_title),
@@ -312,19 +315,32 @@ private fun EffortSelectionSection(
                                 Color.Transparent
                             },
                         )
-                        .noRippleClickable(enabled = enabled) { onSelect(option.selectionId) }
+                        .noRippleClickable(enabled = enabled && option.enabled) { onSelect(option.selectionId) }
                         .padding(horizontal = 4.dp, vertical = 9.dp),
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(
                         option.effortDisplayLabel(defaultEffortLabel),
-                        color = if (selected) colors.ink else colors.muted,
+                        color = when {
+                            !option.enabled -> colors.muted.copy(alpha = 0.45f)
+                            selected -> colors.ink
+                            else -> colors.muted
+                        },
                         fontSize = 11.5.sp,
                         fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
+            }
+        }
+        options.filter { !it.enabled }.forEach { option ->
+            option.disabledReason?.takeIf(String::isNotBlank)?.let { reason ->
+                Text(
+                    text = "${option.effortDisplayLabel(defaultEffortLabel)}: $reason",
+                    color = colors.muted,
+                    fontSize = 11.5.sp,
+                )
             }
         }
     }
@@ -399,7 +415,7 @@ private fun RuntimeSettingsSection(
                                 color = if (selected) colors.border else Color.Transparent,
                                 shape = RoundedCornerShape(14.dp),
                             )
-                            .noRippleClickable(enabled = !busy && !loading) {
+                            .noRippleClickable(enabled = !busy && !loading && option.enabled) {
                                 onSelect(option.selectionId)
                             }
                             .padding(horizontal = 12.dp, vertical = 10.dp),
@@ -409,13 +425,13 @@ private fun RuntimeSettingsSection(
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 text = option.label,
-                                color = colors.ink,
+                                color = colors.ink.copy(alpha = if (option.enabled) 1f else 0.45f),
                                 fontSize = 14.sp,
                                 fontWeight = if (selected) FontWeight.Bold else FontWeight.SemiBold,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                             )
-                            option.description?.takeIf(String::isNotBlank)?.let {
+                            (option.disabledReason ?: option.description)?.takeIf(String::isNotBlank)?.let {
                                 Text(
                                     text = it,
                                     color = colors.muted,

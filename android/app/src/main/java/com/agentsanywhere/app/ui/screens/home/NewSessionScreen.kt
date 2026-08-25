@@ -273,13 +273,16 @@ fun NewSessionScreen(
         onPrepareSession(
             NewSessionDraft(
                 connectorId = device.id,
-                runtime = runtime.id,
+                runtime = runtime.type,
                 title = title.trim().takeIf(String::isNotBlank),
                 cwd = effectiveWorkspacePath.trim().takeIf(String::isNotBlank),
                 deviceName = device.name,
-                runtimeLabel = runtime.displayName,
+                runtimeLabel = runtime.labels.primary,
                 knownSessionIds = (sessionsState.sessions + sessionsState.archivedSessions)
                     .mapTo(mutableSetOf()) { it.id },
+                runtimeId = runtime.id,
+                runtimeType = runtime.type,
+                runtimeName = runtime.name,
             ),
         )
     }
@@ -324,7 +327,7 @@ fun NewSessionScreen(
                     )
                     RuntimeSelectPill(
                         label = stringResource(R.string.new_session_agent),
-                        value = selectedRuntime?.displayName ?: stringResource(R.string.new_session_no_agent),
+                        value = selectedRuntime?.labels?.primary ?: stringResource(R.string.new_session_no_agent),
                         icon = Lucide.Bot,
                         darkMode = darkMode,
                         modifier = Modifier.weight(1f),
@@ -1267,7 +1270,7 @@ private fun RuntimePickerSheet(
             LazyColumn(modifier = Modifier.heightIn(max = 420.dp)) {
                 items(runtimes, key = { it.id }) { runtime ->
                     SheetChoiceRow(
-                        title = runtime.displayName,
+                        title = runtime.labels.primary,
                         subtitle = runtime.pickerSubtitle(),
                         selected = runtime.id == selectedRuntimeId,
                         darkMode = darkMode,
@@ -1415,7 +1418,7 @@ private fun DeviceRuntime.pickerSubtitle(): String {
             DeviceRuntimeStatus.Unknown -> stringResource(R.string.device_runtime_unknown)
         }
     }
-    return listOfNotNull(id, readiness, detailMessage).joinToString(" · ")
+    return listOfNotNull(labels.secondary, readiness, detailMessage).joinToString(" · ")
 }
 
 private fun pathTitle(path: String, homeDirectory: String): String {

@@ -7,7 +7,6 @@ import com.agentsanywhere.app.api.RemoteRuntimeModelCatalog
 import com.agentsanywhere.app.api.RemoteRuntimePermissionCatalog
 import com.agentsanywhere.app.api.SessionsApi
 import com.agentsanywhere.app.api.UploadFilePart
-import com.agentsanywhere.app.api.isSupportedV2NativeRuntime
 import com.agentsanywhere.app.feature.auth.AuthSessionReader
 import com.agentsanywhere.app.feature.sessions.toAgentSession
 import com.agentsanywhere.app.model.AgentDevice
@@ -48,9 +47,6 @@ class SessionDetailController(
                     sessionId = sessionId,
                     limit = INITIAL_TIMELINE_LIMIT,
                 )
-                check(snapshot.session.runtime.isSupportedV2NativeRuntime()) {
-                    "This runtime is not supported by Android v2."
-                }
                 val projection = mergeRemoteTimelineItems(
                     currentOrdering = emptyList(),
                     currentMessages = emptyList(),

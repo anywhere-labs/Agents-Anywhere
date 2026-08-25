@@ -39,7 +39,10 @@ data class RemoteDeviceRuntime(
     val error: Map<String, Any?>?,
     val lastDiscoveredAt: String?,
     val updatedAt: String?,
-)
+) {
+    val name: String
+        get() = displayName
+}
 
 enum class RemoteDeviceRuntimeStatus(val wireValue: String) {
     Stopped("stopped"),

@@ -1,5 +1,6 @@
 package com.agentsanywhere.app.api
 
+import com.agentsanywhere.app.feature.devices.toDeviceRuntimeList
 import java.io.BufferedInputStream
 import java.io.ByteArrayOutputStream
 import java.io.Closeable
@@ -36,7 +37,7 @@ class DevicesApiTest {
                 serverUrl = serverUrl,
                 authorizationToken = "token",
                 deviceId = "connector one",
-                runtime = "codex",
+                runtimeId = "codex",
                 config = mapOf(
                     "executablePath" to "/opt/codex",
                     "environment" to mapOf("HTTP_PROXY" to "http://proxy", "OLD" to null),
@@ -68,17 +69,40 @@ class DevicesApiTest {
     }
 
     @Test
-    fun runtimeResponseMapsAllFieldsAndFiltersUnsupportedProviders() {
+    fun runtimeResponseKeepsDynamicInstancesAndLegacyProviderFallback() {
         val codex = runtimeJson("codex")
         val unknownClaude = runtimeJson("claude", status = "future-status")
-        withJsonServer(ArrayDeque(listOf(listJson(codex, runtimeJson("acp"), unknownClaude)))) { serverUrl, _ ->
+        val dsh = JSONObject(
+            runtimeJson(
+                runtime = "rti_dsh_home",
+                runtimeType = "dsh",
+                metadata = JSONObject()
+                    .put("storageMode", "dsh-native")
+                    .put("crossProcessWriterExclusion", false),
+            ),
+        ).apply {
+            remove("displayName")
+            put("name", "Personal DSH")
+        }.toString()
+        val legacyExtension = JSONObject(runtimeJson("opencode")).apply {
+            remove("runtimeId")
+            remove("runtimeType")
+            remove("displayName")
+            put("runtime", "opencode")
+        }.toString()
+        withJsonServer(
+            ArrayDeque(listOf(listJson(codex, runtimeJson("acp"), unknownClaude, legacyExtension, dsh))),
+        ) { serverUrl, _ ->
             val result = DevicesApi().listDeviceRuntimes(serverUrl, "token", "connector one")
 
             assertEquals("connector one", result.connectorId)
-            assertEquals(listOf("codex", "claude"), result.runtimes.map { it.runtimeId })
+            assertEquals(
+                listOf("codex", "acp", "claude", "opencode", "rti_dsh_home"),
+                result.runtimes.map { it.runtimeId },
+            )
             assertEquals("2026-08-10T00:00:00Z", result.serverTime)
             val runtime = result.runtimes.first()
-            assertEquals("native", runtime.runtimeType)
+            assertEquals("codex", runtime.runtimeType)
             assertEquals("Codex", runtime.displayName)
             assertTrue(runtime.present)
             assertTrue(runtime.configured)
@@ -90,7 +114,19 @@ class DevicesApiTest {
             assertEquals(emptyMap<String, Any?>(), runtime.config)
             assertNull(runtime.error)
             assertEquals("2026-08-10T00:00:00Z", runtime.lastDiscoveredAt)
-            assertEquals(RemoteDeviceRuntimeStatus.Unknown, result.runtimes.last().status)
+            assertEquals(RemoteDeviceRuntimeStatus.Unknown, result.runtimes[2].status)
+            val legacyRuntime = result.runtimes[3]
+            assertEquals("opencode", legacyRuntime.runtimeType)
+            assertEquals("opencode", legacyRuntime.name)
+            val dshRuntime = result.runtimes.last()
+            assertEquals("dsh", dshRuntime.runtimeType)
+            assertEquals("Personal DSH", dshRuntime.name)
+            assertEquals("dsh-native", dshRuntime.metadata["storageMode"])
+            assertEquals(false, dshRuntime.metadata["crossProcessWriterExclusion"])
+            val domainDsh = result.toDeviceRuntimeList().runtimes.last()
+            assertEquals("dsh-native", domainDsh.metadata["storageMode"])
+            assertEquals("Personal DSH", domainDsh.labels.primary)
+            assertEquals("DeepSeek Harness", domainDsh.labels.secondary)
         }
     }
 
@@ -165,17 +201,22 @@ class DevicesApiTest {
             assertEquals("not ready", unknownCapability.unavailableReason)
 
             assertEquals("codex", models.catalog.runtime)
+            assertEquals("codex", models.catalog.runtimeId)
+            assertEquals("codex", models.catalog.runtimeType)
             assertEquals(7L, models.catalog.revision)
             assertEquals(1, models.catalog.models.size)
             val model = models.catalog.models.single()
             assertEquals("gpt-5.6", model.id)
             assertNull(model.selectionId)
             assertTrue(model.default)
+            assertTrue(model.enabled)
             assertEquals("model.label", (model.metadata["i18n"] as Map<*, *>)["labelKey"])
             val reasoning = model.reasoningItems.single()
             assertEquals("high", reasoning.id)
             assertEquals("model:gpt-5.6:high", reasoning.selectionId)
             assertEquals("gpt-5.6-high", reasoning.fullModelId)
+            assertFalse(reasoning.enabled)
+            assertEquals("not available on this account", reasoning.disabledReason)
 
             assertEquals("codex", permissions.catalog.runtime)
             assertEquals(9L, permissions.catalog.revision)
@@ -184,6 +225,8 @@ class DevicesApiTest {
             assertEquals("permission:workspace-write", permission.selectionId)
             assertTrue(permission.default)
             assertEquals("permission.label", permission.metadata["labelKey"])
+            assertFalse(permission.enabled)
+            assertEquals("managed by policy", permission.disabledReason)
             assertEquals("2026-08-10T00:00:02Z", permissions.serverTime)
         }
     }
@@ -222,8 +265,14 @@ class DevicesApiTest {
         assertEquals(body, request.body)
     }
 
-    private fun runtimeJson(runtime: String, status: String = "available"): String {
-        val displayName = when (runtime) {
+    private fun runtimeJson(
+        runtime: String,
+        status: String = "available",
+        runtimeType: String = "native",
+        displayName: String? = null,
+        metadata: JSONObject? = null,
+    ): String {
+        val resolvedDisplayName = displayName ?: when (runtime) {
             "codex" -> "Codex"
             "claude" -> "Claude Code"
             else -> runtime.uppercase()
@@ -231,13 +280,14 @@ class DevicesApiTest {
         return JSONObject()
             .put("connectorId", "connector one")
             .put("runtimeId", runtime)
-            .put("runtimeType", "native")
-            .put("displayName", displayName)
+            .put("runtimeType", runtimeType)
+            .put("displayName", resolvedDisplayName)
             .put("present", true)
             .put("configured", true)
             .put("active", false)
             .put("status", status)
             .put("discovery", JSONObject().put("available", true))
+            .put("metadata", metadata ?: JSONObject())
             .put("schema", JSONObject().put("type", "object"))
             .put("uiSchema", JSONObject().put("order", listOf("environment")))
             .put("config", JSONObject())
@@ -292,15 +342,27 @@ class DevicesApiTest {
             .put("displayName", "High")
             .put("description", "More reasoning")
             .put("default", true)
-            .put("metadata", JSONObject().put("future", true))
+            .put(
+                "metadata",
+                JSONObject()
+                    .put("future", true)
+                    .put("enabled", false)
+                    .put("disabledReason", "not available on this account"),
+            )
         val model = JSONObject()
             .put("id", "gpt-5.6")
             .put("selectionId", JSONObject.NULL)
             .put("displayName", "GPT-5.6")
             .put("description", "Frontier model")
             .put("default", true)
+            .put("enabled", true)
             .put("reasoningItems", listOf(reasoning))
-            .put("metadata", JSONObject().put("i18n", JSONObject().put("labelKey", "model.label")))
+            .put(
+                "metadata",
+                JSONObject()
+                    .put("i18n", JSONObject().put("labelKey", "model.label"))
+                    .put("enabled", false),
+            )
         return JSONObject()
             .put(
                 "catalog",
@@ -317,6 +379,8 @@ class DevicesApiTest {
             .put("displayName", "Workspace write")
             .put("description", "Allow workspace edits")
             .put("default", true)
+            .put("enabled", false)
+            .put("disabledReason", "managed by policy")
             .put("metadata", JSONObject().put("labelKey", "permission.label"))
         return JSONObject()
             .put(

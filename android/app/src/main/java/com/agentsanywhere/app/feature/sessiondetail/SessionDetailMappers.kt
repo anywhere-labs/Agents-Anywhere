@@ -78,6 +78,9 @@ internal fun RemoteSessionRuntimeState?.toSessionRuntimeState(serverTime: String
         updatedAt = updatedAt,
         serverTime = serverTime,
         isLoaded = true,
+        runtimeId = runtimeId,
+        runtimeType = runtimeType,
+        runtimeName = runtimeName,
     )
 }
 
@@ -114,5 +117,7 @@ private fun RemoteRuntimeCapability.toEffectiveCapability(): EffectiveCapability
         allowed = allowed,
         unavailableReason = unavailableReason,
         parameters = parameters,
+        runtimeId = runtimeId,
+        runtimeType = runtimeType,
     )
 }

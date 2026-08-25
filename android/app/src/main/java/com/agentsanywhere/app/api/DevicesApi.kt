@@ -106,12 +106,12 @@ class DevicesApi(
         serverUrl: String,
         authorizationToken: String,
         deviceId: String,
-        runtime: String,
+        runtimeId: String,
         config: Map<String, Any?>,
     ): RemoteDeviceRuntime {
         return client.putJson(
             serverUrl = serverUrl,
-            path = "/connectors/${deviceId.urlEncode()}/runtimes/${runtime.urlEncode()}/config",
+            path = "/connectors/${deviceId.urlEncode()}/runtimes/${runtimeId.urlEncode()}/config",
             body = JSONObject().put("config", config.toJsonObject()),
             authorizationToken = authorizationToken,
         ).toRemoteDeviceRuntime(deviceId)
@@ -121,12 +121,12 @@ class DevicesApi(
         serverUrl: String,
         authorizationToken: String,
         deviceId: String,
-        runtime: String,
+        runtimeId: String,
         active: Boolean,
     ): RemoteDeviceRuntime {
         return client.putJson(
             serverUrl = serverUrl,
-            path = "/connectors/${deviceId.urlEncode()}/runtimes/${runtime.urlEncode()}/active",
+            path = "/connectors/${deviceId.urlEncode()}/runtimes/${runtimeId.urlEncode()}/active",
             body = JSONObject().put("active", active),
             authorizationToken = authorizationToken,
         ).toRemoteDeviceRuntime(deviceId)
@@ -136,11 +136,11 @@ class DevicesApi(
         serverUrl: String,
         authorizationToken: String,
         deviceId: String,
-        runtime: String,
+        runtimeId: String,
     ): RemoteDeviceRuntime {
         return client.deleteJson(
             serverUrl = serverUrl,
-            path = "/connectors/${deviceId.urlEncode()}/runtimes/${runtime.urlEncode()}/config",
+            path = "/connectors/${deviceId.urlEncode()}/runtimes/${runtimeId.urlEncode()}/config",
             authorizationToken = authorizationToken,
         ).toRemoteDeviceRuntime(deviceId)
     }
@@ -149,11 +149,11 @@ class DevicesApi(
         serverUrl: String,
         authorizationToken: String,
         deviceId: String,
-        runtime: String,
+        runtimeId: String,
     ): RemoteRuntimeCapabilities {
         return client.getJson(
             serverUrl = serverUrl,
-            path = "/connectors/${deviceId.urlEncode()}/runtimes/${runtime.urlEncode()}/capabilities",
+            path = "/connectors/${deviceId.urlEncode()}/runtimes/${runtimeId.urlEncode()}/capabilities",
             authorizationToken = authorizationToken,
         ).toRemoteRuntimeCapabilities(deviceId)
     }
@@ -162,26 +162,26 @@ class DevicesApi(
         serverUrl: String,
         authorizationToken: String,
         deviceId: String,
-        runtime: String,
+        runtimeId: String,
     ): RemoteRuntimeModelCatalogResponse {
         return client.getJson(
             serverUrl = serverUrl,
-            path = "/connectors/${deviceId.urlEncode()}/runtimes/${runtime.urlEncode()}/catalogs/model",
+            path = "/connectors/${deviceId.urlEncode()}/runtimes/${runtimeId.urlEncode()}/catalogs/model",
             authorizationToken = authorizationToken,
-        ).toRemoteRuntimeModelCatalogResponse()
+        ).toRemoteRuntimeModelCatalogResponse(runtimeId)
     }
 
     fun getDeviceRuntimePermissionCatalog(
         serverUrl: String,
         authorizationToken: String,
         deviceId: String,
-        runtime: String,
+        runtimeId: String,
     ): RemoteRuntimePermissionCatalogResponse {
         return client.getJson(
             serverUrl = serverUrl,
-            path = "/connectors/${deviceId.urlEncode()}/runtimes/${runtime.urlEncode()}/catalogs/permission",
+            path = "/connectors/${deviceId.urlEncode()}/runtimes/${runtimeId.urlEncode()}/catalogs/permission",
             authorizationToken = authorizationToken,
-        ).toRemoteRuntimePermissionCatalogResponse()
+        ).toRemoteRuntimePermissionCatalogResponse(runtimeId)
     }
 
     fun claimPairing(
@@ -229,7 +229,10 @@ class DevicesApi(
             connectorId = connectorId,
             runtimes = optJSONArray("runtimes")
                 .toObjectList { toRemoteDeviceRuntime(connectorId) }
-                .filter { it.runtimeId.isSupportedV2NativeRuntime() },
+                .filter { runtime ->
+                    runtime.runtimeType.isValidRuntimeType() &&
+                        runtime.runtimeId.isValidRuntimeInstanceId(runtime.runtimeType)
+                },
             serverTime = optNullableString("serverTime"),
         )
     }
@@ -237,12 +240,21 @@ class DevicesApi(
     private fun JSONObject.toRemoteDeviceRuntime(
         fallbackConnectorId: String,
     ): RemoteDeviceRuntime {
-        val runtimeId = optString("runtimeId", "")
+        val legacyRuntime = optNullableString("runtime")
+        val runtimeId = optNullableString("runtimeId") ?: legacyRuntime.orEmpty()
+        val reportedRuntimeType = optNullableString("runtimeType")
+        val runtimeType = legacyRuntime ?: when {
+            runtimeId.isValidRuntimeType() -> runtimeId
+            else -> reportedRuntimeType.orEmpty()
+        }
+        val displayName = optNullableString("displayName")
+            ?: optNullableString("name")
+            ?: runtimeType
         return RemoteDeviceRuntime(
             connectorId = optString("connectorId", fallbackConnectorId).ifBlank { fallbackConnectorId },
             runtimeId = runtimeId,
-            runtimeType = optString("runtimeType", runtimeId).ifBlank { runtimeId },
-            displayName = optString("displayName", runtimeId).ifBlank { runtimeId },
+            runtimeType = runtimeType,
+            displayName = displayName,
             present = optBoolean("present", false),
             configured = optBoolean("configured", false),
             active = optBoolean("active", false),
@@ -286,67 +298,28 @@ class DevicesApi(
             allowed = optBoolean("allowed", true),
             unavailableReason = optNullableString("unavailableReason"),
             parameters = optJSONObject("parameters").toMap(),
+            runtimeId = optNullableString("runtimeId"),
+            runtimeType = optNullableString("runtimeType") ?: optNullableString("runtime"),
         )
     }
 
-    private fun JSONObject.toRemoteRuntimeModelCatalogResponse(): RemoteRuntimeModelCatalogResponse {
+    private fun JSONObject.toRemoteRuntimeModelCatalogResponse(
+        fallbackRuntimeId: String,
+    ): RemoteRuntimeModelCatalogResponse {
         val catalog = optJSONObject("catalog") ?: JSONObject()
         return RemoteRuntimeModelCatalogResponse(
-            catalog = RemoteRuntimeModelCatalog(
-                runtime = catalog.optString("runtime", ""),
-                revision = catalog.optLong("revision", 0L),
-                models = catalog.optJSONArray("models").toObjectList { toRemoteRuntimeModel() },
-            ),
+            catalog = catalog.parseRemoteRuntimeModelCatalog(fallbackRuntimeId),
             serverTime = optNullableString("serverTime"),
         )
     }
 
-    private fun JSONObject.toRemoteRuntimeModel(): RemoteRuntimeModel {
-        return RemoteRuntimeModel(
-            id = optString("id", ""),
-            selectionId = optNullableString("selectionId"),
-            displayName = optString("displayName", ""),
-            description = optNullableString("description"),
-            default = optBoolean("default", false),
-            reasoningItems = optJSONArray("reasoningItems")
-                .toObjectList { toRemoteRuntimeReasoning() },
-            metadata = optJSONObject("metadata").toMap(),
-        )
-    }
-
-    private fun JSONObject.toRemoteRuntimeReasoning(): RemoteRuntimeReasoning {
-        return RemoteRuntimeReasoning(
-            id = optString("id", ""),
-            selectionId = optString("selectionId", ""),
-            fullModelId = optNullableString("fullModelId"),
-            displayName = optString("displayName", ""),
-            description = optNullableString("description"),
-            default = optBoolean("default", false),
-            metadata = optJSONObject("metadata").toMap(),
-        )
-    }
-
-    private fun JSONObject.toRemoteRuntimePermissionCatalogResponse(): RemoteRuntimePermissionCatalogResponse {
+    private fun JSONObject.toRemoteRuntimePermissionCatalogResponse(
+        fallbackRuntimeId: String,
+    ): RemoteRuntimePermissionCatalogResponse {
         val catalog = optJSONObject("catalog") ?: JSONObject()
         return RemoteRuntimePermissionCatalogResponse(
-            catalog = RemoteRuntimePermissionCatalog(
-                runtime = catalog.optString("runtime", ""),
-                revision = catalog.optLong("revision", 0L),
-                permissions = catalog.optJSONArray("permissions")
-                    .toObjectList { toRemoteRuntimePermission() },
-            ),
+            catalog = catalog.parseRemoteRuntimePermissionCatalog(fallbackRuntimeId),
             serverTime = optNullableString("serverTime"),
-        )
-    }
-
-    private fun JSONObject.toRemoteRuntimePermission(): RemoteRuntimePermission {
-        return RemoteRuntimePermission(
-            id = optString("id", ""),
-            selectionId = optString("selectionId", ""),
-            displayName = optString("displayName", ""),
-            description = optNullableString("description"),
-            default = optBoolean("default", false),
-            metadata = optJSONObject("metadata").toMap(),
         )
     }
 }

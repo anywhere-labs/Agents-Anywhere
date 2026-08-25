@@ -10,7 +10,8 @@ import com.agentsanywhere.app.api.RemoteSession
 import com.agentsanywhere.app.api.RemoteSessionCreateAndStartRequest
 import com.agentsanywhere.app.api.RemoteDashboardSnapshot
 import com.agentsanywhere.app.api.RemoteSessionsMutationResponse
-import com.agentsanywhere.app.api.isSupportedV2NativeRuntime
+import com.agentsanywhere.app.api.isValidRuntimeInstanceId
+import com.agentsanywhere.app.api.isValidRuntimeType
 import com.agentsanywhere.app.feature.auth.AuthSessionReader
 import com.agentsanywhere.app.feature.devices.DeviceRuntimeList
 import com.agentsanywhere.app.feature.devices.toAgentDevice
@@ -92,13 +93,15 @@ class SessionsController(
                     authorizationToken = accessToken,
                     request = RemoteSessionCreateAndStartRequest(
                         connectorId = draft.connectorId,
-                        runtime = draft.runtime,
+                        runtime = draft.runtimeType,
                         title = draft.title?.trim()?.takeIf(String::isNotBlank),
                         cwd = draft.cwd?.trim()?.takeIf(String::isNotBlank),
                         content = draft.content.trim(),
                         selections = draft.selections.toMap(),
                         attachments = draft.attachments.map(NewSessionAttachmentPart::toInlineAttachmentRef),
                         clientMessageId = draft.clientMessageId,
+                        runtimeId = draft.runtimeId,
+                        runtimeType = draft.runtimeType,
                     ),
                 )
                 NewSessionCreateOutcome.Created(
@@ -215,7 +218,7 @@ class SessionsController(
 
     suspend fun loadNewSessionRuntimeCapabilities(
         connectorId: String,
-        runtime: String,
+        runtimeId: String,
     ): Result<NewSessionRuntimeCapabilities> {
         val auth = newSessionAuth() ?: return Result.failure(
             IllegalStateException("Sign in again to load runtime capabilities."),
@@ -226,7 +229,7 @@ class SessionsController(
                     serverUrl = auth.serverUrl,
                     authorizationToken = auth.accessToken,
                     deviceId = connectorId,
-                    runtime = runtime,
+                    runtimeId = runtimeId,
                 ).toNewSessionRuntimeCapabilities()
             }.wrapNewSessionFailure("Could not load runtime capabilities.")
         }
@@ -234,7 +237,7 @@ class SessionsController(
 
     suspend fun loadNewSessionModelCatalog(
         connectorId: String,
-        runtime: String,
+        runtimeId: String,
     ): Result<NewSessionModelCatalog> {
         val auth = newSessionAuth() ?: return Result.failure(
             IllegalStateException("Sign in again to load the model catalog."),
@@ -245,7 +248,7 @@ class SessionsController(
                     serverUrl = auth.serverUrl,
                     authorizationToken = auth.accessToken,
                     deviceId = connectorId,
-                    runtime = runtime,
+                    runtimeId = runtimeId,
                 ).toNewSessionModelCatalog()
             }.wrapNewSessionFailure("Could not load the model catalog.")
         }
@@ -253,7 +256,7 @@ class SessionsController(
 
     suspend fun loadNewSessionPermissionCatalog(
         connectorId: String,
-        runtime: String,
+        runtimeId: String,
     ): Result<NewSessionPermissionCatalog> {
         val auth = newSessionAuth() ?: return Result.failure(
             IllegalStateException("Sign in again to load the permission catalog."),
@@ -264,7 +267,7 @@ class SessionsController(
                     serverUrl = auth.serverUrl,
                     authorizationToken = auth.accessToken,
                     deviceId = connectorId,
-                    runtime = runtime,
+                    runtimeId = runtimeId,
                 ).toNewSessionPermissionCatalog()
             }.wrapNewSessionFailure("Could not load the permission catalog.")
         }
@@ -421,7 +424,6 @@ class SessionsController(
             device.id to device.toAgentDevice()
         }
         val allSessions = remoteSessions
-            .filter { session -> session.runtime.isSupportedV2NativeRuntime() }
             .sortedWith(sessionComparator())
             .map { session ->
                 session.toAgentSession(devicesById)
@@ -462,9 +464,7 @@ class SessionsController(
                 val response = request(auth.serverUrl, auth.accessToken, normalized)
                 val devicesById = devices.associateBy { it.id }
                 SessionBatchUpdate(
-                    sessions = response.sessions
-                        .filter { it.runtime.isSupportedV2NativeRuntime() }
-                        .map { it.toAgentSession(devicesById) },
+                    sessions = response.sessions.map { it.toAgentSession(devicesById) },
                     notFound = response.notFound,
                     serverTime = response.serverTime,
                 )
@@ -502,7 +502,12 @@ class SessionsController(
 
 internal fun validateNewSessionDraft(draft: NewSessionCreateDraft): String? {
     if (draft.connectorId.isBlank()) return "Choose a connector before starting."
-    if (!draft.runtime.isSupportedV2NativeRuntime()) return "Choose a supported runtime before starting."
+    if (!draft.runtimeType.isValidRuntimeType() || draft.runtime != draft.runtimeType) {
+        return "Choose a valid runtime type before starting."
+    }
+    if (!draft.runtimeId.isValidRuntimeInstanceId(draft.runtimeType)) {
+        return "Choose a valid runtime instance before starting."
+    }
     if (draft.content.isBlank() && draft.attachments.isEmpty()) return "Enter a message or attach a file before starting."
     if (draft.clientMessageId.isBlank()) return "The client message ID is missing."
     if (draft.attachments.size > MAX_CREATE_ATTACHMENTS) return "You can attach up to $MAX_CREATE_ATTACHMENTS files."

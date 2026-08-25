@@ -9,7 +9,7 @@ import kotlinx.coroutines.runBlocking
 
 class DeviceRuntimeStateTest {
     @Test
-    fun listResponseReplacesExistingRuntimesAndSortsNativeOrder() {
+    fun listResponseReplacesExistingRuntimesAndSortsProviderOrder() {
         val previous = DeviceRuntimeManagementState(
             connectorId = "connector",
             runtimes = listOf(runtime("old")),
@@ -59,7 +59,7 @@ class DeviceRuntimeStateTest {
     }
 
     @Test
-    fun runtimeSectionsKeepNativePriorityAndDiscoveryAvailabilityDefaultsToTrue() {
+    fun runtimeSectionsKeepProviderPriorityAndDiscoveryAvailabilityDefaultsToTrue() {
         val other = runtime("other").copy(configured = false)
         val claude = runtime("claude").copy(configured = false, discovery = mapOf("available" to false))
         val codex = runtime("codex").copy(configured = false)
@@ -71,6 +71,17 @@ class DeviceRuntimeStateTest {
         )
         assertTrue(codex.discoveryAvailable)
         assertFalse(claude.discoveryAvailable)
+    }
+
+    @Test
+    fun dynamicInstancesSortByProviderAndExposeInstanceFirstLabels() {
+        val claude = runtime("rti_claude_work", type = "claude").copy(displayName = "Work Claude")
+        val codex = runtime("rti_codex_personal", type = "codex").copy(displayName = "Personal")
+        val state = DeviceRuntimeManagementState(runtimes = listOf(claude, codex))
+
+        assertEquals(listOf("rti_codex_personal", "rti_claude_work"), state.configuredRuntimes.map { it.id })
+        assertEquals("Personal", codex.labels.primary)
+        assertEquals("Codex", codex.labels.secondary)
     }
 
     @Test
@@ -181,11 +192,15 @@ class DeviceRuntimeStateTest {
         )
     }
 
-    private fun runtime(id: String, active: Boolean = false): DeviceRuntime {
+    private fun runtime(
+        id: String,
+        active: Boolean = false,
+        type: String = id,
+    ): DeviceRuntime {
         return DeviceRuntime(
             connectorId = "connector",
             id = id,
-            type = "native",
+            type = type,
             displayName = id,
             present = true,
             configured = true,

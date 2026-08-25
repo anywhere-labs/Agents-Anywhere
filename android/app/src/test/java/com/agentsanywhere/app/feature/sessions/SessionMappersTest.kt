@@ -37,6 +37,23 @@ class SessionMappersTest {
         }
     }
 
+    @Test
+    fun namedInstanceLabelIsPrimaryAndProviderTypeIsSecondary() {
+        val session = remoteSession("idle").copy(
+            runtimeId = "rti_codex_work_01",
+            runtimeType = "codex",
+            runtimeName = "Work Codex",
+        ).toAgentSession(emptyMap())
+
+        assertEquals("codex", session.runtime)
+        assertEquals("rti_codex_work_01", session.runtimeId)
+        assertEquals("codex", session.runtimeType)
+        assertEquals("Work Codex", session.runtimeName)
+        assertEquals("Work Codex", session.runtimeLabel)
+        assertEquals("Work Codex · Codex", session.runtimeContextLabel)
+        assertTrue(session.metaLabel.startsWith("Work Codex  ·  Codex"))
+    }
+
     private fun remoteSession(status: String) = RemoteSession(
         id = "session",
         connectorId = "connector",

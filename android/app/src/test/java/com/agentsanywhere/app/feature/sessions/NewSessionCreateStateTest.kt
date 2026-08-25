@@ -56,7 +56,7 @@ class NewSessionCreateStateTest {
     }
 
     @Test
-    fun draftValidationAllowsTextOrPureAttachmentButRejectsEmptyAndInvalidRuntime() {
+    fun draftValidationAcceptsExtensionAndDynamicRuntimeIdsButRejectsInvalidPairs() {
         val base = draft(content = "message")
         assertNull(validateNewSessionDraft(base))
         assertNull(
@@ -68,7 +68,18 @@ class NewSessionCreateStateTest {
             ),
         )
         assertNotNull(validateNewSessionDraft(base.copy(content = "", attachments = emptyList())))
-        assertNotNull(validateNewSessionDraft(base.copy(runtime = "acp")))
+        assertNull(
+            validateNewSessionDraft(
+                base.copy(runtime = "acp", runtimeId = "acp", runtimeType = "acp"),
+            ),
+        )
+        assertNull(validateNewSessionDraft(base.copy(runtimeId = "rti_codex_work_01")))
+        assertNotNull(validateNewSessionDraft(base.copy(runtimeId = "claude")))
+        assertNotNull(
+            validateNewSessionDraft(
+                base.copy(runtime = "bad runtime", runtimeId = "bad runtime", runtimeType = "bad runtime"),
+            ),
+        )
     }
 
     @Test
@@ -90,6 +101,20 @@ class NewSessionCreateStateTest {
             state.copy(sessions = state.sessions + session(id = "created-2"))
                 .newCreateCandidates(request)
                 .size,
+        )
+    }
+
+    @Test
+    fun timeoutReconciliationMatchesConcreteRuntimeInstance() {
+        val request = draft(content = "message").copy(runtimeId = "rti_codex_work_01")
+        val matching = session(id = "matching").copy(runtimeId = "rti_codex_work_01")
+        val otherInstance = session(id = "other").copy(runtimeId = "rti_codex_personal_01")
+
+        assertEquals(
+            listOf("matching"),
+            SessionsState(sessions = listOf(matching, otherInstance))
+                .newCreateCandidates(request)
+                .map { it.id },
         )
     }
 
