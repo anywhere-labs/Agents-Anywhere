@@ -1,0 +1,13 @@
+This package is a clean-room rewrite informed by the behavior of
+xipian1216/dsh-aa-bridge.
+
+Original implementation author and source:
+  xipian1216/dsh-aa-bridge
+
+Agents Anywhere import/reference commits:
+  1639548 feat(dsh): import Desktop bridge plugin
+  cac7e76 chore(dsh): integrate Desktop bridge package
+  53a136c docs(dsh): clarify bridge repository ownership
+
+No generated lib output, source maps, or private protocol fixtures from that
+implementation are included in this package.
