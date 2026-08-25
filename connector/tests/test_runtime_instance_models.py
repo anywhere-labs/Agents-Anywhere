@@ -5,7 +5,6 @@ from dataclasses import FrozenInstanceError, fields
 from typing import Any, cast
 
 import pytest
-
 from connector.runtime_protocol import (
     MAX_CONFIG_REVISION,
     RuntimeConfigSchema,
@@ -236,6 +235,42 @@ def test_runtime_type_descriptor_config_schema_matches_provider_key() -> None:
             display_name="Codex",
             available=True,
             config_schema=schema,
+        )
+
+
+@pytest.mark.parametrize("revision", [0, MAX_CONFIG_REVISION])
+def test_runtime_type_descriptor_accepts_safe_config_schema_revision(
+    revision: int,
+) -> None:
+    descriptor = RuntimeTypeDescriptor(
+        runtime_type="codex",
+        display_name="Codex",
+        available=True,
+        config_schema=RuntimeConfigSchema(
+            runtime="codex",
+            revision=revision,
+            schema={"type": "object"},
+        ),
+    )
+
+    assert descriptor.config_schema is not None
+    assert descriptor.config_schema.revision == revision
+
+
+@pytest.mark.parametrize("revision", [True, -1, MAX_CONFIG_REVISION + 1])
+def test_runtime_type_descriptor_rejects_unsafe_config_schema_revision(
+    revision: object,
+) -> None:
+    with pytest.raises((TypeError, ValueError)):
+        RuntimeTypeDescriptor(
+            runtime_type="codex",
+            display_name="Codex",
+            available=True,
+            config_schema=RuntimeConfigSchema(
+                runtime="codex",
+                revision=cast(Any, revision),
+                schema={"type": "object"},
+            ),
         )
 
 

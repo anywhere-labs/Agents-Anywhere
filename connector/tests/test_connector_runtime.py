@@ -6,13 +6,11 @@ import hashlib
 import json
 import sys
 from collections.abc import Mapping
+from types import SimpleNamespace
 from typing import Any, Self
 
 import httpx
 import pytest
-from websockets.exceptions import ConnectionClosedError
-from websockets.frames import Close
-
 from connector.core.config import ConnectorConfig
 from connector.local.terminal import TerminalBackend
 from connector.runtime_protocol import (
@@ -78,6 +76,8 @@ from connector.server.rpc import (
     sanitize_rpc_log_value,
 )
 from connector.server.runtime_sync import RuntimeSyncRunner, _timeline_sync_notification
+from websockets.exceptions import ConnectionClosedError
+from websockets.frames import Close
 
 
 def test_rpc_log_payload_sanitizer_redacts_secrets_and_bounds_size() -> None:
@@ -877,6 +877,13 @@ class FakeRuntimeSupervisor:
             raise RuntimeError(f"unknown runtime {runtime_id}")
         return self._runtime
 
+    def entry(self, runtime_id: str) -> SimpleNamespace:
+        runtime = self.resolve_runtime(runtime_id)
+        return SimpleNamespace(
+            runtime_type=runtime.identity.runtime,
+            runtime_id=runtime_id,
+        )
+
 
 async def unused_notification_sender(method: str, params: dict[str, Any]) -> None:
     raise AssertionError(f"unexpected notification {method}: {params}")
@@ -936,6 +943,44 @@ class FakeSnapshotTerminalBackend(FakeTerminalBackend):
 
 def test_connector_runtime_dispatches_request_and_forwards_notifications() -> None:
     asyncio.run(_exercise_runtime())
+
+
+def test_connector_runtime_publishes_named_instance_status_scope() -> None:
+    async def run() -> None:
+        client = _client()
+        websocket = FakeWebSocket()
+        client._rpc.set_connection(websocket)  # type: ignore[arg-type]
+        negotiated = await client.dispatch(
+            "runtime.discover",
+            {"supportedControlVersions": ["2.0", "1.0"]},
+        )
+
+        await client.dispatch(
+            "runtime.start",
+            {
+                "runtime": "codex",
+                "runtimeId": "rti_codex_named",
+                "name": "Named Codex",
+                "config": {},
+                "configRevision": 1,
+            },
+        )
+
+        assert negotiated["selectedControlVersion"] == "2.0"
+        status_scopes = [
+            message["params"]
+            for message in websocket.messages
+            if message.get("method") == "runtime.statusChanged"
+        ]
+        assert [scope["status"] for scope in status_scopes] == [
+            "validating",
+            "starting",
+            "running",
+        ]
+        assert all(scope["runtime"] == "codex" for scope in status_scopes)
+        assert all(scope["runtimeId"] == "rti_codex_named" for scope in status_scopes)
+
+    asyncio.run(run())
 
 
 def test_connector_rpc_start_message_does_not_block_later_requests() -> None:
@@ -1395,9 +1440,11 @@ async def _exercise_runtime_sync_reconciles_complete_dsh_inventory_only() -> Non
     begin = ingested_batches[0][0]["params"]
     complete = ingested_batches[1][0]["params"]
     assert begin["runtime"] == "dsh"
+    assert begin["runtimeId"] == "dsh"
     assert len(begin["scanToken"]) == 32
     assert complete == {
         "runtime": "dsh",
+        "runtimeId": "dsh",
         "scanToken": begin["scanToken"],
         "complete": True,
         "sessions": [
@@ -1850,7 +1897,11 @@ async def _exercise_runtime() -> None:
     assert ws.messages[0] == {
         "type": "notification",
         "method": "runtime.statusChanged",
-        "params": {"runtimeId": "codex", "status": "validating"},
+        "params": {
+            "runtime": "codex",
+            "runtimeId": "codex",
+            "status": "validating",
+        },
     }
     assert ws.messages[-1] == {
         "id": "rpc_1",
@@ -1963,7 +2014,11 @@ async def _exercise_runtime() -> None:
     assert ws.messages[-1]["result"]["notices"][0] == {
         "noticeId": "notice_1",
         "sessionId": "sess_1",
-        "source": {"runtime": "codex"},
+        "source": {
+            "runtime": "codex",
+            "runtimeType": "codex",
+            "runtimeId": "codex",
+        },
         "type": "interaction",
         "title": "Approval required",
         "severity": "info",
@@ -1972,7 +2027,7 @@ async def _exercise_runtime() -> None:
         "responseRequired": True,
         "actions": [{"actionId": "approve", "label": "Approve"}],
         "context": {},
-        "metadata": {},
+        "metadata": {"runtimeType": "codex", "runtimeId": "codex"},
     }
 
     await client.handle_message(
@@ -1989,10 +2044,11 @@ async def _exercise_runtime() -> None:
         "version": "1",
         "scope": "runtime",
         "runtime": "codex",
+        "runtimeId": "codex",
         "supported": True,
         "available": True,
         "allowed": True,
-        "metadata": {},
+        "metadata": {"runtimeType": "codex", "runtimeId": "codex"},
     }
 
     await client.handle_message(
@@ -2039,12 +2095,13 @@ async def _exercise_runtime() -> None:
         "version": "1",
         "scope": "session",
         "runtime": "codex",
+        "runtimeId": "codex",
         "sessionId": "sess_1",
         "supported": True,
         "available": False,
         "allowed": True,
         "unavailableReason": "session_not_running",
-        "metadata": {},
+        "metadata": {"runtimeType": "codex", "runtimeId": "codex"},
     }
 
     await client.handle_message(
@@ -2965,6 +3022,7 @@ async def _exercise_runtime_config_read() -> None:
         "running": True,
         "config": {
             "runtime": "codex",
+            "runtimeId": "codex",
             "revision": 42,
             "values": {"environment": {"EXAMPLE": "1"}},
             "schema": {
@@ -2974,7 +3032,11 @@ async def _exercise_runtime_config_read() -> None:
                 },
             },
             "uiSchema": {"environment": {"component": "keyValue"}},
-            "metadata": {"validated": True},
+            "metadata": {
+                "validated": True,
+                "runtimeType": "codex",
+                "runtimeId": "codex",
+            },
         },
     }
 

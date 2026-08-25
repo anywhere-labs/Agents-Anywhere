@@ -6,7 +6,6 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-
 from connector.launch import LaunchTarget
 from connector.runtime_protocol import RuntimeInvalidRequestError
 from connector.runtimes.claude.provider import ClaudeProvider
@@ -26,7 +25,9 @@ async def _test_claude_provider_discovers_sdk_with_initial_runtime_actions() -> 
     item = await provider.discover()
 
     assert item.available is True
-    assert item.configured is True
+    assert item.metadata["configured"] is True
+    assert item.instance_policy == "single"
+    assert item.max_instances == 1
     assert item.capabilities["modelCatalog"] is True
     assert item.capabilities["createAndStartSession"] is True
     assert item.capabilities["startTurn"] is True
@@ -59,7 +60,7 @@ async def _test_claude_provider_reports_unavailable_without_sdk() -> None:
     item = await provider.discover()
 
     assert item.available is False
-    assert item.configured is False
+    assert item.metadata["configured"] is False
     assert "claude_agent_sdk" in (item.reason or "")
 
 
@@ -202,7 +203,9 @@ async def _test_claude_provider_rejects_protected_environment() -> None:
     provider = ClaudeProvider(sdk_loader=_sdk, command_checker=_available_command)
 
     with pytest.raises(RuntimeInvalidRequestError, match="managed by the connector"):
-        await provider.validate_config({"environment": {"AGENT_SERVER_URL": "http://x"}})
+        await provider.validate_config(
+            {"environment": {"AGENT_SERVER_URL": "http://x"}}
+        )
 
 
 def test_claude_provider_creates_skeleton_runtime() -> None:
@@ -217,6 +220,7 @@ async def _test_claude_provider_creates_skeleton_runtime() -> None:
 
     assert isinstance(runtime, ClaudeRuntime)
     assert await runtime.get_config() == config
+    assert runtime._pending_messages._connector_id == _NoHost().session_namespace
 
 
 def _sdk() -> Any:
@@ -252,3 +256,7 @@ class _NoHost:
     @property
     def connector_id(self) -> str:
         return "conn_test"
+
+    @property
+    def session_namespace(self) -> str:
+        return "conn_test:claude:rti_test"
