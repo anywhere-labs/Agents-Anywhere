@@ -1842,6 +1842,56 @@ async def _test_claude_runtime_projects_tool_blocks_to_timeline() -> None:
     assert history_tool.status == "done"
 
 
+def test_claude_runtime_closes_history_tool_calls_without_results() -> None:
+    asyncio.run(_test_claude_runtime_closes_history_tool_calls_without_results())
+
+
+async def _test_claude_runtime_closes_history_tool_calls_without_results() -> None:
+    host = _RecordingHost()
+    sdk = _HistorySdk(
+        messages={
+            "claude_orphan_tool_session": [
+                SimpleNamespace(
+                    type="user",
+                    uuid="orphan_tool_user",
+                    session_id="claude_orphan_tool_session",
+                    message={"role": "user", "content": "where am I"},
+                ),
+                SimpleNamespace(
+                    type="assistant",
+                    uuid="orphan_tool_call",
+                    session_id="claude_orphan_tool_session",
+                    message={
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": "orphan_tool_1",
+                                "name": "Bash",
+                                "input": {"command": "pwd"},
+                            }
+                        ],
+                    },
+                ),
+            ]
+        }
+    )
+    runtime = _runtime(host=host, sdk=sdk)
+
+    handled = await runtime.sync_session_timeline(
+        "sess_orphan_tool",
+        "claude_orphan_tool_session",
+    )
+
+    tool = next(item for item in host.timeline_syncs[-1]["items"] if item.type == "tool")
+    assert handled is True
+    assert tool.status == "done"
+    assert tool.content["kind"] == "tool_result"
+    assert tool.content["command"] == "pwd"
+    assert tool.content["missingResult"] is True
+    assert tool.content["synthetic"] is True
+
+
 def test_claude_runtime_binds_identical_live_user_messages_by_history_order() -> None:
     asyncio.run(
         _test_claude_runtime_binds_identical_live_user_messages_by_history_order()

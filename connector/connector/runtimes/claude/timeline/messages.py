@@ -34,6 +34,13 @@ class ClaudeToolBlock:
     tool_input: Any = None
     tool_result: Any = None
     is_error: bool = False
+    is_synthetic: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class ClaudePendingToolCall:
+    block: ClaudeToolBlock
+    turn_id: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,7 +55,7 @@ class ClaudeMessageProjector:
     def __init__(self) -> None:
         self._order_by_id: dict[str, int] = {}
         self._next_order_seq = 1
-        self._tool_calls: dict[str, ClaudeToolBlock] = {}
+        self._tool_calls: dict[str, ClaudePendingToolCall] = {}
         self._ignored_task_tool_use_ids: set[str] = set()
 
     def message_item(
@@ -182,6 +189,26 @@ class ClaudeMessageProjector:
             )
         return tuple(items)
 
+    def missing_history_tool_result_items(
+        self,
+        session: ClaudeSession,
+    ) -> tuple[RuntimeTimelineItem, ...]:
+        items: list[RuntimeTimelineItem] = []
+        for pending in tuple(self._tool_calls.values()):
+            items.append(
+                self.tool_item(
+                    session=session,
+                    turn_id=pending.turn_id,
+                    block=ClaudeToolBlock(
+                        block_type="tool_result",
+                        tool_use_id=pending.block.tool_use_id,
+                        tool_result="No tool result was recorded in Claude history.",
+                        is_synthetic=True,
+                    ),
+                )
+            )
+        return tuple(items)
+
     def tool_item(
         self,
         session: ClaudeSession,
@@ -204,7 +231,8 @@ class ClaudeMessageProjector:
             event=f"claude.{block.block_type}",
         )
         if block.block_type == "tool_result":
-            call = self._tool_calls.get(item_id)
+            pending = self._tool_calls.pop(item_id, None)
+            call = pending.block if pending is not None else None
             return ToolTimelineItem(
                 id=item_id,
                 type="tool",
@@ -215,7 +243,7 @@ class ClaudeMessageProjector:
                 source=source,
             ).to_platform_item(session_id=session.session_id, order_seq=order_seq)
 
-        self._tool_calls[item_id] = block
+        self._tool_calls[item_id] = ClaudePendingToolCall(block=block, turn_id=turn_id)
         return ToolTimelineItem(
             id=item_id,
             type="tool",
@@ -515,6 +543,11 @@ def _tool_result_content(
         "outputPreview": _preview_text(output),
         "outputLength": len(output),
         "isError": block.is_error,
+        **(
+            {"synthetic": True, "missingResult": True}
+            if block.is_synthetic
+            else {}
+        ),
         **({"error": output} if block.is_error else {}),
     }
     call_content = _tool_call_content(call) if call is not None else None

@@ -363,6 +363,7 @@ def _history_items_from_messages(
                 ),
             )
         )
+    items.extend(projector.missing_history_tool_result_items(session=session))
     return _resequence_history_items(_dedupe_history_items(items))
 
 
