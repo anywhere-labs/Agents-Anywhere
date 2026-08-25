@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Any
 
 from connector.runtime_protocol import RuntimeInvalidRequestError
+from connector.runtime_protocol.filesystem import canonical_path
 
 DEFAULT_STARTUP_TIMEOUT_MS = 30_000
 DEFAULT_REQUEST_TIMEOUT_MS = 60_000
@@ -100,12 +100,6 @@ def endpoint_path(values: dict[str, Any]) -> Path:
             dsh_home(values) / "agents-anywhere" / "bridge" / "endpoint.json"
         )
     )
-
-
-def canonical_path(path: str | Path) -> str:
-    return os.path.normcase(str(Path(path).expanduser().resolve(strict=False)))
-
-
 def dsh_capabilities() -> dict[str, bool]:
     return {
         "modelCatalog": True,

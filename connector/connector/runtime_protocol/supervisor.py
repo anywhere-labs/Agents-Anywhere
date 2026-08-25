@@ -297,6 +297,7 @@ class RuntimeSupervisor:
             error=None,
         )
         native_runtime: AgentRuntime | None = None
+        bound_runtime: RuntimeInstance | None = None
         try:
             scoped_host = RuntimeInstanceHost(
                 base=self._host,
@@ -310,14 +311,20 @@ class RuntimeSupervisor:
             )
             await bound_runtime.start()
         except Exception as exc:
-            await self._stop_runtime_after_failed_start(entry.provider, native_runtime)
+            cleanup_error = await self._stop_runtime_after_failed_start(
+                entry.provider,
+                native_runtime,
+            )
+            retained_runtime = bound_runtime or native_runtime
+            cleanup_failed = cleanup_error is not None and retained_runtime is not None
             await self._set_entry(
                 instance.runtime_id,
-                runtime=None,
-                resource_claims=(),
+                runtime=retained_runtime if cleanup_failed else None,
+                requested_values=requested_values if cleanup_failed else None,
+                resource_claims=claims if cleanup_failed else (),
                 status="error",
                 config=config,
-                error=error_payload(exc),
+                error=error_payload(cleanup_error or exc),
             )
             raise
 
@@ -464,9 +471,9 @@ class RuntimeSupervisor:
     async def _stop_runtime_after_failed_start(
         provider: RuntimeProvider,
         runtime: AgentRuntime | None,
-    ) -> None:
+    ) -> Exception | None:
         if runtime is None:
-            return
+            return None
         try:
             await provider.stop_runtime(runtime)
         except Exception as exc:  # noqa: BLE001
@@ -475,6 +482,8 @@ class RuntimeSupervisor:
                 provider.runtime_type,
                 exc.__class__.__name__,
             )
+            return exc
+        return None
 
 
 def provider_registry(

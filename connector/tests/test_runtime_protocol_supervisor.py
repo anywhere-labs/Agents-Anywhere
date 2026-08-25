@@ -5,6 +5,7 @@ from collections.abc import Mapping
 from typing import Any
 
 import pytest
+
 from connector.runtime_protocol import (
     AgentRuntime,
     RuntimeConfig,
@@ -63,6 +64,7 @@ class FakeProvider(RuntimeProvider):
         self.fail_discover = False
         self.fail_validate = False
         self.fail_start = False
+        self.fail_stop = False
         self.config_runtime = "fake"
         self.config_revision = 1
         self.normalize_modes: dict[str, str] = {}
@@ -138,6 +140,8 @@ class FakeProvider(RuntimeProvider):
 
     async def stop_runtime(self, runtime: AgentRuntime) -> None:
         self.stopped.append(runtime)
+        if self.fail_stop:
+            raise RuntimeError("stop boom")
         await runtime.stop()
 
     def resource_claims(
@@ -560,6 +564,42 @@ def test_runtime_protocol_supervisor_releases_claim_after_failed_start() -> None
             {"mode": "shared"},
         )
         assert running.identity.runtime_id == "rti_running"
+
+    asyncio.run(run())
+
+
+def test_runtime_protocol_supervisor_retains_claim_when_start_cleanup_fails() -> None:
+    async def run() -> None:
+        provider = FakeProvider()
+        provider.claim_by_mode = {"shared": "source"}
+        provider.fail_start = True
+        provider.fail_stop = True
+        supervisor = RuntimeSupervisor(providers=(provider,), host=FakeHost())
+        failed_spec = RuntimeInstanceSpec("rti_failed", "fake", "Failed")
+        waiting_spec = RuntimeInstanceSpec("rti_waiting", "fake", "Waiting")
+
+        with pytest.raises(RuntimeError, match="boom"):
+            await supervisor.start(failed_spec, {"mode": "shared"})
+
+        failed_entry = supervisor.entry("rti_failed")
+        assert failed_entry.runtime is not None
+        assert failed_entry.resource_claims == (
+            RuntimeResourceClaim(
+                kind="fake_source",
+                key="source",
+                label="source source",
+            ),
+        )
+        assert failed_entry.error is not None
+        assert failed_entry.error["message"] == "stop boom"
+        with pytest.raises(RuntimeConflictError, match="Failed"):
+            await supervisor.start(waiting_spec, {"mode": "shared"})
+
+        provider.fail_start = False
+        provider.fail_stop = False
+        await supervisor.stop("rti_failed")
+        running = await supervisor.start(waiting_spec, {"mode": "shared"})
+        assert running.identity.runtime_id == "rti_waiting"
 
     asyncio.run(run())
 

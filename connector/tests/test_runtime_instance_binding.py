@@ -5,6 +5,8 @@ import inspect
 from collections.abc import Mapping
 from typing import Any
 
+import pytest
+
 from connector.runtime_protocol import (
     AgentRuntime,
     RuntimeAttachmentContent,
@@ -27,6 +29,7 @@ from connector.runtime_protocol import (
     SessionNotice,
     SessionState,
 )
+from connector.runtimes.session_identity import stable_runtime_session_id
 
 
 class CompleteInventoryRuntime(AgentRuntime):
@@ -314,6 +317,27 @@ def test_runtime_instance_host_falls_back_to_runtime_id_namespace() -> None:
     assert host.session_namespace == "conn_test:codex:rti_codex_one"
     assert host.instance_sync_key("codex/history/cursor") == (
         "codex/instances/rti_codex_one/history/cursor"
+    )
+
+
+@pytest.mark.parametrize("runtime_type", ["codex", "claude", "dsh"])
+def test_legacy_instance_preserves_pre_instance_session_ids(runtime_type: str) -> None:
+    base = RecordingHost()
+    host = RuntimeInstanceHost(
+        base=base,
+        instance=RuntimeInstanceSpec(runtime_type, runtime_type, runtime_type.title()),
+        source_key=RuntimeSourceKey(f"{runtime_type}_source", "/tmp/source"),
+    )
+
+    assert host.session_namespace == base.connector_id
+    assert stable_runtime_session_id(
+        host.session_namespace,
+        runtime_type,
+        "external-session",
+    ) == stable_runtime_session_id(
+        base.connector_id,
+        runtime_type,
+        "external-session",
     )
 
 

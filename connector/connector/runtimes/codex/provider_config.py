@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from connector.runtime_protocol import RuntimeInvalidRequestError
+from connector.runtime_protocol.filesystem import canonical_path
 from connector.runtimes.codex.sdk.binary import CodexRuntimeBinaryMode
 from connector.runtimes.custom_models import custom_models_schema
 from connector.runtimes.model_gateway import model_gateway_schema
@@ -208,7 +209,3 @@ def validate_codex_home(path: str) -> None:
         raise RuntimeInvalidRequestError(
             "codexHome must point to a directory or a path that can be created"
         )
-
-
-def canonical_path(path: str | Path) -> str:
-    return os.path.normcase(str(Path(path).expanduser().resolve(strict=False)))

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import sys
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
 import pytest
+
 from connector.runtime_protocol import (
     RuntimeConfig,
     RuntimeConflictError,
@@ -15,6 +17,7 @@ from connector.runtime_protocol import (
     RuntimeInvalidRequestError,
     RuntimeSupervisor,
 )
+from connector.runtime_protocol.filesystem import filesystem_resource_key
 from connector.runtimes.codex import provider_config
 from connector.runtimes.codex.provider import CodexProvider
 from connector.runtimes.codex.runtime import CodexRuntime
@@ -435,7 +438,29 @@ def test_codex_provider_claims_effective_environment_home(
         claim = provider.resource_claims(config)[0]
 
         assert config.values["codexHome"] == str(environment_home.resolve())
-        assert claim.key == str(environment_home.resolve())
+        assert claim.key == filesystem_resource_key(environment_home)
+
+    asyncio.run(run())
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="Darwin path identity semantics")
+def test_codex_provider_blocks_case_and_unicode_home_aliases(tmp_path: Path) -> None:
+    async def run() -> None:
+        provider = CodexProvider(sdk_checker=_available_sdk)
+        composed = tmp_path / "Cod\u00e9x-Home"
+        decomposed = tmp_path / "CODE\u0301X-HOME"
+
+        first = await provider.validate_config({"codexHome": str(composed)})
+        second = await provider.validate_config({"codexHome": str(decomposed)})
+
+        first_claim = provider.resource_claims(first)[0]
+        second_claim = provider.resource_claims(second)[0]
+        assert (first_claim.kind, first_claim.key, first_claim.mode) == (
+            second_claim.kind,
+            second_claim.key,
+            second_claim.mode,
+        )
+        assert provider.session_source_key(first) == provider.session_source_key(second)
 
     asyncio.run(run())
 

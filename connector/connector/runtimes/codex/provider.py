@@ -18,6 +18,7 @@ from connector.runtime_protocol import (
     RuntimeSourceKey,
     RuntimeTypeDescriptor,
 )
+from connector.runtime_protocol.filesystem import filesystem_resource_key
 from connector.runtime_protocol.host import RuntimeHostClient
 from connector.runtimes.codex import provider_config
 from connector.runtimes.codex.runtime import CodexRuntime
@@ -248,7 +249,7 @@ class CodexProvider(RuntimeProvider):
         return (
             RuntimeResourceClaim(
                 kind="codex_home",
-                key=codex_home,
+                key=filesystem_resource_key(codex_home),
                 label=f"Codex Home {codex_home!r}",
             ),
         )
@@ -256,5 +257,5 @@ class CodexProvider(RuntimeProvider):
     def session_source_key(self, config: RuntimeConfig) -> RuntimeSourceKey:
         return RuntimeSourceKey(
             kind="codex_home",
-            key=provider_config.canonical_path(str(config.values["codexHome"])),
+            key=filesystem_resource_key(str(config.values["codexHome"])),
         )

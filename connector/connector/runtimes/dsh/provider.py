@@ -16,6 +16,7 @@ from connector.runtime_protocol import (
     RuntimeSourceKey,
     RuntimeTypeDescriptor,
 )
+from connector.runtime_protocol.filesystem import filesystem_resource_key
 from connector.runtime_protocol.host import RuntimeHostClient
 from connector.runtimes.dsh import discovery, provider_config
 from connector.runtimes.dsh.runtime import DshRuntime
@@ -179,12 +180,12 @@ class DshProvider(RuntimeProvider):
         return (
             RuntimeResourceClaim(
                 kind="dsh_home",
-                key=dsh_home,
+                key=filesystem_resource_key(dsh_home),
                 label=f"DSH Home {dsh_home!r}",
             ),
             RuntimeResourceClaim(
                 kind="dsh_bridge_endpoint",
-                key=endpoint,
+                key=filesystem_resource_key(endpoint),
                 label=f"DSH bridge endpoint {endpoint!r}",
             ),
         )
@@ -192,5 +193,7 @@ class DshProvider(RuntimeProvider):
     def session_source_key(self, config: RuntimeConfig) -> RuntimeSourceKey:
         return RuntimeSourceKey(
             kind="dsh_bridge_endpoint",
-            key=str(provider_config.endpoint_path(dict(config.values))),
+            key=filesystem_resource_key(
+                provider_config.endpoint_path(dict(config.values))
+            ),
         )

@@ -171,6 +171,8 @@ class RuntimeInstanceHost(RuntimeHostClient):
 
     @property
     def session_namespace(self) -> str:
+        if self.instance.runtime_id == self.instance.runtime_type:
+            return self.connector_id
         if self.source_key is None:
             return (
                 f"{self.connector_id}:{self.instance.runtime_type}:"

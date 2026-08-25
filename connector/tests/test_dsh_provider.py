@@ -3,10 +3,12 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import os
+import sys
 from pathlib import Path
 from typing import Any
 
 import pytest
+
 from connector.runtime_protocol import RuntimeConfig, RuntimeInvalidRequestError
 from connector.runtimes.dsh.discovery import BridgeEndpoint, DshDiscovery
 from connector.runtimes.dsh.provider import DshProvider
@@ -411,6 +413,37 @@ def test_dsh_provider_canonicalizes_home_and_endpoint_claims(
         assert "secret-token" not in source.key
         assert "12345" not in source.key
         assert str(os.getpid()) not in source.key
+
+    asyncio.run(run())
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="Darwin path identity semantics")
+def test_dsh_provider_blocks_case_and_unicode_path_aliases(tmp_path: Path) -> None:
+    async def discover(values: dict[str, Any]) -> DshDiscovery:
+        path = Path(str(values["dshHome"])) / "agents-anywhere/bridge/endpoint.json"
+        return DshDiscovery(
+            True,
+            True,
+            BridgeEndpoint("127.0.0.1", 12345, "token", os.getpid(), path),
+            metadata={},
+        )
+
+    async def run() -> None:
+        provider = DshProvider(discoverer=discover)
+        composed = tmp_path / "DSH-Caf\u00e9"
+        decomposed = tmp_path / "dsh-cafe\u0301"
+
+        first = await provider.validate_config({"dshHome": str(composed)})
+        second = await provider.validate_config({"dshHome": str(decomposed)})
+
+        first_claims = provider.resource_claims(first)
+        second_claims = provider.resource_claims(second)
+        assert [
+            (claim.kind, claim.key, claim.mode) for claim in first_claims
+        ] == [
+            (claim.kind, claim.key, claim.mode) for claim in second_claims
+        ]
+        assert provider.session_source_key(first) == provider.session_source_key(second)
 
     asyncio.run(run())
 
