@@ -8,11 +8,13 @@ rebased onto `v2`. Current `v2` has since added DSH, runtime config deletion,
 session source-state tracking, inventory metadata, and later database
 migrations that the old branch does not understand.
 
-Compatibility is limited to released inputs: the current `v2` database,
-Protocol 1.0, Runtime Control 1.0, and rolling upgrades from the current
-Connector. The unpublished `codex/runtime-instances` branch and other draft
-runtime-instance API shapes, wire payloads, IDs, or persisted state have no
-migration or compatibility guarantee.
+Compatibility guarantees are limited to formally released inputs. The current
+`v2` database is the rewrite baseline and must migrate correctly, but
+unreleased branches, draft wire shapes, and development-only state are not
+compatibility targets. Existing incidental adapters for those inputs may
+remain when they do not interfere with the rewrite; they are not removed merely
+for being unreleased, and no new complexity or test obligation is added for
+them.
 
 ## Product decision
 
