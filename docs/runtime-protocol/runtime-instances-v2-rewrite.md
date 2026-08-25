@@ -1,6 +1,7 @@
 # Runtime Instances v2 Rewrite
 
-Status: implementation plan for `codex/runtime-instances-v2`.
+Status: implemented and verified on `codex/runtime-instances-v2`; pending merge
+to `v2`.
 
 This plan replaces direct integration of `codex/runtime-instances`. The old
 branch remains a behavior reference, but its commits must not be merged or
@@ -282,6 +283,31 @@ next cross-layer boundary.
 DSH Bridge packaging and the post-merge DSH UI fixes should use separate PRs
 unless the runtime-instance implementation depends on them directly.
 
+## Implementation outcome
+
+The rewrite was completed on 2026-08-26 without merging or rebasing the old
+`codex/runtime-instances` branch. The old branch remains available as a
+reference.
+
+- Runtime Control 2.0 is a separate validated contract; Protocol 1.0 remains
+  unchanged.
+- Connector runtime supervision is keyed by runtime instance, with per-instance
+  lifecycle serialization, resource claims, catalog scoping, and negotiation
+  bound to the concrete connection.
+- Server schema `v2_14` separates runtime types and instances, preserves
+  existing instance and session identity, and provides named-instance lifecycle
+  and routing APIs.
+- Web manages named instances and routes sessions by immutable runtime ID.
+  Android accepts dynamic IDs and renders instance names without provider-ID
+  allowlists.
+- DSH Bridge was completed in the same branch because the Connector DSH binding
+  depends on its shared contract and security behavior. It remains isolated as
+  its own package and commit series.
+- Connector readiness, discovery, reconnect negotiation, and ephemeral terminal
+  cleanup are fenced by the concrete connection generation. Deterministic tests
+  cover Redis promotion/unregister/cancellation races and stale discovery
+  responses.
+
 ## Verification gates
 
 - Connector full tests, focused supervisor/provider tests, Ruff, and Pyright.
@@ -297,3 +323,18 @@ unless the runtime-instance implementation depends on them directly.
   state, and DSH timeline controls.
 - Rolling-version compatibility tests or an explicit incompatible-handshake
   test, according to the chosen rollout policy.
+
+## Verification record
+
+- Runtime Control contract: 9 schemas, 11 valid fixtures, and 14 invalid
+  fixtures validated.
+- Connector: 601 tests passed; changed-file Ruff and Pyright checks passed.
+- Server: 520 tests passed and 14 skipped; changed-file Ruff and diff checks
+  passed. The repository-wide Ruff command still reports the pre-existing
+  lint baseline outside this change.
+- Web: protocol check, typecheck, 7 focused Node tests, and production build
+  passed.
+- DSH Bridge: 9 Vitest files with 21 tests passed; packed-package install,
+  import, and contract dump verification passed for 45 files.
+- Android Gradle tests were not run on this host because no Java runtime is
+  installed. No Java runtime or simulator was installed as part of this work.
