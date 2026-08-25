@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
-import { Download, ExternalLink, FileText, Loader2 } from "lucide-react"
+import { ExternalLink, FileText, Loader2 } from "lucide-react"
 
 import {
   Attachment,
@@ -43,7 +43,10 @@ export function MessageAttachments({
       aria-label={t("attach")}
       role="group"
       tabIndex={0}
-      className={cn("w-full", align === "right" && "[&>[data-slot=attachment]:first-child]:ms-auto")}
+      className={cn(
+        "w-full flex-col items-start gap-2 overflow-visible py-0",
+        align === "right" && "items-end",
+      )}
     >
       {attachments.map((attachment) => (
         <MessageAttachmentItem
@@ -113,12 +116,9 @@ function MessageAttachmentItem({
       return (
         <ImageAttachment
           name={resolvedName}
-          mediaType={resolvedMediaType}
-          size={attachment.size}
           src={attachment.previewUrl}
           previewOpen={previewOpen}
           setPreviewOpen={setPreviewOpen}
-          state="uploading"
         />
       )
     }
@@ -136,8 +136,6 @@ function MessageAttachmentItem({
     return (
       <ImageAttachment
         name={resolvedName}
-        mediaType={resolvedMediaType}
-        size={resolvedSize}
         src={openUrl}
         previewOpen={previewOpen}
         setPreviewOpen={setPreviewOpen}
@@ -232,50 +230,31 @@ function useDeviceAttachmentFile({
 
 function ImageAttachment({
   name,
-  mediaType,
-  size,
   src,
   previewOpen,
   setPreviewOpen,
-  state = "done",
 }: {
   name: string
-  mediaType: string
-  size: number | undefined
   src: string
   previewOpen: boolean
   setPreviewOpen: (open: boolean) => void
-  state?: "uploading" | "done"
 }) {
   return (
     <>
-      <Attachment
-        orientation="vertical"
-        state={state}
-        className="w-[min(320px,85vw)] has-data-[slot=attachment-content]:w-[min(320px,85vw)]"
+      <button
+        type="button"
+        aria-label={`Preview ${name}`}
+        onClick={() => setPreviewOpen(true)}
+        className="block w-fit max-w-[min(720px,85vw)] rounded-lg p-0 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
       >
-        <AttachmentMedia variant="image">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={src} alt={name} loading="lazy" />
-        </AttachmentMedia>
-        <AttachmentContent>
-          <AttachmentTitle>{name}</AttachmentTitle>
-          <AttachmentDescription>{attachmentDetails(mediaType, size)}</AttachmentDescription>
-        </AttachmentContent>
-        <AttachmentActions>
-          <AttachmentAction aria-label={`Preview ${name}`} onClick={() => setPreviewOpen(true)}>
-            <ExternalLink />
-          </AttachmentAction>
-          {state === "done" ? (
-            <AttachmentAction asChild aria-label={`Download ${name}`}>
-              <a href={src} download={name}>
-                <Download />
-              </a>
-            </AttachmentAction>
-          ) : null}
-        </AttachmentActions>
-        <AttachmentTrigger aria-label={`Preview ${name}`} onClick={() => setPreviewOpen(true)} />
-      </Attachment>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={src}
+          alt={name}
+          loading="lazy"
+          className="block h-auto max-h-[70vh] max-w-full rounded-lg object-contain"
+        />
+      </button>
       <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
         <DialogContent
           showCloseButton
@@ -307,17 +286,19 @@ function LoadingAttachment({
       state="processing"
       className={cn(
         orientation === "vertical"
-          ? "w-[min(320px,85vw)] has-data-[slot=attachment-content]:w-[min(320px,85vw)]"
+          ? "h-48 w-[min(420px,85vw)] items-center justify-center rounded-lg border-0 bg-muted/40 has-data-[slot=attachment-content]:hidden"
           : "w-[min(420px,85vw)]",
       )}
     >
       <AttachmentMedia variant={orientation === "vertical" ? "image" : "icon"}>
         <Loader2 className="animate-spin" />
       </AttachmentMedia>
-      <AttachmentContent>
-        <AttachmentTitle>{name}</AttachmentTitle>
-        <AttachmentDescription>{[attachmentDetails(mediaType, size), "Loading"].filter(Boolean).join(" · ")}</AttachmentDescription>
-      </AttachmentContent>
+      {orientation === "horizontal" ? (
+        <AttachmentContent>
+          <AttachmentTitle>{name}</AttachmentTitle>
+          <AttachmentDescription>{[attachmentDetails(mediaType, size), "Loading"].filter(Boolean).join(" · ")}</AttachmentDescription>
+        </AttachmentContent>
+      ) : null}
     </Attachment>
   )
 }
@@ -343,9 +324,9 @@ function FileAttachment({
   const details = attachmentDetails(mediaType, size ?? attachment.size)
 
   return (
-    <Attachment state={state} className="w-[min(420px,85vw)]">
-      <AttachmentMedia>
-        <FileText />
+    <Attachment state={state} className="w-[min(640px,85vw)] rounded-xl border-border/70 bg-transparent px-2 py-2">
+      <AttachmentMedia className="bg-transparent text-muted-foreground">
+        {state === "uploading" ? <Loader2 className="animate-spin" /> : <FileText />}
       </AttachmentMedia>
       <AttachmentContent>
         <AttachmentTitle>{name}</AttachmentTitle>
@@ -359,11 +340,6 @@ function FileAttachment({
             <AttachmentAction asChild aria-label={`Open ${name}`}>
               <a href={openUrl} target="_blank" rel="noreferrer">
                 <ExternalLink />
-              </a>
-            </AttachmentAction>
-            <AttachmentAction asChild aria-label={`Download ${name}`}>
-              <a href={openUrl} download={name}>
-                <Download />
               </a>
             </AttachmentAction>
           </AttachmentActions>
