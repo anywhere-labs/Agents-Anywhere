@@ -98,6 +98,11 @@ Freeze `contracts/protocol/1.0`. Named-instance lifecycle belongs in a separate
 `contracts/runtime-control/2.0` contract because its RPC shape and identity
 semantics are incompatible with the current runtime-control surface.
 
+Backward-compatible public API fields may be introduced additively, but the
+generated `contracts/protocol/1.0` artifacts remain immutable. Any regenerated
+public session/catalog contract carrying required instance identity must be
+published as Protocol `1.1`, not written over `1.0`.
+
 The runtime-control contract must carry both instance and type identity where
 the Server cannot derive them safely.
 
@@ -155,9 +160,13 @@ reuse the old branch's `v2_11` migration.
 1. Create `connector_runtime_types` for discovery-owned type facts.
 2. Rebuild or migrate `device_runtimes` to instance-owned columns while
    preserving current inventory metadata and config deletion semantics.
-3. Preserve configured rows as legacy-ID instances.
-4. Convert discovery-only rows to type rows unless an existing session needs
-   the legacy instance binding.
+3. Preserve every pre-`v2_14` runtime row as a type-equal compatibility
+   instance, including discovery-only rows. This keeps the old Web and old
+   Connector usable while Server rolls out first. New Runtime Control 2.0 type
+   discovery does not create instances implicitly.
+4. Legacy inventory reconciliation maintains exactly one compatibility
+   instance per provider. Runtime Control 2.0 reconciliation updates type rows
+   only; instances are created explicitly.
 5. Normalize known DSH rows to runtime type `dsh`; retain `local-service` only
    as category metadata.
 6. Add and backfill `sessions.runtime_id` while preserving `sessions.runtime`
