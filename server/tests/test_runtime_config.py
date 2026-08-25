@@ -569,8 +569,16 @@ def test_session_runtime_catalog_reads_start_active_runtime_before_rpc(tmp_path)
         "runtime.modelCatalog",
         "runtime.permissionCatalog",
     ]
-    assert rpc.requests[1][2] == {"runtime": "codex", "limit": 200}
-    assert rpc.requests[2][2] == {"runtime": "codex", "limit": 200}
+    assert rpc.requests[1][2] == {
+        "runtime": "codex",
+        "runtimeId": "codex",
+        "limit": 200,
+    }
+    assert rpc.requests[2][2] == {
+        "runtime": "codex",
+        "runtimeId": "codex",
+        "limit": 200,
+    }
 
 
 def test_editing_active_config_restarts_runtime(tmp_path):

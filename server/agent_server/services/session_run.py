@@ -34,10 +34,10 @@ from agent_server.infra.connector_rpc import (
     ConnectorRpcError,
     ConnectorRpcManager,
 )
-from agent_server.services.repository_ports import SessionRunRepository
 from agent_server.services.effective_capabilities import (
     derive_session_effective_capabilities,
 )
+from agent_server.services.repository_ports import SessionRunRepository
 
 
 class SessionRunError(RuntimeError):
@@ -90,6 +90,14 @@ class SessionRunService:
                 raise KeyError(payload.connectorId)
         except KeyError:
             raise SessionRunNotFoundError("connector not found") from None
+        runtime_id = _request_runtime_id(payload)
+        await self._require_runtime_instance(
+            payload.connectorId,
+            payload.runtime,
+            runtime_id,
+            user_id=user_id,
+            require_running=False,
+        )
 
         connector_result = None
         if payload.externalSessionId is not None:
@@ -97,6 +105,7 @@ class SessionRunService:
                 connector_id=payload.connectorId,
                 user_id=user_id,
                 runtime=payload.runtime,
+                runtime_id=runtime_id,
                 external_session_id=payload.externalSessionId,
                 title=payload.title,
                 cwd=payload.cwd,
@@ -119,12 +128,21 @@ class SessionRunService:
                 raise KeyError(payload.connectorId)
         except KeyError:
             raise SessionRunNotFoundError("connector not found") from None
+        runtime_id = _request_runtime_id(payload)
+        await self._require_runtime_instance(
+            payload.connectorId,
+            payload.runtime,
+            runtime_id,
+            user_id=user_id,
+            require_running=True,
+        )
         if not await self._manager.is_online(payload.connectorId):
             raise SessionRunConflictError("connector is offline")
         if payload.attachments:
             await self._require_runtime_capability(
                 payload.connectorId,
                 payload.runtime,
+                runtime_id,
                 RUNTIME_ATTACHMENT,
                 user_id=user_id,
             )
@@ -134,6 +152,7 @@ class SessionRunService:
             connector_id=payload.connectorId,
             user_id=user_id,
             runtime=payload.runtime,
+            runtime_id=runtime_id,
             external_session_id=None,
             title=payload.title,
             cwd=payload.cwd,
@@ -142,6 +161,7 @@ class SessionRunService:
         )
         params: dict[str, Any] = {
             "runtime": payload.runtime,
+            "runtimeId": runtime_id,
             "sessionId": session.id,
             "content": payload.content,
         }
@@ -173,6 +193,7 @@ class SessionRunService:
         await self._store.start_active_run(
             session_id=session.id,
             runtime=payload.runtime,
+            runtime_id=runtime_id,
             params=params,
         )
         try:
@@ -211,6 +232,7 @@ class SessionRunService:
         await self._store.start_active_run(
             session_id=session.id,
             runtime=payload.runtime,
+            runtime_id=runtime_id,
             external_session_id=external_session_id if isinstance(external_session_id, str) else None,
             params=params,
         )
@@ -218,6 +240,7 @@ class SessionRunService:
             connector_id=payload.connectorId,
             session_id=session.id,
             runtime=payload.runtime,
+            runtime_id=runtime_id,
             external_session_id=external_session_id if isinstance(external_session_id, str) else None,
             title=payload.title,
             cwd=payload.cwd,
@@ -267,6 +290,7 @@ class SessionRunService:
         params: dict[str, Any] = {
             "sessionId": session_id,
             "runtime": session.runtime,
+            "runtimeId": _session_runtime_id(session),
             "content": payload.content,
         }
         if session.cwd:
@@ -292,6 +316,7 @@ class SessionRunService:
         await self._store.start_active_run(
             session_id=session_id,
             runtime=session.runtime,
+            runtime_id=_session_runtime_id(session),
             external_session_id=session.externalSessionId,
             params=params,
         )
@@ -313,6 +338,7 @@ class SessionRunService:
         params: dict[str, Any] = {
             "sessionId": session.id,
             "runtime": session.runtime,
+            "runtimeId": _session_runtime_id(session),
         }
         if session.externalSessionId:
             params["externalSessionId"] = session.externalSessionId
@@ -374,6 +400,7 @@ class SessionRunService:
         params: dict[str, Any] = {
             "sessionId": session_id,
             "runtime": session.runtime,
+            "runtimeId": _session_runtime_id(session),
             "selections": payload.selections,
         }
         if session.externalSessionId:
@@ -431,6 +458,7 @@ class SessionRunService:
         params: dict[str, Any] = {
             "sessionId": session_id,
             "runtime": session.runtime,
+            "runtimeId": _session_runtime_id(session),
             "content": payload.content,
         }
         external_session_id = session.externalSessionId
@@ -472,6 +500,7 @@ class SessionRunService:
         self,
         connector_id: str,
         runtime: str,
+        runtime_id: str,
         capability_id: str,
         *,
         user_id: str,
@@ -489,9 +518,22 @@ class SessionRunService:
                 if item.runtime == runtime
                 and item.scope == "runtime"
                 and item.capabilityId == capability_id
+                and _capability_runtime_id(item) == runtime_id
             ),
             None,
         )
+        if capability is None:
+            capability = next(
+                (
+                    item
+                    for item in capability_set.capabilities
+                    if item.runtime == runtime
+                    and item.scope == "runtime"
+                    and item.capabilityId == capability_id
+                    and _capability_runtime_id(item) is None
+                ),
+                None,
+            )
         if capability is None or not (
             capability.supported and capability.available and capability.allowed
         ):
@@ -531,6 +573,36 @@ class SessionRunService:
             raise SessionRunConflictError(
                 f"session capability is unavailable: {capability_id}"
             )
+
+    async def _require_runtime_instance(
+        self,
+        connector_id: str,
+        runtime: str,
+        runtime_id: str,
+        *,
+        user_id: str,
+        require_running: bool,
+    ) -> None:
+        try:
+            instance = await self._store.get_device_runtime(
+                connector_id,
+                runtime_id,
+                user_id=user_id,
+            )
+        except KeyError:
+            if runtime_id == runtime:
+                return
+            raise SessionRunNotFoundError("runtime instance not found") from None
+        if instance.get("runtimeType") != runtime:
+            raise SessionRunInvalidConfigError("runtime instance type mismatch")
+        if runtime_id == runtime:
+            return
+        if require_running and not (
+            instance.get("configured") is True
+            and instance.get("active") is True
+            and instance.get("status") == "running"
+        ):
+            raise SessionRunConflictError("runtime instance is not active and running")
 
     async def _attachment_payloads(
         self,
@@ -637,6 +709,7 @@ class SessionRunService:
         params: dict[str, Any] = {
             "sessionId": session_id,
             "runtime": session.runtime,
+            "runtimeId": _session_runtime_id(session),
         }
         try:
             result = await self._manager.request(
@@ -656,6 +729,21 @@ def _selections_from_mapping(value: dict[str, str | None]) -> dict[str, str]:
     return {key: item for key, item in value.items() if isinstance(item, str) and item}
 
 
+def _request_runtime_id(
+    payload: SessionCreateRequest | SessionCreateAndStartRequest,
+) -> str:
+    return payload.runtimeId or payload.runtime
+
+
+def _session_runtime_id(session: SessionView) -> str:
+    return session.runtimeId or session.runtime
+
+
+def _capability_runtime_id(capability: Any) -> str | None:
+    value = getattr(capability, "runtimeId", None)
+    return value if isinstance(value, str) and value else None
+
+
 def _runtime_state_from_selection_result(
     session: SessionView,
     selections: dict[str, str | None],
@@ -668,6 +756,8 @@ def _runtime_state_from_selection_result(
             {
                 "sessionId": raw_state.get("sessionId") or session.id,
                 "runtime": raw_state.get("runtime") or session.runtime,
+                "runtimeId": raw_state.get("runtimeId")
+                or _session_runtime_id(session),
                 "externalSessionId": raw_state.get("externalSessionId")
                 or session.externalSessionId,
                 "status": raw_state.get("status") or "idle",
@@ -689,6 +779,7 @@ def _runtime_state_from_selection_result(
     return SessionRuntimeState(
         sessionId=session.id,
         runtime=session.runtime,
+        runtimeId=_session_runtime_id(session),
         externalSessionId=session.externalSessionId,
         status="idle",
         selections=selections,

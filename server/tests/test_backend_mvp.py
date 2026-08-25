@@ -1745,6 +1745,7 @@ def test_session_runtime_command_list_reads_full_runtime_commands(tmp_path):
         {
             "sessionId": session_id,
             "runtime": "codex",
+            "runtimeId": "codex",
             "limit": 100,
             "externalSessionId": f"thr_{connector_id}_demo",
         },
@@ -1777,6 +1778,7 @@ def test_session_command_execute_calls_runtime(tmp_path):
         {
             "sessionId": session_id,
             "runtime": "codex",
+            "runtimeId": "codex",
             "command": "resume",
             "args": ["now"],
             "externalSessionId": f"thr_{connector_id}_demo",
@@ -1807,6 +1809,7 @@ def test_session_runtime_command_execute_calls_runtime(tmp_path):
         {
             "sessionId": session_id,
             "runtime": "codex",
+            "runtimeId": "codex",
             "command": "resume",
             "args": ["now"],
             "externalSessionId": f"thr_{connector_id}_demo",
@@ -3970,6 +3973,7 @@ def test_patch_session_selections_routes_to_runtime_and_reads_live_state(tmp_pat
         {
             "sessionId": session_id,
             "runtime": "codex",
+            "runtimeId": "codex",
             "selections": {"model": "sel_model_live", "permission": "sel_permission_live"},
             "externalSessionId": f"thr_{connector_id}_demo",
         },
@@ -4421,6 +4425,7 @@ def test_steer_routes_running_codex_session_without_turn_id(tmp_path):
     assert params == {
         "sessionId": session_id,
         "runtime": "codex",
+        "runtimeId": "codex",
         "content": "focus on IPC",
         "externalSessionId": external_session_id,
         "cwd": "/repo",
@@ -6461,7 +6466,10 @@ def test_timeline_sync_keeps_existing_realtime_items_missing_from_snapshot(tmp_p
 
 def test_claude_history_sync_replaces_live_item_with_snapshot_same_id(tmp_path):
     client = make_client(tmp_path)
-    _, access_token, session_id, headers = create_connector_and_session(client)
+    _, access_token, session_id, headers = create_connector_and_session(
+        client,
+        runtime="claude",
+    )
 
     with client.websocket_connect(
         "/connector/ws",
@@ -6560,7 +6568,10 @@ def test_claude_history_sync_replaces_live_item_with_snapshot_same_id(tmp_path):
 
 def test_claude_timeline_sync_replaces_existing_timeline(tmp_path):
     client = make_client(tmp_path)
-    _, access_token, session_id, headers = create_connector_and_session(client)
+    _, access_token, session_id, headers = create_connector_and_session(
+        client,
+        runtime="claude",
+    )
 
     with client.websocket_connect(
         "/connector/ws",

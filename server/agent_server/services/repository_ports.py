@@ -35,7 +35,7 @@ class CatalogRepository(Protocol):
         self,
         connector_id: str,
         *,
-        runtime: str,
+        runtime_id: str,
         catalog_type: CatalogType,
         user_id: str | None = None,
     ) -> dict[str, Any] | None: ...
@@ -45,6 +45,7 @@ class CatalogRepository(Protocol):
         connector_id: str,
         *,
         runtime: str,
+        runtime_id: str | None = None,
         catalog_type: CatalogType,
         revision: int,
         catalog: dict[str, Any],
@@ -75,6 +76,7 @@ class SessionStateRepository(SessionLookupRepository, Protocol):
         *,
         session_id: str,
         runtime: str,
+        runtime_id: str | None = None,
         external_session_id: str | None = None,
         status: str | None = None,
         selections: dict[str, str | None] | None = None,
@@ -145,12 +147,14 @@ class ConnectorNotificationRepository(
     async def begin_dsh_session_inventory(
         self,
         connector_id: str,
+        runtime_id: str,
         scan_token: str,
     ) -> None: ...
 
     async def complete_dsh_session_inventory(
         self,
         connector_id: str,
+        runtime_id: str,
         scan_token: str,
         entries: list[dict[str, str | None]],
         *,
@@ -192,6 +196,8 @@ class ConnectorNotificationRepository(
         connector_id: str,
         session_id: str,
         external_session_id: str | None = None,
+        runtime: str | None = None,
+        runtime_id: str | None = None,
     ) -> str: ...
 
     async def set_session_archived(
@@ -268,7 +274,7 @@ class DeviceRuntimeRepository(
         self,
         *,
         connector_id: str,
-        runtime: str,
+        runtime_id: str,
         user_id: str | None = None,
     ) -> list[SessionView]: ...
 
@@ -315,6 +321,14 @@ class SessionRunRepository(
         user_id: str | None = None,
     ) -> dict[str, Any]: ...
 
+    async def get_device_runtime(
+        self,
+        connector_id: str,
+        runtime_id: str,
+        *,
+        user_id: str | None = None,
+    ) -> dict[str, Any]: ...
+
     async def clear_active_run(self, session_id: str) -> None: ...
 
     async def create_session(self, **values: Any) -> SessionView: ...
@@ -343,6 +357,8 @@ class SessionRunRepository(
         connector_id: str,
         session_id: str,
         external_session_id: str | None = None,
+        runtime: str | None = None,
+        runtime_id: str | None = None,
     ) -> str: ...
 
     async def start_active_run(self, **values: Any) -> None: ...

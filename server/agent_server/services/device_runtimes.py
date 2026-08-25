@@ -440,7 +440,7 @@ class DeviceRuntimeService:
     async def _settle_runtime_sessions(self, runtime: DeviceRuntimeView) -> None:
         sessions = await self._store.list_running_sessions_for_connector_agent(
             connector_id=runtime.connectorId,
-            runtime=runtime.runtimeId,
+            runtime_id=runtime.runtimeId,
         )
         for session in sessions:
             await self._store.clear_active_run(session.id)

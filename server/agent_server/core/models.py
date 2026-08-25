@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from agent_server.core.runtime_identity import RuntimeIdentity
 
 RuntimeName = Literal["codex", "claude", "opencode", "acp", "dsh"]
 ConnectorStatus = Literal["offline", "online"]
@@ -532,10 +534,20 @@ class SessionCreateRequest(BaseModel):
 
     connectorId: str
     runtime: RuntimeName = "codex"
+    runtimeId: str | None = None
     externalSessionId: str | None = None
     title: str | None = None
     cwd: str | None = None
     selections: dict[str, str | None] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _validate_runtime_identity(self) -> SessionCreateRequest:
+        identity = RuntimeIdentity.create(
+            runtime_type=self.runtime,
+            runtime_id=self.runtimeId or self.runtime,
+        )
+        self.runtimeId = str(identity.runtime_id)
+        return self
 
 
 class AttachmentRef(BaseModel):
@@ -556,6 +568,7 @@ class SessionCreateAndStartRequest(BaseModel):
 
     connectorId: str
     runtime: RuntimeName = "codex"
+    runtimeId: str | None = None
     title: str | None = None
     cwd: str | None = None
     content: str
@@ -563,12 +576,25 @@ class SessionCreateAndStartRequest(BaseModel):
     attachments: list[InlineAttachmentRef] = Field(default_factory=list, max_length=10)
     clientMessageId: str | None = None
 
+    @model_validator(mode="after")
+    def _validate_runtime_identity(self) -> SessionCreateAndStartRequest:
+        identity = RuntimeIdentity.create(
+            runtime_type=self.runtime,
+            runtime_id=self.runtimeId or self.runtime,
+        )
+        self.runtimeId = str(identity.runtime_id)
+        return self
+
 
 class SessionView(BaseModel):
     id: str
     connectorId: str
     connectorStatus: ConnectorStatus
     runtime: RuntimeName
+    runtimeId: str | None = None
+    runtimeType: RuntimeName | None = None
+    runtimeName: str | None = None
+    runtimeTypeDisplayName: str | None = None
     externalSessionId: str | None = None
     title: str | None = None
     cwd: str | None = None
@@ -588,10 +614,22 @@ class SessionView(BaseModel):
     sortAt: str | None = None
     updatedSeq: int
 
+    @model_validator(mode="after")
+    def _normalize_runtime_identity(self) -> SessionView:
+        identity = RuntimeIdentity.create(
+            runtime_type=self.runtime,
+            runtime_id=self.runtimeId or self.runtime,
+        )
+        self.runtimeId = str(identity.runtime_id)
+        self.runtimeType = self.runtime
+        return self
+
 
 class SessionRuntimeState(BaseModel):
     sessionId: str
     runtime: RuntimeName
+    runtimeId: str | None = None
+    runtimeType: RuntimeName | None = None
     externalSessionId: str | None = None
     status: SessionStatus = "idle"
     selections: dict[str, str | None] = Field(default_factory=dict)
@@ -601,6 +639,16 @@ class SessionRuntimeState(BaseModel):
     updatedSeq: int
     createdAt: str
     updatedAt: str
+
+    @model_validator(mode="after")
+    def _normalize_runtime_identity(self) -> SessionRuntimeState:
+        identity = RuntimeIdentity.create(
+            runtime_type=self.runtime,
+            runtime_id=self.runtimeId or self.runtime,
+        )
+        self.runtimeId = str(identity.runtime_id)
+        self.runtimeType = self.runtime
+        return self
 
 
 class SessionRuntimeStateResponse(BaseModel):

@@ -22,16 +22,16 @@ from agent_server.api.connector_runtimes import (
 from agent_server.api.server_push_websocket import (
     run_server_push_until_disconnect,
 )
+from agent_server.core.capabilities import (
+    SESSION_COMMANDS,
+    SESSION_INTERACTION_APPROVAL,
+    capability_is_usable,
+)
 from agent_server.core.events import (
     EventCursorError,
     event_cursor,
     events_from_invalidation,
     protocol_event,
-)
-from agent_server.core.capabilities import (
-    SESSION_COMMANDS,
-    SESSION_INTERACTION_APPROVAL,
-    capability_is_usable,
 )
 from agent_server.core.models import (
     BulkArchiveResponse,
@@ -514,7 +514,7 @@ async def session_runtime_model_catalog(
         session = await db.get_session(session_id, user_id=user_id)
         await device_runtimes.ensure_active_running(
             session.connectorId,
-            session.runtime,
+            _session_runtime_id(session),
             user_id=user_id,
         )
     except KeyError:
@@ -548,7 +548,7 @@ async def session_runtime_permission_catalog(
         session = await db.get_session(session_id, user_id=user_id)
         await device_runtimes.ensure_active_running(
             session.connectorId,
-            session.runtime,
+            _session_runtime_id(session),
             user_id=user_id,
         )
     except KeyError:
@@ -694,20 +694,24 @@ async def session_snapshot(
         )
         model_catalog = await catalogs.model_catalog(
             session.connectorId,
-            runtime=session.runtime,
+            runtime_id=_session_runtime_id(session),
             user_id=user_id,
         )
         permission_catalog = await catalogs.permission_catalog(
             session.connectorId,
-            runtime=session.runtime,
+            runtime_id=_session_runtime_id(session),
             user_id=user_id,
         )
         next_seq = await db.get_session_seq(session_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="session not found") from None
     return ProtocolSessionSnapshotResponse(
-        session=session,
-        state=runtime_state,
+        session=session.model_dump(mode="json"),
+        state=(
+            runtime_state.model_dump(mode="json")
+            if runtime_state is not None
+            else None
+        ),
         timeline=ProtocolTimelineSnapshot(items=items, nextSeq=next_seq, hasMore=has_more),
         approvals=[],
         notices=notices,
@@ -920,6 +924,7 @@ async def list_session_runtime_commands(
     params: dict[str, Any] = {
         "sessionId": session.id,
         "runtime": session.runtime,
+        "runtimeId": _session_runtime_id(session),
         "limit": 100,
     }
     if session.externalSessionId:
@@ -972,6 +977,7 @@ async def execute_session_command(
     params: dict[str, Any] = {
         "sessionId": session.id,
         "runtime": session.runtime,
+        "runtimeId": _session_runtime_id(session),
         "command": payload.command,
         "args": payload.args,
     }
@@ -1170,6 +1176,7 @@ async def respond_interaction(
     params: dict[str, Any] = {
         "sessionId": session.id,
         "runtime": session.runtime,
+        "runtimeId": _session_runtime_id(session),
         "noticeId": notice_id,
         "actionId": payload.actionId,
         "inputData": input_data,
@@ -1236,7 +1243,7 @@ async def sync_session(
     try:
         await device_runtimes.ensure_active_running(
             session.connectorId,
-            session.runtime,
+            _session_runtime_id(session),
             user_id=user_id,
         )
     except DeviceRuntimeError as exc:
@@ -1248,6 +1255,7 @@ async def sync_session(
             {
                 "sessionId": session.id,
                 "runtime": session.runtime,
+                "runtimeId": _session_runtime_id(session),
                 "externalSessionId": session.externalSessionId,
             },
             timeout=60,
@@ -1317,6 +1325,7 @@ async def read_runtime_state_from_connector(
     params: dict[str, Any] = {
         "sessionId": session.id,
         "runtime": session.runtime,
+        "runtimeId": _session_runtime_id(session),
     }
     if session.externalSessionId:
         params["externalSessionId"] = session.externalSessionId
@@ -1344,6 +1353,7 @@ async def read_session_capabilities_from_connector(
     params: dict[str, Any] = {
         "sessionId": session.id,
         "runtime": session.runtime,
+        "runtimeId": _session_runtime_id(session),
     }
     if session.externalSessionId:
         params["externalSessionId"] = session.externalSessionId
@@ -1397,7 +1407,11 @@ async def request_session_runtime_catalog(
         return await manager.request(
             session.connectorId,
             method,
-            {"runtime": session.runtime, "limit": limit},
+            {
+                "runtime": session.runtime,
+                "runtimeId": _session_runtime_id(session),
+                "limit": limit,
+            },
             timeout=30,
         )
     except ConnectorOfflineError as exc:
@@ -1416,6 +1430,7 @@ async def read_session_notices_from_connector(
     params: dict[str, Any] = {
         "sessionId": session.id,
         "runtime": session.runtime,
+        "runtimeId": _session_runtime_id(session),
     }
     if session.externalSessionId:
         params["externalSessionId"] = session.externalSessionId
@@ -1476,6 +1491,7 @@ async def best_effort_runtime_notice_context(
     params: dict[str, Any] = {
         "sessionId": session.id,
         "runtime": session.runtime,
+        "runtimeId": _session_runtime_id(session),
     }
     if session.externalSessionId:
         params["externalSessionId"] = session.externalSessionId
@@ -1529,6 +1545,10 @@ async def read_session_notices_for_snapshot(
         return []
 
 
+def _session_runtime_id(session: SessionView) -> str:
+    return session.runtimeId or session.runtime
+
+
 def runtime_state_from_rpc_payload(
     raw_state: dict[str, Any],
     session: SessionView,
@@ -1538,6 +1558,8 @@ def runtime_state_from_rpc_payload(
         {
             "sessionId": raw_state.get("sessionId") or session.id,
             "runtime": raw_state.get("runtime") or session.runtime,
+            "runtimeId": raw_state.get("runtimeId")
+            or _session_runtime_id(session),
             "externalSessionId": raw_state.get("externalSessionId")
             or session.externalSessionId,
             "status": raw_state.get("status") or "idle",

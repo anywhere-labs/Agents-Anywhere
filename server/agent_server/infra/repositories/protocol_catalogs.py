@@ -12,10 +12,15 @@ class ProtocolCatalogRepositoryMixin:
         connector_id: str,
         *,
         runtime: str,
+        runtime_id: str | None = None,
         catalog_type: CatalogType,
         revision: int,
         catalog: dict[str, Any],
     ) -> CatalogUpdateOutcome:
+        identity = RuntimeIdentity.create(
+            runtime_type=runtime,
+            runtime_id=runtime_id or runtime,
+        )
         now = utc_now()
         async with self._engine.begin() as conn:
             connector_statement = select(connectors_t.c.id).where(
@@ -30,15 +35,19 @@ class ProtocolCatalogRepositoryMixin:
             existing = (
                 await conn.execute(
                     select(
+                        connector_runtime_catalogs_t.c.runtime,
                         connector_runtime_catalogs_t.c.revision,
                         connector_runtime_catalogs_t.c.catalog_json,
                     ).where(
                         connector_runtime_catalogs_t.c.connector_id == connector_id,
-                        connector_runtime_catalogs_t.c.runtime == runtime,
+                        connector_runtime_catalogs_t.c.runtime_id
+                        == str(identity.runtime_id),
                         connector_runtime_catalogs_t.c.catalog_type == catalog_type,
                     )
                 )
             ).first()
+            if existing is not None and existing.runtime != str(identity.runtime_type):
+                raise ValueError("runtime catalog identity is immutable")
             if existing is not None and int(existing.revision) > revision:
                 return "stale"
             if existing is not None and int(existing.revision) == revision:
@@ -46,7 +55,8 @@ class ProtocolCatalogRepositoryMixin:
                 return "idempotent" if current == catalog else "conflict"
             values = {
                 "connector_id": connector_id,
-                "runtime": runtime,
+                "runtime": str(identity.runtime_type),
+                "runtime_id": str(identity.runtime_id),
                 "catalog_type": catalog_type,
                 "revision": revision,
                 "catalog_json": _json_dumps(catalog),
@@ -59,7 +69,8 @@ class ProtocolCatalogRepositoryMixin:
                     update(connector_runtime_catalogs_t)
                     .where(
                         connector_runtime_catalogs_t.c.connector_id == connector_id,
-                        connector_runtime_catalogs_t.c.runtime == runtime,
+                        connector_runtime_catalogs_t.c.runtime_id
+                        == str(identity.runtime_id),
                         connector_runtime_catalogs_t.c.catalog_type == catalog_type,
                     )
                     .values(**values)
@@ -70,7 +81,7 @@ class ProtocolCatalogRepositoryMixin:
         self,
         connector_id: str,
         *,
-        runtime: str,
+        runtime_id: str,
         catalog_type: CatalogType,
         user_id: str | None = None,
     ) -> dict[str, Any] | None:
@@ -90,7 +101,7 @@ class ProtocolCatalogRepositoryMixin:
                     )
                     .where(
                         connector_runtime_catalogs_t.c.connector_id == connector_id,
-                        connector_runtime_catalogs_t.c.runtime == runtime,
+                        connector_runtime_catalogs_t.c.runtime_id == runtime_id,
                         connector_runtime_catalogs_t.c.catalog_type == catalog_type,
                         connectors_t.c.revoked == 0,
                     )
