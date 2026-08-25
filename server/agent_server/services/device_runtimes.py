@@ -20,6 +20,7 @@ from agent_server.core.device_runtime import (
     validate_config_schema,
 )
 from agent_server.infra.connector_rpc import (
+    ConnectorConnection,
     ConnectorOfflineError,
     ConnectorRpcError,
     ConnectorRpcManager,
@@ -142,16 +143,61 @@ class DeviceRuntimeService:
         self,
         connector_id: str,
         raw: dict[str, Any],
+        *,
+        select_control_version: bool = True,
     ) -> list[DeviceRuntimeView]:
         inventory = RuntimeInventory.model_validate(raw)
         for runtime in inventory.runtimes:
             if runtime.schema_ is not None:
                 validate_config_schema(runtime.schema_)
         rows = await self._store.replace_device_runtime_inventory(
-            connector_id, inventory.runtimes
+            connector_id,
+            inventory.runtimes,
+            select_control_version=select_control_version,
         )
         await self._publish(connector_id, "runtime.inventory")
         return [DeviceRuntimeView.model_validate(row) for row in rows]
+
+    async def prepare_connection(self, connector_id: str) -> None:
+        async with self._runtime_lock(connector_id, "@instances"):
+            await self._store.set_connector_runtime_control_version(
+                connector_id,
+                "1.0",
+            )
+
+    async def ingest_unsolicited_inventory(
+        self,
+        connector_id: str,
+        raw: dict[str, Any],
+    ) -> None:
+        async with self._runtime_lock(connector_id, "@instances"):
+            if await self._get_control_version(connector_id) == "2.0":
+                logger.debug(
+                    "ignored legacy runtime inventory after v2 negotiation "
+                    "connector_id={}",
+                    connector_id,
+                )
+                return
+            await self.ingest_inventory(
+                connector_id,
+                raw,
+                select_control_version=False,
+            )
+
+    async def negotiate_connection(
+        self,
+        connector_id: str,
+        connection: ConnectorConnection,
+    ) -> None:
+        result = await self._request_discovery(
+            connector_id,
+            connection=connection,
+        )
+        async with self._runtime_lock(connector_id, "@instances"):
+            if not self._manager.is_connection_current(connection):
+                raise DeviceRuntimeOfflineError("connector connection was replaced")
+            await self._ingest_discovery(connector_id, result)
+        await self.reconcile_active(connector_id)
 
     async def discover(
         self, connector_id: str, *, user_id: str
@@ -175,15 +221,35 @@ class DeviceRuntimeService:
         return await self.list_runtime_types(connector_id, user_id=user_id)
 
     async def _discover(self, connector_id: str) -> None:
-        if not await self._manager.is_online(connector_id):
+        result = await self._request_discovery(connector_id)
+        await self._ingest_discovery(connector_id, result)
+
+    async def _request_discovery(
+        self,
+        connector_id: str,
+        *,
+        connection: ConnectorConnection | None = None,
+    ) -> Any:
+        if connection is None and not await self._manager.is_online(connector_id):
             raise DeviceRuntimeOfflineError("connector is offline")
         try:
-            result = await self._manager.request(
-                connector_id,
-                "runtime.discover",
-                {"supportedControlVersions": SUPPORTED_RUNTIME_CONTROL_VERSIONS},
-                timeout=90,
-            )
+            params = {
+                "supportedControlVersions": SUPPORTED_RUNTIME_CONTROL_VERSIONS,
+            }
+            if connection is None:
+                result = await self._manager.request(
+                    connector_id,
+                    "runtime.discover",
+                    params,
+                    timeout=90,
+                )
+            else:
+                result = await self._manager.request_on_connection(
+                    connection,
+                    "runtime.discover",
+                    params,
+                    timeout=90,
+                )
         except ConnectorOfflineError as exc:
             raise DeviceRuntimeOfflineError(str(exc)) from exc
         except ConnectorRpcError as exc:
@@ -191,6 +257,13 @@ class DeviceRuntimeService:
                 exc.message,
                 detail={"code": exc.code, "message": exc.message},
             ) from exc
+        return result
+
+    async def _ingest_discovery(
+        self,
+        connector_id: str,
+        result: Any,
+    ) -> None:
         if not isinstance(result, dict):
             raise DeviceRuntimeUpstreamError(
                 "connector returned an invalid runtime discovery response"

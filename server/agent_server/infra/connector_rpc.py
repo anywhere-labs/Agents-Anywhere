@@ -267,6 +267,24 @@ class ConnectorRpcManager:
             timeout=timeout,
         )
 
+    async def request_on_connection(
+        self,
+        connection: ConnectorConnection,
+        method: str,
+        params: dict[str, Any],
+        *,
+        timeout: float = 30,
+    ) -> Any:
+        if self._connections.get(connection.connector_id) is not connection:
+            raise ConnectorOfflineError("connector connection was replaced")
+        return await self._request_local(connection, method, params, timeout=timeout)
+
+    def is_connection_current(self, connection: ConnectorConnection) -> bool:
+        return (
+            self._connections.get(connection.connector_id) is connection
+            and self._is_local_online(connection)
+        )
+
     def resolve_response(self, connector_id: str, message: dict[str, Any]) -> None:
         connection = self._connections.get(connector_id)
         if connection is None:

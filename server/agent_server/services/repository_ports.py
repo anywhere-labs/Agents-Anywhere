@@ -256,6 +256,12 @@ class DeviceRuntimeRepository(
         user_id: str | None = None,
     ) -> str: ...
 
+    async def set_connector_runtime_control_version(
+        self,
+        connector_id: str,
+        version: str,
+    ) -> None: ...
+
     async def get_connector_runtime_type(
         self,
         connector_id: str,
@@ -300,6 +306,8 @@ class DeviceRuntimeRepository(
         self,
         connector_id: str,
         runtimes: list[RuntimeInventoryItem],
+        *,
+        select_control_version: bool = True,
     ) -> list[dict[str, Any]]: ...
 
     async def replace_connector_runtime_types(

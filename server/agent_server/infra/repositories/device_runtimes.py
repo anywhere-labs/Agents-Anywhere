@@ -150,6 +150,8 @@ class DeviceRuntimeRepositoryMixin:
         self,
         connector_id: str,
         runtimes: list[RuntimeInventoryItem],
+        *,
+        select_control_version: bool = True,
     ) -> list[dict[str, Any]]:
         """Persist a legacy 1.0 inventory as types plus compatibility instances."""
 
@@ -293,11 +295,12 @@ class DeviceRuntimeRepositoryMixin:
                         )
                         .values(status=runtime.status, updated_at=now)
                     )
-            await conn.execute(
-                update(connectors_t)
-                .where(connectors_t.c.id == connector_id)
-                .values(runtime_control_version="1.0", updated_at=now)
-            )
+            if select_control_version:
+                await conn.execute(
+                    update(connectors_t)
+                    .where(connectors_t.c.id == connector_id)
+                    .values(runtime_control_version="1.0", updated_at=now)
+                )
         return await self.list_device_runtimes(connector_id)
 
     async def list_connector_runtime_types(
@@ -375,6 +378,31 @@ class DeviceRuntimeRepositoryMixin:
         if value is None:
             raise KeyError(connector_id)
         return str(value)
+
+    async def set_connector_runtime_control_version(
+        self,
+        connector_id: str,
+        version: str,
+    ) -> None:
+        if version not in {"1.0", "2.0"}:
+            raise ValueError(f"unsupported runtime control version: {version}")
+        now = utc_now()
+        async with self._engine.begin() as conn:
+            connector = (
+                await conn.execute(
+                    select(connectors_t.c.id).where(
+                        connectors_t.c.id == connector_id,
+                        connectors_t.c.revoked == 0,
+                    )
+                )
+            ).first()
+            if connector is None:
+                raise KeyError(connector_id)
+            await conn.execute(
+                update(connectors_t)
+                .where(connectors_t.c.id == connector_id)
+                .values(runtime_control_version=version, updated_at=now)
+            )
 
     async def create_device_runtime(
         self,

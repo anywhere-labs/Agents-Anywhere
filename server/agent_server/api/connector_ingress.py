@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 from typing import Any
 
@@ -36,6 +37,7 @@ from agent_server.deps import (
     get_timeline_broker,
 )
 from agent_server.infra.connector_rpc import (
+    ConnectorConnection,
     ConnectorRpcManager,
     DuplicateConnectorConnectionError,
 )
@@ -51,6 +53,10 @@ from agent_server.services.connector_notifications import (
 )
 from agent_server.services.connector_realtime import ConnectorRealtimeService
 from agent_server.services.dashboard_events import publish_dashboard_changed
+from agent_server.services.device_runtimes import (
+    DeviceRuntimeError,
+    DeviceRuntimeService,
+)
 from agent_server.services.effective_capabilities import (
     publish_connector_session_capabilities,
 )
@@ -192,12 +198,15 @@ async def connector_ws(
         await websocket.close(code=4409, reason="connector id already connected")
         logger.warning("rejected duplicate connector websocket: {}", connector_id)
         return
+    runtime_service: DeviceRuntimeService = websocket.app.state.device_runtime_service
     try:
         recorded_connection = await db.record_connector_connection(
             connector_id,
             device_os=_connector_device_os(websocket.headers.get("x-device-os")),
         )
-    except Exception:  # noqa: BLE001 - release the lease before propagating startup failure
+        if recorded_connection:
+            await runtime_service.prepare_connection(connector_id)
+    except Exception:
         await manager.unregister(connector_id, connection)
         raise
     if not recorded_connection:
@@ -225,9 +234,17 @@ async def connector_ws(
         db,
         ConnectorNotificationService(db, realtime),
         timeline_broker,
-        websocket.app.state.device_runtime_service,
+        runtime_service,
         manager,
         websocket.app.state.session_runtime_state_cache,
+    )
+    negotiation_task = asyncio.create_task(
+        _negotiate_runtime_control(
+            runtime_service,
+            connector_id,
+            connection,
+        ),
+        name=f"runtime-control-negotiate-{connection.connection_id}",
     )
     logger.info("connector connected: {}", connector_id)
     try:
@@ -241,6 +258,8 @@ async def connector_ws(
     except WebSocketDisconnect:
         logger.info("connector disconnected: {}", connector_id)
     finally:
+        negotiation_task.cancel()
+        await asyncio.gather(negotiation_task, return_exceptions=True)
         removed_terminals = await broker.remove_ephemeral_for_connector(connector_id)
         if removed_terminals:
             logger.info(
@@ -261,6 +280,32 @@ async def connector_ws(
             timeline_broker,
             connector_id=connector_id,
             reason="connector.presence",
+        )
+
+
+async def _negotiate_runtime_control(
+    runtime_service: DeviceRuntimeService,
+    connector_id: str,
+    connection: ConnectorConnection,
+) -> None:
+    try:
+        await runtime_service.negotiate_connection(connector_id, connection)
+    except asyncio.CancelledError:
+        raise
+    except DeviceRuntimeError as exc:
+        logger.warning(
+            "runtime control negotiation failed connector_id={} "
+            "connection_id={} error_code={} error={}",
+            connector_id,
+            connection.connection_id,
+            exc.code,
+            exc.message,
+        )
+    except Exception:  # noqa: BLE001 - background task errors must be observed
+        logger.exception(
+            "runtime control negotiation crashed connector_id={} connection_id={}",
+            connector_id,
+            connection.connection_id,
         )
 
 

@@ -84,7 +84,6 @@ class ConnectorIngestService:
         rejected: list[ConnectorIngestRejectedNotification] = []
         protocol_capabilities_changed = False
         runtime_scoped_capabilities_changed = False
-        saw_runtime_inventory = False
         saw_dsh_session_inventory_complete = False
         for index, notification in enumerate(payload.notifications):
             try:
@@ -112,7 +111,6 @@ class ConnectorIngestService:
                 continue
             accepted += 1
             if notification.method == "runtime.inventoryUpdated":
-                saw_runtime_inventory = True
                 continue
             if notification.method == "runtime.statusChanged":
                 continue
@@ -167,10 +165,6 @@ class ConnectorIngestService:
                 connector_id=connector_id,
                 reason="dsh.session.inventory",
             )
-        if saw_runtime_inventory:
-            import asyncio
-
-            asyncio.create_task(self._device_runtimes.reconcile_active(connector_id))
         return ConnectorIngestResponse(
             accepted=accepted,
             rejected=rejected,
@@ -190,7 +184,7 @@ class ConnectorIngestService:
         - does not publish session WebSocket effects; caller owns publication
         """
         if notification.method == "runtime.inventoryUpdated":
-            await self._device_runtimes.ingest_inventory(
+            await self._device_runtimes.ingest_unsolicited_inventory(
                 connector_id,
                 notification.params,
             )
@@ -212,10 +206,10 @@ class ConnectorIngestService:
         params: dict,
     ) -> None:
         if method == "runtime.inventoryUpdated":
-            await self._device_runtimes.ingest_inventory(connector_id, params)
-            import asyncio
-
-            asyncio.create_task(self._device_runtimes.reconcile_active(connector_id))
+            await self._device_runtimes.ingest_unsolicited_inventory(
+                connector_id,
+                params,
+            )
             return
         if method == "runtime.statusChanged":
             await self._apply_runtime_status(connector_id, params)
