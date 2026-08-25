@@ -17,7 +17,7 @@ private fun JSONObject.toTimelineAttachmentOrNull(): TimelineAttachment? {
 
 private fun RemoteTimelineItem.toTimelineMessages(): List<TimelineMessage> {
     return when (type) {
-        "message" -> listOf(toMessage())
+        "message" -> listOfNotNull(toMessageOrNull())
         "tool" -> toToolMessages()
         "artifact" -> toArtifactMessages()
         "marker" -> listOf(toMarkerMessage())
@@ -72,19 +72,18 @@ private fun RemoteTimelineItem.toToolMessages(): List<TimelineMessage> {
         "web_search" -> listOf(toToolCallMessage(title = "Searched web", subtitle = content.text("query").orEmpty()))
         "mcp" -> listOf(
             toToolCallMessage(
-                title = content.text("tool") ?: "tool",
-                subtitle = content.text("server") ?: "mcp",
+                title = "${content.text("server") ?: "mcp"} / ${content.text("tool") ?: "tool"}",
+                subtitle = "",
             )
         )
         "tool_call", "tool_result", "permission", "input_request" -> listOf(
-            toToolCallMessage(title = shortToolTitle(), subtitle = content.text("kind").orEmpty()),
+            toToolCallMessage(title = shortToolTitle(), subtitle = content.toolTargetText().orEmpty()),
         )
         else -> listOf(toDiagnosticMessage())
     }
 }
 
-private fun RemoteTimelineItem.toMessage(): TimelineMessage {
-    val contentKind = content.text("kind")
+private fun RemoteTimelineItem.toMessageOrNull(): TimelineMessage? {
     val nestedContent = content.optJSONObject("content")
     val attachments = (
         content.records("attachments") + nestedContent?.records("attachments").orEmpty()
@@ -93,9 +92,8 @@ private fun RemoteTimelineItem.toMessage(): TimelineMessage {
     val messageText = text
         .ifBlank { content.platformMessageText().orEmpty() }
         .stripInjectedAttachmentMentions()
-    if (contentKind !in setOf(null, "text", "markdown", "multimodal") ||
-        (messageText.isBlank() && attachments.isEmpty())
-    ) {
+    if (messageText.isBlank() && attachments.isEmpty()) {
+        if (role == "assistant") return null
         return toDiagnosticMessage()
     }
     val author = when (role) {
@@ -354,11 +352,33 @@ private fun RemoteTimelineItem.toToolCallMessage(title: String, subtitle: String
 }
 
 private fun RemoteTimelineItem.shortToolTitle(): String {
-    return content.text("function")
+    return content.text("toolName")
         ?: content.text("name")
         ?: content.text("tool")
+        ?: content.text("title")
+        ?: content.text("function")
         ?: content.text("kind")
         ?: "tool"
+}
+
+private fun JSONObject.toolTargetText(): String? {
+    val input = optJSONObject("input")
+    firstText("path", "filePath", "file", "uri", "query", "url")?.let { return it }
+    input?.firstText(
+        "file_path",
+        "filePath",
+        "notebook_path",
+        "notebookPath",
+        "path",
+        "file",
+        "uri",
+        "query",
+        "url",
+    )?.let { return it }
+    opt("command").commandText().takeIf(String::isNotBlank)?.let { return it }
+    input?.opt("command").commandText().takeIf(String::isNotBlank)?.let { return it }
+    input?.opt("cmd").commandText().takeIf(String::isNotBlank)?.let { return it }
+    return null
 }
 
 internal fun String.statusLabel(): String {

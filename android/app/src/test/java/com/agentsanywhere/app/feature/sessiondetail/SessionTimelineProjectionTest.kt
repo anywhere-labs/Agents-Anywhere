@@ -1,8 +1,10 @@
 package com.agentsanywhere.app.feature.sessiondetail
 
 import com.agentsanywhere.app.api.RemoteTimelineItem
+import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SessionTimelineProjectionTest {
@@ -103,6 +105,98 @@ class SessionTimelineProjectionTest {
 
         assertEquals(listOf("first", "user", "second"), projection.messages.map { it.id })
     }
+
+    @Test
+    fun blankAssistantMessageKeepsOrderingWithoutRenderingDiagnosticRow() {
+        val blank = item("blank", orderSeq = 1, updatedSeq = 1).copy(
+            text = "",
+            content = JSONObject().put("kind", "markdown").put("text", ""),
+            source = JSONObject().put("runtime", "dsh").put("itemType", "assistant_activity"),
+        )
+
+        val projection = project(blank)
+
+        assertEquals(listOf("blank"), projection.orderingItems.map { it.id })
+        assertEquals(emptyList<TimelineMessage>(), projection.messages)
+    }
+
+    @Test
+    fun messageTextRemainsVisibleForUnknownContentKind() {
+        val message = item("future-message", orderSeq = 1, updatedSeq = 1).copy(
+            text = "",
+            content = JSONObject().put("kind", "future_markdown").put("text", "visible fallback"),
+        )
+
+        val projected = project(message).messages.single()
+
+        assertEquals(TimelineMessageKind.Text, projected.kind)
+        assertEquals("visible fallback", projected.text)
+    }
+
+    @Test
+    fun toolNameAndNestedCommandAreProjectedAsTitleAndTarget() {
+        val tool = item("tool", orderSeq = 1, updatedSeq = 1).copy(
+            type = "tool",
+            text = "",
+            content = JSONObject()
+                .put("kind", "tool_call")
+                .put("toolName", "Bash")
+                .put(
+                    "input",
+                    JSONObject().put("command", JSONArray().put("pwd").put("&&").put("ls")),
+                ),
+        )
+
+        val projected = project(tool).messages.single()
+
+        assertEquals(TimelineMessageKind.ToolCall, projected.kind)
+        assertEquals("Bash", projected.title)
+        assertEquals("pwd && ls", projected.subtitle)
+    }
+
+    @Test
+    fun toolTitleAndNestedPathAreProjectedAsNameAndTarget() {
+        val tool = item("tool", orderSeq = 1, updatedSeq = 1).copy(
+            type = "tool",
+            text = "",
+            content = JSONObject()
+                .put("kind", "tool_call")
+                .put("title", "Read")
+                .put("input", JSONObject().put("file_path", "/workspace/README.md")),
+        )
+
+        val projected = project(tool).messages.single()
+
+        assertEquals("Read", projected.title)
+        assertEquals("/workspace/README.md", projected.subtitle)
+    }
+
+    @Test
+    fun diffArtifactRemainsVisible() {
+        val diff = item("diff", orderSeq = 1, updatedSeq = 1).copy(
+            type = "artifact",
+            text = "",
+            content = JSONObject()
+                .put("kind", "diff")
+                .put("path", "/workspace/app.kt")
+                .put("text", "@@ -1 +1 @@"),
+        )
+
+        val projection = project(diff)
+        val projected = projection.messages.single()
+
+        assertEquals(listOf("diff"), projection.orderingItems.map { it.id })
+        assertEquals(TimelineMessageKind.Artifact, projected.kind)
+        assertEquals("/workspace/app.kt", projected.detail)
+        assertTrue(projected.body.contains("@@ -1 +1 @@"))
+    }
+
+    private fun project(item: RemoteTimelineItem): TimelineProjection = mergeRemoteTimelineItems(
+        currentOrdering = emptyList(),
+        currentMessages = emptyList(),
+        incoming = listOf(item),
+        replace = true,
+    )
 
     private fun item(
         id: String,
