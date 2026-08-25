@@ -9,9 +9,12 @@ from connector.runtime_protocol import (
     AgentRuntime,
     RuntimeConfig,
     RuntimeConfigSchema,
+    RuntimeInstancePolicy,
     RuntimeInvalidRequestError,
-    RuntimeInventoryItem,
     RuntimeProvider,
+    RuntimeResourceClaim,
+    RuntimeSourceKey,
+    RuntimeTypeDescriptor,
 )
 from connector.runtime_protocol.host import RuntimeHostClient
 from connector.runtimes.dsh import discovery, provider_config
@@ -41,13 +44,29 @@ class DshProvider(RuntimeProvider):
 
     @property
     def runtime_type(self) -> str:
+        return "dsh"
+
+    @property
+    def implementation_type(self) -> str:
         return "local-service"
 
     @property
     def display_name(self) -> str:
         return "DeepSeek Harness"
 
-    async def discover(self) -> RuntimeInventoryItem:
+    @property
+    def description(self) -> str:
+        return "DeepSeek Harness local service runtime"
+
+    @property
+    def instance_policy(self) -> RuntimeInstancePolicy:
+        return "multiple"
+
+    @property
+    def max_instances(self) -> int | None:
+        return None
+
+    async def discover(self) -> RuntimeTypeDescriptor:
         values = provider_config.default_config_values()
         result = await self._discoverer(values)
         self._last_discovery = result
@@ -59,17 +78,25 @@ class DshProvider(RuntimeProvider):
                 "storageMode": "dsh-native",
                 "sameSessionWriterLimit": 1,
                 "crossProcessWriterExclusion": False,
+                "configured": result.configured,
             }
         )
-        return RuntimeInventoryItem(
-            runtime=self.runtime,
+        return RuntimeTypeDescriptor(
             runtime_type=self.runtime_type,
             display_name=self.display_name,
+            description=self.description,
+            implementation_type=self.implementation_type,
             available=result.available,
-            configured=result.configured,
             capabilities=provider_config.dsh_capabilities(),
-            reason=result.reason,
+            reason=(
+                result.reason
+                if result.available
+                else result.reason or "DeepSeek Harness is unavailable"
+            ),
             config_schema=await self.get_config_schema(),
+            instance_policy=self.instance_policy,
+            max_instances=self.max_instances,
+            recommended=False,
             metadata=metadata,
         )
 
@@ -123,6 +150,7 @@ class DshProvider(RuntimeProvider):
                 "storageMode": "dsh-native",
                 "sameSessionWriterLimit": 1,
                 "crossProcessWriterExclusion": False,
+                "configured": result.configured,
             }
         )
         return RuntimeConfig(
@@ -140,3 +168,29 @@ class DshProvider(RuntimeProvider):
         host: RuntimeHostClient,
     ) -> AgentRuntime:
         return DshRuntime(config=config, host=host)
+
+    def resource_claims(
+        self,
+        config: RuntimeConfig,
+    ) -> tuple[RuntimeResourceClaim, ...]:
+        values = dict(config.values)
+        dsh_home = str(provider_config.dsh_home(values))
+        endpoint = str(provider_config.endpoint_path(values))
+        return (
+            RuntimeResourceClaim(
+                kind="dsh_home",
+                key=dsh_home,
+                label=f"DSH Home {dsh_home!r}",
+            ),
+            RuntimeResourceClaim(
+                kind="dsh_bridge_endpoint",
+                key=endpoint,
+                label=f"DSH bridge endpoint {endpoint!r}",
+            ),
+        )
+
+    def session_source_key(self, config: RuntimeConfig) -> RuntimeSourceKey:
+        return RuntimeSourceKey(
+            kind="dsh_bridge_endpoint",
+            key=str(provider_config.endpoint_path(dict(config.values))),
+        )

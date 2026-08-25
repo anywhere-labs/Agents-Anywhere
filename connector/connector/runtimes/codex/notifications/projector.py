@@ -61,9 +61,12 @@ class CodexNotificationProjector:
         """
 
         event = notification_event(message)
-        thread_id = event.thread_id or codex_sessions.thread_id_from_result(event.params)
-        session_id = event.platform_session_id or codex_sessions.session_id_from_notification(
+        thread_id = event.thread_id or codex_sessions.thread_id_from_result(
             event.params
+        )
+        session_id = (
+            event.platform_session_id
+            or codex_sessions.session_id_from_notification(event.params)
         )
         if session_id is None and thread_id is not None:
             cached_state = self.session_states.get_by_external_session_id(thread_id)
@@ -71,7 +74,12 @@ class CodexNotificationProjector:
                 session_id = cached_state.session_id
             else:
                 session_id = codex_sessions.stable_session_id(
-                    self.host.connector_id, thread_id
+                    getattr(
+                        self.host,
+                        "session_namespace",
+                        self.host.connector_id,
+                    ),
+                    thread_id,
                 )
         if session_id is None or thread_id is None:
             return

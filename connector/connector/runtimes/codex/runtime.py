@@ -63,7 +63,11 @@ class CodexRuntime(AgentRuntime):
         )
         self._notices = CodexNoticeRegistry()
         self._pending_messages = PendingClientMessageRegistry(
-            connector_id=self.host.connector_id,
+            connector_id=getattr(
+                self.host,
+                "session_namespace",
+                self.host.connector_id,
+            ),
             kv_store=self.client_message_kv,
         )
         self._timeline = CodexTimelineAccumulator(
@@ -223,9 +227,7 @@ class CodexRuntime(AgentRuntime):
             state=state,
             has_active_turn=state.session_id in self._active_turn_ids,
         )
-        await self.host.session_capabilities_update(
-            codex_session_capabilities(context)
-        )
+        await self.host.session_capabilities_update(codex_session_capabilities(context))
 
     async def get_session_snapshot(
         self,

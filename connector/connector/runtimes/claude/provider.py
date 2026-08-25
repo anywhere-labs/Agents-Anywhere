@@ -13,9 +13,10 @@ from connector.runtime_protocol import (
     AgentRuntime,
     RuntimeConfig,
     RuntimeConfigSchema,
+    RuntimeInstancePolicy,
     RuntimeInvalidRequestError,
-    RuntimeInventoryItem,
     RuntimeProvider,
+    RuntimeTypeDescriptor,
 )
 from connector.runtime_protocol.host import RuntimeHostClient
 from connector.runtimes.claude import discovery, provider_config
@@ -39,6 +40,18 @@ class ClaudeProvider(RuntimeProvider):
     def display_name(self) -> str:
         return "Claude"
 
+    @property
+    def description(self) -> str:
+        return "Anthropic Claude Agent SDK runtime"
+
+    @property
+    def instance_policy(self) -> RuntimeInstancePolicy:
+        return "single"
+
+    @property
+    def max_instances(self) -> int:
+        return 1
+
     def __init__(
         self,
         sdk_loader: discovery.SdkLoader | None = None,
@@ -49,7 +62,7 @@ class ClaudeProvider(RuntimeProvider):
         self._discovered_sdk: dict[str, Any] | None = None
         self._discovered_target = None
 
-    async def discover(self) -> RuntimeInventoryItem:
+    async def discover(self) -> RuntimeTypeDescriptor:
         sdk = discovery.check_claude_sdk(self._sdk_loader)
         self._discovered_sdk = sdk
         environment = provider_config.merge_environment({})
@@ -58,17 +71,21 @@ class ClaudeProvider(RuntimeProvider):
             environment,
         )
         available = bool(sdk.get("available"))
-        reason = None if available else sdk.get("reason") or "claude-agent-sdk unavailable"
-        return RuntimeInventoryItem(
-            runtime=self.runtime,
+        reason = (
+            None if available else sdk.get("reason") or "claude-agent-sdk unavailable"
+        )
+        return RuntimeTypeDescriptor(
             runtime_type=self.runtime_type,
             display_name=self.display_name,
+            description=self.description,
             available=available,
-            configured=available,
             capabilities=provider_config.claude_capabilities(),
             reason=reason,
             config_schema=await self.get_config_schema(),
+            instance_policy=self.instance_policy,
+            max_instances=self.max_instances,
             metadata={
+                "configured": available,
                 "sdk": sdk,
                 "launchTarget": discovery.target_metadata(self._discovered_target),
                 "platform": sys.platform,

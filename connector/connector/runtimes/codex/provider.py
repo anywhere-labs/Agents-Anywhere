@@ -11,9 +11,12 @@ from connector.runtime_protocol import (
     AgentRuntime,
     RuntimeConfig,
     RuntimeConfigSchema,
+    RuntimeInstancePolicy,
     RuntimeInvalidRequestError,
-    RuntimeInventoryItem,
     RuntimeProvider,
+    RuntimeResourceClaim,
+    RuntimeSourceKey,
+    RuntimeTypeDescriptor,
 )
 from connector.runtime_protocol.host import RuntimeHostClient
 from connector.runtimes.codex import provider_config
@@ -30,7 +33,7 @@ from connector.runtimes.model_gateway import model_gateway_from_config
 
 SdkChecker = Callable[[], dict[str, Any]]
 SdkClientFactory = Callable[[RuntimeConfig], Any]
-CODEX_CONFIG_SCHEMA_REVISION = 4
+CODEX_CONFIG_SCHEMA_REVISION = 5
 
 
 class CodexProvider(RuntimeProvider):
@@ -46,6 +49,26 @@ class CodexProvider(RuntimeProvider):
     def display_name(self) -> str:
         return "Codex"
 
+    @property
+    def description(self) -> str:
+        return "OpenAI Codex runtime"
+
+    @property
+    def recommended(self) -> bool:
+        return True
+
+    @property
+    def recommendation_rank(self) -> int:
+        return 10
+
+    @property
+    def instance_policy(self) -> RuntimeInstancePolicy:
+        return "multiple"
+
+    @property
+    def max_instances(self) -> int | None:
+        return None
+
     def __init__(
         self,
         sdk_checker: SdkChecker | None = None,
@@ -55,7 +78,7 @@ class CodexProvider(RuntimeProvider):
         self._sdk_client_factory = sdk_client_factory or sdk_client_from_config
         self._discovered_sdk: dict[str, Any] | None = None
 
-    async def discover(self) -> RuntimeInventoryItem:
+    async def discover(self) -> RuntimeTypeDescriptor:
         sdk = self._sdk_checker()
         self._discovered_sdk = sdk
         available = bool(sdk.get("available"))
@@ -68,16 +91,20 @@ class CodexProvider(RuntimeProvider):
         reason = None
         if not available:
             reason = "Codex SDK is unavailable"
-        return RuntimeInventoryItem(
-            runtime=self.runtime,
+        return RuntimeTypeDescriptor(
             runtime_type=self.runtime_type,
             display_name=self.display_name,
+            description=self.description,
             available=available,
-            configured=available,
+            recommended=self.recommended,
+            recommendation_rank=self.recommendation_rank,
             capabilities=provider_config.codex_capabilities(),
             reason=reason,
             config_schema=await self.get_config_schema(),
+            instance_policy=self.instance_policy,
+            max_instances=self.max_instances,
             metadata={
+                "configured": available,
                 "sdk": sdk,
                 "runtimeBinary": runtime_binary_metadata(binary_selection),
                 "platform": sys.platform,
@@ -94,11 +121,13 @@ class CodexProvider(RuntimeProvider):
                 "order": [
                     "useSystemCodex",
                     "codexExecutablePath",
+                    "codexHome",
                     "modelGateway",
                     "environment",
                     "customModels",
                 ],
                 "codexExecutablePath": {"component": "path"},
+                "codexHome": {"component": "path"},
                 "modelGateway": {"component": "modelGateway"},
                 "environment": {"component": "keyValue"},
                 "customModels": {"component": "customModels"},
@@ -131,6 +160,13 @@ class CodexProvider(RuntimeProvider):
             raw_values.pop("codexExecutablePath", None)
         else:
             raw_values["codexExecutablePath"] = codex_executable_path
+        configured_codex_home = provider_config.normalize_codex_home(
+            raw_values.get("codexHome")
+        )
+        if configured_codex_home is None:
+            raw_values.pop("codexHome", None)
+        else:
+            raw_values["codexHome"] = configured_codex_home
         schema = (await self.get_config_schema()).schema
         errors = sorted(
             Draft202012Validator(schema).iter_errors(raw_values),
@@ -147,11 +183,14 @@ class CodexProvider(RuntimeProvider):
             raise RuntimeInvalidRequestError("Codex SDK is not available")
         provider_config.merge_environment(raw_values.get("environment"))
         provider_config.validate_codex_executable_path(codex_executable_path)
+        codex_home = provider_config.effective_codex_home(configured_codex_home)
+        provider_config.validate_codex_home(codex_home)
         binary_mode = provider_config.runtime_binary_mode_for_system_preference(
             use_system_codex
         )
         runtime_environment, shell_path = codex_runtime_environment(
-            raw_values.get("environment")
+            raw_values.get("environment"),
+            codex_home=codex_home,
         )
         binary_selection = select_codex_runtime_binary(
             binary_mode,
@@ -164,6 +203,7 @@ class CodexProvider(RuntimeProvider):
             "useSystemCodex": use_system_codex,
             "environment": dict(raw_values.get("environment") or {}),
             "customModels": normalize_custom_models(raw_values.get("customModels")),
+            "codexHome": codex_home,
         }
         if model_gateway is not None:
             normalized_values["modelGateway"] = model_gateway.to_config_values()
@@ -179,6 +219,7 @@ class CodexProvider(RuntimeProvider):
             metadata={
                 "sdk": sdk,
                 "runtimeBinary": runtime_binary_metadata(binary_selection),
+                "codexHome": codex_home,
                 "platform": sys.platform,
             },
         )
@@ -197,4 +238,23 @@ class CodexProvider(RuntimeProvider):
             host=host,
             client=client,
             client_message_kv=JsonKeyValueStore.default(),
+        )
+
+    def resource_claims(
+        self,
+        config: RuntimeConfig,
+    ) -> tuple[RuntimeResourceClaim, ...]:
+        codex_home = provider_config.canonical_path(str(config.values["codexHome"]))
+        return (
+            RuntimeResourceClaim(
+                kind="codex_home",
+                key=codex_home,
+                label=f"Codex Home {codex_home!r}",
+            ),
+        )
+
+    def session_source_key(self, config: RuntimeConfig) -> RuntimeSourceKey:
+        return RuntimeSourceKey(
+            kind="codex_home",
+            key=provider_config.canonical_path(str(config.values["codexHome"])),
         )

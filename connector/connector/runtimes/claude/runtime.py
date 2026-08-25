@@ -79,7 +79,11 @@ class ClaudeRuntime(AgentRuntime):
         self._session_store = ClaudeSessionStore(self._sessions)
         self._session_sync_states = ClaudeSessionSyncStateStore(self.host)
         self._pending_messages = ClaudePendingClientMessageRegistry(
-            connector_id=self.host.connector_id,
+            connector_id=getattr(
+                self.host,
+                "session_namespace",
+                self.host.connector_id,
+            ),
             kv_store=self.client_message_kv,
         )
         self._catalogs = ClaudeCatalogReader(config=self.config)
