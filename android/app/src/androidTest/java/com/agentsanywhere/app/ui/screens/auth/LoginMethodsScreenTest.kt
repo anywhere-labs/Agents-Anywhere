@@ -1,12 +1,14 @@
 package com.agentsanywhere.app.ui.screens.auth
 
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.fetchSemanticsNode
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.agentsanywhere.app.R
 import com.agentsanywhere.app.ui.designsystem.AgentsAnywhereTheme
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -27,6 +29,17 @@ class LoginMethodsScreenTest {
 
         composeRule.onNodeWithText(context.getString(R.string.auth_enter_server)).assertIsDisplayed()
         composeRule.onNodeWithText(context.getString(R.string.auth_continue_qr)).assertIsDisplayed()
+        val qrButtonTop = composeRule
+            .onNodeWithText(context.getString(R.string.auth_continue_qr))
+            .fetchSemanticsNode()
+            .boundsInRoot
+            .top
+        val serverButtonTop = composeRule
+            .onNodeWithText(context.getString(R.string.auth_enter_server))
+            .fetchSemanticsNode()
+            .boundsInRoot
+            .top
+        assertTrue(qrButtonTop < serverButtonTop)
         composeRule.onNodeWithText("Continue with Password").assertDoesNotExist()
         composeRule.onNodeWithText("Continue with OAuth").assertDoesNotExist()
         composeRule.onNodeWithText("Create an account").assertDoesNotExist()

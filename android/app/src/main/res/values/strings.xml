@@ -33,8 +33,8 @@
 
     <string name="auth_continue_to">Continue to</string>
     <string name="auth_choose_login">Choose how you want to login.</string>
-    <string name="auth_enter_server">Enter Server</string>
-    <string name="auth_continue_qr">Continue with QR Code</string>
+    <string name="auth_enter_server">Self-host Login</string>
+    <string name="auth_continue_qr">Scan to Login (Recommended)</string>
     <string name="auth_web_login_subtitle">Enter your server address, then sign in with the server\'s web login.</string>
     <string name="auth_continue_in_web">Continue in Web Login</string>
     <string name="auth_opening_web_login">Opening web login...</string>

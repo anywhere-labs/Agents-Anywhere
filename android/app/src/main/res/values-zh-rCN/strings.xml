@@ -33,8 +33,8 @@
 
     <string name="auth_continue_to">继续使用</string>
     <string name="auth_choose_login">选择登录方式。</string>
-    <string name="auth_enter_server">输入服务器</string>
-    <string name="auth_continue_qr">使用二维码继续</string>
+    <string name="auth_enter_server">self-host登录</string>
+    <string name="auth_continue_qr">扫码登录（推荐）</string>
     <string name="auth_web_login_subtitle">输入服务器地址，然后使用服务器提供的网页登录。</string>
     <string name="auth_continue_in_web">继续打开网页登录</string>
     <string name="auth_opening_web_login">正在打开网页登录...</string>

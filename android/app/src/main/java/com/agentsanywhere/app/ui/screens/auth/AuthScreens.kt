@@ -72,14 +72,14 @@ fun LoginMethodsScreen(navigate: (AppDestination) -> Unit) {
 
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 LoginMethodButton(
-                    label = stringResource(R.string.auth_enter_server),
-                    icon = Lucide.Server,
-                    onClick = { navigate(AppDestination.ServerSetup) },
-                )
-                LoginMethodButton(
                     label = stringResource(R.string.auth_continue_qr),
                     icon = Lucide.QrCode,
                     onClick = { navigate(AppDestination.QrLogin) },
+                )
+                LoginMethodButton(
+                    label = stringResource(R.string.auth_enter_server),
+                    icon = Lucide.Server,
+                    onClick = { navigate(AppDestination.ServerSetup) },
                 )
             }
         }
