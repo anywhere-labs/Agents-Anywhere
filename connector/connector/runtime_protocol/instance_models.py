@@ -195,6 +195,11 @@ class RuntimeTypeDescriptor:
                 raise TypeError("config_schema must be a RuntimeConfigSchema or None")
             if self.config_schema.runtime != self.runtime_type:
                 raise ValueError("config_schema.runtime must equal runtime_type")
+            _validate_optional_safe_integer(
+                self.config_schema.revision,
+                field_name="config_schema.revision",
+                minimum=0,
+            )
         if self.instance_policy not in _INSTANCE_POLICIES:
             raise ValueError(f"unsupported instance_policy: {self.instance_policy!r}")
         _validate_optional_safe_integer(

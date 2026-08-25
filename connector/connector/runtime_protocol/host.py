@@ -23,6 +23,12 @@ class RuntimeHostClient(ABC):
     def connector_id(self) -> str:
         raise NotImplementedError
 
+    @property
+    def session_namespace(self) -> str:
+        """Stable namespace used when deriving platform session identities."""
+
+        return self.connector_id
+
     async def session_meta_upsert(
         self,
         session_id: str,

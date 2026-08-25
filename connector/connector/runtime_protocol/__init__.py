@@ -5,6 +5,7 @@ from connector.runtime_protocol.attachments import (
 )
 from connector.runtime_protocol.errors import (
     RuntimeConflictError,
+    RuntimeInstancesUnsupportedError,
     RuntimeInvalidRequestError,
     RuntimeProtocolError,
     RuntimeUnavailableError,
@@ -12,6 +13,10 @@ from connector.runtime_protocol.errors import (
     RuntimeUpstreamError,
 )
 from connector.runtime_protocol.host import RuntimeHostClient
+from connector.runtime_protocol.instance_binding import (
+    RuntimeInstance,
+    RuntimeInstanceHost,
+)
 from connector.runtime_protocol.instance_models import (
     MAX_CONFIG_REVISION,
     RuntimeInstanceLifecycleStatus,
@@ -189,10 +194,13 @@ __all__ = [
     "RuntimeConflictError",
     "RuntimeHostClient",
     "RuntimeIdentity",
+    "RuntimeInstance",
+    "RuntimeInstanceHost",
     "RuntimeInstanceLifecycleStatus",
     "RuntimeInstancePolicy",
     "RuntimeInstanceSpec",
     "RuntimeInstanceStatus",
+    "RuntimeInstancesUnsupportedError",
     "RuntimeInvalidRequestError",
     "RuntimeInventoryItem",
     "RuntimeLifecycleStatus",

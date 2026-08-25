@@ -40,6 +40,7 @@ class RuntimeIdentity:
     runtime_version: str
     display_name: str | None = None
     protocol_version: str = "1.0"
+    runtime_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,6 +51,7 @@ class RuntimeConfig:
     schema: Mapping[str, Any] | None = None
     ui_schema: Mapping[str, Any] | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
+    runtime_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,6 +116,7 @@ class RuntimeModelCatalog:
     runtime: str
     revision: int
     models: tuple[RuntimeModelItem, ...]
+    runtime_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,6 +124,7 @@ class RuntimePermissionCatalog:
     runtime: str
     revision: int
     permissions: tuple[RuntimePermissionItem, ...]
+    runtime_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -136,6 +140,7 @@ class RuntimeCapability:
     allowed: bool = True
     unavailable_reason: str | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
+    runtime_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -146,6 +151,7 @@ class RuntimeCapabilitySet:
     session_id: str | None = None
     connector_id: str | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
+    runtime_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -157,6 +163,7 @@ class SessionMeta:
     cwd: str | None = None
     ordering_time: str | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
+    runtime_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -169,6 +176,7 @@ class SessionState:
     status_reason: str | None = None
     error: Mapping[str, Any] | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
+    runtime_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -237,6 +245,7 @@ class RuntimeTimelineSnapshot:
     items: tuple[RuntimeTimelineItem, ...]
     complete: bool = False
     metadata: Mapping[str, Any] = field(default_factory=dict)
+    runtime_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -262,6 +271,7 @@ class SessionNotice:
     source: Mapping[str, Any] = field(default_factory=dict)
     context: Mapping[str, Any] = field(default_factory=dict)
     metadata: Mapping[str, Any] = field(default_factory=dict)
+    runtime_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

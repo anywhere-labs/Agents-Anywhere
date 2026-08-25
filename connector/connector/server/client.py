@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any
 
 import httpx
@@ -282,11 +282,16 @@ class BackendRpcClient:
 
     async def _publish_runtime_status(
         self,
+        runtime_type: str,
         runtime_id: str,
         status: str,
-        error: dict[str, Any] | None,
+        error: Mapping[str, Any] | None,
     ) -> None:
-        payload: dict[str, Any] = {"runtimeId": runtime_id, "status": status}
+        payload: dict[str, Any] = {
+            "runtime": runtime_type,
+            "runtimeId": runtime_id,
+            "status": status,
+        }
         if error is not None:
             payload["error"] = error
         await self.send_notification("runtime.statusChanged", payload)
@@ -295,9 +300,12 @@ class BackendRpcClient:
         self,
         runtime_id: str,
         status: str,
-        error: dict[str, Any] | None,
+        error: Mapping[str, Any] | None,
     ) -> None:
-        await self._publish_runtime_status(runtime_id, status, error)
+        entry = self.agent_runtime_supervisor.entry(runtime_id)
+        await self._publish_runtime_status(
+            entry.runtime_type, runtime_id, status, error
+        )
 
     async def ingest_notifications(self, notifications: list[dict[str, Any]]) -> None:
         await self._ingest.ingest_notifications(notifications)
