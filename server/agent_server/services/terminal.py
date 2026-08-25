@@ -12,11 +12,13 @@ from agent_server.core.models import (
 )
 from agent_server.core.utc import utc_now
 from agent_server.infra.connector_rpc import ConnectorRpcManager
-from agent_server.infra.terminal_broker import TerminalBroker
+from agent_server.infra.terminal_broker import Terminal, TerminalBroker
 from agent_server.services.repository_ports import TerminalRepository
 from agent_server.services.workspace import (
+    ConnectorUnavailableError,
     local_rpc_session,
     request_connector,
+    request_connector_bound,
     resolve_workspace_path,
 )
 
@@ -96,7 +98,7 @@ class TerminalService:
                 ephemeral_group_id=payload.ephemeralGroupId,
             )
             try:
-                result = await request_connector(
+                result, connection_id = await request_connector_bound(
                     self._manager,
                     session.connectorId,
                     "terminal.create",
@@ -114,6 +116,11 @@ class TerminalService:
                         "env": payload.env or {},
                     },
                     timeout=15,
+                )
+                term = await self._bind_current_connection(
+                    term.id,
+                    session.connectorId,
+                    connection_id,
                 )
             except Exception:
                 await self._broker.remove(term.id)
@@ -157,7 +164,7 @@ class TerminalService:
                 ephemeral_group_id=payload.ephemeralGroupId,
             )
             try:
-                await request_connector(
+                _, connection_id = await request_connector_bound(
                     self._manager,
                     connector_id,
                     "terminal.relay.connect",
@@ -168,6 +175,11 @@ class TerminalService:
                     },
                     timeout=15,
                 )
+                term = await self._bind_current_connection(
+                    term.id,
+                    connector_id,
+                    connection_id,
+                )
                 connected = await self._broker.wait_connector(term.id, timeout=10)
                 if connected is None:
                     raise TerminalConflictError("terminal relay did not connect")
@@ -175,6 +187,20 @@ class TerminalService:
                 await self._broker.remove(term.id)
                 raise
             return TerminalResponse(terminal=TerminalView(**term.view()), serverTime=utc_now())
+
+    async def _bind_current_connection(
+        self,
+        terminal_id: str,
+        connector_id: str,
+        connection_id: str,
+    ) -> Terminal:
+        term = await self._broker.bind_connection(terminal_id, connection_id)
+        if term is None or not await self._manager.is_connection_id_current(
+            connector_id,
+            connection_id,
+        ):
+            raise ConnectorUnavailableError("connector connection was replaced")
+        return term
 
     async def _close_connector_terminal(
         self,

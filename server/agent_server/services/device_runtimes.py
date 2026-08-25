@@ -189,22 +189,17 @@ class DeviceRuntimeService:
         connector_id: str,
         connection: ConnectorConnection,
     ) -> None:
-        result = await self._request_discovery(
+        await self._discover(
             connector_id,
             connection=connection,
         )
-        async with self._runtime_lock(connector_id, "@instances"):
-            if not self._manager.is_connection_current(connection):
-                raise DeviceRuntimeOfflineError("connector connection was replaced")
-            await self._ingest_discovery(connector_id, result)
         await self.reconcile_active(connector_id)
 
     async def discover(
         self, connector_id: str, *, user_id: str
     ) -> list[DeviceRuntimeView]:
         await self.list_runtimes(connector_id, user_id=user_id)
-        async with self._runtime_lock(connector_id, "@instances"):
-            await self._discover(connector_id)
+        await self._discover(connector_id)
         await self.reconcile_active(connector_id)
         return await self.list_runtimes(connector_id, user_id=user_id)
 
@@ -215,21 +210,34 @@ class DeviceRuntimeService:
         user_id: str,
     ) -> list[RuntimeTypeView]:
         await self.list_runtime_types(connector_id, user_id=user_id)
-        async with self._runtime_lock(connector_id, "@instances"):
-            await self._discover(connector_id)
+        await self._discover(connector_id)
         await self.reconcile_active(connector_id)
         return await self.list_runtime_types(connector_id, user_id=user_id)
 
-    async def _discover(self, connector_id: str) -> None:
-        result = await self._request_discovery(connector_id)
-        await self._ingest_discovery(connector_id, result)
+    async def _discover(
+        self,
+        connector_id: str,
+        *,
+        connection: ConnectorConnection | None = None,
+    ) -> None:
+        result, connection_id = await self._request_discovery(
+            connector_id,
+            connection=connection,
+        )
+        async with self._runtime_lock(connector_id, "@instances"):
+            if not await self._manager.is_connection_id_current(
+                connector_id,
+                connection_id,
+            ):
+                raise DeviceRuntimeOfflineError("connector connection was replaced")
+            await self._ingest_discovery(connector_id, result)
 
     async def _request_discovery(
         self,
         connector_id: str,
         *,
         connection: ConnectorConnection | None = None,
-    ) -> Any:
+    ) -> tuple[Any, str]:
         if connection is None and not await self._manager.is_online(connector_id):
             raise DeviceRuntimeOfflineError("connector is offline")
         try:
@@ -237,7 +245,7 @@ class DeviceRuntimeService:
                 "supportedControlVersions": SUPPORTED_RUNTIME_CONTROL_VERSIONS,
             }
             if connection is None:
-                result = await self._manager.request(
+                return await self._manager.request_bound(
                     connector_id,
                     "runtime.discover",
                     params,
@@ -250,6 +258,7 @@ class DeviceRuntimeService:
                     params,
                     timeout=90,
                 )
+                return result, connection.connection_id
         except ConnectorOfflineError as exc:
             raise DeviceRuntimeOfflineError(str(exc)) from exc
         except ConnectorRpcError as exc:
@@ -257,7 +266,6 @@ class DeviceRuntimeService:
                 exc.message,
                 detail={"code": exc.code, "message": exc.message},
             ) from exc
-        return result
 
     async def _ingest_discovery(
         self,

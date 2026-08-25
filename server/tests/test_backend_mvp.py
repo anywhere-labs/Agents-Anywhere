@@ -1245,6 +1245,31 @@ class FakeLocalRpc:
     async def is_online(self, connector_id: str) -> bool:
         return True
 
+    async def request_bound(
+        self,
+        connector_id: str,
+        method: str,
+        params: dict[str, Any],
+        *,
+        timeout: float = 30,
+    ) -> tuple[Any, str]:
+        return (
+            await self.request(
+                connector_id,
+                method,
+                params,
+                timeout=timeout,
+            ),
+            "fake-connection",
+        )
+
+    async def is_connection_id_current(
+        self,
+        _connector_id: str,
+        connection_id: str,
+    ) -> bool:
+        return connection_id == "fake-connection"
+
     async def request(
         self,
         connector_id: str,
@@ -5551,6 +5576,44 @@ def test_terminal_broker_removes_connector_user_terminals_only(tmp_path):
     assert (
         asyncio.run(client.app.state.terminal_broker.get(other_terminal_id)) is not None
     )
+
+
+def test_terminal_broker_cleanup_is_scoped_to_connector_connection(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, _, session_id, _ = create_connector_and_session(client)
+
+    async def exercise() -> tuple[str, str]:
+        broker = client.app.state.terminal_broker
+        old_terminal = await broker.register(
+            session_id=session_id,
+            connector_id=connector_id,
+            connector_connection_id="cnx_old",
+            label="old",
+            cwd="/repo",
+            shell="zsh",
+            cols=80,
+            rows=24,
+        )
+        new_terminal = await broker.register(
+            session_id=session_id,
+            connector_id=connector_id,
+            connector_connection_id="cnx_new",
+            label="new",
+            cwd="/repo",
+            shell="zsh",
+            cols=80,
+            rows=24,
+        )
+        removed = await broker.remove_ephemeral_for_connector(
+            connector_id,
+            connection_id="cnx_old",
+        )
+        assert [terminal.id for terminal in removed] == [old_terminal.id]
+        assert await broker.get(old_terminal.id) is None
+        assert await broker.get(new_terminal.id) is not None
+        return old_terminal.id, new_terminal.id
+
+    asyncio.run(exercise())
 
 
 def test_terminal_broker_forwards_browser_events_to_connector_relay(tmp_path):

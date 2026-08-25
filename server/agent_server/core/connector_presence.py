@@ -7,3 +7,4 @@ from dataclasses import dataclass
 class ConnectorLease:
     instance_id: str
     connection_id: str
+    ready: bool = True

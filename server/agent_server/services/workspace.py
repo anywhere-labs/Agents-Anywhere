@@ -116,3 +116,26 @@ async def request_connector(
         raise ConnectorUpstreamError(exc.message or exc.code) from exc
     except TimeoutError as exc:
         raise ConnectorRequestTimeoutError(f"{method} timed out") from exc
+
+
+async def request_connector_bound(
+    manager: ConnectorRpcManager,
+    connector_id: str,
+    method: str,
+    params: dict[str, Any],
+    *,
+    timeout: float,
+) -> tuple[Any, str]:
+    try:
+        return await manager.request_bound(
+            connector_id,
+            method,
+            params,
+            timeout=timeout,
+        )
+    except ConnectorOfflineError as exc:
+        raise ConnectorUnavailableError(str(exc)) from exc
+    except ConnectorRpcError as exc:
+        raise ConnectorUpstreamError(exc.message or exc.code) from exc
+    except TimeoutError as exc:
+        raise ConnectorRequestTimeoutError(f"{method} timed out") from exc

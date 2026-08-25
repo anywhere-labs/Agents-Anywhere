@@ -61,6 +61,25 @@ class FakeRuntimeRpc:
             return self.session_create_result
         return {"ok": True}
 
+    async def request_bound(
+        self,
+        connector_id: str,
+        method: str,
+        params: dict[str, Any],
+        **kwargs: Any,
+    ) -> tuple[dict[str, Any], str]:
+        return (
+            await self.request(connector_id, method, params, **kwargs),
+            "fake-connection",
+        )
+
+    async def is_connection_id_current(
+        self,
+        _connector_id: str,
+        connection_id: str,
+    ) -> bool:
+        return connection_id == "fake-connection" and self.online
+
 
 def _auth_headers(client: TestClient) -> dict[str, str]:
     config = client.get("/auth/config").json()

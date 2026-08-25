@@ -70,6 +70,18 @@ async def _connector_presence_watchdog(app: FastAPI) -> None:
         await asyncio.sleep(CONNECTOR_PRESENCE_SWEEP_SECONDS)
         stale_connections = await app.state.rpc.expire_stale()
         for connection in stale_connections:
+            try:
+                await app.state.terminal_broker.remove_ephemeral_for_connector(
+                    connection.connector_id,
+                    connection_id=connection.connection_id,
+                )
+            except Exception:  # noqa: BLE001 - keep the presence watchdog alive
+                logger.exception(
+                    "failed to clean stale connector terminals connector_id={} "
+                    "connection_id={}",
+                    connection.connector_id,
+                    connection.connection_id,
+                )
             await publish_connector_session_capabilities(
                 app.state.store,
                 app.state.rpc,

@@ -8,6 +8,7 @@ from fakeredis import FakeServer
 from fakeredis.aioredis import FakeRedis
 
 from agent_server.infra.connector_rpc import (
+    ConnectorOfflineError,
     ConnectorRpcError,
     ConnectorRpcManager,
     DuplicateConnectorConnectionError,
@@ -32,6 +33,34 @@ def _coordinator(server: FakeServer) -> RedisCoordinator:
         prefix="test-connector-routing",
         client=FakeRedis(server=server, decode_responses=True),
     )
+
+
+class PausingPromotionCoordinator(RedisCoordinator):
+    def __init__(self, server: FakeServer) -> None:
+        super().__init__(
+            prefix="test-connector-routing",
+            client=FakeRedis(server=server, decode_responses=True),
+        )
+        self.promoted = asyncio.Event()
+        self.resume = asyncio.Event()
+
+    async def replace_if_value(
+        self,
+        key: str,
+        expected_value: str,
+        replacement_value: str,
+        *,
+        ttl_seconds: float,
+    ) -> bool:
+        result = await super().replace_if_value(
+            key,
+            expected_value,
+            replacement_value,
+            ttl_seconds=ttl_seconds,
+        )
+        self.promoted.set()
+        await self.resume.wait()
+        return result
 
 
 def test_connector_rpc_manager_rejects_duplicate_online_connection() -> None:
@@ -82,6 +111,87 @@ def test_distributed_lease_rejects_duplicate_connector() -> None:
         }
         assert await owner.unregister("conn_1", connection)
         assert not await other.is_online("conn_1")
+
+    asyncio.run(exercise())
+
+
+def test_distributed_reserved_connection_is_not_online_or_routable() -> None:
+    async def exercise() -> None:
+        fake_server = FakeServer()
+        owner = ConnectorRpcManager(_coordinator(fake_server), instance_id="server-a")
+        other = ConnectorRpcManager(_coordinator(fake_server), instance_id="server-b")
+        connection = await owner.register(
+            "conn_1",
+            FakeWebSocket(),  # type: ignore[arg-type]
+            ready=False,
+        )
+
+        assert not await owner.is_online("conn_1")
+        assert not await other.is_online("conn_1")
+        with pytest.raises(ConnectorOfflineError):
+            await other.request("conn_1", "runtime.discover", {})
+        with pytest.raises(DuplicateConnectorConnectionError):
+            await other.register(
+                "conn_1",
+                FakeWebSocket(),  # type: ignore[arg-type]
+            )
+
+        assert await owner.mark_ready(connection)
+        assert await owner.is_online("conn_1")
+        assert await other.is_online("conn_1")
+        assert await owner.unregister("conn_1", connection)
+
+    asyncio.run(exercise())
+
+
+def test_unregister_during_ready_promotion_cleans_promoted_lease() -> None:
+    async def exercise() -> None:
+        fake_server = FakeServer()
+        coordinator = PausingPromotionCoordinator(fake_server)
+        owner = ConnectorRpcManager(coordinator, instance_id="server-a")
+        other = ConnectorRpcManager(_coordinator(fake_server), instance_id="server-b")
+        connection = await owner.register(
+            "conn_1",
+            FakeWebSocket(),  # type: ignore[arg-type]
+            ready=False,
+        )
+
+        promotion = asyncio.create_task(owner.mark_ready(connection))
+        await asyncio.wait_for(coordinator.promoted.wait(), timeout=1)
+        assert await owner.unregister("conn_1", connection)
+        coordinator.resume.set()
+
+        assert not await promotion
+        assert not await other.is_online("conn_1")
+        replacement = await other.register("conn_1", FakeWebSocket())  # type: ignore[arg-type]
+        assert await other.unregister("conn_1", replacement)
+
+    asyncio.run(exercise())
+
+
+def test_cancelling_ready_promotion_releases_promoted_lease() -> None:
+    async def exercise() -> None:
+        fake_server = FakeServer()
+        coordinator = PausingPromotionCoordinator(fake_server)
+        owner = ConnectorRpcManager(coordinator, instance_id="server-a")
+        other = ConnectorRpcManager(_coordinator(fake_server), instance_id="server-b")
+        connection = await owner.register(
+            "conn_1",
+            FakeWebSocket(),  # type: ignore[arg-type]
+            ready=False,
+        )
+
+        promotion = asyncio.create_task(owner.mark_ready(connection))
+        await asyncio.wait_for(coordinator.promoted.wait(), timeout=1)
+        promotion.cancel()
+        coordinator.resume.set()
+
+        with pytest.raises(asyncio.CancelledError):
+            await promotion
+        assert not await owner.is_online("conn_1")
+        assert not await other.is_online("conn_1")
+        replacement = await other.register("conn_1", FakeWebSocket())  # type: ignore[arg-type]
+        assert await other.unregister("conn_1", replacement)
 
     asyncio.run(exercise())
 

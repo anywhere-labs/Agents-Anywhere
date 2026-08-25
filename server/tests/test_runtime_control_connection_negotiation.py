@@ -4,11 +4,16 @@ import asyncio
 import time
 from typing import Any
 
+import pytest
 from conftest import ApiV2TestClient as TestClient
 
 from agent_server.app import create_app
 from agent_server.core.device_runtime import RuntimeDiscoverV2Response
-from agent_server.services.device_runtimes import SUPPORTED_RUNTIME_CONTROL_VERSIONS
+from agent_server.infra.connector_rpc import ConnectorOfflineError
+from agent_server.services.device_runtimes import (
+    SUPPORTED_RUNTIME_CONTROL_VERSIONS,
+    DeviceRuntimeOfflineError,
+)
 
 ADMIN_USER = "user1"
 ADMIN_PASSWORD = "secret"
@@ -314,3 +319,181 @@ def test_abandoned_negotiation_cannot_overwrite_a_reconnect(tmp_path: Any) -> No
         )
 
     asyncio.run(exercise())
+
+
+def test_registered_connection_is_not_routable_until_prepared(tmp_path: Any) -> None:
+    client, connector_id, _ = _make_connector(tmp_path)
+    _seed_v2(client, connector_id)
+
+    async def exercise() -> None:
+        manager = client.app.state.rpc
+        service = client.app.state.device_runtime_service
+        websocket = FakeWebSocket()
+        connection = await manager.register(  # type: ignore[arg-type]
+            connector_id,
+            websocket,
+            ready=False,
+        )
+
+        assert not await manager.is_online(connector_id)
+        with pytest.raises(ConnectorOfflineError):
+            await manager.request(connector_id, "runtime.config", {})
+        assert (
+            await client.app.state.store.get_connector_runtime_control_version(
+                connector_id
+            )
+            == "2.0"
+        )
+
+        await service.prepare_connection(connector_id)
+        with pytest.raises(ConnectorOfflineError):
+            await manager.request(connector_id, "runtime.config", {})
+        assert await manager.mark_ready(connection)
+
+        request_task = asyncio.create_task(
+            manager.request(connector_id, "runtime.config", {})
+        )
+        request = await _wait_for_request(websocket)
+        manager.resolve_response(
+            connector_id,
+            {
+                "id": request["id"],
+                "type": "response",
+                "ok": True,
+                "result": {"running": False, "config": None},
+            },
+        )
+        assert await request_task == {"running": False, "config": None}
+        assert await manager.unregister(connector_id, connection)
+
+    asyncio.run(exercise())
+
+
+def test_explicit_discovery_does_not_block_inventory_before_response(
+    tmp_path: Any,
+) -> None:
+    client, connector_id, _ = _make_connector(tmp_path)
+
+    async def exercise() -> None:
+        manager = client.app.state.rpc
+        service = client.app.state.device_runtime_service
+        websocket = FakeWebSocket()
+        connection = await manager.register(  # type: ignore[arg-type]
+            connector_id,
+            websocket,
+        )
+        discovery_task = asyncio.create_task(
+            service.discover_runtime_types(
+                connector_id,
+                user_id=ADMIN_USER,
+            )
+        )
+        request = await _wait_for_request(websocket)
+
+        await asyncio.wait_for(
+            service.ingest_unsolicited_inventory(
+                connector_id,
+                _legacy_inventory(display_name="Bootstrap Legacy Codex"),
+            ),
+            timeout=0.5,
+        )
+        manager.resolve_response(
+            connector_id,
+            {
+                "id": request["id"],
+                "type": "response",
+                "ok": True,
+                "result": _v2_discovery(),
+            },
+        )
+        runtime_types = await discovery_task
+        assert runtime_types[0].displayName == "Codex V2"
+        assert await manager.unregister(connector_id, connection)
+
+    asyncio.run(exercise())
+
+
+def test_stale_discovery_response_waiting_for_lock_is_rejected(
+    tmp_path: Any,
+) -> None:
+    client, connector_id, _ = _make_connector(tmp_path)
+
+    async def exercise() -> None:
+        manager = client.app.state.rpc
+        service = client.app.state.device_runtime_service
+        old_ws = FakeWebSocket()
+        old_connection = await manager.register(  # type: ignore[arg-type]
+            connector_id,
+            old_ws,
+        )
+
+        async with service._runtime_lock(
+            connector_id,
+            "@instances",
+        ):
+            stale_task = asyncio.create_task(
+                service.negotiate_connection(connector_id, old_connection)
+            )
+            request = await _wait_for_request(old_ws)
+            manager.resolve_response(
+                connector_id,
+                {
+                    "id": request["id"],
+                    "type": "response",
+                    "ok": True,
+                    "result": _v2_discovery(),
+                },
+            )
+            await asyncio.sleep(0)
+            assert not stale_task.done()
+            assert await manager.unregister(connector_id, old_connection)
+            replacement = await manager.register(  # type: ignore[arg-type]
+                connector_id,
+                FakeWebSocket(),
+            )
+
+        result = await asyncio.gather(stale_task, return_exceptions=True)
+        assert isinstance(result[0], DeviceRuntimeOfflineError)
+        await service.prepare_connection(connector_id)
+        assert (
+            await client.app.state.store.get_connector_runtime_control_version(
+                connector_id
+            )
+            == "1.0"
+        )
+        assert await manager.unregister(connector_id, replacement)
+
+    asyncio.run(exercise())
+
+
+def test_connector_cleanup_failure_still_unregisters_connection(
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, connector_id, access_token = _make_connector(tmp_path)
+
+    async def fail_terminal_cleanup(
+        cleanup_connector_id: str,
+        *,
+        connection_id: str | None = None,
+    ) -> list[Any]:
+        assert cleanup_connector_id == connector_id
+        assert connection_id is not None
+        raise RuntimeError("terminal cleanup failed")
+
+    monkeypatch.setattr(
+        client.app.state.terminal_broker,
+        "remove_ephemeral_for_connector",
+        fail_terminal_cleanup,
+    )
+
+    with (
+        pytest.raises(RuntimeError, match="terminal cleanup failed"),
+        client.websocket_connect(
+            "/connector/ws",
+            headers={"Authorization": f"Bearer {access_token}"},
+        ),
+    ):
+        assert asyncio.run(client.app.state.rpc.is_online(connector_id))
+
+    assert not asyncio.run(client.app.state.rpc.is_online(connector_id))
