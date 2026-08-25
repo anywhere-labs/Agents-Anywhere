@@ -11,6 +11,9 @@ from typing import Any, Self
 
 import httpx
 import pytest
+from websockets.exceptions import ConnectionClosedError
+from websockets.frames import Close
+
 from connector.core.config import ConnectorConfig
 from connector.local.terminal import TerminalBackend
 from connector.runtime_protocol import (
@@ -37,6 +40,7 @@ from connector.runtime_protocol import (
     RuntimeConfig,
     RuntimeConfigSchema,
     RuntimeIdentity,
+    RuntimeInvalidRequestError,
     RuntimeInventoryItem,
     RuntimeModelCatalog,
     RuntimeModelItem,
@@ -76,8 +80,6 @@ from connector.server.rpc import (
     sanitize_rpc_log_value,
 )
 from connector.server.runtime_sync import RuntimeSyncRunner, _timeline_sync_notification
-from websockets.exceptions import ConnectionClosedError
-from websockets.frames import Close
 
 
 def test_rpc_log_payload_sanitizer_redacts_secrets_and_bounds_size() -> None:
@@ -979,6 +981,59 @@ def test_connector_runtime_publishes_named_instance_status_scope() -> None:
         ]
         assert all(scope["runtime"] == "codex" for scope in status_scopes)
         assert all(scope["runtimeId"] == "rti_codex_named" for scope in status_scopes)
+
+    asyncio.run(run())
+
+
+def test_runtime_control_negotiation_isolated_across_reconnect_race(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def run() -> None:
+        client = _client()
+        old_connection = client._dispatcher.new_session()
+        new_connection = client._dispatcher.new_session()
+        discover_started = asyncio.Event()
+        discover_release = asyncio.Event()
+        original_discover = client.agent_runtime_supervisor.discover
+        calls = 0
+
+        async def delayed_first_discover():  # type: ignore[no-untyped-def]
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                discover_started.set()
+                await discover_release.wait()
+            return await original_discover()
+
+        monkeypatch.setattr(
+            client.agent_runtime_supervisor,
+            "discover",
+            delayed_first_discover,
+        )
+        old_negotiation = asyncio.create_task(
+            old_connection.dispatch(
+                "runtime.discover",
+                {"supportedControlVersions": ["2.0", "1.0"]},
+            )
+        )
+        await discover_started.wait()
+
+        new_legacy = await new_connection.dispatch("runtime.discover", {})
+        assert set(new_legacy) == {"runtimes"}
+        assert new_connection.runtime_rpc.control_version == "1.0"
+
+        discover_release.set()
+        old_result = await old_negotiation
+        assert old_result["selectedControlVersion"] == "2.0"
+        assert old_connection.runtime_rpc.control_version == "2.0"
+        assert new_connection.runtime_rpc.control_version == "1.0"
+
+        with pytest.raises(RuntimeInvalidRequestError, match="already selected"):
+            await old_connection.dispatch(
+                "runtime.discover",
+                {"supportedControlVersions": ["1.0"]},
+            )
+        assert new_connection.runtime_rpc.control_version == "1.0"
 
     asyncio.run(run())
 
@@ -2453,7 +2508,18 @@ async def _exercise_runtime_sync_task_survives_websocket_reconnect(monkeypatch) 
         await asyncio.Event().wait()
 
     monkeypatch.setattr(client, "ensure_access_token", ensure_access_token)
-    monkeypatch.setattr(client._dispatcher, "discover_runtimes", discover_runtimes)
+    original_new_session = client._dispatcher.new_session
+
+    def new_session():  # type: ignore[no-untyped-def]
+        request_session = original_new_session()
+        monkeypatch.setattr(
+            request_session,
+            "discover_runtimes",
+            discover_runtimes,
+        )
+        return request_session
+
+    monkeypatch.setattr(client._dispatcher, "new_session", new_session)
     monkeypatch.setattr(client, "send_notification", send_notification)
     monkeypatch.setattr(client._runtime_sync, "sync_existing_loop", sync_existing_loop)
     monkeypatch.setattr(

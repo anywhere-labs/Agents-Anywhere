@@ -7,6 +7,9 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from jsonschema import Draft202012Validator, FormatChecker
+from referencing import Registry, Resource
+
 from connector.runtime_protocol import (
     MAX_CONFIG_REVISION,
     AgentRuntime,
@@ -25,8 +28,6 @@ from connector.runtime_protocol import (
     RuntimeTypeDescriptor,
 )
 from connector.server.runtime_rpc import RuntimeRpcHandler
-from jsonschema import Draft202012Validator, FormatChecker
-from referencing import Registry, Resource
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 CONTRACT_DIR = REPOSITORY_ROOT / "contracts" / "runtime-control" / "2.0"
@@ -220,6 +221,29 @@ async def _test_runtime_discover_negotiates_v2_and_preserves_exact_legacy_shape(
     assert negotiated["selectedControlVersion"] == "2.0"
     assert negotiated["runtimeTypes"][0]["runtimeType"] == "codex"
     assert negotiated["runtimeTypes"][1]["maxInstances"] == 1
+
+    repeated = await handler.dispatch(
+        "runtime.discover",
+        {"supportedControlVersions": ["2.0", "1.0"]},
+    )
+    assert repeated["selectedControlVersion"] == "2.0"
+
+    with pytest.raises(RuntimeInvalidRequestError, match="already selected"):
+        await handler.dispatch(
+            "runtime.discover",
+            {"supportedControlVersions": ["1.0"]},
+        )
+    with pytest.raises(RuntimeInvalidRequestError, match="already selected"):
+        await handler.dispatch("runtime.discover", {})
+    assert handler.control_version == "2.0"
+
+
+def test_runtime_control_v1_only_discovery_remains_legacy() -> None:
+    asyncio.run(_test_runtime_control_v1_only_discovery_remains_legacy())
+
+
+async def _test_runtime_control_v1_only_discovery_remains_legacy() -> None:
+    handler, _supervisor = _handler()
 
     v1_only = await handler.dispatch(
         "runtime.discover",

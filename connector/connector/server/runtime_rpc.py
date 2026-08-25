@@ -298,7 +298,10 @@ class RuntimeRpcHandler:
                     for descriptor in descriptors
                 ],
             }
-        self._control_version = "1.0"
+        if self._control_version == "2.0":
+            raise RuntimeInvalidRequestError(
+                "Runtime Control 2.0 is already selected for this connection"
+            )
         items = await self.agent_runtime_supervisor.discover_legacy()
         return {"runtimes": [agent_inventory_payload(item) for item in items]}
 
