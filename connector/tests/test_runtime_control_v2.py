@@ -128,6 +128,7 @@ class _Runtime(AgentRuntime):
 class _Provider(RuntimeProvider):
     def __init__(self, runtime_type: str) -> None:
         self._runtime_type = runtime_type
+        self.fail_stop = False
 
     @property
     def runtime_type(self) -> str:
@@ -185,6 +186,11 @@ class _Provider(RuntimeProvider):
         assert host.connector_id == "conn_contract"
         return _Runtime(config)
 
+    async def stop_runtime(self, runtime: AgentRuntime) -> None:
+        if self.fail_stop:
+            raise RuntimeError("stop boom")
+        await runtime.stop()
+
 
 def _handler() -> tuple[RuntimeRpcHandler, RuntimeSupervisor]:
     host = _Host()
@@ -195,11 +201,11 @@ def _handler() -> tuple[RuntimeRpcHandler, RuntimeSupervisor]:
     return RuntimeRpcHandler(supervisor, host), supervisor
 
 
-def test_runtime_discover_negotiates_v2_and_preserves_exact_legacy_shape() -> None:
-    asyncio.run(_test_runtime_discover_negotiates_v2_and_preserves_exact_legacy_shape())
+def test_runtime_discover_bootstrap_allows_v2_and_preserves_legacy_shape() -> None:
+    asyncio.run(_test_runtime_discover_bootstrap_allows_v2_and_preserves_legacy_shape())
 
 
-async def _test_runtime_discover_negotiates_v2_and_preserves_exact_legacy_shape() -> (
+async def _test_runtime_discover_bootstrap_allows_v2_and_preserves_legacy_shape() -> (
     None
 ):
     handler, _supervisor = _handler()
@@ -207,6 +213,7 @@ async def _test_runtime_discover_negotiates_v2_and_preserves_exact_legacy_shape(
     legacy = await handler.dispatch("runtime.discover", {})
     assert set(legacy) == {"runtimes"}
     assert handler.control_version == "1.0"
+    assert handler.negotiated_control_version is None
 
     offered = _load_json(
         FIXTURE_DIR
@@ -218,6 +225,7 @@ async def _test_runtime_discover_negotiates_v2_and_preserves_exact_legacy_shape(
 
     _contract_validator("runtime-discover-response").validate(negotiated)
     assert handler.control_version == "2.0"
+    assert handler.negotiated_control_version == "2.0"
     assert negotiated["selectedControlVersion"] == "2.0"
     assert negotiated["runtimeTypes"][0]["runtimeType"] == "codex"
     assert negotiated["runtimeTypes"][1]["maxInstances"] == 1
@@ -251,6 +259,40 @@ async def _test_runtime_control_v1_only_discovery_remains_legacy() -> None:
     )
     assert set(v1_only) == {"runtimes"}
     assert handler.control_version == "1.0"
+    assert handler.negotiated_control_version == "1.0"
+
+    repeated = await handler.dispatch(
+        "runtime.discover",
+        {"supportedControlVersions": ["1.0"]},
+    )
+    assert set(repeated) == {"runtimes"}
+
+    with pytest.raises(RuntimeInvalidRequestError, match="1.0 is already selected"):
+        await handler.dispatch(
+            "runtime.discover",
+            {"supportedControlVersions": ["2.0", "1.0"]},
+        )
+    assert handler.control_version == "1.0"
+    assert handler.negotiated_control_version == "1.0"
+
+
+def test_runtime_control_rejects_unsupported_only_offer() -> None:
+    async def run() -> None:
+        handler, _supervisor = _handler()
+
+        with pytest.raises(
+            RuntimeInvalidRequestError,
+            match="does not include a supported Runtime Control version",
+        ):
+            await handler.dispatch(
+                "runtime.discover",
+                {"supportedControlVersions": ["3.0"]},
+            )
+
+        assert handler.control_version == "1.0"
+        assert handler.negotiated_control_version is None
+
+    asyncio.run(run())
 
 
 def test_runtime_control_v2_lifecycle_and_scoped_rpc_use_type_and_instance() -> None:
@@ -369,6 +411,52 @@ async def _test_runtime_control_v2_lifecycle_and_scoped_rpc_use_type_and_instanc
         "runtimeId": "rti_codex_work_01",
         "status": "stopped",
     }
+
+
+def test_runtime_config_reports_retained_error_handle_as_not_running() -> None:
+    async def run() -> None:
+        handler, supervisor = _handler()
+        await handler.dispatch(
+            "runtime.discover",
+            {"supportedControlVersions": ["2.0", "1.0"]},
+        )
+        params = {
+            "runtime": "codex",
+            "runtimeId": "rti_codex_retained",
+            "name": "Retained Codex",
+            "config": {"home": "/tmp/codex-retained"},
+            "configRevision": 7,
+        }
+        await handler.dispatch("runtime.start", params)
+        provider = supervisor.provider("codex")
+        assert isinstance(provider, _Provider)
+        provider.fail_stop = True
+
+        with pytest.raises(RuntimeError, match="stop boom"):
+            await handler.dispatch(
+                "runtime.stop",
+                {"runtime": "codex", "runtimeId": "rti_codex_retained"},
+            )
+
+        entry = supervisor.entry("rti_codex_retained")
+        assert entry.status == "error"
+        assert entry.runtime is not None
+        result = await handler.dispatch(
+            "runtime.config",
+            {"runtime": "codex", "runtimeId": "rti_codex_retained"},
+        )
+        assert result["running"] is False
+        assert result["config"]["runtime"] == "codex"
+        assert result["config"]["runtimeId"] == "rti_codex_retained"
+        assert result["config"]["revision"] == 7
+
+        provider.fail_stop = False
+        await handler.dispatch(
+            "runtime.stop",
+            {"runtime": "codex", "runtimeId": "rti_codex_retained"},
+        )
+
+    asyncio.run(run())
 
 
 def test_runtime_control_v2_rejects_invalid_lifecycle_contracts() -> None:

@@ -183,6 +183,8 @@ class RuntimeSupervisor:
         lock = self._locks[resolved.runtime_id]
         async with lock:
             entry = self._entry(resolved.runtime_id)
+            was_running = entry.status == "running" and entry.runtime is not None
+            previous_error = entry.error
             await self._set_entry(resolved.runtime_id, status="validating", error=None)
             try:
                 config = await entry.provider.validate_config(values)
@@ -192,21 +194,25 @@ class RuntimeSupervisor:
                 async with self._resource_lock:
                     self.ensure_resources_available(resolved, claims)
             except Exception as exc:
-                current = self._entry(resolved.runtime_id)
-                running = current.runtime is not None
                 await self._set_entry(
                     resolved.runtime_id,
-                    status="running" if running else "error",
-                    error=None if running else error_payload(exc),
+                    status="running" if was_running else "error",
+                    error=None if was_running else error_payload(exc),
                 )
                 raise
 
             current = self._entry(resolved.runtime_id)
-            if current.runtime is not None:
+            if was_running:
                 await self._set_entry(
                     resolved.runtime_id,
                     status="running",
                     error=None,
+                )
+            elif current.runtime is not None:
+                await self._set_entry(
+                    resolved.runtime_id,
+                    status="error",
+                    error=previous_error,
                 )
             else:
                 await self._set_entry(
@@ -237,7 +243,8 @@ class RuntimeSupervisor:
         entry = self._entry(instance.runtime_id)
         requested_values = dict(values)
         if (
-            entry.runtime is not None
+            entry.status == "running"
+            and entry.runtime is not None
             and dict(entry.requested_values or {}) == requested_values
         ):
             config = (
@@ -255,6 +262,7 @@ class RuntimeSupervisor:
             assert current_runtime is not None
             return current_runtime
 
+        was_running = entry.status == "running" and entry.runtime is not None
         await self._set_entry(instance.runtime_id, status="validating", error=None)
         try:
             config = await entry.provider.validate_config(requested_values)
@@ -263,17 +271,19 @@ class RuntimeSupervisor:
             claims = _provider_resource_claims(entry.provider, config)
             self.ensure_resources_available(instance, claims)
         except Exception as exc:
-            current = self._entry(instance.runtime_id)
-            running = current.runtime is not None
             await self._set_entry(
                 instance.runtime_id,
-                status="running" if running else "error",
-                error=None if running else error_payload(exc),
+                status="running" if was_running else "error",
+                error=None if was_running else error_payload(exc),
             )
             raise
 
         entry = self._entry(instance.runtime_id)
-        if entry.runtime is not None and same_effective_config(entry.config, config):
+        if (
+            was_running
+            and entry.runtime is not None
+            and same_effective_config(entry.config, config)
+        ):
             await self._set_entry(
                 instance.runtime_id,
                 config=config,
@@ -356,9 +366,10 @@ class RuntimeSupervisor:
                 f"runtime instance {runtime_id!r} belongs to type "
                 f"{entry.runtime_type!r}, not {runtime_type!r}"
             )
-        if entry.runtime is None:
+        if entry.status != "running" or entry.runtime is None:
             raise RuntimeUnavailableError(
-                f"runtime instance {runtime_id!r} is not running"
+                f"runtime instance {runtime_id!r} is not running "
+                f"(status={entry.status!r})"
             )
         return entry.runtime
 

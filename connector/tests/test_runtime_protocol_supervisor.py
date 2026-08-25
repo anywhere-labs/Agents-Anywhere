@@ -73,6 +73,9 @@ class FakeProvider(RuntimeProvider):
         self.block_validation_mode: str | None = None
         self.validation_started: asyncio.Event | None = None
         self.validation_release: asyncio.Event | None = None
+        self.block_stop = False
+        self.stop_started: asyncio.Event | None = None
+        self.stop_release: asyncio.Event | None = None
 
     @property
     def instance_policy(self) -> RuntimeInstancePolicy:
@@ -140,6 +143,11 @@ class FakeProvider(RuntimeProvider):
 
     async def stop_runtime(self, runtime: AgentRuntime) -> None:
         self.stopped.append(runtime)
+        if self.block_stop:
+            assert self.stop_started is not None
+            assert self.stop_release is not None
+            self.stop_started.set()
+            await self.stop_release.wait()
         if self.fail_stop:
             raise RuntimeError("stop boom")
         await runtime.stop()
@@ -592,6 +600,36 @@ def test_runtime_protocol_supervisor_retains_claim_when_start_cleanup_fails() ->
         )
         assert failed_entry.error is not None
         assert failed_entry.error["message"] == "stop boom"
+        with pytest.raises(RuntimeUnavailableError, match="not running"):
+            supervisor.resolve_runtime("rti_failed")
+
+        retained_runtime = failed_entry.runtime
+        retained_claims = failed_entry.resource_claims
+        cleanup_error = failed_entry.error
+        await supervisor.validate_config(failed_spec, {"mode": "shared"})
+        validated_entry = supervisor.entry("rti_failed")
+        assert validated_entry.status == "error"
+        assert validated_entry.runtime is retained_runtime
+        assert validated_entry.resource_claims == retained_claims
+        assert validated_entry.error == cleanup_error
+
+        provider.fail_validate = True
+        with pytest.raises(RuntimeInvalidRequestError, match="invalid config"):
+            await supervisor.validate_config(failed_spec, {"mode": "shared"})
+        invalid_entry = supervisor.entry("rti_failed")
+        assert invalid_entry.status == "error"
+        assert invalid_entry.runtime is retained_runtime
+        assert invalid_entry.resource_claims == retained_claims
+        provider.fail_validate = False
+
+        cleanup_attempts = len(provider.stopped)
+        with pytest.raises(RuntimeError, match="stop boom"):
+            await supervisor.start(failed_spec, {"mode": "shared"})
+        assert len(provider.stopped) == cleanup_attempts + 1
+        assert supervisor.entry("rti_failed").status == "error"
+        with pytest.raises(RuntimeUnavailableError, match="not running"):
+            supervisor.resolve_runtime("rti_failed")
+
         with pytest.raises(RuntimeConflictError, match="Failed"):
             await supervisor.start(waiting_spec, {"mode": "shared"})
 
@@ -600,6 +638,58 @@ def test_runtime_protocol_supervisor_retains_claim_when_start_cleanup_fails() ->
         await supervisor.stop("rti_failed")
         running = await supervisor.start(waiting_spec, {"mode": "shared"})
         assert running.identity.runtime_id == "rti_waiting"
+
+    asyncio.run(run())
+
+
+def test_runtime_protocol_supervisor_retains_claim_when_normal_stop_fails() -> None:
+    async def run() -> None:
+        provider = FakeProvider()
+        provider.claim_by_mode = {"shared": "source"}
+        supervisor = RuntimeSupervisor(providers=(provider,), host=FakeHost())
+        first_spec = RuntimeInstanceSpec("rti_first", "fake", "First")
+        second_spec = RuntimeInstanceSpec("rti_second", "fake", "Second")
+        await supervisor.start(first_spec, {"mode": "shared"})
+
+        provider.fail_stop = True
+        with pytest.raises(RuntimeError, match="stop boom"):
+            await supervisor.stop("rti_first")
+
+        failed_entry = supervisor.entry("rti_first")
+        assert failed_entry.status == "error"
+        assert failed_entry.runtime is not None
+        assert failed_entry.resource_claims
+        with pytest.raises(RuntimeUnavailableError, match="not running"):
+            supervisor.resolve_runtime("rti_first")
+        with pytest.raises(RuntimeConflictError, match="First"):
+            await supervisor.start(second_spec, {"mode": "shared"})
+
+        provider.fail_stop = False
+        await supervisor.stop("rti_first")
+        running = await supervisor.start(second_spec, {"mode": "shared"})
+        assert running.identity.runtime_id == "rti_second"
+
+    asyncio.run(run())
+
+
+def test_runtime_protocol_supervisor_rejects_routing_while_stopping() -> None:
+    async def run() -> None:
+        provider = FakeProvider()
+        provider.block_stop = True
+        provider.stop_started = asyncio.Event()
+        provider.stop_release = asyncio.Event()
+        supervisor = RuntimeSupervisor(providers=(provider,), host=FakeHost())
+        await supervisor.start("fake", {})
+
+        stopping = asyncio.create_task(supervisor.stop("fake"))
+        await provider.stop_started.wait()
+
+        assert supervisor.entry("fake").status == "stopping"
+        with pytest.raises(RuntimeUnavailableError, match="not running"):
+            supervisor.resolve_runtime("fake")
+
+        provider.stop_release.set()
+        await stopping
 
     asyncio.run(run())
 

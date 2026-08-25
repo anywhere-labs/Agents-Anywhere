@@ -1038,6 +1038,25 @@ def test_runtime_control_negotiation_isolated_across_reconnect_race(
     asyncio.run(run())
 
 
+def test_backend_connection_bootstrap_does_not_lock_control_version() -> None:
+    async def run() -> None:
+        client = _client()
+        connection = client._dispatcher.new_session()
+
+        inventory = await connection.discover_runtimes()
+        assert set(inventory) == {"runtimes"}
+        assert connection.runtime_rpc.negotiated_control_version is None
+
+        negotiated = await connection.dispatch(
+            "runtime.discover",
+            {"supportedControlVersions": ["2.0", "1.0"]},
+        )
+        assert negotiated["selectedControlVersion"] == "2.0"
+        assert connection.runtime_rpc.negotiated_control_version == "2.0"
+
+    asyncio.run(run())
+
+
 def test_connector_rpc_start_message_does_not_block_later_requests() -> None:
     asyncio.run(_exercise_nonblocking_runtime_rpc())
 

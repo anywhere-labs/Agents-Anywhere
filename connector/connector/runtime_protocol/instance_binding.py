@@ -173,13 +173,10 @@ class RuntimeInstanceHost(RuntimeHostClient):
     def session_namespace(self) -> str:
         if self.instance.runtime_id == self.instance.runtime_type:
             return self.connector_id
-        if self.source_key is None:
-            return (
-                f"{self.connector_id}:{self.instance.runtime_type}:"
-                f"{self.instance.runtime_id}"
-            )
-        digest = _source_key_digest(self.source_key)
-        return f"{self.connector_id}:{self.instance.runtime_type}:{digest}"
+        namespace = self.instance.runtime_id
+        if self.source_key is not None:
+            namespace = f"{namespace}:{_source_key_digest(self.source_key)}"
+        return f"{self.connector_id}:{self.instance.runtime_type}:{namespace}"
 
     async def session_meta_upsert(
         self,
@@ -333,13 +330,13 @@ class RuntimeInstanceHost(RuntimeHostClient):
         await self.base.sync_state_delete(self.instance_sync_key(key))
 
     def instance_sync_key(self, key: str) -> str:
+        if self.instance.runtime_id == self.instance.runtime_type:
+            return key
         type_prefix = f"{self.instance.runtime_type}/"
         suffix = key.removeprefix(type_prefix)
-        namespace = (
-            self.instance.runtime_id
-            if self.source_key is None
-            else _source_key_digest(self.source_key)
-        )
+        namespace = self.instance.runtime_id
+        if self.source_key is not None:
+            namespace = f"{namespace}/{_source_key_digest(self.source_key)}"
         return f"{self.instance.runtime_type}/instances/{namespace}/{suffix}"
 
     def instance_metadata(

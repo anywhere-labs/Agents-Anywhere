@@ -301,9 +301,10 @@ def test_runtime_instance_host_scopes_side_effects_and_storage() -> None:
         assert timeline["runtimeId"] == "rti_codex_one"
         assert base.calls[2][1]["details"]["runtimeId"] == "rti_codex_one"
         sync_key = base.calls[3][1]["key"]
-        assert sync_key.startswith("codex/instances/")
+        assert sync_key.startswith("codex/instances/rti_codex_one/")
         assert sync_key.endswith("/history/cursor")
-        assert "rti_codex_one" not in host.session_namespace
+        assert host.session_namespace.startswith("conn_test:codex:rti_codex_one:")
+        assert "/tmp/codex-home" not in host.session_namespace
 
     asyncio.run(run())
 
@@ -339,6 +340,71 @@ def test_legacy_instance_preserves_pre_instance_session_ids(runtime_type: str) -
         runtime_type,
         "external-session",
     )
+
+
+@pytest.mark.parametrize("runtime_type", ["codex", "claude", "dsh"])
+def test_legacy_instance_preserves_sync_keys(runtime_type: str) -> None:
+    key = f"{runtime_type}/history/cursor/session"
+    host = RuntimeInstanceHost(
+        base=RecordingHost(),
+        instance=RuntimeInstanceSpec(runtime_type, runtime_type, runtime_type.title()),
+        source_key=RuntimeSourceKey(f"{runtime_type}_source", "/tmp/source"),
+    )
+
+    assert host.instance_sync_key(key) == key
+
+
+@pytest.mark.parametrize("runtime_type", ["codex", "dsh"])
+def test_named_instance_namespaces_bind_id_and_source(runtime_type: str) -> None:
+    source = RuntimeSourceKey(f"{runtime_type}_source", "/tmp/source-one")
+    first = RuntimeInstanceHost(
+        base=RecordingHost(),
+        instance=RuntimeInstanceSpec(
+            f"rti_{runtime_type}_one",
+            runtime_type,
+            f"{runtime_type.title()} One",
+        ),
+        source_key=source,
+    )
+    reused_source = RuntimeInstanceHost(
+        base=RecordingHost(),
+        instance=RuntimeInstanceSpec(
+            f"rti_{runtime_type}_two",
+            runtime_type,
+            f"{runtime_type.title()} Two",
+        ),
+        source_key=source,
+    )
+    changed_source = RuntimeInstanceHost(
+        base=RecordingHost(),
+        instance=first.instance,
+        source_key=RuntimeSourceKey(
+            f"{runtime_type}_source",
+            "/tmp/source-two",
+        ),
+    )
+
+    key = f"{runtime_type}/history/cursor/session"
+    first_key = first.instance_sync_key(key)
+    reused_key = reused_source.instance_sync_key(key)
+    changed_key = changed_source.instance_sync_key(key)
+    session_ids = {
+        stable_runtime_session_id(
+            host.session_namespace,
+            runtime_type,
+            "external-session",
+        )
+        for host in (first, reused_source, changed_source)
+    }
+
+    assert f":{runtime_type}:rti_{runtime_type}_one:" in first.session_namespace
+    assert "/tmp/source-one" not in first.session_namespace
+    assert f"{runtime_type}/instances/rti_{runtime_type}_one/" in first_key
+    assert len(session_ids) == 3
+    assert first.session_namespace != reused_source.session_namespace
+    assert first.session_namespace != changed_source.session_namespace
+    assert first_key != reused_key
+    assert first_key != changed_key
 
 
 def test_runtime_instance_wrappers_explicitly_cover_protocol_methods() -> None:

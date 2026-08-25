@@ -88,11 +88,15 @@ class RuntimeRpcHandler:
         self.agent_runtime_supervisor = agent_runtime_supervisor
         self.agent_runtime_host = agent_runtime_host
         self.schedule_background = schedule_background
-        self._control_version = "1.0"
+        self._negotiated_control_version: str | None = None
 
     @property
     def control_version(self) -> str:
-        return self._control_version
+        return self._negotiated_control_version or "1.0"
+
+    @property
+    def negotiated_control_version(self) -> str | None:
+        return self._negotiated_control_version
 
     def supports(self, method: str) -> bool:
         return method in self.METHODS
@@ -103,7 +107,7 @@ class RuntimeRpcHandler:
         if method == "runtime.configSchema":
             parsed = RuntimeIdParams.parse(
                 params,
-                control_version=self._control_version,
+                control_version=self.control_version,
             )
             self._validate_known_scope(parsed.scope)
             schema = await self.agent_runtime_supervisor.provider(
@@ -114,7 +118,7 @@ class RuntimeRpcHandler:
         if method == "runtime.config":
             parsed = RuntimeIdParams.parse(
                 params,
-                control_version=self._control_version,
+                control_version=self.control_version,
             )
             self._validate_known_scope(parsed.scope)
             entry = self.agent_runtime_supervisor.entry_or_none(parsed.runtime_id)
@@ -131,7 +135,7 @@ class RuntimeRpcHandler:
                 config = runtime_config_for_instance(config, entry.instance)
                 result = {
                     "runtimeId": parsed.runtime_id,
-                    "running": True,
+                    "running": entry.status == "running",
                     "config": runtime_config_payload(config),
                 }
             return self._scoped_result(parsed.scope, result)
@@ -160,9 +164,9 @@ class RuntimeRpcHandler:
         if method == "runtime.stop":
             parsed = RuntimeIdParams.parse(
                 params,
-                control_version=self._control_version,
+                control_version=self.control_version,
             )
-            if self._control_version == "1.0":
+            if self.control_version == "1.0":
                 await self.agent_runtime_supervisor.ensure_legacy_instance(
                     parsed.runtime_type
                 )
@@ -288,8 +292,21 @@ class RuntimeRpcHandler:
         params: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         request = dict(params or {})
-        if _selects_v2(request):
-            self._control_version = "2.0"
+        requested_version = _select_control_version(request)
+        selected_version = self._negotiated_control_version
+        if requested_version is not None:
+            if selected_version is not None and selected_version != requested_version:
+                raise RuntimeInvalidRequestError(
+                    f"Runtime Control {selected_version} is already selected for "
+                    "this connection"
+                )
+            self._negotiated_control_version = requested_version
+        elif selected_version == "2.0":
+            raise RuntimeInvalidRequestError(
+                "Runtime Control 2.0 is already selected for this connection"
+            )
+
+        if self.control_version == "2.0":
             descriptors = await self.agent_runtime_supervisor.discover()
             return {
                 "selectedControlVersion": "2.0",
@@ -298,10 +315,6 @@ class RuntimeRpcHandler:
                     for descriptor in descriptors
                 ],
             }
-        if self._control_version == "2.0":
-            raise RuntimeInvalidRequestError(
-                "Runtime Control 2.0 is already selected for this connection"
-            )
         items = await self.agent_runtime_supervisor.discover_legacy()
         return {"runtimes": [agent_inventory_payload(item) for item in items]}
 
@@ -327,7 +340,7 @@ class RuntimeRpcHandler:
 
     def _parse_config_params(self, params: dict[str, Any]) -> RuntimeConfigParams:
         display_name = None
-        if self._control_version == "1.0":
+        if self.control_version == "1.0":
             runtime_id = params.get("runtimeId")
             if (
                 isinstance(runtime_id, str)
@@ -339,12 +352,12 @@ class RuntimeRpcHandler:
                 ).display_name
         return RuntimeConfigParams.parse(
             params,
-            control_version=self._control_version,
+            control_version=self.control_version,
             display_name=display_name,
         )
 
     def _resolve_agent_runtime(self, params: dict[str, Any]) -> AgentRuntime:
-        if self._control_version == "1.0" and any(
+        if self.control_version == "1.0" and any(
             isinstance(params.get(key), str) and params[key].startswith("rti_")
             for key in ("runtime", "runtimeId")
         ):
@@ -352,7 +365,7 @@ class RuntimeRpcHandler:
                 "named runtime instances require Runtime Control 2.0"
             )
         scope = scoped_runtime(params)
-        if self._control_version == "1.0" and not scope.is_legacy:
+        if self.control_version == "1.0" and not scope.is_legacy:
             raise RuntimeInstancesUnsupportedError(
                 "named runtime instances require Runtime Control 2.0"
             )
@@ -398,7 +411,7 @@ class RuntimeRpcHandler:
         scope: RuntimeScope,
         result: dict[str, Any],
     ) -> dict[str, Any]:
-        if self._control_version != "2.0":
+        if self.control_version != "2.0":
             return result
         return {
             **result,
@@ -407,9 +420,9 @@ class RuntimeRpcHandler:
         }
 
 
-def _selects_v2(params: dict[str, Any]) -> bool:
+def _select_control_version(params: dict[str, Any]) -> str | None:
     if not params:
-        return False
+        return None
     if set(params) != {"supportedControlVersions"}:
         raise ValueError("runtime.discover params contain unsupported fields")
     versions = params.get("supportedControlVersions")
@@ -419,4 +432,10 @@ def _selects_v2(params: dict[str, Any]) -> bool:
         raise TypeError("supportedControlVersions must contain version strings")
     if len(set(versions)) != len(versions):
         raise ValueError("supportedControlVersions must not contain duplicates")
-    return "2.0" in versions
+    if "2.0" in versions:
+        return "2.0"
+    if "1.0" in versions:
+        return "1.0"
+    raise RuntimeInvalidRequestError(
+        "supportedControlVersions does not include a supported Runtime Control version"
+    )
