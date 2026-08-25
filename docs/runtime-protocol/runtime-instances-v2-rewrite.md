@@ -8,6 +8,12 @@ rebased onto `v2`. Current `v2` has since added DSH, runtime config deletion,
 session source-state tracking, inventory metadata, and later database
 migrations that the old branch does not understand.
 
+Compatibility is limited to released inputs: the current `v2` database,
+Protocol 1.0, Runtime Control 1.0, and rolling upgrades from the current
+Connector. The unpublished `codex/runtime-instances` branch and other draft
+runtime-instance API shapes, wire payloads, IDs, or persisted state have no
+migration or compatibility guarantee.
+
 ## Product decision
 
 Named runtime instances remain a target capability.
