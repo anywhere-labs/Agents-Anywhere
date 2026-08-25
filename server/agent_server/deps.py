@@ -75,7 +75,11 @@ def get_connector_file_service(conn: HTTPConnection) -> ConnectorFileService:
 
 
 def get_session_run_service(conn: HTTPConnection) -> SessionRunService:
-    return SessionRunService(conn.app.state.store, conn.app.state.rpc)
+    return SessionRunService(
+        conn.app.state.store,
+        conn.app.state.rpc,
+        conn.app.state.device_runtime_service,
+    )
 
 
 def get_device_runtime_service(conn: HTTPConnection) -> DeviceRuntimeService:

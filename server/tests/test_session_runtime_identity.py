@@ -35,6 +35,26 @@ def test_session_requests_keep_named_runtime_identity() -> None:
     assert request.runtimeId == "rti_work"
 
 
+def test_session_requests_accept_normalized_discovered_runtime_types() -> None:
+    request = SessionCreateRequest(
+        connectorId="conn_1",
+        runtime="example-runtime",
+        runtimeId="rti_example",
+    )
+
+    assert request.runtime == "example-runtime"
+    assert request.runtimeId == "rti_example"
+
+
+def test_session_requests_reject_noncanonical_runtime_types() -> None:
+    with pytest.raises(ValidationError, match="runtime type"):
+        SessionCreateRequest(
+            connectorId="conn_1",
+            runtime="Example Runtime",
+            runtimeId="rti_example",
+        )
+
+
 def test_session_requests_reject_mismatched_legacy_identity() -> None:
     with pytest.raises(ValidationError, match="runtime instance ID"):
         SessionCreateRequest(

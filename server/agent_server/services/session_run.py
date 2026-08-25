@@ -34,6 +34,10 @@ from agent_server.infra.connector_rpc import (
     ConnectorRpcError,
     ConnectorRpcManager,
 )
+from agent_server.services.device_runtimes import (
+    DeviceRuntimeError,
+    DeviceRuntimeService,
+)
 from agent_server.services.effective_capabilities import (
     derive_session_effective_capabilities,
 )
@@ -43,7 +47,7 @@ from agent_server.services.repository_ports import SessionRunRepository
 class SessionRunError(RuntimeError):
     status_code = 500
 
-    def __init__(self, detail: str) -> None:
+    def __init__(self, detail: Any) -> None:
         super().__init__(detail)
         self.detail = detail
 
@@ -64,6 +68,16 @@ class SessionRunInvalidConfigError(SessionRunError):
     status_code = 422
 
 
+class SessionRunInstancesUnsupportedError(SessionRunConflictError):
+    def __init__(self) -> None:
+        super().__init__(
+            {
+                "code": "runtime_instances_unsupported",
+                "message": "connector does not support named runtime instances",
+            }
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class PersistedInlineAttachment:
     file_id: str
@@ -74,9 +88,15 @@ class PersistedInlineAttachment:
 
 
 class SessionRunService:
-    def __init__(self, store: SessionRunRepository, manager: ConnectorRpcManager) -> None:
+    def __init__(
+        self,
+        store: SessionRunRepository,
+        manager: ConnectorRpcManager,
+        device_runtimes: DeviceRuntimeService,
+    ) -> None:
         self._store = store
         self._manager = manager
+        self._device_runtimes = device_runtimes
 
     async def create_session(
         self,
@@ -284,6 +304,7 @@ class SessionRunService:
             SESSION_SEND_MESSAGE,
             user_id=user_id,
         )
+        await self._ensure_session_runtime_running(session, user_id=user_id)
         runtime_status = await self._read_runtime_status(session)
         if runtime_status != "idle":
             raise SessionRunConflictError(f"session is {runtime_status}")
@@ -397,6 +418,7 @@ class SessionRunService:
                     capability_id,
                     user_id=user_id,
                 )
+        await self._ensure_session_runtime_running(session, user_id=user_id)
         params: dict[str, Any] = {
             "sessionId": session_id,
             "runtime": session.runtime,
@@ -451,6 +473,7 @@ class SessionRunService:
             SESSION_STEER,
             user_id=user_id,
         )
+        await self._ensure_session_runtime_running(session, user_id=user_id)
         runtime_status = await self._read_runtime_status(session)
         if runtime_status != "running":
             raise SessionRunConflictError("session is not running")
@@ -584,25 +607,41 @@ class SessionRunService:
         require_running: bool,
     ) -> None:
         try:
-            instance = await self._store.get_device_runtime(
+            await self._device_runtimes.ensure_session_routable(
                 connector_id,
-                runtime_id,
+                runtime_type=runtime,
+                runtime_id=runtime_id,
                 user_id=user_id,
+                ensure_running=require_running,
             )
-        except KeyError:
-            if runtime_id == runtime:
-                return
-            raise SessionRunNotFoundError("runtime instance not found") from None
-        if instance.get("runtimeType") != runtime:
-            raise SessionRunInvalidConfigError("runtime instance type mismatch")
-        if runtime_id == runtime:
-            return
-        if require_running and not (
-            instance.get("configured") is True
-            and instance.get("active") is True
-            and instance.get("status") == "running"
-        ):
-            raise SessionRunConflictError("runtime instance is not active and running")
+        except DeviceRuntimeError as exc:
+            self._raise_device_runtime_error(exc)
+
+    async def _ensure_session_runtime_running(
+        self,
+        session: SessionView,
+        *,
+        user_id: str,
+    ) -> None:
+        await self._require_runtime_instance(
+            session.connectorId,
+            session.runtime,
+            _session_runtime_id(session),
+            user_id=user_id,
+            require_running=True,
+        )
+
+    @staticmethod
+    def _raise_device_runtime_error(exc: DeviceRuntimeError) -> None:
+        if exc.code == "runtime_instances_unsupported":
+            raise SessionRunInstancesUnsupportedError() from exc
+        if exc.status_code == 404:
+            raise SessionRunNotFoundError(exc.message) from exc
+        if exc.status_code == 422:
+            raise SessionRunInvalidConfigError(exc.detail) from exc
+        if exc.status_code == 502:
+            raise SessionRunUpstreamError(exc.detail) from exc
+        raise SessionRunConflictError(exc.detail) from exc
 
     async def _attachment_payloads(
         self,
@@ -706,6 +745,7 @@ class SessionRunService:
                 SESSION_INTERRUPT,
                 user_id=user_id,
             )
+        await self._ensure_session_runtime_running(session, user_id=user_id)
         params: dict[str, Any] = {
             "sessionId": session_id,
             "runtime": session.runtime,

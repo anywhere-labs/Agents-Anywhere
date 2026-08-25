@@ -398,7 +398,7 @@ class DeviceRuntimeService:
         connector_id: str,
         runtime_id: str,
         *,
-        user_id: str,
+        user_id: str | None,
     ) -> DeviceRuntimeView:
         async with self._runtime_lock(connector_id, runtime_id):
             runtime = await self._get_owned(connector_id, runtime_id, user_id=user_id)
@@ -424,6 +424,46 @@ class DeviceRuntimeService:
             started = await self._start_locked(current)
             await self._publish(connector_id, "runtime.ensure_running")
             return started
+
+    async def ensure_session_routable(
+        self,
+        connector_id: str,
+        *,
+        runtime_type: str,
+        runtime_id: str,
+        user_id: str | None,
+        ensure_running: bool,
+    ) -> DeviceRuntimeView | None:
+        control_version = await self._get_control_version(
+            connector_id,
+            user_id=user_id,
+        )
+        if control_version not in {"1.0", "2.0"}:
+            raise DeviceRuntimeConflictError(
+                f"unsupported runtime control version: {control_version}"
+            )
+        if runtime_id == runtime_type:
+            # Legacy sessions predate persisted runtime rows and remain routable
+            # through the type-equal compatibility identity.
+            return None
+        if control_version != "2.0":
+            raise DeviceRuntimeInstancesUnsupportedError(
+                "connector does not support named runtime instances"
+            )
+        runtime = await self._get_owned(
+            connector_id,
+            runtime_id,
+            user_id=user_id,
+        )
+        if runtime.runtimeType != runtime_type:
+            raise DeviceRuntimeConflictError("runtime instance type mismatch")
+        if ensure_running:
+            return await self.ensure_active_running(
+                connector_id,
+                runtime_id,
+                user_id=user_id,
+            )
+        return runtime
 
     async def delete_config(
         self,
@@ -759,7 +799,7 @@ class DeviceRuntimeService:
         connector_id: str,
         runtime_id: str,
         *,
-        user_id: str,
+        user_id: str | None,
     ) -> DeviceRuntimeView:
         try:
             row = await self._store.get_device_runtime(

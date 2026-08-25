@@ -93,14 +93,21 @@ def _v2_discovery(
     max_instances: int | None = 3,
     implementation_type: str | None = None,
     available: bool = True,
+    runtime_type: str = "codex",
 ) -> dict[str, Any]:
     return {
         "selectedControlVersion": "2.0",
         "runtimeTypes": [
             {
-                "runtimeType": "codex",
-                "displayName": "Codex",
-                "description": "Codex runtime",
+                "runtimeType": runtime_type,
+                "displayName": (
+                    "Codex" if runtime_type == "codex" else "Example Runtime"
+                ),
+                "description": (
+                    "Codex runtime"
+                    if runtime_type == "codex"
+                    else f"{runtime_type} runtime"
+                ),
                 "available": available,
                 "reason": None if available else "executable was not discovered",
                 "recommended": True,
@@ -716,6 +723,173 @@ def test_legacy_fallback_adds_deterministic_compatibility_instance(
         )
         == "1.0"
     )
+
+
+def test_named_session_create_starts_an_active_stopped_instance(
+    tmp_path: Any,
+) -> None:
+    client, rpc, connector_id, headers = _make_client(tmp_path, _v2_discovery())
+    _discover_types(client, connector_id, headers)
+    created = client.post(
+        f"/connectors/{connector_id}/runtimes",
+        headers=headers,
+        json={
+            "runtimeType": "codex",
+            "name": "Work Codex",
+            "config": {"home": "/work/codex"},
+            "active": True,
+        },
+    )
+    assert created.status_code == 201, created.text
+    runtime_id = created.json()["runtimeId"]
+    asyncio.run(
+        client.app.state.store.set_device_runtime_status(
+            connector_id,
+            runtime_id,
+            "stopped",
+        )
+    )
+    rpc.requests.clear()
+
+    response = client.post(
+        "/sessions/create-and-start",
+        headers=headers,
+        json={
+            "connectorId": connector_id,
+            "runtime": "codex",
+            "runtimeId": runtime_id,
+            "content": "start this instance",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert [request[1] for request in rpc.requests[:2]] == [
+        "runtime.start",
+        "session.create",
+    ]
+    assert rpc.requests[0][2]["runtimeId"] == runtime_id
+    assert rpc.requests[1][2]["runtime"] == "codex"
+    assert rpc.requests[1][2]["runtimeId"] == runtime_id
+
+
+def test_discovered_custom_provider_type_routes_named_sessions(
+    tmp_path: Any,
+) -> None:
+    runtime_type = "example-runtime"
+    client, rpc, connector_id, headers = _make_client(
+        tmp_path,
+        _v2_discovery(runtime_type=runtime_type),
+    )
+    _discover_types(client, connector_id, headers)
+    created = client.post(
+        f"/connectors/{connector_id}/runtimes",
+        headers=headers,
+        json={
+            "runtimeType": runtime_type,
+            "name": "Example Work",
+            "config": {"home": "/work/example"},
+            "active": True,
+        },
+    )
+    assert created.status_code == 201, created.text
+    runtime_id = created.json()["runtimeId"]
+    rpc.requests.clear()
+
+    response = client.post(
+        "/sessions/create-and-start",
+        headers=headers,
+        json={
+            "connectorId": connector_id,
+            "runtime": runtime_type,
+            "runtimeId": runtime_id,
+            "content": "custom provider",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    session = response.json()["session"]
+    assert session["runtime"] == runtime_type
+    assert session["runtimeType"] == runtime_type
+    assert session["runtimeId"] == runtime_id
+    create_request = next(
+        request for request in rpc.requests if request[1] == "session.create"
+    )
+    assert create_request[2]["runtime"] == runtime_type
+    assert create_request[2]["runtimeId"] == runtime_id
+    snapshot = client.get(f"/sessions/{session['id']}/snapshot", headers=headers)
+    assert snapshot.status_code == 200, snapshot.text
+    assert snapshot.json()["session"]["runtime"] == runtime_type
+
+
+def test_v1_rejects_named_session_routing_but_keeps_type_equal_compatibility(
+    tmp_path: Any,
+) -> None:
+    client, rpc, connector_id, headers = _make_client(tmp_path, _v2_discovery())
+    _discover_types(client, connector_id, headers)
+    created = client.post(
+        f"/connectors/{connector_id}/runtimes",
+        headers=headers,
+        json={
+            "runtimeType": "codex",
+            "name": "Work Codex",
+            "config": {"home": "/work/codex"},
+            "active": False,
+        },
+    )
+    assert created.status_code == 201, created.text
+    runtime_id = created.json()["runtimeId"]
+    imported = client.post(
+        "/sessions",
+        headers=headers,
+        json={
+            "connectorId": connector_id,
+            "runtime": "codex",
+            "runtimeId": runtime_id,
+            "externalSessionId": "thr_named_before_downgrade",
+        },
+    )
+    assert imported.status_code == 200, imported.text
+
+    rpc.discovery = _legacy_discovery()
+    _discover_types(client, connector_id, headers)
+    rpc.requests.clear()
+
+    named_create = client.post(
+        "/sessions/create-and-start",
+        headers=headers,
+        json={
+            "connectorId": connector_id,
+            "runtime": "codex",
+            "runtimeId": runtime_id,
+            "content": "must not reach v1",
+        },
+    )
+    named_state = client.get(
+        f"/sessions/{imported.json()['session']['id']}/runtime/state",
+        headers=headers,
+    )
+
+    for response in (named_create, named_state):
+        assert response.status_code == 409, response.text
+        assert response.json()["detail"]["code"] == "runtime_instances_unsupported"
+    assert rpc.requests == []
+
+    compatibility = client.post(
+        "/sessions/create-and-start",
+        headers=headers,
+        json={
+            "connectorId": connector_id,
+            "runtime": "codex",
+            "runtimeId": "codex",
+            "content": "legacy route",
+        },
+    )
+    assert compatibility.status_code == 200, compatibility.text
+    create_request = next(
+        request for request in rpc.requests if request[1] == "session.create"
+    )
+    assert create_request[2]["runtime"] == "codex"
+    assert create_request[2]["runtimeId"] == "codex"
 
 
 def test_invalid_v2_discovery_is_not_accepted_as_legacy(tmp_path: Any) -> None:

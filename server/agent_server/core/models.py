@@ -1,12 +1,45 @@
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    WithJsonSchema,
+    model_validator,
+)
 
-from agent_server.core.runtime_identity import RuntimeIdentity
+from agent_server.core.runtime_identity import (
+    RuntimeIdentity,
+    RuntimeIdentityError,
+    validate_runtime_type,
+)
 
-RuntimeName = Literal["codex", "claude", "opencode", "acp", "dsh"]
+_PROTOCOL_1_RUNTIME_NAMES = ("codex", "claude", "opencode", "acp", "dsh")
+LegacyRuntimeName = Literal["codex", "claude", "opencode", "acp", "dsh"]
+
+
+def _validate_runtime_name(value: str) -> str:
+    try:
+        return str(validate_runtime_type(value))
+    except RuntimeIdentityError as exc:
+        raise ValueError(str(exc)) from exc
+
+
+# Runtime Control 2.0 can discover new normalized provider keys. Protocol 1.0
+# keeps its original advertised enum until the additive 1.1 contract ships.
+RuntimeName = Annotated[
+    str,
+    AfterValidator(_validate_runtime_name),
+    WithJsonSchema(
+        {
+            "enum": list(_PROTOCOL_1_RUNTIME_NAMES),
+            "type": "string",
+        }
+    ),
+]
 ConnectorStatus = Literal["offline", "online"]
 ConnectorDeviceOs = Literal["macos", "windows", "linux"]
 SessionStatus = Literal[
