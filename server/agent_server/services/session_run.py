@@ -242,6 +242,21 @@ class SessionRunService:
                 message="connector did not return a session result",
             )
             raise SessionRunUpstreamError("connector did not return a session result")
+        try:
+            resolve_session_runtime_binding(
+                connector_result,
+                session_id=session.id,
+                runtime_type=payload.runtime,
+                runtime_id=runtime_id,
+            )
+        except SessionRuntimeBindingError as exc:
+            await self._mark_create_and_start_failed(
+                session.id,
+                runtime=payload.runtime,
+                code="invalid_runtime_binding",
+                message=str(exc),
+            )
+            raise SessionRunUpstreamError(str(exc)) from exc
         external_session_id = connector_result.get("externalSessionId")
         if external_session_id is not None and (
             not isinstance(external_session_id, str) or not external_session_id

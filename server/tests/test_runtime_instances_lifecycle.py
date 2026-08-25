@@ -22,6 +22,7 @@ class FakeRuntimeRpc:
         self.discovery = discovery
         self.online = True
         self.requests: list[tuple[str, str, dict[str, Any]]] = []
+        self.session_create_result: dict[str, Any] | None = None
 
     async def is_online(self, _connector_id: str) -> bool:
         return self.online
@@ -56,6 +57,8 @@ class FakeRuntimeRpc:
             }
         if method == "runtime.commands":
             return {"commands": []}
+        if method == "session.create" and self.session_create_result is not None:
+            return self.session_create_result
         return {"ok": True}
 
 
@@ -819,6 +822,50 @@ def test_discovered_custom_provider_type_routes_named_sessions(
     snapshot = client.get(f"/sessions/{session['id']}/snapshot", headers=headers)
     assert snapshot.status_code == 200, snapshot.text
     assert snapshot.json()["session"]["runtime"] == runtime_type
+
+
+def test_named_session_create_rejects_mismatched_connector_identity(
+    tmp_path: Any,
+) -> None:
+    client, rpc, connector_id, headers = _make_client(tmp_path, _v2_discovery())
+    _discover_types(client, connector_id, headers)
+    created = client.post(
+        f"/connectors/{connector_id}/runtimes",
+        headers=headers,
+        json={
+            "runtimeType": "codex",
+            "name": "Work Codex",
+            "config": {"home": "/work/codex"},
+            "active": True,
+        },
+    )
+    assert created.status_code == 201, created.text
+    runtime_id = created.json()["runtimeId"]
+    rpc.session_create_result = {
+        "ok": True,
+        "runtime": "codex",
+        "runtimeId": "rti_wrong",
+    }
+
+    response = client.post(
+        "/sessions/create-and-start",
+        headers=headers,
+        json={
+            "connectorId": connector_id,
+            "runtime": "codex",
+            "runtimeId": runtime_id,
+            "content": "wrong instance must fail",
+        },
+    )
+
+    assert response.status_code == 502, response.text
+    assert "runtimeId" in response.json()["detail"]
+    sessions = client.get("/sessions", headers=headers)
+    assert sessions.status_code == 200, sessions.text
+    persisted = sessions.json()["sessions"]
+    assert len(persisted) == 1
+    assert persisted[0]["runtimeId"] == runtime_id
+    assert persisted[0]["status"] == "idle"
 
 
 def test_v1_rejects_named_session_routing_but_keeps_type_equal_compatibility(
