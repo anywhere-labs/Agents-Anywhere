@@ -1,0 +1,29 @@
+{
+  "$id": "https://agents-anywhere.dev/contracts/runtime-control/2.0/schemas/runtime-stop-params.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Parameters for stopping one named runtime instance.",
+  "properties": {
+    "runtime": {
+      "description": "Stable provider type; it MUST equal the instance's immutable runtimeType.",
+      "maxLength": 64,
+      "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+      "type": "string"
+    },
+    "runtimeId": {
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+      "type": "string"
+    }
+  },
+  "required": [
+    "runtime",
+    "runtimeId"
+  ],
+  "title": "RuntimeStopParams",
+  "type": "object",
+  "x-direction": "ingress",
+  "x-rpc-method": "runtime.stop",
+  "x-rpc-part": "params",
+  "x-runtime-control-version": "2.0"
+}

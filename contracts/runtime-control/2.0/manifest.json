@@ -1,0 +1,80 @@
+{
+  "artifacts": [
+    {
+      "direction": "ingress",
+      "model": "RuntimeDiscoverRequest",
+      "path": "schemas/runtime-discover-request.schema.json",
+      "rpcMethod": "runtime.discover",
+      "rpcPart": "params",
+      "sha256": "4eac3cd10d85ab2768ccf5105a5a0c459bd1ea0c02ad9f2d68489b78dba7095d",
+      "slug": "runtime-discover-request"
+    },
+    {
+      "direction": "egress",
+      "model": "RuntimeDiscoverResponse",
+      "path": "schemas/runtime-discover-response.schema.json",
+      "rpcMethod": "runtime.discover",
+      "rpcPart": "result",
+      "sha256": "2dcb25fa716b76402db6bae3cb100ef93b30076c619682e6a1c27b504c3e59f8",
+      "slug": "runtime-discover-response"
+    },
+    {
+      "direction": "egress",
+      "model": "RuntimeTypeDescriptor",
+      "path": "schemas/runtime-type-descriptor.schema.json",
+      "sha256": "cfba3c64f54e498821682689d17df53ad474042390dd225f4e9b17ab0b5b0dba",
+      "slug": "runtime-type-descriptor"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "RuntimeInstanceSpec",
+      "path": "schemas/runtime-instance-spec.schema.json",
+      "sha256": "af669cad81b9fe5c841e6076293bdede8642ea47a04e7086028602eaba3a09b4",
+      "slug": "runtime-instance-spec"
+    },
+    {
+      "direction": "egress",
+      "model": "RuntimeInstanceStatus",
+      "path": "schemas/runtime-instance-status.schema.json",
+      "sha256": "3357a5f547f2f4044973957bf1c4620ae6b5625d70b68a1b0527e5c38cb1f4e2",
+      "slug": "runtime-instance-status"
+    },
+    {
+      "direction": "bidirectional",
+      "model": "RuntimeScope",
+      "path": "schemas/runtime-scope.schema.json",
+      "sha256": "5a5bf9bf17a02f2ccfa49a09010c6f8c833d5c6ff4a9a116512c56c0854d3809",
+      "slug": "runtime-scope"
+    },
+    {
+      "direction": "ingress",
+      "model": "RuntimeValidateConfigParams",
+      "path": "schemas/runtime-validate-config-params.schema.json",
+      "rpcMethod": "runtime.validateConfig",
+      "rpcPart": "params",
+      "sha256": "d846fa0785fca12ad7176c00753b3b8e26fcee15fec3c20ddc77eec522b92e14",
+      "slug": "runtime-validate-config-params"
+    },
+    {
+      "direction": "ingress",
+      "model": "RuntimeStartParams",
+      "path": "schemas/runtime-start-params.schema.json",
+      "rpcMethod": "runtime.start",
+      "rpcPart": "params",
+      "sha256": "40d4dc9b6f42282fe515c26500a6a0b6c95d36802e7b294d84ad329fea6cbf96",
+      "slug": "runtime-start-params"
+    },
+    {
+      "direction": "ingress",
+      "model": "RuntimeStopParams",
+      "path": "schemas/runtime-stop-params.schema.json",
+      "rpcMethod": "runtime.stop",
+      "rpcPart": "params",
+      "sha256": "91649fedd4865b669de6f9d83f5d659edc589132d279dbff76f90b68708077b1",
+      "slug": "runtime-stop-params"
+    }
+  ],
+  "jsonSchemaDraft": "https://json-schema.org/draft/2020-12/schema",
+  "runtimeControlVersion": "2.0",
+  "source": "contracts/runtime-control/2.0"
+}

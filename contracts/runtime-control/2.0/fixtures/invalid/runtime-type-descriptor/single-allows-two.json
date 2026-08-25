@@ -1,0 +1,13 @@
+{
+  "available": true,
+  "capabilities": {},
+  "configSchema": null,
+  "description": null,
+  "displayName": "Claude",
+  "instancePolicy": "single",
+  "maxInstances": 2,
+  "metadata": {},
+  "reason": null,
+  "recommended": false,
+  "runtimeType": "claude"
+}

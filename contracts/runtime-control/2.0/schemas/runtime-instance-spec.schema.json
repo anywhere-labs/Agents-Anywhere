@@ -1,0 +1,33 @@
+{
+  "$id": "https://agents-anywhere.dev/contracts/runtime-control/2.0/schemas/runtime-instance-spec.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "The immutable runtimeId/runtimeType binding and user-editable name for one runtime instance. Implementations MUST reject changes to runtimeId or runtimeType after creation.",
+  "properties": {
+    "name": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": ".*\\S.*",
+      "type": "string"
+    },
+    "runtimeId": {
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+      "type": "string"
+    },
+    "runtimeType": {
+      "maxLength": 64,
+      "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+      "type": "string"
+    }
+  },
+  "required": [
+    "runtimeId",
+    "runtimeType",
+    "name"
+  ],
+  "title": "RuntimeInstanceSpec",
+  "type": "object",
+  "x-direction": "bidirectional",
+  "x-runtime-control-version": "2.0"
+}
