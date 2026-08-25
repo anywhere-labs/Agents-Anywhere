@@ -171,6 +171,19 @@
       ],
       "type": "string"
     },
+    "implementationType": {
+      "description": "Optional implementation category, separate from the stable provider identity.",
+      "oneOf": [
+        {
+          "maxLength": 64,
+          "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "maxInstances": {
       "oneOf": [
         {
@@ -202,9 +215,21 @@
     "recommended": {
       "type": "boolean"
     },
+    "recommendationRank": {
+      "oneOf": [
+        {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "runtimeType": {
       "maxLength": 64,
-      "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+      "pattern": "^(?!rti_)[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
       "type": "string"
     }
   },
@@ -215,6 +240,8 @@
     "available",
     "reason",
     "recommended",
+    "recommendationRank",
+    "implementationType",
     "configSchema",
     "capabilities",
     "metadata",

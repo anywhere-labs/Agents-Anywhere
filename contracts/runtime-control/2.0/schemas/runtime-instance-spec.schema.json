@@ -12,12 +12,12 @@
     },
     "runtimeId": {
       "maxLength": 128,
-      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+      "pattern": "^(?:(?!rti_)[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*|rti_[A-Za-z0-9_-]+)$",
       "type": "string"
     },
     "runtimeType": {
       "maxLength": 64,
-      "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+      "pattern": "^(?!rti_)[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
       "type": "string"
     }
   },

@@ -22,28 +22,28 @@
       "direction": "egress",
       "model": "RuntimeTypeDescriptor",
       "path": "schemas/runtime-type-descriptor.schema.json",
-      "sha256": "cfba3c64f54e498821682689d17df53ad474042390dd225f4e9b17ab0b5b0dba",
+      "sha256": "45986a848627cf00c25609ff2b2c67afd5b59155f269c7a94ce5f1b06997697d",
       "slug": "runtime-type-descriptor"
     },
     {
       "direction": "bidirectional",
       "model": "RuntimeInstanceSpec",
       "path": "schemas/runtime-instance-spec.schema.json",
-      "sha256": "af669cad81b9fe5c841e6076293bdede8642ea47a04e7086028602eaba3a09b4",
+      "sha256": "d0d9fd18d8b892c4854852f67c9f194beec84253ed2c4320deb0d65cf39c1e0e",
       "slug": "runtime-instance-spec"
     },
     {
       "direction": "egress",
       "model": "RuntimeInstanceStatus",
       "path": "schemas/runtime-instance-status.schema.json",
-      "sha256": "3357a5f547f2f4044973957bf1c4620ae6b5625d70b68a1b0527e5c38cb1f4e2",
+      "sha256": "9554a4d06b24f00ab3c5881f7dd61d3db35becb121696fe3b6584278b71d0ade",
       "slug": "runtime-instance-status"
     },
     {
       "direction": "bidirectional",
       "model": "RuntimeScope",
       "path": "schemas/runtime-scope.schema.json",
-      "sha256": "5a5bf9bf17a02f2ccfa49a09010c6f8c833d5c6ff4a9a116512c56c0854d3809",
+      "sha256": "598072b346d093ca8e61790669227b51c58209aa9e65f48ef1a7adbbd662657c",
       "slug": "runtime-scope"
     },
     {
@@ -52,7 +52,7 @@
       "path": "schemas/runtime-validate-config-params.schema.json",
       "rpcMethod": "runtime.validateConfig",
       "rpcPart": "params",
-      "sha256": "d846fa0785fca12ad7176c00753b3b8e26fcee15fec3c20ddc77eec522b92e14",
+      "sha256": "2175a35bab90f68b8db8c550ab6e90a9065be2a59686c93881f002738f6f875f",
       "slug": "runtime-validate-config-params"
     },
     {
@@ -61,7 +61,7 @@
       "path": "schemas/runtime-start-params.schema.json",
       "rpcMethod": "runtime.start",
       "rpcPart": "params",
-      "sha256": "40d4dc9b6f42282fe515c26500a6a0b6c95d36802e7b294d84ad329fea6cbf96",
+      "sha256": "2d579046fb397b3a84acbfacb75e3fe8288a146dc13bd7cf60ffb3b4fea4589a",
       "slug": "runtime-start-params"
     },
     {
@@ -70,7 +70,7 @@
       "path": "schemas/runtime-stop-params.schema.json",
       "rpcMethod": "runtime.stop",
       "rpcPart": "params",
-      "sha256": "91649fedd4865b669de6f9d83f5d659edc589132d279dbff76f90b68708077b1",
+      "sha256": "6743d3ad063f0c5c4c9339c34ec1e8595c7d34d2786375b548780ff7ac199aa3",
       "slug": "runtime-stop-params"
     }
   ],

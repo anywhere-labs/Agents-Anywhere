@@ -33,13 +33,13 @@
       },
       "description": "OpenAI Codex runtime",
       "displayName": "Codex",
+      "implementationType": "sdk",
       "instancePolicy": "multiple",
       "maxInstances": 4,
-      "metadata": {
-        "implementationType": "sdk"
-      },
+      "metadata": {},
       "reason": null,
       "recommended": true,
+      "recommendationRank": 0,
       "runtimeType": "codex"
     },
     {
@@ -48,13 +48,13 @@
       "configSchema": null,
       "description": "DeepSeek Harness runtime",
       "displayName": "DeepSeek Harness",
+      "implementationType": "local-service",
       "instancePolicy": "single",
       "maxInstances": 1,
-      "metadata": {
-        "implementationType": "local-service"
-      },
+      "metadata": {},
       "reason": "DSH Bridge is not installed",
       "recommended": false,
+      "recommendationRank": null,
       "runtimeType": "dsh"
     }
   ],

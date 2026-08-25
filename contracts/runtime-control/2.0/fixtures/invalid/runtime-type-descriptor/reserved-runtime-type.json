@@ -3,13 +3,13 @@
   "capabilities": {},
   "configSchema": null,
   "description": null,
-  "displayName": "Claude",
-  "implementationType": "sdk",
+  "displayName": "Reserved Runtime",
+  "implementationType": null,
   "instancePolicy": "single",
-  "maxInstances": 2,
+  "maxInstances": 1,
   "metadata": {},
   "reason": null,
   "recommended": false,
   "recommendationRank": null,
-  "runtimeType": "claude"
+  "runtimeType": "rti_reserved"
 }

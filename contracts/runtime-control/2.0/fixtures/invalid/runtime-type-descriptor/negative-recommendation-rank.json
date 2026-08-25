@@ -3,13 +3,13 @@
   "capabilities": {},
   "configSchema": null,
   "description": null,
-  "displayName": "Claude",
+  "displayName": "Codex",
   "implementationType": "sdk",
-  "instancePolicy": "single",
-  "maxInstances": 2,
+  "instancePolicy": "multiple",
+  "maxInstances": null,
   "metadata": {},
   "reason": null,
-  "recommended": false,
-  "recommendationRank": null,
-  "runtimeType": "claude"
+  "recommended": true,
+  "recommendationRank": -1,
+  "runtimeType": "codex"
 }

@@ -17,8 +17,15 @@ Runtime Control 2.0 keeps provider and instance identity separate:
 - `runtime` has the same provider-type meaning in every scoped RPC payload.
 - `runtimeId` is the immutable identity of one configured instance.
 - `name` is user-editable and is never used as an identity or source key.
-- Provider categories such as `local-service` belong in `metadata`; they are
-  not valid substitutes for `runtime` or `runtimeType`.
+- `implementationType` is a nullable implementation category such as
+  `local-service`; it is not a substitute for `runtime` or `runtimeType`.
+
+Provider IDs use the canonical lowercase token grammar and must not start with
+the reserved `rti_` prefix. A `runtimeId` is either that canonical provider ID
+for a legacy compatibility instance or an opaque `rti_` ID containing only
+ASCII letters, digits, `_`, and `-` after the prefix. For a legacy instance,
+the application layer must verify `runtimeId == runtime`; JSON Schema cannot
+express equality between those two fields.
 
 After an instance is created, implementations must reject changes to its
 `runtimeId` or `runtimeType`. Renaming an instance does not change its session
@@ -29,6 +36,9 @@ namespace and does not, by itself, restart the runtime.
 least two, or `null` when the provider does not impose a fixed count. Resource
 claims may still prevent two otherwise valid instances from using the same
 native source.
+
+Implementation models and generated client types must use the exact
+`single`/`multiple` tokens; `singleton` is not a Runtime Control 2.0 value.
 
 ## Discovery
 
@@ -55,7 +65,8 @@ shape in `runtime-discover-response.schema.json`:
 `RuntimeTypeDescriptor.configSchema` contains its own non-negative safe-integer
 revision, JSON configuration schema, optional UI schema, defaults, and open
 metadata. `available: false` requires a non-empty `reason`. Capability keys are
-extensible strings with boolean availability values.
+extensible strings with boolean availability values. `recommendationRank` is a
+nullable non-negative safe integer; lower values are recommended first.
 
 ## V1 Fallback
 
