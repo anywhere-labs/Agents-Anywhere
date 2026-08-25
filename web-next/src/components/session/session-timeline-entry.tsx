@@ -146,7 +146,7 @@ function MessageCard({ token, session, item }: { token: string; session: Session
   const attachmentList = (
     <MessageAttachments
       token={token}
-      sessionId={session.id}
+      session={session}
       attachments={attachments}
       align={isUser ? "right" : "left"}
     />
