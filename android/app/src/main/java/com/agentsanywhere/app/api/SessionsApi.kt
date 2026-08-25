@@ -544,7 +544,7 @@ class SessionsApi(
             ?: optNullableString("runtimeDisplayName")
             ?: optNullableString("displayName")
             ?: optNullableString("name")
-            ?: runtimeType
+            ?: runtimeId
         return RemoteSession(
             id = getString("id"),
             connectorId = getString("connectorId"),
@@ -647,7 +647,7 @@ class SessionsApi(
             ?: optNullableString("runtimeDisplayName")
             ?: optNullableString("displayName")
             ?: optNullableString("name")
-            ?: runtimeType
+            ?: runtimeId
         return RemoteSessionRuntimeState(
             sessionId = optString("sessionId", ""),
             runtime = runtimeType,

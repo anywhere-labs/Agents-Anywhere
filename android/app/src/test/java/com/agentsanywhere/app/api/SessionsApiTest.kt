@@ -186,6 +186,13 @@ class SessionsApiTest {
         assertEquals("codex", legacy.runtimeType)
         assertEquals("codex", legacy.runtimeName)
 
+        val unnamed = api.parseSession(
+            JSONObject(legacyJson.toString())
+                .put("runtimeId", "rti_codex_work_01")
+                .put("runtimeType", "codex"),
+        )
+        assertEquals("rti_codex_work_01", unnamed.runtimeName)
+
         val named = api.parseSession(
             JSONObject(legacyJson.toString())
                 .put("runtimeId", "rti_codex_work_01")
@@ -249,7 +256,13 @@ class SessionsApiTest {
                 TestResponse(body = timelineResponse(hasMore = false)),
                 TestResponse(body = timelineResponse(hasMore = false)),
                 TestResponse(body = snapshotResponse()),
-                TestResponse(body = runtimeStateResponse("future_status")),
+                TestResponse(
+                    body = JSONObject(runtimeStateResponse("future_status")).apply {
+                        getJSONObject("state")
+                            .put("runtimeId", "rti_codex_personal_02")
+                            .put("runtimeType", "codex")
+                    }.toString(),
+                ),
                 TestResponse(body = capabilitiesResponse()),
                 TestResponse(body = noticesResponse()),
             ),
@@ -321,6 +334,9 @@ class SessionsApiTest {
             assertEquals("seq:12", snapshot.eventCursor)
 
             assertEquals("future_status", runtime.state.status)
+            assertEquals("rti_codex_personal_02", runtime.state.runtimeId)
+            assertEquals("codex", runtime.state.runtimeType)
+            assertEquals("rti_codex_personal_02", runtime.state.runtimeName)
             assertEquals(4L, capabilities.capabilitySet.revision)
             assertTrue(capabilities.capabilitySet.capabilities.first().usable)
             assertEquals(2, notices.notices.single().revision)

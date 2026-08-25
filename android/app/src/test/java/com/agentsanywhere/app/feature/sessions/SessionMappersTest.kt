@@ -54,6 +54,18 @@ class SessionMappersTest {
         assertTrue(session.metaLabel.startsWith("Work Codex  ·  Codex"))
     }
 
+    @Test
+    fun unnamedDynamicInstanceUsesRuntimeIdAsItsPrimaryLabel() {
+        val session = remoteSession("idle").copy(
+            runtimeId = "rti_codex_personal_02",
+            runtimeType = "codex",
+            runtimeName = "rti_codex_personal_02",
+        ).toAgentSession(emptyMap())
+
+        assertEquals("rti_codex_personal_02", session.runtimeLabel)
+        assertEquals("rti_codex_personal_02 · Codex", session.runtimeContextLabel)
+    }
+
     private fun remoteSession(status: String) = RemoteSession(
         id = "session",
         connectorId = "connector",
