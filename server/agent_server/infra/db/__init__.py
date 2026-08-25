@@ -2,6 +2,7 @@ from agent_server.infra.db.engine import build_engine
 from agent_server.infra.db.schema import (
     connector_protocol_capabilities,
     connector_runtime_catalogs,
+    connector_runtime_types,
     connector_terminal_roots,
     connectors,
     dashboard_daily_metrics,
@@ -27,6 +28,7 @@ __all__ = [
     "build_engine",
     "connector_protocol_capabilities",
     "connector_runtime_catalogs",
+    "connector_runtime_types",
     "connector_terminal_roots",
     "connectors",
     "dashboard_daily_metrics",

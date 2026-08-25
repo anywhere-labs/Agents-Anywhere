@@ -226,7 +226,19 @@ class DeviceRuntimeRepository(
 ):
     async def clear_active_run(self, session_id: str) -> None: ...
 
-    async def clear_device_runtime_config(self, connector_id: str, runtime_id: str) -> dict[str, Any]: ...
+    async def clear_device_runtime_config(
+        self,
+        connector_id: str,
+        runtime_id: str,
+    ) -> dict[str, Any]: ...
+
+    async def get_connector_runtime_type(
+        self,
+        connector_id: str,
+        runtime_type: str,
+        *,
+        user_id: str | None = None,
+    ) -> dict[str, Any]: ...
 
     async def get_device_runtime(
         self,
@@ -239,6 +251,13 @@ class DeviceRuntimeRepository(
     async def get_session_seq(self, session_id: str) -> int: ...
 
     async def list_device_runtimes(
+        self,
+        connector_id: str,
+        *,
+        user_id: str | None = None,
+    ) -> list[dict[str, Any]]: ...
+
+    async def list_connector_runtime_types(
         self,
         connector_id: str,
         *,
