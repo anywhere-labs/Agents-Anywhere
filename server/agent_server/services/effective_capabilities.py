@@ -8,9 +8,9 @@ from agent_server.core.capabilities import (
     CATALOG_PERMISSION,
     RUNTIME_ATTACHMENT,
     RUNTIME_CONFIG,
+    SESSION_COMMANDS,
     SESSION_INTERACTION_APPROVAL,
     SESSION_INTERRUPT,
-    SESSION_COMMANDS,
     SESSION_SEND_MESSAGE,
     SESSION_STEER,
 )
@@ -108,12 +108,34 @@ def derive_session_effective_capabilities(
         if capability.runtime == session.runtime
         and capability.scope == "session"
         and capability.sessionId == session.id
+        and _capability_runtime_id(capability) is None
     }
+    session_by_id.update(
+        {
+            capability.capabilityId: capability
+            for capability in runtime_capabilities.capabilities
+            if capability.runtime == session.runtime
+            and capability.scope == "session"
+            and capability.sessionId == session.id
+            and _capability_runtime_id(capability) == session.runtimeId
+        }
+    )
     runtime_by_id = {
         capability.capabilityId: capability
         for capability in runtime_capabilities.capabilities
-        if capability.runtime == session.runtime and capability.scope == "runtime"
+        if capability.runtime == session.runtime
+        and capability.scope == "runtime"
+        and _capability_runtime_id(capability) is None
     }
+    runtime_by_id.update(
+        {
+            capability.capabilityId: capability
+            for capability in runtime_capabilities.capabilities
+            if capability.runtime == session.runtime
+            and capability.scope == "runtime"
+            and _capability_runtime_id(capability) == session.runtimeId
+        }
+    )
     online = session.connectorStatus == "online"
     capabilities: list[ProtocolCapability] = []
     for capability_id in _INHERITED_RUNTIME_CAPABILITY_IDS:
@@ -159,6 +181,7 @@ def platform_scoped_session_capability(
         capabilityId=capability_id,
         scope="session",
         runtime=session.runtime,
+        runtimeId=session.runtimeId,
         sessionId=session.id,
         supported=supported,
         available=available,
@@ -166,6 +189,11 @@ def platform_scoped_session_capability(
         unavailableReason=unavailable_reason,
         parameters=source_capability.parameters if source_capability is not None else {},
     )
+
+
+def _capability_runtime_id(capability: ProtocolCapability) -> str | None:
+    value = getattr(capability, "runtimeId", None)
+    return value if isinstance(value, str) and value else None
 
 
 def effective_capability_revision(

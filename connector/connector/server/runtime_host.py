@@ -58,15 +58,17 @@ class ConnectorRuntimeHost(RuntimeHostClient):
         ordering_time: str | None = None,
         metadata: Mapping[str, Any] | None = None,
     ) -> None:
+        instance_metadata = dict(metadata or {})
         payload: dict[str, Any] = {
             "sessionId": session_id,
             "runtime": runtime,
+            "runtimeId": _runtime_id_from_metadata(instance_metadata),
             "externalSessionId": external_session_id,
             "title": title,
             "cwd": cwd,
             "lastActivityAt": ordering_time,
             "sourceObservedAt": ordering_time,
-            "metadata": dict(metadata or {}),
+            "metadata": instance_metadata,
         }
         await self._notify_server("session.meta.upsert", _drop_none(payload))
 
@@ -82,15 +84,17 @@ class ConnectorRuntimeHost(RuntimeHostClient):
         metadata: Mapping[str, Any] | None = None,
     ) -> None:
         selection_values = dict(selections or {})
+        instance_metadata = dict(metadata or {})
         payload: dict[str, Any] = {
             "sessionId": session_id,
             "runtime": runtime,
+            "runtimeId": _runtime_id_from_metadata(instance_metadata),
             "externalSessionId": external_session_id,
             "status": status,
             "statusReason": status_reason,
             "error": dict(error) if error is not None else None,
             "selections": selection_values,
-            "metadata": dict(metadata or {}),
+            "metadata": instance_metadata,
         }
         await self._notify_server("session.state.updated", _drop_none(payload))
 
@@ -137,6 +141,8 @@ class ConnectorRuntimeHost(RuntimeHostClient):
         await self._notify_server(
             "runtime.catalog.updated",
             {
+                "runtime": catalog.runtime,
+                "runtimeId": catalog.runtime_id or catalog.runtime,
                 "catalogType": "model",
                 "catalog": model_catalog_payload(catalog),
             },
@@ -155,6 +161,8 @@ class ConnectorRuntimeHost(RuntimeHostClient):
         await self._notify_server(
             "runtime.catalog.updated",
             {
+                "runtime": catalog.runtime,
+                "runtimeId": catalog.runtime_id or catalog.runtime,
                 "catalogType": "permission",
                 "catalog": permission_catalog_payload(catalog),
             },
@@ -169,16 +177,18 @@ class ConnectorRuntimeHost(RuntimeHostClient):
         complete: bool = False,
         metadata: Mapping[str, Any] | None = None,
     ) -> None:
+        instance_metadata = dict(metadata or {})
         server_items = tuple(
             item for item in items if item.type not in {"turn.start", "turn.end"}
         )
         payload: dict[str, Any] = {
             "sessionId": session_id,
             "runtime": runtime,
+            "runtimeId": _runtime_id_from_metadata(instance_metadata),
             "externalSessionId": external_session_id,
             "items": [_timeline_item_payload(item) for item in server_items],
             "complete": complete,
-            "metadata": dict(metadata or {}),
+            "metadata": instance_metadata,
         }
         started_at = time.monotonic()
         await self._notify_server("timeline.sync", _drop_none(payload))
@@ -199,12 +209,20 @@ class ConnectorRuntimeHost(RuntimeHostClient):
     ) -> None:
         if item.type in {"turn.start", "turn.end"}:
             return
+        source = item.source
+        runtime_id = source.get("runtimeId")
         await self._notify_server(
             "timeline.itemUpsert",
-            {
-                "sessionId": item.session_id,
-                "item": _timeline_item_payload(item),
-            },
+            _drop_none(
+                {
+                    "sessionId": item.session_id,
+                    "runtime": source.get("runtime")
+                    if runtime_id is not None
+                    else None,
+                    "runtimeId": runtime_id,
+                    "item": _timeline_item_payload(item),
+                }
+            ),
         )
 
     async def notice_upsert(
@@ -225,16 +243,18 @@ class ConnectorRuntimeHost(RuntimeHostClient):
         external_session_id: str | None = None,
         details: Mapping[str, Any] | None = None,
     ) -> None:
+        instance_details = dict(details or {})
         await self._notify_server(
             "runtime.error",
             _drop_none(
                 {
                     "runtime": runtime,
+                    "runtimeId": _runtime_id_from_metadata(instance_details),
                     "code": code,
                     "message": message,
                     "sessionId": session_id,
                     "externalSessionId": external_session_id,
-                    "details": dict(details or {}),
+                    "details": instance_details,
                 }
             ),
         )
@@ -249,7 +269,9 @@ class ConnectorRuntimeHost(RuntimeHostClient):
         session_id: str,
         file_id: str,
     ) -> RuntimeAttachmentContent:
-        content, name, media_type = await self._attachment_downloader(session_id, file_id)
+        content, name, media_type = await self._attachment_downloader(
+            session_id, file_id
+        )
         return RuntimeAttachmentContent(
             file_id=file_id,
             name=name,
@@ -295,7 +317,9 @@ class ConnectorRuntimeHost(RuntimeHostClient):
     def _sync_state_key(self, key: str) -> tuple[str, str, str]:
         runtime, separator, _rest = key.partition("/")
         if not separator or not runtime:
-            raise ValueError("sync state key must be runtime-namespaced, e.g. codex/history/cursor/{id}")
+            raise ValueError(
+                "sync state key must be runtime-namespaced, e.g. codex/history/cursor/{id}"
+            )
         return runtime, self._connector_id, key
 
 
@@ -321,6 +345,8 @@ def _timeline_source_payload(item: RuntimeTimelineItem) -> dict[str, Any]:
     return _drop_none(
         {
             "runtime": source.get("runtime"),
+            "runtimeType": source.get("runtimeType"),
+            "runtimeId": source.get("runtimeId"),
             "sessionId": source.get("sessionId") or source.get("threadId"),
             "itemId": source.get("itemId") or item.id,
             "itemType": source.get("itemType") or source.get("rawType"),
@@ -339,3 +365,8 @@ def _sync_state_value(state: RuntimeSyncState | None) -> Mapping[str, Any] | Non
     if state is None:
         return None
     return state.cursor
+
+
+def _runtime_id_from_metadata(metadata: Mapping[str, Any]) -> str | None:
+    runtime_id = metadata.get("runtimeId")
+    return runtime_id if isinstance(runtime_id, str) and runtime_id else None

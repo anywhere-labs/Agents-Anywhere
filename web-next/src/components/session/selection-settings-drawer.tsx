@@ -19,6 +19,8 @@ export type SelectionOption = {
   id: string
   label: string
   description?: string | null
+  enabled?: boolean
+  disabledReason?: string | null
 }
 
 export type ModelSelectionOption = SelectionOption & {
@@ -100,7 +102,8 @@ export function SelectionSettingsDrawer({
                     <SelectionRow
                       selected={selectedModel === model.id}
                       label={model.label}
-                      disabled={modelDisabled}
+                      helper={model.enabled === false ? model.disabledReason ?? undefined : model.description ?? undefined}
+                      disabled={modelDisabled || model.enabled === false}
                       trailing={hasReasoning
                         ? expanded
                           ? <ChevronDown className="size-4" />
@@ -125,7 +128,8 @@ export function SelectionSettingsDrawer({
                             key={reasoning.id}
                             selected={selectedModel === model.id && selectedReasoning === reasoning.id}
                             label={reasoning.label}
-                            disabled={modelDisabled || reasoningDisabled}
+                            helper={reasoning.enabled === false ? reasoning.disabledReason ?? undefined : reasoning.description ?? undefined}
+                            disabled={modelDisabled || reasoningDisabled || reasoning.enabled === false}
                             onClick={() => {
                               onModelChange(model.id, reasoning.id)
                               setDrawerOpen(false)
@@ -149,8 +153,8 @@ export function SelectionSettingsDrawer({
                   key={item.id}
                   selected={selectedPermission === item.id}
                   label={item.label}
-                  helper={item.description ?? undefined}
-                  disabled={permissionDisabled}
+                  helper={item.enabled === false ? item.disabledReason ?? undefined : item.description ?? undefined}
+                  disabled={permissionDisabled || item.enabled === false}
                   onClick={() => {
                     onPermissionChange(item.id)
                     setDrawerOpen(false)

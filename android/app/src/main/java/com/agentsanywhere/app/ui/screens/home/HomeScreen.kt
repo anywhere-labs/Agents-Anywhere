@@ -366,7 +366,7 @@ private fun HomeSessionActionOverlay(
 
 @Composable
 internal fun HomeSessionHighlightRow(session: AgentSession, darkMode: Boolean) {
-    val subtitle = listOf(session.runtimeLabel, session.workspaceLabel)
+    val subtitle = listOf(session.runtimeContextLabel, session.workspaceLabel)
         .filter { it.isNotBlank() }
         .joinToString("  ·  ")
     val title = if (darkMode) Color(0xFFE4E4E7) else Color(0xFF1F201D)
@@ -1304,7 +1304,7 @@ internal fun HomePinnedSessionRow(
     onClick: () -> Unit,
     onLongPress: (Rect) -> Unit,
 ) {
-    val subtitle = listOf(session.runtimeLabel, session.workspaceLabel)
+    val subtitle = listOf(session.runtimeContextLabel, session.workspaceLabel)
         .filter { it.isNotBlank() }
         .joinToString("  ·  ")
 

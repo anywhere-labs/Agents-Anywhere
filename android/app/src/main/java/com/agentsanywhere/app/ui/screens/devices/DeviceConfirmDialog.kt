@@ -78,7 +78,7 @@ internal fun DeviceConfirmDialog(
         }
         is DeviceConfirmAction.DeleteRuntimeConfig -> {
             danger = true
-            val label = action.runtime.displayName
+            val label = action.runtime.labels.primary
             title = stringResource(R.string.device_confirm_delete_runtime_config_title, label)
             body = stringResource(
                 if (action.runtime.active) {

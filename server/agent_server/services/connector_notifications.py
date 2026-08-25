@@ -22,6 +22,7 @@ from agent_server.core.protocol import (
     ProtocolModelCatalog,
     ProtocolPermissionCatalog,
 )
+from agent_server.core.runtime_identity import RuntimeIdentity, RuntimeIdentityError
 from agent_server.services.connector_realtime import ConnectorRealtimeService
 from agent_server.services.ingest_effects import IngestEffect
 from agent_server.services.repository_ports import ConnectorNotificationRepository
@@ -221,9 +222,16 @@ class RuntimeCatalogNotificationHandler:
 
         catalog_type = runtime_catalog_type_from_params(params)
         catalog = runtime_catalog_from_params(catalog_type, params)
+        runtime, runtime_id = runtime_catalog_identity_from_params(params, catalog)
+        if catalog.runtime != runtime:
+            raise NotificationValidationError(
+                "invalid_runtime_catalog",
+                "runtime catalog provider does not match its instance scope",
+            )
         outcome = await self._store.update_protocol_catalog(
             connector_id,
             runtime=catalog.runtime,
+            runtime_id=runtime_id,
             catalog_type=catalog_type,
             revision=catalog.revision,
             catalog=catalog.model_dump(mode="json"),
@@ -237,7 +245,7 @@ class RuntimeCatalogNotificationHandler:
             )
 
         sessions = await self._store.list_sessions_for_connector(connector_id)
-        session_ids = session_ids_for_runtime_catalog(sessions, catalog.runtime)
+        session_ids = session_ids_for_runtime_catalog(sessions, runtime_id)
         return IngestEffect(
             session_ids=session_ids,
             catalogs={catalog_type: catalog.model_dump(mode="json")},
@@ -261,7 +269,7 @@ class SessionNotificationHandler:
             _reject_legacy_selection_fields(params, notification=method)
         session_id = params["sessionId"]
         external_session_id = params.get("externalSessionId")
-        runtime = params.get("runtime") or "codex"
+        runtime, runtime_id = runtime_identity_from_params(params)
         is_dsh = runtime == "dsh"
         should_archive = False if is_dsh else _session_meta_should_archive(params)
         source_state = _dsh_session_meta_source_state(params) if is_dsh else None
@@ -271,7 +279,16 @@ class SessionNotificationHandler:
                     connector_id=connector_id,
                     session_id=session_id,
                     external_session_id=external_session_id,
+                    runtime=runtime,
+                    runtime_id=runtime_id,
                 )
+            existing_session = await self._store.get_session(session_id)
+            _require_session_binding(
+                existing_session,
+                connector_id=connector_id,
+                runtime=runtime,
+                runtime_id=runtime_id,
+            )
             session = await self._store.update_session_snapshot(
                 session_id=session_id,
                 title=params.get("title"),
@@ -287,18 +304,25 @@ class SessionNotificationHandler:
                 session = await self._store.set_session_archived(session.id, True)
             return IngestEffect(session_id=session.id, session_changed=True)
         except KeyError:
-            session = await self._store.upsert_connector_session(
-                connector_id=connector_id,
-                session_id=session_id,
-                runtime=params.get("runtime") or "codex",
-                external_session_id=_string_or_none(external_session_id),
-                title=params.get("title"),
-                cwd=params.get("cwd"),
-                last_synced_at=params.get("lastSyncedAt"),
-                source_observed_at=params.get("sourceObservedAt"),
-                last_activity_at=params.get("lastActivityAt"),
-                source_state=source_state,
-            )
+            try:
+                session = await self._store.upsert_connector_session(
+                    connector_id=connector_id,
+                    session_id=session_id,
+                    runtime=runtime,
+                    runtime_id=runtime_id,
+                    external_session_id=_string_or_none(external_session_id),
+                    title=params.get("title"),
+                    cwd=params.get("cwd"),
+                    last_synced_at=params.get("lastSyncedAt"),
+                    source_observed_at=params.get("sourceObservedAt"),
+                    last_activity_at=params.get("lastActivityAt"),
+                    source_state=source_state,
+                )
+            except ValueError as exc:
+                raise NotificationValidationError(
+                    "session_identity_conflict",
+                    str(exc),
+                ) from exc
             if should_archive and not session.archived:
                 session = await self._store.set_session_archived(session.id, True)
             return IngestEffect(session_id=session.id, session_changed=True)
@@ -322,7 +346,8 @@ class DshSessionInventoryNotificationHandler:
     ) -> IngestEffect | None:
         if method not in self.METHODS:
             return None
-        if params.get("runtime") != "dsh":
+        runtime, runtime_id = runtime_identity_from_params(params)
+        if runtime != "dsh":
             raise NotificationValidationError(
                 "invalid_session_inventory_runtime",
                 "session inventory reconciliation is only supported for dsh",
@@ -334,7 +359,11 @@ class DshSessionInventoryNotificationHandler:
                 "session inventory scanToken must contain 16 to 128 characters",
             )
         if method == "session.inventory.begin":
-            await self._store.begin_dsh_session_inventory(connector_id, scan_token)
+            await self._store.begin_dsh_session_inventory(
+                connector_id,
+                runtime_id,
+                scan_token,
+            )
             return IngestEffect()
 
         raw_sessions = params.get("sessions")
@@ -398,6 +427,7 @@ class DshSessionInventoryNotificationHandler:
             )
         changed = await self._store.complete_dsh_session_inventory(
             connector_id,
+            runtime_id,
             scan_token,
             entries,
             complete=complete,
@@ -420,7 +450,7 @@ class SessionStateNotificationHandler:
             return None
         _reject_legacy_selection_fields(params, notification=method)
         session_id = params["sessionId"]
-        runtime = params.get("runtime") or "codex"
+        runtime, runtime_id = runtime_identity_from_params(params)
         external_session_id = _string_or_none(params.get("externalSessionId"))
         if external_session_id is not None:
             try:
@@ -428,22 +458,39 @@ class SessionStateNotificationHandler:
                     connector_id=connector_id,
                     session_id=session_id,
                     external_session_id=external_session_id,
+                    runtime=runtime,
+                    runtime_id=runtime_id,
                 )
             except KeyError:
                 pass
         try:
-            await self._store.get_session(session_id)
+            session = await self._store.get_session(session_id)
         except KeyError:
-            session = await self._store.upsert_connector_session(
-                connector_id=connector_id,
-                session_id=session_id,
-                runtime=runtime,
-                external_session_id=external_session_id,
-            )
+            try:
+                session = await self._store.upsert_connector_session(
+                    connector_id=connector_id,
+                    session_id=session_id,
+                    runtime=runtime,
+                    runtime_id=runtime_id,
+                    external_session_id=external_session_id,
+                )
+            except ValueError as exc:
+                raise NotificationValidationError(
+                    "session_identity_conflict",
+                    str(exc),
+                ) from exc
             session_id = session.id
+        else:
+            _require_session_binding(
+                session,
+                connector_id=connector_id,
+                runtime=runtime,
+                runtime_id=runtime_id,
+            )
         runtime_state = runtime_state_from_session_state_params(
             session_id=session_id,
             runtime=runtime,
+            runtime_id=runtime_id,
             external_session_id=external_session_id,
             params=params,
         )
@@ -480,12 +527,18 @@ class TimelineNotificationHandler:
         params: dict[str, Any],
     ) -> IngestEffect:
         items = [TimelineItemIn.model_validate(item) for item in params.get("items", [])]
+        runtime, runtime_id = await timeline_runtime_identity_from_params(
+            self._store,
+            params,
+        )
         requested_session_id = params["sessionId"]
         session_id = await _resolve_timeline_session_id(
             self._store,
             connector_id,
             requested_session_id,
             items,
+            runtime=runtime,
+            runtime_id=runtime_id,
         )
         if await _session_disabled(self._store, session_id):
             return IngestEffect()
@@ -522,11 +575,17 @@ class TimelineNotificationHandler:
         params: dict[str, Any],
     ) -> IngestEffect:
         item = TimelineItemIn.model_validate(params["item"])
+        runtime, runtime_id = await timeline_runtime_identity_from_params(
+            self._store,
+            params,
+        )
         session_id = await _resolve_timeline_session_id(
             self._store,
             connector_id,
             params["sessionId"],
             [item],
+            runtime=runtime,
+            runtime_id=runtime_id,
         )
         if await _session_disabled(self._store, session_id):
             return IngestEffect()
@@ -562,15 +621,29 @@ class InteractionNotificationHandler:
         if method not in self.METHODS:
             return None
         if method == "notice.upsert":
-            return await self._notice(params)
-        return await self._runtime_error(params)
+            return await self._notice(connector_id, params)
+        return await self._runtime_error(connector_id, params)
 
-    async def _notice(self, params: dict[str, Any]) -> IngestEffect:
+    async def _notice(
+        self,
+        connector_id: str,
+        params: dict[str, Any],
+    ) -> IngestEffect:
         try:
             notice = NoticeIn.model_validate(params)
         except ValidationError as exc:
             raise NotificationValidationError("invalid_notice", str(exc)) from exc
-        if await _session_disabled(self._store, notice.sessionId):
+        runtime, runtime_id = await interaction_runtime_identity_from_params(
+            self._store,
+            params,
+        )
+        if not await _session_matches_runtime(
+            self._store,
+            notice.sessionId,
+            runtime,
+            runtime_id,
+            connector_id=connector_id,
+        ):
             return IngestEffect()
         return IngestEffect(
             session_id=notice.sessionId,
@@ -579,11 +652,22 @@ class InteractionNotificationHandler:
             notices_changed=True,
         )
 
-    async def _runtime_error(self, params: dict[str, Any]) -> IngestEffect:
+    async def _runtime_error(
+        self,
+        connector_id: str,
+        params: dict[str, Any],
+    ) -> IngestEffect:
         session_id = params.get("sessionId")
-        if not isinstance(session_id, str) or await _session_disabled(
+        runtime, runtime_id = await interaction_runtime_identity_from_params(
+            self._store,
+            params,
+        )
+        if not isinstance(session_id, str) or not await _session_matches_runtime(
             self._store,
             session_id,
+            runtime,
+            runtime_id,
+            connector_id=connector_id,
         ):
             return IngestEffect()
         notice = NoticeIn.model_validate(
@@ -648,6 +732,7 @@ def capability_set_fingerprint(value: ProtocolCapabilitySet) -> list[dict[str, A
         key=lambda item: (
             str(item.get("capabilityId") or ""),
             str(item.get("runtime") or ""),
+            str(item.get("runtimeId") or ""),
             str(item.get("scope") or ""),
             str(item.get("sessionId") or ""),
         ),
@@ -690,18 +775,19 @@ def runtime_catalog_from_params(
 
 def session_ids_for_runtime_catalog(
     sessions: list[SessionView],
-    runtime: str,
+    runtime_id: str,
 ) -> list[str]:
-    return [session.id for session in sessions if session.runtime == runtime]
+    return [session.id for session in sessions if session.runtimeId == runtime_id]
 
 
 def capability_identity_key(
     capability: ProtocolCapability,
-) -> tuple[str, str, str | None, str | None]:
+) -> tuple[str, str, str | None, str | None, str | None]:
     return (
         capability.capabilityId,
         capability.scope,
         capability.runtime,
+        _string_or_none(getattr(capability, "runtimeId", None)),
         capability.sessionId,
     )
 
@@ -723,11 +809,54 @@ async def _session_disabled(store: ConnectorNotificationRepository, session_id: 
     return await store.get_session_runtime(session_id) is None
 
 
+async def _session_matches_runtime(
+    store: ConnectorNotificationRepository,
+    session_id: str,
+    runtime: str,
+    runtime_id: str,
+    *,
+    connector_id: str,
+) -> bool:
+    try:
+        session = await store.get_session(session_id)
+    except KeyError:
+        return False
+    _require_session_binding(
+        session,
+        connector_id=connector_id,
+        runtime=runtime,
+        runtime_id=runtime_id,
+    )
+    return True
+
+
+def _require_session_binding(
+    session: SessionView,
+    *,
+    connector_id: str,
+    runtime: str,
+    runtime_id: str,
+) -> None:
+    if session.connectorId != connector_id:
+        raise NotificationValidationError(
+            "session_connector_mismatch",
+            "notification connector does not match the session binding",
+        )
+    if session.runtime != runtime or session.runtimeId != runtime_id:
+        raise NotificationValidationError(
+            "session_runtime_mismatch",
+            "notification runtime does not match the session binding",
+        )
+
+
 async def _resolve_timeline_session_id(
     store: ConnectorNotificationRepository,
     connector_id: str,
     session_id: str,
     items: list[TimelineItemIn],
+    *,
+    runtime: str,
+    runtime_id: str,
 ) -> str:
     external_session_id = next(
         (item.source.sessionId for item in items if item.source.sessionId),
@@ -738,8 +867,20 @@ async def _resolve_timeline_session_id(
             connector_id=connector_id,
             session_id=session_id,
             external_session_id=external_session_id,
+            runtime=runtime,
+            runtime_id=runtime_id,
         )
     except KeyError:
+        try:
+            session = await store.get_session(session_id)
+        except KeyError:
+            return session_id
+        _require_session_binding(
+            session,
+            connector_id=connector_id,
+            runtime=runtime,
+            runtime_id=runtime_id,
+        )
         return session_id
 
 
@@ -828,6 +969,105 @@ def _string_or_none(value: Any) -> str | None:
     return value if isinstance(value, str) else None
 
 
+def runtime_identity_from_params(params: dict[str, Any]) -> tuple[str, str]:
+    runtime = params.get("runtime") or "codex"
+    runtime_id = params.get("runtimeId") or runtime
+    try:
+        identity = RuntimeIdentity.create(
+            runtime_type=runtime,
+            runtime_id=runtime_id,
+        )
+    except RuntimeIdentityError as exc:
+        raise NotificationValidationError(
+            "invalid_runtime_identity",
+            str(exc),
+        ) from exc
+    return str(identity.runtime_type), str(identity.runtime_id)
+
+
+def runtime_catalog_identity_from_params(
+    params: dict[str, Any],
+    catalog: ProtocolModelCatalog | ProtocolPermissionCatalog,
+) -> tuple[str, str]:
+    if "runtime" not in params and "runtimeId" not in params:
+        return runtime_identity_from_params(
+            {
+                "runtime": catalog.runtime,
+                "runtimeId": catalog.runtime,
+            }
+        )
+    return runtime_identity_from_params(params)
+
+
+async def interaction_runtime_identity_from_params(
+    store: ConnectorNotificationRepository,
+    params: dict[str, Any],
+) -> tuple[str, str]:
+    if "runtime" in params or "runtimeId" in params:
+        return runtime_identity_from_params(params)
+
+    source = params.get("source")
+    if isinstance(source, dict):
+        runtime = source.get("runtimeType") or source.get("runtime")
+        if isinstance(runtime, str) and runtime != "platform":
+            return runtime_identity_from_params(
+                {
+                    "runtime": runtime,
+                    "runtimeId": source.get("runtimeId") or runtime,
+                }
+            )
+
+    session_id = params.get("sessionId")
+    if isinstance(session_id, str):
+        try:
+            session = await store.get_session(session_id)
+        except KeyError:
+            pass
+        else:
+            return session.runtime, session.runtimeId or session.runtime
+
+    return runtime_identity_from_params(params)
+
+
+async def timeline_runtime_identity_from_params(
+    store: ConnectorNotificationRepository,
+    params: dict[str, Any],
+) -> tuple[str, str]:
+    if "runtime" in params or "runtimeId" in params:
+        return runtime_identity_from_params(params)
+
+    session_id = params.get("sessionId")
+    if isinstance(session_id, str):
+        try:
+            session = await store.get_session(session_id)
+        except KeyError:
+            pass
+        else:
+            return session.runtime, session.runtimeId or session.runtime
+
+    raw_items = params.get("items")
+    raw_item = params.get("item")
+    if isinstance(raw_item, dict):
+        candidates = [raw_item]
+    elif isinstance(raw_items, list):
+        candidates = [item for item in raw_items if isinstance(item, dict)]
+    else:
+        candidates = []
+    for candidate in candidates:
+        source = candidate.get("source")
+        if not isinstance(source, dict):
+            continue
+        runtime = source.get("runtimeType") or source.get("runtime")
+        if isinstance(runtime, str) and runtime != "platform":
+            return runtime_identity_from_params(
+                {
+                    "runtime": runtime,
+                    "runtimeId": source.get("runtimeId") or runtime,
+                }
+            )
+    return runtime_identity_from_params(params)
+
+
 def _object_or_none(value: Any) -> dict[str, Any] | None:
     return dict(value) if isinstance(value, dict) else None
 
@@ -868,12 +1108,14 @@ def _has_runtime_state_fields(params: dict[str, Any]) -> bool:
 def runtime_state_from_session_state_params(
     session_id: str,
     runtime: str,
+    runtime_id: str,
     external_session_id: str | None,
     params: dict[str, Any],
 ) -> dict[str, Any]:
     return {
         "sessionId": session_id,
         "runtime": runtime,
+        "runtimeId": runtime_id,
         "externalSessionId": external_session_id,
         "status": _v2_session_status(params.get("status")) or "idle",
         "selections": _selections_param(params) or {},

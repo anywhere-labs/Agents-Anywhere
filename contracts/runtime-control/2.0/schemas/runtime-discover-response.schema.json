@@ -1,0 +1,29 @@
+{
+  "$id": "https://agents-anywhere.dev/contracts/runtime-control/2.0/schemas/runtime-discover-response.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Runtime Control 2.0 discovery result. Legacy runtimes arrays are not valid in this schema.",
+  "properties": {
+    "runtimeTypes": {
+      "items": {
+        "$ref": "runtime-type-descriptor.schema.json"
+      },
+      "maxItems": 64,
+      "type": "array"
+    },
+    "selectedControlVersion": {
+      "const": "2.0",
+      "type": "string"
+    }
+  },
+  "required": [
+    "selectedControlVersion",
+    "runtimeTypes"
+  ],
+  "title": "RuntimeDiscoverResponse",
+  "type": "object",
+  "x-direction": "egress",
+  "x-rpc-method": "runtime.discover",
+  "x-rpc-part": "result",
+  "x-runtime-control-version": "2.0"
+}

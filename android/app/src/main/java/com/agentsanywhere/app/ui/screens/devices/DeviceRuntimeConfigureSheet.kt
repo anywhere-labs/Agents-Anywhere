@@ -138,7 +138,7 @@ internal fun DeviceRuntimeConfigureSheet(
                         fontWeight = FontWeight.ExtraBold,
                     )
                     Text(
-                        text = runtime.displayName,
+                        text = runtime.labels.primary,
                         color = colors.muted,
                         fontSize = 12.sp,
                         fontWeight = FontWeight.SemiBold,

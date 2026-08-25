@@ -55,6 +55,10 @@ export type SessionView = {
   connectorId: string
   connectorStatus: ConnectorStatus
   runtime: string
+  runtimeId?: string
+  runtimeType?: string
+  runtimeName?: string | null
+  runtimeTypeDisplayName?: string | null
   externalSessionId?: string | null
   title?: string | null
   cwd?: string | null

@@ -56,8 +56,11 @@ export type DeviceRuntimeView = {
   connectorId: string;
   runtimeId: string;
   runtimeType: string;
+  name?: string;
   displayName: string;
+  typeDisplayName?: string;
   present: boolean;
+  available?: boolean;
   configured: boolean;
   active: boolean;
   status: DeviceRuntimeStatus;
@@ -65,10 +68,45 @@ export type DeviceRuntimeView = {
   metadata: Record<string, unknown>;
   schema: Record<string, unknown> | null;
   uiSchema: Record<string, unknown>;
+  defaults?: Record<string, unknown>;
+  capabilities?: Record<string, boolean>;
   config: Record<string, unknown> | null;
   error: Record<string, unknown> | null;
   lastDiscoveredAt: string;
+  createdAt?: string;
   updatedAt: string;
+};
+
+export type RuntimeInstancePolicy = "single" | "multiple";
+
+export type RuntimeTypeView = {
+  connectorId: string;
+  runtimeType: string;
+  implementationType: string;
+  displayName: string;
+  description: string | null;
+  present: boolean;
+  available: boolean;
+  reason: string | null;
+  recommended: boolean;
+  recommendationRank: number | null;
+  discovery: Record<string, unknown>;
+  schema: Record<string, unknown> | null;
+  uiSchema: Record<string, unknown>;
+  defaults: Record<string, unknown>;
+  capabilities: Record<string, boolean>;
+  metadata: Record<string, unknown>;
+  instancePolicy: RuntimeInstancePolicy;
+  maxInstances: number | null;
+  lastDiscoveredAt: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type RuntimeTypeListResponse = {
+  connectorId: string;
+  runtimeTypes: RuntimeTypeView[];
+  serverTime: string;
 };
 
 export type DeviceRuntimeListResponse = {
@@ -94,6 +132,10 @@ export type SessionView = {
   connectorId: string;
   connectorStatus: ConnectorStatus;
   runtime: string;
+  runtimeId?: string;
+  runtimeType?: string;
+  runtimeName?: string | null;
+  runtimeTypeDisplayName?: string | null;
   externalSessionId: string | null;
   title: string | null;
   cwd: string | null;
@@ -219,6 +261,7 @@ export type SessionResponse = {
 export type SessionCreateRequest = {
   connectorId: string;
   runtime: string;
+  runtimeId?: string;
   externalSessionId?: string | null;
   title?: string;
   cwd?: string;
@@ -228,6 +271,7 @@ export type SessionCreateRequest = {
 export type SessionCreateAndStartRequest = {
   connectorId: string;
   runtime: string;
+  runtimeId?: string;
   title?: string;
   cwd?: string;
   content: string;
@@ -554,6 +598,8 @@ export type MessageSendOptions = {
 export type SessionRuntimeState = {
   sessionId: string;
   runtime: string;
+  runtimeId?: string;
+  runtimeType?: string;
   externalSessionId?: string | null;
   status: RuntimeStatusValue;
   selections: Record<string, string | null>;

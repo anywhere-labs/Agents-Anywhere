@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from agent_server.core.models import RuntimeName
+from agent_server.core.models import LegacyRuntimeName
 from agent_server.core.protocol import (
     ProtocolModelCatalogResponse,
     ProtocolPermissionCatalogResponse,
@@ -12,7 +12,10 @@ from agent_server.deps import current_user_id
 router = APIRouter(prefix="/agents", tags=["agents"])
 
 
-def removed_agent_catalog_detail(runtime: RuntimeName, catalog: str) -> dict[str, str]:
+def removed_agent_catalog_detail(
+    runtime: LegacyRuntimeName,
+    catalog: str,
+) -> dict[str, str]:
     return {
         "code": "agent_catalog_route_removed",
         "message": "Agent catalog query routes were removed from the v2 target API.",
@@ -26,7 +29,7 @@ def removed_agent_catalog_detail(runtime: RuntimeName, catalog: str) -> dict[str
     include_in_schema=False,
 )
 async def get_agent_model_catalog(
-    runtime: RuntimeName,
+    runtime: LegacyRuntimeName,
     user_id: str = Depends(current_user_id),
 ) -> ProtocolModelCatalogResponse:
     """Reject the removed agent catalog route.
@@ -50,7 +53,7 @@ async def get_agent_model_catalog(
     include_in_schema=False,
 )
 async def get_agent_permission_catalog(
-    runtime: RuntimeName,
+    runtime: LegacyRuntimeName,
     user_id: str = Depends(current_user_id),
 ) -> ProtocolPermissionCatalogResponse:
     """Reject the removed agent catalog route.

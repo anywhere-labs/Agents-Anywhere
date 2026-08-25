@@ -37,6 +37,7 @@ class ConnectorConnection:
     websocket: WebSocket
     connected_at_monotonic: float
     last_seen_monotonic: float
+    ready: bool = False
     pending: dict[str, asyncio.Future[dict[str, Any]]] = field(default_factory=dict)
     send_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
@@ -102,7 +103,8 @@ class ConnectorRpcManager:
             return True
         if not self._coordinator.distributed:
             return False
-        return await self._get_lease(connector_id) is not None
+        lease = await self._get_lease(connector_id)
+        return lease is not None and lease.ready
 
     async def online_statuses(self, connector_ids: list[str]) -> dict[str, bool]:
         unique_ids = list(dict.fromkeys(connector_ids))
@@ -122,7 +124,10 @@ class ConnectorRpcManager:
             )
             statuses.update(
                 {
-                    connector_id: self._parse_lease(raw) is not None
+                    connector_id: bool(
+                        (lease := self._parse_lease(raw)) is not None
+                        and lease.ready
+                    )
                     for connector_id, raw in zip(remote_ids, values, strict=True)
                 }
             )
@@ -132,11 +137,13 @@ class ConnectorRpcManager:
         self,
         connector_id: str,
         websocket: WebSocket,
+        *,
+        ready: bool = True,
     ) -> ConnectorConnection:
         now = self._clock()
         old = self._connections.get(connector_id)
         if old is not None:
-            if self._is_local_online(old):
+            if self._is_local_live(old):
                 raise DuplicateConnectorConnectionError(
                     "connector is already connected"
                 )
@@ -150,6 +157,7 @@ class ConnectorRpcManager:
             websocket=websocket,
             connected_at_monotonic=now,
             last_seen_monotonic=now,
+            ready=ready,
         )
         if self._coordinator.distributed:
             claimed = await self._coordinator.claim(
@@ -163,6 +171,45 @@ class ConnectorRpcManager:
                 )
         self._connections[connector_id] = connection
         return connection
+
+    async def mark_ready(self, connection: ConnectorConnection) -> bool:
+        transition = asyncio.create_task(self._mark_ready(connection))
+        try:
+            return await asyncio.shield(transition)
+        except asyncio.CancelledError:
+            await asyncio.gather(transition, return_exceptions=True)
+            await self.unregister(connection.connector_id, connection)
+            raise
+
+    async def _mark_ready(self, connection: ConnectorConnection) -> bool:
+        connector_id = connection.connector_id
+        if (
+            self._connections.get(connector_id) is not connection
+            or not self._is_local_live(connection)
+        ):
+            return False
+        if connection.ready:
+            return True
+        if self._coordinator.distributed:
+            promoted = await self._coordinator.replace_if_value(
+                self._lease_key(connector_id),
+                self._lease_value(connection, ready=False),
+                self._lease_value(connection, ready=True),
+                ttl_seconds=self._heartbeat_timeout_seconds,
+            )
+            if not promoted:
+                self._connections.pop(connector_id, None)
+                self._fail_pending(connection, "connector ownership was lost")
+                return False
+            if self._connections.get(connector_id) is not connection:
+                await self._coordinator.delete_if_value(
+                    self._lease_key(connector_id),
+                    self._lease_value(connection, ready=True),
+                )
+                self._fail_pending(connection, "connector ownership was lost")
+                return False
+        connection.ready = True
+        return True
 
     async def unregister(
         self,
@@ -245,17 +292,37 @@ class ConnectorRpcManager:
         *,
         timeout: float = 30,
     ) -> Any:
+        result, _ = await self.request_bound(
+            connector_id,
+            method,
+            params,
+            timeout=timeout,
+        )
+        return result
+
+    async def request_bound(
+        self,
+        connector_id: str,
+        method: str,
+        params: dict[str, Any],
+        *,
+        timeout: float = 30,
+    ) -> tuple[Any, str]:
         connection = self._connections.get(connector_id)
         if connection is not None and self._is_local_online(connection):
-            return await self._request_local(
-                connection, method, params, timeout=timeout
+            result = await self._request_local(
+                connection,
+                method,
+                params,
+                timeout=timeout,
             )
+            return result, connection.connection_id
         if not self._coordinator.distributed:
             raise ConnectorOfflineError("connector is offline")
         lease = await self._get_lease(connector_id)
-        if lease is None:
+        if lease is None or not lease.ready:
             raise ConnectorOfflineError("connector is offline")
-        return await self._route(
+        result = await self._route(
             lease,
             {
                 "type": "request",
@@ -265,6 +332,49 @@ class ConnectorRpcManager:
                 "timeout": timeout,
             },
             timeout=timeout,
+        )
+        return result, lease.connection_id
+
+    async def request_on_connection(
+        self,
+        connection: ConnectorConnection,
+        method: str,
+        params: dict[str, Any],
+        *,
+        timeout: float = 30,
+    ) -> Any:
+        if self._connections.get(connection.connector_id) is not connection:
+            raise ConnectorOfflineError("connector connection was replaced")
+        return await self._request_local(connection, method, params, timeout=timeout)
+
+    async def is_connection_id_current(
+        self,
+        connector_id: str,
+        connection_id: str,
+    ) -> bool:
+        connection = self._connections.get(connector_id)
+        if connection is not None:
+            if (
+                connection.connection_id != connection_id
+                or not self._is_local_online(connection)
+            ):
+                return False
+            if not self._coordinator.distributed:
+                return True
+            lease = await self._get_lease(connector_id)
+            return (
+                lease is not None
+                and lease.ready
+                and lease.instance_id == self.instance_id
+                and lease.connection_id == connection_id
+            )
+        if not self._coordinator.distributed:
+            return False
+        lease = await self._get_lease(connector_id)
+        return (
+            lease is not None
+            and lease.ready
+            and lease.connection_id == connection_id
         )
 
     def resolve_response(self, connector_id: str, message: dict[str, Any]) -> None:
@@ -484,11 +594,20 @@ class ConnectorRpcManager:
             payload = json.loads(raw)
             instance_id = payload["instanceId"]
             connection_id = payload["connectionId"]
+            ready = payload.get("ready", True)
         except (KeyError, TypeError, json.JSONDecodeError):
             return None
-        if not isinstance(instance_id, str) or not isinstance(connection_id, str):
+        if (
+            not isinstance(instance_id, str)
+            or not isinstance(connection_id, str)
+            or not isinstance(ready, bool)
+        ):
             return None
-        return ConnectorLease(instance_id=instance_id, connection_id=connection_id)
+        return ConnectorLease(
+            instance_id=instance_id,
+            connection_id=connection_id,
+            ready=ready,
+        )
 
     async def _release_lease(self, connection: ConnectorConnection) -> bool:
         if not self._coordinator.distributed:
@@ -499,6 +618,9 @@ class ConnectorRpcManager:
         )
 
     def _is_local_online(self, connection: ConnectorConnection) -> bool:
+        return connection.ready and self._is_local_live(connection)
+
+    def _is_local_live(self, connection: ConnectorConnection) -> bool:
         return (
             self._clock() - connection.last_seen_monotonic
             <= self._heartbeat_timeout_seconds
@@ -507,11 +629,17 @@ class ConnectorRpcManager:
     def _lease_key(self, connector_id: str) -> str:
         return self._coordinator.key("connector", "presence", connector_id)
 
-    def _lease_value(self, connection: ConnectorConnection) -> str:
+    def _lease_value(
+        self,
+        connection: ConnectorConnection,
+        *,
+        ready: bool | None = None,
+    ) -> str:
         return json.dumps(
             {
                 "instanceId": self.instance_id,
                 "connectionId": connection.connection_id,
+                "ready": connection.ready if ready is None else ready,
             },
             separators=(",", ":"),
             sort_keys=True,

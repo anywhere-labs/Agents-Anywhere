@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from connector.runtime_protocol import RuntimeInvalidRequestError
+from connector.runtime_protocol.filesystem import canonical_path
 from connector.runtimes.codex.sdk.binary import CodexRuntimeBinaryMode
 from connector.runtimes.custom_models import custom_models_schema
 from connector.runtimes.model_gateway import model_gateway_schema
@@ -17,6 +18,7 @@ PROTECTED_ENV_NAMES = {
     "AGENT_CONNECTOR_DATA_DIR",
     "AGENT_CONNECTOR_STATE_FILE",
     "AGENT_SERVER_URL",
+    "CODEX_HOME",
 }
 
 
@@ -46,8 +48,7 @@ def codex_config_schema() -> dict[str, Any]:
                 "metadata": {
                     "i18n": {
                         "labelKey": (
-                            "dashboard.device.runtimeConfigFields."
-                            "useSystemCodex.label"
+                            "dashboard.device.runtimeConfigFields.useSystemCodex.label"
                         ),
                         "descriptionKey": (
                             "dashboard.device.runtimeConfigFields."
@@ -77,6 +78,15 @@ def codex_config_schema() -> dict[str, Any]:
                         ),
                     }
                 },
+            },
+            "codexHome": {
+                "type": "string",
+                "title": "Codex Home",
+                "description": (
+                    "Directory used by this Codex instance for configuration, "
+                    "credentials, and session history. Two running instances "
+                    "cannot use the same directory."
+                ),
             },
             "modelGateway": model_gateway_schema(),
             "customModels": custom_models_schema(),
@@ -167,4 +177,35 @@ def validate_codex_executable_path(path: str | None) -> None:
     if not candidate.is_file() or not os.access(candidate, os.X_OK):
         raise RuntimeInvalidRequestError(
             "codexExecutablePath must point to an executable file"
+        )
+
+
+def normalize_codex_home(raw: Any) -> str | None:
+    if raw is None:
+        return None
+    if not isinstance(raw, str):
+        raise RuntimeInvalidRequestError("codexHome must be a string")
+    value = raw.strip()
+    if not value:
+        return None
+    if "\x00" in value or "\r" in value or "\n" in value:
+        raise RuntimeInvalidRequestError("codexHome contains unsupported characters")
+    expanded = os.path.expandvars(str(Path(value).expanduser()))
+    return canonical_path(expanded)
+
+
+def effective_codex_home(configured_home: str | None) -> str:
+    if configured_home is not None:
+        return configured_home
+    environment_home = normalize_codex_home(os.environ.get("CODEX_HOME"))
+    if environment_home is not None:
+        return environment_home
+    return canonical_path(Path.home() / ".codex")
+
+
+def validate_codex_home(path: str) -> None:
+    candidate = Path(path)
+    if candidate.exists() and not candidate.is_dir():
+        raise RuntimeInvalidRequestError(
+            "codexHome must point to a directory or a path that can be created"
         )

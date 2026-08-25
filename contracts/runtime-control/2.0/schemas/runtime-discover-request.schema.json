@@ -1,0 +1,30 @@
+{
+  "$id": "https://agents-anywhere.dev/contracts/runtime-control/2.0/schemas/runtime-discover-request.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Parameters sent by the Server to negotiate Runtime Control before runtime discovery.",
+  "properties": {
+    "supportedControlVersions": {
+      "contains": {
+        "const": "2.0"
+      },
+      "description": "Runtime Control versions supported by the Server, in preference order.",
+      "items": {
+        "pattern": "^[1-9][0-9]*\\.[0-9]+$",
+        "type": "string"
+      },
+      "minItems": 1,
+      "type": "array",
+      "uniqueItems": true
+    }
+  },
+  "required": [
+    "supportedControlVersions"
+  ],
+  "title": "RuntimeDiscoverRequest",
+  "type": "object",
+  "x-direction": "ingress",
+  "x-rpc-method": "runtime.discover",
+  "x-rpc-part": "params",
+  "x-runtime-control-version": "2.0"
+}

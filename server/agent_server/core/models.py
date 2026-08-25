@@ -1,10 +1,45 @@
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    WithJsonSchema,
+    model_validator,
+)
 
-RuntimeName = Literal["codex", "claude", "opencode", "acp", "dsh"]
+from agent_server.core.runtime_identity import (
+    RuntimeIdentity,
+    RuntimeIdentityError,
+    validate_runtime_type,
+)
+
+_PROTOCOL_1_RUNTIME_NAMES = ("codex", "claude", "opencode", "acp", "dsh")
+LegacyRuntimeName = Literal["codex", "claude", "opencode", "acp", "dsh"]
+
+
+def _validate_runtime_name(value: str) -> str:
+    try:
+        return str(validate_runtime_type(value))
+    except RuntimeIdentityError as exc:
+        raise ValueError(str(exc)) from exc
+
+
+# Runtime Control 2.0 can discover new normalized provider keys. Protocol 1.0
+# keeps its original advertised enum until the additive 1.1 contract ships.
+RuntimeName = Annotated[
+    str,
+    AfterValidator(_validate_runtime_name),
+    WithJsonSchema(
+        {
+            "enum": list(_PROTOCOL_1_RUNTIME_NAMES),
+            "type": "string",
+        }
+    ),
+]
 ConnectorStatus = Literal["offline", "online"]
 ConnectorDeviceOs = Literal["macos", "windows", "linux"]
 SessionStatus = Literal[
@@ -532,10 +567,20 @@ class SessionCreateRequest(BaseModel):
 
     connectorId: str
     runtime: RuntimeName = "codex"
+    runtimeId: str | None = None
     externalSessionId: str | None = None
     title: str | None = None
     cwd: str | None = None
     selections: dict[str, str | None] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _validate_runtime_identity(self) -> SessionCreateRequest:
+        identity = RuntimeIdentity.create(
+            runtime_type=self.runtime,
+            runtime_id=self.runtimeId or self.runtime,
+        )
+        self.runtimeId = str(identity.runtime_id)
+        return self
 
 
 class AttachmentRef(BaseModel):
@@ -556,6 +601,7 @@ class SessionCreateAndStartRequest(BaseModel):
 
     connectorId: str
     runtime: RuntimeName = "codex"
+    runtimeId: str | None = None
     title: str | None = None
     cwd: str | None = None
     content: str
@@ -563,12 +609,25 @@ class SessionCreateAndStartRequest(BaseModel):
     attachments: list[InlineAttachmentRef] = Field(default_factory=list, max_length=10)
     clientMessageId: str | None = None
 
+    @model_validator(mode="after")
+    def _validate_runtime_identity(self) -> SessionCreateAndStartRequest:
+        identity = RuntimeIdentity.create(
+            runtime_type=self.runtime,
+            runtime_id=self.runtimeId or self.runtime,
+        )
+        self.runtimeId = str(identity.runtime_id)
+        return self
+
 
 class SessionView(BaseModel):
     id: str
     connectorId: str
     connectorStatus: ConnectorStatus
     runtime: RuntimeName
+    runtimeId: str | None = None
+    runtimeType: RuntimeName | None = None
+    runtimeName: str | None = None
+    runtimeTypeDisplayName: str | None = None
     externalSessionId: str | None = None
     title: str | None = None
     cwd: str | None = None
@@ -588,10 +647,22 @@ class SessionView(BaseModel):
     sortAt: str | None = None
     updatedSeq: int
 
+    @model_validator(mode="after")
+    def _normalize_runtime_identity(self) -> SessionView:
+        identity = RuntimeIdentity.create(
+            runtime_type=self.runtime,
+            runtime_id=self.runtimeId or self.runtime,
+        )
+        self.runtimeId = str(identity.runtime_id)
+        self.runtimeType = self.runtime
+        return self
+
 
 class SessionRuntimeState(BaseModel):
     sessionId: str
     runtime: RuntimeName
+    runtimeId: str | None = None
+    runtimeType: RuntimeName | None = None
     externalSessionId: str | None = None
     status: SessionStatus = "idle"
     selections: dict[str, str | None] = Field(default_factory=dict)
@@ -601,6 +672,16 @@ class SessionRuntimeState(BaseModel):
     updatedSeq: int
     createdAt: str
     updatedAt: str
+
+    @model_validator(mode="after")
+    def _normalize_runtime_identity(self) -> SessionRuntimeState:
+        identity = RuntimeIdentity.create(
+            runtime_type=self.runtime,
+            runtime_id=self.runtimeId or self.runtime,
+        )
+        self.runtimeId = str(identity.runtime_id)
+        self.runtimeType = self.runtime
+        return self
 
 
 class SessionRuntimeStateResponse(BaseModel):

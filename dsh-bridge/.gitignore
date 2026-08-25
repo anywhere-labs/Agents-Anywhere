@@ -1,0 +1,10 @@
+lib/
+node_modules/
+.yarn/cache/
+.yarn/install-state.gz
+.yarn/unplugged/
+artifacts/
+coverage/
+
+# The repository ignores lockfiles globally; this package intentionally owns one.
+!yarn.lock

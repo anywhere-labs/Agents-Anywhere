@@ -1,0 +1,255 @@
+{
+  "$defs": {
+    "RuntimeConfigSchema": {
+      "additionalProperties": false,
+      "description": "Provider-owned configuration contract for this runtime type.",
+      "properties": {
+        "defaults": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "metadata": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "revision": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "schema": {
+          "additionalProperties": true,
+          "description": "A JSON Schema whose root validates a runtime configuration object.",
+          "properties": {
+            "type": {
+              "const": "object"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        "uiSchema": {
+          "oneOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "revision",
+        "schema",
+        "uiSchema",
+        "defaults",
+        "metadata"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "https://agents-anywhere.dev/contracts/runtime-control/2.0/schemas/runtime-type-descriptor.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "available": {
+            "const": false
+          }
+        },
+        "required": [
+          "available"
+        ]
+      },
+      "then": {
+        "properties": {
+          "reason": {
+            "minLength": 1,
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "instancePolicy": {
+            "const": "single"
+          }
+        },
+        "required": [
+          "instancePolicy"
+        ]
+      },
+      "then": {
+        "properties": {
+          "maxInstances": {
+            "const": 1
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "instancePolicy": {
+            "const": "multiple"
+          }
+        },
+        "required": [
+          "instancePolicy"
+        ]
+      },
+      "then": {
+        "properties": {
+          "maxInstances": {
+            "oneOf": [
+              {
+                "maximum": 9007199254740991,
+                "minimum": 2,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "description": "Provider-owned discovery facts. runtimeType is a stable provider identifier, never an instance identifier or implementation category.",
+  "properties": {
+    "available": {
+      "type": "boolean"
+    },
+    "capabilities": {
+      "additionalProperties": {
+        "type": "boolean"
+      },
+      "propertyNames": {
+        "minLength": 1
+      },
+      "type": "object"
+    },
+    "configSchema": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/RuntimeConfigSchema"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "description": {
+      "oneOf": [
+        {
+          "maxLength": 1024,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "displayName": {
+      "maxLength": 128,
+      "minLength": 1,
+      "type": "string"
+    },
+    "instancePolicy": {
+      "enum": [
+        "single",
+        "multiple"
+      ],
+      "type": "string"
+    },
+    "implementationType": {
+      "description": "Optional implementation category, separate from the stable provider identity.",
+      "oneOf": [
+        {
+          "maxLength": 64,
+          "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "maxInstances": {
+      "oneOf": [
+        {
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "metadata": {
+      "additionalProperties": true,
+      "type": "object"
+    },
+    "reason": {
+      "oneOf": [
+        {
+          "maxLength": 1024,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "recommended": {
+      "type": "boolean"
+    },
+    "recommendationRank": {
+      "oneOf": [
+        {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "runtimeType": {
+      "maxLength": 64,
+      "pattern": "^(?!rti_)[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+      "type": "string"
+    }
+  },
+  "required": [
+    "runtimeType",
+    "displayName",
+    "description",
+    "available",
+    "reason",
+    "recommended",
+    "recommendationRank",
+    "implementationType",
+    "configSchema",
+    "capabilities",
+    "metadata",
+    "instancePolicy",
+    "maxInstances"
+  ],
+  "title": "RuntimeTypeDescriptor",
+  "type": "object",
+  "x-direction": "egress",
+  "x-runtime-control-version": "2.0"
+}

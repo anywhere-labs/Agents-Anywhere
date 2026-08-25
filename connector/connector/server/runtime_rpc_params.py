@@ -3,7 +3,28 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from connector.runtime_protocol import RuntimeAttachment
+from connector.runtime_protocol import (
+    MAX_CONFIG_REVISION,
+    RuntimeAttachment,
+    RuntimeInstanceSpec,
+    RuntimeInstancesUnsupportedError,
+    RuntimeInvalidRequestError,
+    RuntimeScope,
+    legacy_runtime_scope,
+)
+
+_V2_RUNTIME_SCOPE_FIELDS = frozenset({"runtime", "runtimeId"})
+_V2_RUNTIME_CONFIG_FIELDS = frozenset(
+    {"runtime", "runtimeId", "name", "config", "configRevision"}
+)
+
+
+def require_only_fields(params: dict[str, Any], allowed: frozenset[str]) -> None:
+    unsupported = sorted(set(params) - allowed)
+    if unsupported:
+        raise RuntimeInvalidRequestError(
+            f"unsupported request field(s): {', '.join(unsupported)}"
+        )
 
 
 def required_runtime_id(params: dict[str, Any]) -> str:
@@ -20,15 +41,49 @@ def runtime_config(params: dict[str, Any]) -> dict[str, Any]:
     return config
 
 
-def optional_positive_int(params: dict[str, Any], key: str) -> int | None:
+def optional_safe_int(
+    params: dict[str, Any],
+    key: str,
+    *,
+    minimum: int = 0,
+) -> int | None:
     value = params.get(key)
     if value is None:
         return None
     if isinstance(value, bool) or not isinstance(value, int):
         raise TypeError(f"{key} must be an integer")
-    if value < 1:
-        raise ValueError(f"{key} must be positive")
+    if not minimum <= value <= MAX_CONFIG_REVISION:
+        raise ValueError(f"{key} must be between {minimum} and {MAX_CONFIG_REVISION}")
     return value
+
+
+def required_safe_int(params: dict[str, Any], key: str) -> int:
+    value = optional_safe_int(params, key)
+    if value is None:
+        raise ValueError(f"{key} is required")
+    return value
+
+
+def required_runtime_type(params: dict[str, Any]) -> str:
+    runtime_type = params.get("runtime")
+    if not isinstance(runtime_type, str) or not runtime_type:
+        raise ValueError("runtime is required")
+    return runtime_type
+
+
+def required_name(params: dict[str, Any]) -> str:
+    name = params.get("name")
+    if not isinstance(name, str) or not name:
+        raise ValueError("name is required")
+    return name
+
+
+def scoped_runtime(params: dict[str, Any]) -> RuntimeScope:
+    runtime_type = required_runtime_type(params)
+    runtime_id = params.get("runtimeId", runtime_type)
+    if not isinstance(runtime_id, str) or not runtime_id:
+        raise ValueError("runtimeId must be a non-empty string")
+    return RuntimeScope(runtime_id=runtime_id, runtime_type=runtime_type)
 
 
 def required_session_id(params: dict[str, Any]) -> str:
@@ -83,7 +138,9 @@ def runtime_attachments(params: dict[str, Any]) -> tuple[RuntimeAttachment, ...]
             or raw.get("content_base64") is not None
         )
         if has_inline_content:
-            raise ValueError("attachment content must be referenced by fileId, not sent as base64")
+            raise ValueError(
+                "attachment content must be referenced by fileId, not sent as base64"
+            )
         file_id = raw.get("fileId") or raw.get("file_id")
         if not isinstance(file_id, str) or not file_id:
             raise ValueError("attachment fileId is required")
@@ -156,25 +213,96 @@ def string_tuple(value: Any) -> tuple[str, ...]:
 
 @dataclass(frozen=True, slots=True)
 class RuntimeIdParams:
-    runtime_id: str
+    scope: RuntimeScope
+
+    @property
+    def runtime_id(self) -> str:
+        return self.scope.runtime_id
+
+    @property
+    def runtime_type(self) -> str:
+        return self.scope.runtime_type
 
     @classmethod
-    def parse(cls, params: dict[str, Any]) -> RuntimeIdParams:
-        return cls(runtime_id=required_runtime_id(params))
+    def parse(
+        cls,
+        params: dict[str, Any],
+        *,
+        control_version: str = "1.0",
+    ) -> RuntimeIdParams:
+        if control_version == "2.0":
+            require_only_fields(params, _V2_RUNTIME_SCOPE_FIELDS)
+            return cls(scope=scoped_runtime(params))
+        runtime_id = required_runtime_id(params)
+        if runtime_id.startswith("rti_"):
+            raise RuntimeInstancesUnsupportedError(
+                "named runtime instances require Runtime Control 2.0"
+            )
+        runtime_type = params.get("runtime")
+        if runtime_type is not None and runtime_type != runtime_id:
+            raise RuntimeInvalidRequestError(
+                "legacy runtime and runtimeId must identify the same provider type"
+            )
+        return cls(scope=legacy_runtime_scope(runtime_id))
 
 
 @dataclass(frozen=True, slots=True)
 class RuntimeConfigParams:
-    runtime_id: str
+    instance: RuntimeInstanceSpec
     config: dict[str, Any]
-    config_revision: int | None = None
+    config_revision: int | None
+
+    @property
+    def runtime_id(self) -> str:
+        return self.instance.runtime_id
+
+    @property
+    def runtime_type(self) -> str:
+        return self.instance.runtime_type
 
     @classmethod
-    def parse(cls, params: dict[str, Any]) -> RuntimeConfigParams:
+    def parse(
+        cls,
+        params: dict[str, Any],
+        *,
+        control_version: str = "1.0",
+        display_name: str | None = None,
+    ) -> RuntimeConfigParams:
+        if control_version == "2.0":
+            require_only_fields(params, _V2_RUNTIME_CONFIG_FIELDS)
+            scope = scoped_runtime(params)
+            instance = RuntimeInstanceSpec(
+                runtime_id=scope.runtime_id,
+                runtime_type=scope.runtime_type,
+                name=required_name(params),
+            )
+            config_revision = required_safe_int(params, "configRevision")
+        else:
+            runtime_id = required_runtime_id(params)
+            if runtime_id.startswith("rti_"):
+                raise RuntimeInstancesUnsupportedError(
+                    "named runtime instances require Runtime Control 2.0"
+                )
+            runtime_type = params.get("runtime")
+            if runtime_type is not None and runtime_type != runtime_id:
+                raise RuntimeInvalidRequestError(
+                    "legacy runtime and runtimeId must identify the same provider type"
+                )
+            scope = legacy_runtime_scope(runtime_id)
+            instance = RuntimeInstanceSpec(
+                runtime_id=scope.runtime_id,
+                runtime_type=scope.runtime_type,
+                name=display_name or scope.runtime_type,
+            )
+            config_revision = optional_safe_int(
+                params,
+                "configRevision",
+                minimum=1,
+            )
         return cls(
-            runtime_id=required_runtime_id(params),
+            instance=instance,
             config=runtime_config(params),
-            config_revision=optional_positive_int(params, "configRevision"),
+            config_revision=config_revision,
         )
 
 

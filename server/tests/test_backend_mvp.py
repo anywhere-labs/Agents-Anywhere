@@ -13,6 +13,7 @@ from starlette.websockets import WebSocketDisconnect
 
 from agent_server.api.sessions_terminal import _send_terminal_ws_error
 from agent_server.app import create_app
+from agent_server.core.models import SessionRuntimeState
 from agent_server.core.protocol import protocol_selection_id
 from agent_server.infra.connector_rpc import (
     ConnectorOfflineError,
@@ -949,6 +950,72 @@ def test_session_state_updated_pushes_ephemeral_runtime_state(tmp_path):
     assert state.json()["state"]["status"] == "running"
 
 
+def test_named_session_state_notification_refreshes_cache_and_pushes_runtime_id(
+    tmp_path,
+):
+    client = make_client(tmp_path)
+    connector_id, access_token, _session_id, headers = create_connector_and_session(
+        client
+    )
+    named_session_id = "sess_named_runtime"
+    asyncio.run(
+        client.app.state.store.upsert_connector_session(
+            connector_id=connector_id,
+            session_id=named_session_id,
+            runtime="codex",
+            runtime_id="rti_work",
+            external_session_id=None,
+        )
+    )
+    asyncio.run(
+        client.app.state.session_runtime_state_cache.put(
+            SessionRuntimeState(
+                sessionId=named_session_id,
+                runtime="codex",
+                runtimeId="codex",
+                status="running",
+                updatedSeq=0,
+                createdAt="2026-08-26T00:00:00Z",
+                updatedAt="2026-08-26T00:00:00Z",
+            )
+        )
+    )
+    ticket = ws_ticket(client, named_session_id, headers)
+
+    with client.websocket_connect(
+        f"/sessions/{named_session_id}/ws?ticket={ticket}"
+    ) as ws:
+        assert ws.receive_json()["type"] == "session.subscribed"
+        response = client.post(
+            "/connector/ingest",
+            headers={"Authorization": f"Bearer {access_token}"},
+            json={
+                "notifications": [
+                    {
+                        "method": "session.state.updated",
+                        "params": {
+                            "sessionId": named_session_id,
+                            "runtime": "codex",
+                            "runtimeId": "rti_work",
+                            "status": "running",
+                            "selections": {},
+                        },
+                    }
+                ]
+            },
+        )
+        assert response.status_code == 200, response.text
+        event = receive_session_ws_event(ws, "runtime.state.updated")
+
+    assert event["payload"]["state"]["runtime"] == "codex"
+    assert event["payload"]["state"]["runtimeId"] == "rti_work"
+    cached = asyncio.run(
+        client.app.state.session_runtime_state_cache.get(named_session_id)
+    )
+    assert cached is not None
+    assert cached.runtimeId == "rti_work"
+
+
 def test_session_list_projects_cached_runtime_status(tmp_path):
     client = make_client(tmp_path)
     _connector_id, access_token, session_id, headers = create_connector_and_session(client)
@@ -1177,6 +1244,31 @@ class FakeLocalRpc:
 
     async def is_online(self, connector_id: str) -> bool:
         return True
+
+    async def request_bound(
+        self,
+        connector_id: str,
+        method: str,
+        params: dict[str, Any],
+        *,
+        timeout: float = 30,
+    ) -> tuple[Any, str]:
+        return (
+            await self.request(
+                connector_id,
+                method,
+                params,
+                timeout=timeout,
+            ),
+            "fake-connection",
+        )
+
+    async def is_connection_id_current(
+        self,
+        _connector_id: str,
+        connection_id: str,
+    ) -> bool:
+        return connection_id == "fake-connection"
 
     async def request(
         self,
@@ -1745,6 +1837,7 @@ def test_session_runtime_command_list_reads_full_runtime_commands(tmp_path):
         {
             "sessionId": session_id,
             "runtime": "codex",
+            "runtimeId": "codex",
             "limit": 100,
             "externalSessionId": f"thr_{connector_id}_demo",
         },
@@ -1777,6 +1870,7 @@ def test_session_command_execute_calls_runtime(tmp_path):
         {
             "sessionId": session_id,
             "runtime": "codex",
+            "runtimeId": "codex",
             "command": "resume",
             "args": ["now"],
             "externalSessionId": f"thr_{connector_id}_demo",
@@ -1807,6 +1901,7 @@ def test_session_runtime_command_execute_calls_runtime(tmp_path):
         {
             "sessionId": session_id,
             "runtime": "codex",
+            "runtimeId": "codex",
             "command": "resume",
             "args": ["now"],
             "externalSessionId": f"thr_{connector_id}_demo",
@@ -1841,6 +1936,30 @@ def test_session_runtime_state_and_capabilities_read_from_runtime(tmp_path):
         "session.state",
         "session.capabilities",
     ]
+
+
+def test_session_runtime_state_rejects_connector_identity_mismatch(tmp_path):
+    client = make_client(tmp_path)
+    _connector_id, _access_token, session_id, headers = create_connector_and_session(
+        client
+    )
+    fake_rpc = FakeLocalRpc()
+    fake_rpc.runtime_states[session_id] = {
+        "sessionId": session_id,
+        "runtime": "codex",
+        "runtimeId": "rti_other",
+        "status": "idle",
+        "selections": {},
+    }
+    client.app.state.rpc = fake_rpc
+
+    response = client.get(
+        f"/sessions/{session_id}/runtime/state",
+        headers=headers,
+    )
+
+    assert response.status_code == 502
+    assert "runtimeId" in response.json()["detail"]
 
 
 def test_session_command_returns_runtime_rpc_error(tmp_path):
@@ -3970,6 +4089,7 @@ def test_patch_session_selections_routes_to_runtime_and_reads_live_state(tmp_pat
         {
             "sessionId": session_id,
             "runtime": "codex",
+            "runtimeId": "codex",
             "selections": {"model": "sel_model_live", "permission": "sel_permission_live"},
             "externalSessionId": f"thr_{connector_id}_demo",
         },
@@ -4041,6 +4161,52 @@ def test_patch_session_selections_does_not_persist_runtime_rejection(tmp_path):
     state = client.get(f"/sessions/{session_id}/runtime/state", headers=headers)
     if state.status_code == 200:
         assert state.json()["state"]["selections"] == {}
+
+
+def test_patch_session_selections_rejects_connector_identity_mismatch(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, _, session_id, headers = create_connector_and_session(client)
+
+    class MismatchedSelectionRpc(FakeLocalRpc):
+        async def request(
+            self,
+            connector_id: str,
+            method: str,
+            params: dict[str, Any],
+            *,
+            timeout: float = 30,
+        ) -> Any:
+            if method == "session.selections.update":
+                self.requests.append((connector_id, method, params, timeout))
+                return {
+                    "ok": True,
+                    "state": {
+                        "sessionId": "sess_other",
+                        "runtime": params["runtime"],
+                        "runtimeId": params["runtimeId"],
+                        "status": "idle",
+                        "selections": params["selections"],
+                    },
+                }
+            return await super().request(
+                connector_id,
+                method,
+                params,
+                timeout=timeout,
+            )
+
+    client.app.state.rpc = MismatchedSelectionRpc()
+    asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
+    client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
+
+    response = client.patch(
+        f"/sessions/{session_id}/runtime/selections",
+        headers=headers,
+        json={"selections": {"model": "sel_model_mismatch"}},
+    )
+
+    assert response.status_code == 502
+    assert "sessionId" in response.json()["detail"]
 
 
 def test_send_message_rejects_legacy_model_fields(tmp_path):
@@ -4421,6 +4587,7 @@ def test_steer_routes_running_codex_session_without_turn_id(tmp_path):
     assert params == {
         "sessionId": session_id,
         "runtime": "codex",
+        "runtimeId": "codex",
         "content": "focus on IPC",
         "externalSessionId": external_session_id,
         "cwd": "/repo",
@@ -5409,6 +5576,44 @@ def test_terminal_broker_removes_connector_user_terminals_only(tmp_path):
     assert (
         asyncio.run(client.app.state.terminal_broker.get(other_terminal_id)) is not None
     )
+
+
+def test_terminal_broker_cleanup_is_scoped_to_connector_connection(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, _, session_id, _ = create_connector_and_session(client)
+
+    async def exercise() -> tuple[str, str]:
+        broker = client.app.state.terminal_broker
+        old_terminal = await broker.register(
+            session_id=session_id,
+            connector_id=connector_id,
+            connector_connection_id="cnx_old",
+            label="old",
+            cwd="/repo",
+            shell="zsh",
+            cols=80,
+            rows=24,
+        )
+        new_terminal = await broker.register(
+            session_id=session_id,
+            connector_id=connector_id,
+            connector_connection_id="cnx_new",
+            label="new",
+            cwd="/repo",
+            shell="zsh",
+            cols=80,
+            rows=24,
+        )
+        removed = await broker.remove_ephemeral_for_connector(
+            connector_id,
+            connection_id="cnx_old",
+        )
+        assert [terminal.id for terminal in removed] == [old_terminal.id]
+        assert await broker.get(old_terminal.id) is None
+        assert await broker.get(new_terminal.id) is not None
+        return old_terminal.id, new_terminal.id
+
+    asyncio.run(exercise())
 
 
 def test_terminal_broker_forwards_browser_events_to_connector_relay(tmp_path):
@@ -6461,7 +6666,10 @@ def test_timeline_sync_keeps_existing_realtime_items_missing_from_snapshot(tmp_p
 
 def test_claude_history_sync_replaces_live_item_with_snapshot_same_id(tmp_path):
     client = make_client(tmp_path)
-    _, access_token, session_id, headers = create_connector_and_session(client)
+    _, access_token, session_id, headers = create_connector_and_session(
+        client,
+        runtime="claude",
+    )
 
     with client.websocket_connect(
         "/connector/ws",
@@ -6560,7 +6768,10 @@ def test_claude_history_sync_replaces_live_item_with_snapshot_same_id(tmp_path):
 
 def test_claude_timeline_sync_replaces_existing_timeline(tmp_path):
     client = make_client(tmp_path)
-    _, access_token, session_id, headers = create_connector_and_session(client)
+    _, access_token, session_id, headers = create_connector_and_session(
+        client,
+        runtime="claude",
+    )
 
     with client.websocket_connect(
         "/connector/ws",

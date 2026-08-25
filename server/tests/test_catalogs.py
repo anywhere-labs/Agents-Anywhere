@@ -108,14 +108,14 @@ def test_catalog_service_resolves_stable_selection_ids() -> None:
     model = asyncio.run(
         service.resolve_model(
             "connector-1",
-            runtime="codex",
+            runtime_id="rti_work",
             selection_id="sel_model_high",
         )
     )
     permission = asyncio.run(
         service.resolve_permission(
             "connector-1",
-            runtime="codex",
+            runtime_id="rti_work",
             selection_id="sel_permission_default",
         )
     )
@@ -155,12 +155,12 @@ class _CatalogRepository:
         self,
         connector_id: str,
         *,
-        runtime: str,
+        runtime_id: str,
         catalog_type: CatalogType,
         user_id: str | None = None,
     ) -> dict[str, Any] | None:
         assert connector_id == "connector-1"
-        assert runtime == "codex"
+        assert runtime_id == "rti_work"
         return self.catalogs[catalog_type]
 
     async def update_protocol_catalog(
@@ -168,12 +168,14 @@ class _CatalogRepository:
         connector_id: str,
         *,
         runtime: str,
+        runtime_id: str | None = None,
         catalog_type: CatalogType,
         revision: int,
         catalog: dict[str, Any],
     ) -> CatalogUpdateOutcome:
         assert connector_id == "connector-1"
         assert runtime == "codex"
+        assert runtime_id is None
         assert revision == catalog["revision"]
         return self.outcome
 

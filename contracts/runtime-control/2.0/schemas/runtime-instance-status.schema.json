@@ -1,0 +1,158 @@
+{
+  "$defs": {
+    "RuntimeError": {
+      "additionalProperties": true,
+      "description": "A stable machine code and human-readable message, with optional provider details preserved.",
+      "properties": {
+        "code": {
+          "maxLength": 128,
+          "minLength": 1,
+          "type": "string"
+        },
+        "details": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "message": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "retryable": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "https://agents-anywhere.dev/contracts/runtime-control/2.0/schemas/runtime-instance-status.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "else": {
+        "properties": {
+          "error": {
+            "type": "null"
+          }
+        }
+      },
+      "if": {
+        "properties": {
+          "status": {
+            "const": "error"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "properties": {
+          "error": {
+            "$ref": "#/$defs/RuntimeError"
+          }
+        }
+      }
+    }
+  ],
+  "description": "Current persisted lifecycle state for a runtime instance.",
+  "properties": {
+    "active": {
+      "description": "The user's desired active state. It may remain true while status is error.",
+      "type": "boolean"
+    },
+    "configured": {
+      "type": "boolean"
+    },
+    "createdAt": {
+      "format": "date-time",
+      "type": "string"
+    },
+    "error": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/RuntimeError"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "name": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": ".*\\S.*",
+      "type": "string"
+    },
+    "runtimeId": {
+      "maxLength": 128,
+      "pattern": "^(?:(?!rti_)[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*|rti_[A-Za-z0-9_-]+)$",
+      "type": "string"
+    },
+    "runtimeType": {
+      "maxLength": 64,
+      "pattern": "^(?!rti_)[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+      "type": "string"
+    },
+    "startedAt": {
+      "oneOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "status": {
+      "enum": [
+        "stopped",
+        "validating",
+        "starting",
+        "running",
+        "stopping",
+        "error",
+        "unknown"
+      ],
+      "type": "string"
+    },
+    "stoppedAt": {
+      "oneOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "updatedAt": {
+      "format": "date-time",
+      "type": "string"
+    }
+  },
+  "required": [
+    "runtimeId",
+    "runtimeType",
+    "name",
+    "configured",
+    "active",
+    "status",
+    "error",
+    "createdAt",
+    "updatedAt",
+    "startedAt",
+    "stoppedAt"
+  ],
+  "title": "RuntimeInstanceStatus",
+  "type": "object",
+  "x-direction": "egress",
+  "x-runtime-control-version": "2.0"
+}

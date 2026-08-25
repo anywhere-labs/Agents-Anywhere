@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any
 
 import httpx
@@ -25,7 +25,10 @@ from connector.runtime_protocol import (
 from connector.runtimes import default_runtime_providers
 from connector.server.auth import ConnectorAuthenticationError, ConnectorAuthenticator
 from connector.server.capabilities import protocol_capabilities_from_inventory
-from connector.server.dispatch import ConnectorRequestDispatcher
+from connector.server.dispatch import (
+    ConnectorRequestDispatcher,
+    ConnectorRequestSession,
+)
 from connector.server.errors import ConnectorNetworkError
 from connector.server.ingest import ConnectorIngestClient
 from connector.server.protocol_revision import ProtocolRevisionClock
@@ -191,6 +194,7 @@ class BackendRpcClient:
             self.config.server_url, api_v2_path("/connector/ws")
         )
         logger.info("connecting backend websocket {}", websocket_url)
+        request_session = self._dispatcher.new_session()
         async with websockets.connect(
             websocket_url,
             additional_headers={
@@ -200,7 +204,7 @@ class BackendRpcClient:
             proxy=None if is_loopback_url(self.config.server_url) else True,
         ) as ws:
             self._rpc.set_connection(ws)
-            inventory = await self._dispatcher.discover_runtimes()
+            inventory = await request_session.discover_runtimes()
             await self.send_notification("runtime.inventoryUpdated", inventory)
             await self.send_notification(
                 "protocol.capabilitiesUpdated",
@@ -220,7 +224,7 @@ class BackendRpcClient:
             try:
                 async for raw_message in ws:
                     message = json.loads(raw_message)
-                    self.start_message(message)
+                    self.start_message(message, request_session=request_session)
             finally:
                 heartbeat_task.cancel()
                 self._rpc.clear_connection()
@@ -231,11 +235,21 @@ class BackendRpcClient:
     async def ensure_access_token(self, *, force: bool = False) -> str:
         return await self._auth.ensure_access_token(force)
 
-    async def handle_message(self, message: dict[str, Any]) -> None:
-        await self._rpc.handle_message(message, self.dispatch)
+    async def handle_message(
+        self,
+        message: dict[str, Any],
+        request_session: ConnectorRequestSession | None = None,
+    ) -> None:
+        dispatcher = request_session or self._dispatcher
+        await self._rpc.handle_message(message, dispatcher.dispatch)
 
-    def start_message(self, message: dict[str, Any]) -> None:
-        self._rpc.start_request(message, self.dispatch)
+    def start_message(
+        self,
+        message: dict[str, Any],
+        request_session: ConnectorRequestSession | None = None,
+    ) -> None:
+        dispatcher = request_session or self._dispatcher
+        self._rpc.start_request(message, dispatcher.dispatch)
 
     async def dispatch(self, method: str, params: dict[str, Any]) -> Any:
         return await self._dispatcher.dispatch(method, params)
@@ -282,11 +296,16 @@ class BackendRpcClient:
 
     async def _publish_runtime_status(
         self,
+        runtime_type: str,
         runtime_id: str,
         status: str,
-        error: dict[str, Any] | None,
+        error: Mapping[str, Any] | None,
     ) -> None:
-        payload: dict[str, Any] = {"runtimeId": runtime_id, "status": status}
+        payload: dict[str, Any] = {
+            "runtime": runtime_type,
+            "runtimeId": runtime_id,
+            "status": status,
+        }
         if error is not None:
             payload["error"] = error
         await self.send_notification("runtime.statusChanged", payload)
@@ -295,9 +314,12 @@ class BackendRpcClient:
         self,
         runtime_id: str,
         status: str,
-        error: dict[str, Any] | None,
+        error: Mapping[str, Any] | None,
     ) -> None:
-        await self._publish_runtime_status(runtime_id, status, error)
+        entry = self.agent_runtime_supervisor.entry(runtime_id)
+        await self._publish_runtime_status(
+            entry.runtime_type, runtime_id, status, error
+        )
 
     async def ingest_notifications(self, notifications: list[dict[str, Any]]) -> None:
         await self._ingest.ingest_notifications(notifications)

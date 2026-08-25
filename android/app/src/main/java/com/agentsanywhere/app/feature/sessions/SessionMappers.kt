@@ -4,6 +4,7 @@ import com.agentsanywhere.app.api.RemoteSession
 import com.agentsanywhere.app.model.AgentDevice
 import com.agentsanywhere.app.model.AgentSession
 import com.agentsanywhere.app.model.SessionStatus
+import com.agentsanywhere.app.model.runtimeInstanceLabels
 import java.time.Duration
 import java.time.Instant
 import java.time.format.DateTimeParseException
@@ -15,10 +16,11 @@ internal fun RemoteSession.toAgentSession(devicesById: Map<String, AgentDevice>)
         ?: externalSessionId?.takeIf { it.isNotBlank() }
         ?: "Untitled session"
     val activityAt = lastActivityAt ?: lastItemAt ?: sortAt ?: sourceObservedAt ?: lastSyncedAt
-    val runtimeText = runtime.runtimeLabel()
+    val runtimeLabels = runtimeInstanceLabels(runtimeName, runtimeType)
     val deviceName = devicesById[connectorId]?.name ?: connectorId.take(8).ifBlank { "Device" }
     val metaParts = listOfNotNull(
-        runtimeText,
+        runtimeLabels.primary,
+        runtimeLabels.secondary,
         deviceName.takeIf { it.isNotBlank() },
         workspace.takeIf { it.isNotBlank() },
     )
@@ -31,8 +33,8 @@ internal fun RemoteSession.toAgentSession(devicesById: Map<String, AgentDevice>)
         summary = summaryText(statusValue, cwd, connectorStatus),
         cwd = cwd,
         workspaceLabel = workspace,
-        runtime = runtime,
-        runtimeLabel = runtimeText,
+        runtime = runtimeType,
+        runtimeLabel = runtimeLabels.primary,
         status = statusValue,
         statusLabel = statusValue.statusLabel(),
         updatedAtLabel = activityAt.relativeTimeLabel(),
@@ -51,6 +53,9 @@ internal fun RemoteSession.toAgentSession(devicesById: Map<String, AgentDevice>)
         ),
         sortKey = sortAt ?: lastActivityAt ?: lastItemAt ?: "",
         updatedSeq = updatedSeq,
+        runtimeId = runtimeId,
+        runtimeType = runtimeType,
+        runtimeName = this.runtimeName,
     )
 }
 

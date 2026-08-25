@@ -592,8 +592,9 @@ fun SessionDetailScreen(
             return
         }
         val id = sessionId ?: return
-        val runtimeId = state.runtime.runtime ?: state.session?.runtime
-        val messageAction = state.capabilities.messageAction(runtimeId, state.runtime.status)
+        val runtimeId = state.session?.runtimeId ?: state.runtime.runtimeId
+        val runtimeType = state.session?.runtimeType ?: state.runtime.runtimeType
+        val messageAction = state.capabilities.messageAction(runtimeId, state.runtime.status, runtimeType)
         if (messageAction == null) {
             showError(context.getString(R.string.session_steer_unavailable))
             return
@@ -601,8 +602,16 @@ fun SessionDetailScreen(
         val clientMessageId = retryClientMessageId ?: "opt_${UUID.randomUUID()}"
         val requestAction = retryMessageAction ?: messageAction
         val actionAllowed = when (requestAction) {
-            RuntimeMessageAction.Send -> state.capabilities.isUsable(SESSION_SEND_MESSAGE_CAPABILITY, runtimeId)
-            RuntimeMessageAction.Steer -> state.capabilities.isUsable(SESSION_STEER_CAPABILITY, runtimeId)
+            RuntimeMessageAction.Send -> state.capabilities.isUsable(
+                SESSION_SEND_MESSAGE_CAPABILITY,
+                runtimeId,
+                runtimeType,
+            )
+            RuntimeMessageAction.Steer -> state.capabilities.isUsable(
+                SESSION_STEER_CAPABILITY,
+                runtimeId,
+                runtimeType,
+            )
         }
         if (!actionAllowed) {
             showError(context.getString(R.string.session_steer_unavailable))
@@ -766,7 +775,7 @@ fun SessionDetailScreen(
             preparedModelLoading = true
             preparedModelError = null
             scope.launch {
-                onLoadPreparedModelCatalog(pending.connectorId, pending.runtime)
+                onLoadPreparedModelCatalog(pending.connectorId, pending.runtimeId)
                     .onSuccess { catalog ->
                         preparedModelOptions = catalog.models.flatMap { model ->
                             val reasoning = model.reasoningItems.filter { it.selectionId.isNotBlank() }
@@ -778,6 +787,8 @@ fun SessionDetailScreen(
                                             .filter(String::isNotBlank).joinToString(" · "),
                                         description = item.description ?: model.description,
                                         default = item.default || (model.default && reasoning.first() == item),
+                                        enabled = model.enabled && item.enabled,
+                                        disabledReason = item.disabledReason ?: model.disabledReason,
                                     )
                                 }
                             } else {
@@ -788,17 +799,16 @@ fun SessionDetailScreen(
                                             label = model.displayName.ifBlank { model.id },
                                             description = model.description,
                                             default = model.default,
+                                            enabled = model.enabled,
+                                            disabledReason = model.disabledReason,
                                         ),
                                     )
                                 }.orEmpty()
                             }
                         }.distinctBy { it.selectionId }
-                        if (preparedSelections.model == null) {
-                            preparedSelections = preparedSelections.copy(
-                                model = preparedModelOptions.firstOrNull { it.default }?.selectionId
-                                    ?: preparedModelOptions.firstOrNull()?.selectionId,
-                            )
-                        }
+                        preparedSelections = preparedSelections.copy(
+                            model = preparedModelOptions.validatedSelection(preparedSelections.model),
+                        )
                     }
                     .onFailure { preparedModelError = it.message ?: context.getString(R.string.session_runtime_model_catalog_failed) }
                 preparedModelLoading = false
@@ -833,16 +843,24 @@ fun SessionDetailScreen(
             preparedPermissionLoading = true
             preparedPermissionError = null
             scope.launch {
-                onLoadPreparedPermissionCatalog(pending.connectorId, pending.runtime)
+                onLoadPreparedPermissionCatalog(pending.connectorId, pending.runtimeId)
                     .onSuccess { catalog ->
                         preparedPermissionCatalog = catalog
-                        if (preparedSelections.permission == null) {
-                            preparedSelections = preparedSelections.copy(
-                                permission = catalog.permissions.firstOrNull { it.default && it.selectionId.isNotBlank() }
-                                    ?.selectionId
-                                    ?: catalog.permissions.firstOrNull { it.selectionId.isNotBlank() }?.selectionId,
-                            )
-                        }
+                        val options = catalog.permissions
+                            .filter { it.selectionId.isNotBlank() }
+                            .map { permission ->
+                                com.agentsanywhere.app.feature.sessiondetail.RuntimeSelectionOption(
+                                    selectionId = permission.selectionId,
+                                    label = permission.displayName.ifBlank { permission.id },
+                                    description = permission.description,
+                                    default = permission.default,
+                                    enabled = permission.enabled,
+                                    disabledReason = permission.disabledReason,
+                                )
+                            }
+                        preparedSelections = preparedSelections.copy(
+                            permission = options.validatedSelection(preparedSelections.permission),
+                        )
                     }
                     .onFailure { preparedPermissionError = it.message ?: context.getString(R.string.session_runtime_permission_catalog_failed) }
                 preparedPermissionLoading = false
@@ -1068,14 +1086,19 @@ fun SessionDetailScreen(
     val isPreparedSession = preparedSession != null
     val connectorOnline = if (isPreparedSession) true else state.session?.connectorOnline == true
     val takeoverEnabled = if (isPreparedSession) true else state.session?.takeover == true
-    val runtimeId = state.runtime.runtime ?: state.session?.runtime
-    val canUseSendMessage = state.capabilities.isUsable(SESSION_SEND_MESSAGE_CAPABILITY, runtimeId)
-    val canUseSteer = state.capabilities.isUsable(SESSION_STEER_CAPABILITY, runtimeId)
-    val canUseInterrupt = state.capabilities.isUsable(SESSION_INTERRUPT_CAPABILITY, runtimeId)
-    val canRespondToNotice = state.capabilities.isUsable(SESSION_NOTICE_RESPONSE_CAPABILITY, runtimeId)
-    val canUseAttachments = state.capabilities.isUsable(SESSION_ATTACHMENT_CAPABILITY, runtimeId)
-    val canUseCommands = state.capabilities.isUsable(SESSION_COMMANDS_CAPABILITY, runtimeId) ||
-        state.capabilities.isUsable(SESSION_COMMAND_EXECUTE_CAPABILITY, runtimeId)
+    val runtimeId = state.session?.runtimeId ?: state.runtime.runtimeId
+    val runtimeType = state.session?.runtimeType ?: state.runtime.runtimeType
+    val canUseSendMessage = state.capabilities.isUsable(SESSION_SEND_MESSAGE_CAPABILITY, runtimeId, runtimeType)
+    val canUseSteer = state.capabilities.isUsable(SESSION_STEER_CAPABILITY, runtimeId, runtimeType)
+    val canUseInterrupt = state.capabilities.isUsable(SESSION_INTERRUPT_CAPABILITY, runtimeId, runtimeType)
+    val canRespondToNotice = state.capabilities.isUsable(
+        SESSION_NOTICE_RESPONSE_CAPABILITY,
+        runtimeId,
+        runtimeType,
+    )
+    val canUseAttachments = state.capabilities.isUsable(SESSION_ATTACHMENT_CAPABILITY, runtimeId, runtimeType)
+    val canUseCommands = state.capabilities.isUsable(SESSION_COMMANDS_CAPABILITY, runtimeId, runtimeType) ||
+        state.capabilities.isUsable(SESSION_COMMAND_EXECUTE_CAPABILITY, runtimeId, runtimeType)
     val capabilityFactsFresh = state.capabilities.isLoaded && state.capabilities.errorMessage == null
     val commandMode = takeoverEnabled && draft.trimStart().startsWith('/') && attachments.isEmpty()
     val commandQuery = draft.trimStart().removePrefix("/").trim()
@@ -1124,6 +1147,8 @@ fun SessionDetailScreen(
                     label = localized.label,
                     description = localized.description,
                     default = permission.default,
+                    enabled = permission.enabled,
+                    disabledReason = permission.disabledReason,
                 )
             }
             ?.distinctBy { it.selectionId }
@@ -1148,10 +1173,10 @@ fun SessionDetailScreen(
     val permissionSelection = permissionOptions.validatedSelection(
         if (isPreparedSession) preparedSelections.permission else state.runtime.selections["permission"],
     )
-    val modelCapability = state.capabilities.find(SESSION_MODEL_CATALOG_CAPABILITY, runtimeId)
-    val permissionCapability = state.capabilities.find(SESSION_PERMISSION_CATALOG_CAPABILITY, runtimeId)
-    val commandCapability = state.capabilities.find(SESSION_COMMANDS_CAPABILITY, runtimeId)
-        ?: state.capabilities.find(SESSION_COMMAND_EXECUTE_CAPABILITY, runtimeId)
+    val modelCapability = state.capabilities.find(SESSION_MODEL_CATALOG_CAPABILITY, runtimeId, runtimeType)
+    val permissionCapability = state.capabilities.find(SESSION_PERMISSION_CATALOG_CAPABILITY, runtimeId, runtimeType)
+    val commandCapability = state.capabilities.find(SESSION_COMMANDS_CAPABILITY, runtimeId, runtimeType)
+        ?: state.capabilities.find(SESSION_COMMAND_EXECUTE_CAPABILITY, runtimeId, runtimeType)
     LaunchedEffect(
         sessionId,
         state.runtime.selections["model"],
@@ -1163,7 +1188,7 @@ fun SessionDetailScreen(
         val selection = state.runtime.selections["model"]?.takeIf(String::isNotBlank)
         val catalogMissing = state.catalogs.model == null && modelCapability?.supported == true
         val selectionMissing = selection != null && state.catalogs.model != null &&
-            modelOptions.none { it.selectionId == selection }
+            modelOptions.none { it.enabled && it.selectionId == selection }
         val refreshKey = when {
             catalogMissing -> "catalog:${state.capabilities.revision}"
             selectionMissing -> "selection:$selection:${state.catalogs.model?.revision}"
@@ -1188,7 +1213,7 @@ fun SessionDetailScreen(
         val selection = state.runtime.selections["permission"]?.takeIf(String::isNotBlank)
         val catalogMissing = state.catalogs.permission == null && permissionCapability?.supported == true
         val selectionMissing = selection != null && state.catalogs.permission != null &&
-            permissionOptions.none { it.selectionId == selection }
+            permissionOptions.none { it.enabled && it.selectionId == selection }
         val refreshKey = when {
             catalogMissing -> "catalog:${state.capabilities.revision}"
             selectionMissing -> "selection:$selection:${state.catalogs.permission?.revision}"
@@ -1432,7 +1457,7 @@ fun SessionDetailScreen(
 
     if (showRuntimeSettings) {
         SessionRuntimeSettingsSheet(
-            runtimeLabel = state.session?.runtimeLabel.orEmpty(),
+            runtimeLabel = state.session?.runtimeContextLabel.orEmpty(),
             modelOptions = modelOptions,
             permissionOptions = permissionOptions,
             selectedModelId = modelSelection,
@@ -1447,12 +1472,22 @@ fun SessionDetailScreen(
             onRetryModels = ::loadModelCatalog,
             onRetryPermissions = ::loadPermissionCatalog,
             onSelectModel = {
-                if (isPreparedSession) preparedSelections = preparedSelections.copy(model = it)
-                else updateSelection("model", it)
+                val option = modelOptions.firstOrNull { option -> option.selectionId == it }
+                if (option?.enabled == true) {
+                    if (isPreparedSession) preparedSelections = preparedSelections.copy(model = it)
+                    else updateSelection("model", it)
+                } else {
+                    showError(option?.disabledReason ?: context.getString(R.string.session_selection_update_failed))
+                }
             },
             onSelectPermission = {
-                if (isPreparedSession) preparedSelections = preparedSelections.copy(permission = it)
-                else updateSelection("permission", it)
+                val option = permissionOptions.firstOrNull { option -> option.selectionId == it }
+                if (option?.enabled == true) {
+                    if (isPreparedSession) preparedSelections = preparedSelections.copy(permission = it)
+                    else updateSelection("permission", it)
+                } else {
+                    showError(option?.disabledReason ?: context.getString(R.string.session_selection_update_failed))
+                }
             },
         )
     }

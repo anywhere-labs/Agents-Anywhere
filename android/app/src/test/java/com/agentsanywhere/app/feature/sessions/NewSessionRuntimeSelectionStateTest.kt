@@ -207,6 +207,113 @@ class NewSessionRuntimeSelectionStateTest {
         assertFalse(state.readyForCreate)
     }
 
+    @Test
+    fun dynamicRuntimeIdUsesProviderScopedCapabilities() {
+        val runtime = runtime("rti_codex_work_01", active = true, type = "codex")
+        val pending = NewSessionRuntimeSelectionState()
+            .beginRuntimeInventory("connector")
+            .replaceRuntimeInventory(DeviceRuntimeList("connector", listOf(runtime), null))
+            .beginRuntimeDetails()
+        val request = pending.requestKey!!
+
+        val next = pending.applyCapabilities(request, capabilities(runtime = "codex"))
+
+        assertEquals("rti_codex_work_01", next.selectedRuntimeId)
+        assertTrue(next.canUseModelCatalog)
+        assertTrue(next.canUsePermissionCatalog)
+    }
+
+    @Test
+    fun instanceScopedCapabilityWinsOverEarlierProviderFallback() {
+        val runtimeId = "rti_codex_work_01"
+        val values = NewSessionRuntimeCapabilities(
+            connectorId = "connector",
+            revision = 1,
+            capabilities = listOf(
+                capability(MODEL_CATALOG_CAPABILITY, runtime = "codex", available = false),
+                capability(MODEL_CATALOG_CAPABILITY, runtime = "codex")
+                    .copy(runtimeId = runtimeId, runtimeType = "codex"),
+            ),
+            serverTime = null,
+        )
+
+        assertTrue(values.find(MODEL_CATALOG_CAPABILITY, runtimeId, "codex")!!.usable)
+        val wrongTypeOnly = values.copy(
+            capabilities = listOf(
+                capability(MODEL_CATALOG_CAPABILITY, runtime = null).copy(runtimeType = "claude"),
+            ),
+        )
+        assertNull(wrongTypeOnly.find(MODEL_CATALOG_CAPABILITY, runtimeId, "codex"))
+    }
+
+    @Test
+    fun disabledCatalogItemsNeverBecomeDefaultsOrSubmissionValues() {
+        val state = stateWithCapabilities()
+        val request = state.requestKey!!
+        val next = state
+            .applyModelCatalog(
+                request,
+                modelCatalog(
+                    listOf(
+                        model("disabled", "model:disabled", default = true, enabled = false),
+                        model(
+                            "enabled",
+                            reasoning = listOf(
+                                reasoning("disabled", "reasoning:disabled", default = true, enabled = false),
+                                reasoning("high", "reasoning:high"),
+                            ),
+                        ),
+                    ),
+                ),
+            )
+            .applyPermissionCatalog(
+                request,
+                permissionCatalog(
+                    listOf(
+                        permission("custom", "permission:custom", default = true, enabled = false),
+                        permission("ask", "permission:ask"),
+                    ),
+                ),
+            )
+
+        assertEquals("enabled", next.selectedModelId)
+        assertEquals("high", next.selectedReasoningId)
+        assertEquals("reasoning:high", next.selections.model)
+        assertEquals("permission:ask", next.selections.permission)
+        assertEquals(listOf("custom", "ask"), next.permissionCatalog.data?.permissions?.map { it.id })
+        assertEquals(next, next.selectModel("disabled"))
+        assertEquals(next, next.selectReasoning("disabled"))
+        assertEquals(next, next.selectPermission("custom"))
+        assertFalse(next.selections.toMap().containsValue("model:disabled"))
+        assertFalse(next.selections.toMap().containsValue("permission:custom"))
+    }
+
+    @Test
+    fun disabledReasoningDoesNotFallBackToItsParentSelection() {
+        val state = stateWithCapabilities()
+        val request = state.requestKey!!
+        val next = state.applyModelCatalog(
+            request,
+            modelCatalog(
+                listOf(
+                    model(
+                        id = "blocked",
+                        selectionId = "model:blocked",
+                        default = true,
+                        reasoning = listOf(
+                            reasoning("disabled", "reasoning:disabled", enabled = false),
+                        ),
+                    ),
+                    model("fallback", "model:fallback"),
+                ),
+            ),
+        )
+
+        assertEquals("fallback", next.selectedModelId)
+        assertEquals("model:fallback", next.selectedModelSelectionId)
+        assertFalse(next.selections.toMap().containsValue("model:blocked"))
+    }
+
     private fun fullyLoadedState(active: Boolean = true): NewSessionRuntimeSelectionState {
         val state = stateWithCapabilities(active)
         val request = state.requestKey!!
@@ -280,6 +387,7 @@ class NewSessionRuntimeSelectionStateTest {
         selectionId: String? = null,
         default: Boolean = false,
         reasoning: List<NewSessionReasoning> = emptyList(),
+        enabled: Boolean = true,
     ): NewSessionModel {
         return NewSessionModel(
             id = id,
@@ -289,6 +397,8 @@ class NewSessionRuntimeSelectionStateTest {
             default = default,
             reasoningItems = reasoning,
             metadata = emptyMap(),
+            enabled = enabled,
+            disabledReason = if (enabled) null else "disabled model",
         )
     }
 
@@ -296,6 +406,7 @@ class NewSessionRuntimeSelectionStateTest {
         id: String,
         selectionId: String,
         default: Boolean = false,
+        enabled: Boolean = true,
     ): NewSessionReasoning {
         return NewSessionReasoning(
             id = id,
@@ -305,6 +416,8 @@ class NewSessionRuntimeSelectionStateTest {
             description = null,
             default = default,
             metadata = emptyMap(),
+            enabled = enabled,
+            disabledReason = if (enabled) null else "disabled reasoning",
         )
     }
 
@@ -318,6 +431,7 @@ class NewSessionRuntimeSelectionStateTest {
         id: String,
         selectionId: String,
         default: Boolean = false,
+        enabled: Boolean = true,
     ): NewSessionPermission {
         return NewSessionPermission(
             id = id,
@@ -326,14 +440,20 @@ class NewSessionRuntimeSelectionStateTest {
             description = null,
             default = default,
             metadata = emptyMap(),
+            enabled = enabled,
+            disabledReason = if (enabled) null else "disabled permission",
         )
     }
 
-    private fun runtime(id: String, active: Boolean): DeviceRuntime {
+    private fun runtime(
+        id: String,
+        active: Boolean,
+        type: String = id,
+    ): DeviceRuntime {
         return DeviceRuntime(
             connectorId = "connector",
             id = id,
-            type = "native",
+            type = type,
             displayName = id,
             present = true,
             configured = true,

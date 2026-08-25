@@ -938,6 +938,9 @@ private val NewSessionDraftSaver = listSaver<NewSessionDraft?, Any>(
                 ArrayList(draft.knownSessionIds),
                 draft.selections.model.orEmpty(),
                 draft.selections.permission.orEmpty(),
+                draft.runtimeId,
+                draft.runtimeType,
+                draft.runtimeName,
             )
         }
     },
@@ -958,6 +961,12 @@ private val NewSessionDraftSaver = listSaver<NewSessionDraft?, Any>(
                     model = (values[7] as String).takeIf(String::isNotBlank),
                     permission = (values[8] as String).takeIf(String::isNotBlank),
                 ),
+                runtimeId = (values.getOrNull(9) as? String)?.takeIf(String::isNotBlank)
+                    ?: values[1] as String,
+                runtimeType = (values.getOrNull(10) as? String)?.takeIf(String::isNotBlank)
+                    ?: values[1] as String,
+                runtimeName = (values.getOrNull(11) as? String)?.takeIf(String::isNotBlank)
+                    ?: values[5] as String,
             )
         }
     },
