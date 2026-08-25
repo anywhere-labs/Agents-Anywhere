@@ -7,6 +7,7 @@ from typing import Any, cast
 import pytest
 from connector.runtime_protocol import (
     MAX_CONFIG_REVISION,
+    RuntimeConfigSchema,
     RuntimeInstanceSpec,
     RuntimeInstanceStatus,
     RuntimeInventoryItem,
@@ -116,6 +117,127 @@ def test_runtime_type_descriptor_keeps_implementation_category_separate() -> Non
     assert descriptor.implementation_type == "local-service"
 
 
+def test_unavailable_runtime_type_requires_a_nonblank_reason() -> None:
+    descriptor = RuntimeTypeDescriptor(
+        runtime_type="dsh",
+        display_name="DeepSeek Harness",
+        available=False,
+        reason="bridge not installed",
+    )
+
+    assert descriptor.reason == "bridge not installed"
+
+    for reason in (None, "", " ", "bad\nreason"):
+        with pytest.raises(ValueError):
+            RuntimeTypeDescriptor(
+                runtime_type="dsh",
+                display_name="DeepSeek Harness",
+                available=False,
+                reason=reason,
+            )
+
+
+@pytest.mark.parametrize("recommendation_rank", [0, MAX_CONFIG_REVISION])
+def test_recommendation_rank_accepts_safe_integer_boundaries(
+    recommendation_rank: int,
+) -> None:
+    descriptor = RuntimeTypeDescriptor(
+        runtime_type="codex",
+        display_name="Codex",
+        available=True,
+        recommendation_rank=recommendation_rank,
+    )
+
+    assert descriptor.recommendation_rank == recommendation_rank
+
+
+@pytest.mark.parametrize("recommendation_rank", [-1, MAX_CONFIG_REVISION + 1])
+def test_recommendation_rank_rejects_out_of_range_values(
+    recommendation_rank: int,
+) -> None:
+    with pytest.raises(ValueError):
+        RuntimeTypeDescriptor(
+            runtime_type="codex",
+            display_name="Codex",
+            available=True,
+            recommendation_rank=recommendation_rank,
+        )
+
+
+@pytest.mark.parametrize("recommendation_rank", [True, 1.5, "1"])
+def test_recommendation_rank_rejects_non_integer_values(
+    recommendation_rank: object,
+) -> None:
+    with pytest.raises(TypeError):
+        RuntimeTypeDescriptor(
+            runtime_type="codex",
+            display_name="Codex",
+            available=True,
+            recommendation_rank=cast(Any, recommendation_rank),
+        )
+
+
+def test_runtime_type_descriptor_requires_boolean_capability_values() -> None:
+    descriptor = RuntimeTypeDescriptor(
+        runtime_type="codex",
+        display_name="Codex",
+        available=True,
+        capabilities={"modelCatalog": True, "permissionCatalog": False},
+    )
+
+    assert descriptor.capabilities["modelCatalog"] is True
+    assert descriptor.capabilities["permissionCatalog"] is False
+
+
+@pytest.mark.parametrize(
+    ("capabilities", "error_type"),
+    [
+        ([], TypeError),
+        ({"": True}, ValueError),
+        ({" ": True}, ValueError),
+        ({"bad\nkey": True}, ValueError),
+        ({1: True}, TypeError),
+        ({"modelCatalog": 1}, TypeError),
+    ],
+)
+def test_runtime_type_descriptor_rejects_invalid_capability_maps(
+    capabilities: object,
+    error_type: type[Exception],
+) -> None:
+    with pytest.raises(error_type):
+        RuntimeTypeDescriptor(
+            runtime_type="codex",
+            display_name="Codex",
+            available=True,
+            capabilities=cast(Any, capabilities),
+        )
+
+
+def test_runtime_type_descriptor_config_schema_matches_provider_key() -> None:
+    schema = RuntimeConfigSchema(
+        runtime="dsh",
+        revision=1,
+        schema={"type": "object"},
+    )
+
+    descriptor = RuntimeTypeDescriptor(
+        runtime_type="dsh",
+        display_name="DeepSeek Harness",
+        available=True,
+        config_schema=schema,
+    )
+
+    assert descriptor.config_schema is schema
+
+    with pytest.raises(ValueError, match="config_schema.runtime"):
+        RuntimeTypeDescriptor(
+            runtime_type="codex",
+            display_name="Codex",
+            available=True,
+            config_schema=schema,
+        )
+
+
 @pytest.mark.parametrize(
     "implementation_type",
     ["Local Service", "local/service", "local--service", "local\nservice"],
@@ -142,6 +264,41 @@ def test_runtime_type_descriptor_supports_bounded_multiple_instances() -> None:
     )
 
     assert descriptor.effective_max_instances == 4
+
+
+def test_max_instances_accepts_safe_integer_boundary() -> None:
+    descriptor = RuntimeTypeDescriptor(
+        runtime_type="codex",
+        display_name="Codex",
+        available=True,
+        instance_policy="multiple",
+        max_instances=MAX_CONFIG_REVISION,
+    )
+
+    assert descriptor.effective_max_instances == MAX_CONFIG_REVISION
+
+
+def test_max_instances_rejects_values_above_safe_integer() -> None:
+    with pytest.raises(ValueError):
+        RuntimeTypeDescriptor(
+            runtime_type="codex",
+            display_name="Codex",
+            available=True,
+            instance_policy="multiple",
+            max_instances=MAX_CONFIG_REVISION + 1,
+        )
+
+
+@pytest.mark.parametrize("max_instances", [True, 1.5, "2"])
+def test_max_instances_rejects_non_integer_values(max_instances: object) -> None:
+    with pytest.raises(TypeError):
+        RuntimeTypeDescriptor(
+            runtime_type="codex",
+            display_name="Codex",
+            available=True,
+            instance_policy="multiple",
+            max_instances=cast(Any, max_instances),
+        )
 
 
 @pytest.mark.parametrize(
@@ -317,6 +474,7 @@ def test_runtime_instance_status_accepts_contract_lifecycle_states(
     status = RuntimeInstanceStatus(
         spec=RuntimeInstanceSpec("codex", "codex", "Primary"),
         lifecycle=cast(Any, lifecycle),
+        error={} if lifecycle == "error" else None,
     )
 
     assert status.lifecycle == lifecycle
@@ -330,6 +488,32 @@ def test_runtime_instance_status_rejects_provider_discovery_states(
         RuntimeInstanceStatus(
             spec=RuntimeInstanceSpec("codex", "codex", "Primary"),
             lifecycle=cast(Any, lifecycle),
+        )
+
+
+def test_error_lifecycle_requires_an_error_mapping() -> None:
+    spec = RuntimeInstanceSpec("codex", "codex", "Primary")
+
+    with pytest.raises(ValueError, match="requires an error mapping"):
+        RuntimeInstanceStatus(spec=spec, lifecycle="error")
+    with pytest.raises(TypeError, match="must be a mapping"):
+        RuntimeInstanceStatus(
+            spec=spec,
+            lifecycle="error",
+            error=cast(Any, []),
+        )
+
+
+@pytest.mark.parametrize(
+    "lifecycle",
+    ["stopped", "validating", "starting", "running", "stopping", "unknown"],
+)
+def test_non_error_lifecycle_rejects_error_mapping(lifecycle: str) -> None:
+    with pytest.raises(ValueError, match="non-error lifecycle"):
+        RuntimeInstanceStatus(
+            spec=RuntimeInstanceSpec("codex", "codex", "Primary"),
+            lifecycle=cast(Any, lifecycle),
+            error={"code": "unexpected"},
         )
 
 

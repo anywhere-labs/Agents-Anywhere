@@ -124,6 +124,32 @@ def _contains_control_character(value: str) -> bool:
     )
 
 
+def _validate_optional_safe_integer(
+    value: int | None,
+    *,
+    field_name: str,
+    minimum: int,
+) -> None:
+    if value is None:
+        return
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError(f"{field_name} must be an integer or None")
+    if not minimum <= value <= MAX_CONFIG_REVISION:
+        raise ValueError(
+            f"{field_name} must be between {minimum} and "
+            f"{MAX_CONFIG_REVISION}, inclusive"
+        )
+
+
+def _validate_capabilities(capabilities: Mapping[str, bool]) -> None:
+    if not isinstance(capabilities, Mapping):
+        raise TypeError("capabilities must be a mapping")
+    for key, value in capabilities.items():
+        _require_non_blank(key, "capability key")
+        if not isinstance(value, bool):
+            raise TypeError("capability values must be booleans")
+
+
 @dataclass(frozen=True, slots=True)
 class RuntimeTypeDescriptor:
     """Provider-owned facts for one stable runtime type.
@@ -150,17 +176,32 @@ class RuntimeTypeDescriptor:
     def __post_init__(self) -> None:
         _validate_runtime_type(self.runtime_type)
         _require_non_blank(self.display_name, "display_name")
+        if not isinstance(self.available, bool):
+            raise TypeError("available must be a boolean")
+        if self.reason is not None:
+            _require_non_blank(self.reason, "reason")
+        if not self.available and self.reason is None:
+            raise ValueError("unavailable runtime types must include a reason")
         if self.implementation_type is not None:
             _validate_implementation_type(self.implementation_type)
+        _validate_optional_safe_integer(
+            self.recommendation_rank,
+            field_name="recommendation_rank",
+            minimum=0,
+        )
+        _validate_capabilities(self.capabilities)
+        if self.config_schema is not None:
+            if not isinstance(self.config_schema, RuntimeConfigSchema):
+                raise TypeError("config_schema must be a RuntimeConfigSchema or None")
+            if self.config_schema.runtime != self.runtime_type:
+                raise ValueError("config_schema.runtime must equal runtime_type")
         if self.instance_policy not in _INSTANCE_POLICIES:
             raise ValueError(f"unsupported instance_policy: {self.instance_policy!r}")
-        if self.max_instances is not None:
-            if isinstance(self.max_instances, bool) or not isinstance(
-                self.max_instances, int
-            ):
-                raise TypeError("max_instances must be an integer or None")
-            if self.max_instances < 1:
-                raise ValueError("max_instances must be greater than zero")
+        _validate_optional_safe_integer(
+            self.max_instances,
+            field_name="max_instances",
+            minimum=1,
+        )
         if self.instance_policy == "single" and self.max_instances not in (
             None,
             1,
@@ -211,8 +252,13 @@ class RuntimeInstanceStatus:
             _require_non_blank(self.runtime_version, "runtime_version")
         if self.protocol_version is not None:
             _require_non_blank(self.protocol_version, "protocol_version")
-        if self.error is not None and not isinstance(self.error, Mapping):
-            raise TypeError("error must be a mapping or None")
+        if self.lifecycle == "error":
+            if self.error is None:
+                raise ValueError("error lifecycle requires an error mapping")
+            if not isinstance(self.error, Mapping):
+                raise TypeError("error must be a mapping")
+        elif self.error is not None:
+            raise ValueError("non-error lifecycle cannot include an error mapping")
 
     @property
     def runtime_id(self) -> str:
