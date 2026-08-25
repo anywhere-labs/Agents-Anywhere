@@ -5,6 +5,7 @@ from dataclasses import FrozenInstanceError, fields
 from typing import Any, cast
 
 import pytest
+
 from connector.runtime_protocol import (
     MAX_CONFIG_REVISION,
     RuntimeConfigSchema,
