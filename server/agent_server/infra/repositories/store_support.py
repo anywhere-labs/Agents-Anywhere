@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from loguru import logger
-from sqlalchemy import create_engine, delete, func, insert, select, text, update
+from sqlalchemy import and_, create_engine, delete, func, insert, or_, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_engine
 

@@ -3,6 +3,93 @@
 from __future__ import annotations
 
 from agent_server.infra.repositories.store_support import *
+from agent_server.core.models import TimelineItem
+
+
+SESSION_CURSOR_VERSION = 1
+
+
+def _latest_timeline_item_subquery() -> Any:
+    ranked = select(
+        timeline_items_t.c.session_id,
+        timeline_items_t.c.item_time,
+        timeline_items_t.c.order_seq,
+        timeline_items_t.c.updated_seq,
+        timeline_items_t.c.payload_json,
+        func.row_number()
+        .over(
+            partition_by=timeline_items_t.c.session_id,
+            order_by=(
+                func.coalesce(timeline_items_t.c.item_time, "").desc(),
+                timeline_items_t.c.order_seq.desc(),
+                timeline_items_t.c.updated_seq.desc(),
+            ),
+        )
+        .label("rank"),
+    ).subquery("ranked_session_timeline_items")
+    return (
+        select(
+            ranked.c.session_id,
+            ranked.c.item_time.label("latest_item_time"),
+            ranked.c.order_seq.label("latest_item_order_seq"),
+            ranked.c.updated_seq.label("latest_item_updated_seq"),
+            ranked.c.payload_json.label("latest_item_payload_json"),
+        )
+        .where(ranked.c.rank == 1)
+        .subquery("latest_session_timeline_item")
+    )
+
+
+def _session_cursor_values(row: Any) -> tuple[int, str, int, int, str]:
+    return (
+        int(row["pinned"] or 0),
+        str(row["session_sort_at"] or ""),
+        int(row["latest_item_order_seq"] or -1),
+        int(row["updated_seq"] or 0),
+        str(row["id"]),
+    )
+
+
+def _encode_session_cursor(row: Any) -> str:
+    pinned, sort_at, order_seq, updated_seq, session_id = _session_cursor_values(row)
+    payload = json.dumps(
+        {
+            "v": SESSION_CURSOR_VERSION,
+            "p": pinned,
+            "s": sort_at,
+            "o": order_seq,
+            "u": updated_seq,
+            "i": session_id,
+        },
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
+
+
+def _decode_session_cursor(cursor: str) -> tuple[int, str, int, int, str]:
+    try:
+        padding = "=" * (-len(cursor) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(cursor + padding))
+        values = (
+            payload["p"],
+            payload["s"],
+            payload["o"],
+            payload["u"],
+            payload["i"],
+        )
+        if payload.get("v") != SESSION_CURSOR_VERSION:
+            raise ValueError
+        if type(values[0]) is not int or values[0] not in (0, 1):
+            raise ValueError
+        if not isinstance(values[1], str):
+            raise ValueError
+        if type(values[2]) is not int or type(values[3]) is not int:
+            raise ValueError
+        if not isinstance(values[4], str) or not values[4]:
+            raise ValueError
+        return values
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise ValueError("invalid session cursor") from exc
 
 
 def _normalize_session_origin(value: str | None) -> str:
@@ -28,12 +115,32 @@ def _runtime_identity(runtime: str, runtime_id: str | None) -> RuntimeIdentity:
     )
 
 
-def _session_view_query() -> Any:
+def _session_sort_at(latest_item: Any) -> Any:
+    return func.coalesce(
+        latest_item.c.latest_item_time,
+        sessions_t.c.last_activity_at,
+        sessions_t.c.created_at,
+    )
+
+
+def _session_view_query(latest_item: Any | None = None) -> Any:
+    if latest_item is None:
+        latest_item = _latest_timeline_item_subquery()
+    session_sort_at = func.coalesce(
+        latest_item.c.latest_item_time,
+        sessions_t.c.last_activity_at,
+        sessions_t.c.created_at,
+    ).label("session_sort_at")
     return select(
         sessions_t,
         connectors_t.c.status.label("connector_status"),
         device_runtimes_t.c.name.label("runtime_name"),
         connector_runtime_types_t.c.display_name.label("runtime_type_display_name"),
+        latest_item.c.latest_item_time,
+        latest_item.c.latest_item_order_seq,
+        latest_item.c.latest_item_updated_seq,
+        latest_item.c.latest_item_payload_json,
+        session_sort_at,
     ).select_from(
         sessions_t.join(
             connectors_t,
@@ -48,6 +155,10 @@ def _session_view_query() -> Any:
             connector_runtime_types_t,
             (connector_runtime_types_t.c.connector_id == sessions_t.c.connector_id)
             & (connector_runtime_types_t.c.runtime_type == sessions_t.c.runtime),
+        )
+        .outerjoin(
+            latest_item,
+            latest_item.c.session_id == sessions_t.c.id,
         )
     )
 
@@ -323,26 +434,90 @@ class SessionRepositoryMixin:
         return str(explicit.id)
 
 
-    async def list_sessions(self, *, user_id: str | None = None) -> list[SessionView]:
+    async def list_sessions_page(
+        self,
+        *,
+        archived: bool,
+        limit: int = 30,
+        cursor: str | None = None,
+        user_id: str | None = None,
+    ) -> tuple[list[SessionView], bool, str | None]:
+        latest_item = _latest_timeline_item_subquery()
+        latest_order_seq = func.coalesce(
+            latest_item.c.latest_item_order_seq,
+            -1,
+        )
+        sort_at = _session_sort_at(latest_item)
         query = (
-            _session_view_query()
+            _session_view_query(latest_item)
             .where(
                 connectors_t.c.revoked == 0,
+                sessions_t.c.archived == int(archived),
                 (sessions_t.c.runtime != "dsh")
                 | (sessions_t.c.source_state == "visible"),
             )
-            .order_by(sessions_t.c.created_at.desc())
+            .order_by(
+                sessions_t.c.pinned.desc(),
+                sort_at.desc(),
+                latest_order_seq.desc(),
+                sessions_t.c.updated_seq.desc(),
+                sessions_t.c.id.desc(),
+            )
+            .limit(limit + 1)
         )
         if user_id is not None:
             query = query.where(connectors_t.c.user_id == user_id)
+        if cursor:
+            pinned, cursor_sort_at, order_seq, updated_seq, session_id = (
+                _decode_session_cursor(cursor)
+            )
+            query = query.where(
+                or_(
+                    sessions_t.c.pinned < pinned,
+                    and_(sessions_t.c.pinned == pinned, sort_at < cursor_sort_at),
+                    and_(
+                        sessions_t.c.pinned == pinned,
+                        sort_at == cursor_sort_at,
+                        latest_order_seq < order_seq,
+                    ),
+                    and_(
+                        sessions_t.c.pinned == pinned,
+                        sort_at == cursor_sort_at,
+                        latest_order_seq == order_seq,
+                        sessions_t.c.updated_seq < updated_seq,
+                    ),
+                    and_(
+                        sessions_t.c.pinned == pinned,
+                        sort_at == cursor_sort_at,
+                        latest_order_seq == order_seq,
+                        sessions_t.c.updated_seq == updated_seq,
+                        sessions_t.c.id < session_id,
+                    ),
+                )
+            )
         async with self._engine.connect() as conn:
             rows = (await conn.execute(query)).mappings().all()
-        sessions = [await self._session_from_row(row) for row in rows]
-        return sorted(
-            sessions,
-            key=lambda session: (session.sortAt or "", session.lastItemOrderSeq or -1, session.updatedSeq),
-            reverse=True,
+        page_rows = rows[:limit]
+        sessions = [await self._session_from_row(row) for row in page_rows]
+        has_more = len(rows) > limit
+        next_cursor = _encode_session_cursor(page_rows[-1]) if has_more and page_rows else None
+        return sessions, has_more, next_cursor
+
+    async def list_sessions(
+        self,
+        *,
+        archived: bool = False,
+        limit: int = 30,
+        cursor: str | None = None,
+        user_id: str | None = None,
+    ) -> list[SessionView]:
+        sessions, _, _ = await self.list_sessions_page(
+            archived=archived,
+            limit=limit,
+            cursor=cursor,
+            user_id=user_id,
         )
+        return sessions
 
     async def begin_dsh_session_inventory(
         self,
@@ -1057,7 +1232,12 @@ class SessionRepositoryMixin:
 
     async def _session_from_row(self, row: Any) -> SessionView:
         session_id = row["id"]
-        latest = await self.timeline.latest_item(session_id)
+        latest_payload = row.get("latest_item_payload_json")
+        latest = (
+            TimelineItem.model_validate_json(latest_payload)
+            if latest_payload
+            else None
+        )
         runtime = row["runtime"]
         runtime_id = row["runtime_id"]
         title = row["title"]
@@ -1067,7 +1247,7 @@ class SessionRepositoryMixin:
                 title = derived
                 await self._lock_in_derived_title(session_id, derived)
         last_item_at = (latest.updatedAt or latest.completedAt or latest.createdAt) if latest else None
-        sort_at = last_item_at or row["last_activity_at"] or row["created_at"]
+        sort_at = row.get("session_sort_at") or last_item_at or row["last_activity_at"] or row["created_at"]
         last_read_seq = int(row["last_read_seq"] or 0)
         updated_seq = int(row["updated_seq"] or 0)
         return SessionView(

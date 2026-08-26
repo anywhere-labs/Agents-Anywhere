@@ -1724,6 +1724,78 @@ def test_dashboard_ws_returns_connector_and_session_snapshot(tmp_path):
         assert snapshot["type"] == "dashboard.snapshot"
         assert [connector["id"] for connector in snapshot["connectors"]] == [connector_id]
         assert [session["id"] for session in snapshot["sessions"]] == [session_id]
+        assert snapshot["sessionPages"] == {
+            "active": {"hasMore": False, "nextCursor": None},
+            "archived": {"hasMore": False, "nextCursor": None},
+        }
+
+
+def test_sessions_list_uses_cursor_pages_and_archive_filter(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, _access_token, first_session_id, headers = create_connector_and_session(client)
+    session_ids = [first_session_id]
+    for index in range(4):
+        response = client.post(
+            "/sessions",
+            headers=headers,
+            json={
+                "connectorId": connector_id,
+                "runtime": "codex",
+                "externalSessionId": f"thr_page_{index}",
+                "title": f"Page {index}",
+                "cwd": "/repo",
+            },
+        )
+        assert response.status_code == 200, response.text
+        session_ids.append(response.json()["session"]["id"])
+
+    seen: list[str] = []
+    cursor = None
+    while True:
+        params = {"archived": False, "limit": 2}
+        if cursor is not None:
+            params["cursor"] = cursor
+        response = client.get("/sessions", headers=headers, params=params)
+        assert response.status_code == 200, response.text
+        body = response.json()
+        seen.extend(session["id"] for session in body["sessions"])
+        if not body["hasMore"]:
+            assert body["nextCursor"] is None
+            break
+        cursor = body["nextCursor"]
+        assert cursor
+
+    assert len(seen) == len(set(seen)) == 5
+    assert set(seen) == set(session_ids)
+
+    archived_id = seen[0]
+    archived = client.patch(
+        f"/sessions/{archived_id}/meta",
+        headers=headers,
+        json={"archived": True},
+    )
+    assert archived.status_code == 200, archived.text
+    archived_page = client.get(
+        "/sessions",
+        headers=headers,
+        params={"archived": True, "limit": 30},
+    )
+    assert archived_page.status_code == 200, archived_page.text
+    assert [session["id"] for session in archived_page.json()["sessions"]] == [archived_id]
+
+
+def test_sessions_list_rejects_invalid_cursor(tmp_path):
+    client = make_client(tmp_path)
+    _connector_id, _access_token, _session_id, headers = create_connector_and_session(client)
+
+    response = client.get(
+        "/sessions",
+        headers=headers,
+        params={"cursor": "not-a-session-cursor"},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "invalid session cursor"
 
 
 def test_dashboard_ws_projects_cached_runtime_status(tmp_path):
