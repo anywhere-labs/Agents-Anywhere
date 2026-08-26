@@ -324,7 +324,13 @@ fun AgentsAnywhereApp(
             pendingMobileLoginQr = null
         }
         if (destination == AppDestination.LoginMethods) {
-            webLoginViewModel.returnToServerEntry()
+            webLoginViewModel.returnToHostChoice()
+        }
+        if (
+            destination == AppDestination.ServerSetup &&
+            destinationName == AppDestination.LoginMethods.name
+        ) {
+            webLoginViewModel.returnToHostChoice()
         }
         if (destination != AppDestination.SessionDetail) {
             preparedSessionDraft = null
