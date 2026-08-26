@@ -35,6 +35,13 @@ data class RemoteSessionResponse(
     val serverTime: String?,
 )
 
+data class RemoteSessionPage(
+    val sessions: List<RemoteSession>,
+    val hasMore: Boolean,
+    val nextCursor: String?,
+    val serverTime: String?,
+)
+
 data class RemoteSessionsMutationResponse(
     val sessions: List<RemoteSession>,
     val notFound: List<String>,

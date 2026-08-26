@@ -10,6 +10,14 @@ data class SessionsState(
     val isLoading: Boolean = false,
     val errorMessage: String? = null,
     val hasLoaded: Boolean = false,
+    val activeHasMore: Boolean = false,
+    val activeNextCursor: String? = null,
+    val archivedHasMore: Boolean = false,
+    val archivedNextCursor: String? = null,
+    val isLoadingMoreActive: Boolean = false,
+    val isLoadingMoreArchived: Boolean = false,
+    val activeFirstPageIds: Set<String> = emptySet(),
+    val archivedFirstPageIds: Set<String> = emptySet(),
     val sessionRequestGenerations: Map<String, Long> = emptyMap(),
     val nextRequestGeneration: Long = 1L,
 )
@@ -23,6 +31,13 @@ data class SessionBatchUpdate(
     val sessions: List<AgentSession>,
     val notFound: List<String>,
     val serverTime: String?,
+)
+
+data class SessionPageAppend(
+    val sessions: List<AgentSession>,
+    val archived: Boolean,
+    val hasMore: Boolean,
+    val nextCursor: String?,
 )
 
 val SessionsState.pinnedSessions: List<AgentSession>
@@ -178,9 +193,11 @@ fun SessionsState.mergedWithRefresh(
 
 fun SessionsState.replacedByDashboardSnapshot(loaded: SessionsState): SessionsState {
     val currentById = (sessions + archivedSessions).associateBy { it.id }
-    val accepted = (loaded.sessions + loaded.archivedSessions).map { incoming ->
+    val replacedFirstPageIds = activeFirstPageIds + archivedFirstPageIds
+    val preserved = currentById.values.filterNot { it.id in replacedFirstPageIds }
+    val accepted = (preserved + loaded.sessions + loaded.archivedSessions).map { incoming ->
         currentById[incoming.id]?.takeIf { current -> current.updatedSeq > incoming.updatedSeq } ?: incoming
-    }
+    }.associateBy { it.id }.values
     return loaded.copy(
         sessions = accepted
             .filterNot { it.archived }
@@ -188,6 +205,33 @@ fun SessionsState.replacedByDashboardSnapshot(loaded: SessionsState): SessionsSt
         archivedSessions = accepted.filter { it.archived }.sortedByDescending { it.sortKey },
         sessionRequestGenerations = sessionRequestGenerations,
         nextRequestGeneration = nextRequestGeneration,
+    )
+}
+
+fun SessionsState.withSessionPageLoading(archived: Boolean, loading: Boolean): SessionsState {
+    return if (archived) {
+        copy(isLoadingMoreArchived = loading)
+    } else {
+        copy(isLoadingMoreActive = loading)
+    }
+}
+
+fun SessionsState.withAppendedSessionPage(page: SessionPageAppend): SessionsState {
+    val currentById = (sessions + archivedSessions).associateBy { it.id }.toMutableMap()
+    page.sessions.forEach { incoming ->
+        currentById[incoming.id] = mergeObservedSession(currentById[incoming.id], incoming)
+    }
+    val all = currentById.values
+    return copy(
+        sessions = all.filterNot { it.archived }
+            .sortedWith(compareByDescending<AgentSession> { it.pinned }.thenByDescending { it.sortKey }),
+        archivedSessions = all.filter { it.archived }.sortedByDescending { it.sortKey },
+        activeHasMore = if (page.archived) activeHasMore else page.hasMore,
+        activeNextCursor = if (page.archived) activeNextCursor else page.nextCursor,
+        archivedHasMore = if (page.archived) page.hasMore else archivedHasMore,
+        archivedNextCursor = if (page.archived) page.nextCursor else archivedNextCursor,
+        isLoadingMoreActive = if (page.archived) isLoadingMoreActive else false,
+        isLoadingMoreArchived = if (page.archived) false else isLoadingMoreArchived,
     )
 }
 
