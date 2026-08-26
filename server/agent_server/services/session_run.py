@@ -325,7 +325,7 @@ class SessionRunService:
         )
         await self._ensure_session_runtime_running(session, user_id=user_id)
         runtime_status = await self._read_runtime_status(session)
-        if runtime_status != "idle":
+        if runtime_status not in {"idle", "error"}:
             raise SessionRunConflictError(f"session is {runtime_status}")
         params: dict[str, Any] = {
             "sessionId": session_id,

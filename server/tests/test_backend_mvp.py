@@ -4467,6 +4467,61 @@ def test_send_message_forwards_client_message_id_to_connector(tmp_path):
     assert params["clientMessageId"] == "opt_abc"
 
 
+def test_send_message_starts_new_turn_from_error_state(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, _, session_id, headers = create_connector_and_session(client)
+    fake_rpc = FakeLocalRpc()
+    fake_rpc.runtime_states[session_id] = {
+        "sessionId": session_id,
+        "runtime": "codex",
+        "externalSessionId": f"thr_{connector_id}_demo",
+        "status": "error",
+        "selections": {},
+        "error": {"code": "turn_failed", "message": "boom"},
+        "metadata": {"source": "test.turn.failed"},
+    }
+    client.app.state.rpc = fake_rpc
+    asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
+    client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
+
+    response = client.post(
+        f"/sessions/{session_id}/runtime/messages",
+        headers=headers,
+        json={"content": "try again"},
+    )
+
+    assert response.status_code == 200, response.text
+    params = wait_for_rpc_method(fake_rpc, "session.send_message")[2]
+    assert params["content"] == "try again"
+
+
+def test_send_message_rejects_running_state(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, _, session_id, headers = create_connector_and_session(client)
+    fake_rpc = FakeLocalRpc()
+    fake_rpc.runtime_states[session_id] = {
+        "sessionId": session_id,
+        "runtime": "codex",
+        "externalSessionId": f"thr_{connector_id}_demo",
+        "status": "running",
+        "selections": {},
+        "metadata": {"source": "test.turn.running"},
+    }
+    client.app.state.rpc = fake_rpc
+    asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
+    client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
+
+    response = client.post(
+        f"/sessions/{session_id}/runtime/messages",
+        headers=headers,
+        json={"content": "should be rejected"},
+    )
+
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"] == "session is running"
+    assert not any(method == "session.send_message" for _, method, _, _ in fake_rpc.requests)
+
+
 @pytest.mark.skip(reason="legacy persisted notice behavior was removed; notices are runtime-owned live facts")
 def test_stored_execution_error_notice_does_not_override_runtime_send_capability(
     tmp_path,

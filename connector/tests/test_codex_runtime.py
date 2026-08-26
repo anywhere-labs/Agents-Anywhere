@@ -1798,6 +1798,31 @@ async def _test_codex_runtime_reports_idle_session_capabilities() -> None:
     assert capabilities[CAPABILITY_SESSION_STEER].available is False
 
 
+def test_codex_runtime_reports_error_session_can_send_message() -> None:
+    asyncio.run(_test_codex_runtime_reports_error_session_can_send_message())
+
+
+async def _test_codex_runtime_reports_error_session_can_send_message() -> None:
+    runtime = CodexRuntime(config=_config(), host=FakeHost(), client=FakeCodexClient())
+    await runtime._session_states.update(
+        session_id="sess_1",
+        external_session_id="thread_1",
+        status="error",
+        error={"code": "turn_failed", "message": "boom"},
+        metadata={"source": "test.turn.failed"},
+    )
+
+    capability_set = await runtime.get_session_capabilities("sess_1", "thread_1")
+    capabilities = {
+        capability.capability_id: capability
+        for capability in capability_set.capabilities
+    }
+
+    assert capabilities[CAPABILITY_SESSION_SEND_MESSAGE].available is True
+    assert capabilities[CAPABILITY_SESSION_SEND_MESSAGE].unavailable_reason is None
+    assert capabilities[CAPABILITY_SESSION_INTERRUPT].available is False
+
+
 def test_codex_runtime_reports_running_session_capabilities() -> None:
     asyncio.run(_test_codex_runtime_reports_running_session_capabilities())
 
