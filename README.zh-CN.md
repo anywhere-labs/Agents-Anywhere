@@ -156,6 +156,7 @@ flowchart LR
 server/      FastAPI 后端，PostgreSQL 存储，Connector RPC broker
 connector/   本地守护进程和 CLI，集成 Codex / Claude runtime
 desktop/     Windows/macOS Electron App，用于运行本机 Connector
+dsh-bridge/  DSH Bridge 插件，将本机 DSH Host 接入 Connector
 web-next/    Next.js + shadcn Web 控制台
 web/         旧版 React + Vite 前端，保留作 fallback/reference
 docker/      开发、生产和 PostgreSQL compose 部署文件
@@ -167,6 +168,7 @@ docs/        共享参考文档
 - [Server](server/README.md)
 - [Connector](connector/README.md)
 - [Desktop Connector](desktop/README.md)
+- [DSH Bridge](dsh-bridge/README.md)
 - [Web Next](web-next/)
 - [Docker](docker/README.md)
 
