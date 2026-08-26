@@ -341,19 +341,21 @@ function SessionPageTrigger({
   onVisible: () => void
 }) {
   const ref = React.useRef<HTMLDivElement>(null)
+  const onVisibleRef = React.useRef(onVisible)
+  onVisibleRef.current = onVisible
 
   React.useEffect(() => {
     const element = ref.current
     if (!element) return
     const observer = new IntersectionObserver(
       ([entry]) => {
-        if (entry?.isIntersecting && !loading) onVisible()
+        if (entry?.isIntersecting && !loading) onVisibleRef.current()
       },
       { rootMargin: "160px 0px" },
     )
     observer.observe(element)
     return () => observer.disconnect()
-  }, [loading, onVisible])
+  }, [loading])
 
   return (
     <div ref={ref} className="flex h-9 items-center justify-center" aria-label={label}>

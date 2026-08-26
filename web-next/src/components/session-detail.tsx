@@ -64,6 +64,7 @@ type SessionDetailProps = {
   fallbackSession: SessionView | null
   onSessionUpdated?: (session: SessionView) => void
   onMemorySnapshotUpdated?: (snapshot: SessionMemorySnapshot | null) => void
+  onStreamProgress?: (sessionId: string, nextSeq: number | null) => void
 }
 
 export type SessionMemorySnapshot = {
@@ -197,6 +198,34 @@ function runtimeStateWithSelections(
   }
 }
 
+function runtimeStateWithSelectionResult(
+  state: SessionRuntimeState | null | undefined,
+  session: SessionView,
+  selectionPatch: Record<string, string | null>,
+  resultState: SessionRuntimeState | null | undefined,
+): SessionRuntimeState {
+  const nextState = state ?? resultState
+  return runtimeStateWithSelections(nextState, session, {
+    ...selectionPatch,
+    ...(resultState?.selections ?? {}),
+  })
+}
+
+function runtimeStateWithSelectionRollback(
+  state: SessionRuntimeState | null | undefined,
+  session: SessionView,
+  previousSelections: Record<string, string | null>,
+  selectionPatch: Record<string, string | null>,
+): SessionRuntimeState {
+  const nextState = nextOptimisticRuntimeState(state, session, state?.status ?? "idle")
+  const selections = { ...nextState.selections }
+  for (const key of Object.keys(selectionPatch)) {
+    if (Object.hasOwn(previousSelections, key)) selections[key] = previousSelections[key] ?? null
+    else delete selections[key]
+  }
+  return { ...nextState, selections }
+}
+
 function composerDraftStorageKey(sessionId: string): string {
   return `${COMPOSER_DRAFT_STORAGE_PREFIX}${sessionId}`
 }
@@ -225,6 +254,7 @@ export function SessionDetail({
   fallbackSession,
   onSessionUpdated,
   onMemorySnapshotUpdated,
+  onStreamProgress,
 }: SessionDetailProps) {
   const tSession = useTranslations("dashboard.session")
   const tNew = useTranslations("dashboard.new")
@@ -344,14 +374,31 @@ export function SessionDetail({
         current
           ? {
               ...current,
-              state: result.state ?? runtimeStateWithSelections(current.state, current.session, selectionPatch),
+              state: runtimeStateWithSelectionResult(
+                current.state,
+                current.session,
+                selectionPatch,
+                result.state,
+              ),
             }
           : current,
       )
       return true
     } catch (err) {
       if (selectionUpdateSeqRef.current === selectionUpdateSeq) {
-        setState((current) => current ? { ...current, state: previousRuntimeState } : current)
+        setState((current) =>
+          current
+            ? {
+                ...current,
+                state: runtimeStateWithSelectionRollback(
+                  current.state,
+                  current.session,
+                  previousRuntimeState?.selections ?? {},
+                  selectionPatch,
+                ),
+              }
+            : current,
+        )
       }
       toast.error(err instanceof Error ? err.message : tSession("updateSelectionsFailed"))
       return false
@@ -530,6 +577,14 @@ export function SessionDetail({
       pendingInteractionCount: blockingInteractions(state.notices, state.session.id).length,
     })
   }, [onMemorySnapshotUpdated, state])
+
+  React.useEffect(() => {
+    onStreamProgress?.(sessionId, state?.nextSeq ?? 0)
+  }, [onStreamProgress, sessionId, state?.nextSeq])
+
+  React.useEffect(() => {
+    return () => onStreamProgress?.(sessionId, null)
+  }, [onStreamProgress, sessionId])
 
   const distanceFromBottom = React.useCallback(() => {
     const viewport = timelineRef.current
@@ -893,13 +948,12 @@ export function SessionDetail({
           current
             ? {
                 ...current,
-                state: selectionResult.state ?? {
-                  ...nextOptimisticRuntimeState(current.state, current.session, current.state?.status ?? runtimeStatus),
-                  selections: {
-                    ...(current.state?.selections ?? {}),
-                    ...selectionPatch,
-                  },
-                },
+                state: runtimeStateWithSelectionResult(
+                  current.state,
+                  current.session,
+                  selectionPatch,
+                  selectionResult.state,
+                ),
               }
             : current,
         )

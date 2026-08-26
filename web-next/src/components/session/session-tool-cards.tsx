@@ -612,7 +612,7 @@ function fileChangeAction(change: Record<string, unknown>): FileChangeAction {
   const direct = textOf(change.action) || textOf(change.type) || textOf(change.status)
   const nestedKind = change.kind && typeof change.kind === "object" && !Array.isArray(change.kind)
     ? textOf((change.kind as Record<string, unknown>).type)
-    : null
+    : textOf(change.kind)
   const value = (nestedKind || direct || "").toLowerCase()
   if (value === "add" || value === "added" || value === "create" || value === "created") return "add"
   if (value === "delete" || value === "deleted" || value === "remove" || value === "removed") return "delete"
@@ -654,6 +654,5 @@ function fileChangeDisplayDiff(change: Record<string, unknown>, diff: string | n
 }
 
 export function isCreatedFileChange(change: Record<string, unknown>) {
-  const diff = textOf(change.diff)
-  return fileChangeAction(change) === "add" || Boolean(diff && !isUnifiedDiffLike(diff))
+  return fileChangeAction(change) === "add"
 }

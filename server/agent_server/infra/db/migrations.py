@@ -22,8 +22,8 @@ from agent_server.infra.db.engine import POSTGRES_BACKEND, resolve_db_url
 
 LEGACY_V1_REVISION = "v1_legacy"
 BASELINE_V2_REVISION = "v2_0"
-CURRENT_SCHEMA_REVISION = "v2_18"
-CURRENT_SCHEMA_VERSION = "2.18"
+CURRENT_SCHEMA_REVISION = "v2_19"
+CURRENT_SCHEMA_VERSION = "2.19"
 POSTGRES_MIGRATION_LOCK_ID = 0x414147454E545332
 DEFAULT_MIGRATION_LOCK_TIMEOUT_SECONDS = 120.0
 
@@ -305,6 +305,8 @@ def _classify_sync(connection) -> UnversionedDatabase:
                     release_columns = _column_names(inspector, "app_releases")
                     if "sha256" in release_columns:
                         revision = "v2_16"
+                    elif "sort_at" in session_columns:
+                        revision = "v2_19"
                     elif "latest_turn_end_seq" in session_columns:
                         revision = "v2_18"
                     else:

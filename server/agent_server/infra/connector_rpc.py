@@ -398,6 +398,7 @@ class ConnectorRpcManager:
     ) -> Any:
         connector_id = connection.connector_id
         request_id = f"rpc_{secrets.token_urlsafe(10)}"
+        request_started_at = time.monotonic()
         future: asyncio.Future[dict[str, Any]] = (
             asyncio.get_running_loop().create_future()
         )
@@ -417,12 +418,25 @@ class ConnectorRpcManager:
                             "params": params,
                         }
                     )
+                    logger.info(
+                        "connector rpc request sent connector_id={} method={} request_id={}",
+                        connector_id,
+                        method,
+                        request_id,
+                    )
                 except (RuntimeError, OSError) as exc:
                     await self.unregister(connector_id, connection)
                     if future.done():
                         future.exception()
                     raise ConnectorOfflineError("connector disconnected") from exc
             response = await asyncio.wait_for(future, timeout=timeout)
+            logger.info(
+                "connector rpc response received connector_id={} method={} request_id={} elapsed_ms={:.1f}",
+                connector_id,
+                method,
+                request_id,
+                (time.monotonic() - request_started_at) * 1000,
+            )
         finally:
             connection.pending.pop(request_id, None)
 

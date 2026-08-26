@@ -3028,7 +3028,7 @@ def test_connector_ingest_rejects_bad_notification_without_500(tmp_path):
     assert [item["id"] for item in messages] == ["item-ok-1", "item-ok-2"]
 
 
-def test_sessions_sort_by_latest_timeline_item_not_session_update(tmp_path):
+def test_timeline_and_session_updates_do_not_change_session_order(tmp_path):
     client = make_client(tmp_path)
     connector_id, access_token, first_session_id, headers = create_connector_and_session(client)
     second_response = client.post(
@@ -3110,16 +3110,26 @@ def test_sessions_sort_by_latest_timeline_item_not_session_update(tmp_path):
             }
         )
 
-        listed = wait_for_sessions_order(client, [first_session_id, second_session_id], headers)
-        assert [session["id"] for session in listed[:2]] == [first_session_id, second_session_id]
-        assert listed[0]["lastItemAt"] == "2027-05-20T12:00:00Z"
-        assert listed[0]["lastItemOrderSeq"] == 1
+        listed = wait_for_sessions_order(
+            client,
+            [second_session_id, first_session_id],
+            headers,
+            extra=lambda sessions: any(
+                session["id"] == first_session_id
+                and session["lastItemAt"] == "2027-05-20T12:00:00Z"
+                for session in sessions
+            ),
+        )
+        assert [session["id"] for session in listed[:2]] == [second_session_id, first_session_id]
+        first_session = next(session for session in listed if session["id"] == first_session_id)
+        assert first_session["lastItemAt"] == "2027-05-20T12:00:00Z"
+        assert first_session["lastItemOrderSeq"] == 1
         first_state = session_view_for_assertions(client, first_session_id, headers)
         assert first_state["session"]["lastItemAt"] == "2027-05-20T12:00:00Z"
         assert first_state["session"]["lastItemOrderSeq"] == 1
 
 
-def test_sessions_sort_by_latest_item_timestamp_not_highest_order_seq(tmp_path):
+def test_timeline_item_time_and_order_seq_do_not_change_session_order(tmp_path):
     client = make_client(tmp_path)
     connector_id, access_token, first_session_id, headers = create_connector_and_session(client)
     second_response = client.post(
@@ -3187,16 +3197,21 @@ def test_sessions_sort_by_latest_item_timestamp_not_highest_order_seq(tmp_path):
 
         listed = wait_for_sessions_order(
             client,
-            [first_session_id, second_session_id],
+            [second_session_id, first_session_id],
             headers,
-            extra=lambda sessions: sessions[0]["lastItemAt"] == "2027-05-20T12:00:00Z",
+            extra=lambda sessions: any(
+                session["id"] == first_session_id
+                and session["lastItemAt"] == "2027-05-20T12:00:00Z"
+                for session in sessions
+            ),
         )
-        assert [session["id"] for session in listed[:2]] == [first_session_id, second_session_id]
-        assert listed[0]["lastItemAt"] == "2027-05-20T12:00:00Z"
-        assert listed[0]["lastItemOrderSeq"] == 9000
+        assert [session["id"] for session in listed[:2]] == [second_session_id, first_session_id]
+        first_session = next(session for session in listed if session["id"] == first_session_id)
+        assert first_session["lastItemAt"] == "2027-05-20T12:00:00Z"
+        assert first_session["lastItemOrderSeq"] == 9000
 
 
-def test_sessions_sort_by_codex_last_activity_at(tmp_path):
+def test_last_activity_updates_do_not_change_session_order(tmp_path):
     client = make_client(tmp_path)
     connector_id, access_token, first_session_id, headers = create_connector_and_session(client)
     second_response = client.post(
@@ -3237,7 +3252,7 @@ def test_sessions_sort_by_codex_last_activity_at(tmp_path):
         assert listed[0]["lastActivityAt"] == "2026-05-20T13:00:00Z"
 
 
-def test_sessions_sort_at_prefers_item_over_activity_timestamp(tmp_path):
+def test_sort_at_ignores_timeline_and_activity_updates(tmp_path):
     client = make_client(tmp_path)
     connector_id, access_token, first_session_id, headers = create_connector_and_session(client)
     second_response = client.post(
@@ -3247,6 +3262,8 @@ def test_sessions_sort_at_prefers_item_over_activity_timestamp(tmp_path):
     )
     assert second_response.status_code == 200
     second_session_id = second_response.json()["session"]["id"]
+    initial = client.get("/sessions", headers=headers).json()["sessions"]
+    initial_sort_at = {session["id"]: session["sortAt"] for session in initial}
 
     with client.websocket_connect(
         "/connector/ws",
@@ -3305,7 +3322,8 @@ def test_sessions_sort_at_prefers_item_over_activity_timestamp(tmp_path):
             [second_session_id, first_session_id],
             headers,
             extra=lambda sessions: any(
-                session["id"] == first_session_id and session["sortAt"] == "2026-05-20T13:00:00Z"
+                session["id"] == first_session_id
+                and session["lastItemAt"] == "2026-05-20T13:00:00Z"
                 for session in sessions
             ),
         )
@@ -3313,7 +3331,7 @@ def test_sessions_sort_at_prefers_item_over_activity_timestamp(tmp_path):
         first_session = next(session for session in listed if session["id"] == first_session_id)
         assert first_session["lastActivityAt"] == "2026-05-20T15:00:00Z"
         assert first_session["lastItemAt"] == "2026-05-20T13:00:00Z"
-        assert first_session["sortAt"] == "2026-05-20T13:00:00Z"
+        assert first_session["sortAt"] == initial_sort_at[first_session_id]
 
 
 def test_empty_sessions_sort_by_session_timestamp(tmp_path):
@@ -3332,7 +3350,100 @@ def test_empty_sessions_sort_by_session_timestamp(tmp_path):
     assert listed[0]["sortAt"] >= listed[1]["sortAt"]
 
 
-def test_sessions_sort_at_ignores_sync_observed_timestamp(tmp_path):
+def test_session_moves_once_at_turn_start_then_stays_stable(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, access_token, first_session_id, headers = create_connector_and_session(client)
+    second_response = client.post(
+        "/sessions",
+        headers=headers,
+        json={"connectorId": connector_id, "runtime": "codex", "externalSessionId": "thr_second_stable", "title": "Second", "cwd": "/repo"},
+    )
+    assert second_response.status_code == 200
+    second_session_id = second_response.json()["session"]["id"]
+
+    initial = client.get("/sessions", headers=headers).json()["sessions"]
+    initial_first = next(session for session in initial if session["id"] == first_session_id)
+    assert [session["id"] for session in initial[:2]] == [second_session_id, first_session_id]
+
+    running_response = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={
+            "notifications": [
+                {
+                    "method": "session.state.updated",
+                    "params": {
+                        "sessionId": first_session_id,
+                        "runtime": "codex",
+                        "runtimeId": "codex",
+                        "status": "running",
+                    },
+                }
+            ]
+        },
+    )
+    assert running_response.status_code == 200, running_response.text
+    running = client.get("/sessions", headers=headers).json()["sessions"]
+    assert [session["id"] for session in running[:2]] == [first_session_id, second_session_id]
+    started_sort_at = running[0]["sortAt"]
+    assert started_sort_at > initial_first["sortAt"]
+
+    updates_response = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={
+            "notifications": [
+                {
+                    "method": "timeline.itemUpsert",
+                    "params": {
+                        "sessionId": first_session_id,
+                        "item": {
+                            "id": "tl_streaming_assistant",
+                            "sessionId": first_session_id,
+                            "turnId": "turn_stable",
+                            "type": "message",
+                            "status": "streaming",
+                            "role": "assistant",
+                            "content": {"text": "partial", "format": "markdown"},
+                            "source": {"runtime": "codex", "turnId": "turn_stable", "itemId": "assistant_1"},
+                            "orderSeq": 1,
+                            "revision": 1,
+                            "contentHash": "sha256:partial",
+                        },
+                    },
+                },
+                {
+                    "method": "session.turnEnded",
+                    "params": {
+                        "sessionId": first_session_id,
+                        "runtime": "codex",
+                        "runtimeId": "codex",
+                        "turnId": "turn_stable",
+                        "outcome": "completed",
+                    },
+                },
+                {
+                    "method": "session.state.updated",
+                    "params": {
+                        "sessionId": first_session_id,
+                        "runtime": "codex",
+                        "runtimeId": "codex",
+                        "status": "idle",
+                    },
+                },
+            ]
+        },
+    )
+    assert updates_response.status_code == 200, updates_response.text
+
+    completed = client.get("/sessions", headers=headers).json()["sessions"]
+    assert [session["id"] for session in completed[:2]] == [first_session_id, second_session_id]
+    assert completed[0]["sortAt"] == started_sort_at
+    assert completed[0]["status"] == "idle"
+    assert completed[0]["unread"] is True
+
+
+def test_sort_at_ignores_sync_observed_timestamp(tmp_path):
     client = make_client(tmp_path)
     connector_id, access_token, first_session_id, headers = create_connector_and_session(client)
     second_response = client.post(
@@ -3342,6 +3453,8 @@ def test_sessions_sort_at_ignores_sync_observed_timestamp(tmp_path):
     )
     assert second_response.status_code == 200
     second_session_id = second_response.json()["session"]["id"]
+    initial = client.get("/sessions", headers=headers).json()["sessions"]
+    initial_sort_at = {session["id"]: session["sortAt"] for session in initial}
 
     with client.websocket_connect(
         "/connector/ws",
@@ -3387,16 +3500,23 @@ def test_sessions_sort_at_ignores_sync_observed_timestamp(tmp_path):
 
         listed = wait_for_sessions_order(
             client,
-            [first_session_id, second_session_id],
+            [second_session_id, first_session_id],
             headers,
             extra=lambda sessions: (
-                sessions[0]["sortAt"] == "2027-05-20T12:00:00Z"
-                and sessions[1]["sortAt"] == "2027-05-20T11:00:00Z"
+                any(
+                    session["id"] == first_session_id
+                    and session["lastItemAt"] == "2027-05-20T12:00:00Z"
+                    for session in sessions
+                )
+                and any(
+                    session["id"] == second_session_id
+                    and session["lastActivityAt"] == "2027-05-20T11:00:00Z"
+                    for session in sessions
+                )
             ),
         )
-        assert [session["id"] for session in listed[:2]] == [first_session_id, second_session_id]
-        assert listed[0]["sortAt"] == "2027-05-20T12:00:00Z"
-        assert listed[1]["sortAt"] == "2027-05-20T11:00:00Z"
+        assert [session["id"] for session in listed[:2]] == [second_session_id, first_session_id]
+        assert {session["id"]: session["sortAt"] for session in listed[:2]} == initial_sort_at
 
 
 def test_takeover_gates_remote_message_and_rpc(tmp_path):
@@ -4345,6 +4465,61 @@ def test_send_message_forwards_client_message_id_to_connector(tmp_path):
     assert response.status_code == 200, response.text
     params = wait_for_rpc_method(fake_rpc, "session.send_message")[2]
     assert params["clientMessageId"] == "opt_abc"
+
+
+def test_send_message_starts_new_turn_from_error_state(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, _, session_id, headers = create_connector_and_session(client)
+    fake_rpc = FakeLocalRpc()
+    fake_rpc.runtime_states[session_id] = {
+        "sessionId": session_id,
+        "runtime": "codex",
+        "externalSessionId": f"thr_{connector_id}_demo",
+        "status": "error",
+        "selections": {},
+        "error": {"code": "turn_failed", "message": "boom"},
+        "metadata": {"source": "test.turn.failed"},
+    }
+    client.app.state.rpc = fake_rpc
+    asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
+    client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
+
+    response = client.post(
+        f"/sessions/{session_id}/runtime/messages",
+        headers=headers,
+        json={"content": "try again"},
+    )
+
+    assert response.status_code == 200, response.text
+    params = wait_for_rpc_method(fake_rpc, "session.send_message")[2]
+    assert params["content"] == "try again"
+
+
+def test_send_message_rejects_running_state(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, _, session_id, headers = create_connector_and_session(client)
+    fake_rpc = FakeLocalRpc()
+    fake_rpc.runtime_states[session_id] = {
+        "sessionId": session_id,
+        "runtime": "codex",
+        "externalSessionId": f"thr_{connector_id}_demo",
+        "status": "running",
+        "selections": {},
+        "metadata": {"source": "test.turn.running"},
+    }
+    client.app.state.rpc = fake_rpc
+    asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
+    client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
+
+    response = client.post(
+        f"/sessions/{session_id}/runtime/messages",
+        headers=headers,
+        json={"content": "should be rejected"},
+    )
+
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"] == "session is running"
+    assert not any(method == "session.send_message" for _, method, _, _ in fake_rpc.requests)
 
 
 @pytest.mark.skip(reason="legacy persisted notice behavior was removed; notices are runtime-owned live facts")

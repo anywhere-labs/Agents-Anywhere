@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from collections.abc import Mapping
 from typing import Any
 
@@ -13,6 +14,7 @@ from fastapi import (
     Query,
     WebSocket,
 )
+from loguru import logger
 from starlette.requests import HTTPConnection
 
 from agent_server.api.connector_runtimes import (
@@ -723,11 +725,30 @@ async def session_snapshot(
     ),
     catalogs: CatalogService = Depends(get_catalog_service),
 ) -> ProtocolSessionSnapshotResponse:
+    snapshot_started_at = time.monotonic()
+
+    def log_snapshot_stage(stage: str, stage_started_at: float) -> None:
+        logger.info(
+            "session snapshot stage completed session_id={} stage={} "
+            "stage_elapsed_ms={:.1f} total_elapsed_ms={:.1f}",
+            session_id,
+            stage,
+            (time.monotonic() - stage_started_at) * 1000,
+            (time.monotonic() - snapshot_started_at) * 1000,
+        )
+
     try:
+        stage_started_at = time.monotonic()
         session = await db.get_session(session_id, user_id=user_id)
         await _require_session_runtime_control(db, session, user_id=user_id)
         items, has_more = await db.list_timeline_latest(session_id=session_id, limit=limit)
+        log_snapshot_stage("database", stage_started_at)
+
+        stage_started_at = time.monotonic()
         notices = await read_session_notices_for_snapshot(manager, session)
+        log_snapshot_stage("notices", stage_started_at)
+
+        stage_started_at = time.monotonic()
         runtime_state = await read_runtime_state_live(
             db,
             manager,
@@ -735,18 +756,27 @@ async def session_snapshot(
             session,
             user_id,
         )
+        log_snapshot_stage("runtime_state", stage_started_at)
         session = session_with_runtime_state(session, runtime_state)
+
+        stage_started_at = time.monotonic()
         session = await with_effective_session_connector_status(manager, session)
+        log_snapshot_stage("connector_status", stage_started_at)
+
+        stage_started_at = time.monotonic()
         runtime_capabilities = await read_session_capabilities_with_fallback(
             db,
             manager,
             session,
             user_id,
         )
+        log_snapshot_stage("capabilities", stage_started_at)
         effective_capabilities = derive_session_effective_capabilities(
             session=session,
             runtime_capabilities=runtime_capabilities,
         )
+
+        stage_started_at = time.monotonic()
         model_catalog = await catalogs.model_catalog(
             session.connectorId,
             runtime_id=_session_runtime_id(session),
@@ -758,6 +788,7 @@ async def session_snapshot(
             user_id=user_id,
         )
         next_seq = await db.get_session_seq(session_id)
+        log_snapshot_stage("catalogs_and_sequence", stage_started_at)
     except KeyError:
         raise HTTPException(status_code=404, detail="session not found") from None
     return ProtocolSessionSnapshotResponse(

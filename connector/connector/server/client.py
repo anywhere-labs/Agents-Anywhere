@@ -31,6 +31,9 @@ from connector.server.dispatch import (
 )
 from connector.server.errors import ConnectorNetworkError
 from connector.server.ingest import ConnectorIngestClient
+from connector.server.notification_coalescer import (
+    TimelineItemNotificationCoalescer,
+)
 from connector.server.protocol_revision import ProtocolRevisionClock
 from connector.server.rpc import ConnectorRpcChannel, ConnectorWebSocketFrameTooLarge
 from connector.server.runtime_host import ConnectorRuntimeHost
@@ -100,6 +103,9 @@ class BackendRpcClient:
             access_token_provider=self._auth.ensure_access_token,
             http_client_getter=self._get_http_client,
             http_client_factory=lambda timeout: self._new_http_client(timeout=timeout),
+        )
+        self._timeline_notifications = TimelineItemNotificationCoalescer(
+            self._send_backend_notification_now
         )
         self._dispatcher = ConnectorRequestDispatcher(
             agent_runtime_supervisor=self.agent_runtime_supervisor,
@@ -171,6 +177,7 @@ class BackendRpcClient:
                     )
                     await asyncio.sleep(self.config.reconnect_seconds)
         finally:
+            await self._timeline_notifications.close()
             flush_task.cancel()
             if self._runtime_sync_task is not None:
                 self._runtime_sync_task.cancel()
@@ -258,6 +265,11 @@ class BackendRpcClient:
         await self._rpc.send_notification(method, params)
 
     async def send_backend_notification(
+        self, method: str, params: dict[str, Any]
+    ) -> None:
+        await self._timeline_notifications.send(method, params)
+
+    async def _send_backend_notification_now(
         self, method: str, params: dict[str, Any]
     ) -> None:
         if notification_requires_ingest(method):

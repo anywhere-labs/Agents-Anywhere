@@ -56,6 +56,8 @@ class CatalogRepository(Protocol):
 class SessionStateRepository(SessionLookupRepository, Protocol):
     async def get_active_run(self, session_id: str) -> dict[str, Any] | None: ...
 
+    async def start_active_run(self, **values: Any) -> None: ...
+
     async def set_session_status(
         self,
         session_id: str,

@@ -124,8 +124,7 @@ export function SessionComposer({
     !isRunning &&
     !isStopping &&
     !isWaitingApproval &&
-    !isBlocked &&
-    !isError
+    !isBlocked
   const canUseSendMessage = capabilityIsUsable(effectiveCapabilities, CAPABILITY.sendMessage, runtimeScope)
   const canUseInterrupt = capabilityIsUsable(effectiveCapabilities, CAPABILITY.interrupt, runtimeScope)
   const interruptCapability = findCapability(effectiveCapabilities, CAPABILITY.interrupt, runtimeScope)

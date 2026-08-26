@@ -27,6 +27,7 @@ ACTIVE_TURN_STATUSES: tuple[RuntimeStatus, ...] = (
     "waiting_approval",
     "blocked",
 )
+STARTABLE_TURN_STATUSES: tuple[RuntimeStatus, ...] = ("idle", "error")
 
 
 @dataclass(frozen=True, slots=True)
@@ -208,7 +209,11 @@ def session_capability(
 
 
 def session_can_send_message(context: CodexCapabilityContext) -> bool:
-    return session_loaded(context) and context.status == "idle"
+    return (
+        session_loaded(context)
+        and not context.has_active_turn
+        and context.status in STARTABLE_TURN_STATUSES
+    )
 
 
 def session_can_interrupt(context: CodexCapabilityContext) -> bool:
@@ -249,7 +254,7 @@ def session_action_unavailable_reason(context: CodexCapabilityContext) -> str | 
     unloaded_reason = session_unloaded_reason(context)
     if unloaded_reason is not None:
         return unloaded_reason
-    if context.status == "idle":
+    if not context.has_active_turn and context.status in STARTABLE_TURN_STATUSES:
         return None
     return f"session_{context.status}"
 

@@ -1239,7 +1239,7 @@ def test_connector_projects_inventory_capabilities_to_protocol_ids() -> None:
     assert payload["revision"] == 42
 
 
-def test_connector_runtime_host_live_notifications_use_websocket_when_connected() -> (
+def test_connector_runtime_host_coalesced_notifications_use_websocket_when_connected() -> (
     None
 ):
     asyncio.run(_exercise_runtime_host_live_notification_uses_websocket())
@@ -1271,6 +1271,8 @@ async def _exercise_runtime_host_live_notification_uses_websocket() -> None:
     )
 
     assert enqueued == []
+    assert ws.messages == []
+    await client._timeline_notifications.flush("sess_1")
     assert ws.messages == [
         {
             "type": "notification",

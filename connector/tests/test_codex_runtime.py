@@ -103,6 +103,7 @@ from connector.runtimes.codex.timeline.items import (
     CodexContextCompactionItem,
     CodexDynamicToolCallItem,
     CodexFileChangeItem,
+    CodexImageViewItem,
     CodexMarkerTimelineItem,
     CodexMcpToolCallItem,
     CodexMessageTimelineItem,
@@ -272,6 +273,8 @@ def test_codex_timeline_native_item_classes_are_explicitly_mapped() -> None:
     assert codex_timeline_item_class("webSearch") is CodexWebSearchItem
     assert codex_timeline_item_class("contextCompaction") is CodexContextCompactionItem
     assert issubclass(CodexContextCompactionItem, MarkerTimelineItem)
+    assert codex_timeline_item_class("ImageViewThreadItem") is CodexImageViewItem
+    assert issubclass(CodexImageViewItem, MarkerTimelineItem)
     assert codex_timeline_item_class("fileChange") is CodexFileChangeItem
     assert codex_timeline_item_class("turnStart") is CodexTurnStartItem
     assert codex_timeline_item_class("turnEnd") is CodexTurnEndItem
@@ -294,6 +297,7 @@ def test_codex_timeline_items_extend_protocol_parent_classes() -> None:
     assert issubclass(CodexWebSearchItem, CodexToolTimelineItem)
     assert issubclass(CodexFileChangeItem, CodexArtifactTimelineItem)
     assert issubclass(CodexContextCompactionItem, CodexMarkerTimelineItem)
+    assert issubclass(CodexImageViewItem, CodexMarkerTimelineItem)
     assert issubclass(CodexReasoningItem, CodexSystemTimelineItem)
     assert issubclass(CodexUnknownItem, CodexSystemTimelineItem)
     assert issubclass(CodexTurnStartItem, CodexTurnStartTimelineItem)
@@ -378,6 +382,31 @@ def test_codex_projection_maps_context_compaction_to_compact_content() -> None:
         "state": "completed",
     }
     assert platform_item.source["rawType"] == "contextCompaction"
+
+
+def test_codex_projection_maps_image_view_to_marker_content() -> None:
+    projection = CodexTimelineProjection(
+        native_id="image_view_1",
+        raw_type="ImageViewThreadItem",
+        status="completed",
+    )
+
+    item = timeline_item_from_projection(
+        projection=projection,
+        external_session_id="thread_1",
+        fallback_index=0,
+        event="item/completed",
+    )
+    platform_item = item.to_platform_item(session_id="sess_1", order_seq=0)
+
+    assert isinstance(item, CodexImageViewItem)
+    assert item.type == "marker"
+    assert platform_item.content == {
+        "kind": "system",
+        "label": "查看图片",
+        "state": "completed",
+    }
+    assert platform_item.source["rawType"] == "ImageViewThreadItem"
 
 
 class FakeCodexClient:
@@ -991,6 +1020,42 @@ async def _test_codex_runtime_thread_compacted_notification_upserts_timeline_ite
     assert item.source["rawType"] == "contextCompaction"
     assert host.state_updates[-1]["status"] == "idle"
     assert host.state_updates[-1]["metadata"]["source"] == "codex.thread/compacted"
+
+
+def test_codex_runtime_thread_compacted_keeps_active_turn_running() -> None:
+    asyncio.run(_test_codex_runtime_thread_compacted_keeps_active_turn_running())
+
+
+async def _test_codex_runtime_thread_compacted_keeps_active_turn_running() -> None:
+    client = FakeCodexClient()
+    host = FakeHost()
+    runtime = CodexRuntime(config=_config(), host=host, client=client)
+
+    await runtime._handle_notification(
+        Notification(
+            method="thread/compacted",
+            payload=ContextCompactedNotification(
+                threadId="thread_1",
+                turnId="turn_before_active",
+            ),
+        )
+    )
+    session_id = host.timeline_item_upserts[-1].session_id
+    runtime._active_turn_ids[session_id] = "turn_active"
+    state_update_count = len(host.state_updates)
+
+    await runtime._handle_notification(
+        Notification(
+            method="thread/compacted",
+            payload=ContextCompactedNotification(
+                threadId="thread_1",
+                turnId="turn_active",
+            ),
+        )
+    )
+
+    assert len(host.state_updates) == state_update_count
+    assert runtime._active_turn_ids[session_id] == "turn_active"
 
 
 def test_codex_compaction_snapshot_uses_item_level_identity() -> None:
@@ -1731,6 +1796,31 @@ async def _test_codex_runtime_reports_idle_session_capabilities() -> None:
         "no_active_turn"
     )
     assert capabilities[CAPABILITY_SESSION_STEER].available is False
+
+
+def test_codex_runtime_reports_error_session_can_send_message() -> None:
+    asyncio.run(_test_codex_runtime_reports_error_session_can_send_message())
+
+
+async def _test_codex_runtime_reports_error_session_can_send_message() -> None:
+    runtime = CodexRuntime(config=_config(), host=FakeHost(), client=FakeCodexClient())
+    await runtime._session_states.update(
+        session_id="sess_1",
+        external_session_id="thread_1",
+        status="error",
+        error={"code": "turn_failed", "message": "boom"},
+        metadata={"source": "test.turn.failed"},
+    )
+
+    capability_set = await runtime.get_session_capabilities("sess_1", "thread_1")
+    capabilities = {
+        capability.capability_id: capability
+        for capability in capability_set.capabilities
+    }
+
+    assert capabilities[CAPABILITY_SESSION_SEND_MESSAGE].available is True
+    assert capabilities[CAPABILITY_SESSION_SEND_MESSAGE].unavailable_reason is None
+    assert capabilities[CAPABILITY_SESSION_INTERRUPT].available is False
 
 
 def test_codex_runtime_reports_running_session_capabilities() -> None:
