@@ -612,6 +612,8 @@ class FakeHost(RuntimeHostClient):
     def __init__(self) -> None:
         self.meta_upserts: list[dict[str, Any]] = []
         self.state_updates: list[dict[str, Any]] = []
+        self.turn_ends: list[dict[str, Any]] = []
+        self.lifecycle_events: list[str] = []
         self.timeline_syncs: list[dict[str, Any]] = []
         self.timeline_item_upserts: list[Any] = []
         self.notice_upserts: list[SessionNotice] = []
@@ -657,6 +659,7 @@ class FakeHost(RuntimeHostClient):
         error: Mapping[str, Any] | None = None,
         metadata: Mapping[str, Any] | None = None,
     ) -> None:
+        self.lifecycle_events.append(f"state:{status}")
         self.state_updates.append(
             {
                 "session_id": session_id,
@@ -666,6 +669,27 @@ class FakeHost(RuntimeHostClient):
                 "external_session_id": external_session_id,
                 "status_reason": status_reason,
                 "error": dict(error) if error is not None else None,
+                "metadata": dict(metadata or {}),
+            }
+        )
+
+    async def session_turn_ended(
+        self,
+        session_id: str,
+        runtime: str,
+        external_session_id: str | None = None,
+        turn_id: str | None = None,
+        outcome: str = "completed",
+        metadata: Mapping[str, Any] | None = None,
+    ) -> None:
+        self.lifecycle_events.append("turn_end")
+        self.turn_ends.append(
+            {
+                "session_id": session_id,
+                "runtime": runtime,
+                "external_session_id": external_session_id,
+                "turn_id": turn_id,
+                "outcome": outcome,
                 "metadata": dict(metadata or {}),
             }
         )
@@ -3480,10 +3504,22 @@ async def _test_codex_runtime_turn_completed_notification_sets_idle() -> None:
             "params": {
                 "platformSessionId": "sess_1",
                 "threadId": "thread_1",
+                "turnId": "turn_1",
             },
         }
     )
 
+    assert host.turn_ends == [
+        {
+            "session_id": "sess_1",
+            "runtime": "codex",
+            "external_session_id": "thread_1",
+            "turn_id": "turn_1",
+            "outcome": "completed",
+            "metadata": {"source": "codex.turn/completed"},
+        }
+    ]
+    assert host.lifecycle_events[-2:] == ["turn_end", "state:idle"]
     assert host.state_updates[-1]["status"] == "idle"
     state = await runtime.get_session_state("sess_1")
     assert state is not None
@@ -4156,6 +4192,10 @@ async def _test_codex_runtime_interrupted_and_cancelled_turns_set_idle() -> None
     ]
     assert "codex.turn/interrupted" in idle_sources
     assert "codex.turn/cancelled" in idle_sources
+    assert [turn_end["outcome"] for turn_end in host.turn_ends] == [
+        "interrupted",
+        "cancelled",
+    ]
 
 
 def test_codex_runtime_failed_turn_creates_blocking_error_notice() -> None:
@@ -4188,6 +4228,7 @@ async def _test_codex_runtime_failed_turn_creates_blocking_error_notice() -> Non
     assert notice.interaction_type == "execution_error"
     assert notice.severity == "error"
     assert notice.blocking == {"scope": "session", "targetId": "sess_1"}
+    assert host.turn_ends[-1]["outcome"] == "failed"
     assert host.state_updates[-1]["status"] == "idle"
     assert interrupt.ok is True
     assert interrupt.result["alreadyStopped"] is True

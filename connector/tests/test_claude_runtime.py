@@ -2398,6 +2398,12 @@ async def _test_claude_runtime_normalizes_interrupted_result_message() -> None:
         "source": "claude.turn.interrupted",
         "terminalReason": "aborted_streaming",
     }
+    assert host.session_turn_ends[-1]["outcome"] == "interrupted"
+    assert host.session_turn_ends[-1]["metadata"] == {
+        "source": "claude.turn.interrupted",
+        "terminalReason": "aborted_streaming",
+    }
+    assert host.lifecycle_events[-2:] == ["turn_end", "state:idle"]
 
 
 def test_claude_runtime_result_error_blocks_session_state() -> None:
@@ -2436,6 +2442,8 @@ async def _test_claude_runtime_result_error_blocks_session_state() -> None:
     }
     assert host.session_state_updates[-1]["status"] == "error"
     assert host.session_state_updates[-1]["error"] == state.error
+    assert host.session_turn_ends[-1]["outcome"] == "failed"
+    assert host.lifecycle_events[-2:] == ["turn_end", "state:error"]
     assert "blocked" not in [update["status"] for update in host.session_state_updates]
 
 
@@ -2784,6 +2792,8 @@ class _RecordingHost(RuntimeHostClient):
     def __init__(self) -> None:
         self.session_meta_upserts: list[dict[str, Any]] = []
         self.session_state_updates: list[dict[str, Any]] = []
+        self.session_turn_ends: list[dict[str, Any]] = []
+        self.lifecycle_events: list[str] = []
         self.timeline_item_upserts: list[RuntimeTimelineItem] = []
         self.timeline_syncs: list[dict[str, Any]] = []
         self.session_capability_updates: list[Any] = []
@@ -2828,6 +2838,7 @@ class _RecordingHost(RuntimeHostClient):
         error: dict[str, Any] | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> None:
+        self.lifecycle_events.append(f"state:{status}")
         self.session_state_updates.append(
             {
                 "session_id": session_id,
@@ -2838,6 +2849,27 @@ class _RecordingHost(RuntimeHostClient):
                 "status_reason": status_reason,
                 "error": error,
                 "metadata": metadata,
+            }
+        )
+
+    async def session_turn_ended(
+        self,
+        session_id: str,
+        runtime: str,
+        external_session_id: str | None = None,
+        turn_id: str | None = None,
+        outcome: str = "completed",
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        self.lifecycle_events.append("turn_end")
+        self.session_turn_ends.append(
+            {
+                "session_id": session_id,
+                "runtime": runtime,
+                "external_session_id": external_session_id,
+                "turn_id": turn_id,
+                "outcome": outcome,
+                "metadata": metadata or {},
             }
         )
 

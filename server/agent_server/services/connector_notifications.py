@@ -30,6 +30,7 @@ from agent_server.services.repository_ports import ConnectorNotificationReposito
 TIMELINE_SYNC_PUSH_LIMIT = 100
 DSH_SESSION_INVENTORY_LIMIT = 10_000
 DSH_SOURCE_STATES = {"visible", "hidden"}
+TURN_END_OUTCOMES = {"completed", "interrupted", "cancelled", "failed"}
 
 
 class NotificationValidationError(ValueError):
@@ -50,6 +51,7 @@ class ConnectorNotificationService:
             ConnectorProtocolNotificationHandler(store),
             RuntimeCatalogNotificationHandler(store),
             SessionStateNotificationHandler(store),
+            SessionTurnEndedNotificationHandler(store),
             DshSessionInventoryNotificationHandler(store),
             SessionNotificationHandler(store),
             TimelineNotificationHandler(store),
@@ -63,7 +65,8 @@ class ConnectorNotificationService:
         method: str,
         params: dict[str, Any],
     ) -> IngestEffect:
-        params = _without_runtime_turn_ids(params)
+        if method != "session.turnEnded":
+            params = _without_runtime_turn_ids(params)
         if method == "approval.requested":
             raise NotificationValidationError(
                 "unsupported_notification",
@@ -502,6 +505,84 @@ class SessionStateNotificationHandler:
         )
 
 
+class SessionTurnEndedNotificationHandler:
+    def __init__(self, store: ConnectorNotificationRepository) -> None:
+        self._store = store
+
+    async def apply(
+        self,
+        *,
+        connector_id: str,
+        method: str,
+        params: dict[str, Any],
+    ) -> IngestEffect | None:
+        if method != "session.turnEnded":
+            return None
+        session_id = params.get("sessionId")
+        if not isinstance(session_id, str) or not session_id:
+            raise NotificationValidationError(
+                "invalid_session_id",
+                "session.turnEnded sessionId must be a non-empty string",
+            )
+        outcome = params.get("outcome")
+        if outcome not in TURN_END_OUTCOMES:
+            raise NotificationValidationError(
+                "invalid_turn_outcome",
+                "session.turnEnded outcome must be completed, interrupted, cancelled, or failed",
+            )
+        turn_id = params.get("turnId")
+        if turn_id is not None and (not isinstance(turn_id, str) or not turn_id):
+            raise NotificationValidationError(
+                "invalid_turn_id",
+                "session.turnEnded turnId must be a non-empty string when provided",
+            )
+        runtime, runtime_id = runtime_identity_from_params(params)
+        external_session_id = _string_or_none(params.get("externalSessionId"))
+        if external_session_id is not None:
+            try:
+                session_id = await self._store.resolve_connector_session_id(
+                    connector_id=connector_id,
+                    session_id=session_id,
+                    external_session_id=external_session_id,
+                    runtime=runtime,
+                    runtime_id=runtime_id,
+                )
+            except KeyError:
+                pass
+        try:
+            session = await self._store.get_session(session_id)
+        except KeyError:
+            try:
+                session = await self._store.upsert_connector_session(
+                    connector_id=connector_id,
+                    session_id=session_id,
+                    runtime=runtime,
+                    runtime_id=runtime_id,
+                    external_session_id=external_session_id,
+                )
+            except ValueError as exc:
+                raise NotificationValidationError(
+                    "session_identity_conflict",
+                    str(exc),
+                ) from exc
+            session_id = session.id
+        else:
+            _require_session_binding(
+                session,
+                connector_id=connector_id,
+                runtime=runtime,
+                runtime_id=runtime_id,
+            )
+        if await _session_disabled(self._store, session_id):
+            return IngestEffect()
+        session = await self._store.record_session_turn_end(
+            session_id=session_id,
+            source_observed_at=_string_or_none(params.get("sourceObservedAt")),
+            mark_read_on_change=False,
+        )
+        return IngestEffect(session_id=session.id, session_changed=True)
+
+
 class TimelineNotificationHandler:
     METHODS: ClassVar[set[str]] = {"timeline.sync", "timeline.itemUpsert"}
 
@@ -574,8 +655,11 @@ class TimelineNotificationHandler:
         connector_id: str,
         params: dict[str, Any],
     ) -> IngestEffect:
-        if _timeline_item_type(params.get("item")) == "turn.end":
-            return await self._turn_end(connector_id, params)
+        if _timeline_item_type(params.get("item")) in {"turn.start", "turn.end"}:
+            raise NotificationValidationError(
+                "unsupported_timeline_marker",
+                "turn lifecycle markers must use dedicated session notifications",
+            )
         item = TimelineItemIn.model_validate(params["item"])
         runtime, runtime_id = await timeline_runtime_identity_from_params(
             self._store,
@@ -602,32 +686,6 @@ class TimelineNotificationHandler:
             session_id=session_id,
             item=result.item.model_dump(mode="json") if result.changed else None,
         )
-
-    async def _turn_end(
-        self,
-        connector_id: str,
-        params: dict[str, Any],
-    ) -> IngestEffect:
-        runtime, runtime_id = await timeline_runtime_identity_from_params(
-            self._store,
-            params,
-        )
-        session_id = await _resolve_timeline_session_id_by_external(
-            self._store,
-            connector_id,
-            params["sessionId"],
-            _timeline_item_external_session_id(params.get("item")),
-            runtime=runtime,
-            runtime_id=runtime_id,
-        )
-        if await _session_disabled(self._store, session_id):
-            return IngestEffect()
-        session = await self._store.record_session_turn_end(
-            session_id=session_id,
-            source_observed_at=params.get("sourceObservedAt"),
-            mark_read_on_change=False,
-        )
-        return IngestEffect(session_id=session.id, session_changed=True)
 
 
 class InteractionNotificationHandler:
@@ -933,16 +991,6 @@ async def _resolve_timeline_session_id_by_external(
 
 def _timeline_item_type(value: Any) -> str | None:
     return value.get("type") if isinstance(value, dict) else None
-
-
-def _timeline_item_external_session_id(value: Any) -> str | None:
-    if not isinstance(value, dict):
-        return None
-    source = value.get("source")
-    if not isinstance(source, dict):
-        return None
-    session_id = source.get("sessionId")
-    return session_id if isinstance(session_id, str) else None
 
 
 def _v2_session_status(value: Any) -> SessionStatus | None:

@@ -40,6 +40,7 @@ class CodexNotificationProjector:
             notices=self.notices,
         )
         self.turn_lifecycle = CodexTurnLifecycleHandler(
+            host=self.host,
             session_states=self.session_states,
             active_turn_ids=self.active_turn_ids,
             timeline=self.timeline,

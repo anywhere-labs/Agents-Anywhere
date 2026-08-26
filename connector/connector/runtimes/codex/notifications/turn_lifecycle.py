@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from connector.runtime_protocol import RuntimeSessionStateCache
+from connector.runtime_protocol.host import RuntimeHostClient
 from connector.runtimes.codex.domain import sessions as codex_sessions
 from connector.runtimes.codex.notifications.notices import (
     CodexNoticeHandler,
@@ -14,6 +15,7 @@ from connector.runtimes.codex.timeline.accumulator import CodexTimelineAccumulat
 
 @dataclass(slots=True)
 class CodexTurnLifecycleHandler:
+    host: RuntimeHostClient
     session_states: RuntimeSessionStateCache
     active_turn_ids: dict[str, str]
     timeline: CodexTimelineAccumulator
@@ -75,6 +77,14 @@ class CodexTurnLifecycleHandler:
             reason=method.rsplit("/", maxsplit=1)[-1],
             source=f"codex.{method}",
         )
+        await self.host.session_turn_ended(
+            session_id=session_id,
+            runtime="codex",
+            external_session_id=thread_id,
+            turn_id=turn_id,
+            outcome=method.rsplit("/", maxsplit=1)[-1],
+            metadata={"source": f"codex.{method}"},
+        )
         await self.session_states.update(
             session_id=session_id,
             external_session_id=thread_id,
@@ -119,6 +129,14 @@ class CodexTurnLifecycleHandler:
             source="codex.turn/failed",
         )
         await self.notice_handler.publish_execution_error_notice(notice)
+        await self.host.session_turn_ended(
+            session_id=session_id,
+            runtime="codex",
+            external_session_id=thread_id,
+            turn_id=turn_id,
+            outcome="failed",
+            metadata={"source": "codex.turn/failed"},
+        )
         await self.session_states.update(
             session_id=session_id,
             external_session_id=thread_id,

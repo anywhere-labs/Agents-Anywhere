@@ -468,6 +468,18 @@ class ClaudeTurnRunner:
     ) -> None:
         reason = terminal.reason or execution.interrupt_reason
         if terminal.status == "failed":
+            metadata = {
+                "source": "claude.turn.failed",
+                **({"terminalReason": reason} if reason else {}),
+            }
+            await self.host.session_turn_ended(
+                session_id=session.session_id,
+                runtime="claude",
+                external_session_id=session.external_session_id,
+                turn_id=execution.turn_id,
+                outcome="failed",
+                metadata=metadata,
+            )
             await self.notifications.session_state.session_state_update(
                 session,
                 "error",
@@ -475,22 +487,28 @@ class ClaudeTurnRunner:
                     "code": terminal.error_code or "claude_turn_failed",
                     "message": terminal.error_message or "Claude turn failed",
                 },
-                metadata={
-                    "source": "claude.turn.failed",
-                    **({"terminalReason": reason} if reason else {}),
-                },
+                metadata=metadata,
             )
             return
         source = "claude.turn.completed"
         if terminal.status == "interrupted":
             source = execution.interrupt_source or "claude.turn.interrupted"
+        metadata = {
+            "source": source,
+            **({"terminalReason": reason} if reason else {}),
+        }
+        await self.host.session_turn_ended(
+            session_id=session.session_id,
+            runtime="claude",
+            external_session_id=session.external_session_id,
+            turn_id=execution.turn_id,
+            outcome=terminal.status,
+            metadata=metadata,
+        )
         await self.notifications.session_state.session_state_update(
             session,
             "idle",
-            metadata={
-                "source": source,
-                **({"terminalReason": reason} if reason else {}),
-            },
+            metadata=metadata,
         )
 
     async def _update_external_session_id(
