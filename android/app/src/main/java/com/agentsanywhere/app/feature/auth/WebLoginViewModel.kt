@@ -13,7 +13,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
 sealed interface WebLoginState {
-    data class HostChoice(val officialUrlMissing: Boolean = false) : WebLoginState
+    data class HostChoice(val officialServiceAvailable: Boolean) : WebLoginState
     data class ServerEntry(val serverUrl: String, val errorMessage: String? = null) : WebLoginState
     data class Checking(val serverUrl: String) : WebLoginState
     data class WebLogin(val session: WebLoginSession) : WebLoginState
@@ -31,7 +31,7 @@ class WebLoginViewModel(application: Application) : AndroidViewModel(application
     private var savedWebViewState: Bundle? = null
     private var webLoginReturnTarget = WebLoginReturnTarget.ServerEntry
 
-    var state: WebLoginState by mutableStateOf(WebLoginState.HostChoice())
+    var state: WebLoginState by mutableStateOf(hostChoiceState())
         private set
 
     fun selectSelfHost() {
@@ -43,7 +43,7 @@ class WebLoginViewModel(application: Application) : AndroidViewModel(application
     fun startOfficialLogin() {
         val officialUrl = AppConfig.OFFICIAL_WEB_LOGIN_URL.trim()
         if (officialUrl.isBlank()) {
-            state = WebLoginState.HostChoice(officialUrlMissing = true)
+            state = hostChoiceState()
             return
         }
         start(officialUrl, WebLoginReturnTarget.HostChoice)
@@ -52,7 +52,7 @@ class WebLoginViewModel(application: Application) : AndroidViewModel(application
     fun returnToHostChoice() {
         operation?.cancel()
         savedWebViewState = null
-        state = WebLoginState.HostChoice()
+        state = hostChoiceState()
     }
 
     fun updateServerUrl(serverUrl: String) {
@@ -127,7 +127,7 @@ class WebLoginViewModel(application: Application) : AndroidViewModel(application
     fun resetForSignedOutEntry() {
         operation?.cancel()
         savedWebViewState = null
-        state = WebLoginState.HostChoice()
+        state = hostChoiceState()
     }
 
     fun takeWebViewState(session: WebLoginSession): Bundle? {
@@ -163,6 +163,10 @@ class WebLoginViewModel(application: Application) : AndroidViewModel(application
         is WebLoginState.Exchanging -> current.session
         else -> null
     }
+
+    private fun hostChoiceState() = WebLoginState.HostChoice(
+        officialServiceAvailable = AppConfig.OFFICIAL_WEB_LOGIN_URL.isNotBlank(),
+    )
 
     private enum class WebLoginReturnTarget {
         ServerEntry,

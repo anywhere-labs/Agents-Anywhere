@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -22,12 +23,14 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -42,7 +45,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -63,8 +65,10 @@ import com.agentsanywhere.app.ui.designsystem.ScreenScaffold
 import com.agentsanywhere.app.ui.designsystem.noRippleClickable
 import com.composables.icons.lucide.Cloud
 import com.composables.icons.lucide.Lucide
+import com.composables.icons.lucide.ArrowLeft
+import com.composables.icons.lucide.ChevronRight
+import com.composables.icons.lucide.Info
 import com.composables.icons.lucide.Server
-import com.composables.icons.lucide.ServerCog
 
 @Composable
 fun WebLoginHostScreen(
@@ -92,7 +96,7 @@ fun WebLoginHostScreen(
 
     when (state) {
         is WebLoginState.HostChoice -> HostChoiceScreen(
-            officialUrlMissing = state.officialUrlMissing,
+            officialServiceAvailable = state.officialServiceAvailable,
             onSelfHost = viewModel::selectSelfHost,
             onOfficial = viewModel::startOfficialLogin,
             onBack = { navigate(AppDestination.LoginMethods) },
@@ -132,7 +136,7 @@ fun WebLoginHostScreen(
 
 @Composable
 private fun HostChoiceScreen(
-    officialUrlMissing: Boolean,
+    officialServiceAvailable: Boolean,
     onSelfHost: () -> Unit,
     onOfficial: () -> Unit,
     onBack: () -> Unit,
@@ -144,45 +148,70 @@ private fun HostChoiceScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(horizontal = 32.dp)
-                .padding(top = 74.dp, bottom = 30.dp),
-            verticalArrangement = Arrangement.spacedBy(30.dp),
+                .padding(top = 54.dp, bottom = 30.dp),
         ) {
-            BackPill(label = stringResource(R.string.common_back), onClick = onBack)
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            IconButton(
+                onClick = onBack,
+                modifier = Modifier.size(44.dp),
+            ) {
+                Icon(
+                    imageVector = Lucide.ArrowLeft,
+                    contentDescription = stringResource(R.string.common_back),
+                    tint = colors.ink,
+                    modifier = Modifier.size(24.dp),
+                )
+            }
+            Spacer(Modifier.height(36.dp))
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(
                     text = stringResource(R.string.auth_host_choice_title),
                     color = colors.ink,
-                    fontSize = 24.sp,
-                    fontWeight = FontWeight.Medium,
-                    lineHeight = 28.sp,
+                    fontSize = 28.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    lineHeight = 34.sp,
                 )
-                AAWordmark(color = colors.ink, fontSize = 42.sp, lineHeight = 44.sp)
                 Text(
                     text = stringResource(R.string.auth_host_choice_description),
                     color = colors.muted,
-                    fontSize = 14.sp,
-                    lineHeight = 19.sp,
+                    fontSize = 15.sp,
+                    lineHeight = 21.sp,
                 )
             }
-            if (officialUrlMissing) {
-                AuthErrorNotice(message = stringResource(R.string.auth_official_url_missing))
-            }
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Spacer(Modifier.height(30.dp))
+            Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 HostChoiceButton(
-                    label = stringResource(R.string.auth_self_host_yes),
-                    icon = Lucide.ServerCog,
-                    onClick = onSelfHost,
-                )
-                HostChoiceButton(
-                    label = stringResource(R.string.auth_self_host_no),
+                    title = stringResource(R.string.auth_official_service),
+                    description = stringResource(R.string.auth_official_service_description),
                     icon = Lucide.Cloud,
+                    badge = if (officialServiceAvailable) {
+                        stringResource(R.string.auth_recommended)
+                    } else {
+                        stringResource(R.string.auth_coming_soon)
+                    },
+                    enabled = officialServiceAvailable,
                     onClick = onOfficial,
                 )
+                HostChoiceButton(
+                    title = stringResource(R.string.auth_self_host_service),
+                    description = stringResource(R.string.auth_self_host_service_description),
+                    icon = Lucide.Server,
+                    onClick = onSelfHost,
+                )
+            }
+            Spacer(Modifier.height(22.dp))
+            Row(verticalAlignment = Alignment.Top) {
+                Icon(
+                    imageVector = Lucide.Info,
+                    contentDescription = null,
+                    tint = colors.faint,
+                    modifier = Modifier.size(17.dp),
+                )
                 Text(
+                    modifier = Modifier.padding(start = 9.dp),
                     text = stringResource(R.string.auth_host_choice_hint),
                     color = colors.muted,
                     fontSize = 13.sp,
-                    lineHeight = 18.sp,
+                    lineHeight = 19.sp,
                 )
             }
         }
@@ -190,30 +219,76 @@ private fun HostChoiceScreen(
 }
 
 @Composable
-private fun HostChoiceButton(label: String, icon: ImageVector, onClick: () -> Unit) {
+private fun HostChoiceButton(
+    title: String,
+    description: String,
+    icon: ImageVector,
+    badge: String? = null,
+    enabled: Boolean = true,
+    onClick: () -> Unit,
+) {
     val colors = LocalAAColors.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(62.dp)
-            .clip(RoundedCornerShape(17.dp))
+            .height(88.dp)
+            .clip(RoundedCornerShape(14.dp))
             .background(colors.raisedSurface)
-            .border(1.2.dp, colors.border, RoundedCornerShape(17.dp))
-            .noRippleClickable(onClick = onClick)
+            .border(1.2.dp, colors.border, RoundedCornerShape(14.dp))
+            .then(if (enabled) Modifier.noRippleClickable(onClick = onClick) else Modifier)
             .padding(horizontal = 18.dp),
-        horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(icon, contentDescription = null, tint = colors.onRaisedSurface, modifier = Modifier.size(22.dp))
-        Text(
-            modifier = Modifier.padding(start = 10.dp),
-            text = label,
-            color = colors.onRaisedSurface,
-            fontSize = 15.3.sp,
-            fontWeight = FontWeight.SemiBold,
-            lineHeight = 18.sp,
-            textAlign = TextAlign.Center,
-        )
+        Box(
+            modifier = Modifier
+                .size(42.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(colors.subtle),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(icon, contentDescription = null, tint = colors.ink, modifier = Modifier.size(21.dp))
+        }
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .padding(start = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(3.dp),
+        ) {
+            Text(
+                text = title,
+                color = if (enabled) colors.ink else colors.muted,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.SemiBold,
+                lineHeight = 20.sp,
+            )
+            Text(
+                text = description,
+                color = colors.muted,
+                fontSize = 12.5.sp,
+                lineHeight = 17.sp,
+            )
+        }
+        if (badge != null) {
+            Text(
+                text = badge,
+                color = if (enabled) colors.inkSoft else colors.faint,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.SemiBold,
+                lineHeight = 15.sp,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(colors.subtle)
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+            )
+        } else {
+            Spacer(Modifier.width(10.dp))
+            Icon(
+                imageVector = Lucide.ChevronRight,
+                contentDescription = null,
+                tint = colors.faint,
+                modifier = Modifier.size(19.dp),
+            )
+        }
     }
 }
 
