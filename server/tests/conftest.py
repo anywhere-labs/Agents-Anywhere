@@ -32,7 +32,7 @@ _API_ROOTS = (
     "/ws-ticket",
 )
 _TRUNCATE_SQL = (
-    "TRUNCATE TABLE android_app_releases, dashboard_daily_metrics, dashboard_user_daily_facts, dashboard_settings, "
+    "TRUNCATE TABLE app_releases, dashboard_daily_metrics, dashboard_user_daily_facts, dashboard_settings, "
     "timeline_items, session_active_runs, "
     "sessions, "
     "connector_runtime_catalogs, connector_protocol_capabilities, device_runtimes, "

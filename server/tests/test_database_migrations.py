@@ -66,7 +66,7 @@ def test_empty_database_upgrades_to_current_schema(tmp_path) -> None:
     engine = create_engine(f"sqlite:///{path}")
     try:
         tables = set(inspect(engine).get_table_names())
-        assert {"alembic_version", "android_app_releases", "device_runtimes", "sessions"}.issubset(
+        assert {"alembic_version", "app_releases", "device_runtimes", "sessions"}.issubset(
             tables
         )
         assert "approvals" not in tables
