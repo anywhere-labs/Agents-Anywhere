@@ -6178,7 +6178,11 @@ def test_connector_ingest_dsh_hidden_state_is_reversible_without_archiving(tmp_p
     assert hidden_snapshot.json()["session"]["archived"] is False
     listed_ids = {
         session.id
-        for session in asyncio.run(client.app.state.store.list_sessions(user_id=ADMIN_USER))
+        for session in asyncio.run(
+            client.app.state.store.list_sessions(
+                user_id=ADMIN_USER,
+            )
+        )
     }
     assert "sess_dsh_hidden" not in listed_ids
 
@@ -6208,7 +6212,12 @@ def test_connector_ingest_dsh_hidden_state_is_reversible_without_archiving(tmp_p
     assert visible_snapshot.json()["session"]["archived"] is False
     listed_ids = {
         session.id
-        for session in asyncio.run(client.app.state.store.list_sessions(user_id=ADMIN_USER))
+        for session in asyncio.run(
+            client.app.state.store.list_sessions(
+                user_id=ADMIN_USER,
+                archived=True,
+            )
+        )
     }
     assert "sess_dsh_hidden" in listed_ids
 
@@ -6447,7 +6456,12 @@ def test_dsh_complete_inventory_tracks_missing_without_changing_user_archive(tmp
 
     listed_ids = {
         session.id
-        for session in asyncio.run(client.app.state.store.list_sessions(user_id=ADMIN_USER))
+        for session in asyncio.run(
+            client.app.state.store.list_sessions(
+                user_id=ADMIN_USER,
+                archived=True,
+            )
+        )
     }
     assert "sess_dsh_kept" in listed_ids
     assert "sess_dsh_missing" not in listed_ids
@@ -6493,11 +6507,20 @@ def test_dsh_complete_inventory_tracks_missing_without_changing_user_archive(tmp
     )
     assert reappeared.status_code == 200, reappeared.text
 
-    listed_ids = {
+    active_ids = {
         session.id
         for session in asyncio.run(client.app.state.store.list_sessions(user_id=ADMIN_USER))
     }
-    assert {"sess_dsh_kept", "sess_dsh_missing"}.issubset(listed_ids)
+    archived_ids = {
+        session.id
+        for session in asyncio.run(
+            client.app.state.store.list_sessions(
+                user_id=ADMIN_USER,
+                archived=True,
+            )
+        )
+    }
+    assert {"sess_dsh_kept", "sess_dsh_missing"}.issubset(active_ids | archived_ids)
     kept = client.get("/sessions/sess_dsh_kept/snapshot", headers=headers)
     assert kept.status_code == 200, kept.text
     assert kept.json()["session"]["archived"] is True
@@ -9322,7 +9345,21 @@ def _create_extra_session(
 
 
 def _sessions_by_id(client: TestClient, headers: dict[str, str]) -> dict[str, Any]:
-    return {s["id"]: s for s in client.get("/sessions", headers=headers).json()["sessions"]}
+    sessions: dict[str, Any] = {}
+    for archived in (False, True):
+        cursor = None
+        while True:
+            params = {"archived": archived, "limit": 100}
+            if cursor is not None:
+                params["cursor"] = cursor
+            response = client.get("/sessions", headers=headers, params=params)
+            response.raise_for_status()
+            body = response.json()
+            sessions.update({session["id"]: session for session in body["sessions"]})
+            cursor = body["nextCursor"]
+            if not body["hasMore"]:
+                break
+    return sessions
 
 
 def test_archive_endpoint_archives_owned_sessions(tmp_path):
