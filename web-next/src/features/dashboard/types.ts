@@ -691,7 +691,6 @@ export type AppReleaseView = {
   versionCode: number;
   versionName: string;
   downloadUrl: string | null;
-  sha256: string | null;
   published: boolean;
   createdAt: string;
   updatedAt: string;
@@ -707,7 +706,6 @@ export type AppReleaseCreateRequest = {
   versionCode: number;
   versionName: string;
   downloadUrl: string;
-  sha256?: string | null;
   published: boolean;
 };
 

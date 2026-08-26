@@ -1076,7 +1076,6 @@ class AppUpdateCheckResponse(BaseModel):
     latestVersionCode: int
     latestVersionName: str
     downloadUrl: str | None = None
-    sha256: str | None = None
 
 
 class AppReleaseCreateRequest(BaseModel):
@@ -1084,7 +1083,6 @@ class AppReleaseCreateRequest(BaseModel):
     versionCode: int = Field(ge=1)
     versionName: str = Field(min_length=1, max_length=64, pattern=r".*\S.*")
     downloadUrl: str = Field(min_length=1, max_length=2048, pattern=r"^https?://\S+$")
-    sha256: str | None = Field(default=None, pattern=r"^[0-9a-fA-F]{64}$")
     published: bool = True
 
 
@@ -1093,7 +1091,6 @@ class AppReleaseView(BaseModel):
     versionCode: int
     versionName: str
     downloadUrl: str | None = None
-    sha256: str | None = None
     published: bool
     createdAt: str
     updatedAt: str

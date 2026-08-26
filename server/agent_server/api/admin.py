@@ -28,7 +28,6 @@ def _release_view(release: dict[str, object]) -> AppReleaseView:
         versionCode=int(release["version_code"]),
         versionName=str(release["version_name"]),
         downloadUrl=str(release["download_url"]) if release["download_url"] else None,
-        sha256=str(release["sha256"]) if release["sha256"] else None,
         published=bool(release["published"]),
         createdAt=str(release["created_at"]),
         updatedAt=str(release["updated_at"]),
@@ -58,7 +57,6 @@ async def create_client_release(
             version_code=payload.versionCode,
             version_name=payload.versionName.strip(),
             download_url=payload.downloadUrl.strip(),
-            sha256=payload.sha256.lower() if payload.sha256 else None,
             published=payload.published,
         )
     except ValueError as exc:

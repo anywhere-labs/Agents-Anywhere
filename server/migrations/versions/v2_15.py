@@ -36,20 +36,39 @@ def upgrade() -> None:
 
     inspector = sa.inspect(op.get_bind())
     if "android_app_releases" in inspector.get_table_names():
-        op.execute(
-            sa.text(
-                """
-                INSERT INTO app_releases (
-                    platform, version_code, version_name, download_url,
-                    sha256, published, created_at, updated_at
+        app_release_columns = {
+            column["name"] for column in inspector.get_columns("app_releases")
+        }
+        if "sha256" in app_release_columns:
+            op.execute(
+                sa.text(
+                    """
+                    INSERT INTO app_releases (
+                        platform, version_code, version_name, download_url,
+                        sha256, published, created_at, updated_at
+                    )
+                    SELECT
+                        'android', version_code, version_name, download_url,
+                        sha256, published, created_at, updated_at
+                    FROM android_app_releases
+                    """
                 )
-                SELECT
-                    'android', version_code, version_name, download_url,
-                    sha256, published, created_at, updated_at
-                FROM android_app_releases
-                """
             )
-        )
+        else:
+            op.execute(
+                sa.text(
+                    """
+                    INSERT INTO app_releases (
+                        platform, version_code, version_name, download_url,
+                        published, created_at, updated_at
+                    )
+                    SELECT
+                        'android', version_code, version_name, download_url,
+                        published, created_at, updated_at
+                    FROM android_app_releases
+                    """
+                )
+            )
         op.drop_table("android_app_releases")
 
 

@@ -1248,8 +1248,6 @@
         "createFailed": "创建发布记录失败。",
         "dialogTitle": "新增发布",
         "dialogDescription": "创建客户端版本记录，已发布的最新版本会被更新检查接口使用。",
-        "sha256Placeholder": "可选，64 位十六进制摘要",
-        "sha256Description": "Android 安装包建议填写，用于下载后完整性校验。",
         "publishNow": "立即发布",
         "cancel": "取消",
         "confirmCreate": "创建发布",

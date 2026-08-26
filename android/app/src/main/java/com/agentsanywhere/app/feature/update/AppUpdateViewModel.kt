@@ -11,7 +11,6 @@ import com.agentsanywhere.app.api.AppUpdatesApi
 import com.agentsanywhere.app.config.AppConfig
 import java.io.File
 import java.io.FileOutputStream
-import java.security.MessageDigest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -105,26 +104,6 @@ class AppUpdateViewModel(application: Application) : AndroidViewModel(applicatio
             val body = response.body ?: error("Update download was empty.")
             FileOutputStream(target).use { output -> body.byteStream().use { it.copyTo(output) } }
         }
-        release.sha256?.let { expected ->
-            val actual = target.sha256()
-            if (!actual.equals(expected, ignoreCase = true)) {
-                target.delete()
-                error("Update checksum verification failed.")
-            }
-        }
         return target
     }
-}
-
-private fun File.sha256(): String {
-    val digest = MessageDigest.getInstance("SHA-256")
-    inputStream().use { input ->
-        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-        while (true) {
-            val count = input.read(buffer)
-            if (count < 0) break
-            digest.update(buffer, 0, count)
-        }
-    }
-    return digest.digest().joinToString("") { "%02x".format(it) }
 }

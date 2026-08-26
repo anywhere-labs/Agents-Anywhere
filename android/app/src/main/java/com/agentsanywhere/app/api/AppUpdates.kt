@@ -6,7 +6,6 @@ data class AndroidAppRelease(
     val versionCode: Int,
     val versionName: String,
     val downloadUrl: String,
-    val sha256: String?,
 )
 
 class AppUpdatesApi(private val client: ApiClient = ApiClient()) {
@@ -22,7 +21,6 @@ class AppUpdatesApi(private val client: ApiClient = ApiClient()) {
             versionCode = payload.requirePositiveInt("latestVersionCode"),
             versionName = payload.requireText("latestVersionName"),
             downloadUrl = downloadUrl,
-            sha256 = payload.optString("sha256").trim().takeIf(String::isNotBlank),
         )
     }
 }

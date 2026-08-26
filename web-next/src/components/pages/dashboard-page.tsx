@@ -57,7 +57,7 @@ import {
   type ChartConfig,
 } from "@/components/ui/chart"
 import { Input } from "@/components/ui/input"
-import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field"
+import { Field, FieldGroup, FieldLabel } from "@/components/ui/field"
 import {
   Select,
   SelectContent,
@@ -732,7 +732,6 @@ const EMPTY_RELEASE_DRAFT: AppReleaseCreateRequest = {
   versionCode: 1,
   versionName: "",
   downloadUrl: "",
-  sha256: null,
   published: true,
 }
 
@@ -774,7 +773,6 @@ function ReleasesTab() {
         ...draft,
         versionName: draft.versionName.trim(),
         downloadUrl: draft.downloadUrl.trim(),
-        sha256: draft.sha256?.trim() || null,
       })
       toast.success(t("created"))
       setDraft(EMPTY_RELEASE_DRAFT)
@@ -939,22 +937,6 @@ function ReleasesTab() {
                     setDraft((current) => ({ ...current, downloadUrl }))
                   }}
                 />
-              </Field>
-              <Field>
-                <FieldLabel htmlFor="release-sha256">SHA-256</FieldLabel>
-                <Input
-                  id="release-sha256"
-                  minLength={64}
-                  maxLength={64}
-                  pattern="[0-9a-fA-F]{64}"
-                  placeholder={t("sha256Placeholder")}
-                  value={draft.sha256 ?? ""}
-                  onChange={(event) => {
-                    const sha256 = event.currentTarget.value
-                    setDraft((current) => ({ ...current, sha256 }))
-                  }}
-                />
-                <FieldDescription>{t("sha256Description")}</FieldDescription>
               </Field>
               <Field orientation="horizontal">
                 <FieldLabel htmlFor="release-published">{t("publishNow")}</FieldLabel>

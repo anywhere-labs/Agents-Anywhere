@@ -1248,8 +1248,6 @@
         "createFailed": "Failed to create release.",
         "dialogTitle": "New release",
         "dialogDescription": "Create a client version record. The latest published version is used for update checks.",
-        "sha256Placeholder": "Optional 64-character hexadecimal digest",
-        "sha256Description": "Recommended for Android packages to verify download integrity.",
         "publishNow": "Publish now",
         "cancel": "Cancel",
         "confirmCreate": "Create release",

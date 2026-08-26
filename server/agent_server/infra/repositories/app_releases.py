@@ -41,7 +41,6 @@ class AppReleaseRepositoryMixin:
         version_code: int,
         version_name: str,
         download_url: str,
-        sha256: str | None,
         published: bool,
     ) -> dict[str, Any]:
         now = utc_now()
@@ -50,7 +49,6 @@ class AppReleaseRepositoryMixin:
             "version_code": version_code,
             "version_name": version_name,
             "download_url": download_url,
-            "sha256": sha256,
             "published": int(published),
             "created_at": now,
             "updated_at": now,

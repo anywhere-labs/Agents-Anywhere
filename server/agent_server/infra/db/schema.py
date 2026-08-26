@@ -23,7 +23,6 @@ app_releases = Table(
     Column("version_code", Integer, nullable=False),
     Column("version_name", Text, nullable=False),
     Column("download_url", Text),
-    Column("sha256", Text),
     Column("published", Integer, nullable=False, server_default="0"),
     Column("created_at", Text, nullable=False),
     Column("updated_at", Text, nullable=False),

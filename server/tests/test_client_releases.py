@@ -34,7 +34,6 @@ def test_update_check_uses_latest_published_release_for_platform(tmp_path) -> No
                         "version_code": 7,
                         "version_name": "0.1.8",
                         "download_url": "https://downloads.example.com/app-0.1.8.apk",
-                        "sha256": "a" * 64,
                         "published": 1,
                         "created_at": "2026-08-26T00:00:00Z",
                         "updated_at": "2026-08-26T00:00:00Z",
@@ -44,7 +43,6 @@ def test_update_check_uses_latest_published_release_for_platform(tmp_path) -> No
                         "version_code": 20,
                         "version_name": "0.2.0",
                         "download_url": "https://downloads.example.com/app-0.2.0.dmg",
-                        "sha256": None,
                         "published": 1,
                         "created_at": "2026-08-26T00:00:00Z",
                         "updated_at": "2026-08-26T00:00:00Z",
@@ -63,7 +61,6 @@ def test_update_check_uses_latest_published_release_for_platform(tmp_path) -> No
         "latestVersionCode": 7,
         "latestVersionName": "0.1.8",
         "downloadUrl": "https://downloads.example.com/app-0.1.8.apk",
-        "sha256": "a" * 64,
     }
 
 

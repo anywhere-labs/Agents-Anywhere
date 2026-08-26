@@ -28,5 +28,4 @@ async def check_app_update(
         latestVersionCode=latest_version_code,
         latestVersionName=str(release["version_name"]),
         downloadUrl=download_url,
-        sha256=(release["sha256"] or "").strip() or None,
     )
