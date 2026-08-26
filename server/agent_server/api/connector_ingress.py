@@ -65,6 +65,79 @@ from agent_server.services.effective_capabilities import (
 router = APIRouter(tags=["connector-ingress"])
 
 
+class _ConnectorNotificationPump:
+    def __init__(
+        self,
+        connector_id: str,
+        ingest_service: ConnectorIngestService,
+    ) -> None:
+        self._connector_id = connector_id
+        self._ingest_service = ingest_service
+        self._queue: asyncio.Queue[tuple[str, dict[str, Any]] | None] = asyncio.Queue()
+        self._task: asyncio.Task[None] | None = None
+
+    @property
+    def task(self) -> asyncio.Task[None]:
+        if self._task is None:
+            raise RuntimeError("connector notification pump is not started")
+        return self._task
+
+    def start(self) -> None:
+        if self._task is not None:
+            raise RuntimeError("connector notification pump is already started")
+        self._task = asyncio.create_task(
+            self._run(),
+            name=f"connector-notifications-{self._connector_id}",
+        )
+
+    def enqueue_message(self, message: dict[str, Any]) -> None:
+        if self.task.done():
+            self.task.result()
+            raise RuntimeError("connector notification pump stopped unexpectedly")
+        method = message.get("method")
+        params = message.get("params") or {}
+        if isinstance(method, str) and isinstance(params, dict):
+            self._queue.put_nowait((method, params))
+
+    async def close(self) -> None:
+        if self._task is None:
+            return
+        if not self._task.done():
+            self._queue.put_nowait(None)
+        await asyncio.gather(self._task, return_exceptions=True)
+
+    async def _run(self) -> None:
+        try:
+            while True:
+                notification = await self._queue.get()
+                if notification is None:
+                    return
+                method, params = notification
+                started_at = time.monotonic()
+                await self._ingest_service.handle_notification_message(
+                    connector_id=self._connector_id,
+                    method=method,
+                    params=params,
+                )
+                elapsed_ms = (time.monotonic() - started_at) * 1000
+                if method == "timeline.itemUpsert" or elapsed_ms >= 100:
+                    logger.info(
+                        "connector notification handled connector_id={} method={} session_id={} elapsed_ms={:.1f}",
+                        self._connector_id,
+                        method,
+                        params.get("sessionId"),
+                        elapsed_ms,
+                    )
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - the socket reader observes task failure
+            logger.exception(
+                "connector notification worker failed connector_id={}",
+                self._connector_id,
+            )
+            raise
+
+
 @router.post("/connector/auth", response_model=ConnectorAuthResponse)
 async def connector_auth(
     authorization: str = Header(..., alias="Authorization"),
@@ -221,6 +294,8 @@ async def connector_ws(
             await manager.unregister(connector_id, connection)
 
     negotiation_task: asyncio.Task[None] | None = None
+    reader_task: asyncio.Task[None] | None = None
+    notification_pump: _ConnectorNotificationPump | None = None
     try:
         await publish_dashboard_changed(
             db,
@@ -242,6 +317,8 @@ async def connector_ws(
             manager,
             websocket.app.state.session_runtime_state_cache,
         )
+        notification_pump = _ConnectorNotificationPump(connector_id, ingest_service)
+        notification_pump.start()
         negotiation_task = asyncio.create_task(
             _negotiate_runtime_control(
                 runtime_service,
@@ -251,20 +328,36 @@ async def connector_ws(
             name=f"runtime-control-negotiate-{connection.connection_id}",
         )
         logger.info("connector connected: {}", connector_id)
-        while True:
-            message = await websocket.receive_json()
-            if not await manager.touch(connector_id, connection):
-                break
-            await _handle_connector_message(
-                connector_id, message, manager, ingest_service
-            )
+        reader_task = asyncio.create_task(
+            _read_connector_messages(
+                websocket,
+                connector_id,
+                connection,
+                manager,
+                notification_pump,
+            ),
+            name=f"connector-reader-{connection.connection_id}",
+        )
+        done, _pending = await asyncio.wait(
+            {reader_task, notification_pump.task},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        if notification_pump.task in done:
+            await notification_pump.task
+            raise RuntimeError("connector notification worker stopped unexpectedly")
+        await reader_task
     except WebSocketDisconnect:
         logger.info("connector disconnected: {}", connector_id)
     finally:
         await manager.unregister(connector_id, connection)
+        if reader_task is not None and not reader_task.done():
+            reader_task.cancel()
+            await asyncio.gather(reader_task, return_exceptions=True)
         if negotiation_task is not None:
             negotiation_task.cancel()
             await asyncio.gather(negotiation_task, return_exceptions=True)
+        if notification_pump is not None:
+            await notification_pump.close()
         removed_terminals = await broker.remove_ephemeral_for_connector(
             connector_id,
             connection_id=connection.connection_id,
@@ -397,37 +490,22 @@ async def connector_terminal_relay_ws(
         await broker.detach_connector(terminal_id, websocket)
 
 
-async def _handle_connector_message(
+async def _read_connector_messages(
+    websocket: WebSocket,
     connector_id: str,
-    message: dict[str, Any],
+    connection: ConnectorConnection,
     manager: ConnectorRpcManager,
-    ingest_service: ConnectorIngestService,
+    notification_pump: _ConnectorNotificationPump,
 ) -> None:
-    message_type = message.get("type")
-    if message_type == "response":
-        manager.resolve_response(connector_id, message)
-        return
-    if message_type != "notification":
-        return
-
-    method = message.get("method")
-    params = message.get("params") or {}
-    if isinstance(method, str) and isinstance(params, dict):
-        started_at = time.monotonic()
-        await ingest_service.handle_notification_message(
-            connector_id=connector_id,
-            method=method,
-            params=params,
-        )
-        elapsed_ms = (time.monotonic() - started_at) * 1000
-        if method == "timeline.itemUpsert" or elapsed_ms >= 100:
-            logger.info(
-                "connector notification handled connector_id={} method={} session_id={} elapsed_ms={:.1f}",
-                connector_id,
-                method,
-                params.get("sessionId"),
-                elapsed_ms,
-            )
+    while True:
+        message = await websocket.receive_json()
+        if not await manager.touch(connector_id, connection):
+            return
+        message_type = message.get("type")
+        if message_type == "response":
+            manager.resolve_response(connector_id, message)
+        elif message_type == "notification":
+            notification_pump.enqueue_message(message)
 
 
 def _parse_connector_authorization(authorization: str) -> tuple[str, str]:
