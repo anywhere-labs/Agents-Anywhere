@@ -59,6 +59,7 @@ class SessionView(_ProtocolSnapshotExtensionModel):
     archivedAt: str | None = None
     unread: bool = False
     lastReadSeq: int = 0
+    latestTurnEndSeq: int = 0
     lastSyncedAt: str | None = None
     sourceObservedAt: str | None = None
     lastActivityAt: str | None = None

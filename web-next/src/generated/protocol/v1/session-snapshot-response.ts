@@ -79,6 +79,7 @@ export type Lastitemat = string | null
 export type Lastitemorderseq = number | null
 export type Lastreadseq = number
 export type Lastsyncedat = string | null
+export type Latestturnendseq = number
 export type Pinned = boolean
 export type Pinnedat = string | null
 export type Runtime3 = "codex" | "claude" | "opencode" | "acp" | "dsh"
@@ -253,6 +254,7 @@ export interface SessionView {
   lastItemOrderSeq?: Lastitemorderseq
   lastReadSeq?: Lastreadseq
   lastSyncedAt?: Lastsyncedat
+  latestTurnEndSeq?: Latestturnendseq
   pinned?: Pinned
   pinnedAt?: Pinnedat
   runtime: Runtime3

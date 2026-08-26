@@ -349,6 +349,7 @@ sessions = Table(
     Column("source_state_at", Text),
     Column("source_scan_token", Text),
     Column("last_read_seq", Integer, nullable=False, server_default="0"),
+    Column("latest_turn_end_seq", Integer, nullable=False, server_default="0"),
     Column("timeline_reset_seq", Integer, nullable=False, server_default="0"),
     Column("last_synced_at", Text),
     Column("source_observed_at", Text),

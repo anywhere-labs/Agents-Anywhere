@@ -209,6 +209,14 @@ class ConnectorNotificationRepository(
         user_id: str | None = None,
     ) -> SessionView: ...
 
+    async def record_session_turn_end(
+        self,
+        *,
+        session_id: str,
+        source_observed_at: str | None = None,
+        mark_read_on_change: bool = False,
+    ) -> SessionView: ...
+
     async def update_connector_preferences(
         self,
         connector_id: str,

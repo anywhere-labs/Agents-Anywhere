@@ -7308,6 +7308,128 @@ def test_connector_timeline_item_upsert_does_not_rearm_unread(tmp_path):
     assert session["lastReadSeq"] == session["updatedSeq"]
 
 
+def test_connector_turn_end_after_read_rearms_unread(tmp_path):
+    client = make_client(tmp_path)
+    _, access_token, session_id, headers = create_connector_and_session(client)
+    read_session = client.post("/sessions/read", headers=headers, json=[session_id]).json()["sessions"][0]
+    read_seq = read_session["lastReadSeq"]
+    assert read_session["unread"] is False
+    assert read_session["latestTurnEndSeq"] == 0
+
+    with client.websocket_connect(
+        "/connector/ws",
+        headers={"Authorization": f"Bearer {access_token}"},
+    ) as ws:
+        ws.send_json(
+            {
+                "type": "notification",
+                "method": "timeline.itemUpsert",
+                "params": {
+                    "sessionId": session_id,
+                    "item": {
+                        "id": "tl_turn_end_1",
+                        "sessionId": session_id,
+                        "turnId": "turn_1",
+                        "type": "turn.end",
+                        "status": "done",
+                        "role": None,
+                        "content": {"result": "completed"},
+                        "source": {
+                            "runtime": "codex",
+                            "sessionId": "thr_1",
+                            "turnId": "turn_1",
+                            "event": "turn/completed",
+                            "derivedKey": "turn-end",
+                        },
+                        "orderSeq": 1,
+                        "revision": 1,
+                        "contentHash": "sha256:turn-end-1",
+                    },
+                },
+            }
+        )
+
+        def read_sessions():
+            sessions = client.get("/sessions", headers=headers).json()["sessions"]
+            current = next(session for session in sessions if session["id"] == session_id)
+            return current if current["latestTurnEndSeq"] > read_seq else None
+
+        session = wait_for(read_sessions)
+
+    assert session["status"] == "idle"
+    assert session["unread"] is True
+    assert session["lastReadSeq"] == read_seq
+    assert session["latestTurnEndSeq"] == session["updatedSeq"]
+
+    read_session = client.post("/sessions/read", headers=headers, json=[session_id]).json()["sessions"][0]
+    assert read_session["unread"] is False
+    assert read_session["lastReadSeq"] >= read_session["latestTurnEndSeq"]
+
+
+def test_session_metadata_update_does_not_clear_unread_turn_end(tmp_path):
+    client = make_client(tmp_path)
+    _, access_token, session_id, headers = create_connector_and_session(client)
+    read_session = client.post("/sessions/read", headers=headers, json=[session_id]).json()["sessions"][0]
+    read_seq = read_session["lastReadSeq"]
+
+    with client.websocket_connect(
+        "/connector/ws",
+        headers={"Authorization": f"Bearer {access_token}"},
+    ) as ws:
+        ws.send_json(
+            {
+                "type": "notification",
+                "method": "timeline.itemUpsert",
+                "params": {
+                    "sessionId": session_id,
+                    "item": {
+                        "id": "tl_turn_end_1",
+                        "sessionId": session_id,
+                        "turnId": "turn_1",
+                        "type": "turn.end",
+                        "status": "done",
+                        "role": None,
+                        "content": {"result": "completed"},
+                        "source": {
+                            "runtime": "codex",
+                            "sessionId": "thr_1",
+                            "turnId": "turn_1",
+                            "event": "turn/completed",
+                            "derivedKey": "turn-end",
+                        },
+                        "orderSeq": 1,
+                        "revision": 1,
+                        "contentHash": "sha256:turn-end-1",
+                    },
+                },
+            }
+        )
+        wait_for(lambda: client.get("/sessions", headers=headers).json()["sessions"][0]["unread"])
+
+        ws.send_json(
+            {
+                "type": "notification",
+                "method": "session.updated",
+                "params": {
+                    "sessionId": session_id,
+                    "runtime": "codex",
+                    "title": "Renamed after turn end",
+                },
+            }
+        )
+
+        def read_sessions():
+            sessions = client.get("/sessions", headers=headers).json()["sessions"]
+            current = next(session for session in sessions if session["id"] == session_id)
+            return current if current["title"] == "Renamed after turn end" else None
+
+        session = wait_for(read_sessions)
+
+    assert session["unread"] is True
+    assert session["lastReadSeq"] == read_seq
+    assert session["latestTurnEndSeq"] > read_seq
+
+
 def test_timeline_sync_completed_at_drift_does_not_rearm_unread(tmp_path):
     client = make_client(tmp_path)
     _, access_token, session_id, headers = create_connector_and_session(client)

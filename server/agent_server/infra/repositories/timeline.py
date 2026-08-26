@@ -6,10 +6,10 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 
-from sqlalchemy import func, select, text, update
+from sqlalchemy import case, func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from agent_server.core.models import TimelineItem, TimelineItemIn
+from agent_server.core.models import SessionView, TimelineItem, TimelineItemIn
 from agent_server.core.timeline import (
     TimelineBatchWriteResult,
     TimelineItemWriteResult,
@@ -254,6 +254,32 @@ class TimelineRepositoryMixin:
             limit=limit,
         )
 
+    async def record_session_turn_end(
+        self,
+        *,
+        session_id: str,
+        source_observed_at: str | None = None,
+        mark_read_on_change: bool = False,
+    ) -> SessionView:
+        async with self._timeline_lock(session_id):
+            async with self._engine.begin() as conn:
+                await update_source_observed_at(
+                    conn,
+                    session_id=session_id,
+                    source_observed_at=source_observed_at,
+                )
+                updated_seq = await self._bump_session(
+                    conn,
+                    session_id,
+                    mark_read=mark_read_on_change,
+                )
+                await conn.execute(
+                    update(sessions_t)
+                    .where(sessions_t.c.id == session_id)
+                    .values(latest_turn_end_seq=updated_seq)
+                )
+        return await self.get_session(session_id)
+
     @asynccontextmanager
     async def timeline_writer_lock(self, session_id: str) -> AsyncIterator[None]:
         async with self._timeline_lock(session_id):
@@ -307,7 +333,13 @@ class TimelineRepositoryMixin:
             "updated_at": utc_now(),
         }
         if mark_read:
-            values["last_read_seq"] = next_seq
+            values["last_read_seq"] = case(
+                (
+                    sessions_t.c.latest_turn_end_seq <= sessions_t.c.last_read_seq,
+                    next_seq,
+                ),
+                else_=sessions_t.c.last_read_seq,
+            )
         row = (
             await conn.execute(
                 update(sessions_t)

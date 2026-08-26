@@ -150,6 +150,7 @@ function mapSession(session: RealSessionView): SessionView {
     archivedAt: session.archivedAt,
     unread: session.unread,
     lastReadSeq: session.lastReadSeq,
+    latestTurnEndSeq: session.latestTurnEndSeq,
     lastSyncedAt: session.lastSyncedAt,
     sourceObservedAt: session.sourceObservedAt,
     lastActivityAt: session.lastActivityAt,

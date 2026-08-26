@@ -574,6 +574,8 @@ class TimelineNotificationHandler:
         connector_id: str,
         params: dict[str, Any],
     ) -> IngestEffect:
+        if _timeline_item_type(params.get("item")) == "turn.end":
+            return await self._turn_end(connector_id, params)
         item = TimelineItemIn.model_validate(params["item"])
         runtime, runtime_id = await timeline_runtime_identity_from_params(
             self._store,
@@ -600,6 +602,32 @@ class TimelineNotificationHandler:
             session_id=session_id,
             item=result.item.model_dump(mode="json") if result.changed else None,
         )
+
+    async def _turn_end(
+        self,
+        connector_id: str,
+        params: dict[str, Any],
+    ) -> IngestEffect:
+        runtime, runtime_id = await timeline_runtime_identity_from_params(
+            self._store,
+            params,
+        )
+        session_id = await _resolve_timeline_session_id_by_external(
+            self._store,
+            connector_id,
+            params["sessionId"],
+            _timeline_item_external_session_id(params.get("item")),
+            runtime=runtime,
+            runtime_id=runtime_id,
+        )
+        if await _session_disabled(self._store, session_id):
+            return IngestEffect()
+        session = await self._store.record_session_turn_end(
+            session_id=session_id,
+            source_observed_at=params.get("sourceObservedAt"),
+            mark_read_on_change=False,
+        )
+        return IngestEffect(session_id=session.id, session_changed=True)
 
 
 class InteractionNotificationHandler:
@@ -862,6 +890,25 @@ async def _resolve_timeline_session_id(
         (item.source.sessionId for item in items if item.source.sessionId),
         None,
     )
+    return await _resolve_timeline_session_id_by_external(
+        store,
+        connector_id,
+        session_id,
+        external_session_id,
+        runtime=runtime,
+        runtime_id=runtime_id,
+    )
+
+
+async def _resolve_timeline_session_id_by_external(
+    store: ConnectorNotificationRepository,
+    connector_id: str,
+    session_id: str,
+    external_session_id: str | None,
+    *,
+    runtime: str,
+    runtime_id: str,
+) -> str:
     try:
         return await store.resolve_connector_session_id(
             connector_id=connector_id,
@@ -882,6 +929,20 @@ async def _resolve_timeline_session_id(
             runtime_id=runtime_id,
         )
         return session_id
+
+
+def _timeline_item_type(value: Any) -> str | None:
+    return value.get("type") if isinstance(value, dict) else None
+
+
+def _timeline_item_external_session_id(value: Any) -> str | None:
+    if not isinstance(value, dict):
+        return None
+    source = value.get("source")
+    if not isinstance(source, dict):
+        return None
+    session_id = source.get("sessionId")
+    return session_id if isinstance(session_id, str) else None
 
 
 def _v2_session_status(value: Any) -> SessionStatus | None:
