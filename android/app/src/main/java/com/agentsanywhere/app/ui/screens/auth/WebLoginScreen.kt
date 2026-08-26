@@ -14,13 +14,20 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -31,8 +38,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -50,8 +60,11 @@ import com.agentsanywhere.app.ui.designsystem.AuthErrorNotice
 import com.agentsanywhere.app.ui.designsystem.BackPill
 import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 import com.agentsanywhere.app.ui.designsystem.ScreenScaffold
+import com.agentsanywhere.app.ui.designsystem.noRippleClickable
+import com.composables.icons.lucide.Cloud
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Server
+import com.composables.icons.lucide.ServerCog
 
 @Composable
 fun WebLoginHostScreen(
@@ -70,7 +83,7 @@ fun WebLoginHostScreen(
             exchanging = state is WebLoginState.Exchanging,
             onCallback = viewModel::handleCallback,
             onWebError = viewModel::reportWebError,
-            onBack = viewModel::returnToServerEntry,
+            onBack = viewModel::returnFromWebLogin,
             takeSavedState = { viewModel.takeWebViewState(embeddedSession) },
             onSaveState = { viewModel.saveWebViewState(embeddedSession, it) },
         )
@@ -78,13 +91,19 @@ fun WebLoginHostScreen(
     }
 
     when (state) {
+        is WebLoginState.HostChoice -> HostChoiceScreen(
+            officialUrlMissing = state.officialUrlMissing,
+            onSelfHost = viewModel::selectSelfHost,
+            onOfficial = viewModel::startOfficialLogin,
+            onBack = { navigate(AppDestination.LoginMethods) },
+        )
         is WebLoginState.ServerEntry -> ServerEntryScreen(
             serverUrl = state.serverUrl,
             errorMessage = state.errorMessage,
             checking = false,
             onServerUrlChanged = viewModel::updateServerUrl,
             onContinue = viewModel::start,
-            onBack = { navigate(AppDestination.LoginMethods) },
+            onBack = viewModel::returnToHostChoice,
         )
         is WebLoginState.Checking -> ServerEntryScreen(
             serverUrl = state.serverUrl,
@@ -93,8 +112,7 @@ fun WebLoginHostScreen(
             onServerUrlChanged = {},
             onContinue = {},
             onBack = {
-                viewModel.returnToServerEntry()
-                navigate(AppDestination.LoginMethods)
+                viewModel.returnToHostChoice()
             },
         )
         is WebLoginState.WebLogin, is WebLoginState.Exchanging -> Unit
@@ -105,11 +123,97 @@ fun WebLoginHostScreen(
             onServerUrlChanged = viewModel::updateServerUrl,
             onContinue = viewModel::start,
             onBack = {
-                viewModel.returnToServerEntry()
-                navigate(AppDestination.LoginMethods)
+                viewModel.returnToHostChoice()
             },
         )
         WebLoginState.Success -> LaunchedEffect(Unit) { navigate(AppDestination.Sessions) }
+    }
+}
+
+@Composable
+private fun HostChoiceScreen(
+    officialUrlMissing: Boolean,
+    onSelfHost: () -> Unit,
+    onOfficial: () -> Unit,
+    onBack: () -> Unit,
+) {
+    val colors = LocalAAColors.current
+    BackHandler(onBack = onBack)
+    ScreenScaffold {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 32.dp)
+                .padding(top = 74.dp, bottom = 30.dp),
+            verticalArrangement = Arrangement.spacedBy(30.dp),
+        ) {
+            BackPill(label = stringResource(R.string.common_back), onClick = onBack)
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = stringResource(R.string.auth_host_choice_title),
+                    color = colors.ink,
+                    fontSize = 24.sp,
+                    fontWeight = FontWeight.Medium,
+                    lineHeight = 28.sp,
+                )
+                AAWordmark(color = colors.ink, fontSize = 42.sp, lineHeight = 44.sp)
+                Text(
+                    text = stringResource(R.string.auth_host_choice_description),
+                    color = colors.muted,
+                    fontSize = 14.sp,
+                    lineHeight = 19.sp,
+                )
+            }
+            if (officialUrlMissing) {
+                AuthErrorNotice(message = stringResource(R.string.auth_official_url_missing))
+            }
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                HostChoiceButton(
+                    label = stringResource(R.string.auth_self_host_yes),
+                    icon = Lucide.ServerCog,
+                    onClick = onSelfHost,
+                )
+                HostChoiceButton(
+                    label = stringResource(R.string.auth_self_host_no),
+                    icon = Lucide.Cloud,
+                    onClick = onOfficial,
+                )
+                Text(
+                    text = stringResource(R.string.auth_host_choice_hint),
+                    color = colors.muted,
+                    fontSize = 13.sp,
+                    lineHeight = 18.sp,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun HostChoiceButton(label: String, icon: ImageVector, onClick: () -> Unit) {
+    val colors = LocalAAColors.current
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(62.dp)
+            .clip(RoundedCornerShape(17.dp))
+            .background(colors.raisedSurface)
+            .border(1.2.dp, colors.border, RoundedCornerShape(17.dp))
+            .noRippleClickable(onClick = onClick)
+            .padding(horizontal = 18.dp),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, contentDescription = null, tint = colors.onRaisedSurface, modifier = Modifier.size(22.dp))
+        Text(
+            modifier = Modifier.padding(start = 10.dp),
+            text = label,
+            color = colors.onRaisedSurface,
+            fontSize = 15.3.sp,
+            fontWeight = FontWeight.SemiBold,
+            lineHeight = 18.sp,
+            textAlign = TextAlign.Center,
+        )
     }
 }
 
@@ -135,7 +239,7 @@ private fun ServerEntryScreen(
             BackPill(label = stringResource(R.string.common_back), onClick = onBack)
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text(
-                    text = stringResource(R.string.auth_enter_server),
+                    text = stringResource(R.string.auth_self_host_login_title),
                     color = colors.ink,
                     fontSize = 24.sp,
                     fontWeight = FontWeight.Medium,
