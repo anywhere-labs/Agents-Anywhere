@@ -438,7 +438,7 @@ class SessionRepositoryMixin:
         self,
         *,
         archived: bool,
-        limit: int = 30,
+        limit: int = 100,
         cursor: str | None = None,
         user_id: str | None = None,
     ) -> tuple[list[SessionView], bool, str | None]:
@@ -507,7 +507,7 @@ class SessionRepositoryMixin:
         self,
         *,
         archived: bool = False,
-        limit: int = 30,
+        limit: int = 100,
         cursor: str | None = None,
         user_id: str | None = None,
     ) -> list[SessionView]:

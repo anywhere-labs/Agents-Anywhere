@@ -465,8 +465,8 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       if (authSession?.accessToken) {
         const [connRes, activeRes, archivedRes] = await Promise.all([
           dashboardApi.listConnectors(authSession.accessToken),
-          dashboardApi.listSessions(authSession.accessToken, { archived: false, limit: 30 }),
-          dashboardApi.listSessions(authSession.accessToken, { archived: true, limit: 30 }),
+          dashboardApi.listSessions(authSession.accessToken, { archived: false, limit: 100 }),
+          dashboardApi.listSessions(authSession.accessToken, { archived: true, limit: 100 }),
         ])
         const nextConnectors = connRes.connectors.map(mapConnector)
         const nextSessions = sortSessionViews(
@@ -509,7 +509,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     try {
       const response = await dashboardApi.listSessions(token, {
         archived: false,
-        limit: 30,
+        limit: 100,
         cursor: page.nextCursor,
       })
       const incoming = response.sessions.map(mapSession)

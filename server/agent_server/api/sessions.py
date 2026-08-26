@@ -304,7 +304,7 @@ async def create_and_start_session(
 @router.get("")
 async def list_sessions(
     archived: bool = Query(default=False),
-    limit: int = Query(default=30, ge=1, le=100),
+    limit: int = Query(default=100, ge=1, le=100),
     cursor: str | None = Query(default=None, min_length=1),
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),

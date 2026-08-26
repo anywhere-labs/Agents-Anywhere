@@ -30,7 +30,7 @@ from agent_server.services.session_meta_projection import (
 from agent_server.services.session_runtime_state_cache import SessionRuntimeStateCache
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
-SESSION_PAGE_LIMIT = 30
+SESSION_PAGE_LIMIT = 100
 
 
 def _get_ws_tickets(conn: HTTPConnection) -> ClientWsTicketManager:

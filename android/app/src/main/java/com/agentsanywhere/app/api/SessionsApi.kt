@@ -12,7 +12,7 @@ class SessionsApi(
         serverUrl: String,
         authorizationToken: String,
         archived: Boolean,
-        limit: Int = 30,
+        limit: Int = 100,
         cursor: String? = null,
     ): RemoteSessionPage {
         val query = buildString {
