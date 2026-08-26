@@ -14,6 +14,7 @@ from connector.runtimes.codex.domain.pending_messages import (
 )
 from connector.runtimes.codex.sdk.events import CodexSdkEvent
 from connector.runtimes.codex.timeline.identity import (
+    client_message_item_id,
     next_turn_lane_position,
     turn_item_lane,
     turn_position_item_id,
@@ -41,9 +42,7 @@ class CodexTimelineAccumulator:
         self._projection_by_id: dict[str, codex_timeline.CodexTimelineProjection] = {}
         self._next_order = 0
         self._pending_messages = pending_messages
-        self._active_turn_positions: dict[
-            tuple[str, str], ActiveTurnPositions
-        ] = {}
+        self._active_turn_positions: dict[tuple[str, str], ActiveTurnPositions] = {}
 
     def begin_turn(self, external_session_id: str, turn_id: str) -> None:
         """Start bounded live-item position tracking for one active turn."""
@@ -94,24 +93,23 @@ class CodexTimelineAccumulator:
         external_session_id: str,
         event: CodexSdkEvent,
     ) -> RuntimeTimelineItem | None:
-        projection = (
-            codex_timeline.timeline_projection_from_sdk_event(event)
-            or codex_timeline.timeline_projection_from_event(event)
-        )
+        projection = codex_timeline.timeline_projection_from_sdk_event(
+            event
+        ) or codex_timeline.timeline_projection_from_event(event)
         if projection is None:
             return None
+        projection = self._attach_client_message_id(external_session_id, projection)
         projection = self._assign_live_turn_position(
             external_session_id=external_session_id,
             projection=projection,
-        )
-        projection = self._attach_client_message_id(
-            session_id, external_session_id, projection, fallback_index=0
         )
         projection = self.stabilize_projection_identity(
             external_session_id=external_session_id,
             projection=projection,
         )
-        item_id = projection.item_id(external_session_id=external_session_id, fallback_index=0)
+        item_id = projection.item_id(
+            external_session_id=external_session_id, fallback_index=0
+        )
         state = self._active_turn_state(external_session_id, projection.turn_id)
         item_key = live_projection_item_key(projection)
         previous = (
@@ -210,9 +208,7 @@ class CodexTimelineAccumulator:
         prepared: list[tuple[codex_timeline.CodexTimelineProjection, int]] = []
         index_by_id: dict[str, int] = {}
         for index, projection in enumerate(projections):
-            projection = self._attach_client_message_id(
-                session_id, external_session_id, projection, fallback_index=index
-            )
+            projection = self._attach_client_message_id(external_session_id, projection)
             projection = self.stabilize_projection_identity(
                 external_session_id=external_session_id,
                 projection=projection,
@@ -252,6 +248,17 @@ class CodexTimelineAccumulator:
     ) -> codex_timeline.CodexTimelineProjection:
         if (
             projection.platform_id is None
+            and projection.client_message_id_is_bound
+            and projection.client_message_id is not None
+        ):
+            return projection.with_platform_id(
+                client_message_item_id(
+                    external_session_id=external_session_id,
+                    client_message_id=projection.client_message_id,
+                )
+            )
+        if (
+            projection.platform_id is None
             and projection.turn_id is not None
             and projection.turn_position is not None
             and uses_turn_position_identity(
@@ -267,6 +274,17 @@ class CodexTimelineAccumulator:
                         projection.raw_type,
                         projection.effective_role(),
                     ),
+                )
+            )
+        if (
+            projection.platform_id is None
+            and projection.client_message_id is not None
+            and projection.effective_role() == "user"
+        ):
+            return projection.with_platform_id(
+                client_message_item_id(
+                    external_session_id=external_session_id,
+                    client_message_id=projection.client_message_id,
                 )
             )
         return projection
@@ -289,15 +307,8 @@ class CodexTimelineAccumulator:
         if item_key is not None:
             existing = state.position_by_item_key.get(item_key)
             if existing is not None:
-                lane, position = existing
-                return projection.with_turn_position(position).with_platform_id(
-                    turn_position_item_id(
-                        external_session_id=external_session_id,
-                        turn_id=projection.turn_id,
-                        lane=lane,
-                        position=position,
-                    )
-                )
+                _, position = existing
+                return projection.with_turn_position(position)
         lane = turn_item_lane(projection.raw_type, projection.effective_role())
         position = next_turn_lane_position(state.next_position_by_lane, lane)
         if item_key is not None:
@@ -348,37 +359,19 @@ class CodexTimelineAccumulator:
             session_id=session_id,
             order_seq=order_seq,
         )
-        if self._pending_messages is not None:
-            self._pending_messages.record_platform_item(
-                session_id=session_id,
-                external_session_id=external_session_id,
-                platform_item_id=platform_item.id,
-                native_item_id=projection.native_id,
-                client_message_id=projection.client_message_id,
-                derived_key=projection.derived_key(fallback_index),
-                raw_type=projection.raw_type,
-                role=projection.effective_role(),
-                turn_id=projection.turn_id,
-                text=projection.pending_message_text(),
-                attachments=projection.attachments,
-            )
         return platform_item
 
     def _attach_client_message_id(
         self,
-        session_id: str,
         external_session_id: str,
         projection: codex_timeline.CodexTimelineProjection,
-        fallback_index: int,
     ) -> codex_timeline.CodexTimelineProjection:
         if self._pending_messages is None:
             return projection
         match = self._pending_messages.attach_to_item(
-            session_id=session_id,
             external_session_id=external_session_id,
             native_item_id=projection.native_id,
             client_message_id=projection.client_message_id,
-            derived_key=projection.derived_key(fallback_index),
             raw_type=projection.raw_type,
             role=projection.effective_role(),
             text=projection.pending_message_text(),
@@ -391,15 +384,12 @@ class CodexTimelineAccumulator:
             text=match.text,
             attachments=match.attachments,
         )
-        if match.platform_item_id is not None:
-            projection = projection.with_platform_id(match.platform_item_id)
         return projection
 
     def event_delta(self, event: CodexSdkEvent) -> str:
-        return (
-            codex_timeline.sdk_event_delta_text(event)
-            or codex_timeline.notification_delta(event.params)
-        )
+        return codex_timeline.sdk_event_delta_text(
+            event
+        ) or codex_timeline.notification_delta(event.params)
 
 
 def projection_is_text_delta(
@@ -470,6 +460,11 @@ def live_projection_item_key(
 ) -> tuple[str, ...] | None:
     if projection.explicit_derived_key is not None:
         return ("derived", projection.explicit_derived_key)
+    if (
+        projection.client_message_id is not None
+        and projection.effective_role() == "user"
+    ):
+        return ("client-message", projection.client_message_id)
     if projection.native_id is not None:
         return ("native", projection.native_id)
     if projection.client_message_id is not None:
@@ -490,7 +485,10 @@ def positioned_raw_snapshot_items(
             next_position_by_lane: dict[str, int] = {}
             for raw_item in codex_timeline.raw_timeline_items(turn):
                 raw = dict(raw_item)
-                if turn_id is not None and codex_timeline.timeline_item_turn_id(raw) is None:
+                if (
+                    turn_id is not None
+                    and codex_timeline.timeline_item_turn_id(raw) is None
+                ):
                     raw["turnId"] = turn_id
                 projection = codex_timeline.timeline_projection_from_raw(raw)
                 if turn_id is not None and uses_turn_position_identity(

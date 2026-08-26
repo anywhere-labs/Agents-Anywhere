@@ -25,11 +25,7 @@ class CodexTurnInputAttachment:
 
     def reference_note(self) -> str:
         media_type = self.media_type or "unknown type"
-        byte_size = (
-            f", {self.byte_size} bytes"
-            if self.byte_size is not None
-            else ""
-        )
+        byte_size = f", {self.byte_size} bytes" if self.byte_size is not None else ""
         return f"[Attached file: {self.name} ({media_type}{byte_size}) at {self.path}]"
 
 
@@ -127,7 +123,9 @@ class CodexRuntimeClient(Protocol):
         thread_id: str,
         include_turns: bool = True,
     ) -> CodexThreadReadResult: ...
-    async def start_thread(self, request: CodexStartThreadRequest) -> CodexThreadResult: ...
+    async def start_thread(
+        self, request: CodexStartThreadRequest
+    ) -> CodexThreadResult: ...
     async def start_turn(self, request: CodexStartTurnRequest) -> CodexTurnResult: ...
     async def steer_turn(self, request: CodexSteerTurnRequest) -> CodexTurnResult: ...
     async def interrupt_turn(

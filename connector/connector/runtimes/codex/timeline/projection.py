@@ -71,12 +71,17 @@ class CodexTimelineProjection:
     patch: str | None = None
     changes: Any = None
     client_message_id: str | None = None
+    client_message_id_is_bound: bool = False
     explicit_derived_key: str | None = None
     attachments: tuple[Mapping[str, Any], ...] = ()
     revision: int = 1
 
     def with_client_message_id(self, client_message_id: str) -> CodexTimelineProjection:
-        return replace(self, client_message_id=client_message_id)
+        return replace(
+            self,
+            client_message_id=client_message_id,
+            client_message_id_is_bound=True,
+        )
 
     def with_pending_message(
         self,
@@ -87,6 +92,7 @@ class CodexTimelineProjection:
         return replace(
             self,
             client_message_id=client_message_id,
+            client_message_id_is_bound=True,
             text=text,
             attachments=attachments,
         )

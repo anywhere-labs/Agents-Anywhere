@@ -36,7 +36,9 @@ async def materialize_codex_attachments(
             CodexTurnInputAttachment(
                 name=name,
                 path=str(target),
-                media_type=downloaded.media_type or attachment.media_type or "application/octet-stream",
+                media_type=downloaded.media_type
+                or attachment.media_type
+                or "application/octet-stream",
                 byte_size=len(downloaded.content),
             )
         )

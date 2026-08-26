@@ -95,7 +95,11 @@ def approval_notice_actions(
 ) -> tuple[Mapping[str, Any], ...]:
     if method == CODEX_PERMISSIONS_APPROVAL_REQUEST:
         return (
-            {"actionId": "approve", "label": "Approve for this turn", "style": "primary"},
+            {
+                "actionId": "approve",
+                "label": "Approve for this turn",
+                "style": "primary",
+            },
             {
                 "actionId": "approve_for_session",
                 "label": "Approve for session",
