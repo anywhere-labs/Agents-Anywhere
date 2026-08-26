@@ -354,6 +354,7 @@ sessions = Table(
     Column("last_synced_at", Text),
     Column("source_observed_at", Text),
     Column("last_activity_at", Text),
+    Column("sort_at", Text),
     Column("seq", Integer, nullable=False),
     Column("updated_seq", Integer, nullable=False),
     Column("created_at", Text, nullable=False),

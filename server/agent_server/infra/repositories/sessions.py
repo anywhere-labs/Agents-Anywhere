@@ -117,8 +117,9 @@ def _runtime_identity(runtime: str, runtime_id: str | None) -> RuntimeIdentity:
 
 def _session_sort_at(latest_item: Any) -> Any:
     return func.coalesce(
-        latest_item.c.latest_item_time,
+        sessions_t.c.sort_at,
         sessions_t.c.last_activity_at,
+        latest_item.c.latest_item_time,
         sessions_t.c.created_at,
     )
 
@@ -126,11 +127,7 @@ def _session_sort_at(latest_item: Any) -> Any:
 def _session_view_query(latest_item: Any | None = None) -> Any:
     if latest_item is None:
         latest_item = _latest_timeline_item_subquery()
-    session_sort_at = func.coalesce(
-        latest_item.c.latest_item_time,
-        sessions_t.c.last_activity_at,
-        sessions_t.c.created_at,
-    ).label("session_sort_at")
+    session_sort_at = _session_sort_at(latest_item).label("session_sort_at")
     return select(
         sessions_t,
         connectors_t.c.status.label("connector_status"),
@@ -214,6 +211,7 @@ class SessionRepositoryMixin:
                     cwd=cwd,
                     status="idle",
                     takeover=int(takeover),
+                    sort_at=now,
                     seq=0,
                     updated_seq=0,
                     created_at=now,
@@ -294,6 +292,7 @@ class SessionRepositoryMixin:
                         last_synced_at=last_synced_at,
                         source_observed_at=source_observed_at,
                         last_activity_at=last_activity_at,
+                        sort_at=last_activity_at or now,
                         source_state=source_state or "visible",
                         source_state_at=now if source_state is not None else None,
                         seq=1,
@@ -443,10 +442,6 @@ class SessionRepositoryMixin:
         user_id: str | None = None,
     ) -> tuple[list[SessionView], bool, str | None]:
         latest_item = _latest_timeline_item_subquery()
-        latest_order_seq = func.coalesce(
-            latest_item.c.latest_item_order_seq,
-            -1,
-        )
         sort_at = _session_sort_at(latest_item)
         query = (
             _session_view_query(latest_item)
@@ -459,8 +454,6 @@ class SessionRepositoryMixin:
             .order_by(
                 sessions_t.c.pinned.desc(),
                 sort_at.desc(),
-                latest_order_seq.desc(),
-                sessions_t.c.updated_seq.desc(),
                 sessions_t.c.id.desc(),
             )
             .limit(limit + 1)
@@ -468,7 +461,7 @@ class SessionRepositoryMixin:
         if user_id is not None:
             query = query.where(connectors_t.c.user_id == user_id)
         if cursor:
-            pinned, cursor_sort_at, order_seq, updated_seq, session_id = (
+            pinned, cursor_sort_at, _order_seq, _updated_seq, session_id = (
                 _decode_session_cursor(cursor)
             )
             query = query.where(
@@ -478,19 +471,6 @@ class SessionRepositoryMixin:
                     and_(
                         sessions_t.c.pinned == pinned,
                         sort_at == cursor_sort_at,
-                        latest_order_seq < order_seq,
-                    ),
-                    and_(
-                        sessions_t.c.pinned == pinned,
-                        sort_at == cursor_sort_at,
-                        latest_order_seq == order_seq,
-                        sessions_t.c.updated_seq < updated_seq,
-                    ),
-                    and_(
-                        sessions_t.c.pinned == pinned,
-                        sort_at == cursor_sort_at,
-                        latest_order_seq == order_seq,
-                        sessions_t.c.updated_seq == updated_seq,
                         sessions_t.c.id < session_id,
                     ),
                 )
@@ -502,6 +482,21 @@ class SessionRepositoryMixin:
         has_more = len(rows) > limit
         next_cursor = _encode_session_cursor(page_rows[-1]) if has_more and page_rows else None
         return sessions, has_more, next_cursor
+
+    async def touch_session_sort_at(
+        self,
+        session_id: str,
+        *,
+        sort_at: str | None = None,
+    ) -> None:
+        async with self._engine.begin() as conn:
+            result = await conn.execute(
+                update(sessions_t)
+                .where(sessions_t.c.id == session_id)
+                .values(sort_at=sort_at or utc_now())
+            )
+        if result.rowcount == 0:
+            raise KeyError(session_id)
 
     async def list_sessions(
         self,

@@ -334,6 +334,7 @@ def test_v2_0_database_upgrades_through_current_revision(tmp_path) -> None:
         ("v2_15", "v2_16"),
         ("v2_16", "v2_17"),
         ("v2_17", "v2_18"),
+        ("v2_18", "v2_19"),
     ],
 )
 def test_every_adjacent_schema_upgrade(
@@ -934,7 +935,7 @@ def test_v2_14_downgrade_rejects_instance_specific_data(
 
 @pytest.mark.parametrize(
     "revision",
-    ["v2_10", "v2_11", "v2_12", "v2_13", "v2_14", "v2_15", "v2_16", "v2_17", "v2_18"],
+    ["v2_10", "v2_11", "v2_12", "v2_13", "v2_14", "v2_15", "v2_16", "v2_17", "v2_18", "v2_19"],
 )
 def test_unversioned_runtime_schema_is_classified_by_actual_columns(
     tmp_path,
@@ -972,9 +973,9 @@ def test_unversioned_runtime_schema_is_classified_by_actual_columns(
     )
 
 
-def test_current_schema_version_is_v2_18() -> None:
-    assert CURRENT_SCHEMA_REVISION == "v2_18"
-    assert CURRENT_SCHEMA_VERSION == "2.18"
+def test_current_schema_version_is_v2_19() -> None:
+    assert CURRENT_SCHEMA_REVISION == "v2_19"
+    assert CURRENT_SCHEMA_VERSION == "2.19"
 
 
 def test_current_schema_drops_legacy_approval_notice_storage(tmp_path) -> None:

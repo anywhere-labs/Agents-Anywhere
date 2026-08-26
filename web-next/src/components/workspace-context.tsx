@@ -170,40 +170,15 @@ function mapSession(session: RealSessionView): SessionView {
 }
 
 function sessionSortMillis(session: SessionView): number {
-  const raw =
-    session.sortAt ||
-    session.lastActivityAt ||
-    session.lastItemAt ||
-    session.lastSyncedAt ||
-    session.sourceObservedAt
+  const raw = session.sortAt
   if (!raw) return 0
   const value = Date.parse(raw)
   return Number.isFinite(value) ? value : 0
 }
 
-function sessionKeepsActivePosition(session: SessionView): boolean {
-  return (
-    session.status === "pending" ||
-    session.status === "running" ||
-    session.status === "waiting" ||
-    session.status === "waiting_approval" ||
-    session.status === "stopping"
-  )
-}
-
-function sortSessionViews(
-  sessions: SessionView[],
-  activeSortAnchors: ReadonlyMap<string, number> = new Map(),
-): SessionView[] {
+function sortSessionViews(sessions: SessionView[]): SessionView[] {
   return [...sessions].sort((a, b) =>
-    Number(activeSortAnchors.has(b.id)) - Number(activeSortAnchors.has(a.id)) ||
-    (activeSortAnchors.has(a.id) && activeSortAnchors.has(b.id)
-      ? (activeSortAnchors.get(b.id) ?? 0) - (activeSortAnchors.get(a.id) ?? 0) ||
-        a.id.localeCompare(b.id)
-      : sessionSortMillis(b) - sessionSortMillis(a) ||
-        (b.lastItemOrderSeq ?? -1) - (a.lastItemOrderSeq ?? -1) ||
-        b.updatedSeq - a.updatedSeq ||
-        a.id.localeCompare(b.id)),
+    sessionSortMillis(b) - sessionSortMillis(a) || b.id.localeCompare(a.id),
   )
 }
 
@@ -411,25 +386,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   })
   const loadingSessionPagesRef = React.useRef({ active: false, archived: false })
   const loadedBeyondFirstPageRef = React.useRef({ active: false, archived: false })
-  const activeSessionSortAnchorsRef = React.useRef(new Map<string, number>())
-
-  const sortSessions = React.useCallback((nextSessions: SessionView[]) => {
-    const anchors = activeSessionSortAnchorsRef.current
-    const nextIds = new Set(nextSessions.map((session) => session.id))
-    for (const session of nextSessions) {
-      if (sessionKeepsActivePosition(session)) {
-        if (!anchors.has(session.id)) {
-          anchors.set(session.id, sessionSortMillis(session))
-        }
-      } else {
-        anchors.delete(session.id)
-      }
-    }
-    for (const sessionId of anchors.keys()) {
-      if (!nextIds.has(sessionId)) anchors.delete(sessionId)
-    }
-    return sortSessionViews(nextSessions, anchors)
-  }, [])
+  const sortSessions = React.useCallback(sortSessionViews, [])
 
   // Derive page state from hash — start at "home" for safe SSR, correct on mount.
   const [route, setRoute] = React.useState<ParsedRoute>({ page: "home" })
@@ -584,7 +541,6 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     firstPageSessionIdsRef.current = { active: new Set(), archived: new Set() }
     loadingSessionPagesRef.current = { active: false, archived: false }
     loadedBeyondFirstPageRef.current = { active: false, archived: false }
-    activeSessionSortAnchorsRef.current.clear()
     setSessionPages({
       active: { hasMore: false, nextCursor: null },
       archived: { hasMore: false, nextCursor: null },

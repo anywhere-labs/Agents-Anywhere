@@ -497,6 +497,16 @@ class SessionStateNotificationHandler:
             external_session_id=external_session_id,
             params=params,
         )
+        if (
+            runtime_state["status"] == "running"
+            and await self._store.get_active_run(session_id) is None
+        ):
+            await self._store.start_active_run(
+                session_id=session_id,
+                runtime=runtime,
+                runtime_id=runtime_id,
+                external_session_id=external_session_id,
+            )
         if runtime_state["status"] in {"idle", "error"}:
             await self._store.clear_active_run(session_id)
         return IngestEffect(
