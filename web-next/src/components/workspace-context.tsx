@@ -392,6 +392,8 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     active: new Set<string>(),
     archived: new Set<string>(),
   })
+  const loadingSessionPagesRef = React.useRef({ active: false, archived: false })
+  const loadedBeyondFirstPageRef = React.useRef({ active: false, archived: false })
 
   // Derive page state from hash — start at "home" for safe SSR, correct on mount.
   const [route, setRoute] = React.useState<ParsedRoute>({ page: "home" })
@@ -453,7 +455,13 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       const sorted = sortSessionViews(Array.from(merged.values()))
       return sameStableValue(current, sorted) ? current : sorted
     })
-    setSessionPages(message.sessionPages)
+    setSessionPages((current) => {
+      const next = {
+        active: loadedBeyondFirstPageRef.current.active ? current.active : message.sessionPages.active,
+        archived: message.sessionPages.archived,
+      }
+      return sameStableValue(current, next) ? current : next
+    })
     setIsLoading(false)
     initialLoadDoneRef.current = true
   }, [])
@@ -477,6 +485,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
           active: new Set(activeRes.sessions.map((session) => session.id)),
           archived: new Set(archivedRes.sessions.map((session) => session.id)),
         }
+        loadedBeyondFirstPageRef.current = { active: false, archived: false }
         setConnectors((current) => sameStableValue(current, nextConnectors) ? current : nextConnectors)
         setSessions((current) => sameStableValue(current, nextSessions) ? current : nextSessions)
         setSessionPages({
@@ -505,7 +514,8 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   const loadMoreSessions = React.useCallback(async () => {
     const token = authSession?.accessToken
     const page = sessionPages.active
-    if (!token || !page.hasMore || !page.nextCursor || loadingSessionPages.active) return
+    if (!token || !page.hasMore || !page.nextCursor || loadingSessionPagesRef.current.active) return
+    loadingSessionPagesRef.current.active = true
     setLoadingSessionPages((current) => ({ ...current, active: true }))
     try {
       const response = await dashboardApi.listSessions(token, {
@@ -519,6 +529,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
         incoming.forEach((session) => merged.set(session.id, session))
         return sortSessionViews(Array.from(merged.values()))
       })
+      loadedBeyondFirstPageRef.current.active = true
       setSessionPages((current) => ({
         ...current,
         active: { hasMore: response.hasMore, nextCursor: response.nextCursor },
@@ -526,14 +537,17 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     } catch {
       // Keep the current cursor so reaching the sentinel can retry later.
     } finally {
+      loadingSessionPagesRef.current.active = false
       setLoadingSessionPages((current) => ({ ...current, active: false }))
     }
-  }, [authSession?.accessToken, loadingSessionPages.active, sessionPages.active])
+  }, [authSession?.accessToken, sessionPages.active])
 
   React.useEffect(() => {
     initialLoadDoneRef.current = false
     lastDashboardSnapshotKeyRef.current = null
     firstPageSessionIdsRef.current = { active: new Set(), archived: new Set() }
+    loadingSessionPagesRef.current = { active: false, archived: false }
+    loadedBeyondFirstPageRef.current = { active: false, archived: false }
     setSessionPages({
       active: { hasMore: false, nextCursor: null },
       archived: { hasMore: false, nextCursor: null },
@@ -1055,7 +1069,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     markOptimisticMessageFailed,
     appendPathToComposer,
     refreshData: fetchData,
-    loadMoreSessions: () => { void loadMoreSessions() },
+    loadMoreSessions,
   }
 
   return <WorkspaceContext.Provider value={value}>{children}</WorkspaceContext.Provider>
