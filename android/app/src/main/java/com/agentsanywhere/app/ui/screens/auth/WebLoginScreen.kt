@@ -95,6 +95,8 @@ fun WebLoginHostScreen(
     when (state) {
         is WebLoginState.HostChoice -> HostChoiceScreen(
             officialServiceAvailable = state.officialServiceAvailable,
+            openingOfficial = state.openingOfficial,
+            errorMessage = state.errorMessage,
             onSelfHost = viewModel::selectSelfHost,
             onOfficial = viewModel::startOfficialLogin,
             onBack = { navigate(AppDestination.LoginMethods) },
@@ -135,6 +137,8 @@ fun WebLoginHostScreen(
 @Composable
 private fun HostChoiceScreen(
     officialServiceAvailable: Boolean,
+    openingOfficial: Boolean,
+    errorMessage: String?,
     onSelfHost: () -> Unit,
     onOfficial: () -> Unit,
     onBack: () -> Unit,
@@ -166,6 +170,10 @@ private fun HostChoiceScreen(
                 )
             }
             Spacer(Modifier.height(30.dp))
+            errorMessage?.let {
+                AuthErrorNotice(message = it)
+                Spacer(Modifier.height(18.dp))
+            }
             Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 HostChoiceButton(
                     title = stringResource(R.string.auth_official_service),
@@ -174,13 +182,15 @@ private fun HostChoiceScreen(
                     badge = if (!officialServiceAvailable) {
                         stringResource(R.string.auth_coming_soon)
                     } else null,
-                    enabled = officialServiceAvailable,
+                    enabled = officialServiceAvailable && !openingOfficial,
+                    loading = openingOfficial,
                     onClick = onOfficial,
                 )
                 HostChoiceButton(
                     title = stringResource(R.string.auth_self_host_service),
                     description = stringResource(R.string.auth_self_host_service_description),
                     icon = Lucide.Server,
+                    enabled = !openingOfficial,
                     onClick = onSelfHost,
                 )
             }
@@ -211,6 +221,7 @@ private fun HostChoiceButton(
     icon: ImageVector,
     badge: String? = null,
     enabled: Boolean = true,
+    loading: Boolean = false,
     onClick: () -> Unit,
 ) {
     val colors = LocalAAColors.current
@@ -254,7 +265,13 @@ private fun HostChoiceButton(
                 lineHeight = 17.sp,
             )
         }
-        if (badge != null) {
+        if (loading) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(19.dp),
+                color = colors.faint,
+                strokeWidth = 2.dp,
+            )
+        } else if (badge != null) {
             Text(
                 text = badge,
                 color = if (enabled) colors.inkSoft else colors.faint,

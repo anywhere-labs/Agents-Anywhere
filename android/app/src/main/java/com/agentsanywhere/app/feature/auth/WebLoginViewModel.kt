@@ -13,7 +13,11 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
 sealed interface WebLoginState {
-    data class HostChoice(val officialServiceAvailable: Boolean) : WebLoginState
+    data class HostChoice(
+        val officialServiceAvailable: Boolean,
+        val openingOfficial: Boolean = false,
+        val errorMessage: String? = null,
+    ) : WebLoginState
     data class ServerEntry(val serverUrl: String, val errorMessage: String? = null) : WebLoginState
     data class Checking(val serverUrl: String) : WebLoginState
     data class WebLogin(val session: WebLoginSession) : WebLoginState
@@ -72,15 +76,19 @@ class WebLoginViewModel(application: Application) : AndroidViewModel(application
         operation?.cancel()
         savedWebViewState = null
         webLoginReturnTarget = returnTarget
-        state = WebLoginState.Checking(serverUrl)
+        state = when (returnTarget) {
+            WebLoginReturnTarget.ServerEntry -> WebLoginState.Checking(serverUrl)
+            WebLoginReturnTarget.HostChoice -> hostChoiceState(openingOfficial = true)
+        }
         operation = viewModelScope.launch {
             controller.createWebLoginSession(serverUrl)
                 .onSuccess { session -> state = WebLoginState.WebLogin(session) }
                 .onFailure { error ->
-                    state = WebLoginState.Error(
-                        serverUrl = serverUrl,
-                        message = error.message ?: "Could not reach the server.",
-                    )
+                    val message = error.message ?: "Could not reach the server."
+                    state = when (returnTarget) {
+                        WebLoginReturnTarget.ServerEntry -> WebLoginState.Error(serverUrl, message)
+                        WebLoginReturnTarget.HostChoice -> hostChoiceState(errorMessage = message)
+                    }
                 }
         }
     }
@@ -164,8 +172,13 @@ class WebLoginViewModel(application: Application) : AndroidViewModel(application
         else -> null
     }
 
-    private fun hostChoiceState() = WebLoginState.HostChoice(
+    private fun hostChoiceState(
+        openingOfficial: Boolean = false,
+        errorMessage: String? = null,
+    ) = WebLoginState.HostChoice(
         officialServiceAvailable = AppConfig.OFFICIAL_WEB_LOGIN_URL.isNotBlank(),
+        openingOfficial = openingOfficial,
+        errorMessage = errorMessage,
     )
 
     private enum class WebLoginReturnTarget {
