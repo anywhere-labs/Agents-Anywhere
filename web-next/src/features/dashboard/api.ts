@@ -178,8 +178,11 @@ export class DashboardApi {
     return this.client.post<PairingPollResponse>("/pairing/poll", { pairingId }, { auth: false });
   }
 
-  listSessions(token: string): Promise<SessionListResponse> {
-    return this.client.get<SessionListResponse>("/sessions", { token });
+  listSessions(
+    token: string,
+    query: { archived: boolean; limit?: number; cursor?: string | null },
+  ): Promise<SessionListResponse> {
+    return this.client.get<SessionListResponse>("/sessions", { token, query });
   }
 
   archiveConnectorSessions(

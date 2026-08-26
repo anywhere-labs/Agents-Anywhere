@@ -16,6 +16,7 @@ import type {
   ConnectorView as RealConnectorView,
   DashboardSnapshotMessage,
   SessionLocalTimelineState,
+  SessionPageInfo,
   SessionRuntimeState,
   SessionView as RealSessionView,
   TimelineItem,
@@ -222,7 +223,18 @@ function isDashboardSnapshotMessage(value: unknown): value is DashboardSnapshotM
   return (
     message.type === "dashboard.snapshot" &&
     Array.isArray(message.connectors) &&
-    Array.isArray(message.sessions)
+    Array.isArray(message.sessions) &&
+    isSessionPageInfo(message.sessionPages?.active) &&
+    isSessionPageInfo(message.sessionPages?.archived)
+  )
+}
+
+function isSessionPageInfo(value: unknown): value is SessionPageInfo {
+  if (!value || typeof value !== "object") return false
+  const page = value as Partial<SessionPageInfo>
+  return (
+    typeof page.hasMore === "boolean" &&
+    (typeof page.nextCursor === "string" || page.nextCursor === null)
   )
 }
 
@@ -250,6 +262,8 @@ type WorkspaceState = {
   connectors: ConnectorView[]
   sessions: SessionView[]
   isLoading: boolean
+  hasMoreSessions: boolean
+  isLoadingMoreSessions: boolean
   routeReady: boolean
 
   // Navigation
@@ -303,6 +317,7 @@ type WorkspaceState = {
   markOptimisticMessageFailed: (clientMessageId: string, message: string) => void
   appendPathToComposer: (path: string) => boolean
   refreshData: () => void
+  loadMoreSessions: () => void
 }
 
 const WorkspaceContext = React.createContext<WorkspaceState | null>(null)
@@ -364,6 +379,18 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   const [connectors, setConnectors] = React.useState<ConnectorView[]>([])
   const [sessions, setSessions] = React.useState<SessionView[]>([])
   const [isLoading, setIsLoading] = React.useState(true)
+  const [sessionPages, setSessionPages] = React.useState<DashboardSnapshotMessage["sessionPages"]>({
+    active: { hasMore: false, nextCursor: null },
+    archived: { hasMore: false, nextCursor: null },
+  })
+  const [loadingSessionPages, setLoadingSessionPages] = React.useState({
+    active: false,
+    archived: false,
+  })
+  const firstPageSessionIdsRef = React.useRef({
+    active: new Set<string>(),
+    archived: new Set<string>(),
+  })
 
   // Derive page state from hash — start at "home" for safe SSR, correct on mount.
   const [route, setRoute] = React.useState<ParsedRoute>({ page: "home" })
@@ -399,14 +426,33 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     const snapshotKey = stableJson({
       connectors: message.connectors,
       sessions: message.sessions,
+      sessionPages: message.sessionPages,
     })
     if (lastDashboardSnapshotKeyRef.current === snapshotKey) return
     lastDashboardSnapshotKeyRef.current = snapshotKey
 
     const nextConnectors = message.connectors.map(mapConnector)
-    const nextSessions = sortSessionViews(message.sessions.map(mapSession))
+    const nextSessions = message.sessions.map(mapSession)
+    const previousFirstPageIds = new Set([
+      ...firstPageSessionIdsRef.current.active,
+      ...firstPageSessionIdsRef.current.archived,
+    ])
+    firstPageSessionIdsRef.current = {
+      active: new Set(nextSessions.filter((session) => !session.archived).map((session) => session.id)),
+      archived: new Set(nextSessions.filter((session) => session.archived).map((session) => session.id)),
+    }
     setConnectors((current) => sameStableValue(current, nextConnectors) ? current : nextConnectors)
-    setSessions((current) => sameStableValue(current, nextSessions) ? current : nextSessions)
+    setSessions((current) => {
+      const merged = new Map(
+        current
+          .filter((session) => !previousFirstPageIds.has(session.id))
+          .map((session) => [session.id, session]),
+      )
+      nextSessions.forEach((session) => merged.set(session.id, session))
+      const sorted = sortSessionViews(Array.from(merged.values()))
+      return sameStableValue(current, sorted) ? current : sorted
+    })
+    setSessionPages(message.sessionPages)
     setIsLoading(false)
     initialLoadDoneRef.current = true
   }, [])
@@ -417,14 +463,25 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     }
     try {
       if (authSession?.accessToken) {
-        const [connRes, sessRes] = await Promise.all([
+        const [connRes, activeRes, archivedRes] = await Promise.all([
           dashboardApi.listConnectors(authSession.accessToken),
-          dashboardApi.listSessions(authSession.accessToken),
+          dashboardApi.listSessions(authSession.accessToken, { archived: false, limit: 30 }),
+          dashboardApi.listSessions(authSession.accessToken, { archived: true, limit: 30 }),
         ])
         const nextConnectors = connRes.connectors.map(mapConnector)
-        const nextSessions = sortSessionViews(sessRes.sessions.map(mapSession))
+        const nextSessions = sortSessionViews(
+          [...activeRes.sessions, ...archivedRes.sessions].map(mapSession),
+        )
+        firstPageSessionIdsRef.current = {
+          active: new Set(activeRes.sessions.map((session) => session.id)),
+          archived: new Set(archivedRes.sessions.map((session) => session.id)),
+        }
         setConnectors((current) => sameStableValue(current, nextConnectors) ? current : nextConnectors)
         setSessions((current) => sameStableValue(current, nextSessions) ? current : nextSessions)
+        setSessionPages({
+          active: { hasMore: activeRes.hasMore, nextCursor: activeRes.nextCursor },
+          archived: { hasMore: archivedRes.hasMore, nextCursor: archivedRes.nextCursor },
+        })
         return
       }
       const [connRes, sessRes] = await Promise.all([
@@ -434,15 +491,52 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       const nextSessions = sortSessionViews(sessRes.sessions)
       setConnectors((current) => sameStableValue(current, connRes.connectors) ? current : connRes.connectors)
       setSessions((current) => sameStableValue(current, nextSessions) ? current : nextSessions)
+      setSessionPages({
+        active: { hasMore: false, nextCursor: null },
+        archived: { hasMore: false, nextCursor: null },
+      })
     } finally {
       setIsLoading(false)
       initialLoadDoneRef.current = true
     }
   }, [authSession?.accessToken])
 
+  const loadMoreSessions = React.useCallback(async () => {
+    const token = authSession?.accessToken
+    const page = sessionPages.active
+    if (!token || !page.hasMore || !page.nextCursor || loadingSessionPages.active) return
+    setLoadingSessionPages((current) => ({ ...current, active: true }))
+    try {
+      const response = await dashboardApi.listSessions(token, {
+        archived: false,
+        limit: 30,
+        cursor: page.nextCursor,
+      })
+      const incoming = response.sessions.map(mapSession)
+      setSessions((current) => {
+        const merged = new Map(current.map((session) => [session.id, session]))
+        incoming.forEach((session) => merged.set(session.id, session))
+        return sortSessionViews(Array.from(merged.values()))
+      })
+      setSessionPages((current) => ({
+        ...current,
+        active: { hasMore: response.hasMore, nextCursor: response.nextCursor },
+      }))
+    } catch {
+      // Keep the current cursor so reaching the sentinel can retry later.
+    } finally {
+      setLoadingSessionPages((current) => ({ ...current, active: false }))
+    }
+  }, [authSession?.accessToken, loadingSessionPages.active, sessionPages.active])
+
   React.useEffect(() => {
     initialLoadDoneRef.current = false
     lastDashboardSnapshotKeyRef.current = null
+    firstPageSessionIdsRef.current = { active: new Set(), archived: new Set() }
+    setSessionPages({
+      active: { hasMore: false, nextCursor: null },
+      archived: { hasMore: false, nextCursor: null },
+    })
     setIsLoading(true)
   }, [authSession?.accessToken])
 
@@ -913,6 +1007,8 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     connectors,
     sessions,
     isLoading,
+    hasMoreSessions: sessionPages.active.hasMore,
+    isLoadingMoreSessions: loadingSessionPages.active,
     routeReady,
     page,
     activeSessionId,
@@ -958,6 +1054,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     markOptimisticMessageFailed,
     appendPathToComposer,
     refreshData: fetchData,
+    loadMoreSessions: () => { void loadMoreSessions() },
   }
 
   return <WorkspaceContext.Provider value={value}>{children}</WorkspaceContext.Provider>

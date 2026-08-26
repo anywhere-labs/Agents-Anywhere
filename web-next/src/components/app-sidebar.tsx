@@ -57,6 +57,8 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
     connectors,
     sessions,
     isLoading,
+    hasMoreSessions,
+    isLoadingMoreSessions,
     activeSessionId,
     activeConnectorId,
     page,
@@ -70,6 +72,7 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
     toggleArchiveSession,
     renameSession,
     refreshData,
+    loadMoreSessions,
   } = useWorkspace()
   const { signOut, me, session: authSession } = useAuth()
   const t = useTranslations("dashboard")
@@ -222,6 +225,13 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
                   />
                 ))
               )}
+              {!isLoading && hasMoreSessions ? (
+                <SessionPageTrigger
+                  loading={isLoadingMoreSessions}
+                  label={t("status.loadingSessions")}
+                  onVisible={loadMoreSessions}
+                />
+              ) : null}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
@@ -318,6 +328,37 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
         </DialogContent>
       </Dialog>
     </Sidebar>
+  )
+}
+
+function SessionPageTrigger({
+  loading,
+  label,
+  onVisible,
+}: {
+  loading: boolean
+  label: string
+  onVisible: () => void
+}) {
+  const ref = React.useRef<HTMLDivElement>(null)
+
+  React.useEffect(() => {
+    const element = ref.current
+    if (!element) return
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry?.isIntersecting && !loading) onVisible()
+      },
+      { rootMargin: "160px 0px" },
+    )
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [loading, onVisible])
+
+  return (
+    <div ref={ref} className="flex h-9 items-center justify-center" aria-label={label}>
+      {loading ? <Spinner className="size-4 text-muted-foreground" /> : null}
+    </div>
   )
 }
 

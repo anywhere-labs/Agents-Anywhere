@@ -206,7 +206,14 @@ export type PairingPollResponse = {
 
 export type SessionListResponse = {
   sessions: SessionView[];
+  hasMore: boolean;
+  nextCursor: string | null;
   serverTime: string;
+};
+
+export type SessionPageInfo = {
+  hasMore: boolean;
+  nextCursor: string | null;
 };
 
 export type SessionCommandResponse = {
@@ -242,6 +249,10 @@ export type DashboardSnapshotMessage = {
   type: "dashboard.snapshot";
   connectors: ConnectorView[];
   sessions: SessionView[];
+  sessionPages: {
+    active: SessionPageInfo;
+    archived: SessionPageInfo;
+  };
   serverTime: string;
 };
 
