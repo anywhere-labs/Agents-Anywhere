@@ -1229,7 +1229,8 @@
         "usage": "Usage",
         "users": "Users",
         "devices": "Devices",
-        "agents": "Agents"
+        "agents": "Agents",
+        "releases": "Releases"
       },
       "metrics": {
         "dau": "DAU",
@@ -1248,6 +1249,32 @@
         "medium": "Medium users",
         "heavy": "Heavy users",
         "userShare": "{percent} of users"
+      },
+      "releases": {
+        "title": "Client releases",
+        "description": "Manage Android and desktop update records.",
+        "create": "New release",
+        "platform": "Platform",
+        "version": "Version",
+        "versionCode": "Version code",
+        "downloadUrl": "Download URL",
+        "status": "Status",
+        "createdAt": "Created",
+        "published": "Published",
+        "draft": "Unpublished",
+        "empty": "No releases yet",
+        "loadFailed": "Failed to load releases.",
+        "created": "Release created.",
+        "createFailed": "Failed to create release.",
+        "dialogTitle": "New release",
+        "dialogDescription": "Create a client version record. The latest published version is used for update checks.",
+        "publishNow": "Publish now",
+        "cancel": "Cancel",
+        "confirmCreate": "Create release",
+        "platforms": {
+          "android": "Android",
+          "desktop": "Desktop"
+        }
       }
     },
     "service": {

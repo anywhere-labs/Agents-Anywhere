@@ -1229,7 +1229,8 @@
         "usage": "使用",
         "users": "用户",
         "devices": "设备",
-        "agents": "Agent"
+        "agents": "Agent",
+        "releases": "发布"
       },
       "metrics": {
         "dau": "DAU",
@@ -1248,6 +1249,32 @@
         "medium": "中度用户",
         "heavy": "重度用户",
         "userShare": "占总用户 {percent}"
+      },
+      "releases": {
+        "title": "客户端发布",
+        "description": "管理 Android 和桌面端的版本更新记录。",
+        "create": "新增发布",
+        "platform": "平台",
+        "version": "版本号",
+        "versionCode": "内部版本号",
+        "downloadUrl": "下载地址",
+        "status": "状态",
+        "createdAt": "创建时间",
+        "published": "已发布",
+        "draft": "未发布",
+        "empty": "暂无发布记录",
+        "loadFailed": "加载发布记录失败。",
+        "created": "发布记录已创建。",
+        "createFailed": "创建发布记录失败。",
+        "dialogTitle": "新增发布",
+        "dialogDescription": "创建客户端版本记录，已发布的最新版本会被更新检查接口使用。",
+        "publishNow": "立即发布",
+        "cancel": "取消",
+        "confirmCreate": "创建发布",
+        "platforms": {
+          "android": "Android",
+          "desktop": "桌面端"
+        }
       }
     },
     "service": {

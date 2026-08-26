@@ -730,6 +730,31 @@ export type AdminDashboardSnapshotResponse = {
   serverTime: string;
 };
 
+export type AppReleasePlatform = "android" | "desktop";
+
+export type AppReleaseView = {
+  platform: AppReleasePlatform;
+  versionCode: number;
+  versionName: string;
+  downloadUrl: string | null;
+  published: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type AppReleaseListResponse = {
+  releases: AppReleaseView[];
+  serverTime: string;
+};
+
+export type AppReleaseCreateRequest = {
+  platform: AppReleasePlatform;
+  versionCode: number;
+  versionName: string;
+  downloadUrl: string;
+  published: boolean;
+};
+
 export type DashboardState = {
   me: AuthMe;
   connectors: ConnectorView[];

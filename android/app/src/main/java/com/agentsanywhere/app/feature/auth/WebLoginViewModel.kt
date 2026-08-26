@@ -8,10 +8,16 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.agentsanywhere.app.api.AuthApi
+import com.agentsanywhere.app.config.AppConfig
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
 sealed interface WebLoginState {
+    data class HostChoice(
+        val officialServiceAvailable: Boolean,
+        val openingOfficial: Boolean = false,
+        val errorMessage: String? = null,
+    ) : WebLoginState
     data class ServerEntry(val serverUrl: String, val errorMessage: String? = null) : WebLoginState
     data class Checking(val serverUrl: String) : WebLoginState
     data class WebLogin(val session: WebLoginSession) : WebLoginState
@@ -27,9 +33,31 @@ class WebLoginViewModel(application: Application) : AndroidViewModel(application
     )
     private var operation: Job? = null
     private var savedWebViewState: Bundle? = null
+    private var webLoginReturnTarget = WebLoginReturnTarget.ServerEntry
 
-    var state: WebLoginState by mutableStateOf(WebLoginState.ServerEntry(controller.savedServerUrl()))
+    var state: WebLoginState by mutableStateOf(hostChoiceState())
         private set
+
+    fun selectSelfHost() {
+        operation?.cancel()
+        savedWebViewState = null
+        state = WebLoginState.ServerEntry(controller.savedServerUrl())
+    }
+
+    fun startOfficialLogin() {
+        val officialUrl = AppConfig.OFFICIAL_WEB_LOGIN_URL.trim()
+        if (officialUrl.isBlank()) {
+            state = hostChoiceState()
+            return
+        }
+        start(officialUrl, WebLoginReturnTarget.HostChoice)
+    }
+
+    fun returnToHostChoice() {
+        operation?.cancel()
+        savedWebViewState = null
+        state = hostChoiceState()
+    }
 
     fun updateServerUrl(serverUrl: String) {
         val current = state
@@ -41,18 +69,34 @@ class WebLoginViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun start(serverUrl: String) {
+        start(serverUrl, WebLoginReturnTarget.ServerEntry)
+    }
+
+    private fun start(serverUrl: String, returnTarget: WebLoginReturnTarget) {
         operation?.cancel()
         savedWebViewState = null
-        state = WebLoginState.Checking(serverUrl)
+        webLoginReturnTarget = returnTarget
+        state = when (returnTarget) {
+            WebLoginReturnTarget.ServerEntry -> WebLoginState.Checking(serverUrl)
+            WebLoginReturnTarget.HostChoice -> hostChoiceState(openingOfficial = true)
+        }
         operation = viewModelScope.launch {
             controller.createWebLoginSession(serverUrl)
                 .onSuccess { session -> state = WebLoginState.WebLogin(session) }
                 .onFailure { error ->
-                    state = WebLoginState.Error(
-                        serverUrl = serverUrl,
-                        message = error.message ?: "Could not reach the server.",
-                    )
+                    val message = error.message ?: "Could not reach the server."
+                    state = when (returnTarget) {
+                        WebLoginReturnTarget.ServerEntry -> WebLoginState.Error(serverUrl, message)
+                        WebLoginReturnTarget.HostChoice -> hostChoiceState(errorMessage = message)
+                    }
                 }
+        }
+    }
+
+    fun returnFromWebLogin() {
+        when (webLoginReturnTarget) {
+            WebLoginReturnTarget.ServerEntry -> returnToServerEntry()
+            WebLoginReturnTarget.HostChoice -> returnToHostChoice()
         }
     }
 
@@ -82,6 +126,7 @@ class WebLoginViewModel(application: Application) : AndroidViewModel(application
             is WebLoginState.WebLogin -> current.session.serverUrl
             is WebLoginState.Exchanging -> current.session.serverUrl
             is WebLoginState.Error -> current.serverUrl
+            is WebLoginState.HostChoice -> controller.savedServerUrl()
             WebLoginState.Success -> controller.savedServerUrl()
         }
         state = WebLoginState.ServerEntry(serverUrl)
@@ -90,7 +135,7 @@ class WebLoginViewModel(application: Application) : AndroidViewModel(application
     fun resetForSignedOutEntry() {
         operation?.cancel()
         savedWebViewState = null
-        state = WebLoginState.ServerEntry(controller.savedServerUrl())
+        state = hostChoiceState()
     }
 
     fun takeWebViewState(session: WebLoginSession): Bundle? {
@@ -125,5 +170,19 @@ class WebLoginViewModel(application: Application) : AndroidViewModel(application
         is WebLoginState.WebLogin -> current.session
         is WebLoginState.Exchanging -> current.session
         else -> null
+    }
+
+    private fun hostChoiceState(
+        openingOfficial: Boolean = false,
+        errorMessage: String? = null,
+    ) = WebLoginState.HostChoice(
+        officialServiceAvailable = AppConfig.OFFICIAL_WEB_LOGIN_URL.isNotBlank(),
+        openingOfficial = openingOfficial,
+        errorMessage = errorMessage,
+    )
+
+    private enum class WebLoginReturnTarget {
+        ServerEntry,
+        HostChoice,
     }
 }

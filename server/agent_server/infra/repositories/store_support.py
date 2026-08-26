@@ -26,6 +26,7 @@ from agent_server.core.auth import (
     verify_password_verifier,
 )
 from agent_server.infra.db import (
+    app_releases as app_releases_t,
     build_engine,
     connector_protocol_capabilities as connector_protocol_capabilities_t,
     connector_runtime_catalogs as connector_runtime_catalogs_t,

@@ -1146,3 +1146,37 @@ class RpcResponsePayload(BaseModel):
     ok: bool
     result: Any = None
     error: RpcError | None = None
+
+
+AppReleasePlatform = Literal["android", "desktop"]
+
+
+class AppUpdateCheckResponse(BaseModel):
+    platform: AppReleasePlatform
+    updateAvailable: bool
+    latestVersionCode: int
+    latestVersionName: str
+    downloadUrl: str | None = None
+
+
+class AppReleaseCreateRequest(BaseModel):
+    platform: AppReleasePlatform
+    versionCode: int = Field(ge=1)
+    versionName: str = Field(min_length=1, max_length=64, pattern=r".*\S.*")
+    downloadUrl: str = Field(min_length=1, max_length=2048, pattern=r"^https?://\S+$")
+    published: bool = True
+
+
+class AppReleaseView(BaseModel):
+    platform: AppReleasePlatform
+    versionCode: int
+    versionName: str
+    downloadUrl: str | None = None
+    published: bool
+    createdAt: str
+    updatedAt: str
+
+
+class AppReleaseListResponse(BaseModel):
+    releases: list[AppReleaseView]
+    serverTime: str

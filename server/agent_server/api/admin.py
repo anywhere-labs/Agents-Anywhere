@@ -8,6 +8,9 @@ from agent_server.core.models import (
     AdminUserCreateRequest,
     AdminUserListResponse,
     AdminUserUpdateRequest,
+    AppReleaseCreateRequest,
+    AppReleaseListResponse,
+    AppReleaseView,
     InstanceSettingsUpdateRequest,
     InstanceSettingsView,
     UserView,
@@ -17,6 +20,48 @@ from agent_server.core.utc import utc_now
 
 
 router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(require_admin)])
+
+
+def _release_view(release: dict[str, object]) -> AppReleaseView:
+    return AppReleaseView(
+        platform=str(release["platform"]),
+        versionCode=int(release["version_code"]),
+        versionName=str(release["version_name"]),
+        downloadUrl=str(release["download_url"]) if release["download_url"] else None,
+        published=bool(release["published"]),
+        createdAt=str(release["created_at"]),
+        updatedAt=str(release["updated_at"]),
+    )
+
+
+# --- application releases ---------------------------------------------------
+
+
+@router.get("/client-releases", response_model=AppReleaseListResponse)
+async def list_client_releases(db: Store = Depends(get_store)) -> AppReleaseListResponse:
+    releases = await db.list_app_releases()
+    return AppReleaseListResponse(
+        releases=[_release_view(release) for release in releases],
+        serverTime=utc_now(),
+    )
+
+
+@router.post("/client-releases", response_model=AppReleaseView, status_code=201)
+async def create_client_release(
+    payload: AppReleaseCreateRequest,
+    db: Store = Depends(get_store),
+) -> AppReleaseView:
+    try:
+        release = await db.create_app_release(
+            platform=payload.platform,
+            version_code=payload.versionCode,
+            version_name=payload.versionName.strip(),
+            download_url=payload.downloadUrl.strip(),
+            published=payload.published,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return _release_view(release)
 
 
 # --- instance settings -------------------------------------------------------

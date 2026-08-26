@@ -73,7 +73,7 @@ def test_empty_database_upgrades_to_current_schema(tmp_path) -> None:
     engine = create_engine(f"sqlite:///{path}")
     try:
         tables = set(inspect(engine).get_table_names())
-        assert {"alembic_version", "device_runtimes", "sessions"}.issubset(
+        assert {"alembic_version", "app_releases", "device_runtimes", "sessions"}.issubset(
             tables
         )
         assert "approvals" not in tables
@@ -330,6 +330,9 @@ def test_v2_0_database_upgrades_through_current_revision(tmp_path) -> None:
         ("v2_11", "v2_12"),
         ("v2_12", "v2_13"),
         ("v2_13", "v2_14"),
+        ("v2_14", "v2_15"),
+        ("v2_15", "v2_16"),
+        ("v2_16", "v2_17"),
     ],
 )
 def test_every_adjacent_schema_upgrade(
@@ -930,7 +933,7 @@ def test_v2_14_downgrade_rejects_instance_specific_data(
 
 @pytest.mark.parametrize(
     "revision",
-    ["v2_10", "v2_11", "v2_12", "v2_13", "v2_14"],
+    ["v2_10", "v2_11", "v2_12", "v2_13", "v2_14", "v2_15", "v2_16", "v2_17"],
 )
 def test_unversioned_runtime_schema_is_classified_by_actual_columns(
     tmp_path,
@@ -968,9 +971,9 @@ def test_unversioned_runtime_schema_is_classified_by_actual_columns(
     )
 
 
-def test_current_schema_version_is_v2_14() -> None:
-    assert CURRENT_SCHEMA_REVISION == "v2_14"
-    assert CURRENT_SCHEMA_VERSION == "2.14"
+def test_current_schema_version_is_v2_17() -> None:
+    assert CURRENT_SCHEMA_REVISION == "v2_17"
+    assert CURRENT_SCHEMA_VERSION == "2.17"
 
 
 def test_current_schema_drops_legacy_approval_notice_storage(tmp_path) -> None:

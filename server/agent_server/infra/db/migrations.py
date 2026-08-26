@@ -22,8 +22,8 @@ from agent_server.infra.db.engine import POSTGRES_BACKEND, resolve_db_url
 
 LEGACY_V1_REVISION = "v1_legacy"
 BASELINE_V2_REVISION = "v2_0"
-CURRENT_SCHEMA_REVISION = "v2_14"
-CURRENT_SCHEMA_VERSION = "2.14"
+CURRENT_SCHEMA_REVISION = "v2_17"
+CURRENT_SCHEMA_VERSION = "2.17"
 POSTGRES_MIGRATION_LOCK_ID = 0x414147454E545332
 DEFAULT_MIGRATION_LOCK_TIMEOUT_SECONDS = 120.0
 
@@ -301,7 +301,13 @@ def _classify_sync(connection) -> UnversionedDatabase:
                 and "name_key" in runtime_columns
             )
             if runtime_instance_layout:
-                revision = CURRENT_SCHEMA_REVISION
+                if "app_releases" in tables:
+                    release_columns = _column_names(inspector, "app_releases")
+                    revision = "v2_16" if "sha256" in release_columns else "v2_17"
+                elif "android_app_releases" in tables:
+                    revision = "v2_15"
+                else:
+                    revision = "v2_14"
             elif "session_states" in tables:
                 revision = "v2_5"
             elif "notices" in tables:

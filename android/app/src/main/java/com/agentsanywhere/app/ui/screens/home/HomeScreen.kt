@@ -99,6 +99,7 @@ import com.agentsanywhere.app.feature.sessions.SessionListIndicator
 import com.agentsanywhere.app.feature.sessions.listIndicator
 import com.agentsanywhere.app.feature.sessions.pinnedSessions
 import com.agentsanywhere.app.feature.sessions.recentSessions
+import com.agentsanywhere.app.feature.update.AppUpdateViewModel
 import com.agentsanywhere.app.model.AgentDevice
 import com.agentsanywhere.app.model.AgentSession
 import com.agentsanywhere.app.navigation.AppDestination
@@ -144,6 +145,7 @@ fun HomeScreen(
     serverUrl: String,
     appearanceMode: String,
     languageMode: String,
+    appUpdateViewModel: AppUpdateViewModel,
     onRefresh: () -> Unit,
     onTabSelected: (HomeTab) -> Unit,
     onAppearanceModeChange: (String) -> Unit,
@@ -251,6 +253,7 @@ fun HomeScreen(
                 serverUrl = serverUrl,
                 appearanceMode = appearanceMode,
                 languageMode = languageMode,
+                appUpdateViewModel = appUpdateViewModel,
                 onAppearanceModeChange = onAppearanceModeChange,
                 onLanguageModeChange = onLanguageModeChange,
                 onLoadAccount = onLoadAccount,

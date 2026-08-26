@@ -20,6 +20,20 @@ from sqlalchemy import (
 metadata = MetaData()
 
 
+app_releases = Table(
+    "app_releases",
+    metadata,
+    Column("platform", Text, nullable=False),
+    Column("version_code", Integer, nullable=False),
+    Column("version_name", Text, nullable=False),
+    Column("download_url", Text),
+    Column("published", Integer, nullable=False, server_default="0"),
+    Column("created_at", Text, nullable=False),
+    Column("updated_at", Text, nullable=False),
+    PrimaryKeyConstraint("platform", "version_code"),
+)
+
+
 def _legacy_runtime_id_default(context: Any) -> str:
     runtime = context.get_current_parameters().get("runtime")
     if not isinstance(runtime, str) or not runtime:
