@@ -43,6 +43,7 @@ import com.agentsanywhere.app.feature.auth.AuthController
 import com.agentsanywhere.app.feature.auth.AuthSessionStore
 import com.agentsanywhere.app.feature.auth.WebLoginState
 import com.agentsanywhere.app.feature.auth.WebLoginViewModel
+import com.agentsanywhere.app.feature.update.AppUpdateViewModel
 import com.agentsanywhere.app.feature.devices.DeviceRuntime
 import com.agentsanywhere.app.feature.devices.DeviceRuntimeList
 import com.agentsanywhere.app.feature.devices.DeviceRuntimeSetupResult
@@ -95,10 +96,12 @@ import com.agentsanywhere.app.ui.screens.home.HomeTab
 import com.agentsanywhere.app.ui.screens.home.HomeScreen
 import com.agentsanywhere.app.ui.screens.home.NewSessionScreen
 import com.agentsanywhere.app.ui.screens.terminal.TerminalScreen
+import com.agentsanywhere.app.ui.screens.update.AppUpdatePromptDialog
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 import java.util.concurrent.atomic.AtomicBoolean
+import java.io.File
 
 @Composable
 fun AgentsAnywhereApp(
@@ -109,6 +112,8 @@ fun AgentsAnywhereApp(
     oauthCallbackUri: Uri? = null,
     onOAuthCallbackConsumed: () -> Unit = {},
     webLoginViewModel: WebLoginViewModel,
+    appUpdateViewModel: AppUpdateViewModel,
+    onInstallUpdate: (File) -> Unit = {},
 ) {
     val context = LocalContext.current
     val sessionStore = remember(context) { AuthSessionStore(context) }
@@ -407,6 +412,7 @@ fun AgentsAnywhereApp(
         remoteTerminalPool = remoteTerminalPool,
         pendingMobileLoginQr = pendingMobileLoginQr,
         webLoginViewModel = webLoginViewModel,
+        appUpdateViewModel = appUpdateViewModel,
         navigate = navigate,
         onRefreshSessions = {
             if (!hasAuthSession || isRefreshingSessions) return@AgentsAnywhereNavHost
@@ -680,6 +686,14 @@ fun AgentsAnywhereApp(
             destinationName = AppDestination.QrWaiting.name
         },
     )
+    AppUpdatePromptDialog(
+        state = appUpdateViewModel.state,
+        onUpdate = appUpdateViewModel::downloadUpdate,
+        onLater = appUpdateViewModel::dismissPrompt,
+    )
+    LaunchedEffect(appUpdateViewModel.state.installFile) {
+        appUpdateViewModel.state.installFile?.let(onInstallUpdate)
+    }
 }
 
 @Composable
@@ -703,6 +717,7 @@ private fun AgentsAnywhereNavHost(
     remoteTerminalPool: RemoteTerminalPool,
     pendingMobileLoginQr: MobileLoginQrPayload?,
     webLoginViewModel: WebLoginViewModel,
+    appUpdateViewModel: AppUpdateViewModel,
     navigate: (AppDestination) -> Unit,
     onRefreshSessions: () -> Unit,
     onOpenSession: (AgentSession) -> Unit,
@@ -801,6 +816,7 @@ private fun AgentsAnywhereNavHost(
                     serverUrl = serverUrl,
                     appearanceMode = appearanceMode,
                     languageMode = languageMode,
+                    appUpdateViewModel = appUpdateViewModel,
                     onRefresh = onRefreshSessions,
                     onTabSelected = onHomeTabSelected,
                     onAppearanceModeChange = onAppearanceModeChange,
@@ -974,6 +990,10 @@ private val NewSessionDraftSaver = listSaver<NewSessionDraft?, Any>(
 private fun AgentsAnywhereAppPreview() {
     AgentsAnywhereTheme {
         val context = LocalContext.current
-        AgentsAnywhereApp(webLoginViewModel = WebLoginViewModel(context.applicationContext as android.app.Application))
+        val application = context.applicationContext as android.app.Application
+        AgentsAnywhereApp(
+            webLoginViewModel = WebLoginViewModel(application),
+            appUpdateViewModel = AppUpdateViewModel(application),
+        )
     }
 }

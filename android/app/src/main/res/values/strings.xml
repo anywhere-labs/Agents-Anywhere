@@ -471,7 +471,14 @@
     <string name="profile_language_system_description">Use the device language.</string>
     <string name="profile_language_english_description">Always show English.</string>
     <string name="profile_language_chinese_description">Always show Simplified Chinese.</string>
-    <string name="profile_updates_coming_soon">Updates are coming soon.</string>
+    <string name="update_available_title">New version available</string>
+    <string name="update_available_message">Version v%1$s is available. Update now?</string>
+    <string name="update_now">Update now</string>
+    <string name="update_later">Later</string>
+    <string name="update_downloading">Downloading...</string>
+    <string name="update_download_failed">The update could not be downloaded. Please try again.</string>
+    <string name="update_up_to_date">You are using the latest version.</string>
+    <string name="update_check_failed">Could not check for updates.</string>
     <string name="profile_official_service">Official Service</string>
     <string name="profile_self_hosted">Self-host Service</string>
     <string name="profile_sign_out">Sign out</string>

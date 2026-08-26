@@ -37,6 +37,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.Icon
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -69,6 +70,8 @@ import coil3.compose.AsyncImage
 import com.agentsanywhere.app.R
 import com.agentsanywhere.app.api.AuthMeResponse
 import com.agentsanywhere.app.config.AppConfig
+import com.agentsanywhere.app.feature.update.AppUpdateUiState
+import com.agentsanywhere.app.feature.update.AppUpdateViewModel
 import com.agentsanywhere.app.ui.designsystem.AAAppearanceMode
 import com.agentsanywhere.app.ui.designsystem.AALanguageMode
 import com.agentsanywhere.app.ui.designsystem.AgentsAnywhereColors
@@ -79,6 +82,7 @@ import com.composables.icons.lucide.ChevronLeft
 import com.composables.icons.lucide.ChevronRight
 import com.composables.icons.lucide.ChevronsUpDown
 import com.composables.icons.lucide.Circle
+import com.composables.icons.lucide.CircleAlert
 import com.composables.icons.lucide.Globe
 import com.composables.icons.lucide.KeyRound
 import com.composables.icons.lucide.LogOut
@@ -112,6 +116,7 @@ fun ProfileSettingsDrawer(
     serverUrl: String,
     appearanceMode: String,
     languageMode: String,
+    appUpdateViewModel: AppUpdateViewModel,
     onAppearanceModeChange: (String) -> Unit,
     onLanguageModeChange: (String) -> Unit,
     onLoadAccount: suspend () -> Result<AuthMeResponse>,
@@ -174,6 +179,7 @@ fun ProfileSettingsDrawer(
             appearanceMenuOpen = false
             return@LaunchedEffect
         }
+        appUpdateViewModel.checkForUpdate(showPrompt = false)
         onLoadAccount()
             .onSuccess { account = it }
             .onFailure { onNotice(it.message ?: context.getString(R.string.profile_account_load_failed), true) }
@@ -220,7 +226,10 @@ fun ProfileSettingsDrawer(
                             )
                         }
                         ProfileDetailPage.Updates -> item("updates-detail") {
-                            ComingSoonDetail(message = stringResource(R.string.profile_updates_coming_soon))
+                            UpdateDetailPage(
+                                state = appUpdateViewModel.state,
+                                onUpdate = appUpdateViewModel::downloadUpdate,
+                            )
                         }
                         ProfileDetailPage.None -> Unit
                     }
@@ -285,6 +294,8 @@ fun ProfileSettingsDrawer(
                             ProfileRow(
                                 icon = Lucide.Server,
                                 title = stringResource(R.string.profile_check_updates),
+                                trailingIcon = if (appUpdateViewModel.state.release != null) Lucide.CircleAlert else null,
+                                trailingIconTint = colors.errorIcon,
                                 onClick = { detailPage = ProfileDetailPage.Updates },
                             )
                         }
@@ -518,22 +529,76 @@ private fun LanguageRow(
 }
 
 @Composable
-private fun ComingSoonDetail(message: String) {
+private fun UpdateDetailPage(
+    state: AppUpdateUiState,
+    onUpdate: () -> Unit,
+) {
     val colors = LocalAAColors.current
+    val release = state.release
+    if (release != null) {
+        ProfileCard {
+            Column(
+                modifier = Modifier.padding(18.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+            ) {
+                Text(
+                    text = stringResource(R.string.update_available_title),
+                    color = colors.ink,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    lineHeight = 22.sp,
+                )
+                Text(
+                    text = stringResource(R.string.update_available_message, release.versionName),
+                    color = colors.muted,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Medium,
+                    lineHeight = 20.sp,
+                )
+                if (state.downloadFailed) {
+                    Text(
+                        text = stringResource(R.string.update_download_failed),
+                        color = colors.errorText,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
+                        lineHeight = 18.sp,
+                    )
+                }
+                ProfileDialogButton(
+                    label = stringResource(if (state.downloading) R.string.update_downloading else R.string.update_now),
+                    primary = true,
+                    enabled = !state.downloading,
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick = onUpdate,
+                )
+            }
+        }
+        return
+    }
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .height(260.dp),
         contentAlignment = Alignment.Center,
     ) {
-        Text(
-            text = message,
-            color = colors.muted,
-            fontSize = 16.sp,
-            fontWeight = FontWeight.SemiBold,
-            lineHeight = 21.sp,
-            maxLines = 2,
-        )
+        if (state.checking) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(24.dp),
+                color = colors.muted,
+                strokeWidth = 2.dp,
+            )
+        } else {
+            Text(
+                text = stringResource(
+                    if (state.checkFailed) R.string.update_check_failed else R.string.update_up_to_date,
+                ),
+                color = colors.muted,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.SemiBold,
+                lineHeight = 21.sp,
+                maxLines = 2,
+            )
+        }
     }
 }
 
@@ -663,6 +728,7 @@ private fun ProfileRow(
     subtitle: String? = null,
     trailing: String? = null,
     trailingIcon: ImageVector? = null,
+    trailingIconTint: Color? = null,
     enabled: Boolean = true,
     showChevron: Boolean = true,
     onClick: (() -> Unit)? = null,
@@ -712,7 +778,12 @@ private fun ProfileRow(
             )
         }
         if (trailingIcon != null) {
-            Icon(trailingIcon, contentDescription = null, tint = colors.faint.copy(alpha = alpha), modifier = Modifier.size(20.dp))
+            Icon(
+                trailingIcon,
+                contentDescription = null,
+                tint = (trailingIconTint ?: colors.faint).copy(alpha = alpha),
+                modifier = Modifier.size(20.dp),
+            )
         }
         if (showChevron) {
             Icon(Lucide.ChevronRight, contentDescription = null, tint = colors.faint.copy(alpha = alpha), modifier = Modifier.size(20.dp))

@@ -5,9 +5,11 @@ import android.content.Intent
 import android.content.res.Configuration
 import android.net.Uri
 import android.os.Bundle
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
+import androidx.lifecycle.lifecycleScope
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -17,18 +19,26 @@ import coil3.disk.DiskCache
 import coil3.memory.MemoryCache
 import com.agentsanywhere.app.app.AgentsAnywhereApp
 import com.agentsanywhere.app.feature.auth.WebLoginViewModel
+import com.agentsanywhere.app.feature.update.AppUpdateInstaller
+import com.agentsanywhere.app.feature.update.AppUpdateViewModel
 import com.agentsanywhere.app.ui.designsystem.AAAppearanceMode
 import com.agentsanywhere.app.ui.designsystem.AALanguageMode
 import com.agentsanywhere.app.ui.designsystem.AgentsAnywhereTheme
 import java.io.File
 import java.util.Locale
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import okio.Path.Companion.toOkioPath
 
 class MainActivity : ComponentActivity() {
     private val oauthCallbackUri = mutableStateOf<Uri?>(null)
     private val webLoginViewModel by viewModels<WebLoginViewModel>()
+    private val appUpdateViewModel by viewModels<AppUpdateViewModel>()
     private var appearanceMode by mutableStateOf(AAAppearanceMode.System)
     private var languageMode by mutableStateOf(AALanguageMode.System)
+    private var pendingUpdateApk: File? = null
+    private var installingUpdate = false
 
     override fun attachBaseContext(newBase: Context) {
         super.attachBaseContext(newBase.withSavedLanguage())
@@ -57,6 +67,7 @@ class MainActivity : ComponentActivity() {
         languageMode = preferences.getString(KEY_LANGUAGE_MODE, AALanguageMode.System)
             ?: AALanguageMode.System
         oauthCallbackUri.value = intent?.data
+        appUpdateViewModel.checkForUpdate(showPrompt = true)
         setContent {
             AgentsAnywhereTheme(appearanceMode = appearanceMode) {
                 AgentsAnywhereApp(
@@ -76,6 +87,8 @@ class MainActivity : ComponentActivity() {
                     oauthCallbackUri = oauthCallbackUri.value,
                     onOAuthCallbackConsumed = { oauthCallbackUri.value = null },
                     webLoginViewModel = webLoginViewModel,
+                    appUpdateViewModel = appUpdateViewModel,
+                    onInstallUpdate = ::requestUpdateInstall,
                 )
             }
         }
@@ -85,6 +98,47 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         oauthCallbackUri.value = intent.data
+    }
+
+    override fun onResume() {
+        super.onResume()
+        val pending = pendingUpdateApk ?: return
+        if (packageManager.canRequestPackageInstalls()) {
+            requestUpdateInstall(pending)
+        } else {
+            pendingUpdateApk = null
+            appUpdateViewModel.reportInstallFailure()
+        }
+    }
+
+    private fun requestUpdateInstall(apk: File) {
+        if (installingUpdate) return
+        if (!apk.isFile) {
+            appUpdateViewModel.reportInstallFailure()
+            return
+        }
+        if (!packageManager.canRequestPackageInstalls()) {
+            pendingUpdateApk = apk
+            startActivity(
+                Intent(
+                    Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                    Uri.parse("package:$packageName"),
+                ),
+            )
+            return
+        }
+        pendingUpdateApk = null
+        installingUpdate = true
+        lifecycleScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) { AppUpdateInstaller.install(this@MainActivity, apk) }
+            }.onSuccess {
+                appUpdateViewModel.markInstallStarted()
+            }.onFailure {
+                appUpdateViewModel.reportInstallFailure()
+            }
+            installingUpdate = false
+        }
     }
 
     private fun Context.withSavedLanguage(): Context {
