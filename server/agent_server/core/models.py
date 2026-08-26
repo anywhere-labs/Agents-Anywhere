@@ -1065,3 +1065,11 @@ class RpcResponsePayload(BaseModel):
     ok: bool
     result: Any = None
     error: RpcError | None = None
+
+
+class AndroidUpdateCheckResponse(BaseModel):
+    updateAvailable: bool
+    latestVersionCode: int
+    latestVersionName: str
+    downloadUrl: str | None = None
+    sha256: str | None = None

@@ -1,5 +1,6 @@
 from agent_server.infra.db.engine import build_engine
 from agent_server.infra.db.schema import (
+    android_app_releases,
     connector_protocol_capabilities,
     connector_runtime_catalogs,
     connector_terminal_roots,
@@ -24,6 +25,7 @@ from agent_server.infra.db.schema import (
 )
 
 __all__ = [
+    "android_app_releases",
     "build_engine",
     "connector_protocol_capabilities",
     "connector_runtime_catalogs",

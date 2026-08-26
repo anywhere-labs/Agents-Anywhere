@@ -16,6 +16,19 @@ from sqlalchemy import (
 metadata = MetaData()
 
 
+android_app_releases = Table(
+    "android_app_releases",
+    metadata,
+    Column("version_code", Integer, primary_key=True),
+    Column("version_name", Text, nullable=False),
+    Column("download_url", Text),
+    Column("sha256", Text),
+    Column("published", Integer, nullable=False, server_default="0"),
+    Column("created_at", Text, nullable=False),
+    Column("updated_at", Text, nullable=False),
+)
+
+
 connectors = Table(
     "connectors",
     metadata,
