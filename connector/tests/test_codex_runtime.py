@@ -85,6 +85,7 @@ from connector.runtimes.codex.sdk.runtime_client import (
     CodexThreadListResult,
     CodexThreadReadResult,
     CodexThreadResult,
+    CodexThreadTurnsResult,
     CodexTurnInputAttachment,
     CodexTurnResult,
 )
@@ -2012,6 +2013,66 @@ async def _test_codex_runtime_reads_session_snapshot() -> None:
 
 def test_codex_runtime_reads_typed_sdk_snapshot_with_parent_turn_id() -> None:
     asyncio.run(_test_codex_runtime_reads_typed_sdk_snapshot_with_parent_turn_id())
+
+
+def test_codex_runtime_reads_typed_sdk_snapshot_from_turn_pages() -> None:
+    asyncio.run(_test_codex_runtime_reads_typed_sdk_snapshot_from_turn_pages())
+
+
+async def _test_codex_runtime_reads_typed_sdk_snapshot_from_turn_pages() -> None:
+    client = FakeCodexClient()
+    client.results["thread/read"] = {
+        "thread": Thread.model_validate(
+            {
+                "id": "thread_1",
+                "cliVersion": "0.1.0",
+                "createdAt": 1,
+                "cwd": "/repo",
+                "ephemeral": False,
+                "modelProvider": "openai",
+                "preview": "hello",
+                "sessionId": "codex_session_1",
+                "source": "appServer",
+                "status": {"type": "notLoaded"},
+                "turns": [],
+                "updatedAt": 2,
+            }
+        )
+    }
+
+    async def list_thread_turns(thread_id: str) -> CodexThreadTurnsResult:
+        assert thread_id == "thread_1"
+        return CodexThreadTurnsResult(
+            turns=(
+                Turn.model_validate(
+                    {
+                        "id": "turn_paged",
+                        "status": "completed",
+                        "items": [
+                            {
+                                "id": "item_paged",
+                                "type": "agentMessage",
+                                "text": "from page",
+                            }
+                        ],
+                    }
+                ),
+            )
+        )
+
+    client.list_thread_turns = list_thread_turns  # type: ignore[attr-defined]
+    runtime = CodexRuntime(config=_config(), host=FakeHost(), client=client)
+
+    snapshot = await runtime.get_session_snapshot(
+        "sess_1",
+        external_session_id="thread_1",
+    )
+
+    assert [item.content["text"] for item in snapshot.items] == ["from page"]
+    assert client.requests[-1] == (
+        "thread/read",
+        {"threadId": "thread_1", "includeTurns": False},
+    )
 
 
 async def _test_codex_runtime_reads_typed_sdk_snapshot_with_parent_turn_id() -> None:

@@ -1432,6 +1432,14 @@ async def read_session_capabilities_from_connector(
         )
     except ConnectorOfflineError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except TimeoutError as exc:
+        raise HTTPException(
+            status_code=504,
+            detail={
+                "code": "runtime_capabilities_timeout",
+                "message": "connector session capabilities request timed out",
+            },
+        ) from exc
     except ConnectorRpcError as exc:
         raise HTTPException(
             status_code=502,
@@ -1509,6 +1517,14 @@ async def read_session_notices_from_connector(
         )
     except ConnectorOfflineError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except TimeoutError as exc:
+        raise HTTPException(
+            status_code=504,
+            detail={
+                "code": "runtime_notices_timeout",
+                "message": "connector session notices request timed out",
+            },
+        ) from exc
     except ConnectorRpcError as exc:
         raise HTTPException(
             status_code=502,

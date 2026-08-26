@@ -39,6 +39,7 @@ RPC_LOG_PARTIAL_SECRET_KEYS = frozenset(
     key for key in RPC_LOG_EXACT_SECRET_KEYS if key != "auth"
 )
 CONNECTOR_WS_MAX_NOTIFICATION_BYTES = 900 * 1024
+CRITICAL_RPC_METHODS = frozenset({"interaction.respond", "session.notices"})
 
 
 class WebSocketSender(Protocol):
@@ -87,6 +88,7 @@ class ConnectorRpcChannel:
         self._send_worker_task: asyncio.Task[None] | None = None
         self._request_tasks: set[asyncio.Task[None]] = set()
         self._request_semaphore = asyncio.Semaphore(8)
+        self._critical_request_semaphore = asyncio.Semaphore(2)
 
     def set_connection(self, ws: WebSocketSender) -> None:
         if self._send_worker_task is not None:
@@ -109,6 +111,11 @@ class ConnectorRpcChannel:
             send_queue,
             ConnectionError("backend websocket connection cleared"),
         )
+        for task in tuple(self._request_tasks):
+            task.cancel()
+        self._request_tasks.clear()
+        self._request_semaphore = asyncio.Semaphore(8)
+        self._critical_request_semaphore = asyncio.Semaphore(2)
 
     @property
     def connected(self) -> bool:
@@ -204,7 +211,13 @@ class ConnectorRpcChannel:
         message: dict[str, Any],
         dispatch: ConnectorDispatcher,
     ) -> None:
-        async with self._request_semaphore:
+        method = message.get("method")
+        semaphore = (
+            self._critical_request_semaphore
+            if method in CRITICAL_RPC_METHODS
+            else self._request_semaphore
+        )
+        async with semaphore:
             await self.handle_message(message, dispatch)
 
     def handle_request_task_done(self, task: asyncio.Task[None]) -> None:

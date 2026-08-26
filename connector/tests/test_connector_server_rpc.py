@@ -128,6 +128,95 @@ def test_connector_rpc_clear_connection_fails_in_flight_and_pending_sends() -> N
     assert all(isinstance(result, ConnectionError) for result in results)
 
 
+def test_connector_rpc_critical_request_bypasses_saturated_general_lane() -> None:
+    async def exercise() -> bool:
+        websocket = MemoryWebSocket()
+        channel = ConnectorRpcChannel()
+        channel.set_connection(websocket)
+        general_started = 0
+        all_general_started = asyncio.Event()
+        release_general = asyncio.Event()
+        critical_completed = asyncio.Event()
+
+        async def dispatch(method: str, params: dict[str, object]) -> dict[str, object]:
+            nonlocal general_started
+            _ = params
+            if method == "session.state":
+                general_started += 1
+                if general_started == 8:
+                    all_general_started.set()
+                await release_general.wait()
+                return {"state": None}
+            critical_completed.set()
+            return {"notices": []}
+
+        for index in range(8):
+            channel.start_request(
+                {
+                    "type": "request",
+                    "id": f"state-{index}",
+                    "method": "session.state",
+                    "params": {},
+                },
+                dispatch,
+            )
+        await asyncio.wait_for(all_general_started.wait(), timeout=1)
+        channel.start_request(
+            {
+                "type": "request",
+                "id": "notices-1",
+                "method": "session.notices",
+                "params": {},
+            },
+            dispatch,
+        )
+        await asyncio.wait_for(critical_completed.wait(), timeout=1)
+        release_general.set()
+        while channel._request_tasks:
+            await asyncio.sleep(0)
+        channel.clear_connection()
+        return any(
+            json.loads(payload).get("id") == "notices-1" for payload in websocket.sent
+        )
+
+    assert asyncio.run(exercise()) is True
+
+
+def test_connector_rpc_clear_connection_cancels_request_tasks() -> None:
+    async def exercise() -> tuple[bool, int]:
+        channel = ConnectorRpcChannel()
+        channel.set_connection(MemoryWebSocket())
+        started = asyncio.Event()
+        cancelled = asyncio.Event()
+
+        async def dispatch(method: str, params: dict[str, object]) -> None:
+            _ = method
+            _ = params
+            started.set()
+            try:
+                await asyncio.Future()
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+
+        channel.start_request(
+            {
+                "type": "request",
+                "id": "state-1",
+                "method": "session.state",
+                "params": {},
+            },
+            dispatch,
+        )
+        await asyncio.wait_for(started.wait(), timeout=1)
+        channel.clear_connection()
+        await asyncio.wait_for(cancelled.wait(), timeout=1)
+        await asyncio.sleep(0)
+        return cancelled.is_set(), len(channel._request_tasks)
+
+    assert asyncio.run(exercise()) == (True, 0)
+
+
 def test_connector_rpc_rejects_oversized_notification_before_send() -> None:
     async def exercise() -> MemoryWebSocket:
         websocket = MemoryWebSocket()

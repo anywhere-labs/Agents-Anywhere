@@ -1241,6 +1241,7 @@ class FakeLocalRpc:
         self.terminal_relay_broker: Any | None = None
         self.terminal_relay_sockets: dict[str, FakeWebSocket] = {}
         self.fail = False
+        self.timeout_session_methods: set[str] = set()
 
     async def is_online(self, connector_id: str) -> bool:
         return True
@@ -1281,6 +1282,8 @@ class FakeLocalRpc:
         self.requests.append((connector_id, method, params, timeout))
         if self.fail:
             raise ConnectorRpcError("codex_error", "request gone")
+        if method in self.timeout_session_methods:
+            raise TimeoutError(f"{method} timed out")
         if method == "terminal.create":
             terminal_id = params["terminalId"]
             self.terminals[terminal_id] = {
@@ -4003,6 +4006,29 @@ def test_session_snapshot_returns_persisted_runtime_catalogs(tmp_path):
     catalogs = response.json()["catalogs"]
     assert catalogs["model"]["models"][0]["reasoningItems"][0]["selectionId"] == model_selection_id
     assert catalogs["permission"]["permissions"][0]["selectionId"] == permission_selection_id
+
+
+def test_session_snapshot_falls_back_when_live_notices_and_capabilities_timeout(
+    tmp_path,
+):
+    client = make_client(tmp_path)
+    connector_id, _access_token, session_id, headers = create_connector_and_session(client)
+    seed_codex_model_catalog(client.app, connector_id)
+    seed_codex_permission_catalog(client.app, connector_id)
+    fake_rpc = FakeLocalRpc()
+    fake_rpc.timeout_session_methods = {"session.notices", "session.capabilities"}
+    client.app.state.rpc = fake_rpc
+
+    snapshot = client.get(f"/sessions/{session_id}/snapshot", headers=headers)
+
+    assert snapshot.status_code == 200, snapshot.text
+    body = snapshot.json()
+    assert body["notices"] == []
+    assert body["runtimeCapabilities"]["revision"] == 1
+
+    notices = client.get(f"/sessions/{session_id}/runtime/notices", headers=headers)
+    assert notices.status_code == 504, notices.text
+    assert notices.json()["detail"]["code"] == "runtime_notices_timeout"
 
 
 def test_running_tool_item_keeps_session_interruptible(tmp_path):
