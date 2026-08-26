@@ -902,9 +902,10 @@ function ReleasesTab() {
                     maxLength={64}
                     placeholder="0.1.8"
                     value={draft.versionName}
-                    onChange={(event) =>
-                      setDraft((current) => ({ ...current, versionName: event.currentTarget.value }))
-                    }
+                    onChange={(event) => {
+                      const versionName = event.currentTarget.value
+                      setDraft((current) => ({ ...current, versionName }))
+                    }}
                   />
                 </Field>
                 <Field>
@@ -915,12 +916,13 @@ function ReleasesTab() {
                     required
                     min={1}
                     value={draft.versionCode}
-                    onChange={(event) =>
+                    onChange={(event) => {
+                      const versionCode = Math.max(1, Number(event.currentTarget.value) || 1)
                       setDraft((current) => ({
                         ...current,
-                        versionCode: Math.max(1, Number(event.currentTarget.value) || 1),
+                        versionCode,
                       }))
-                    }
+                    }}
                   />
                 </Field>
               </div>
@@ -932,9 +934,10 @@ function ReleasesTab() {
                   required
                   placeholder="https://downloads.example.com/app.apk"
                   value={draft.downloadUrl}
-                  onChange={(event) =>
-                    setDraft((current) => ({ ...current, downloadUrl: event.currentTarget.value }))
-                  }
+                  onChange={(event) => {
+                    const downloadUrl = event.currentTarget.value
+                    setDraft((current) => ({ ...current, downloadUrl }))
+                  }}
                 />
               </Field>
               <Field>
@@ -946,9 +949,10 @@ function ReleasesTab() {
                   pattern="[0-9a-fA-F]{64}"
                   placeholder={t("sha256Placeholder")}
                   value={draft.sha256 ?? ""}
-                  onChange={(event) =>
-                    setDraft((current) => ({ ...current, sha256: event.currentTarget.value }))
-                  }
+                  onChange={(event) => {
+                    const sha256 = event.currentTarget.value
+                    setDraft((current) => ({ ...current, sha256 }))
+                  }}
                 />
                 <FieldDescription>{t("sha256Description")}</FieldDescription>
               </Field>
