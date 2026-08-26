@@ -19,6 +19,8 @@ import {
   Gauge,
   Laptop,
   LineChart,
+  PackageOpen,
+  Plus,
   RefreshCw,
   Save,
   SlidersHorizontal,
@@ -31,7 +33,16 @@ import { useAuth } from "@/components/auth/auth-context"
 import { DashboardSidebarToggle } from "@/components/dashboard-sidebar-toggle"
 import { LoadingState } from "@/components/loading-state"
 import { Button } from "@/components/ui/button"
+import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import {
   Drawer,
   DrawerContent,
@@ -46,8 +57,18 @@ import {
   type ChartConfig,
 } from "@/components/ui/chart"
 import { Input } from "@/components/ui/input"
+import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field"
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { Separator } from "@/components/ui/separator"
 import { Spinner } from "@/components/ui/spinner"
+import { Switch } from "@/components/ui/switch"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { useWorkspace } from "@/components/workspace-context"
 import { dashboardApi } from "@/features/dashboard/api"
@@ -55,10 +76,13 @@ import type {
   AdminDashboardBreakdownItem,
   AdminDashboardOverviewResponse,
   AdminDashboardSettings,
+  AppReleaseCreateRequest,
+  AppReleasePlatform,
+  AppReleaseView,
 } from "@/features/dashboard/types"
 import { cn } from "@/lib/utils"
 
-type DashboardTab = "overview" | "usage" | "users" | "devices" | "agents"
+type DashboardTab = "overview" | "usage" | "users" | "devices" | "agents" | "releases"
 
 const DEFAULT_TZ = "Asia/Shanghai"
 const CHART_COLORS = ["#60a5fa", "#34d399", "#f59e0b", "#f87171", "#a78bfa"]
@@ -88,6 +112,7 @@ const navItems: { id: DashboardTab; icon: typeof LineChart; labelKey: string }[]
   { id: "users", icon: Users, labelKey: "users" },
   { id: "devices", icon: Laptop, labelKey: "devices" },
   { id: "agents", icon: SlidersHorizontal, labelKey: "agents" },
+  { id: "releases", icon: PackageOpen, labelKey: "releases" },
 ]
 
 export function DashboardPage() {
@@ -184,18 +209,20 @@ export function DashboardPage() {
             <h1 className="text-2xl font-semibold">{t("title")}</h1>
             <p className="mt-1 text-sm text-muted-foreground">{t("description")}</p>
           </div>
-          <div className="flex flex-wrap items-end gap-2">
-            <DateField label={t("from")} value={fromDate} onChange={setFromDate} />
-            <DateField label={t("to")} value={toDate} onChange={setToDate} />
-            <Button type="button" variant="outline" onClick={() => void load()}>
-              <RefreshCw data-icon="inline-start" />
-              {t("load")}
-            </Button>
-            <Button type="button" onClick={() => void refreshToday()} disabled={refreshing}>
-              {refreshing ? <Spinner /> : <RefreshCw data-icon="inline-start" />}
-              {t("refreshToday")}
-            </Button>
-          </div>
+          {tab !== "releases" && (
+            <div className="flex flex-wrap items-end gap-2">
+              <DateField label={t("from")} value={fromDate} onChange={setFromDate} />
+              <DateField label={t("to")} value={toDate} onChange={setToDate} />
+              <Button type="button" variant="outline" onClick={() => void load()}>
+                <RefreshCw data-icon="inline-start" />
+                {t("load")}
+              </Button>
+              <Button type="button" onClick={() => void refreshToday()} disabled={refreshing}>
+                {refreshing ? <Spinner /> : <RefreshCw data-icon="inline-start" />}
+                {t("refreshToday")}
+              </Button>
+            </div>
+          )}
         </div>
         <DashboardCategoryDrawer
           tab={tab}
@@ -322,6 +349,7 @@ function DashboardContent({
   onSettingsChange: (settings: AdminDashboardSettings) => void
   onSaveSettings: () => void
 }) {
+  if (tab === "releases") return <ReleasesTab />
   if (tab === "usage") {
     return (
       <UsageTab
@@ -697,6 +725,261 @@ function BreakdownPie({ title, items }: { title: string; items: AdminDashboardBr
       </div>
     </section>
   )
+}
+
+const EMPTY_RELEASE_DRAFT: AppReleaseCreateRequest = {
+  platform: "android",
+  versionCode: 1,
+  versionName: "",
+  downloadUrl: "",
+  sha256: null,
+  published: true,
+}
+
+function ReleasesTab() {
+  const { session } = useAuth()
+  const t = useTranslations("pages.opsDashboard.releases")
+  const [releases, setReleases] = React.useState<AppReleaseView[]>([])
+  const [loading, setLoading] = React.useState(true)
+  const [error, setError] = React.useState<string | null>(null)
+  const [dialogOpen, setDialogOpen] = React.useState(false)
+  const [saving, setSaving] = React.useState(false)
+  const [draft, setDraft] = React.useState<AppReleaseCreateRequest>(EMPTY_RELEASE_DRAFT)
+  const token = session?.accessToken
+
+  const loadReleases = React.useCallback(async () => {
+    if (!token) return
+    setLoading(true)
+    setError(null)
+    try {
+      const response = await dashboardApi.listAdminClientReleases(token)
+      setReleases(response.releases)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t("loadFailed"))
+    } finally {
+      setLoading(false)
+    }
+  }, [t, token])
+
+  React.useEffect(() => {
+    void loadReleases()
+  }, [loadReleases])
+
+  const createRelease = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (!token || saving) return
+    setSaving(true)
+    try {
+      await dashboardApi.createAdminClientRelease(token, {
+        ...draft,
+        versionName: draft.versionName.trim(),
+        downloadUrl: draft.downloadUrl.trim(),
+        sha256: draft.sha256?.trim() || null,
+      })
+      toast.success(t("created"))
+      setDraft(EMPTY_RELEASE_DRAFT)
+      setDialogOpen(false)
+      await loadReleases()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : t("createFailed"))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="text-lg font-semibold">{t("title")}</h2>
+          <p className="mt-1 text-sm text-muted-foreground">{t("description")}</p>
+        </div>
+        <Button type="button" onClick={() => setDialogOpen(true)}>
+          <Plus data-icon="inline-start" />
+          {t("create")}
+        </Button>
+      </div>
+
+      {loading ? (
+        <LoadingState className="min-h-64 rounded-xl border border-border bg-card" />
+      ) : error ? (
+        <div className="rounded-xl border border-destructive/30 bg-destructive/5 px-5 py-4 text-sm text-destructive">
+          {error}
+        </div>
+      ) : (
+        <section className="overflow-hidden rounded-xl border border-border bg-card">
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>{t("platform")}</TableHead>
+                  <TableHead>{t("version")}</TableHead>
+                  <TableHead>{t("versionCode")}</TableHead>
+                  <TableHead>{t("downloadUrl")}</TableHead>
+                  <TableHead>{t("status")}</TableHead>
+                  <TableHead>{t("createdAt")}</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {releases.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={6} className="h-32 text-center text-muted-foreground">
+                      {t("empty")}
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  releases.map((release) => (
+                    <TableRow key={`${release.platform}-${release.versionCode}`}>
+                      <TableCell>
+                        <Badge variant="secondary">{t(`platforms.${release.platform}`)}</Badge>
+                      </TableCell>
+                      <TableCell className="font-medium">{release.versionName}</TableCell>
+                      <TableCell className="tabular-nums">{release.versionCode}</TableCell>
+                      <TableCell className="max-w-72">
+                        {release.downloadUrl ? (
+                          <a
+                            href={release.downloadUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="block truncate text-primary underline-offset-4 hover:underline"
+                          >
+                            {release.downloadUrl}
+                          </a>
+                        ) : (
+                          <span className="text-muted-foreground">-</span>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant={release.published ? "default" : "outline"}>
+                          {release.published ? t("published") : t("draft")}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="whitespace-nowrap text-muted-foreground">
+                        {formatReleaseDate(release.createdAt)}
+                      </TableCell>
+                    </TableRow>
+                  ))
+                )}
+              </TableBody>
+            </Table>
+          </div>
+        </section>
+      )}
+
+      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t("dialogTitle")}</DialogTitle>
+            <DialogDescription>{t("dialogDescription")}</DialogDescription>
+          </DialogHeader>
+          <form id="create-release-form" onSubmit={(event) => void createRelease(event)}>
+            <FieldGroup>
+              <Field>
+                <FieldLabel htmlFor="release-platform">{t("platform")}</FieldLabel>
+                <Select
+                  value={draft.platform}
+                  onValueChange={(value) =>
+                    setDraft((current) => ({ ...current, platform: value as AppReleasePlatform }))
+                  }
+                >
+                  <SelectTrigger id="release-platform" className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      <SelectItem value="android">{t("platforms.android")}</SelectItem>
+                      <SelectItem value="desktop">{t("platforms.desktop")}</SelectItem>
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+              </Field>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <Field>
+                  <FieldLabel htmlFor="release-version-name">{t("version")}</FieldLabel>
+                  <Input
+                    id="release-version-name"
+                    required
+                    maxLength={64}
+                    placeholder="0.1.8"
+                    value={draft.versionName}
+                    onChange={(event) =>
+                      setDraft((current) => ({ ...current, versionName: event.currentTarget.value }))
+                    }
+                  />
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor="release-version-code">{t("versionCode")}</FieldLabel>
+                  <Input
+                    id="release-version-code"
+                    type="number"
+                    required
+                    min={1}
+                    value={draft.versionCode}
+                    onChange={(event) =>
+                      setDraft((current) => ({
+                        ...current,
+                        versionCode: Math.max(1, Number(event.currentTarget.value) || 1),
+                      }))
+                    }
+                  />
+                </Field>
+              </div>
+              <Field>
+                <FieldLabel htmlFor="release-download-url">{t("downloadUrl")}</FieldLabel>
+                <Input
+                  id="release-download-url"
+                  type="url"
+                  required
+                  placeholder="https://downloads.example.com/app.apk"
+                  value={draft.downloadUrl}
+                  onChange={(event) =>
+                    setDraft((current) => ({ ...current, downloadUrl: event.currentTarget.value }))
+                  }
+                />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="release-sha256">SHA-256</FieldLabel>
+                <Input
+                  id="release-sha256"
+                  minLength={64}
+                  maxLength={64}
+                  pattern="[0-9a-fA-F]{64}"
+                  placeholder={t("sha256Placeholder")}
+                  value={draft.sha256 ?? ""}
+                  onChange={(event) =>
+                    setDraft((current) => ({ ...current, sha256: event.currentTarget.value }))
+                  }
+                />
+                <FieldDescription>{t("sha256Description")}</FieldDescription>
+              </Field>
+              <Field orientation="horizontal">
+                <FieldLabel htmlFor="release-published">{t("publishNow")}</FieldLabel>
+                <Switch
+                  id="release-published"
+                  checked={draft.published}
+                  onCheckedChange={(published) => setDraft((current) => ({ ...current, published }))}
+                />
+              </Field>
+            </FieldGroup>
+          </form>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>
+              {t("cancel")}
+            </Button>
+            <Button type="submit" form="create-release-form" disabled={saving}>
+              {saving && <Spinner />}
+              {t("confirmCreate")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  )
+}
+
+function formatReleaseDate(value: string) {
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString()
 }
 
 function DateField({
