@@ -181,12 +181,29 @@ function sessionSortMillis(session: SessionView): number {
   return Number.isFinite(value) ? value : 0
 }
 
-function sortSessionViews(sessions: SessionView[]): SessionView[] {
+function sessionKeepsActivePosition(session: SessionView): boolean {
+  return (
+    session.status === "pending" ||
+    session.status === "running" ||
+    session.status === "waiting" ||
+    session.status === "waiting_approval" ||
+    session.status === "stopping"
+  )
+}
+
+function sortSessionViews(
+  sessions: SessionView[],
+  activeSortAnchors: ReadonlyMap<string, number> = new Map(),
+): SessionView[] {
   return [...sessions].sort((a, b) =>
-    sessionSortMillis(b) - sessionSortMillis(a) ||
-    (b.lastItemOrderSeq ?? -1) - (a.lastItemOrderSeq ?? -1) ||
-    b.updatedSeq - a.updatedSeq ||
-    a.id.localeCompare(b.id),
+    Number(activeSortAnchors.has(b.id)) - Number(activeSortAnchors.has(a.id)) ||
+    (activeSortAnchors.has(a.id) && activeSortAnchors.has(b.id)
+      ? (activeSortAnchors.get(b.id) ?? 0) - (activeSortAnchors.get(a.id) ?? 0) ||
+        a.id.localeCompare(b.id)
+      : sessionSortMillis(b) - sessionSortMillis(a) ||
+        (b.lastItemOrderSeq ?? -1) - (a.lastItemOrderSeq ?? -1) ||
+        b.updatedSeq - a.updatedSeq ||
+        a.id.localeCompare(b.id)),
   )
 }
 
@@ -394,6 +411,25 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   })
   const loadingSessionPagesRef = React.useRef({ active: false, archived: false })
   const loadedBeyondFirstPageRef = React.useRef({ active: false, archived: false })
+  const activeSessionSortAnchorsRef = React.useRef(new Map<string, number>())
+
+  const sortSessions = React.useCallback((nextSessions: SessionView[]) => {
+    const anchors = activeSessionSortAnchorsRef.current
+    const nextIds = new Set(nextSessions.map((session) => session.id))
+    for (const session of nextSessions) {
+      if (sessionKeepsActivePosition(session)) {
+        if (!anchors.has(session.id)) {
+          anchors.set(session.id, sessionSortMillis(session))
+        }
+      } else {
+        anchors.delete(session.id)
+      }
+    }
+    for (const sessionId of anchors.keys()) {
+      if (!nextIds.has(sessionId)) anchors.delete(sessionId)
+    }
+    return sortSessionViews(nextSessions, anchors)
+  }, [])
 
   // Derive page state from hash — start at "home" for safe SSR, correct on mount.
   const [route, setRoute] = React.useState<ParsedRoute>({ page: "home" })
@@ -452,7 +488,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
           .map((session) => [session.id, session]),
       )
       nextSessions.forEach((session) => merged.set(session.id, session))
-      const sorted = sortSessionViews(Array.from(merged.values()))
+      const sorted = sortSessions(Array.from(merged.values()))
       return sameStableValue(current, sorted) ? current : sorted
     })
     setSessionPages((current) => {
@@ -464,7 +500,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     })
     setIsLoading(false)
     initialLoadDoneRef.current = true
-  }, [])
+  }, [sortSessions])
 
   const fetchData = React.useCallback(async () => {
     if (!initialLoadDoneRef.current) {
@@ -478,7 +514,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
           dashboardApi.listSessions(authSession.accessToken, { archived: true, limit: 100 }),
         ])
         const nextConnectors = connRes.connectors.map(mapConnector)
-        const nextSessions = sortSessionViews(
+        const nextSessions = sortSessions(
           [...activeRes.sessions, ...archivedRes.sessions].map(mapSession),
         )
         firstPageSessionIdsRef.current = {
@@ -498,7 +534,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
         listMockConnectors("mock-token"),
         listMockSessions("mock-token"),
       ])
-      const nextSessions = sortSessionViews(sessRes.sessions)
+      const nextSessions = sortSessions(sessRes.sessions)
       setConnectors((current) => sameStableValue(current, connRes.connectors) ? current : connRes.connectors)
       setSessions((current) => sameStableValue(current, nextSessions) ? current : nextSessions)
       setSessionPages({
@@ -509,7 +545,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       setIsLoading(false)
       initialLoadDoneRef.current = true
     }
-  }, [authSession?.accessToken])
+  }, [authSession?.accessToken, sortSessions])
 
   const loadMoreSessions = React.useCallback(async () => {
     const token = authSession?.accessToken
@@ -527,7 +563,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       setSessions((current) => {
         const merged = new Map(current.map((session) => [session.id, session]))
         incoming.forEach((session) => merged.set(session.id, session))
-        return sortSessionViews(Array.from(merged.values()))
+        return sortSessions(Array.from(merged.values()))
       })
       loadedBeyondFirstPageRef.current.active = true
       setSessionPages((current) => ({
@@ -540,7 +576,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       loadingSessionPagesRef.current.active = false
       setLoadingSessionPages((current) => ({ ...current, active: false }))
     }
-  }, [authSession?.accessToken, sessionPages.active])
+  }, [authSession?.accessToken, sessionPages.active, sortSessions])
 
   React.useEffect(() => {
     initialLoadDoneRef.current = false
@@ -548,6 +584,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     firstPageSessionIdsRef.current = { active: new Set(), archived: new Set() }
     loadingSessionPagesRef.current = { active: false, archived: false }
     loadedBeyondFirstPageRef.current = { active: false, archived: false }
+    activeSessionSortAnchorsRef.current.clear()
     setSessionPages({
       active: { hasMore: false, nextCursor: null },
       archived: { hasMore: false, nextCursor: null },
@@ -699,10 +736,10 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
         const mapped = mapSession(response.session)
         setSessions((prev) => {
           const index = prev.findIndex((item) => item.id === mapped.id)
-          if (index === -1) return sortSessionViews([mapped, ...prev])
+          if (index === -1) return sortSessions([mapped, ...prev])
           const next = [...prev]
           next[index] = mapped
-          return sortSessionViews(next)
+          return sortSessions(next)
         })
       })
       .catch(() => {
@@ -711,7 +748,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       .finally(() => {
         readRequestsRef.current.delete(id)
       })
-  }, [authSession?.accessToken, fetchData])
+  }, [authSession?.accessToken, fetchData, sortSessions])
 
   const openSession = React.useCallback(
     (id: string) => {
@@ -796,12 +833,12 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     const mapped = mapSession(session)
     setSessions((prev) => {
       const index = prev.findIndex((item) => item.id === mapped.id)
-      if (index === -1) return sortSessionViews([mapped, ...prev])
+      if (index === -1) return sortSessions([mapped, ...prev])
       const next = [...prev]
       next[index] = mapped
-      return sortSessionViews(next)
+      return sortSessions(next)
     })
-  }, [])
+  }, [sortSessions])
 
   // ── Session mutation helpers ──────────────────────────────
 
@@ -814,9 +851,9 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       upsertSession(response.session)
     } else {
       const response = await patchMockSession("mock-token", id, { pinned: !targetSession.pinned })
-      setSessions((prev) => sortSessionViews(prev.map((s) => (s.id === id ? response.session : s))))
+      setSessions((prev) => sortSessions(prev.map((s) => (s.id === id ? response.session : s))))
     }
-  }, [authSession?.accessToken, sessions, upsertSession])
+  }, [authSession?.accessToken, sessions, sortSessions, upsertSession])
 
   const toggleArchiveSession = React.useCallback(async (id: string) => {
     const targetSession = sessions.find((s) => s.id === id)
@@ -827,9 +864,9 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       upsertSession(response.session)
     } else {
       const response = await patchMockSession("mock-token", id, { archived: !targetSession.archived })
-      setSessions((prev) => sortSessionViews(prev.map((s) => (s.id === id ? response.session : s))))
+      setSessions((prev) => sortSessions(prev.map((s) => (s.id === id ? response.session : s))))
     }
-  }, [authSession?.accessToken, sessions, upsertSession])
+  }, [authSession?.accessToken, sessions, sortSessions, upsertSession])
 
   const renameSession = React.useCallback(async (id: string, title: string) => {
     const nextTitle = title.trim()
@@ -845,13 +882,13 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
         upsertSession(response.session)
       } else {
         const response = await patchMockSession("mock-token", id, { title: nextTitle })
-        setSessions((prev) => sortSessionViews(prev.map((s) => (s.id === id ? response.session : s))))
+        setSessions((prev) => sortSessions(prev.map((s) => (s.id === id ? response.session : s))))
       }
       return true
     } catch {
       return false
     }
-  }, [authSession?.accessToken, sessions, upsertSession])
+  }, [authSession?.accessToken, sessions, sortSessions, upsertSession])
 
   const addOptimisticMessage = React.useCallback((message: OptimisticSessionMessage) => {
     setOptimisticMessages((prev) => {
@@ -905,16 +942,16 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     setSessions((prev) => {
       const withoutLocal = prev.filter((item) => item.id !== localSessionId)
       const index = withoutLocal.findIndex((item) => item.id === mapped.id)
-      if (index === -1) return sortSessionViews([mapped, ...withoutLocal])
+      if (index === -1) return sortSessions([mapped, ...withoutLocal])
       const next = [...withoutLocal]
       next[index] = mapped
-      return sortSessionViews(next)
+      return sortSessions(next)
     })
     const currentRoute = routeRef.current
     if (currentRoute.page === "session" && currentRoute.sessionId === localSessionId) {
       replaceRoute({ page: "session", sessionId: session.id })
     }
-  }, [replaceRoute])
+  }, [replaceRoute, sortSessions])
 
   const markOptimisticMessageFailed = React.useCallback((clientMessageId: string, message: string) => {
     setOptimisticMessages((prev) => {
