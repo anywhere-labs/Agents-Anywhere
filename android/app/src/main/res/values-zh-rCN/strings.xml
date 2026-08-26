@@ -471,7 +471,8 @@
     <string name="profile_language_english_description">始终显示英文。</string>
     <string name="profile_language_chinese_description">始终显示简体中文。</string>
     <string name="profile_updates_coming_soon">更新功能即将推出。</string>
-    <string name="profile_self_hosted">自托管版</string>
+    <string name="profile_official_service">官方服务</string>
+    <string name="profile_self_hosted">Self-host 服务</string>
     <string name="profile_sign_out">退出登录</string>
     <string name="profile_account_fallback">账号</string>
     <string name="profile_avatar_updating">正在更新头像</string>

@@ -68,6 +68,7 @@ import androidx.compose.ui.window.PopupProperties
 import coil3.compose.AsyncImage
 import com.agentsanywhere.app.R
 import com.agentsanywhere.app.api.AuthMeResponse
+import com.agentsanywhere.app.config.AppConfig
 import com.agentsanywhere.app.ui.designsystem.AAAppearanceMode
 import com.agentsanywhere.app.ui.designsystem.AALanguageMode
 import com.agentsanywhere.app.ui.designsystem.AgentsAnywhereColors
@@ -230,6 +231,14 @@ fun ProfileSettingsDrawer(
                     item("identity") {
                         IdentityCard(
                             account = account,
+                            serviceLabel = if (
+                                AppConfig.OFFICIAL_WEB_LOGIN_URL.isNotBlank() &&
+                                serverUrl.trimEnd('/') == AppConfig.OFFICIAL_WEB_LOGIN_URL.trimEnd('/')
+                            ) {
+                                stringResource(R.string.profile_official_service)
+                            } else {
+                                stringResource(R.string.profile_self_hosted)
+                            },
                             onClick = { detailPage = ProfileDetailPage.Account },
                         )
                     }
@@ -356,6 +365,7 @@ private fun ProfileHeader(
 @Composable
 private fun IdentityCard(
     account: AuthMeResponse,
+    serviceLabel: String,
     onClick: (() -> Unit)? = null,
 ) {
     val colors = LocalAAColors.current
@@ -381,7 +391,7 @@ private fun IdentityCard(
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    text = stringResource(R.string.profile_self_hosted),
+                    text = serviceLabel,
                     color = colors.muted,
                     fontSize = 13.sp,
                     fontWeight = FontWeight.Medium,

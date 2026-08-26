@@ -472,7 +472,8 @@
     <string name="profile_language_english_description">Always show English.</string>
     <string name="profile_language_chinese_description">Always show Simplified Chinese.</string>
     <string name="profile_updates_coming_soon">Updates are coming soon.</string>
-    <string name="profile_self_hosted">Self-hosted</string>
+    <string name="profile_official_service">Official Service</string>
+    <string name="profile_self_hosted">Self-host Service</string>
     <string name="profile_sign_out">Sign out</string>
     <string name="profile_account_fallback">Account</string>
     <string name="profile_avatar_updating">Updating avatar</string>
