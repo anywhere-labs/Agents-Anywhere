@@ -30,7 +30,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -65,7 +64,6 @@ import com.agentsanywhere.app.ui.designsystem.ScreenScaffold
 import com.agentsanywhere.app.ui.designsystem.noRippleClickable
 import com.composables.icons.lucide.Cloud
 import com.composables.icons.lucide.Lucide
-import com.composables.icons.lucide.ArrowLeft
 import com.composables.icons.lucide.ChevronRight
 import com.composables.icons.lucide.Info
 import com.composables.icons.lucide.Server
@@ -148,20 +146,10 @@ private fun HostChoiceScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(horizontal = 32.dp)
-                .padding(top = 54.dp, bottom = 30.dp),
+                .padding(top = 74.dp, bottom = 30.dp),
         ) {
-            IconButton(
-                onClick = onBack,
-                modifier = Modifier.size(44.dp),
-            ) {
-                Icon(
-                    imageVector = Lucide.ArrowLeft,
-                    contentDescription = stringResource(R.string.common_back),
-                    tint = colors.ink,
-                    modifier = Modifier.size(24.dp),
-                )
-            }
-            Spacer(Modifier.height(36.dp))
+            BackPill(label = stringResource(R.string.common_back), onClick = onBack)
+            Spacer(Modifier.height(30.dp))
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(
                     text = stringResource(R.string.auth_host_choice_title),
