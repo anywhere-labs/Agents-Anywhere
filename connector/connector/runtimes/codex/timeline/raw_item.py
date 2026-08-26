@@ -35,7 +35,7 @@ def timeline_item_type_from_raw_type(value: str) -> str:
         "unknown",
     }:
         return "system"
-    if value == "contextCompaction":
+    if value in {"contextCompaction", "ImageViewThreadItem"}:
         return "marker"
     if value in {
         "commandExecution",

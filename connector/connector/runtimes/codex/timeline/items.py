@@ -175,6 +175,11 @@ class CodexContextCompactionItem(CodexMarkerTimelineItem):
 
 
 @dataclass(frozen=True, slots=True)
+class CodexImageViewItem(CodexMarkerTimelineItem):
+    expected_native_item_types: ClassVar[tuple[str, ...]] = ("ImageViewThreadItem",)
+
+
+@dataclass(frozen=True, slots=True)
 class CodexCommandExecutionItem(CodexToolTimelineItem):
     expected_native_item_types: ClassVar[tuple[str, ...]] = ("commandExecution",)
 
@@ -254,6 +259,7 @@ CODEX_TIMELINE_ITEM_CLASS_BY_NATIVE_TYPE: Mapping[str, type[CodexTimelineItem]] 
     "turnEnd": CodexTurnEndItem,
     "error": CodexErrorItem,
     "contextCompaction": CodexContextCompactionItem,
+    "ImageViewThreadItem": CodexImageViewItem,
     "commandExecution": CodexCommandExecutionItem,
     "mcpToolCall": CodexMcpToolCallItem,
     "dynamicToolCall": CodexDynamicToolCallItem,

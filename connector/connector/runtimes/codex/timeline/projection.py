@@ -216,6 +216,8 @@ class CodexTimelineProjection:
             }
         if self.raw_type == "contextCompaction":
             return self.context_compaction_content()
+        if self.raw_type == "ImageViewThreadItem":
+            return self.image_view_content()
         if self.text:
             return {
                 "text": self.text,
@@ -313,6 +315,13 @@ class CodexTimelineProjection:
             "label": label,
             "state": state,
             **({"text": text, "format": "markdown"} if text else {}),
+        }
+
+    def image_view_content(self) -> Mapping[str, Any]:
+        return {
+            "kind": "system",
+            "label": "查看图片",
+            "state": compact_state_from_status(self.status),
         }
 
     def custom_tool_call_content(self) -> Mapping[str, Any]:

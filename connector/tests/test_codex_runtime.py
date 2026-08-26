@@ -103,6 +103,7 @@ from connector.runtimes.codex.timeline.items import (
     CodexContextCompactionItem,
     CodexDynamicToolCallItem,
     CodexFileChangeItem,
+    CodexImageViewItem,
     CodexMarkerTimelineItem,
     CodexMcpToolCallItem,
     CodexMessageTimelineItem,
@@ -272,6 +273,8 @@ def test_codex_timeline_native_item_classes_are_explicitly_mapped() -> None:
     assert codex_timeline_item_class("webSearch") is CodexWebSearchItem
     assert codex_timeline_item_class("contextCompaction") is CodexContextCompactionItem
     assert issubclass(CodexContextCompactionItem, MarkerTimelineItem)
+    assert codex_timeline_item_class("ImageViewThreadItem") is CodexImageViewItem
+    assert issubclass(CodexImageViewItem, MarkerTimelineItem)
     assert codex_timeline_item_class("fileChange") is CodexFileChangeItem
     assert codex_timeline_item_class("turnStart") is CodexTurnStartItem
     assert codex_timeline_item_class("turnEnd") is CodexTurnEndItem
@@ -294,6 +297,7 @@ def test_codex_timeline_items_extend_protocol_parent_classes() -> None:
     assert issubclass(CodexWebSearchItem, CodexToolTimelineItem)
     assert issubclass(CodexFileChangeItem, CodexArtifactTimelineItem)
     assert issubclass(CodexContextCompactionItem, CodexMarkerTimelineItem)
+    assert issubclass(CodexImageViewItem, CodexMarkerTimelineItem)
     assert issubclass(CodexReasoningItem, CodexSystemTimelineItem)
     assert issubclass(CodexUnknownItem, CodexSystemTimelineItem)
     assert issubclass(CodexTurnStartItem, CodexTurnStartTimelineItem)
@@ -378,6 +382,31 @@ def test_codex_projection_maps_context_compaction_to_compact_content() -> None:
         "state": "completed",
     }
     assert platform_item.source["rawType"] == "contextCompaction"
+
+
+def test_codex_projection_maps_image_view_to_marker_content() -> None:
+    projection = CodexTimelineProjection(
+        native_id="image_view_1",
+        raw_type="ImageViewThreadItem",
+        status="completed",
+    )
+
+    item = timeline_item_from_projection(
+        projection=projection,
+        external_session_id="thread_1",
+        fallback_index=0,
+        event="item/completed",
+    )
+    platform_item = item.to_platform_item(session_id="sess_1", order_seq=0)
+
+    assert isinstance(item, CodexImageViewItem)
+    assert item.type == "marker"
+    assert platform_item.content == {
+        "kind": "system",
+        "label": "查看图片",
+        "state": "completed",
+    }
+    assert platform_item.source["rawType"] == "ImageViewThreadItem"
 
 
 class FakeCodexClient:
