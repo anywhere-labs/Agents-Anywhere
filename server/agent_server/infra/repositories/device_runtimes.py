@@ -410,11 +410,9 @@ class DeviceRuntimeRepositoryMixin:
         *,
         runtime_type: str,
         name: str,
-        config: dict[str, Any] | None,
+        config: dict[str, Any],
         active: bool,
     ) -> dict[str, Any]:
-        if active and config is None:
-            raise ValueError("active runtime instances require config")
         normalized_name = normalize_runtime_instance_name(name)
         runtime_id = str(generate_runtime_instance_id())
         RuntimeIdentity.create(runtime_type=runtime_type, runtime_id=runtime_id)
@@ -491,9 +489,7 @@ class DeviceRuntimeRepositoryMixin:
                         runtime_type=runtime_type,
                         name=normalized_name,
                         name_key=runtime_instance_name_key(normalized_name),
-                        config_json=(
-                            _json_dumps(config) if config is not None else None
-                        ),
+                        config_json=_json_dumps(config),
                         active=1 if active else 0,
                         status="stopped",
                         error_json=None,

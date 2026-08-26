@@ -306,7 +306,7 @@ class DeviceRuntimeService:
         *,
         runtime_type: str,
         name: str,
-        config: dict[str, Any] | None,
+        config: dict[str, Any],
         active: bool,
         user_id: str,
     ) -> DeviceRuntimeView:
@@ -333,18 +333,13 @@ class DeviceRuntimeService:
                 raise DeviceRuntimeConflictError(
                     "runtime type is not currently present on the connector"
                 )
-            if active and config is None:
+            if runtime_type_row.schema_ is None:
                 raise DeviceRuntimeConflictError(
-                    "runtime must be configured before activation"
+                    "runtime config schema is unavailable"
                 )
-            if config is not None:
-                if runtime_type_row.schema_ is None:
-                    raise DeviceRuntimeConflictError(
-                        "runtime config schema is unavailable"
-                    )
-                self._validate(config, runtime_type_row.schema_)
-                if not await self._manager.is_online(connector_id):
-                    raise DeviceRuntimeOfflineError("connector is offline")
+            self._validate(config, runtime_type_row.schema_)
+            if not await self._manager.is_online(connector_id):
+                raise DeviceRuntimeOfflineError("connector is offline")
 
             try:
                 runtime = DeviceRuntimeView.model_validate(
@@ -365,22 +360,21 @@ class DeviceRuntimeService:
                     ) from exc
                 raise DeviceRuntimeConflictError(str(exc)) from exc
 
-            if config is not None:
-                try:
-                    await self._request_validate(runtime, config)
-                except DeviceRuntimeError as exc:
-                    error = (
-                        exc.detail
-                        if isinstance(exc.detail, dict)
-                        else {"code": exc.code, "message": exc.message}
-                    )
-                    await self._store.set_device_runtime_status(
-                        connector_id,
-                        runtime.runtimeId,
-                        "error",
-                        error=error,
-                    )
-                    raise
+            try:
+                await self._request_validate(runtime, config)
+            except DeviceRuntimeError as exc:
+                error = (
+                    exc.detail
+                    if isinstance(exc.detail, dict)
+                    else {"code": exc.code, "message": exc.message}
+                )
+                await self._store.set_device_runtime_status(
+                    connector_id,
+                    runtime.runtimeId,
+                    "error",
+                    error=error,
+                )
+                raise
             if active:
                 runtime = await self._start_locked(runtime)
             await self._publish(connector_id, "runtime.created")

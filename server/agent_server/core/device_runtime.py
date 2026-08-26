@@ -244,7 +244,7 @@ class RuntimeInstanceCreateRequest(BaseModel):
 
     runtimeType: str
     name: str
-    config: dict[str, Any] | None = None
+    config: dict[str, Any]
     active: bool = False
 
     @field_validator("runtimeType")
@@ -262,13 +262,6 @@ class RuntimeInstanceCreateRequest(BaseModel):
             return normalize_runtime_instance_name(value)
         except RuntimeIdentityError as exc:
             raise ValueError(str(exc)) from exc
-
-    @model_validator(mode="after")
-    def _require_config_for_active_instance(self) -> RuntimeInstanceCreateRequest:
-        if self.active and self.config is None:
-            raise ValueError("config is required when active is true")
-        return self
-
 
 class RuntimeInstancePatchRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")

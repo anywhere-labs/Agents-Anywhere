@@ -363,7 +363,7 @@ def test_v2_create_and_rename_enforce_identity_and_name_invariants(
     assert detail.json()["runtimeId"] == runtime_id
 
 
-def test_v2_create_without_config_uses_inactive_default_and_skips_rpc(
+def test_v2_create_requires_config_and_does_not_persist_an_instance(
     tmp_path: Any,
 ) -> None:
     discovery = _v2_discovery()
@@ -373,20 +373,17 @@ def test_v2_create_without_config_uses_inactive_default_and_skips_rpc(
     rpc.requests.clear()
     rpc.online = False
 
-    created = client.post(
+    rejected = client.post(
         f"/connectors/{connector_id}/runtimes",
         headers=headers,
         json={"runtimeType": "codex", "name": "Needs Configuration"},
     )
 
-    assert created.status_code == 201, created.text
-    runtime = created.json()
-    assert runtime["runtimeId"].startswith("rti_")
-    assert runtime["configured"] is False
-    assert runtime["config"] is None
-    assert runtime["active"] is False
-    assert runtime["status"] == "stopped"
+    assert rejected.status_code == 422, rejected.text
     assert rpc.requests == []
+    listed = client.get(f"/connectors/{connector_id}/runtimes", headers=headers)
+    assert listed.status_code == 200, listed.text
+    assert listed.json()["runtimes"] == []
 
 
 def test_v2_unavailable_type_can_be_created_configured_and_started(
@@ -405,36 +402,20 @@ def test_v2_unavailable_type_can_be_created_configured_and_started(
         json={
             "runtimeType": "codex",
             "name": "Custom Executable",
-            "active": False,
+            "config": {"home": "/custom/codex"},
+            "active": True,
         },
     )
     assert created.status_code == 201, created.text
     runtime_id = created.json()["runtimeId"]
     assert created.json()["available"] is False
-    assert created.json()["configured"] is False
-    assert rpc.requests == []
-
-    configured = client.put(
-        f"/connectors/{connector_id}/runtimes/{runtime_id}/config",
-        headers=headers,
-        json={"config": {"home": "/custom/codex"}},
-    )
-    assert configured.status_code == 200, configured.text
-    assert configured.json()["configured"] is True
-    assert configured.json()["available"] is False
-    assert rpc.requests[-1][1] == "runtime.validateConfig"
-    assert rpc.requests[-1][2]["runtime"] == "codex"
-    assert rpc.requests[-1][2]["runtimeId"] == runtime_id
-
-    started = client.put(
-        f"/connectors/{connector_id}/runtimes/{runtime_id}/active",
-        headers=headers,
-        json={"active": True},
-    )
-    assert started.status_code == 200, started.text
-    assert started.json()["active"] is True
-    assert started.json()["status"] == "running"
-    assert started.json()["available"] is False
+    assert created.json()["configured"] is True
+    assert created.json()["active"] is True
+    assert created.json()["status"] == "running"
+    assert [request[1] for request in rpc.requests] == [
+        "runtime.validateConfig",
+        "runtime.start",
+    ]
     assert rpc.requests[-1][1] == "runtime.start"
     assert rpc.requests[-1][2]["runtime"] == "codex"
     assert rpc.requests[-1][2]["runtimeId"] == runtime_id
@@ -596,7 +577,11 @@ def test_v2_lifecycle_sends_type_and_instance_identity_and_clear_is_soft(
     rejected = client.post(
         f"/connectors/{connector_id}/runtimes",
         headers=headers,
-        json={"runtimeType": "codex", "name": "Missing Type"},
+        json={
+            "runtimeType": "codex",
+            "name": "Missing Type",
+            "config": {"home": "/missing/type"},
+        },
     )
     assert rejected.status_code == 409, rejected.text
     assert rejected.json()["detail"] == {

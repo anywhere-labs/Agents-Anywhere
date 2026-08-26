@@ -245,7 +245,7 @@ class DeviceRuntimeRepository(
         *,
         runtime_type: str,
         name: str,
-        config: dict[str, Any] | None,
+        config: dict[str, Any],
         active: bool,
     ) -> dict[str, Any]: ...
 
