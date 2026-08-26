@@ -13,7 +13,7 @@ class AppUpdatesApi(private val client: ApiClient = ApiClient()) {
     fun check(serverUrl: String, currentVersionCode: Int): AndroidAppRelease? {
         val payload = client.getJson(
             serverUrl = serverUrl,
-            path = "/client-releases/android/check?versionCode=$currentVersionCode",
+            path = "/client-releases/check?platform=android&versionCode=$currentVersionCode",
         )
         if (!payload.optBoolean("updateAvailable")) return null
         val downloadUrl = payload.optString("downloadUrl").trim()

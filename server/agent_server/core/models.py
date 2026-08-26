@@ -1082,8 +1082,8 @@ class AppUpdateCheckResponse(BaseModel):
 class AppReleaseCreateRequest(BaseModel):
     platform: AppReleasePlatform
     versionCode: int = Field(ge=1)
-    versionName: str = Field(min_length=1, max_length=64)
-    downloadUrl: str = Field(min_length=1, max_length=2048)
+    versionName: str = Field(min_length=1, max_length=64, pattern=r".*\S.*")
+    downloadUrl: str = Field(min_length=1, max_length=2048, pattern=r"^https?://\S+$")
     sha256: str | None = Field(default=None, pattern=r"^[0-9a-fA-F]{64}$")
     published: bool = True
 
