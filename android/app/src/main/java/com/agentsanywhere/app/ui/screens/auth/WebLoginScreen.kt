@@ -188,11 +188,7 @@ private fun EmbeddedWebLogin(
     var webView by remember(session) { mutableStateOf<WebView?>(null) }
     var loading by remember(session) { mutableStateOf(true) }
 
-    fun navigateBack() {
-        val current = webView
-        if (!exchanging && current?.canGoBack() == true) current.goBack() else onBack()
-    }
-    BackHandler(onBack = ::navigateBack)
+    BackHandler(onBack = onBack)
 
     Column(
         modifier = Modifier
@@ -200,7 +196,7 @@ private fun EmbeddedWebLogin(
             .windowInsetsPadding(WindowInsets.statusBars),
     ) {
         Box(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp)) {
-            BackPill(label = stringResource(R.string.common_back), onClick = ::navigateBack)
+            BackPill(label = stringResource(R.string.common_back), onClick = onBack)
         }
         Box(modifier = Modifier.fillMaxSize()) {
             AndroidView(
