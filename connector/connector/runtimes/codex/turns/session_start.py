@@ -67,7 +67,10 @@ class CodexSessionStartController:
                 ok=False,
                 code="codex_invalid_selection_scope",
                 message=f"Unsupported Codex selection scope: {invalid_scope}",
-                result={"sessionId": session_id, "selections": dict(effective_selections)},
+                result={
+                    "sessionId": session_id,
+                    "selections": dict(effective_selections),
+                },
             )
         try:
             selected_model = await model_settings_from_selection(
@@ -81,7 +84,10 @@ class CodexSessionStartController:
                 ok=False,
                 code="codex_invalid_selection",
                 message=str(exc),
-                result={"sessionId": session_id, "selections": dict(effective_selections)},
+                result={
+                    "sessionId": session_id,
+                    "selections": dict(effective_selections),
+                },
             )
         result = await self.client.start_thread(
             CodexStartThreadRequest(

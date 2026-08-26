@@ -231,7 +231,10 @@ class CodexToolResultItem(CodexToolTimelineItem):
 
 @dataclass(frozen=True, slots=True)
 class CodexFileChangeItem(CodexArtifactTimelineItem):
-    expected_native_item_types: ClassVar[tuple[str, ...]] = ("fileChange", "file_change")
+    expected_native_item_types: ClassVar[tuple[str, ...]] = (
+        "fileChange",
+        "file_change",
+    )
 
 
 @dataclass(frozen=True, slots=True)

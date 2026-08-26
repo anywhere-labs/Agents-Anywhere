@@ -33,7 +33,9 @@ def raw_item_from_notification(
     if method in {"thread/compact/started", "thread/compact/failed"}:
         thread_id = first_string_from_mapping(params, "threadId", "thread_id")
         return {
-            "id": f"context_compaction_{thread_id}" if thread_id else "context_compaction",
+            "id": f"context_compaction_{thread_id}"
+            if thread_id
+            else "context_compaction",
             "type": "contextCompaction",
             "status": "failed" if method == "thread/compact/failed" else "inProgress",
             "role": "system",
@@ -42,7 +44,9 @@ def raw_item_from_notification(
         thread_id = first_string_from_mapping(params, "threadId", "thread_id")
         turn_id = turn_id_from_result(dict(params))
         return {
-            "id": f"context_compaction_{thread_id}" if thread_id else "context_compaction",
+            "id": f"context_compaction_{thread_id}"
+            if thread_id
+            else "context_compaction",
             "type": "contextCompaction",
             "status": "completed",
             "role": "system",

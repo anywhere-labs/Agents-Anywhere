@@ -8,13 +8,13 @@ from connector.core.json_kv import JsonKeyValueStore
 from connector.runtime_protocol import RuntimeAttachment
 from connector.runtimes.codex import timeline as codex_timeline
 
-CLIENT_MESSAGE_BINDINGS_VERSION = 1
+CLIENT_MESSAGE_BINDINGS_VERSION = 2
+SUPPORTED_CLIENT_MESSAGE_BINDINGS_VERSIONS = {1, CLIENT_MESSAGE_BINDINGS_VERSION}
 MAX_BINDINGS_PER_THREAD = 1000
 
 
 @dataclass(slots=True)
 class PendingClientMessage:
-    session_id: str
     external_session_id: str
     client_message_id: str
     text: str
@@ -25,12 +25,9 @@ class PendingClientMessage:
 
 @dataclass(frozen=True, slots=True)
 class MatchedClientMessage:
-    session_id: str
     external_session_id: str
     client_message_id: str
-    platform_item_id: str | None
     native_item_ids: tuple[str, ...]
-    derived_keys: tuple[str, ...]
     raw_type: str
     role: str | None
     turn_id: str | None
@@ -41,7 +38,6 @@ class MatchedClientMessage:
 @dataclass(frozen=True, slots=True)
 class PendingClientMessageMatch:
     client_message_id: str
-    platform_item_id: str | None
     text: str
     attachments: tuple[Mapping[str, object], ...] = ()
 
@@ -62,7 +58,6 @@ class PendingClientMessageRegistry:
 
     def register(
         self,
-        session_id: str,
         external_session_id: str,
         client_message_id: str | None,
         text: str,
@@ -75,11 +70,13 @@ class PendingClientMessageRegistry:
         self._pending = [
             item
             for item in self._pending
-            if item.client_message_id != client_message_id
+            if not (
+                item.external_session_id == external_session_id
+                and item.client_message_id == client_message_id
+            )
         ]
         self._pending.append(
             PendingClientMessage(
-                session_id=session_id,
                 external_session_id=external_session_id,
                 client_message_id=client_message_id,
                 text=text,
@@ -91,7 +88,7 @@ class PendingClientMessageRegistry:
 
     def bind_turn(
         self,
-        session_id: str,
+        external_session_id: str,
         client_message_id: str | None,
         turn_id: str | None,
     ) -> None:
@@ -99,7 +96,7 @@ class PendingClientMessageRegistry:
             return
         for item in self._pending:
             if (
-                item.session_id == session_id
+                item.external_session_id == external_session_id
                 and item.client_message_id == client_message_id
             ):
                 item.turn_id = turn_id
@@ -107,21 +104,17 @@ class PendingClientMessageRegistry:
 
     def attach_to_raw_item(
         self,
-        session_id: str,
         external_session_id: str,
         raw: dict[str, object],
-        fallback_index: int = 0,
     ) -> str | None:
         if not _is_user_message(raw):
             return None
         text = codex_timeline.text_from_value(raw) or ""
         turn_id = codex_timeline.timeline_item_turn_id(raw)
         match = self.attach_to_item(
-            session_id=session_id,
             external_session_id=external_session_id,
             native_item_id=codex_timeline.native_item_id(raw),
             client_message_id=codex_timeline.client_message_id_from_raw(raw),
-            derived_key=codex_timeline.derived_key(raw, fallback_index),
             raw_type=str(raw.get("type") or ""),
             role=raw.get("role") if isinstance(raw.get("role"), str) else None,
             text=text,
@@ -136,41 +129,43 @@ class PendingClientMessageRegistry:
 
     def attach_to_item(
         self,
-        session_id: str,
         external_session_id: str,
         native_item_id: str | None,
         client_message_id: str | None,
-        derived_key: str,
         raw_type: str,
         role: str | None,
         text: str,
         turn_id: str | None,
     ) -> PendingClientMessageMatch | None:
+        if not is_user_message(raw_type=raw_type, role=role):
+            return None
         self.load_external_session(external_session_id)
         matched = self.matched_client_message(
-            session_id=session_id,
             external_session_id=external_session_id,
             native_item_id=native_item_id,
             client_message_id=client_message_id,
-            derived_key=derived_key,
         )
         if matched is not None:
+            self.record_match(
+                external_session_id=external_session_id,
+                native_item_id=native_item_id,
+                client_message_id=matched.client_message_id,
+                raw_type=raw_type,
+                role=role,
+                turn_id=turn_id,
+                text=matched.text,
+                attachments=matched.attachments,
+            )
             return matched
-        if not is_user_message(raw_type=raw_type, role=role):
-            return None
         pending_by_client_id = self.pending_message_by_client_id(
-            session_id=session_id,
             external_session_id=external_session_id,
             client_message_id=client_message_id,
         )
         if pending_by_client_id is not None:
             self.record_match(
-                session_id=session_id,
                 external_session_id=external_session_id,
                 native_item_id=native_item_id,
                 client_message_id=pending_by_client_id.client_message_id,
-                platform_item_id=None,
-                derived_key=derived_key,
                 raw_type=raw_type,
                 role=role,
                 turn_id=turn_id,
@@ -179,7 +174,6 @@ class PendingClientMessageRegistry:
             )
             return PendingClientMessageMatch(
                 client_message_id=pending_by_client_id.client_message_id,
-                platform_item_id=None,
                 text=pending_by_client_id.text,
                 attachments=pending_by_client_id.attachments,
             )
@@ -187,8 +181,6 @@ class PendingClientMessageRegistry:
             return None
         for index in range(len(self._pending) - 1, -1, -1):
             pending = self._pending[index]
-            if pending.session_id != session_id:
-                continue
             if pending.external_session_id != external_session_id:
                 continue
             if pending.turn_id and turn_id and pending.turn_id != turn_id:
@@ -199,12 +191,9 @@ class PendingClientMessageRegistry:
                 continue
             self._pending.pop(index)
             self.record_match(
-                session_id=session_id,
                 external_session_id=external_session_id,
                 native_item_id=native_item_id,
                 client_message_id=pending.client_message_id,
-                platform_item_id=None,
-                derived_key=derived_key,
                 raw_type=raw_type,
                 role=role,
                 turn_id=turn_id,
@@ -213,7 +202,6 @@ class PendingClientMessageRegistry:
             )
             return PendingClientMessageMatch(
                 client_message_id=pending.client_message_id,
-                platform_item_id=None,
                 text=pending.text,
                 attachments=pending.attachments,
             )
@@ -221,7 +209,6 @@ class PendingClientMessageRegistry:
 
     def pending_message_by_client_id(
         self,
-        session_id: str,
         external_session_id: str,
         client_message_id: str | None,
     ) -> PendingClientMessage | None:
@@ -229,8 +216,6 @@ class PendingClientMessageRegistry:
             return None
         for index in range(len(self._pending) - 1, -1, -1):
             pending = self._pending[index]
-            if pending.session_id != session_id:
-                continue
             if pending.external_session_id != external_session_id:
                 continue
             if pending.client_message_id != client_message_id:
@@ -240,27 +225,21 @@ class PendingClientMessageRegistry:
 
     def matched_client_message(
         self,
-        session_id: str,
         external_session_id: str,
         native_item_id: str | None,
         client_message_id: str | None,
-        derived_key: str,
     ) -> PendingClientMessageMatch | None:
         for item in reversed(self._matched):
-            if item.session_id != session_id:
-                continue
             if item.external_session_id != external_session_id:
                 continue
             if not client_message_matches(
                 item=item,
                 native_item_id=native_item_id,
                 client_message_id=client_message_id,
-                derived_key=derived_key,
             ):
                 continue
             return PendingClientMessageMatch(
                 client_message_id=item.client_message_id,
-                platform_item_id=item.platform_item_id,
                 text=item.text,
                 attachments=item.attachments,
             )
@@ -268,12 +247,9 @@ class PendingClientMessageRegistry:
 
     def record_match(
         self,
-        session_id: str,
         external_session_id: str,
         native_item_id: str | None,
         client_message_id: str,
-        platform_item_id: str | None,
-        derived_key: str | None,
         raw_type: str,
         role: str | None,
         turn_id: str | None,
@@ -284,18 +260,14 @@ class PendingClientMessageRegistry:
             return
         self.load_external_session(external_session_id)
         existing = self.match_by_client_message_id(
-            session_id=session_id,
             external_session_id=external_session_id,
             client_message_id=client_message_id,
         )
         binding = merged_client_message_binding(
             existing=existing,
-            session_id=session_id,
             external_session_id=external_session_id,
-            native_item_id=native_item_id,
+            native_item_ids=(native_item_id,) if native_item_id is not None else (),
             client_message_id=client_message_id,
-            platform_item_id=platform_item_id,
-            derived_key=derived_key,
             raw_type=raw_type,
             role=role,
             turn_id=turn_id,
@@ -306,62 +278,19 @@ class PendingClientMessageRegistry:
             item
             for item in self._matched
             if not (
-                item.session_id == session_id
-                and item.external_session_id == external_session_id
+                item.external_session_id == external_session_id
                 and item.client_message_id == client_message_id
             )
         ]
         self._matched.append(binding)
         self.persist_external_session(external_session_id)
 
-    def record_platform_item(
-        self,
-        session_id: str,
-        external_session_id: str,
-        platform_item_id: str,
-        native_item_id: str | None,
-        client_message_id: str | None,
-        derived_key: str,
-        raw_type: str,
-        role: str | None,
-        turn_id: str | None,
-        text: str,
-        attachments: tuple[Mapping[str, object], ...],
-    ) -> None:
-        """Persist the resolved platform item for a Web-originated message.
-
-        Side effects:
-        - updates the in-memory client-message binding registry
-        - writes the affected thread binding set to the local JSON KV store
-        """
-
-        if client_message_id is None:
-            return
-        if not is_user_message(raw_type=raw_type, role=role):
-            return
-        self.record_match(
-            session_id=session_id,
-            external_session_id=external_session_id,
-            native_item_id=native_item_id,
-            client_message_id=client_message_id,
-            platform_item_id=platform_item_id,
-            derived_key=derived_key,
-            raw_type=raw_type,
-            role=role,
-            turn_id=turn_id,
-            text=text,
-            attachments=attachments,
-        )
-
     def match_by_client_message_id(
         self,
-        session_id: str,
         external_session_id: str,
         client_message_id: str,
     ) -> MatchedClientMessage | None:
         for item in reversed(self._matched):
-            if item.session_id != session_id:
-                continue
             if item.external_session_id != external_session_id:
                 continue
             if item.client_message_id != client_message_id:
@@ -374,22 +303,40 @@ class PendingClientMessageRegistry:
             return
         if external_session_id in self._loaded_external_session_ids:
             return
-        value = self._kv_store.get(client_message_bindings_key(self._connector_id, external_session_id))
+        value = self._kv_store.get(
+            client_message_bindings_key(self._connector_id, external_session_id)
+        )
         self._loaded_external_session_ids.add(external_session_id)
         if value is None:
             return
         for item in client_message_bindings_from_value(value):
             if item.external_session_id != external_session_id:
                 continue
+            existing = self.match_by_client_message_id(
+                external_session_id=item.external_session_id,
+                client_message_id=item.client_message_id,
+            )
             self._matched = [
-                existing
-                for existing in self._matched
+                candidate
+                for candidate in self._matched
                 if not (
-                    existing.external_session_id == item.external_session_id
-                    and existing.client_message_id == item.client_message_id
+                    candidate.external_session_id == item.external_session_id
+                    and candidate.client_message_id == item.client_message_id
                 )
             ]
-            self._matched.append(item)
+            self._matched.append(
+                merged_client_message_binding(
+                    existing=existing,
+                    external_session_id=item.external_session_id,
+                    native_item_ids=item.native_item_ids,
+                    client_message_id=item.client_message_id,
+                    raw_type=item.raw_type,
+                    role=item.role,
+                    turn_id=item.turn_id,
+                    text=item.text,
+                    attachments=item.attachments,
+                )
+            )
 
     def persist_external_session(self, external_session_id: str) -> None:
         if self._kv_store is None:
@@ -417,40 +364,26 @@ def client_message_matches(
     item: MatchedClientMessage,
     native_item_id: str | None,
     client_message_id: str | None,
-    derived_key: str,
 ) -> bool:
-    _ = derived_key
-    if client_message_id is not None and item.client_message_id == client_message_id:
-        return True
+    if client_message_id is not None:
+        return item.client_message_id == client_message_id
     return native_item_id is not None and native_item_id in item.native_item_ids
 
 
 def merged_client_message_binding(
     existing: MatchedClientMessage | None,
-    session_id: str,
     external_session_id: str,
-    native_item_id: str | None,
+    native_item_ids: tuple[str, ...],
     client_message_id: str,
-    platform_item_id: str | None,
-    derived_key: str | None,
     raw_type: str,
     role: str | None,
     turn_id: str | None,
     text: str,
     attachments: tuple[Mapping[str, object], ...],
 ) -> MatchedClientMessage:
-    native_item_ids = add_unique(
+    resolved_native_item_ids = add_unique_values(
         existing.native_item_ids if existing is not None else (),
-        native_item_id,
-    )
-    derived_keys = add_unique(
-        existing.derived_keys if existing is not None else (),
-        derived_key,
-    )
-    resolved_platform_item_id = (
-        existing.platform_item_id
-        if existing is not None and existing.platform_item_id is not None
-        else platform_item_id
+        native_item_ids,
     )
     resolved_text = existing.text if existing is not None and existing.text else text
     resolved_attachments = (
@@ -459,30 +392,32 @@ def merged_client_message_binding(
         else attachments
     )
     return MatchedClientMessage(
-        session_id=session_id,
         external_session_id=external_session_id,
         client_message_id=client_message_id,
-        platform_item_id=resolved_platform_item_id,
-        native_item_ids=native_item_ids,
-        derived_keys=derived_keys,
+        native_item_ids=resolved_native_item_ids,
         raw_type=raw_type,
-        role=role,
-        turn_id=turn_id,
+        role=role or (existing.role if existing is not None else None),
+        turn_id=turn_id or (existing.turn_id if existing is not None else None),
         text=resolved_text,
         attachments=resolved_attachments,
     )
 
 
-def add_unique(values: tuple[str, ...], value: str | None) -> tuple[str, ...]:
-    if value is None or value in values:
-        return values
-    return (*values, value)
+def add_unique_values(
+    values: tuple[str, ...],
+    incoming: tuple[str, ...],
+) -> tuple[str, ...]:
+    result = list(values)
+    for value in incoming:
+        if value not in result:
+            result.append(value)
+    return tuple(result)
 
 
 def client_message_bindings_from_value(
     value: Mapping[str, Any],
 ) -> tuple[MatchedClientMessage, ...]:
-    if value.get("version") != CLIENT_MESSAGE_BINDINGS_VERSION:
+    if value.get("version") not in SUPPORTED_CLIENT_MESSAGE_BINDINGS_VERSIONS:
         return ()
     raw_bindings = value.get("bindings")
     if not isinstance(raw_bindings, list):
@@ -500,18 +435,14 @@ def client_message_bindings_from_value(
 def client_message_binding_from_value(
     value: Mapping[str, Any],
 ) -> MatchedClientMessage | None:
-    session_id = string_value(value.get("sessionId"))
     external_session_id = string_value(value.get("externalSessionId"))
     client_message_id = string_value(value.get("clientMessageId"))
-    if session_id is None or external_session_id is None or client_message_id is None:
+    if external_session_id is None or client_message_id is None:
         return None
     return MatchedClientMessage(
-        session_id=session_id,
         external_session_id=external_session_id,
         client_message_id=client_message_id,
-        platform_item_id=string_value(value.get("platformItemId")),
         native_item_ids=string_tuple_value(value.get("nativeItemIds")),
-        derived_keys=string_tuple_value(value.get("derivedKeys")),
         raw_type=string_value(value.get("rawType")) or "userMessage",
         role=string_value(value.get("role")),
         turn_id=string_value(value.get("turnId")),
@@ -522,12 +453,9 @@ def client_message_binding_from_value(
 
 def client_message_binding_to_value(item: MatchedClientMessage) -> dict[str, Any]:
     return {
-        "sessionId": item.session_id,
         "externalSessionId": item.external_session_id,
         "clientMessageId": item.client_message_id,
-        "platformItemId": item.platform_item_id,
         "nativeItemIds": list(item.native_item_ids),
-        "derivedKeys": list(item.derived_keys),
         "rawType": item.raw_type,
         "role": item.role,
         "turnId": item.turn_id,

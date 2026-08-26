@@ -10,6 +10,7 @@ from connector.runtimes.codex.timeline.events import (
 )
 from connector.runtimes.codex.timeline.identity import (
     client_message_id_from_raw,
+    client_message_item_id,
     derived_key,
     native_item_id,
     timeline_item_id,
@@ -101,6 +102,7 @@ __all__ = [
     "CodexWebSearchItem",
     "MappingTimelineContent",
     "client_message_id_from_raw",
+    "client_message_item_id",
     "codex_timeline_content_from_mapping",
     "codex_timeline_item_class",
     "content_hash",

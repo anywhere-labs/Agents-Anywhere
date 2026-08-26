@@ -66,6 +66,11 @@ from connector.runtimes.codex.domain.catalogs import (
     model_catalog_from_codex_items,
     permission_catalog_from_codex_items,
 )
+from connector.runtimes.codex.domain.pending_messages import (
+    CLIENT_MESSAGE_BINDINGS_VERSION,
+    PendingClientMessageRegistry,
+    client_message_bindings_key,
+)
 from connector.runtimes.codex.domain.sessions import stable_session_id
 from connector.runtimes.codex.runtime import CodexRuntime
 from connector.runtimes.codex.sdk.client import CodexSdkClient
@@ -85,7 +90,10 @@ from connector.runtimes.codex.sdk.runtime_client import (
 )
 from connector.runtimes.codex.sdk.shapes import notification_dict, thread_ref
 from connector.runtimes.codex.timeline.accumulator import CodexTimelineAccumulator
-from connector.runtimes.codex.timeline.identity import turn_position_item_id
+from connector.runtimes.codex.timeline.identity import (
+    client_message_item_id,
+    turn_position_item_id,
+)
 from connector.runtimes.codex.timeline.items import (
     CodexAgentMessageItem,
     CodexArtifactTimelineItem,
@@ -154,7 +162,7 @@ def test_codex_timeline_item_maps_native_type_to_platform_parent_type() -> None:
     }
 
 
-def test_codex_user_message_native_id_beats_client_message_id() -> None:
+def test_codex_unpositioned_user_message_uses_client_id_before_native_id() -> None:
     accumulator = CodexTimelineAccumulator()
 
     items = accumulator.items_from_snapshot_projections(
@@ -180,8 +188,73 @@ def test_codex_user_message_native_id_beats_client_message_id() -> None:
         ),
     )
 
-    assert [item.id for item in items] == ["item_user_1", "item_user_2"]
+    assert [item.id for item in items] == [
+        client_message_item_id("thread_1", "cm_1"),
+        client_message_item_id("thread_1", "cm_2"),
+    ]
     assert [item.source["clientMessageId"] for item in items] == ["cm_1", "cm_2"]
+
+
+def test_codex_client_message_id_rejects_colliding_native_alias() -> None:
+    registry = PendingClientMessageRegistry("conn_test")
+    registry.record_match(
+        external_session_id="thread_1",
+        native_item_id="item-1",
+        client_message_id="cm_old",
+        raw_type="userMessage",
+        role="user",
+        turn_id="turn_old",
+        text="old prompt",
+    )
+
+    match = registry.attach_to_item(
+        external_session_id="thread_1",
+        native_item_id="item-1",
+        client_message_id="cm_new",
+        raw_type="userMessage",
+        role="user",
+        text="new prompt",
+        turn_id="turn_new",
+    )
+
+    assert match is None
+
+
+def test_codex_unbound_client_message_id_keeps_turn_identity_across_events() -> None:
+    accumulator = CodexTimelineAccumulator(
+        pending_messages=PendingClientMessageRegistry("conn_test")
+    )
+    accumulator.begin_turn("thread_1", "turn_1")
+    params = {
+        "threadId": "thread_1",
+        "turnId": "turn_1",
+        "item": {
+            "id": "native_user_1",
+            "type": "userMessage",
+            "role": "user",
+            "clientMessageId": "external_client_1",
+            "text": "prompt",
+        },
+    }
+
+    started = accumulator.item_from_notification(
+        session_id="sess_1",
+        external_session_id="thread_1",
+        method="item/started",
+        params={**params, "item": {**params["item"], "status": "inProgress"}},
+    )
+    completed = accumulator.item_from_notification(
+        session_id="sess_1",
+        external_session_id="thread_1",
+        method="item/completed",
+        params={**params, "item": {**params["item"], "status": "completed"}},
+    )
+
+    expected_id = turn_position_item_id("thread_1", "turn_1", 0, lane="user-message")
+    assert started is not None
+    assert completed is not None
+    assert started.id == expected_id
+    assert completed.id == expected_id
 
 
 def test_codex_timeline_native_item_classes_are_explicitly_mapped() -> None:
@@ -191,16 +264,12 @@ def test_codex_timeline_native_item_classes_are_explicitly_mapped() -> None:
     assert codex_timeline_item_class("runtimeMessage") is CodexRuntimeMessageItem
     assert codex_timeline_item_class("commandExecution") is CodexCommandExecutionItem
     assert (
-        codex_timeline_item_class("collabAgentToolCall")
-        is CodexCollabAgentToolCallItem
+        codex_timeline_item_class("collabAgentToolCall") is CodexCollabAgentToolCallItem
     )
     assert codex_timeline_item_class("mcpToolCall") is CodexMcpToolCallItem
     assert codex_timeline_item_class("dynamicToolCall") is CodexDynamicToolCallItem
     assert codex_timeline_item_class("webSearch") is CodexWebSearchItem
-    assert (
-        codex_timeline_item_class("contextCompaction")
-        is CodexContextCompactionItem
-    )
+    assert codex_timeline_item_class("contextCompaction") is CodexContextCompactionItem
     assert issubclass(CodexContextCompactionItem, MarkerTimelineItem)
     assert codex_timeline_item_class("fileChange") is CodexFileChangeItem
     assert codex_timeline_item_class("turnStart") is CodexTurnStartItem
@@ -326,8 +395,14 @@ class FakeCodexClient:
                         "displayName": "GPT Example",
                         "description": "SDK model description",
                         "supportedReasoningEfforts": [
-                            {"id": "low", "description": "SDK low reasoning description"},
-                            {"id": "high", "description": "SDK high reasoning description"},
+                            {
+                                "id": "low",
+                                "description": "SDK low reasoning description",
+                            },
+                            {
+                                "id": "high",
+                                "description": "SDK high reasoning description",
+                            },
                         ],
                     },
                     {
@@ -494,7 +569,9 @@ class FakeCodexClient:
             "turn/steer",
             {
                 "threadId": request.thread_id,
-                "input": [{"type": "text", "text": request.content, "text_elements": []}],
+                "input": [
+                    {"type": "text", "text": request.content, "text_elements": []}
+                ],
                 "expectedTurnId": request.turn_id,
                 "clientUserMessageId": request.client_message_id,
             },
@@ -856,10 +933,14 @@ def test_codex_timeline_projects_context_compaction_item_event() -> None:
 
 
 def test_codex_runtime_thread_compacted_notification_upserts_timeline_item() -> None:
-    asyncio.run(_test_codex_runtime_thread_compacted_notification_upserts_timeline_item())
+    asyncio.run(
+        _test_codex_runtime_thread_compacted_notification_upserts_timeline_item()
+    )
 
 
-async def _test_codex_runtime_thread_compacted_notification_upserts_timeline_item() -> None:
+async def _test_codex_runtime_thread_compacted_notification_upserts_timeline_item() -> (
+    None
+):
     client = FakeCodexClient()
     host = FakeHost()
     runtime = CodexRuntime(config=_config(), host=host, client=client)
@@ -1174,7 +1255,12 @@ def test_codex_timeline_uses_typed_sdk_user_client_id_for_identity() -> None:
     )
 
     assert item is not None
-    assert item.id == "item_user"
+    assert item.id == turn_position_item_id(
+        "thread_1",
+        "turn_done",
+        0,
+        lane="user-message",
+    )
     assert item.source["itemId"] == "item_user"
     assert item.source["clientMessageId"] == "msg_client_1"
 
@@ -1244,7 +1330,9 @@ def test_codex_timeline_omits_attachment_inputs_from_user_message_text() -> None
     ]
 
 
-def test_codex_raw_user_message_restores_attachment_card_without_injected_text() -> None:
+def test_codex_raw_user_message_restores_attachment_card_without_injected_text() -> (
+    None
+):
     projection = timeline_projection_from_raw(
         {
             "id": "item_user",
@@ -1417,9 +1505,9 @@ async def _test_codex_runtime_applies_custom_model_selection_to_turn_start() -> 
         host=FakeHost(),
         client=client,
     )
-    model_selection = (await runtime.list_model_catalog(query="local")).models[
-        0
-    ].selection_id
+    model_selection = (
+        (await runtime.list_model_catalog(query="local")).models[0].selection_id
+    )
 
     result = await runtime.start_turn(
         "sess_1",
@@ -1564,11 +1652,17 @@ async def _test_codex_runtime_reports_runtime_capabilities() -> None:
     assert capabilities[CAPABILITY_CATALOG_MODEL].available is True
 
 
-def test_codex_runtime_reports_unavailable_runtime_capabilities_without_client() -> None:
-    asyncio.run(_test_codex_runtime_reports_unavailable_runtime_capabilities_without_client())
+def test_codex_runtime_reports_unavailable_runtime_capabilities_without_client() -> (
+    None
+):
+    asyncio.run(
+        _test_codex_runtime_reports_unavailable_runtime_capabilities_without_client()
+    )
 
 
-async def _test_codex_runtime_reports_unavailable_runtime_capabilities_without_client() -> None:
+async def _test_codex_runtime_reports_unavailable_runtime_capabilities_without_client() -> (
+    None
+):
     runtime = CodexRuntime(config=_config(), host=FakeHost(), client=None)
 
     capability_set = await runtime.get_runtime_capabilities()
@@ -1897,12 +1991,23 @@ async def _test_codex_runtime_reads_session_snapshot() -> None:
     assert snapshot.runtime == "codex"
     assert snapshot.external_session_id == "thread_1"
     assert snapshot.complete is False
-    assert [item.id for item in snapshot.items] == ["item_user", "item_assistant"]
+    assert [item.id for item in snapshot.items] == [
+        turn_position_item_id("thread_1", "turn_1", 0, lane="user-message"),
+        "item_assistant",
+    ]
     assert snapshot.items[0].content_hash.startswith("sha256:")
     assert snapshot.items[0].role == "user"
     assert snapshot.items[0].turn_id == "turn_1"
-    assert snapshot.items[0].content == {"kind": "markdown", "text": "hello", "format": "markdown"}
-    assert snapshot.items[1].content == {"kind": "markdown", "text": "hi", "format": "markdown"}
+    assert snapshot.items[0].content == {
+        "kind": "markdown",
+        "text": "hello",
+        "format": "markdown",
+    }
+    assert snapshot.items[1].content == {
+        "kind": "markdown",
+        "text": "hi",
+        "format": "markdown",
+    }
 
 
 def test_codex_runtime_reads_typed_sdk_snapshot_with_parent_turn_id() -> None:
@@ -1954,7 +2059,7 @@ async def _test_codex_runtime_reads_typed_sdk_snapshot_with_parent_turn_id() -> 
     )
 
     assert [item.id for item in snapshot.items] == [
-        "item_user",
+        turn_position_item_id("thread_1", "turn_sdk", 0, lane="user-message"),
         turn_position_item_id("thread_1", "turn_sdk", 0),
     ]
     assert [item.turn_id for item in snapshot.items] == ["turn_sdk", "turn_sdk"]
@@ -1963,7 +2068,9 @@ async def _test_codex_runtime_reads_typed_sdk_snapshot_with_parent_turn_id() -> 
 
 
 def test_codex_runtime_typed_snapshot_preserves_messages_after_compaction() -> None:
-    asyncio.run(_test_codex_runtime_typed_snapshot_preserves_messages_after_compaction())
+    asyncio.run(
+        _test_codex_runtime_typed_snapshot_preserves_messages_after_compaction()
+    )
 
 
 def test_codex_runtime_default_snapshot_reads_more_than_hundred_items() -> None:
@@ -2011,12 +2118,8 @@ async def _test_codex_runtime_default_snapshot_reads_more_than_hundred_items() -
     )
 
     assert len(snapshot.items) == 101
-    assert snapshot.items[0].id == turn_position_item_id(
-        "thread_1", "turn_many", 0
-    )
-    assert snapshot.items[-1].id == turn_position_item_id(
-        "thread_1", "turn_many", 100
-    )
+    assert snapshot.items[0].id == turn_position_item_id("thread_1", "turn_many", 0)
+    assert snapshot.items[-1].id == turn_position_item_id("thread_1", "turn_many", 100)
     assert snapshot.items[0].source["itemId"] == "item_0"
     assert snapshot.items[-1].source["itemId"] == "item_100"
 
@@ -2070,7 +2173,7 @@ async def _test_codex_runtime_typed_snapshot_preserves_messages_after_compaction
 
     assert [item.id for item in snapshot.items] == [
         "item_compact",
-        "item_user",
+        turn_position_item_id("thread_1", "turn_compacted", 0, lane="user-message"),
         turn_position_item_id("thread_1", "turn_compacted", 0),
     ]
     assert [item.turn_id for item in snapshot.items] == [
@@ -2137,12 +2240,8 @@ async def _test_codex_runtime_reads_typed_tool_items_from_snapshot() -> None:
     )
 
     assert [item.id for item in snapshot.items] == [
-        turn_position_item_id(
-            "thread_1", "turn_tools", 0, lane="tool:mcpToolCall"
-        ),
-        turn_position_item_id(
-            "thread_1", "turn_tools", 0, lane="tool:webSearch"
-        ),
+        turn_position_item_id("thread_1", "turn_tools", 0, lane="tool:mcpToolCall"),
+        turn_position_item_id("thread_1", "turn_tools", 0, lane="tool:webSearch"),
     ]
     assert [item.type for item in snapshot.items] == ["tool", "tool"]
     assert [item.turn_id for item in snapshot.items] == ["turn_tools", "turn_tools"]
@@ -2322,7 +2421,9 @@ def test_codex_snapshot_keeps_assistant_native_identity_without_turn_id() -> Non
     asyncio.run(_test_codex_snapshot_keeps_assistant_native_identity_without_turn_id())
 
 
-async def _test_codex_snapshot_keeps_assistant_native_identity_without_turn_id() -> None:
+async def _test_codex_snapshot_keeps_assistant_native_identity_without_turn_id() -> (
+    None
+):
     client = FakeCodexClient()
     host = FakeHost()
     runtime = CodexRuntime(config=_config(), host=host, client=client)
@@ -2423,10 +2524,14 @@ def test_codex_turn_position_identity_matches_live_and_snapshot_native_ids() -> 
     assert live_item.id.startswith("codex_item_")
     assert live_item.source["itemId"] == "msg_live"
     assert snapshot_items[1].source["itemId"] == "item-2"
-    assert snapshot_items[0].id == "item-1"
+    assert snapshot_items[0].id == turn_position_item_id(
+        "thread_1", "turn_1", 0, lane="user-message"
+    )
 
 
-def test_codex_turn_position_identity_distinguishes_repeated_assistant_messages() -> None:
+def test_codex_turn_position_identity_distinguishes_repeated_assistant_messages() -> (
+    None
+):
     accumulator = CodexTimelineAccumulator()
     accumulator.begin_turn("thread_1", "turn_1")
 
@@ -2651,11 +2756,15 @@ def test_codex_turn_position_tracking_is_released_at_turn_end() -> None:
     assert restarted_item.id == item.id
 
 
-def test_codex_snapshot_keeps_late_user_client_message_identity() -> None:
-    asyncio.run(_test_codex_snapshot_keeps_late_user_client_message_identity())
+def test_codex_snapshot_reuses_turn_identity_when_user_client_id_arrives_late() -> None:
+    asyncio.run(
+        _test_codex_snapshot_reuses_turn_identity_when_user_client_id_arrives_late()
+    )
 
 
-async def _test_codex_snapshot_keeps_late_user_client_message_identity() -> None:
+async def _test_codex_snapshot_reuses_turn_identity_when_user_client_id_arrives_late() -> (
+    None
+):
     client = FakeCodexClient()
     host = FakeHost()
     runtime = CodexRuntime(config=_config(), host=host, client=client)
@@ -2685,6 +2794,7 @@ async def _test_codex_snapshot_keeps_late_user_client_message_identity() -> None
                 {
                     "id": "item-1",
                     "type": "userMessage",
+                    "turnId": "turn_1",
                     "status": "done",
                     "role": "user",
                     "clientMessageId": "msg_late",
@@ -2699,8 +2809,14 @@ async def _test_codex_snapshot_keeps_late_user_client_message_identity() -> None
         external_session_id="thread_1",
     )
 
-    assert host.timeline_item_upserts[-1].id == "live_user"
-    assert snapshot.items[0].id == "item-1"
+    expected_id = turn_position_item_id(
+        "thread_1",
+        "turn_1",
+        0,
+        lane="user-message",
+    )
+    assert host.timeline_item_upserts[-1].id == expected_id
+    assert snapshot.items[0].id == expected_id
     assert snapshot.items[0].source["itemId"] == "item-1"
     assert snapshot.items[0].source["clientMessageId"] == "msg_late"
 
@@ -2775,7 +2891,11 @@ async def _test_codex_runtime_reads_nested_turn_snapshot() -> None:
 
     assert len(snapshot.items) == 1
     assert snapshot.items[0].id == "codex_thread_1_message-user-0"
-    assert snapshot.items[0].content == {"kind": "markdown", "text": "nested", "format": "markdown"}
+    assert snapshot.items[0].content == {
+        "kind": "markdown",
+        "text": "nested",
+        "format": "markdown",
+    }
 
 
 def test_codex_runtime_returns_empty_snapshot_without_external_session() -> None:
@@ -2866,7 +2986,9 @@ async def _test_codex_runtime_materializes_attachments_for_turn_start() -> None:
     assert attachment["byteSize"] == 5
 
 
-def test_codex_runtime_materializes_create_and_start_attachments_from_host(tmp_path, monkeypatch) -> None:
+def test_codex_runtime_materializes_create_and_start_attachments_from_host(
+    tmp_path, monkeypatch
+) -> None:
     asyncio.run(
         _test_codex_runtime_materializes_create_and_start_attachments_from_host(
             tmp_path,
@@ -2918,7 +3040,9 @@ def test_codex_runtime_does_not_restore_running_after_fast_terminal_turn() -> No
     asyncio.run(_test_codex_runtime_does_not_restore_running_after_fast_terminal_turn())
 
 
-async def _test_codex_runtime_does_not_restore_running_after_fast_terminal_turn() -> None:
+async def _test_codex_runtime_does_not_restore_running_after_fast_terminal_turn() -> (
+    None
+):
     class FastTerminalCodexClient(FakeCodexClient):
         async def start_turn(self, request: CodexStartTurnRequest) -> CodexTurnResult:
             result = await super().start_turn(request)
@@ -2954,13 +3078,17 @@ async def _test_codex_runtime_does_not_restore_running_after_fast_terminal_turn(
     assert interrupt.result["alreadyStopped"] is True
 
 
-def test_codex_runtime_terminal_event_without_platform_session_uses_cached_session() -> None:
+def test_codex_runtime_terminal_event_without_platform_session_uses_cached_session() -> (
+    None
+):
     asyncio.run(
         _test_codex_runtime_terminal_event_without_platform_session_uses_cached_session()
     )
 
 
-async def _test_codex_runtime_terminal_event_without_platform_session_uses_cached_session() -> None:
+async def _test_codex_runtime_terminal_event_without_platform_session_uses_cached_session() -> (
+    None
+):
     client = FakeCodexClient()
     host = FakeHost()
     runtime = CodexRuntime(config=_config(), host=host, client=client)
@@ -3078,7 +3206,9 @@ def test_codex_runtime_update_session_selections_allows_platform_only_session() 
     )
 
 
-async def _test_codex_runtime_update_session_selections_allows_platform_only_session() -> None:
+async def _test_codex_runtime_update_session_selections_allows_platform_only_session() -> (
+    None
+):
     client = FakeCodexClient()
     host = FakeHost()
     runtime = CodexRuntime(config=_config(), host=host, client=client)
@@ -3252,8 +3382,7 @@ async def _test_codex_runtime_rejects_command_args_without_sdk_request() -> None
 
 def capability_map(capabilities: RuntimeCapabilitySet) -> dict[str, Any]:
     return {
-        capability.capability_id: capability
-        for capability in capabilities.capabilities
+        capability.capability_id: capability for capability in capabilities.capabilities
     }
 
 
@@ -3538,7 +3667,9 @@ async def _test_codex_runtime_reduces_agent_message_snapshot_without_native_type
     assert item.source["rawType"] == "agentMessage"
 
 
-def test_codex_accumulator_merges_started_and_completed_agent_message_by_derived_key() -> None:
+def test_codex_accumulator_merges_started_and_completed_agent_message_by_derived_key() -> (
+    None
+):
     accumulator = CodexTimelineAccumulator()
     started = accumulator.item_from_notification(
         session_id="sess_1",
@@ -3657,8 +3788,12 @@ def test_codex_accumulator_preserves_repeated_user_message_text() -> None:
 
     assert first is not None
     assert second is not None
-    assert first.id == "user_msg_1"
-    assert second.id == "user_msg_2"
+    assert first.id == turn_position_item_id(
+        "thread_1", "turn_1", 0, lane="user-message"
+    )
+    assert second.id == turn_position_item_id(
+        "thread_1", "turn_2", 0, lane="user-message"
+    )
     assert first.id != second.id
     assert first.content["text"] == "你好"
     assert second.content["text"] == "你好"
@@ -3996,9 +4131,7 @@ async def _test_codex_runtime_failed_turn_creates_blocking_error_notice() -> Non
     assert interrupt.ok is True
     assert interrupt.result["alreadyStopped"] is True
     error_update = next(
-        update
-        for update in reversed(host.state_updates)
-        if update["status"] == "error"
+        update for update in reversed(host.state_updates) if update["status"] == "error"
     )
     assert error_update["error"]["code"] == "boom"
 
@@ -4033,9 +4166,7 @@ async def _test_codex_runtime_native_failed_completion_sets_error_state() -> Non
     )
 
     error_update = next(
-        update
-        for update in reversed(host.state_updates)
-        if update["status"] == "error"
+        update for update in reversed(host.state_updates) if update["status"] == "error"
     )
     assert error_update["error"]["code"] == "native_failure"
     assert error_update["error"]["message"] == "Native turn failed"
@@ -4084,16 +4215,14 @@ async def _test_codex_runtime_tags_completed_user_echo_with_client_message_id() 
     )
 
     item = host.timeline_item_upserts[-1]
-    assert item.id == "item_user"
+    assert item.id == client_message_item_id("thread_1", "cm_web_1")
     assert item.source["clientMessageId"] == "cm_web_1"
-    assert item.source["derivedKey"].startswith("userMessage-")
+    assert item.source["derivedKey"] == "turn-item-v2-turn_new-user-message-0"
     assert host.timeline_syncs == []
 
 
 def test_codex_runtime_remembers_completed_user_echo_client_message_id() -> None:
-    asyncio.run(
-        _test_codex_runtime_remembers_completed_user_echo_client_message_id()
-    )
+    asyncio.run(_test_codex_runtime_remembers_completed_user_echo_client_message_id())
 
 
 async def _test_codex_runtime_remembers_completed_user_echo_client_message_id() -> None:
@@ -4126,8 +4255,8 @@ async def _test_codex_runtime_remembers_completed_user_echo_client_message_id() 
     await runtime._handle_notification(notification)
 
     first, second = host.timeline_item_upserts[-2:]
-    assert first.id == "item_user"
-    assert second.id == "item_user"
+    assert first.id == client_message_item_id("thread_1", "cm_web_1")
+    assert second.id == first.id
     assert first.source["clientMessageId"] == "cm_web_1"
     assert second.source["clientMessageId"] == "cm_web_1"
     assert host.timeline_syncs == []
@@ -4165,10 +4294,14 @@ async def _test_codex_runtime_tags_live_user_echo_with_client_message_id() -> No
     )
 
     item = host.timeline_item_upserts[-1]
-    assert item.id == "item_live_user"
+    assert item.id == client_message_item_id("thread_1", "cm_live_1")
     assert item.source["clientMessageId"] == "cm_live_1"
     assert item.role == "user"
-    assert item.content == {"kind": "markdown", "text": "live hello", "format": "markdown"}
+    assert item.content == {
+        "kind": "markdown",
+        "text": "live hello",
+        "format": "markdown",
+    }
 
 
 def test_codex_runtime_preserves_pending_user_attachments_after_codex_echo() -> None:
@@ -4177,7 +4310,9 @@ def test_codex_runtime_preserves_pending_user_attachments_after_codex_echo() -> 
     )
 
 
-async def _test_codex_runtime_preserves_pending_user_attachments_after_codex_echo() -> None:
+async def _test_codex_runtime_preserves_pending_user_attachments_after_codex_echo() -> (
+    None
+):
     client = FakeCodexClient()
     host = FakeHost()
     runtime = CodexRuntime(config=_config(), host=host, client=client)
@@ -4220,7 +4355,7 @@ async def _test_codex_runtime_preserves_pending_user_attachments_after_codex_ech
     )
 
     item = host.timeline_item_upserts[-1]
-    assert item.id == "item_user_file"
+    assert item.id == client_message_item_id("thread_1", "cm_file_1")
     assert item.source["clientMessageId"] == "cm_file_1"
     assert item.content == {
         "kind": "markdown",
@@ -4237,15 +4372,17 @@ async def _test_codex_runtime_preserves_pending_user_attachments_after_codex_ech
     }
 
 
-def test_codex_runtime_persists_client_message_binding_for_snapshot_echo(
+def test_codex_runtime_reconciles_snapshot_echo_after_restart_with_session_alias(
     tmp_path: Path,
 ) -> None:
     asyncio.run(
-        _test_codex_runtime_persists_client_message_binding_for_snapshot_echo(tmp_path)
+        _test_codex_runtime_reconciles_snapshot_echo_after_restart_with_session_alias(
+            tmp_path
+        )
     )
 
 
-async def _test_codex_runtime_persists_client_message_binding_for_snapshot_echo(
+async def _test_codex_runtime_reconciles_snapshot_echo_after_restart_with_session_alias(
     tmp_path: Path,
 ) -> None:
     client = FakeCodexClient()
@@ -4320,13 +4457,14 @@ async def _test_codex_runtime_persists_client_message_binding_for_snapshot_echo(
     )
 
     snapshot = await restarted_runtime.get_session_snapshot(
-        "sess_1",
+        "sess_codex_alias",
         external_session_id="thread_1",
     )
 
     assert len(snapshot.items) == 1
     item = snapshot.items[0]
-    assert item.id == "live_user_item"
+    assert item.id == client_message_item_id("thread_1", "cm_file_1")
+    assert item.session_id == "sess_codex_alias"
     assert item.source["itemId"] == "item-1"
     assert item.source["clientMessageId"] == "cm_file_1"
     assert item.content == {
@@ -4342,6 +4480,106 @@ async def _test_codex_runtime_persists_client_message_binding_for_snapshot_echo(
             }
         ],
     }
+
+
+def test_codex_runtime_merges_v1_bindings_from_multiple_session_aliases(
+    tmp_path: Path,
+) -> None:
+    asyncio.run(
+        _test_codex_runtime_merges_v1_bindings_from_multiple_session_aliases(tmp_path)
+    )
+
+
+async def _test_codex_runtime_merges_v1_bindings_from_multiple_session_aliases(
+    tmp_path: Path,
+) -> None:
+    kv_store = JsonKeyValueStore(tmp_path / "connector-kv.json")
+    binding_key = client_message_bindings_key("conn_test", "thread_1")
+    kv_store.set(
+        binding_key,
+        {
+            "version": 1,
+            "bindings": [
+                {
+                    "sessionId": "sess_live",
+                    "externalSessionId": "thread_1",
+                    "clientMessageId": "cm_file_1",
+                    "platformItemId": "live_user_item",
+                    "nativeItemIds": ["live_user_item"],
+                    "derivedKeys": ["live-derived"],
+                    "rawType": "userMessage",
+                    "role": "user",
+                    "turnId": "turn_1",
+                    "text": "read this",
+                    "attachments": [
+                        {
+                            "fileId": "file_1",
+                            "name": "note.txt",
+                            "mediaType": "text/plain",
+                            "size": 16,
+                        }
+                    ],
+                },
+                {
+                    "sessionId": "sess_codex_alias",
+                    "externalSessionId": "thread_1",
+                    "clientMessageId": "cm_file_1",
+                    "platformItemId": "item-1",
+                    "nativeItemIds": ["item-1"],
+                    "derivedKeys": ["snapshot-derived"],
+                    "rawType": "userMessage",
+                    "role": "user",
+                    "turnId": "turn_1",
+                    "text": "read this",
+                    "attachments": [],
+                },
+            ],
+        },
+    )
+    client = FakeCodexClient()
+    client.results["thread/read"] = {
+        "thread": {
+            "id": "thread_1",
+            "items": [
+                {
+                    "id": "item-1",
+                    "type": "userMessage",
+                    "clientMessageId": "cm_file_1",
+                    "text": "read this",
+                    "status": "completed",
+                }
+            ],
+        }
+    }
+    runtime = CodexRuntime(
+        config=_config(),
+        host=FakeHost(),
+        client=client,
+        client_message_kv=kv_store,
+    )
+
+    snapshot = await runtime.get_session_snapshot(
+        "sess_codex_alias",
+        external_session_id="thread_1",
+    )
+
+    assert len(snapshot.items) == 1
+    item = snapshot.items[0]
+    assert item.id == client_message_item_id("thread_1", "cm_file_1")
+    assert item.content["attachments"] == [
+        {
+            "fileId": "file_1",
+            "name": "note.txt",
+            "mediaType": "text/plain",
+            "size": 16,
+        }
+    ]
+    migrated = kv_store.get(binding_key)
+    assert migrated is not None
+    assert migrated["version"] == CLIENT_MESSAGE_BINDINGS_VERSION
+    assert len(migrated["bindings"]) == 1
+    assert "sessionId" not in migrated["bindings"][0]
+    assert "platformItemId" not in migrated["bindings"][0]
 
 
 def test_codex_runtime_tags_live_steer_echo_with_client_message_id() -> None:
@@ -4377,7 +4615,7 @@ async def _test_codex_runtime_tags_live_steer_echo_with_client_message_id() -> N
     )
 
     item = host.timeline_item_upserts[-1]
-    assert item.id == "item_steer_user"
+    assert item.id == client_message_item_id("thread_1", "cm_steer_1")
     assert item.source["clientMessageId"] == "cm_steer_1"
     assert item.source["rawType"] == "steeringUserMessage"
     assert item.role == "user"
@@ -4433,10 +4671,14 @@ async def _test_codex_runtime_snapshot_and_live_use_same_sdk_item_identity() -> 
 
 
 def test_codex_sdk_stream_exhaustion_emits_failed_when_sdk_omits_terminal() -> None:
-    asyncio.run(_test_codex_sdk_stream_exhaustion_emits_failed_when_sdk_omits_terminal())
+    asyncio.run(
+        _test_codex_sdk_stream_exhaustion_emits_failed_when_sdk_omits_terminal()
+    )
 
 
-async def _test_codex_sdk_stream_exhaustion_emits_failed_when_sdk_omits_terminal() -> None:
+async def _test_codex_sdk_stream_exhaustion_emits_failed_when_sdk_omits_terminal() -> (
+    None
+):
     emitted: list[Any] = []
     client = CodexSdkClient(_FakeSdkClient())
 
@@ -4454,9 +4696,7 @@ async def _test_codex_sdk_stream_exhaustion_emits_failed_when_sdk_omits_terminal
     assert emitted[-1]["params"]["error"]["code"] == (
         "codex_stream_ended_without_terminal_event"
     )
-    assert emitted[-1]["params"]["metadata"] == {
-        "source": "codex.sdk.stream.exhausted"
-    }
+    assert emitted[-1]["params"]["metadata"] == {"source": "codex.sdk.stream.exhausted"}
 
 
 def test_codex_sdk_start_turn_initializes_before_low_level_detection() -> None:
@@ -4655,7 +4895,9 @@ async def _test_codex_runtime_approval_request_upserts_session_notice() -> None:
 
 
 def test_codex_runtime_permission_approval_uses_permission_response_shape() -> None:
-    asyncio.run(_test_codex_runtime_permission_approval_uses_permission_response_shape())
+    asyncio.run(
+        _test_codex_runtime_permission_approval_uses_permission_response_shape()
+    )
 
 
 async def _test_codex_runtime_permission_approval_uses_permission_response_shape() -> (
@@ -4797,8 +5039,7 @@ async def _test_codex_runtime_steer_no_active_sdk_turn_sets_idle() -> None:
     assert result.result["steered"] is False
     assert host.state_updates[-1]["status"] == "idle"
     assert (
-        host.state_updates[-1]["metadata"]["source"]
-        == "codex.turn/steer.soft-failed"
+        host.state_updates[-1]["metadata"]["source"] == "codex.turn/steer.soft-failed"
     )
 
 
@@ -4883,10 +5124,14 @@ async def _test_codex_runtime_interrupt_no_active_sdk_turn_sets_idle() -> None:
 
 
 def test_codex_runtime_interrupt_no_active_sdk_turn_request_error_sets_idle() -> None:
-    asyncio.run(_test_codex_runtime_interrupt_no_active_sdk_turn_request_error_sets_idle())
+    asyncio.run(
+        _test_codex_runtime_interrupt_no_active_sdk_turn_request_error_sets_idle()
+    )
 
 
-async def _test_codex_runtime_interrupt_no_active_sdk_turn_request_error_sets_idle() -> None:
+async def _test_codex_runtime_interrupt_no_active_sdk_turn_request_error_sets_idle() -> (
+    None
+):
     client = FakeCodexClient()
     client.results["turn/interrupt"] = RuntimeInvalidRequestError(
         "Codex SDK has no active turn for thread thread_1"
@@ -5132,7 +5377,9 @@ async def _test_codex_runtime_interrupt_closes_open_approval_notice() -> None:
     assert host.state_updates[-1]["status"] == "idle"
 
 
-def test_codex_runtime_resolved_approval_keeps_waiting_approval_with_other_open_notice() -> None:
+def test_codex_runtime_resolved_approval_keeps_waiting_approval_with_other_open_notice() -> (
+    None
+):
     asyncio.run(
         _test_codex_runtime_resolved_approval_keeps_waiting_approval_with_other_open_notice()
     )

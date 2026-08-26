@@ -69,7 +69,9 @@ def codex_tool_content_from_mapping(content: Mapping[str, Any]) -> TimelineConte
             command=string_field(content, "command"),
             output=optional_field(content, "output"),
             exit_code=int_field(content, "exitCode"),
-            metadata=mapping_without(content, ("kind", "command", "output", "exitCode")),
+            metadata=mapping_without(
+                content, ("kind", "command", "output", "exitCode")
+            ),
         )
     if kind == "mcp":
         return McpToolContent(

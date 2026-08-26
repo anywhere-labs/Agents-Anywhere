@@ -95,7 +95,6 @@ class CodexTurnActions:
             metadata={"source": "codex.turn/start.requested"},
         )
         self.pending_messages.register(
-            session_id=session_id,
             external_session_id=external_session_id,
             client_message_id=client_message_id,
             text=content,
@@ -141,14 +140,16 @@ class CodexTurnActions:
                     "turnId": turn_id,
                     "turn": dict(result.payload),
                     "externalSessionId": external_session_id,
-                    "status": current_state.status if current_state is not None else None,
+                    "status": current_state.status
+                    if current_state is not None
+                    else None,
                     "completed": True,
                 },
             )
         if turn_id is not None:
             self.active_turn_ids[session_id] = turn_id
             self.pending_messages.bind_turn(
-                session_id=session_id,
+                external_session_id=external_session_id,
                 client_message_id=client_message_id,
                 turn_id=turn_id,
             )
@@ -206,7 +207,6 @@ class CodexTurnActions:
             codex_attachments,
         )
         self.pending_messages.register(
-            session_id=session_id,
             external_session_id=external_session_id,
             client_message_id=client_message_id,
             text=content,
