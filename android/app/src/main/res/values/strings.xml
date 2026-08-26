@@ -472,6 +472,7 @@
     <string name="profile_language_english_description">Always show English.</string>
     <string name="profile_language_chinese_description">Always show Simplified Chinese.</string>
     <string name="update_available_title">New version available</string>
+    <string name="update_new_version_badge">New version</string>
     <string name="update_available_message">Version v%1$s is available. Update now?</string>
     <string name="update_now">Update now</string>
     <string name="update_later">Later</string>

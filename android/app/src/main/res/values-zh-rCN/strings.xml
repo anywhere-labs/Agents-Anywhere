@@ -471,6 +471,7 @@
     <string name="profile_language_english_description">始终显示英文。</string>
     <string name="profile_language_chinese_description">始终显示简体中文。</string>
     <string name="update_available_title">发现新版本</string>
+    <string name="update_new_version_badge">有新版本</string>
     <string name="update_available_message">新版本 v%1$s 已可用，是否立即更新？</string>
     <string name="update_now">立即更新</string>
     <string name="update_later">稍后更新</string>

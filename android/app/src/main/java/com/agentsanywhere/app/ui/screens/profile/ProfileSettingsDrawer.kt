@@ -82,7 +82,6 @@ import com.composables.icons.lucide.ChevronLeft
 import com.composables.icons.lucide.ChevronRight
 import com.composables.icons.lucide.ChevronsUpDown
 import com.composables.icons.lucide.Circle
-import com.composables.icons.lucide.CircleAlert
 import com.composables.icons.lucide.Globe
 import com.composables.icons.lucide.KeyRound
 import com.composables.icons.lucide.LogOut
@@ -294,8 +293,11 @@ fun ProfileSettingsDrawer(
                             ProfileRow(
                                 icon = Lucide.Server,
                                 title = stringResource(R.string.profile_check_updates),
-                                trailingIcon = if (appUpdateViewModel.state.release != null) Lucide.CircleAlert else null,
-                                trailingIconTint = colors.errorIcon,
+                                trailingTag = if (appUpdateViewModel.state.release != null) {
+                                    stringResource(R.string.update_new_version_badge)
+                                } else {
+                                    null
+                                },
                                 onClick = { detailPage = ProfileDetailPage.Updates },
                             )
                         }
@@ -727,8 +729,8 @@ private fun ProfileRow(
     title: String,
     subtitle: String? = null,
     trailing: String? = null,
+    trailingTag: String? = null,
     trailingIcon: ImageVector? = null,
-    trailingIconTint: Color? = null,
     enabled: Boolean = true,
     showChevron: Boolean = true,
     onClick: (() -> Unit)? = null,
@@ -777,11 +779,25 @@ private fun ProfileRow(
                 overflow = TextOverflow.Ellipsis,
             )
         }
+        if (trailingTag != null) {
+            Text(
+                text = trailingTag,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(5.dp))
+                    .background(colors.errorIcon.copy(alpha = alpha))
+                    .padding(horizontal = 7.dp, vertical = 3.dp),
+                color = Color.White,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.SemiBold,
+                lineHeight = 14.sp,
+                maxLines = 1,
+            )
+        }
         if (trailingIcon != null) {
             Icon(
                 trailingIcon,
                 contentDescription = null,
-                tint = (trailingIconTint ?: colors.faint).copy(alpha = alpha),
+                tint = colors.faint.copy(alpha = alpha),
                 modifier = Modifier.size(20.dp),
             )
         }
