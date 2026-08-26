@@ -690,6 +690,7 @@ fun AgentsAnywhereApp(
         state = appUpdateViewModel.state,
         onUpdate = appUpdateViewModel::downloadUpdate,
         onLater = appUpdateViewModel::dismissPrompt,
+        onCancelDownload = appUpdateViewModel::cancelDownload,
     )
     LaunchedEffect(appUpdateViewModel.state.installFile) {
         appUpdateViewModel.state.installFile?.let(onInstallUpdate)

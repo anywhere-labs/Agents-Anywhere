@@ -72,6 +72,7 @@ import com.agentsanywhere.app.api.AuthMeResponse
 import com.agentsanywhere.app.config.AppConfig
 import com.agentsanywhere.app.feature.update.AppUpdateUiState
 import com.agentsanywhere.app.feature.update.AppUpdateViewModel
+import com.agentsanywhere.app.ui.screens.update.AppUpdateDownloadProgress
 import com.agentsanywhere.app.ui.designsystem.AAAppearanceMode
 import com.agentsanywhere.app.ui.designsystem.AALanguageMode
 import com.agentsanywhere.app.ui.designsystem.AgentsAnywhereColors
@@ -228,6 +229,7 @@ fun ProfileSettingsDrawer(
                             UpdateDetailPage(
                                 state = appUpdateViewModel.state,
                                 onUpdate = appUpdateViewModel::downloadUpdate,
+                                onCancelDownload = appUpdateViewModel::cancelDownload,
                             )
                         }
                         ProfileDetailPage.None -> Unit
@@ -534,6 +536,7 @@ private fun LanguageRow(
 private fun UpdateDetailPage(
     state: AppUpdateUiState,
     onUpdate: () -> Unit,
+    onCancelDownload: () -> Unit,
 ) {
     val colors = LocalAAColors.current
     val release = state.release
@@ -544,19 +547,36 @@ private fun UpdateDetailPage(
                 verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
                 Text(
-                    text = stringResource(R.string.update_available_title),
+                    text = stringResource(
+                        when {
+                            state.downloading -> R.string.update_downloading_title
+                            state.preparingInstall -> R.string.update_preparing_install
+                            else -> R.string.update_available_title
+                        },
+                    ),
                     color = colors.ink,
                     fontSize = 18.sp,
                     fontWeight = FontWeight.SemiBold,
                     lineHeight = 22.sp,
                 )
-                Text(
-                    text = stringResource(R.string.update_available_message, release.versionName),
-                    color = colors.muted,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Medium,
-                    lineHeight = 20.sp,
-                )
+                if (state.downloading) {
+                    Text(
+                        text = stringResource(R.string.update_downloading_version, release.versionName),
+                        color = colors.muted,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Medium,
+                        lineHeight = 20.sp,
+                    )
+                    AppUpdateDownloadProgress(state = state)
+                } else if (!state.preparingInstall) {
+                    Text(
+                        text = stringResource(R.string.update_available_message, release.versionName),
+                        color = colors.muted,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Medium,
+                        lineHeight = 20.sp,
+                    )
+                }
                 if (state.downloadFailed) {
                     Text(
                         text = stringResource(R.string.update_download_failed),
@@ -566,13 +586,29 @@ private fun UpdateDetailPage(
                         lineHeight = 18.sp,
                     )
                 }
-                ProfileDialogButton(
-                    label = stringResource(if (state.downloading) R.string.update_downloading else R.string.update_now),
-                    primary = true,
-                    enabled = !state.downloading,
-                    modifier = Modifier.fillMaxWidth(),
-                    onClick = onUpdate,
-                )
+                when {
+                    state.downloading -> ProfileDialogButton(
+                        label = stringResource(R.string.update_cancel_download),
+                        primary = false,
+                        enabled = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        onClick = onCancelDownload,
+                    )
+                    state.preparingInstall -> ProfileDialogButton(
+                        label = stringResource(R.string.update_preparing_install),
+                        primary = true,
+                        enabled = false,
+                        modifier = Modifier.fillMaxWidth(),
+                        onClick = {},
+                    )
+                    else -> ProfileDialogButton(
+                        label = stringResource(if (state.downloadFailed) R.string.update_retry else R.string.update_now),
+                        primary = true,
+                        enabled = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        onClick = onUpdate,
+                    )
+                }
             }
         }
         return
@@ -783,10 +819,11 @@ private fun ProfileRow(
             Text(
                 text = trailingTag,
                 modifier = Modifier
-                    .clip(RoundedCornerShape(5.dp))
-                    .background(colors.errorIcon.copy(alpha = alpha))
-                    .padding(horizontal = 7.dp, vertical = 3.dp),
-                color = Color.White,
+                    .clip(CircleShape)
+                    .background(colors.errorSurface.copy(alpha = alpha))
+                    .border(1.dp, colors.errorBorder.copy(alpha = alpha), CircleShape)
+                    .padding(horizontal = 10.dp, vertical = 4.dp),
+                color = colors.errorText.copy(alpha = alpha),
                 fontSize = 11.sp,
                 fontWeight = FontWeight.SemiBold,
                 lineHeight = 14.sp,

@@ -476,7 +476,13 @@
     <string name="update_available_message">Version v%1$s is available. Update now?</string>
     <string name="update_now">Update now</string>
     <string name="update_later">Later</string>
-    <string name="update_downloading">Downloading...</string>
+    <string name="update_retry">Try again</string>
+    <string name="update_downloading_title">Downloading update</string>
+    <string name="update_downloading_version">Downloading version v%1$s</string>
+    <string name="update_download_progress">%1$d%% · %2$s / %3$s</string>
+    <string name="update_download_progress_unknown">%1$s downloaded</string>
+    <string name="update_cancel_download">Cancel download</string>
+    <string name="update_preparing_install">Preparing installation…</string>
     <string name="update_download_failed">The update could not be downloaded. Please try again.</string>
     <string name="update_up_to_date">You are using the latest version.</string>
     <string name="update_check_failed">Could not check for updates.</string>
