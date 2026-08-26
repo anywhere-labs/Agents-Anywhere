@@ -816,7 +816,7 @@ export class DashboardApi {
     payload: {
       runtimeType: string;
       name: string;
-      config?: Record<string, unknown>;
+      config: Record<string, unknown>;
       active?: boolean;
     },
   ): Promise<DeviceRuntimeView> {

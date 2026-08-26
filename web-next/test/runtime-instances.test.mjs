@@ -11,7 +11,10 @@ import {
 } from "../src/components/session/catalog-selection.ts"
 import { findCapability } from "../src/components/session/capabilities.ts"
 import {
+  addableRuntimeTypes,
+  configuredRuntimeInstances,
   mergeRuntimeTypes,
+  reconfigurableRuntimeInstance,
   runtimeInstanceName,
   runtimeTypeCanCreateInstance,
   sessionRuntimeId,
@@ -64,12 +67,31 @@ test("an unavailable provider can still create an instance for custom configurat
   assert.equal(runtimeTypeCanCreateInstance(runtimeType, []), true)
 })
 
-test("legacy inventory derives a single compatibility runtime type", () => {
+test("an unconfigured compatibility instance is offered as addable without displaying it", () => {
   const [runtimeType] = mergeRuntimeTypes([], [legacyRuntime])
   assert.equal(runtimeType.runtimeType, "dsh")
   assert.equal(runtimeType.instancePolicy, "single")
   assert.equal(runtimeType.metadata.storageMode, "dsh-native")
-  assert.equal(runtimeTypeCanCreateInstance(runtimeType, [legacyRuntime]), false)
+  assert.equal(runtimeTypeCanCreateInstance(runtimeType, [legacyRuntime]), true)
+  assert.deepEqual(configuredRuntimeInstances([legacyRuntime]), [])
+  assert.equal(reconfigurableRuntimeInstance(runtimeType, [legacyRuntime]), legacyRuntime)
+  assert.deepEqual(addableRuntimeTypes([runtimeType], [legacyRuntime]), [runtimeType])
+})
+
+test("configured instances and addable types are mutually scoped", () => {
+  const configured = { ...legacyRuntime, configured: true, config: {} }
+  const [runtimeType] = mergeRuntimeTypes([], [configured])
+
+  assert.deepEqual(configuredRuntimeInstances([configured]), [configured])
+  assert.equal(runtimeTypeCanCreateInstance(runtimeType, [configured]), false)
+  assert.deepEqual(addableRuntimeTypes([runtimeType], [configured]), [])
+})
+
+test("a runtime type without a configuration schema is not addable", () => {
+  const [runtimeType] = mergeRuntimeTypes([], [legacyRuntime])
+  const withoutSchema = { ...runtimeType, schema: null }
+
+  assert.equal(runtimeTypeCanCreateInstance(withoutSchema, []), false)
 })
 
 test("capability lookup prefers instance scope and falls back to provider scope", () => {

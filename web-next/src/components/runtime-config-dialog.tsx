@@ -156,8 +156,12 @@ export function RuntimeConfigDialog({
       setErrors(next)
       return
     }
-    await onSave(draft)
-    onOpenChange(false)
+    try {
+      await onSave(draft)
+      onOpenChange(false)
+    } catch {
+      // The owner reports request failures; keep the configuration open for correction or retry.
+    }
   }
 
   return (

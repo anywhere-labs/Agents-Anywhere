@@ -94,10 +94,35 @@ export function runtimeTypeCanCreateInstance(
   runtimeType: RuntimeTypeView,
   runtimes: readonly DeviceRuntimeView[],
 ): boolean {
-  if (!runtimeType.present) return false
+  if (!runtimeType.present || runtimeType.schema === null) return false
+  if (reconfigurableRuntimeInstance(runtimeType, runtimes)) return true
   const current = runtimes.filter((runtime) => runtime.runtimeType === runtimeType.runtimeType).length
   if (runtimeType.instancePolicy === "single" && current >= 1) return false
   return runtimeType.maxInstances === null || current < runtimeType.maxInstances
+}
+
+export function configuredRuntimeInstances(
+  runtimes: readonly DeviceRuntimeView[],
+): DeviceRuntimeView[] {
+  return runtimes
+    .filter((runtime) => runtime.configured)
+    .sort((left, right) => runtimeInstanceName(left).localeCompare(runtimeInstanceName(right)))
+}
+
+export function addableRuntimeTypes(
+  runtimeTypes: readonly RuntimeTypeView[],
+  runtimes: readonly DeviceRuntimeView[],
+): RuntimeTypeView[] {
+  return runtimeTypes.filter((runtimeType) => runtimeTypeCanCreateInstance(runtimeType, runtimes))
+}
+
+export function reconfigurableRuntimeInstance(
+  runtimeType: Pick<RuntimeTypeView, "runtimeType">,
+  runtimes: readonly DeviceRuntimeView[],
+): DeviceRuntimeView | null {
+  return runtimes.find((runtime) => (
+    runtime.runtimeType === runtimeType.runtimeType && !runtime.configured
+  )) ?? null
 }
 
 export function suggestedRuntimeInstanceName(

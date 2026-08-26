@@ -288,8 +288,22 @@ The rewrite was completed on 2026-08-26 without merging or rebasing the old
 `codex/runtime-instances` branch. The old branch remains available as a
 reference.
 
+The setup flow was tightened after the initial rewrite:
+
+- Runtime Control 2.0 discovery persists runtime types only and never creates
+  unconfigured instances implicitly.
+- Named-instance creation requires configuration. Web collects the instance
+  name and configuration first, then creates and starts the configured instance
+  in one request; cancelling setup leaves no instance row.
+- Pairing and device management display configured instances and runtime types
+  that can currently be added. A soft-cleared instance remains internal and is
+  restored through the same Add entry point, preserving its ID and historical
+  session bindings without exposing a separate unconfigured list.
+- Pairing waits briefly after the Connector becomes online and retries transient
+  discovery failures before exposing the manual refresh action.
+
 - Runtime Control 2.0 is a separate validated contract; Protocol 1.0 remains
-  unchanged.
+unchanged.
 - Connector runtime supervision is keyed by runtime instance, with per-instance
   lifecycle serialization, resource claims, catalog scoping, and negotiation
   bound to the concrete connection.
