@@ -356,8 +356,10 @@ def timeline_projection_from_response_item(
 
 
 def file_update_change_mapping(change: FileUpdateChange) -> dict[str, str]:
+    kind = enum_value(change.kind) or "unknown"
     return {
-        "kind": enum_value(change.kind) or "unknown",
+        "kind": kind,
+        "action": kind,
         "path": change.path,
         "diff": change.diff,
     }

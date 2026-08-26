@@ -346,7 +346,7 @@ class CodexTimelineProjection:
             "path": self.path,
             "action": self.action or "unknown",
             "patch": self.patch,
-            "changes": self.changes,
+            "changes": normalized_file_changes(self.changes),
         }
 
     def raw_metadata(self) -> Mapping[str, Any]:
@@ -426,7 +426,7 @@ def timeline_projection_from_raw(raw: Mapping[str, Any]) -> CodexTimelineProject
         path=first_string_from_mapping(raw_dict, "path", "file", "filePath"),
         action=first_string_from_mapping(raw_dict, "action", "operation"),
         patch=first_string_from_mapping(raw_dict, "patch", "diff"),
-        changes=raw_dict.get("changes"),
+        changes=normalized_file_changes(raw_dict.get("changes")),
         client_message_id=client_message_id_from_raw(raw_dict),
         explicit_derived_key=explicit_derived_key(raw_dict),
         attachments=attachments_from_raw(raw_dict, raw_type),
@@ -444,6 +444,31 @@ def attachments_from_raw(
     if raw_type not in {"userMessage", "steeringUserMessage"}:
         return ()
     return user_input_attachments_from_raw(raw.get("input") or raw.get("content"))
+
+
+def normalized_file_changes(value: Any) -> Any:
+    if not isinstance(value, Mapping):
+        return value
+    changes: list[dict[str, Any]] = []
+    for path, change in value.items():
+        if not isinstance(path, str) or not isinstance(change, Mapping):
+            continue
+        action = first_string_from_mapping(change, "action", "type", "operation")
+        diff = change.get("diff")
+        if diff is None:
+            diff = change.get("patch")
+        if diff is None:
+            diff = change.get("content")
+        item: dict[str, Any] = {
+            "path": path,
+            "kind": action or "unknown",
+        }
+        if action:
+            item["action"] = action
+        if isinstance(diff, str):
+            item["diff"] = diff
+        changes.append(item)
+    return tuple(changes) if changes else value
 
 
 def attachments_from_mapping_list(value: list[Any]) -> tuple[Mapping[str, Any], ...]:
