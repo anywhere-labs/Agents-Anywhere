@@ -4,7 +4,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from openai_codex.generated.v2_all import Thread
+from openai_codex.generated.v2_all import Thread, Turn
 
 from connector.runtimes.codex.sdk.events import CodexSdkEvent
 
@@ -93,6 +93,11 @@ class CodexThreadReadResult:
 
 
 @dataclass(frozen=True, slots=True)
+class CodexThreadTurnsResult:
+    turns: tuple[Turn, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class CodexThreadResult:
     thread_id: str | None
     payload: Mapping[str, Any]
@@ -123,6 +128,7 @@ class CodexRuntimeClient(Protocol):
         thread_id: str,
         include_turns: bool = True,
     ) -> CodexThreadReadResult: ...
+    async def list_thread_turns(self, thread_id: str) -> CodexThreadTurnsResult: ...
     async def start_thread(
         self, request: CodexStartThreadRequest
     ) -> CodexThreadResult: ...

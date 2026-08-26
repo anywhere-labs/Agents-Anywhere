@@ -887,6 +887,11 @@
           "default": null,
           "title": "Lastsyncedat"
         },
+        "latestTurnEndSeq": {
+          "default": 0,
+          "title": "Latestturnendseq",
+          "type": "integer"
+        },
         "pinned": {
           "default": false,
           "title": "Pinned",

@@ -54,6 +54,17 @@ class RuntimeHostClient(ABC):
     ) -> None:
         raise NotImplementedError
 
+    async def session_turn_ended(
+        self,
+        session_id: str,
+        runtime: str,
+        external_session_id: str | None = None,
+        turn_id: str | None = None,
+        outcome: str = "completed",
+        metadata: Mapping[str, Any] | None = None,
+    ) -> None:
+        raise NotImplementedError
+
     async def runtime_capabilities_update(
         self,
         capabilities: RuntimeCapabilitySet,

@@ -1061,8 +1061,8 @@ def test_connector_rpc_start_message_does_not_block_later_requests() -> None:
     asyncio.run(_exercise_nonblocking_runtime_rpc())
 
 
-def test_connector_runtime_host_keeps_turn_data_inside_runtime() -> None:
-    asyncio.run(_exercise_session_only_server_notifications())
+def test_connector_runtime_host_publishes_dedicated_turn_end() -> None:
+    asyncio.run(_exercise_dedicated_turn_end_notification())
 
 
 def test_runtime_scanner_keeps_turn_markers_out_of_server_timeline() -> None:
@@ -2387,7 +2387,7 @@ async def _exercise_nonblocking_runtime_rpc() -> None:
     assert slow_response["result"]["state"]["sessionId"] == "sess_1"
 
 
-async def _exercise_session_only_server_notifications() -> None:
+async def _exercise_dedicated_turn_end_notification() -> None:
     notifications: list[tuple[str, dict[str, Any]]] = []
 
     async def notify(method: str, params: dict[str, Any]) -> None:
@@ -2404,6 +2404,14 @@ async def _exercise_session_only_server_notifications() -> None:
         "codex",
         status="running",
         metadata={"turnId": "turn_1", "nested": {"turn_id": "turn_1"}},
+    )
+    await host.session_turn_ended(
+        "sess_1",
+        "codex",
+        external_session_id="thread_1",
+        turn_id="turn_1",
+        outcome="completed",
+        metadata={"source": "codex.turn/completed"},
     )
     await host.timeline_sync(
         "sess_1",
@@ -2440,13 +2448,15 @@ async def _exercise_session_only_server_notifications() -> None:
 
     assert [method for method, _params in notifications] == [
         "session.state.updated",
+        "session.turnEnded",
         "timeline.sync",
     ]
-    assert [item["id"] for item in notifications[1][1]["items"]] == ["message_1"]
-    encoded = json.dumps(notifications)
-    assert "turnId" not in encoded
-    assert "turn_id" not in encoded
-    assert notifications[1][1]["items"][0]["content"]["turn"] == "left"
+    assert notifications[1][1]["turnId"] == "turn_1"
+    assert [item["id"] for item in notifications[2][1]["items"]] == ["message_1"]
+    encoded_without_turn_end = json.dumps([notifications[0], notifications[2]])
+    assert "turnId" not in encoded_without_turn_end
+    assert "turn_id" not in encoded_without_turn_end
+    assert notifications[2][1]["items"][0]["content"]["turn"] == "left"
 
 
 async def wait_for_ws_response(

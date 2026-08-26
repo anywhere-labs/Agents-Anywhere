@@ -172,6 +172,27 @@ class RecordingHost(RuntimeHostClient):
             ("meta", {"runtime": runtime, "metadata": dict(metadata or {})})
         )
 
+    async def session_turn_ended(
+        self,
+        session_id: str,
+        runtime: str,
+        external_session_id: str | None = None,
+        turn_id: str | None = None,
+        outcome: str = "completed",
+        metadata: Mapping[str, Any] | None = None,
+    ) -> None:
+        self.calls.append(
+            (
+                "turn_end",
+                {
+                    "runtime": runtime,
+                    "turnId": turn_id,
+                    "outcome": outcome,
+                    "metadata": dict(metadata or {}),
+                },
+            )
+        )
+
     async def timeline_item_upsert(self, item: RuntimeTimelineItem) -> None:
         self.calls.append(("timeline", item.source))
 
@@ -274,6 +295,12 @@ def test_runtime_instance_host_scopes_side_effects_and_storage() -> None:
         host = RuntimeInstanceHost(base=base, instance=instance, source_key=source)
 
         await host.session_meta_upsert("sess", "codex", metadata={"native": True})
+        await host.session_turn_ended(
+            "sess",
+            "codex",
+            turn_id="turn_1",
+            metadata={"native": True},
+        )
         await host.timeline_item_upsert(
             RuntimeTimelineItem(
                 id="item",
@@ -296,11 +323,14 @@ def test_runtime_instance_host_scopes_side_effects_and_storage() -> None:
             "kind": "codex_home",
             "key": "/tmp/codex-home",
         }
-        timeline = base.calls[1][1]
+        turn_end = base.calls[1][1]
+        assert turn_end["turnId"] == "turn_1"
+        assert turn_end["metadata"]["runtimeId"] == "rti_codex_one"
+        timeline = base.calls[2][1]
         assert timeline["runtime"] == "codex"
         assert timeline["runtimeId"] == "rti_codex_one"
-        assert base.calls[2][1]["details"]["runtimeId"] == "rti_codex_one"
-        sync_key = base.calls[3][1]["key"]
+        assert base.calls[3][1]["details"]["runtimeId"] == "rti_codex_one"
+        sync_key = base.calls[4][1]["key"]
         assert sync_key.startswith("codex/instances/rti_codex_one/")
         assert sync_key.endswith("/history/cursor")
         assert host.session_namespace.startswith("conn_test:codex:rti_codex_one:")

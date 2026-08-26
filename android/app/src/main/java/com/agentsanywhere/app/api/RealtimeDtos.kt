@@ -9,7 +9,14 @@ data class RemoteWsTicket(
 data class RemoteDashboardSnapshot(
     val devices: List<RemoteDevice>,
     val sessions: List<RemoteSession>,
+    val activePage: RemoteSessionPageInfo,
+    val archivedPage: RemoteSessionPageInfo,
     val serverTime: String?,
+)
+
+data class RemoteSessionPageInfo(
+    val hasMore: Boolean,
+    val nextCursor: String?,
 )
 
 data class RemoteSessionEventEnvelope(

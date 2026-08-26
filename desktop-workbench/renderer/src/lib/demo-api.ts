@@ -66,6 +66,7 @@ export type SessionView = {
   archivedAt?: string | null
   unread: boolean
   lastReadSeq: number
+  latestTurnEndSeq?: number
   lastSyncedAt?: string | null
   sourceObservedAt?: string | null
   lastActivityAt?: string | null

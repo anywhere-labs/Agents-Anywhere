@@ -222,6 +222,25 @@ class RuntimeInstanceHost(RuntimeHostClient):
             metadata=self.instance_metadata(metadata),
         )
 
+    async def session_turn_ended(
+        self,
+        session_id: str,
+        runtime: str,
+        external_session_id: str | None = None,
+        turn_id: str | None = None,
+        outcome: str = "completed",
+        metadata: Mapping[str, Any] | None = None,
+    ) -> None:
+        self._validate_native_runtime(runtime)
+        await self.base.session_turn_ended(
+            session_id=session_id,
+            runtime=self.instance.runtime_type,
+            external_session_id=external_session_id,
+            turn_id=turn_id,
+            outcome=outcome,
+            metadata=self.instance_metadata(metadata),
+        )
+
     async def runtime_capabilities_update(
         self,
         capabilities: RuntimeCapabilitySet,

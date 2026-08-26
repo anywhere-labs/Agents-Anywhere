@@ -44,10 +44,12 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHostState
@@ -56,6 +58,8 @@ import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -147,6 +151,7 @@ fun HomeScreen(
     languageMode: String,
     appUpdateViewModel: AppUpdateViewModel,
     onRefresh: () -> Unit,
+    onLoadMore: (HomeTab) -> Unit,
     onTabSelected: (HomeTab) -> Unit,
     onAppearanceModeChange: (String) -> Unit,
     onLanguageModeChange: (String) -> Unit,
@@ -201,6 +206,7 @@ fun HomeScreen(
                 selectedTab = selectedTab,
                 isRefreshing = isRefreshing,
                 onRefresh = onRefresh,
+                onLoadMore = onLoadMore,
                 onTabSelected = onTabSelected,
                 onProfile = { profileOpen = true },
                 onSearch = { showToast(context.getString(R.string.home_search_coming_soon)) },
@@ -718,6 +724,7 @@ private fun HomeContent(
     selectedTab: HomeTab,
     isRefreshing: Boolean,
     onRefresh: () -> Unit,
+    onLoadMore: (HomeTab) -> Unit,
     onTabSelected: (HomeTab) -> Unit,
     onProfile: () -> Unit,
     onSearch: () -> Unit,
@@ -774,6 +781,7 @@ private fun HomeContent(
                 deviceAgentPreviews = deviceAgentPreviews,
                 onCreateSession = { navigate(AppDestination.NewSession) },
                 onPairDevice = onPairDevice,
+                onLoadMore = onLoadMore,
             )
         }
     }
@@ -1001,6 +1009,7 @@ private fun HomeList(
     deviceAgentPreviews: DeviceAgentPreviews,
     onCreateSession: () -> Unit,
     onPairDevice: () -> Unit,
+    onLoadMore: (HomeTab) -> Unit,
 ) {
     val devices = remember(state.devices) { state.devices.sortedForDevicesPage() }
     val sessions = if (tab == HomeTab.Active) state.sessions else state.archivedSessions
@@ -1042,6 +1051,9 @@ private fun HomeList(
         )
         else -> SessionList(
             sessions = sessions,
+            hasMore = if (tab == HomeTab.Active) state.activeHasMore else state.archivedHasMore,
+            isLoadingMore = if (tab == HomeTab.Active) state.isLoadingMoreActive else state.isLoadingMoreArchived,
+            onLoadMore = { onLoadMore(tab) },
             onSessionLongPress = onSessionLongPress,
             onOpenSession = onOpenSession,
         )
@@ -1142,6 +1154,9 @@ private fun SkeletonLine(
 @Composable
 private fun SessionList(
     sessions: List<AgentSession>,
+    hasMore: Boolean,
+    isLoadingMore: Boolean,
+    onLoadMore: () -> Unit,
     onSessionLongPress: (AgentSession, Rect) -> Unit,
     onOpenSession: (AgentSession) -> Unit,
 ) {
@@ -1149,8 +1164,20 @@ private fun SessionList(
     var recentExpanded by remember(sessions) { mutableStateOf(true) }
     val pinned = remember(sessions) { SessionsState(sessions = sessions).pinnedSessions }
     val recent = remember(sessions) { SessionsState(sessions = sessions).recentSessions }
+    val listState = rememberLazyListState()
+    val shouldLoadMore by remember(listState, hasMore, isLoadingMore) {
+        derivedStateOf {
+            val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
+            hasMore && !isLoadingMore && lastVisible >= listState.layoutInfo.totalItemsCount - 4
+        }
+    }
+
+    LaunchedEffect(shouldLoadMore) {
+        if (shouldLoadMore) onLoadMore()
+    }
 
     LazyColumn(
+        state = listState,
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(bottom = 96.dp),
     ) {
@@ -1194,6 +1221,22 @@ private fun SessionList(
                         session = session,
                         onClick = { onOpenSession(session) },
                         onLongPress = { bounds -> onSessionLongPress(session, bounds) },
+                    )
+                }
+            }
+        }
+        if (isLoadingMore) {
+            item("loading-more") {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(20.dp),
+                        color = LocalAAColors.current.muted,
+                        strokeWidth = 2.dp,
                     )
                 }
             }

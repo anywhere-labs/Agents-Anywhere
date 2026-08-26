@@ -592,6 +592,7 @@ export function TaskComposer() {
       archivedAt: null,
       unread: false,
       lastReadSeq: 0,
+      latestTurnEndSeq: 0,
       lastSyncedAt: null,
       sourceObservedAt: null,
       lastActivityAt: now,

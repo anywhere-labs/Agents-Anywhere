@@ -11,6 +11,7 @@ from openai_codex.generated.v2_all import Thread
 from connector.logging import logger
 from connector.runtime_protocol import (
     RuntimeModelCatalog,
+    RuntimeInvalidRequestError,
     RuntimePermissionCatalog,
     RuntimeSessionStateCache,
 )
@@ -234,10 +235,38 @@ class CodexSessionReader:
             )
         await self.ensure_started()
         started_at = time.monotonic()
-        result = await self.client.read_thread(
-            thread_id=external_session_id,
-            include_turns=True,
-        )
+        snapshot_source = "codex.thread/read"
+        list_thread_turns = getattr(self.client, "list_thread_turns", None)
+        if callable(list_thread_turns):
+            result = await self.client.read_thread(
+                thread_id=external_session_id,
+                include_turns=False,
+            )
+            if isinstance(result.thread, Thread):
+                try:
+                    turns_result = await list_thread_turns(external_session_id)
+                except RuntimeInvalidRequestError:
+                    result = await self.client.read_thread(
+                        thread_id=external_session_id,
+                        include_turns=True,
+                    )
+                else:
+                    result = result.__class__(
+                        thread=result.thread.model_copy(
+                            update={"turns": list(turns_result.turns)}
+                        )
+                    )
+                    snapshot_source = "codex.thread/turns/list"
+            else:
+                result = await self.client.read_thread(
+                    thread_id=external_session_id,
+                    include_turns=True,
+                )
+        else:
+            result = await self.client.read_thread(
+                thread_id=external_session_id,
+                include_turns=True,
+            )
         read_elapsed_ms = (time.monotonic() - started_at) * 1000
         project_started_at = time.monotonic()
         if isinstance(result.thread, Thread) and self.timeline is not None:
@@ -284,7 +313,7 @@ class CodexSessionReader:
             runtime="codex",
             items=items,
             complete=False,
-            metadata={"source": "codex.thread/read"},
+            metadata={"source": snapshot_source},
         )
 
 

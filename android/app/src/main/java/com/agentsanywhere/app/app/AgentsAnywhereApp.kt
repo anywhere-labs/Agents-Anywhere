@@ -71,6 +71,8 @@ import com.agentsanywhere.app.feature.sessions.withPatchedDevice
 import com.agentsanywhere.app.feature.sessions.withPatchedSession
 import com.agentsanywhere.app.feature.sessions.withPatchedSessions
 import com.agentsanywhere.app.feature.sessions.withMissingSessionsRemoved
+import com.agentsanywhere.app.feature.sessions.withAppendedSessionPage
+import com.agentsanywhere.app.feature.sessions.withSessionPageLoading
 import com.agentsanywhere.app.feature.sessiondetail.SessionDetailController
 import com.agentsanywhere.app.feature.terminal.RemoteTerminalPool
 import com.agentsanywhere.app.feature.terminal.TerminalController
@@ -324,6 +326,24 @@ fun AgentsAnywhereApp(
             }
         }
     }
+    fun loadMoreSessions(archived: Boolean) {
+        val hasMore = if (archived) sessionsState.archivedHasMore else sessionsState.activeHasMore
+        val cursor = if (archived) sessionsState.archivedNextCursor else sessionsState.activeNextCursor
+        val loading = if (archived) sessionsState.isLoadingMoreArchived else sessionsState.isLoadingMoreActive
+        if (!hasMore || cursor == null || loading) return
+        sessionsState = sessionsState.withSessionPageLoading(archived, true)
+        scope.launch {
+            sessionsController.loadMoreSessions(
+                archived = archived,
+                cursor = cursor,
+                devices = sessionsState.devices,
+            ).onSuccess { page ->
+                sessionsState = sessionsState.withAppendedSessionPage(page)
+            }.onFailure {
+                sessionsState = sessionsState.withSessionPageLoading(archived, false)
+            }
+        }
+    }
     val navigate: (AppDestination) -> Unit = { destination ->
         if (destination == AppDestination.QrLogin) {
             pendingMobileLoginQr = null
@@ -423,6 +443,7 @@ fun AgentsAnywhereApp(
                 )
             }
         },
+        onLoadMoreSessions = ::loadMoreSessions,
         onOpenSession = { session ->
             preparedSessionDraft = null
             selectedSessionId = session.id
@@ -721,6 +742,7 @@ private fun AgentsAnywhereNavHost(
     appUpdateViewModel: AppUpdateViewModel,
     navigate: (AppDestination) -> Unit,
     onRefreshSessions: () -> Unit,
+    onLoadMoreSessions: (Boolean) -> Unit,
     onOpenSession: (AgentSession) -> Unit,
     onOpenDevice: (AgentDevice) -> Unit,
     onHomeTabSelected: (HomeTab) -> Unit,
@@ -819,6 +841,7 @@ private fun AgentsAnywhereNavHost(
                     languageMode = languageMode,
                     appUpdateViewModel = appUpdateViewModel,
                     onRefresh = onRefreshSessions,
+                    onLoadMore = { tab -> onLoadMoreSessions(tab == HomeTab.Archived) },
                     onTabSelected = onHomeTabSelected,
                     onAppearanceModeChange = onAppearanceModeChange,
                     onLanguageModeChange = onLanguageModeChange,

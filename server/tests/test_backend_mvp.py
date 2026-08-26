@@ -1241,6 +1241,7 @@ class FakeLocalRpc:
         self.terminal_relay_broker: Any | None = None
         self.terminal_relay_sockets: dict[str, FakeWebSocket] = {}
         self.fail = False
+        self.timeout_session_methods: set[str] = set()
 
     async def is_online(self, connector_id: str) -> bool:
         return True
@@ -1281,6 +1282,8 @@ class FakeLocalRpc:
         self.requests.append((connector_id, method, params, timeout))
         if self.fail:
             raise ConnectorRpcError("codex_error", "request gone")
+        if method in self.timeout_session_methods:
+            raise TimeoutError(f"{method} timed out")
         if method == "terminal.create":
             terminal_id = params["terminalId"]
             self.terminals[terminal_id] = {
@@ -1724,6 +1727,78 @@ def test_dashboard_ws_returns_connector_and_session_snapshot(tmp_path):
         assert snapshot["type"] == "dashboard.snapshot"
         assert [connector["id"] for connector in snapshot["connectors"]] == [connector_id]
         assert [session["id"] for session in snapshot["sessions"]] == [session_id]
+        assert snapshot["sessionPages"] == {
+            "active": {"hasMore": False, "nextCursor": None},
+            "archived": {"hasMore": False, "nextCursor": None},
+        }
+
+
+def test_sessions_list_uses_cursor_pages_and_archive_filter(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, _access_token, first_session_id, headers = create_connector_and_session(client)
+    session_ids = [first_session_id]
+    for index in range(4):
+        response = client.post(
+            "/sessions",
+            headers=headers,
+            json={
+                "connectorId": connector_id,
+                "runtime": "codex",
+                "externalSessionId": f"thr_page_{index}",
+                "title": f"Page {index}",
+                "cwd": "/repo",
+            },
+        )
+        assert response.status_code == 200, response.text
+        session_ids.append(response.json()["session"]["id"])
+
+    seen: list[str] = []
+    cursor = None
+    while True:
+        params = {"archived": False, "limit": 2}
+        if cursor is not None:
+            params["cursor"] = cursor
+        response = client.get("/sessions", headers=headers, params=params)
+        assert response.status_code == 200, response.text
+        body = response.json()
+        seen.extend(session["id"] for session in body["sessions"])
+        if not body["hasMore"]:
+            assert body["nextCursor"] is None
+            break
+        cursor = body["nextCursor"]
+        assert cursor
+
+    assert len(seen) == len(set(seen)) == 5
+    assert set(seen) == set(session_ids)
+
+    archived_id = seen[0]
+    archived = client.patch(
+        f"/sessions/{archived_id}/meta",
+        headers=headers,
+        json={"archived": True},
+    )
+    assert archived.status_code == 200, archived.text
+    archived_page = client.get(
+        "/sessions",
+        headers=headers,
+        params={"archived": True, "limit": 30},
+    )
+    assert archived_page.status_code == 200, archived_page.text
+    assert [session["id"] for session in archived_page.json()["sessions"]] == [archived_id]
+
+
+def test_sessions_list_rejects_invalid_cursor(tmp_path):
+    client = make_client(tmp_path)
+    _connector_id, _access_token, _session_id, headers = create_connector_and_session(client)
+
+    response = client.get(
+        "/sessions",
+        headers=headers,
+        params={"cursor": "not-a-session-cursor"},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "invalid session cursor"
 
 
 def test_dashboard_ws_projects_cached_runtime_status(tmp_path):
@@ -3933,6 +4008,29 @@ def test_session_snapshot_returns_persisted_runtime_catalogs(tmp_path):
     assert catalogs["permission"]["permissions"][0]["selectionId"] == permission_selection_id
 
 
+def test_session_snapshot_falls_back_when_live_notices_and_capabilities_timeout(
+    tmp_path,
+):
+    client = make_client(tmp_path)
+    connector_id, _access_token, session_id, headers = create_connector_and_session(client)
+    seed_codex_model_catalog(client.app, connector_id)
+    seed_codex_permission_catalog(client.app, connector_id)
+    fake_rpc = FakeLocalRpc()
+    fake_rpc.timeout_session_methods = {"session.notices", "session.capabilities"}
+    client.app.state.rpc = fake_rpc
+
+    snapshot = client.get(f"/sessions/{session_id}/snapshot", headers=headers)
+
+    assert snapshot.status_code == 200, snapshot.text
+    body = snapshot.json()
+    assert body["notices"] == []
+    assert body["runtimeCapabilities"]["revision"] == 1
+
+    notices = client.get(f"/sessions/{session_id}/runtime/notices", headers=headers)
+    assert notices.status_code == 504, notices.text
+    assert notices.json()["detail"]["code"] == "runtime_notices_timeout"
+
+
 def test_running_tool_item_keeps_session_interruptible(tmp_path):
     client = make_client(tmp_path)
     connector_id, access_token, session_id, headers = create_connector_and_session(client)
@@ -6106,7 +6204,11 @@ def test_connector_ingest_dsh_hidden_state_is_reversible_without_archiving(tmp_p
     assert hidden_snapshot.json()["session"]["archived"] is False
     listed_ids = {
         session.id
-        for session in asyncio.run(client.app.state.store.list_sessions(user_id=ADMIN_USER))
+        for session in asyncio.run(
+            client.app.state.store.list_sessions(
+                user_id=ADMIN_USER,
+            )
+        )
     }
     assert "sess_dsh_hidden" not in listed_ids
 
@@ -6136,7 +6238,11 @@ def test_connector_ingest_dsh_hidden_state_is_reversible_without_archiving(tmp_p
     assert visible_snapshot.json()["session"]["archived"] is False
     listed_ids = {
         session.id
-        for session in asyncio.run(client.app.state.store.list_sessions(user_id=ADMIN_USER))
+        for session in asyncio.run(
+            client.app.state.store.list_sessions(
+                user_id=ADMIN_USER,
+            )
+        )
     }
     assert "sess_dsh_hidden" in listed_ids
 
@@ -6375,7 +6481,12 @@ def test_dsh_complete_inventory_tracks_missing_without_changing_user_archive(tmp
 
     listed_ids = {
         session.id
-        for session in asyncio.run(client.app.state.store.list_sessions(user_id=ADMIN_USER))
+        for session in asyncio.run(
+            client.app.state.store.list_sessions(
+                user_id=ADMIN_USER,
+                archived=True,
+            )
+        )
     }
     assert "sess_dsh_kept" in listed_ids
     assert "sess_dsh_missing" not in listed_ids
@@ -6421,11 +6532,20 @@ def test_dsh_complete_inventory_tracks_missing_without_changing_user_archive(tmp
     )
     assert reappeared.status_code == 200, reappeared.text
 
-    listed_ids = {
+    active_ids = {
         session.id
         for session in asyncio.run(client.app.state.store.list_sessions(user_id=ADMIN_USER))
     }
-    assert {"sess_dsh_kept", "sess_dsh_missing"}.issubset(listed_ids)
+    archived_ids = {
+        session.id
+        for session in asyncio.run(
+            client.app.state.store.list_sessions(
+                user_id=ADMIN_USER,
+                archived=True,
+            )
+        )
+    }
+    assert {"sess_dsh_kept", "sess_dsh_missing"}.issubset(active_ids | archived_ids)
     kept = client.get("/sessions/sess_dsh_kept/snapshot", headers=headers)
     assert kept.status_code == 200, kept.text
     assert kept.json()["session"]["archived"] is True
@@ -7212,6 +7332,132 @@ def test_connector_timeline_item_upsert_does_not_rearm_unread(tmp_path):
 
     assert session["unread"] is False
     assert session["lastReadSeq"] == session["updatedSeq"]
+
+
+def test_connector_turn_end_after_read_rearms_unread(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, access_token, session_id, headers = create_connector_and_session(client)
+    read_session = client.post("/sessions/read", headers=headers, json=[session_id]).json()["sessions"][0]
+    read_seq = read_session["lastReadSeq"]
+    assert read_session["unread"] is False
+    assert read_session["latestTurnEndSeq"] == 0
+
+    with client.websocket_connect(
+        "/connector/ws",
+        headers={"Authorization": f"Bearer {access_token}"},
+    ) as ws:
+        ws.send_json(
+            {
+                "type": "notification",
+                "method": "session.state.updated",
+                "params": {
+                    "sessionId": session_id,
+                    "runtime": "codex",
+                    "runtimeId": "codex",
+                    "externalSessionId": f"thr_{connector_id}_demo",
+                    "status": "running",
+                },
+            }
+        )
+        ws.send_json(
+            {
+                "type": "notification",
+                "method": "session.turnEnded",
+                "params": {
+                    "sessionId": session_id,
+                    "runtime": "codex",
+                    "runtimeId": "codex",
+                    "externalSessionId": f"thr_{connector_id}_demo",
+                    "turnId": "turn_1",
+                    "outcome": "completed",
+                },
+            }
+        )
+        ws.send_json(
+            {
+                "type": "notification",
+                "method": "session.state.updated",
+                "params": {
+                    "sessionId": session_id,
+                    "runtime": "codex",
+                    "runtimeId": "codex",
+                    "externalSessionId": f"thr_{connector_id}_demo",
+                    "status": "idle",
+                },
+            }
+        )
+
+        def read_sessions():
+            sessions = client.get("/sessions", headers=headers).json()["sessions"]
+            current = next(session for session in sessions if session["id"] == session_id)
+            return (
+                current
+                if current["latestTurnEndSeq"] > read_seq
+                and current["status"] == "idle"
+                else None
+            )
+
+        session = wait_for(read_sessions)
+
+    assert session["status"] == "idle"
+    assert session["unread"] is True
+    assert session["lastReadSeq"] >= read_seq
+    assert session["latestTurnEndSeq"] > session["lastReadSeq"]
+    assert session["updatedSeq"] >= session["latestTurnEndSeq"]
+
+    read_session = client.post("/sessions/read", headers=headers, json=[session_id]).json()["sessions"][0]
+    assert read_session["unread"] is False
+    assert read_session["lastReadSeq"] >= read_session["latestTurnEndSeq"]
+
+
+def test_session_metadata_update_does_not_clear_unread_turn_end(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, access_token, session_id, headers = create_connector_and_session(client)
+    read_session = client.post("/sessions/read", headers=headers, json=[session_id]).json()["sessions"][0]
+    read_seq = read_session["lastReadSeq"]
+
+    with client.websocket_connect(
+        "/connector/ws",
+        headers={"Authorization": f"Bearer {access_token}"},
+    ) as ws:
+        ws.send_json(
+            {
+                "type": "notification",
+                "method": "session.turnEnded",
+                "params": {
+                    "sessionId": session_id,
+                    "runtime": "codex",
+                    "runtimeId": "codex",
+                    "externalSessionId": f"thr_{connector_id}_demo",
+                    "turnId": "turn_1",
+                    "outcome": "completed",
+                },
+            }
+        )
+        wait_for(lambda: client.get("/sessions", headers=headers).json()["sessions"][0]["unread"])
+
+        ws.send_json(
+            {
+                "type": "notification",
+                "method": "session.updated",
+                "params": {
+                    "sessionId": session_id,
+                    "runtime": "codex",
+                    "title": "Renamed after turn end",
+                },
+            }
+        )
+
+        def read_sessions():
+            sessions = client.get("/sessions", headers=headers).json()["sessions"]
+            current = next(session for session in sessions if session["id"] == session_id)
+            return current if current["title"] == "Renamed after turn end" else None
+
+        session = wait_for(read_sessions)
+
+    assert session["unread"] is True
+    assert session["lastReadSeq"] == read_seq
+    assert session["latestTurnEndSeq"] > read_seq
 
 
 def test_timeline_sync_completed_at_drift_does_not_rearm_unread(tmp_path):
@@ -9250,7 +9496,21 @@ def _create_extra_session(
 
 
 def _sessions_by_id(client: TestClient, headers: dict[str, str]) -> dict[str, Any]:
-    return {s["id"]: s for s in client.get("/sessions", headers=headers).json()["sessions"]}
+    sessions: dict[str, Any] = {}
+    for archived in (False, True):
+        cursor = None
+        while True:
+            params = {"archived": archived, "limit": 100}
+            if cursor is not None:
+                params["cursor"] = cursor
+            response = client.get("/sessions", headers=headers, params=params)
+            response.raise_for_status()
+            body = response.json()
+            sessions.update({session["id"]: session for session in body["sessions"]})
+            cursor = body["nextCursor"]
+            if not body["hasMore"]:
+                break
+    return sessions
 
 
 def test_archive_endpoint_archives_owned_sessions(tmp_path):

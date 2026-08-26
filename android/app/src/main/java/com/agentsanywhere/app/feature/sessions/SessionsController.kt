@@ -9,6 +9,7 @@ import com.agentsanywhere.app.api.RemoteDevice
 import com.agentsanywhere.app.api.RemoteSession
 import com.agentsanywhere.app.api.RemoteSessionCreateAndStartRequest
 import com.agentsanywhere.app.api.RemoteDashboardSnapshot
+import com.agentsanywhere.app.api.RemoteSessionPage
 import com.agentsanywhere.app.api.RemoteSessionsMutationResponse
 import com.agentsanywhere.app.api.isValidRuntimeInstanceId
 import com.agentsanywhere.app.api.isValidRuntimeType
@@ -32,7 +33,12 @@ class SessionsController(
     private val sessionStore: AuthSessionReader,
 ) {
     fun dashboardSnapshotState(snapshot: RemoteDashboardSnapshot): SessionsState {
-        return toState(snapshot.sessions, snapshot.devices)
+        return toState(
+            remoteSessions = snapshot.sessions,
+            remoteDevices = snapshot.devices,
+            activePage = snapshot.activePage,
+            archivedPage = snapshot.archivedPage,
+        )
     }
     suspend fun loadSessions(): Result<SessionsState> {
         val serverUrl = sessionStore.readServerUrl()
@@ -43,18 +49,61 @@ class SessionsController(
 
         return withContext(Dispatchers.IO) {
             runCatching {
-                val sessions = sessionsApi.listSessions(
+                val activePage = sessionsApi.listSessions(
                     serverUrl = serverUrl,
                     authorizationToken = accessToken,
+                    archived = false,
+                )
+                val archivedPage = sessionsApi.listSessions(
+                    serverUrl = serverUrl,
+                    authorizationToken = accessToken,
+                    archived = true,
                 )
                 val devices = devicesApi.listDevices(
                     serverUrl = serverUrl,
                     authorizationToken = accessToken,
                 )
-                toState(sessions, devices)
+                toState(
+                    remoteSessions = activePage.sessions + archivedPage.sessions,
+                    remoteDevices = devices,
+                    activePage = activePage.pageInfo(),
+                    archivedPage = archivedPage.pageInfo(),
+                )
             }.recoverCatching { error ->
                 if (error is ApiException) throw error
                 throw IllegalStateException(error.message ?: "Could not load sessions.", error)
+            }
+        }
+    }
+
+    suspend fun loadMoreSessions(
+        archived: Boolean,
+        cursor: String,
+        devices: List<AgentDevice>,
+    ): Result<SessionPageAppend> {
+        val serverUrl = sessionStore.readServerUrl()
+        val accessToken = sessionStore.readAccessToken()
+        if (serverUrl.isBlank() || accessToken.isBlank()) {
+            return Result.failure(IllegalStateException("Sign in again to load sessions."))
+        }
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                val page = sessionsApi.listSessions(
+                    serverUrl = serverUrl,
+                    authorizationToken = accessToken,
+                    archived = archived,
+                    cursor = cursor,
+                )
+                val devicesById = devices.associateBy { it.id }
+                SessionPageAppend(
+                    sessions = page.sessions.map { it.toAgentSession(devicesById) },
+                    archived = archived,
+                    hasMore = page.hasMore,
+                    nextCursor = page.nextCursor,
+                )
+            }.recoverCatching { error ->
+                if (error is ApiException) throw error
+                throw IllegalStateException(error.message ?: "Could not load more sessions.", error)
             }
         }
     }
@@ -131,9 +180,13 @@ class SessionsController(
         originalError: Throwable,
     ): NewSessionCreateOutcome {
         val refreshedState = runCatching {
+            val activePage = sessionsApi.listSessions(serverUrl, accessToken, archived = false)
+            val archivedPage = sessionsApi.listSessions(serverUrl, accessToken, archived = true)
             toState(
-                remoteSessions = sessionsApi.listSessions(serverUrl, accessToken),
+                remoteSessions = activePage.sessions + archivedPage.sessions,
                 remoteDevices = devicesApi.listDevices(serverUrl, accessToken),
+                activePage = activePage.pageInfo(),
+                archivedPage = archivedPage.pageInfo(),
             )
         }.getOrNull()
         val candidates = refreshedState?.newCreateCandidates(draft).orEmpty()
@@ -419,6 +472,8 @@ class SessionsController(
     private fun toState(
         remoteSessions: List<RemoteSession>,
         remoteDevices: List<RemoteDevice>,
+        activePage: com.agentsanywhere.app.api.RemoteSessionPageInfo,
+        archivedPage: com.agentsanywhere.app.api.RemoteSessionPageInfo,
     ): SessionsState {
         val devicesById = remoteDevices.associate { device ->
             device.id to device.toAgentDevice()
@@ -440,8 +495,19 @@ class SessionsController(
             isLoading = false,
             errorMessage = null,
             hasLoaded = true,
+            activeHasMore = activePage.hasMore,
+            activeNextCursor = activePage.nextCursor,
+            archivedHasMore = archivedPage.hasMore,
+            archivedNextCursor = archivedPage.nextCursor,
+            activeFirstPageIds = sessions.mapTo(mutableSetOf()) { it.id },
+            archivedFirstPageIds = archivedSessions.mapTo(mutableSetOf()) { it.id },
         )
     }
+
+    private fun RemoteSessionPage.pageInfo() = com.agentsanywhere.app.api.RemoteSessionPageInfo(
+        hasMore = hasMore,
+        nextCursor = nextCursor,
+    )
 
     private suspend fun mutateSessions(
         ids: List<String>,

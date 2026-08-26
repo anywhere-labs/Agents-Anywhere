@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import queue
+import threading
 from collections.abc import Mapping
 from pathlib import Path
 from types import SimpleNamespace, TracebackType
@@ -47,6 +49,14 @@ from connector.runtimes.model_gateway import ModelGateway
 
 def test_codex_sdk_client_delegates_runtime_protocol_methods() -> None:
     asyncio.run(_test_codex_sdk_client_delegates_runtime_protocol_methods())
+
+
+def test_codex_sdk_approval_does_not_block_response_reader() -> None:
+    asyncio.run(_test_codex_sdk_approval_does_not_block_response_reader())
+
+
+def test_codex_sdk_lists_paginated_thread_turns_in_chronological_order() -> None:
+    asyncio.run(_test_codex_sdk_lists_paginated_thread_turns_in_chronological_order())
 
 
 def test_codex_sdk_approval_mode_maps_platform_permission_modes() -> None:
@@ -99,6 +109,79 @@ async def _test_codex_sdk_client_delegates_runtime_protocol_methods() -> None:
     assert native.requests == [("thread/list", {"limit": 1})]
     assert native.responses == [("req_1", {"decision": "approve"})]
     assert result.threads == ()
+
+
+async def _test_codex_sdk_approval_does_not_block_response_reader() -> None:
+    native = _DeferredServerRequestSdkClient()
+    client = CodexSdkClient(native)
+    approval_messages: list[dict[str, Any]] = []
+
+    async def handler(message: dict[str, Any]) -> None:
+        approval_messages.append(message)
+
+    await client.start(handler)
+    native.sync.incoming.put(
+        {
+            "id": 42,
+            "method": "item/commandExecution/requestApproval",
+            "params": {
+                "threadId": "thread_1",
+                "turnId": "turn_1",
+                "itemId": "item_1",
+                "approvalId": "approval_1",
+            },
+        }
+    )
+    async with asyncio.timeout(1):
+        while not approval_messages:
+            await asyncio.sleep(0)
+
+    native.sync.incoming.put({"id": "thread-list-1", "result": {"data": []}})
+    async with asyncio.timeout(1):
+        while not native.sync.router.responses:
+            await asyncio.sleep(0)
+
+    assert native.sync.written == []
+    await client.respond("approval_approval_1", {"decision": "accept"})
+    async with asyncio.timeout(1):
+        while not native.sync.written:
+            await asyncio.sleep(0)
+
+    assert native.sync.router.responses == [
+        {"id": "thread-list-1", "result": {"data": []}}
+    ]
+    assert native.sync.written == [{"id": 42, "result": {"decision": "accept"}}]
+    await client.stop()
+
+
+async def _test_codex_sdk_lists_paginated_thread_turns_in_chronological_order() -> None:
+    native = _FakeLowLevelAsyncCodex()
+    client = CodexSdkClient(native)
+
+    result = await client.list_thread_turns("thread_1")
+
+    assert [turn.id for turn in result.turns] == ["turn_1", "turn_2"]
+    assert native.low_level.raw_requests == [
+        (
+            "thread/turns/list",
+            {
+                "threadId": "thread_1",
+                "limit": 100,
+                "sortDirection": "desc",
+                "itemsView": "full",
+            },
+        ),
+        (
+            "thread/turns/list",
+            {
+                "threadId": "thread_1",
+                "limit": 100,
+                "sortDirection": "desc",
+                "itemsView": "full",
+                "cursor": "older",
+            },
+        ),
+    ]
 
 
 def test_create_sdk_client_prefers_explicit_runtime_factory() -> None:
@@ -608,6 +691,67 @@ class _NativeSdkClient:
         self.responses.append((request_id, dict(result or {})))
 
 
+class _DeferredServerRequestSdkClient:
+    def __init__(self) -> None:
+        self.sync = _DeferredServerRequestSyncClient()
+        self._client = SimpleNamespace(_sync=self.sync)
+        self._reader_thread: threading.Thread | None = None
+
+    async def start(self, handler: Any) -> None:
+        _ = handler
+        self._reader_thread = threading.Thread(
+            target=self.sync._reader_loop,
+            daemon=True,
+        )
+        self._reader_thread.start()
+
+    async def stop(self) -> None:
+        self.sync.incoming.put(EOFError("reader stopped"))
+        if self._reader_thread is not None:
+            self._reader_thread.join(timeout=1)
+
+
+class _DeferredServerRequestSyncClient:
+    def __init__(self) -> None:
+        self.incoming: queue.Queue[dict[str, Any] | BaseException] = queue.Queue()
+        self.router = _DeferredServerRequestRouter()
+        self._router = self.router
+        self._approval_handler: Any | None = None
+        self.written: list[dict[str, Any]] = []
+
+    def _read_message(self) -> dict[str, Any]:
+        message = self.incoming.get(timeout=1)
+        if isinstance(message, BaseException):
+            raise message
+        return message
+
+    def _handle_server_request(self, message: dict[str, Any]) -> dict[str, Any]:
+        assert self._approval_handler is not None
+        return self._approval_handler(message["method"], message.get("params"))
+
+    def _write_message(self, message: dict[str, Any]) -> None:
+        self.written.append(message)
+
+    def _coerce_notification(self, method: str, params: Any) -> dict[str, Any]:
+        return {"method": method, "params": params}
+
+
+class _DeferredServerRequestRouter:
+    def __init__(self) -> None:
+        self.responses: list[dict[str, Any]] = []
+        self.notifications: list[dict[str, Any]] = []
+        self.failure: BaseException | None = None
+
+    def route_response(self, message: dict[str, Any]) -> None:
+        self.responses.append(message)
+
+    def route_notification(self, message: dict[str, Any]) -> None:
+        self.notifications.append(message)
+
+    def fail_all(self, exc: BaseException) -> None:
+        self.failure = exc
+
+
 class _FakeSdkModule:
     def __init__(self) -> None:
         self.created_with: RuntimeConfig | None = None
@@ -680,6 +824,29 @@ class _FakeLowLevelClient:
         self.turn_start_inputs: list[list[dict[str, Any]]] = []
         self.turn_start_params: list[dict[str, Any]] = []
         self.fail_next_turn_start: Exception | None = None
+        self.raw_requests: list[tuple[str, dict[str, Any]]] = []
+
+    async def request(
+        self,
+        method: str,
+        params: dict[str, Any],
+        *,
+        response_model: Any,
+    ) -> Any:
+        self.raw_requests.append((method, dict(params)))
+        turn_id = "turn_2" if "cursor" not in params else "turn_1"
+        return response_model.model_validate(
+            {
+                "data": [
+                    {
+                        "id": turn_id,
+                        "status": "completed",
+                        "items": [],
+                    }
+                ],
+                "nextCursor": "older" if "cursor" not in params else None,
+            }
+        )
 
     async def thread_resume(
         self,

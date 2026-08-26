@@ -98,6 +98,27 @@ class ConnectorRuntimeHost(RuntimeHostClient):
         }
         await self._notify_server("session.state.updated", _drop_none(payload))
 
+    async def session_turn_ended(
+        self,
+        session_id: str,
+        runtime: str,
+        external_session_id: str | None = None,
+        turn_id: str | None = None,
+        outcome: str = "completed",
+        metadata: Mapping[str, Any] | None = None,
+    ) -> None:
+        instance_metadata = dict(metadata or {})
+        payload: dict[str, Any] = {
+            "sessionId": session_id,
+            "runtime": runtime,
+            "runtimeId": _runtime_id_from_metadata(instance_metadata),
+            "externalSessionId": external_session_id,
+            "turnId": turn_id,
+            "outcome": outcome,
+            "metadata": instance_metadata,
+        }
+        await self._notify_server("session.turnEnded", _drop_none(payload))
+
     async def runtime_capabilities_update(
         self,
         capabilities: RuntimeCapabilitySet,
@@ -262,7 +283,12 @@ class ConnectorRuntimeHost(RuntimeHostClient):
     async def _notify_server(self, method: str, payload: Mapping[str, Any]) -> None:
         """Send a notification after enforcing the Server session-only boundary."""
 
-        await self._notifier(method, server_payload_without_turn_data(payload))
+        server_payload = (
+            dict(payload)
+            if method == "session.turnEnded"
+            else server_payload_without_turn_data(payload)
+        )
+        await self._notifier(method, server_payload)
 
     async def attachment_download(
         self,

@@ -11,12 +11,25 @@ class SessionsApi(
     fun listSessions(
         serverUrl: String,
         authorizationToken: String,
-    ): List<RemoteSession> {
-        return client.getJson(
+        archived: Boolean,
+        limit: Int = 100,
+        cursor: String? = null,
+    ): RemoteSessionPage {
+        val query = buildString {
+            append("/sessions?archived=$archived&limit=$limit")
+            cursor?.let { append("&cursor=${it.urlEncode()}") }
+        }
+        val response = client.getJson(
             serverUrl = serverUrl,
-            path = "/sessions",
+            path = query,
             authorizationToken = authorizationToken,
-        ).optJSONArray("sessions").toObjectList { toRemoteSession() }
+        )
+        return RemoteSessionPage(
+            sessions = response.optJSONArray("sessions").toObjectList { toRemoteSession() },
+            hasMore = response.optBoolean("hasMore", false),
+            nextCursor = response.optNullableString("nextCursor"),
+            serverTime = response.optNullableString("serverTime"),
+        )
     }
 
     fun createAndStartSession(

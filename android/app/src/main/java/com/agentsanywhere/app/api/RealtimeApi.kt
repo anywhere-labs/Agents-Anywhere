@@ -89,9 +89,14 @@ class RealtimeApi(
     override fun parseDashboardMessage(text: String): RemoteDashboardSnapshot? {
         val message = runCatching { JSONObject(text) }.getOrNull() ?: return null
         if (message.optString("type") != "dashboard.snapshot") return null
+        val sessionPages = message.optJSONObject("sessionPages") ?: return null
+        val activePage = sessionPages.optJSONObject("active") ?: return null
+        val archivedPage = sessionPages.optJSONObject("archived") ?: return null
         return RemoteDashboardSnapshot(
             devices = message.optJSONArray("connectors").toObjectList { devicesApi.parseDevice(this) },
             sessions = message.optJSONArray("sessions").toObjectList { sessionsApi.parseSession(this) },
+            activePage = activePage.toRemoteSessionPageInfo(),
+            archivedPage = archivedPage.toRemoteSessionPageInfo(),
             serverTime = message.optNullableString("serverTime"),
         )
     }
@@ -133,3 +138,8 @@ class RealtimeApi(
             .build()
     }
 }
+
+private fun JSONObject.toRemoteSessionPageInfo(): RemoteSessionPageInfo = RemoteSessionPageInfo(
+    hasMore = optBoolean("hasMore", false),
+    nextCursor = optNullableString("nextCursor"),
+)

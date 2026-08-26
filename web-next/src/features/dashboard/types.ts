@@ -147,6 +147,7 @@ export type SessionView = {
   archivedAt: string | null;
   unread: boolean;
   lastReadSeq: number;
+  latestTurnEndSeq: number;
   lastSyncedAt: string | null;
   sourceObservedAt: string | null;
   lastActivityAt: string | null;
@@ -206,7 +207,14 @@ export type PairingPollResponse = {
 
 export type SessionListResponse = {
   sessions: SessionView[];
+  hasMore: boolean;
+  nextCursor: string | null;
   serverTime: string;
+};
+
+export type SessionPageInfo = {
+  hasMore: boolean;
+  nextCursor: string | null;
 };
 
 export type SessionCommandResponse = {
@@ -242,6 +250,10 @@ export type DashboardSnapshotMessage = {
   type: "dashboard.snapshot";
   connectors: ConnectorView[];
   sessions: SessionView[];
+  sessionPages: {
+    active: SessionPageInfo;
+    archived: SessionPageInfo;
+  };
   serverTime: string;
 };
 

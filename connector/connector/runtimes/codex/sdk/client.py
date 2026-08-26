@@ -7,6 +7,7 @@ import time
 from collections.abc import Mapping
 from typing import Any
 
+from openai_codex import MethodNotFoundError
 from openai_codex.generated.v2_all import (
     ApprovalsReviewer,
     AskForApproval,
@@ -20,10 +21,12 @@ from openai_codex.generated.v2_all import (
     TextUserInput,
     ThreadResumeParams,
     ThreadStartParams,
+    Turn,
     TurnStartParams,
     UserInput,
     WorkspaceWriteSandboxPolicy,
 )
+from pydantic import BaseModel, ConfigDict, Field
 
 from connector.logging import logger
 from connector.runtime_protocol import RuntimeConfig, RuntimeInvalidRequestError
@@ -36,6 +39,9 @@ from connector.runtimes.codex.sdk.events import CodexSdkEvent
 from connector.runtimes.codex.sdk.model_gateway import (
     CODEX_MODEL_GATEWAY_PROVIDER_ID,
     codex_model_gateway_config,
+)
+from connector.runtimes.codex.sdk.server_requests import (
+    install_deferred_server_request_reader,
 )
 from connector.runtimes.codex.sdk.runtime_client import (
     CodexCompactResult,
@@ -50,6 +56,7 @@ from connector.runtimes.codex.sdk.runtime_client import (
     CodexThreadListResult,
     CodexThreadReadResult,
     CodexThreadResult,
+    CodexThreadTurnsResult,
     CodexTurnResult,
     NotificationHandler,
 )
@@ -75,6 +82,14 @@ CODEX_SDK_APPROVAL_REQUEST_METHODS = {
     "item/fileChange/requestApproval",
     "item/permissions/requestApproval",
 }
+CODEX_THREAD_TURNS_PAGE_SIZE = 100
+
+
+class CodexThreadTurnsListResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    data: list[Turn]
+    next_cursor: str | None = Field(default=None, alias="nextCursor")
 
 
 class CodexSdkClient:
@@ -108,6 +123,8 @@ class CodexSdkClient:
     async def start(self, handler: NotificationHandler) -> None:
         self._handler = handler
         self._loop = asyncio.get_running_loop()
+        if install_deferred_server_request_reader(self._client):
+            logger.debug("codex sdk deferred server request reader installed")
         install_codex_approval_handler(self._client, self.handle_sdk_approval_request)
         start = getattr(self._client, "start", None)
         if callable(start):
@@ -117,6 +134,7 @@ class CodexSdkClient:
         self.start_global_notification_task()
 
     async def stop(self) -> None:
+        self.cancel_pending_approval_responses()
         if self._global_notification_task is not None:
             self._global_notification_task.cancel()
             await asyncio.gather(
@@ -137,6 +155,13 @@ class CodexSdkClient:
             self._entered_client = None
         elif hasattr(self._client, "close"):
             await maybe_await(self._client.close())
+
+    def cancel_pending_approval_responses(self) -> None:
+        pending = tuple(self._pending_approval_responses.values())
+        self._pending_approval_responses.clear()
+        for response in pending:
+            if not response.done():
+                response.set_result({"decision": "decline"})
 
     def start_global_notification_task(self) -> None:
         """Forward SDK global notifications to the runtime projector.
@@ -213,6 +238,45 @@ class CodexSdkClient:
                 elapsed_ms,
             )
         return projected
+
+    async def list_thread_turns(self, thread_id: str) -> CodexThreadTurnsResult:
+        await ensure_codex_initialized(self._client)
+        low_level_client = getattr(self._client, "_client", None)
+        request = getattr(low_level_client, "request", None)
+        if not callable(request):
+            raise RuntimeInvalidRequestError(
+                "Codex SDK client does not expose raw request() for thread turns"
+            )
+        turns_descending: list[Turn] = []
+        cursor: str | None = None
+        seen_cursors: set[str] = set()
+        while True:
+            params: dict[str, Any] = {
+                "threadId": thread_id,
+                "limit": CODEX_THREAD_TURNS_PAGE_SIZE,
+                "sortDirection": "desc",
+                "itemsView": "full",
+            }
+            if cursor is not None:
+                params["cursor"] = cursor
+            try:
+                page = await request(
+                    "thread/turns/list",
+                    params,
+                    response_model=CodexThreadTurnsListResponse,
+                )
+            except MethodNotFoundError as exc:
+                raise RuntimeInvalidRequestError(
+                    "Codex app-server does not support thread/turns/list"
+                ) from exc
+            turns_descending.extend(page.data)
+            next_cursor = page.next_cursor
+            if next_cursor is None or next_cursor in seen_cursors:
+                break
+            seen_cursors.add(next_cursor)
+            cursor = next_cursor
+        turns_descending.reverse()
+        return CodexThreadTurnsResult(turns=tuple(turns_descending))
 
     async def start_thread(self, request: CodexStartThreadRequest) -> CodexThreadResult:
         await ensure_codex_initialized(self._client)

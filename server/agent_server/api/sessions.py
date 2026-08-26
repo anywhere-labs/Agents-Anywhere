@@ -303,6 +303,9 @@ async def create_and_start_session(
 
 @router.get("")
 async def list_sessions(
+    archived: bool = Query(default=False),
+    limit: int = Query(default=100, ge=1, le=100),
+    cursor: str | None = Query(default=None, min_length=1),
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
     manager: ConnectorRpcManager = Depends(get_rpc),
@@ -310,13 +313,23 @@ async def list_sessions(
         get_session_runtime_state_cache
     ),
 ) -> dict[str, Any]:
-    sessions = await db.list_sessions(user_id=user_id)
+    try:
+        sessions, has_more, next_cursor = await db.list_sessions_page(
+            archived=archived,
+            limit=limit,
+            cursor=cursor,
+            user_id=user_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {
         "sessions": await project_session_meta_for_dashboard(
             manager,
             runtime_state_cache,
             sessions,
         ),
+        "hasMore": has_more,
+        "nextCursor": next_cursor,
         "serverTime": utc_now(),
     }
 
@@ -1419,6 +1432,14 @@ async def read_session_capabilities_from_connector(
         )
     except ConnectorOfflineError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except TimeoutError as exc:
+        raise HTTPException(
+            status_code=504,
+            detail={
+                "code": "runtime_capabilities_timeout",
+                "message": "connector session capabilities request timed out",
+            },
+        ) from exc
     except ConnectorRpcError as exc:
         raise HTTPException(
             status_code=502,
@@ -1496,6 +1517,14 @@ async def read_session_notices_from_connector(
         )
     except ConnectorOfflineError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except TimeoutError as exc:
+        raise HTTPException(
+            status_code=504,
+            detail={
+                "code": "runtime_notices_timeout",
+                "message": "connector session notices request timed out",
+            },
+        ) from exc
     except ConnectorRpcError as exc:
         raise HTTPException(
             status_code=502,
