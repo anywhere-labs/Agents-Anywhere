@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import time
 from typing import Any
 
 from fastapi import (
@@ -412,11 +413,21 @@ async def _handle_connector_message(
     method = message.get("method")
     params = message.get("params") or {}
     if isinstance(method, str) and isinstance(params, dict):
+        started_at = time.monotonic()
         await ingest_service.handle_notification_message(
             connector_id=connector_id,
             method=method,
             params=params,
         )
+        elapsed_ms = (time.monotonic() - started_at) * 1000
+        if method == "timeline.itemUpsert" or elapsed_ms >= 100:
+            logger.info(
+                "connector notification handled connector_id={} method={} session_id={} elapsed_ms={:.1f}",
+                connector_id,
+                method,
+                params.get("sessionId"),
+                elapsed_ms,
+            )
 
 
 def _parse_connector_authorization(authorization: str) -> tuple[str, str]:
