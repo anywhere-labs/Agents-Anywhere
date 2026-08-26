@@ -993,6 +993,42 @@ async def _test_codex_runtime_thread_compacted_notification_upserts_timeline_ite
     assert host.state_updates[-1]["metadata"]["source"] == "codex.thread/compacted"
 
 
+def test_codex_runtime_thread_compacted_keeps_active_turn_running() -> None:
+    asyncio.run(_test_codex_runtime_thread_compacted_keeps_active_turn_running())
+
+
+async def _test_codex_runtime_thread_compacted_keeps_active_turn_running() -> None:
+    client = FakeCodexClient()
+    host = FakeHost()
+    runtime = CodexRuntime(config=_config(), host=host, client=client)
+
+    await runtime._handle_notification(
+        Notification(
+            method="thread/compacted",
+            payload=ContextCompactedNotification(
+                threadId="thread_1",
+                turnId="turn_before_active",
+            ),
+        )
+    )
+    session_id = host.timeline_item_upserts[-1].session_id
+    runtime._active_turn_ids[session_id] = "turn_active"
+    state_update_count = len(host.state_updates)
+
+    await runtime._handle_notification(
+        Notification(
+            method="thread/compacted",
+            payload=ContextCompactedNotification(
+                threadId="thread_1",
+                turnId="turn_active",
+            ),
+        )
+    )
+
+    assert len(host.state_updates) == state_update_count
+    assert runtime._active_turn_ids[session_id] == "turn_active"
+
+
 def test_codex_compaction_snapshot_uses_item_level_identity() -> None:
     accumulator = CodexTimelineAccumulator()
     started = accumulator.item_from_notification(

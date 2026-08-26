@@ -30,7 +30,7 @@ class CodexTimelineActivityHandler:
         """
 
         turn_id = event.turn_id or self.active_turn_ids.get(session_id)
-        if turn_id is not None:
+        if event.is_running_item_event and turn_id is not None:
             self.active_turn_ids[session_id] = turn_id
         cached = self.session_states.get(session_id)
         if cached is not None and cached.status in {

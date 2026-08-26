@@ -301,6 +301,7 @@ type WorkspaceState = {
   renameSession: (id: string, title: string) => Promise<boolean>
   markSessionRead: (id: string) => void
   upsertSession: (session: RealSessionView) => void
+  reportSessionStreamProgress: (sessionId: string, nextSeq: number | null) => void
   addOptimisticMessage: (message: OptimisticSessionMessage) => void
   bindOptimisticSession: (localSessionId: string, session: RealSessionView, attachments?: AttachmentRef[]) => void
   clearResolvedOptimisticMessages: (sessionId: string, items: TimelineItem[]) => void
@@ -386,7 +387,33 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   })
   const loadingSessionPagesRef = React.useRef({ active: false, archived: false })
   const loadedBeyondFirstPageRef = React.useRef({ active: false, archived: false })
+  const sessionStreamSeqRef = React.useRef(new Map<string, number>())
+  const pendingSessionIndicatorRef = React.useRef(new Map<string, SessionView>())
   const sortSessions = React.useCallback(sortSessionViews, [])
+
+  const reconcileSessionIndicator = React.useCallback((
+    current: SessionView | undefined,
+    incoming: SessionView,
+  ): SessionView => {
+    const appliedSeq = sessionStreamSeqRef.current.get(incoming.id)
+    const shouldWaitForTimeline = Boolean(
+      current &&
+      sessionStatusIsBusy(current.status) &&
+      incoming.status === "idle" &&
+      appliedSeq !== undefined &&
+      appliedSeq < incoming.updatedSeq,
+    )
+    if (shouldWaitForTimeline && current) {
+      pendingSessionIndicatorRef.current.set(incoming.id, incoming)
+      return {
+        ...incoming,
+        status: current.status,
+        unread: current.unread,
+      }
+    }
+    pendingSessionIndicatorRef.current.delete(incoming.id)
+    return incoming
+  }, [])
 
   // Derive page state from hash — start at "home" for safe SSR, correct on mount.
   const [route, setRoute] = React.useState<ParsedRoute>({ page: "home" })
@@ -439,12 +466,18 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     }
     setConnectors((current) => sameStableValue(current, nextConnectors) ? current : nextConnectors)
     setSessions((current) => {
+      const currentById = new Map(current.map((session) => [session.id, session]))
       const merged = new Map(
         current
           .filter((session) => !previousFirstPageIds.has(session.id))
           .map((session) => [session.id, session]),
       )
-      nextSessions.forEach((session) => merged.set(session.id, session))
+      nextSessions.forEach((session) => {
+        merged.set(
+          session.id,
+          reconcileSessionIndicator(currentById.get(session.id), session),
+        )
+      })
       const sorted = sortSessions(Array.from(merged.values()))
       return sameStableValue(current, sorted) ? current : sorted
     })
@@ -457,7 +490,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     })
     setIsLoading(false)
     initialLoadDoneRef.current = true
-  }, [sortSessions])
+  }, [reconcileSessionIndicator, sortSessions])
 
   const fetchData = React.useCallback(async () => {
     if (!initialLoadDoneRef.current) {
@@ -541,6 +574,8 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     firstPageSessionIdsRef.current = { active: new Set(), archived: new Set() }
     loadingSessionPagesRef.current = { active: false, archived: false }
     loadedBeyondFirstPageRef.current = { active: false, archived: false }
+    sessionStreamSeqRef.current = new Map()
+    pendingSessionIndicatorRef.current = new Map()
     setSessionPages({
       active: { hasMore: false, nextCursor: null },
       archived: { hasMore: false, nextCursor: null },
@@ -791,9 +826,35 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       const index = prev.findIndex((item) => item.id === mapped.id)
       if (index === -1) return sortSessions([mapped, ...prev])
       const next = [...prev]
-      next[index] = mapped
+      next[index] = reconcileSessionIndicator(prev[index], mapped)
       return sortSessions(next)
     })
+  }, [reconcileSessionIndicator, sortSessions])
+
+  const reportSessionStreamProgress = React.useCallback((
+    sessionId: string,
+    nextSeq: number | null,
+  ) => {
+    if (nextSeq === null) {
+      sessionStreamSeqRef.current.delete(sessionId)
+      const pending = pendingSessionIndicatorRef.current.get(sessionId)
+      if (!pending) return
+      pendingSessionIndicatorRef.current.delete(sessionId)
+      setSessions((current) => sortSessions(
+        current.map((session) => session.id === sessionId ? pending : session),
+      ))
+      return
+    }
+
+    const currentSeq = sessionStreamSeqRef.current.get(sessionId) ?? 0
+    const appliedSeq = Math.max(currentSeq, nextSeq)
+    sessionStreamSeqRef.current.set(sessionId, appliedSeq)
+    const pending = pendingSessionIndicatorRef.current.get(sessionId)
+    if (!pending || appliedSeq < pending.updatedSeq) return
+    pendingSessionIndicatorRef.current.delete(sessionId)
+    setSessions((current) => sortSessions(
+      current.map((session) => session.id === sessionId ? pending : session),
+    ))
   }, [sortSessions])
 
   // ── Session mutation helpers ──────────────────────────────
@@ -1053,6 +1114,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     renameSession,
     markSessionRead,
     upsertSession,
+    reportSessionStreamProgress,
     addOptimisticMessage,
     bindOptimisticSession,
     clearResolvedOptimisticMessages,
@@ -1070,6 +1132,10 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
 
 function sameStableValue(left: unknown, right: unknown): boolean {
   return stableJson(left) === stableJson(right)
+}
+
+function sessionStatusIsBusy(status: string): boolean {
+  return status === "running" || status === "waiting" || status === "pending"
 }
 
 function stableJson(value: unknown): string {

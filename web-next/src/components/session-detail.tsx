@@ -64,6 +64,7 @@ type SessionDetailProps = {
   fallbackSession: SessionView | null
   onSessionUpdated?: (session: SessionView) => void
   onMemorySnapshotUpdated?: (snapshot: SessionMemorySnapshot | null) => void
+  onStreamProgress?: (sessionId: string, nextSeq: number | null) => void
 }
 
 export type SessionMemorySnapshot = {
@@ -225,6 +226,7 @@ export function SessionDetail({
   fallbackSession,
   onSessionUpdated,
   onMemorySnapshotUpdated,
+  onStreamProgress,
 }: SessionDetailProps) {
   const tSession = useTranslations("dashboard.session")
   const tNew = useTranslations("dashboard.new")
@@ -530,6 +532,14 @@ export function SessionDetail({
       pendingInteractionCount: blockingInteractions(state.notices, state.session.id).length,
     })
   }, [onMemorySnapshotUpdated, state])
+
+  React.useEffect(() => {
+    onStreamProgress?.(sessionId, state?.nextSeq ?? 0)
+  }, [onStreamProgress, sessionId, state?.nextSeq])
+
+  React.useEffect(() => {
+    return () => onStreamProgress?.(sessionId, null)
+  }, [onStreamProgress, sessionId])
 
   const distanceFromBottom = React.useCallback(() => {
     const viewport = timelineRef.current

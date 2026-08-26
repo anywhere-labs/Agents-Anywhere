@@ -123,7 +123,10 @@ class CodexNotificationProjector:
                 event=event,
                 item=item,
             )
-        if event.event_type == "thread/compacted":
+        if (
+            event.event_type == "thread/compacted"
+            and session_id not in self.active_turn_ids
+        ):
             await self.session_states.update(
                 session_id=session_id,
                 external_session_id=thread_id,
