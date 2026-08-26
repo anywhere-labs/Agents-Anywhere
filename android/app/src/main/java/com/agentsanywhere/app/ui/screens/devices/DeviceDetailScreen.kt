@@ -776,7 +776,7 @@ private fun ConfiguredAgentRow(
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = runtime.displayName,
+                text = runtime.labels.primary,
                 color = LocalAAColors.current.ink,
                 fontSize = 16.5.sp,
                 fontWeight = FontWeight.Bold,
@@ -802,7 +802,7 @@ private fun ConfiguredAgentRow(
                 )
             }
             Text(
-                text = runtimeStatusLabel(runtime),
+                text = listOfNotNull(runtime.labels.secondary, runtimeStatusLabel(runtime)).joinToString(" · "),
                 color = if (runtime.status == DeviceRuntimeStatus.Error) {
                     LocalAAColors.current.errorText
                 } else {
@@ -863,7 +863,7 @@ private fun DiscoveredAgentRow(
         )
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = runtime.displayName,
+                text = runtime.labels.primary,
                 color = colors.ink,
                 fontSize = 16.sp,
                 fontWeight = FontWeight.Bold,
@@ -871,7 +871,7 @@ private fun DiscoveredAgentRow(
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                text = status,
+                text = listOfNotNull(runtime.labels.secondary, status).joinToString(" · "),
                 color = colors.muted,
                 fontSize = 11.5.sp,
                 fontWeight = FontWeight.Medium,
@@ -883,7 +883,7 @@ private fun DiscoveredAgentRow(
         } else {
             ConfigureRuntimeButton(
                 label = stringResource(R.string.configure_agent_action),
-                contentDescription = stringResource(R.string.configure_agent_description, runtime.displayName),
+                contentDescription = stringResource(R.string.configure_agent_description, runtime.labels.primary),
                 enabled = enabled,
                 onClick = onConfigure,
             )

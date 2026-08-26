@@ -44,6 +44,10 @@ def test_connector_runtime_host_maps_catalogs_to_backend_notifications() -> None
     asyncio.run(_exercise_runtime_catalog_notifications())
 
 
+def test_connector_runtime_host_preserves_named_catalog_scope() -> None:
+    asyncio.run(_exercise_named_runtime_catalog_notifications())
+
+
 async def _exercise_timeline_item_notification() -> None:
     notifications: list[tuple[str, dict[str, Any]]] = []
 
@@ -216,6 +220,8 @@ async def _exercise_runtime_catalog_notifications() -> None:
         (
             "runtime.catalog.updated",
             {
+                "runtime": "codex",
+                "runtimeId": "codex",
                 "catalogType": "model",
                 "catalog": {
                     "runtime": "codex",
@@ -237,6 +243,8 @@ async def _exercise_runtime_catalog_notifications() -> None:
         (
             "runtime.catalog.updated",
             {
+                "runtime": "codex",
+                "runtimeId": "codex",
                 "catalogType": "permission",
                 "catalog": {
                     "runtime": "codex",
@@ -251,6 +259,71 @@ async def _exercise_runtime_catalog_notifications() -> None:
                             "metadata": {"enabled": True},
                         }
                     ],
+                },
+            },
+        ),
+    ]
+
+
+async def _exercise_named_runtime_catalog_notifications() -> None:
+    notifications: list[tuple[str, dict[str, Any]]] = []
+
+    async def notify(method: str, params: dict[str, Any]) -> None:
+        notifications.append((method, params))
+
+    async def download(session_id: str, file_id: str) -> tuple[bytes, str, str]:
+        _ = session_id
+        return b"data", f"{file_id}.txt", "text/plain"
+
+    host = ConnectorRuntimeHost(
+        connector_id="conn_1",
+        notifier=notify,
+        attachment_downloader=download,
+    )
+
+    await host.model_catalog_update(
+        RuntimeModelCatalog(
+            runtime="dsh",
+            runtime_id="rti_dsh_home_01",
+            revision=31,
+            models=(),
+        )
+    )
+    await host.permission_catalog_update(
+        RuntimePermissionCatalog(
+            runtime="codex",
+            runtime_id="rti_codex_work_01",
+            revision=32,
+            permissions=(),
+        )
+    )
+
+    assert notifications == [
+        (
+            "runtime.catalog.updated",
+            {
+                "runtime": "dsh",
+                "runtimeId": "rti_dsh_home_01",
+                "catalogType": "model",
+                "catalog": {
+                    "runtime": "dsh",
+                    "runtimeId": "rti_dsh_home_01",
+                    "revision": 31,
+                    "models": [],
+                },
+            },
+        ),
+        (
+            "runtime.catalog.updated",
+            {
+                "runtime": "codex",
+                "runtimeId": "rti_codex_work_01",
+                "catalogType": "permission",
+                "catalog": {
+                    "runtime": "codex",
+                    "runtimeId": "rti_codex_work_01",
+                    "revision": 32,
+                    "permissions": [],
                 },
             },
         ),

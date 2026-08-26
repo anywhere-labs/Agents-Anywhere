@@ -31,6 +31,9 @@ data class SessionRuntimeState(
     val isLoaded: Boolean = false,
     val isLoading: Boolean = false,
     val errorMessage: String? = null,
+    val runtimeId: String? = runtime,
+    val runtimeType: String? = runtime,
+    val runtimeName: String? = runtimeType,
 )
 
 enum class SessionRuntimeStatus {
@@ -50,26 +53,45 @@ data class EffectiveCapabilities(
     val isLoading: Boolean = false,
     val errorMessage: String? = null,
 ) {
-    fun find(capabilityId: String, runtime: String? = null): EffectiveCapability? {
+    fun find(
+        capabilityId: String,
+        runtimeId: String? = null,
+        runtimeType: String? = null,
+    ): EffectiveCapability? {
         val matches = capabilities.filter { it.capabilityId == capabilityId }
-        return if (runtime == null) {
+        return if (runtimeId == null && runtimeType == null) {
             matches.firstOrNull()
         } else {
-            matches.firstOrNull { it.runtime == runtime }
-                ?: matches.firstOrNull { it.runtime == null }
+            matches.firstOrNull { runtimeId != null && it.runtimeId == runtimeId }
+                ?: matches.firstOrNull {
+                    runtimeId != null && it.runtimeId == null && it.runtime == runtimeId
+                }
+                ?: runtimeType?.let { expectedType ->
+                    matches.firstOrNull {
+                        it.runtimeId == null && (it.runtimeType ?: it.runtime) == expectedType
+                    }
+                }
+                ?: matches.firstOrNull {
+                    it.runtimeId == null && it.runtimeType == null && it.runtime == null
+                }
         }
     }
 
-    fun isUsable(capabilityId: String, runtime: String? = null): Boolean {
-        return find(capabilityId, runtime)?.usable == true
+    fun isUsable(
+        capabilityId: String,
+        runtimeId: String? = null,
+        runtimeType: String? = null,
+    ): Boolean {
+        return find(capabilityId, runtimeId, runtimeType)?.usable == true
     }
 
     fun messageAction(
         runtime: String?,
         runtimeStatus: SessionRuntimeStatus,
+        runtimeType: String? = runtime,
     ): RuntimeMessageAction? {
-        val canSend = isUsable(SESSION_SEND_MESSAGE_CAPABILITY, runtime)
-        val canSteer = isUsable(SESSION_STEER_CAPABILITY, runtime)
+        val canSend = isUsable(SESSION_SEND_MESSAGE_CAPABILITY, runtime, runtimeType)
+        val canSteer = isUsable(SESSION_STEER_CAPABILITY, runtime, runtimeType)
         return when {
             canSteer && (!canSend || runtimeStatus == SessionRuntimeStatus.Running) -> RuntimeMessageAction.Steer
             canSend -> RuntimeMessageAction.Send
@@ -95,6 +117,8 @@ data class EffectiveCapability(
     val allowed: Boolean,
     val unavailableReason: String?,
     val parameters: Map<String, Any?>,
+    val runtimeId: String? = null,
+    val runtimeType: String? = runtime,
 ) {
     val usable: Boolean
         get() = supported && available && allowed
@@ -314,6 +338,8 @@ data class RuntimeSelectionOption(
     val label: String,
     val description: String?,
     val default: Boolean,
+    val enabled: Boolean = true,
+    val disabledReason: String? = null,
 )
 
 internal enum class RuntimePermissionTranslation {
@@ -383,6 +409,8 @@ internal fun RemoteRuntimeModelCatalog.selectionOptions(): List<RuntimeSelection
                     label = listOf(model.displayName, item.displayName).filter(String::isNotBlank).joinToString(" · "),
                     description = item.description ?: model.description,
                     default = item.default || (model.default && reasoning.first() == item),
+                    enabled = model.enabled && item.enabled,
+                    disabledReason = item.disabledReason ?: model.disabledReason,
                 )
             }
         } else {
@@ -393,6 +421,8 @@ internal fun RemoteRuntimeModelCatalog.selectionOptions(): List<RuntimeSelection
                         label = model.displayName.ifBlank { model.id },
                         description = model.description,
                         default = model.default,
+                        enabled = model.enabled,
+                        disabledReason = model.disabledReason,
                     ),
                 )
             }.orEmpty()
@@ -409,6 +439,8 @@ internal fun RemoteRuntimePermissionCatalog.selectionOptions(): List<RuntimeSele
                 label = it.displayName.ifBlank { it.id },
                 description = it.description,
                 default = it.default,
+                enabled = it.enabled,
+                disabledReason = it.disabledReason,
             )
         }
         .distinctBy { it.selectionId }
@@ -416,9 +448,10 @@ internal fun RemoteRuntimePermissionCatalog.selectionOptions(): List<RuntimeSele
 internal fun List<RuntimeSelectionOption>.validatedSelection(hint: String?): String? {
     val explicitSelection = hint?.takeIf(String::isNotBlank)
     return if (explicitSelection != null) {
-        firstOrNull { it.selectionId == explicitSelection }?.selectionId
+        firstOrNull { it.enabled && it.selectionId == explicitSelection }?.selectionId
     } else {
-        firstOrNull { it.default }?.selectionId ?: firstOrNull()?.selectionId
+        firstOrNull { it.enabled && it.default }?.selectionId
+            ?: firstOrNull { it.enabled }?.selectionId
     }
 }
 

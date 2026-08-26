@@ -9,10 +9,10 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from agent_server.core.models import (
     Approval,
+    ConnectorStatus,
     NoticeIn,
     RuntimeName,
-    SessionRuntimeState,
-    SessionView,
+    SessionStatus,
     TimelineItem,
 )
 
@@ -24,8 +24,62 @@ ProtocolVersion = Literal["1.0"]
 ProtocolCapabilityScope = Literal["runtime", "session"]
 
 
+def _omit_default_additional_properties(schema: dict[str, Any]) -> None:
+    schema.pop("additionalProperties", None)
+
+
 class ProtocolWireModel(BaseModel):
-    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
+    model_config = ConfigDict(
+        json_schema_serialization_defaults_required=True,
+        extra="allow",
+        json_schema_extra=_omit_default_additional_properties,
+    )
+
+
+class _ProtocolSnapshotExtensionModel(BaseModel):
+    model_config = ConfigDict(
+        extra="allow",
+        json_schema_extra=_omit_default_additional_properties,
+    )
+
+
+class SessionView(_ProtocolSnapshotExtensionModel):
+    id: str
+    connectorId: str
+    connectorStatus: ConnectorStatus
+    runtime: RuntimeName
+    externalSessionId: str | None = None
+    title: str | None = None
+    cwd: str | None = None
+    status: SessionStatus
+    takeover: bool
+    pinned: bool = False
+    pinnedAt: str | None = None
+    archived: bool = False
+    archivedAt: str | None = None
+    unread: bool = False
+    lastReadSeq: int = 0
+    lastSyncedAt: str | None = None
+    sourceObservedAt: str | None = None
+    lastActivityAt: str | None = None
+    lastItemAt: str | None = None
+    lastItemOrderSeq: int | None = None
+    sortAt: str | None = None
+    updatedSeq: int
+
+
+class SessionRuntimeState(_ProtocolSnapshotExtensionModel):
+    sessionId: str
+    runtime: RuntimeName
+    externalSessionId: str | None = None
+    status: SessionStatus = "idle"
+    selections: dict[str, str | None] = Field(default_factory=dict)
+    statusReason: str | None = None
+    error: dict[str, Any] | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    updatedSeq: int
+    createdAt: str
+    updatedAt: str
 
 
 class ProtocolRuntimeIdentity(ProtocolWireModel):

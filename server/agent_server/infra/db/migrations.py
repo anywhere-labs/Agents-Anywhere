@@ -22,8 +22,8 @@ from agent_server.infra.db.engine import POSTGRES_BACKEND, resolve_db_url
 
 LEGACY_V1_REVISION = "v1_legacy"
 BASELINE_V2_REVISION = "v2_0"
-CURRENT_SCHEMA_REVISION = "v2_16"
-CURRENT_SCHEMA_VERSION = "2.16"
+CURRENT_SCHEMA_REVISION = "v2_17"
+CURRENT_SCHEMA_VERSION = "2.17"
 POSTGRES_MIGRATION_LOCK_ID = 0x414147454E545332
 DEFAULT_MIGRATION_LOCK_TIMEOUT_SECONDS = 120.0
 
@@ -269,6 +269,12 @@ def _classify_sync(connection) -> UnversionedDatabase:
     connector_columns = _column_names(inspector, "connectors")
     active_run_columns = _column_names(inspector, "session_active_runs")
     timeline_columns = _column_names(inspector, "timeline_items")
+    runtime_columns = _column_names(inspector, "device_runtimes")
+    runtime_catalog_columns = _column_names(inspector, "connector_runtime_catalogs")
+    dashboard_fact_columns = _column_names(
+        inspector,
+        "dashboard_user_daily_facts",
+    )
     if {
         "connectors",
         "sessions",
@@ -286,7 +292,23 @@ def _classify_sync(connection) -> UnversionedDatabase:
             and "runtime_settings_override" not in session_columns
         )
         if current_layout:
-            if "session_states" in tables:
+            runtime_instance_layout = (
+                "connector_runtime_types" in tables
+                and "runtime_control_version" in connector_columns
+                and "runtime_id" in session_columns
+                and "runtime_id" in active_run_columns
+                and "runtime_id" in runtime_catalog_columns
+                and "name_key" in runtime_columns
+            )
+            if runtime_instance_layout:
+                if "app_releases" in tables:
+                    release_columns = _column_names(inspector, "app_releases")
+                    revision = "v2_16" if "sha256" in release_columns else "v2_17"
+                elif "android_app_releases" in tables:
+                    revision = "v2_15"
+                else:
+                    revision = "v2_14"
+            elif "session_states" in tables:
                 revision = "v2_5"
             elif "notices" in tables:
                 revision = "v2_6"
@@ -296,8 +318,17 @@ def _classify_sync(connection) -> UnversionedDatabase:
                 revision = "v2_8"
             elif "timeline_reset_seq" not in session_columns:
                 revision = "v2_9"
+            elif (
+                "inventory_metadata_json" not in runtime_columns
+                or "dsh_agents" not in dashboard_fact_columns
+            ):
+                revision = "v2_10"
+            elif "source_state" not in session_columns:
+                revision = "v2_11"
+            elif "dsh_archive_legacy" not in session_columns:
+                revision = "v2_12"
             else:
-                revision = CURRENT_SCHEMA_REVISION
+                revision = "v2_13"
             return UnversionedDatabase("v2", revision)
         if "approvals" in tables:
             if {"presence_instance_id", "presence_connection_id"}.issubset(

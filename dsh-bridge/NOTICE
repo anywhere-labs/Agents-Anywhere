@@ -1,0 +1,21 @@
+Agents Anywhere DSH Bridge
+
+This package preserves the origin and authorship of the DSH bridge originally
+developed by xipian1216:
+
+  Source: https://github.com/xipian1216/dsh-aa-bridge
+  Author: xipian1216
+
+The implementation entered Agents Anywhere in commit:
+
+  16395489be15b3a9e87ba9a5394629b2ab57a942
+  feat(dsh): import Desktop bridge plugin
+
+Subsequent integration and ownership documentation appeared in:
+
+  cac7e76bef9bf9f126fdc4be8d6260470df6c58d
+  53a136cbef7297c0ea90395184ad35bdf61d69b9
+
+The current package is a source rewrite against the shared DSH Bridge 1.0
+contract and the verified DeepSeek Harness Host API. It does not include the
+imported generated lib output, source maps, or private protocol fixtures.

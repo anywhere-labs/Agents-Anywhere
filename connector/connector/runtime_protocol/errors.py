@@ -18,6 +18,10 @@ class RuntimeInvalidRequestError(RuntimeProtocolError):
     code = "runtime_invalid_request"
 
 
+class RuntimeInstancesUnsupportedError(RuntimeInvalidRequestError):
+    code = "runtime_instances_unsupported"
+
+
 class RuntimeConflictError(RuntimeProtocolError):
     code = "runtime_conflict"
 

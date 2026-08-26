@@ -21,6 +21,37 @@ def _selection_map(
     return selections
 
 
+def _runtime_identity(runtime: str, runtime_id: str | None) -> RuntimeIdentity:
+    return RuntimeIdentity.create(
+        runtime_type=runtime,
+        runtime_id=runtime_id or runtime,
+    )
+
+
+def _session_view_query() -> Any:
+    return select(
+        sessions_t,
+        connectors_t.c.status.label("connector_status"),
+        device_runtimes_t.c.name.label("runtime_name"),
+        connector_runtime_types_t.c.display_name.label("runtime_type_display_name"),
+    ).select_from(
+        sessions_t.join(
+            connectors_t,
+            connectors_t.c.id == sessions_t.c.connector_id,
+        )
+        .outerjoin(
+            device_runtimes_t,
+            (device_runtimes_t.c.connector_id == sessions_t.c.connector_id)
+            & (device_runtimes_t.c.runtime_id == sessions_t.c.runtime_id),
+        )
+        .outerjoin(
+            connector_runtime_types_t,
+            (connector_runtime_types_t.c.connector_id == sessions_t.c.connector_id)
+            & (connector_runtime_types_t.c.runtime_type == sessions_t.c.runtime),
+        )
+    )
+
+
 class SessionRepositoryMixin:
     async def get_session_runtime(self, session_id: str) -> str | None:
         async with self._engine.connect() as conn:
@@ -37,6 +68,7 @@ class SessionRepositoryMixin:
         connector_id: str,
         user_id: str | None = None,
         runtime: str,
+        runtime_id: str | None = None,
         external_session_id: str | None,
         title: str | None,
         cwd: str | None,
@@ -45,6 +77,7 @@ class SessionRepositoryMixin:
         selections: dict[str, str | None] | None = None,
         takeover: bool = False,
     ) -> SessionView:
+        identity = _runtime_identity(runtime, runtime_id)
         session_id = f"sess_{secrets.token_urlsafe(10)}"
         now = utc_now()
         async with self._engine.begin() as conn:
@@ -60,7 +93,8 @@ class SessionRepositoryMixin:
                 insert(sessions_t).values(
                     id=session_id,
                     connector_id=connector_id,
-                    runtime=runtime,
+                    runtime=str(identity.runtime_type),
+                    runtime_id=str(identity.runtime_id),
                     origin="platform",
                     model_selection_id=model_selection_id,
                     permission_selection_id=permission_selection_id,
@@ -77,13 +111,13 @@ class SessionRepositoryMixin:
             )
         return await self.get_session(session_id)
 
-
     async def upsert_connector_session(
         self,
         *,
         connector_id: str,
         session_id: str,
         runtime: str,
+        runtime_id: str | None = None,
         external_session_id: str | None,
         title: str | None = None,
         cwd: str | None = None,
@@ -96,6 +130,9 @@ class SessionRepositoryMixin:
         origin: str = "connector_import",
         source_state: str | None = None,
     ) -> SessionView:
+        identity = _runtime_identity(runtime, runtime_id)
+        runtime = str(identity.runtime_type)
+        runtime_id = str(identity.runtime_id)
         has_model_selection_id = model_selection_id is not None
         has_permission_selection_id = permission_selection_id is not None
         now = utc_now()
@@ -119,6 +156,7 @@ class SessionRepositoryMixin:
                         select(sessions_t.c.id)
                         .where(
                             sessions_t.c.connector_id == connector_id,
+                            sessions_t.c.runtime_id == runtime_id,
                             sessions_t.c.external_session_id == external_session_id,
                         )
                         .order_by(sessions_t.c.takeover.desc(), sessions_t.c.created_at.asc())
@@ -133,6 +171,7 @@ class SessionRepositoryMixin:
                         id=session_id,
                         connector_id=connector_id,
                         runtime=runtime,
+                        runtime_id=runtime_id,
                         origin=normalized_origin,
                         model_selection_id=model_selection_id,
                         permission_selection_id=permission_selection_id,
@@ -158,6 +197,7 @@ class SessionRepositoryMixin:
                         select(
                             sessions_t.c.connector_id,
                             sessions_t.c.runtime,
+                            sessions_t.c.runtime_id,
                             sessions_t.c.external_session_id,
                             sessions_t.c.title,
                             sessions_t.c.cwd,
@@ -172,10 +212,11 @@ class SessionRepositoryMixin:
                 ).first()
                 if current is None:
                     raise KeyError(session_id)
-                values: dict[str, Any] = {
-                    "connector_id": connector_id,
-                    "runtime": runtime,
-                }
+                if current.connector_id != connector_id:
+                    raise ValueError("session connector binding is immutable")
+                if current.runtime != runtime or current.runtime_id != runtime_id:
+                    raise ValueError("session runtime identity is immutable")
+                values: dict[str, Any] = {}
                 if external_session_id is not None:
                     values["external_session_id"] = external_session_id
                 if title is not None:
@@ -210,8 +251,6 @@ class SessionRepositoryMixin:
                 semantic_changed = any(
                     field in values and values[field] != getattr(current, field)
                     for field in (
-                        "connector_id",
-                        "runtime",
                         "external_session_id",
                         "title",
                         "cwd",
@@ -237,32 +276,42 @@ class SessionRepositoryMixin:
         connector_id: str,
         session_id: str,
         external_session_id: str | None = None,
+        runtime: str | None = None,
+        runtime_id: str | None = None,
     ) -> str:
+        identity = _runtime_identity(runtime, runtime_id) if runtime is not None else None
         async with self._engine.connect() as conn:
-            explicit = (
-                await conn.execute(
-                    select(
-                        sessions_t.c.id,
-                        sessions_t.c.origin,
-                        sessions_t.c.takeover,
-                    ).where(
-                        sessions_t.c.id == session_id,
-                        sessions_t.c.connector_id == connector_id,
-                    )
+            explicit_query = select(
+                sessions_t.c.id,
+                sessions_t.c.origin,
+                sessions_t.c.takeover,
+            ).where(
+                sessions_t.c.id == session_id,
+                sessions_t.c.connector_id == connector_id,
+            )
+            if identity is not None:
+                explicit_query = explicit_query.where(
+                    sessions_t.c.runtime == str(identity.runtime_type),
+                    sessions_t.c.runtime_id == str(identity.runtime_id),
                 )
-            ).first()
+            explicit = (await conn.execute(explicit_query)).first()
             if explicit is not None and (
                 explicit.takeover == 1 or explicit.origin == "platform"
             ):
                 return str(explicit.id)
             if external_session_id:
+                external_query = select(sessions_t.c.id).where(
+                    sessions_t.c.connector_id == connector_id,
+                    sessions_t.c.external_session_id == external_session_id,
+                )
+                if identity is not None:
+                    external_query = external_query.where(
+                        sessions_t.c.runtime == str(identity.runtime_type),
+                        sessions_t.c.runtime_id == str(identity.runtime_id),
+                    )
                 row = (
                     await conn.execute(
-                        select(sessions_t.c.id)
-                        .where(
-                            sessions_t.c.connector_id == connector_id,
-                            sessions_t.c.external_session_id == external_session_id,
-                        )
+                        external_query
                         .order_by(sessions_t.c.takeover.desc(), sessions_t.c.created_at.asc())
                         .limit(1)
                     )
@@ -276,8 +325,7 @@ class SessionRepositoryMixin:
 
     async def list_sessions(self, *, user_id: str | None = None) -> list[SessionView]:
         query = (
-            select(sessions_t, connectors_t.c.status.label("connector_status"))
-            .join(connectors_t, connectors_t.c.id == sessions_t.c.connector_id)
+            _session_view_query()
             .where(
                 connectors_t.c.revoked == 0,
                 (sessions_t.c.runtime != "dsh")
@@ -299,6 +347,7 @@ class SessionRepositoryMixin:
     async def begin_dsh_session_inventory(
         self,
         connector_id: str,
+        runtime_id: str,
         scan_token: str,
     ) -> None:
         async with self._engine.begin() as conn:
@@ -307,6 +356,7 @@ class SessionRepositoryMixin:
                 .where(
                     sessions_t.c.connector_id == connector_id,
                     sessions_t.c.runtime == "dsh",
+                    sessions_t.c.runtime_id == runtime_id,
                 )
                 .values(source_scan_token=scan_token)
             )
@@ -314,6 +364,7 @@ class SessionRepositoryMixin:
     async def complete_dsh_session_inventory(
         self,
         connector_id: str,
+        runtime_id: str,
         scan_token: str,
         entries: list[dict[str, str | None]],
         *,
@@ -334,6 +385,7 @@ class SessionRepositoryMixin:
                     ).where(
                         sessions_t.c.connector_id == connector_id,
                         sessions_t.c.runtime == "dsh",
+                        sessions_t.c.runtime_id == runtime_id,
                     )
                 )
             ).mappings().all()
@@ -426,15 +478,14 @@ class SessionRepositoryMixin:
         self,
         *,
         connector_id: str,
-        runtime: str,
+        runtime_id: str,
         user_id: str | None = None,
     ) -> list[SessionView]:
         query = (
-            select(sessions_t, connectors_t.c.status.label("connector_status"))
-            .join(connectors_t, connectors_t.c.id == sessions_t.c.connector_id)
+            _session_view_query()
             .where(
                 sessions_t.c.connector_id == connector_id,
-                sessions_t.c.runtime == runtime,
+                sessions_t.c.runtime_id == runtime_id,
                 sessions_t.c.status.in_(
                     (
                         "waiting",
@@ -461,8 +512,7 @@ class SessionRepositoryMixin:
         connector_id: str,
     ) -> list[SessionView]:
         query = (
-            select(sessions_t, connectors_t.c.status.label("connector_status"))
-            .join(connectors_t, connectors_t.c.id == sessions_t.c.connector_id)
+            _session_view_query()
             .where(
                 sessions_t.c.connector_id == connector_id,
                 connectors_t.c.revoked == 0,
@@ -476,8 +526,7 @@ class SessionRepositoryMixin:
 
     async def get_session(self, session_id: str, *, user_id: str | None = None) -> SessionView:
         query = (
-            select(sessions_t, connectors_t.c.status.label("connector_status"))
-            .join(connectors_t, connectors_t.c.id == sessions_t.c.connector_id)
+            _session_view_query()
             .where(sessions_t.c.id == session_id, connectors_t.c.revoked == 0)
         )
         if user_id is not None:
@@ -499,6 +548,7 @@ class SessionRepositoryMixin:
             select(
                 sessions_t.c.id,
                 sessions_t.c.runtime,
+                sessions_t.c.runtime_id,
                 sessions_t.c.external_session_id,
                 sessions_t.c.status,
                 sessions_t.c.updated_seq,
@@ -517,6 +567,7 @@ class SessionRepositoryMixin:
         return SessionRuntimeState(
             sessionId=row["id"],
             runtime=row["runtime"],
+            runtimeId=row["runtime_id"],
             externalSessionId=row["external_session_id"],
             status=row["status"],
             selections={},
@@ -531,6 +582,7 @@ class SessionRepositoryMixin:
         *,
         session_id: str,
         runtime: str,
+        runtime_id: str | None = None,
         external_session_id: str | None = None,
         status: str | None = None,
         selections: dict[str, str | None] | None = None,
@@ -673,8 +725,7 @@ class SessionRepositoryMixin:
         sessions: list[SessionView] = []
         if owned_ids:
             view_query = (
-                select(sessions_t, connectors_t.c.status.label("connector_status"))
-                .join(connectors_t, connectors_t.c.id == sessions_t.c.connector_id)
+                _session_view_query()
                 .where(sessions_t.c.id.in_(owned_ids))
             )
             async with self._engine.connect() as conn:
@@ -745,8 +796,7 @@ class SessionRepositoryMixin:
             return []
 
         view_query = (
-            select(sessions_t, connectors_t.c.status.label("connector_status"))
-            .join(connectors_t, connectors_t.c.id == sessions_t.c.connector_id)
+            _session_view_query()
             .where(sessions_t.c.id.in_(target_ids))
         )
         async with self._engine.connect() as conn:
@@ -838,8 +888,7 @@ class SessionRepositoryMixin:
         sessions: list[SessionView] = []
         if owned_ids:
             view_query = (
-                select(sessions_t, connectors_t.c.status.label("connector_status"))
-                .join(connectors_t, connectors_t.c.id == sessions_t.c.connector_id)
+                _session_view_query()
                 .where(sessions_t.c.id.in_(owned_ids))
             )
             async with self._engine.connect() as conn:
@@ -1010,6 +1059,7 @@ class SessionRepositoryMixin:
         session_id = row["id"]
         latest = await self.timeline.latest_item(session_id)
         runtime = row["runtime"]
+        runtime_id = row["runtime_id"]
         title = row["title"]
         if not (isinstance(title, str) and title.strip()):
             derived = await self._derive_title_from_first_user_message(session_id)
@@ -1025,6 +1075,9 @@ class SessionRepositoryMixin:
             connectorId=row["connector_id"],
             connectorStatus=row["connector_status"],
             runtime=runtime,
+            runtimeId=runtime_id,
+            runtimeName=row.get("runtime_name"),
+            runtimeTypeDisplayName=row.get("runtime_type_display_name"),
             externalSessionId=row["external_session_id"],
             title=title,
             cwd=row["cwd"],

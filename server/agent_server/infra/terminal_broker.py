@@ -50,6 +50,7 @@ class Terminal:
     id: str
     session_id: str
     connector_id: str
+    connector_connection_id: str | None
     label: str
     root: str
     cwd: str
@@ -107,6 +108,7 @@ class Terminal:
             "id": self.id,
             "session_id": self.session_id,
             "connector_id": self.connector_id,
+            "connector_connection_id": self.connector_connection_id,
             "label": self.label,
             "root": self.root,
             "cwd": self.cwd,
@@ -135,6 +137,7 @@ class Terminal:
             id=str(payload["id"]),
             session_id=str(payload["session_id"]),
             connector_id=str(payload["connector_id"]),
+            connector_connection_id=payload.get("connector_connection_id"),
             label=str(payload["label"]),
             root=str(payload["root"]),
             cwd=str(payload["cwd"]),
@@ -249,6 +252,7 @@ class TerminalBroker:
         *,
         session_id: str,
         connector_id: str,
+        connector_connection_id: str | None = None,
         label: str,
         cwd: str,
         root: str | None = None,
@@ -267,6 +271,7 @@ class TerminalBroker:
             id=f"trm_{secrets.token_urlsafe(10)}",
             session_id=session_id,
             connector_id=connector_id,
+            connector_connection_id=connector_connection_id,
             label=label,
             root=root or cwd,
             cwd=cwd,
@@ -324,6 +329,16 @@ class TerminalBroker:
             ),
         )
 
+    async def bind_connection(
+        self,
+        terminal_id: str,
+        connection_id: str,
+    ) -> Terminal | None:
+        return await self._mutate(
+            terminal_id,
+            lambda term: setattr(term, "connector_connection_id", connection_id),
+        )
+
     async def rename(self, terminal_id: str, label: str) -> Terminal | None:
         return await self._mutate(
             terminal_id, lambda term: setattr(term, "label", label)
@@ -364,14 +379,26 @@ class TerminalBroker:
         await self._close_local(terminal_id, exit_code=term.exit_code)
         return term
 
-    async def remove_ephemeral_for_connector(self, connector_id: str) -> list[Terminal]:
+    async def remove_ephemeral_for_connector(
+        self,
+        connector_id: str,
+        *,
+        connection_id: str | None = None,
+    ) -> list[Terminal]:
         if self._coordinator.distributed:
             terminals = await self._get_indexed(self._connector_key(connector_id))
         else:
             terminals = list(self._terminals.values())
         removed: list[Terminal] = []
         for term in terminals:
-            if term.connector_id != connector_id or term.purpose != "user":
+            if (
+                term.connector_id != connector_id
+                or term.purpose != "user"
+                or (
+                    connection_id is not None
+                    and term.connector_connection_id != connection_id
+                )
+            ):
                 continue
             current = await self.remove(term.id)
             if current is not None:

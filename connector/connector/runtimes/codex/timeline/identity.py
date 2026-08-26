@@ -10,11 +10,11 @@ def timeline_item_id(
     index: int,
 ) -> str:
     client_message_id = client_message_id_from_raw(raw)
+    if client_message_id and _is_user_message(raw):
+        return client_message_item_id(external_session_id, client_message_id)
     native_id = native_item_id(raw)
     if native_id is not None:
         return native_id
-    if client_message_id and _is_user_message(raw):
-        return client_message_id
     return f"codex_{external_session_id}_{derived_key(raw, index)}"
 
 
@@ -27,14 +27,23 @@ def timeline_item_id_from_values(
     external_session_id: str,
     index: int,
 ) -> str:
+    if client_message_id and is_user_message_values(raw_type=raw_type, role=role):
+        return client_message_item_id(external_session_id, client_message_id)
     if native_id is not None:
         return native_id
-    if client_message_id and is_user_message_values(raw_type=raw_type, role=role):
-        return client_message_id
     return (
         f"codex_{external_session_id}_"
         f"{derived_key_from_values(raw_type=raw_type, role=role, turn_id=turn_id, index=index)}"
     )
+
+
+def client_message_item_id(
+    external_session_id: str,
+    client_message_id: str,
+) -> str:
+    identity = f"codex-client-message-v1\0{external_session_id}\0{client_message_id}"
+    digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:32]
+    return f"codex_item_{digest}"
 
 
 def turn_position_item_id(
@@ -53,6 +62,8 @@ def turn_position_item_id(
 def turn_item_lane(raw_type: str, role: str | None) -> str:
     """Return the position lane shared by live events and thread history."""
 
+    if role == "user":
+        return "user-message"
     if role == "assistant" and raw_type in {"agentMessage", "message"}:
         return "assistant-message"
     if raw_type == "reasoning":
@@ -78,8 +89,6 @@ def next_turn_lane_position(
 
 
 def uses_turn_position_identity(raw_type: str, role: str | None) -> bool:
-    if is_user_message_values(raw_type=raw_type, role=role):
-        return False
     return raw_type not in {
         "contextCompaction",
         "runtimeMessage",

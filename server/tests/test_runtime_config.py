@@ -98,6 +98,25 @@ class FakeRpc:
             }
         return {"ok": True}
 
+    async def request_bound(
+        self,
+        connector_id: str,
+        method: str,
+        params: dict[str, Any],
+        **kwargs: Any,
+    ) -> tuple[dict[str, Any], str]:
+        return (
+            await self.request(connector_id, method, params, **kwargs),
+            "fake-connection",
+        )
+
+    async def is_connection_id_current(
+        self,
+        _connector_id: str,
+        connection_id: str,
+    ) -> bool:
+        return connection_id == "fake-connection" and self.online
+
 
 def _auth_headers(client: TestClient) -> dict[str, str]:
     config = client.get("/auth/config").json()
@@ -466,9 +485,22 @@ def test_connector_runtime_scoped_reads_start_active_runtime_before_rpc(tmp_path
         "runtime.permissionCatalog",
         "runtime.commands",
     ]
-    assert rpc.requests[2][2] == {"runtime": "codex", "limit": 200}
-    assert rpc.requests[3][2] == {"runtime": "codex", "limit": 200}
-    assert rpc.requests[4][2] == {"runtime": "codex", "limit": 100}
+    assert rpc.requests[1][2] == {"runtime": "codex", "runtimeId": "codex"}
+    assert rpc.requests[2][2] == {
+        "runtime": "codex",
+        "runtimeId": "codex",
+        "limit": 200,
+    }
+    assert rpc.requests[3][2] == {
+        "runtime": "codex",
+        "runtimeId": "codex",
+        "limit": 200,
+    }
+    assert rpc.requests[4][2] == {
+        "runtime": "codex",
+        "runtimeId": "codex",
+        "limit": 100,
+    }
 
 
 def test_session_sync_starts_active_runtime_before_sync_rpc(tmp_path):
@@ -569,8 +601,16 @@ def test_session_runtime_catalog_reads_start_active_runtime_before_rpc(tmp_path)
         "runtime.modelCatalog",
         "runtime.permissionCatalog",
     ]
-    assert rpc.requests[1][2] == {"runtime": "codex", "limit": 200}
-    assert rpc.requests[2][2] == {"runtime": "codex", "limit": 200}
+    assert rpc.requests[1][2] == {
+        "runtime": "codex",
+        "runtimeId": "codex",
+        "limit": 200,
+    }
+    assert rpc.requests[2][2] == {
+        "runtime": "codex",
+        "runtimeId": "codex",
+        "limit": 200,
+    }
 
 
 def test_editing_active_config_restarts_runtime(tmp_path):
@@ -757,3 +797,4 @@ def test_explicit_discovery_stops_runtime_that_server_has_not_activated(tmp_path
         "runtime.discover",
         "runtime.stop",
     ]
+    assert rpc.requests[0][2] == {"supportedControlVersions": ["2.0", "1.0"]}

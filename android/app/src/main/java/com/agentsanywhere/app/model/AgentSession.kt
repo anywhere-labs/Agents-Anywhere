@@ -23,7 +23,16 @@ data class AgentSession(
     val live: Boolean,
     val sortKey: String,
     val updatedSeq: Int,
-)
+    val runtimeId: String = runtime,
+    val runtimeType: String = runtime,
+    val runtimeName: String = runtimeLabel,
+) {
+    val runtimeLabels: RuntimeInstanceLabels
+        get() = runtimeInstanceLabels(runtimeName, runtimeType)
+
+    val runtimeContextLabel: String
+        get() = listOfNotNull(runtimeLabels.primary, runtimeLabels.secondary).joinToString(" · ")
+}
 
 enum class SessionStatus {
     Idle,

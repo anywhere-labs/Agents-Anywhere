@@ -14,6 +14,7 @@ import {
   Circle,
   AlertCircle,
   Archive,
+  Pencil,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -45,6 +46,7 @@ import { cn } from "@/lib/utils"
 import type {
   DeviceRuntimeStatus,
   DeviceRuntimeView,
+  RuntimeTypeView,
   SessionView as RealSessionView,
 } from "@/features/dashboard/types"
 import { useWorkspace } from "@/components/workspace-context"
@@ -56,6 +58,20 @@ import { useIsMobile } from "@/hooks/use-mobile"
 import { useTranslations } from "next-intl"
 import { toast } from "sonner"
 import { RuntimeConfigDialog } from "@/components/runtime-config-dialog"
+import { RuntimeInstanceNameDialog } from "@/components/runtime-instance-name-dialog"
+import {
+  discoverConnectorRuntimeOverview,
+  loadConnectorRuntimeOverview,
+} from "@/features/dashboard/runtime-discovery"
+import {
+  addableRuntimeTypes,
+  configuredRuntimeInstances,
+  reconfigurableRuntimeInstance,
+  runtimeInstanceName,
+  runtimeIsAvailable,
+  suggestedRuntimeInstanceName,
+  runtimeTypeName,
+} from "@/features/dashboard/runtime-instances"
 
 const DEVICE_STATUS_LABEL_KEYS = {
   online: "online",
@@ -74,6 +90,8 @@ const RUNTIME_STATUS_LABEL_KEYS = {
   error: "runtimeStatus.error",
   unknown: "runtimeStatus.unknown",
 } as const satisfies Record<DeviceRuntimeStatus, string>
+
+const NEW_RUNTIME_SAVING_ID = "@new-runtime"
 
 type ConnectorWorkspace = {
   path: string
@@ -318,6 +336,7 @@ export function DevicePage() {
   const [connector, setConnector] = React.useState<(typeof connectors)[number] | null>(null)
   const [workspaces, setWorkspaces] = React.useState<ConnectorWorkspace[]>([])
   const [runtimes, setRuntimes] = React.useState<DeviceRuntimeView[]>([])
+  const [runtimeTypes, setRuntimeTypes] = React.useState<RuntimeTypeView[]>([])
   const [runtimesLoading, setRuntimesLoading] = React.useState(false)
   const [discoveringRuntimes, setDiscoveringRuntimes] = React.useState(false)
   const [sessions, setSessions] = React.useState<DeviceSession[]>([])
@@ -329,6 +348,13 @@ export function DevicePage() {
   const [savingRuntimeId, setSavingRuntimeId] = React.useState<string | null>(null)
   const [runtimeActionId, setRuntimeActionId] = React.useState<string | null>(null)
   const [removeRuntime, setRemoveRuntime] = React.useState<DeviceRuntimeView | null>(null)
+  const [createRuntimeType, setCreateRuntimeType] = React.useState<RuntimeTypeView | null>(null)
+  const [pendingRuntimeCreation, setPendingRuntimeCreation] = React.useState<{
+    runtimeType: RuntimeTypeView
+    name: string
+  } | null>(null)
+  const [renameRuntime, setRenameRuntime] = React.useState<DeviceRuntimeView | null>(null)
+  const [savingRuntimeName, setSavingRuntimeName] = React.useState(false)
   const [revokeOpen, setRevokeOpen] = React.useState(false)
   const [deleteOpen, setDeleteOpen] = React.useState(false)
   const [setupCredential, setSetupCredential] = React.useState<ConnectorRevokeResponse | null>(null)
@@ -354,8 +380,12 @@ export function DevicePage() {
       setShowAllWorkspaces(false)
       setSessionTab("active")
       setRuntimes([])
+      setRuntimeTypes([])
       setConfigRuntime(null)
       setRemoveRuntime(null)
+      setCreateRuntimeType(null)
+      setPendingRuntimeCreation(null)
+      setRenameRuntime(null)
       setSelectMode(false)
       setSelectedSessionIds(new Set())
     }
@@ -374,9 +404,12 @@ export function DevicePage() {
     if (!authSession?.accessToken || !activeConnectorId) return
     let cancelled = false
     setRuntimesLoading(true)
-    dashboardApi.getConnectorRuntimes(authSession.accessToken, activeConnectorId)
-      .then((response) => {
-        if (!cancelled) setRuntimes(response.runtimes)
+    loadConnectorRuntimeOverview(authSession.accessToken, activeConnectorId)
+      .then((overview) => {
+        if (!cancelled) {
+          setRuntimes(overview.runtimes)
+          setRuntimeTypes(overview.runtimeTypes)
+        }
       })
       .catch((error) => {
         if (!cancelled) toast.error(error instanceof Error ? error.message : t("loadRuntimesFailed"))
@@ -401,12 +434,8 @@ export function DevicePage() {
   const targetArchiveSelected = sessionTab !== "archived" || Array.from(selectedSessionIds).some((id) => !sessions.find((s) => s.id === id)?.archived)
   const targetArchiveAll = sessionTab !== "archived"
   const allVisibleSelected = filteredSessions.length > 0 && filteredSessions.every((session) => selectedSessionIds.has(session.id))
-  const configuredRuntimes = runtimes
-    .filter((runtime) => runtime.configured)
-    .sort((a, b) => a.displayName.localeCompare(b.displayName))
-  const discoveredRuntimes = runtimes
-    .filter((runtime) => runtime.present && !runtime.configured)
-    .sort((a, b) => a.displayName.localeCompare(b.displayName))
+  const configuredRuntimes = configuredRuntimeInstances(runtimes)
+  const availableRuntimeTypes = addableRuntimeTypes(runtimeTypes, runtimes)
 
   if (loading || !connector) {
     return (
@@ -464,19 +493,87 @@ export function DevicePage() {
   }
 
   const replaceRuntime = (runtime: DeviceRuntimeView) => {
-    setRuntimes((current) => current.map((item) => item.runtimeId === runtime.runtimeId ? runtime : item))
+    setRuntimes((current) => current.some((item) => item.runtimeId === runtime.runtimeId)
+      ? current.map((item) => item.runtimeId === runtime.runtimeId ? runtime : item)
+      : [...current, runtime])
   }
 
   const discoverRuntimes = async () => {
     if (!authSession?.accessToken) return
     setDiscoveringRuntimes(true)
     try {
-      const response = await dashboardApi.discoverConnectorRuntimes(authSession.accessToken, connector.id)
-      setRuntimes(response.runtimes)
+      const overview = await discoverConnectorRuntimeOverview(
+        authSession.accessToken,
+        connector.id,
+      )
+      setRuntimes(overview.runtimes)
+      setRuntimeTypes(overview.runtimeTypes)
     } catch (error) {
       toast.error(error instanceof Error ? error.message : t("discoverRuntimesFailed"))
     } finally {
       setDiscoveringRuntimes(false)
+    }
+  }
+
+  const stageRuntimeCreation = async (name: string) => {
+    if (!createRuntimeType) return
+    setPendingRuntimeCreation({ runtimeType: createRuntimeType, name })
+    setCreateRuntimeType(null)
+  }
+
+  const createAndStartRuntime = async (
+    pending: NonNullable<typeof pendingRuntimeCreation>,
+    config: Record<string, unknown>,
+  ) => {
+    if (!authSession?.accessToken) return
+    setSavingRuntimeId(NEW_RUNTIME_SAVING_ID)
+    try {
+      const created = await dashboardApi.createConnectorRuntime(
+        authSession.accessToken,
+        connector.id,
+        {
+          runtimeType: pending.runtimeType.runtimeType,
+          name: pending.name,
+          config,
+          active: true,
+        },
+      )
+      replaceRuntime(created)
+      toast.success(t("runtimeConfiguredAndStarted", { name: pending.name }))
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t("createRuntimeFailed"))
+      throw error
+    } finally {
+      setSavingRuntimeId(null)
+    }
+  }
+
+  const addRuntime = (runtimeType: RuntimeTypeView) => {
+    const existing = reconfigurableRuntimeInstance(runtimeType, runtimes)
+    if (existing) {
+      setConfigRuntime(existing)
+      return
+    }
+    setCreateRuntimeType(runtimeType)
+  }
+
+  const submitRuntimeRename = async (name: string) => {
+    if (!authSession?.accessToken || !renameRuntime) return
+    setSavingRuntimeName(true)
+    try {
+      const renamed = await dashboardApi.renameConnectorRuntime(
+        authSession.accessToken,
+        connector.id,
+        renameRuntime.runtimeId,
+        name,
+      )
+      replaceRuntime(renamed)
+      setRenameRuntime(null)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t("renameRuntimeFailed"))
+      throw error
+    } finally {
+      setSavingRuntimeName(false)
     }
   }
 
@@ -491,7 +588,7 @@ export function DevicePage() {
         config,
       )
       replaceRuntime(response)
-      toast.success(t("runtimeConfigSaved", { name: runtime.displayName }))
+      toast.success(t("runtimeConfigSaved", { name: runtimeInstanceName(runtime) }))
     } catch (error) {
       const message = error instanceof Error ? error.message : t("saveRuntimeConfigFailed")
       toast.error(message)
@@ -519,7 +616,7 @@ export function DevicePage() {
         true,
       )
       replaceRuntime(started)
-      toast.success(t("runtimeConfiguredAndStarted", { name: runtime.displayName }))
+      toast.success(t("runtimeConfiguredAndStarted", { name: runtimeInstanceName(runtime) }))
     } catch (error) {
       const message = error instanceof Error ? error.message : t("configureAndStartRuntimeFailed")
       toast.error(message)
@@ -746,7 +843,7 @@ export function DevicePage() {
                           )}
                           <div className="min-w-0 flex-1">
                             <div className="flex min-w-0 items-center gap-2">
-                              <span className="truncate text-sm font-medium">{runtime.displayName}</span>
+                              <span className="truncate text-sm font-medium">{runtimeInstanceName(runtime)}</span>
                               <Badge variant="outline" className="shrink-0 font-normal">
                                 {runtimeStatusLabel(runtime.status)}
                               </Badge>
@@ -764,25 +861,35 @@ export function DevicePage() {
                                 </Tooltip>
                               ) : null}
                             </div>
-                            {!runtime.present ? (
-                              <p className="mt-0.5 text-xs text-muted-foreground">{t("runtimeNotReported")}</p>
-                            ) : null}
+                            <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                              {runtimeTypeName(runtime)}
+                              {!runtime.present ? ` · ${t("runtimeNotReported")}` : ""}
+                            </p>
                           </div>
                           <div className="flex shrink-0 items-center gap-2">
                             <Button
                               type="button"
                               variant="ghost"
                               size="icon"
+                              onClick={() => setRenameRuntime(runtime)}
+                              aria-label={t("renameRuntime", { name: runtimeInstanceName(runtime) })}
+                            >
+                              <Pencil />
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
                               onClick={() => setConfigRuntime(runtime)}
-                              aria-label={t("configureRuntime", { name: runtime.displayName })}
+                              aria-label={t("configureRuntime", { name: runtimeInstanceName(runtime) })}
                             >
                               <Settings />
                             </Button>
                             <Switch
                               checked={runtime.active}
                               onCheckedChange={(active: boolean) => void toggleRuntime(runtime, active)}
-                              disabled={runtimeActionId === runtime.runtimeId || (!runtime.active && (connector.status !== "online" || !runtime.present))}
-                              aria-label={runtime.active ? t("deactivateRuntime", { name: runtime.displayName }) : t("activateRuntime", { name: runtime.displayName })}
+                              disabled={runtimeActionId === runtime.runtimeId || (!runtime.active && (connector.status !== "online" || !runtimeIsAvailable(runtime)))}
+                              aria-label={runtime.active ? t("deactivateRuntime", { name: runtimeInstanceName(runtime) }) : t("activateRuntime", { name: runtimeInstanceName(runtime) })}
                             />
                             <Button
                               type="button"
@@ -791,7 +898,7 @@ export function DevicePage() {
                               className="text-muted-foreground hover:text-destructive"
                               onClick={() => setRemoveRuntime(runtime)}
                               disabled={runtimeActionId === runtime.runtimeId}
-                              aria-label={t("deleteRuntimeConfig", { name: runtime.displayName })}
+                              aria-label={t("deleteRuntimeConfig", { name: runtimeInstanceName(runtime) })}
                             >
                               <Trash2 />
                             </Button>
@@ -805,28 +912,34 @@ export function DevicePage() {
                 <Separator />
 
                 <div>
-                  <h3 className="mb-2 text-sm font-medium">{t("discoveredRuntimes")}</h3>
-                  {discoveredRuntimes.length === 0 ? (
-                    <p className="px-2 py-3 text-sm text-muted-foreground">{t("noDiscoveredRuntimes")}</p>
+                  <h3 className="mb-2 text-sm font-medium">{t("availableRuntimeTypes")}</h3>
+                  {availableRuntimeTypes.length === 0 ? (
+                    <p className="px-2 py-3 text-sm text-muted-foreground">{t("noRuntimeTypes")}</p>
                   ) : (
                     <div className="flex flex-col gap-1">
-                      {discoveredRuntimes.map((runtime) => {
-                        const available = runtime.discovery.available !== false
-                        return (
-                          <div key={runtime.runtimeId} className="flex min-h-12 items-center gap-3 rounded-lg px-2 py-2 hover:bg-accent/30">
-                            <span className={cn("size-2 shrink-0 rounded-full", available ? "bg-muted-foreground/50" : "bg-amber-500")} />
-                            <div className="min-w-0 flex-1">
-                              <p className="truncate text-sm font-medium">{runtime.displayName}</p>
-                              <p className="truncate text-xs text-muted-foreground">
-                                {available ? t("runtimeDiscovered") : t("runtimeExecutableNotFound")}
-                              </p>
-                            </div>
-                            <Button type="button" variant="outline" size="sm" onClick={() => setConfigRuntime(runtime)}>
-                              {t("configure")}
-                            </Button>
+                      {availableRuntimeTypes.map((runtimeType) => (
+                        <div key={runtimeType.runtimeType} className="flex min-h-12 items-center gap-3 rounded-lg px-2 py-2 hover:bg-accent/30">
+                          <span className={cn(
+                            "size-2 shrink-0 rounded-full",
+                            runtimeType.available ? "bg-muted-foreground/50" : "bg-amber-500",
+                          )} />
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-sm font-medium">{runtimeType.displayName}</p>
+                            <p className="truncate text-xs text-muted-foreground">
+                              {runtimeType.description || runtimeType.reason || runtimeType.implementationType}
+                            </p>
                           </div>
-                        )
-                      })}
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => addRuntime(runtimeType)}
+                          >
+                            <Plus data-icon="inline-start" />
+                            {t("addRuntime")}
+                          </Button>
+                        </div>
+                      ))}
                     </div>
                   )}
                 </div>
@@ -982,7 +1095,7 @@ export function DevicePage() {
 
       {configRuntime ? (
         <RuntimeConfigDialog
-          runtimeName={configRuntime.displayName}
+          runtimeName={runtimeInstanceName(configRuntime)}
           schema={configRuntime.schema}
           uiSchema={configRuntime.uiSchema}
           config={configRuntime.config}
@@ -993,6 +1106,54 @@ export function DevicePage() {
           onSave={(config) => configRuntime.configured
             ? saveRuntimeConfig(configRuntime, config)
             : configureAndStartRuntime(configRuntime, config)}
+        />
+      ) : null}
+
+      {createRuntimeType ? (
+        <RuntimeInstanceNameDialog
+          open
+          title={t("createRuntimeTitle", { type: createRuntimeType.displayName })}
+          description={t("createRuntimeDescription", { type: createRuntimeType.displayName })}
+          label={t("runtimeName")}
+          requiredMessage={t("runtimeNameRequired")}
+          placeholder={t("runtimeNamePlaceholder")}
+          submitLabel={t("createRuntime")}
+          cancelLabel={tCommon("cancel")}
+          initialName={suggestedRuntimeInstanceName(createRuntimeType, runtimes)}
+          saving={false}
+          onOpenChange={(open) => { if (!open) setCreateRuntimeType(null) }}
+          onSubmit={stageRuntimeCreation}
+        />
+      ) : null}
+
+      {pendingRuntimeCreation ? (
+        <RuntimeConfigDialog
+          runtimeName={pendingRuntimeCreation.name}
+          schema={pendingRuntimeCreation.runtimeType.schema}
+          uiSchema={pendingRuntimeCreation.runtimeType.uiSchema}
+          config={null}
+          saving={savingRuntimeId === NEW_RUNTIME_SAVING_ID}
+          submitLabel={t("configureAndStart")}
+          open
+          onOpenChange={(open) => { if (!open) setPendingRuntimeCreation(null) }}
+          onSave={(config) => createAndStartRuntime(pendingRuntimeCreation, config)}
+        />
+      ) : null}
+
+      {renameRuntime ? (
+        <RuntimeInstanceNameDialog
+          open
+          title={t("renameRuntimeTitle")}
+          description={t("renameRuntimeDescription", { type: runtimeTypeName(renameRuntime) })}
+          label={t("runtimeName")}
+          requiredMessage={t("runtimeNameRequired")}
+          placeholder={t("runtimeNamePlaceholder")}
+          submitLabel={t("saveRuntimeName")}
+          cancelLabel={tCommon("cancel")}
+          initialName={runtimeInstanceName(renameRuntime)}
+          saving={savingRuntimeName}
+          onOpenChange={(open) => { if (!open) setRenameRuntime(null) }}
+          onSubmit={submitRuntimeRename}
         />
       ) : null}
 
@@ -1052,7 +1213,9 @@ export function DevicePage() {
           <AlertDialogHeader>
             <AlertDialogTitle>{t("deleteRuntimeConfigTitle")}</AlertDialogTitle>
             <AlertDialogDescription>
-              {t("deleteRuntimeConfigDescription", { name: removeRuntime?.displayName ?? "" })}
+              {t("deleteRuntimeConfigDescription", {
+                name: removeRuntime ? runtimeInstanceName(removeRuntime) : "",
+              })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from connector.runtime_protocol import RuntimeInvalidRequestError
+from connector.runtime_protocol.filesystem import canonical_path
 
 DEFAULT_STARTUP_TIMEOUT_MS = 30_000
 DEFAULT_REQUEST_TIMEOUT_MS = 60_000
@@ -64,7 +65,7 @@ def normalized_config_values(raw: dict[str, Any]) -> dict[str, Any]:
             or not Path(dsh_home).expanduser().is_absolute()
         ):
             raise RuntimeInvalidRequestError("dshHome must be an absolute path")
-        values["dshHome"] = str(Path(dsh_home).expanduser())
+        values["dshHome"] = canonical_path(dsh_home)
     for key in ("startupTimeoutMs", "requestTimeoutMs", "restartBackoffMs"):
         value = values.get(key)
         if (
@@ -89,13 +90,16 @@ def normalized_config_values(raw: dict[str, Any]) -> dict[str, Any]:
 
 def dsh_home(values: dict[str, Any]) -> Path:
     configured = values.get("dshHome")
-    return Path(configured) if isinstance(configured, str) else Path.home() / ".dsh"
+    path = Path(configured) if isinstance(configured, str) else Path.home() / ".dsh"
+    return Path(canonical_path(path))
 
 
 def endpoint_path(values: dict[str, Any]) -> Path:
-    return dsh_home(values) / "agents-anywhere" / "bridge" / "endpoint.json"
-
-
+    return Path(
+        canonical_path(
+            dsh_home(values) / "agents-anywhere" / "bridge" / "endpoint.json"
+        )
+    )
 def dsh_capabilities() -> dict[str, bool]:
     return {
         "modelCatalog": True,

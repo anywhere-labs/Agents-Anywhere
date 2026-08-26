@@ -6,6 +6,7 @@ import hashlib
 import json
 import sys
 from collections.abc import Mapping
+from types import SimpleNamespace
 from typing import Any, Self
 
 import httpx
@@ -39,6 +40,7 @@ from connector.runtime_protocol import (
     RuntimeConfig,
     RuntimeConfigSchema,
     RuntimeIdentity,
+    RuntimeInvalidRequestError,
     RuntimeInventoryItem,
     RuntimeModelCatalog,
     RuntimeModelItem,
@@ -877,6 +879,13 @@ class FakeRuntimeSupervisor:
             raise RuntimeError(f"unknown runtime {runtime_id}")
         return self._runtime
 
+    def entry(self, runtime_id: str) -> SimpleNamespace:
+        runtime = self.resolve_runtime(runtime_id)
+        return SimpleNamespace(
+            runtime_type=runtime.identity.runtime,
+            runtime_id=runtime_id,
+        )
+
 
 async def unused_notification_sender(method: str, params: dict[str, Any]) -> None:
     raise AssertionError(f"unexpected notification {method}: {params}")
@@ -936,6 +945,116 @@ class FakeSnapshotTerminalBackend(FakeTerminalBackend):
 
 def test_connector_runtime_dispatches_request_and_forwards_notifications() -> None:
     asyncio.run(_exercise_runtime())
+
+
+def test_connector_runtime_publishes_named_instance_status_scope() -> None:
+    async def run() -> None:
+        client = _client()
+        websocket = FakeWebSocket()
+        client._rpc.set_connection(websocket)  # type: ignore[arg-type]
+        negotiated = await client.dispatch(
+            "runtime.discover",
+            {"supportedControlVersions": ["2.0", "1.0"]},
+        )
+
+        await client.dispatch(
+            "runtime.start",
+            {
+                "runtime": "codex",
+                "runtimeId": "rti_codex_named",
+                "name": "Named Codex",
+                "config": {},
+                "configRevision": 1,
+            },
+        )
+
+        assert negotiated["selectedControlVersion"] == "2.0"
+        status_scopes = [
+            message["params"]
+            for message in websocket.messages
+            if message.get("method") == "runtime.statusChanged"
+        ]
+        assert [scope["status"] for scope in status_scopes] == [
+            "validating",
+            "starting",
+            "running",
+        ]
+        assert all(scope["runtime"] == "codex" for scope in status_scopes)
+        assert all(scope["runtimeId"] == "rti_codex_named" for scope in status_scopes)
+
+    asyncio.run(run())
+
+
+def test_runtime_control_negotiation_isolated_across_reconnect_race(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def run() -> None:
+        client = _client()
+        old_connection = client._dispatcher.new_session()
+        new_connection = client._dispatcher.new_session()
+        discover_started = asyncio.Event()
+        discover_release = asyncio.Event()
+        original_discover = client.agent_runtime_supervisor.discover
+        calls = 0
+
+        async def delayed_first_discover():  # type: ignore[no-untyped-def]
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                discover_started.set()
+                await discover_release.wait()
+            return await original_discover()
+
+        monkeypatch.setattr(
+            client.agent_runtime_supervisor,
+            "discover",
+            delayed_first_discover,
+        )
+        old_negotiation = asyncio.create_task(
+            old_connection.dispatch(
+                "runtime.discover",
+                {"supportedControlVersions": ["2.0", "1.0"]},
+            )
+        )
+        await discover_started.wait()
+
+        new_legacy = await new_connection.dispatch("runtime.discover", {})
+        assert set(new_legacy) == {"runtimes"}
+        assert new_connection.runtime_rpc.control_version == "1.0"
+
+        discover_release.set()
+        old_result = await old_negotiation
+        assert old_result["selectedControlVersion"] == "2.0"
+        assert old_connection.runtime_rpc.control_version == "2.0"
+        assert new_connection.runtime_rpc.control_version == "1.0"
+
+        with pytest.raises(RuntimeInvalidRequestError, match="already selected"):
+            await old_connection.dispatch(
+                "runtime.discover",
+                {"supportedControlVersions": ["1.0"]},
+            )
+        assert new_connection.runtime_rpc.control_version == "1.0"
+
+    asyncio.run(run())
+
+
+def test_backend_connection_bootstrap_does_not_lock_control_version() -> None:
+    async def run() -> None:
+        client = _client()
+        connection = client._dispatcher.new_session()
+
+        inventory = await connection.discover_runtimes()
+        assert set(inventory) == {"runtimes"}
+        assert connection.runtime_rpc.negotiated_control_version is None
+
+        negotiated = await connection.dispatch(
+            "runtime.discover",
+            {"supportedControlVersions": ["2.0", "1.0"]},
+        )
+        assert negotiated["selectedControlVersion"] == "2.0"
+        assert connection.runtime_rpc.negotiated_control_version == "2.0"
+
+    asyncio.run(run())
 
 
 def test_connector_rpc_start_message_does_not_block_later_requests() -> None:
@@ -1395,9 +1514,11 @@ async def _exercise_runtime_sync_reconciles_complete_dsh_inventory_only() -> Non
     begin = ingested_batches[0][0]["params"]
     complete = ingested_batches[1][0]["params"]
     assert begin["runtime"] == "dsh"
+    assert begin["runtimeId"] == "dsh"
     assert len(begin["scanToken"]) == 32
     assert complete == {
         "runtime": "dsh",
+        "runtimeId": "dsh",
         "scanToken": begin["scanToken"],
         "complete": True,
         "sessions": [
@@ -1850,7 +1971,11 @@ async def _exercise_runtime() -> None:
     assert ws.messages[0] == {
         "type": "notification",
         "method": "runtime.statusChanged",
-        "params": {"runtimeId": "codex", "status": "validating"},
+        "params": {
+            "runtime": "codex",
+            "runtimeId": "codex",
+            "status": "validating",
+        },
     }
     assert ws.messages[-1] == {
         "id": "rpc_1",
@@ -1963,7 +2088,11 @@ async def _exercise_runtime() -> None:
     assert ws.messages[-1]["result"]["notices"][0] == {
         "noticeId": "notice_1",
         "sessionId": "sess_1",
-        "source": {"runtime": "codex"},
+        "source": {
+            "runtime": "codex",
+            "runtimeType": "codex",
+            "runtimeId": "codex",
+        },
         "type": "interaction",
         "title": "Approval required",
         "severity": "info",
@@ -1972,7 +2101,7 @@ async def _exercise_runtime() -> None:
         "responseRequired": True,
         "actions": [{"actionId": "approve", "label": "Approve"}],
         "context": {},
-        "metadata": {},
+        "metadata": {"runtimeType": "codex", "runtimeId": "codex"},
     }
 
     await client.handle_message(
@@ -1989,10 +2118,11 @@ async def _exercise_runtime() -> None:
         "version": "1",
         "scope": "runtime",
         "runtime": "codex",
+        "runtimeId": "codex",
         "supported": True,
         "available": True,
         "allowed": True,
-        "metadata": {},
+        "metadata": {"runtimeType": "codex", "runtimeId": "codex"},
     }
 
     await client.handle_message(
@@ -2039,12 +2169,13 @@ async def _exercise_runtime() -> None:
         "version": "1",
         "scope": "session",
         "runtime": "codex",
+        "runtimeId": "codex",
         "sessionId": "sess_1",
         "supported": True,
         "available": False,
         "allowed": True,
         "unavailableReason": "session_not_running",
-        "metadata": {},
+        "metadata": {"runtimeType": "codex", "runtimeId": "codex"},
     }
 
     await client.handle_message(
@@ -2396,7 +2527,18 @@ async def _exercise_runtime_sync_task_survives_websocket_reconnect(monkeypatch) 
         await asyncio.Event().wait()
 
     monkeypatch.setattr(client, "ensure_access_token", ensure_access_token)
-    monkeypatch.setattr(client._dispatcher, "discover_runtimes", discover_runtimes)
+    original_new_session = client._dispatcher.new_session
+
+    def new_session():  # type: ignore[no-untyped-def]
+        request_session = original_new_session()
+        monkeypatch.setattr(
+            request_session,
+            "discover_runtimes",
+            discover_runtimes,
+        )
+        return request_session
+
+    monkeypatch.setattr(client._dispatcher, "new_session", new_session)
     monkeypatch.setattr(client, "send_notification", send_notification)
     monkeypatch.setattr(client._runtime_sync, "sync_existing_loop", sync_existing_loop)
     monkeypatch.setattr(
@@ -2965,6 +3107,7 @@ async def _exercise_runtime_config_read() -> None:
         "running": True,
         "config": {
             "runtime": "codex",
+            "runtimeId": "codex",
             "revision": 42,
             "values": {"environment": {"EXAMPLE": "1"}},
             "schema": {
@@ -2974,7 +3117,11 @@ async def _exercise_runtime_config_read() -> None:
                 },
             },
             "uiSchema": {"environment": {"component": "keyValue"}},
-            "metadata": {"validated": True},
+            "metadata": {
+                "validated": True,
+                "runtimeType": "codex",
+                "runtimeId": "codex",
+            },
         },
     }
 

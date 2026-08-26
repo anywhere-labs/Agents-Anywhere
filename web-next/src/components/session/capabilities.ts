@@ -14,24 +14,34 @@ export const CAPABILITY = {
 
 export type KnownCapabilityId = (typeof CAPABILITY)[keyof typeof CAPABILITY]
 
+export type RuntimeCapabilityScope = string | {
+  runtimeId?: string | null
+  runtimeType?: string | null
+}
+
 export function findCapability(
   capabilitySet: ProtocolCapabilitySet | null | undefined,
   capabilityId: string,
-  runtime?: string,
+  runtime?: RuntimeCapabilityScope,
 ): ProtocolCapability | null {
   const matches = capabilitySet?.capabilities.filter(
     (capability) => capability.capabilityId === capabilityId,
   ) ?? []
   if (!runtime) return matches[0] ?? null
-  return matches.find((capability) => capability.runtime === runtime)
-    ?? matches.find((capability) => !capability.runtime)
+  const runtimeId = typeof runtime === "string" ? runtime : runtime.runtimeId ?? null
+  const runtimeType = typeof runtime === "string" ? runtime : runtime.runtimeType ?? null
+  return matches.find(
+    (capability) => runtimeId && capability.runtimeId === runtimeId,
+  )
+    ?? matches.find((capability) => runtimeType && capability.runtime === runtimeType)
+    ?? matches.find((capability) => !capability.runtime && !capability.runtimeId)
     ?? null
 }
 
 export function capabilityIsUsable(
   capabilitySet: ProtocolCapabilitySet | null | undefined,
   capabilityId: KnownCapabilityId,
-  runtime?: string,
+  runtime?: RuntimeCapabilityScope,
 ): boolean {
   const capability = findCapability(capabilitySet, capabilityId, runtime)
   return Boolean(capability?.supported && capability.available && capability.allowed)

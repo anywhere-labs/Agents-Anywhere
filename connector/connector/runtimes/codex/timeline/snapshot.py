@@ -21,10 +21,8 @@ def timeline_items_from_thread(
     for index, raw in enumerate(limit_items(raw_items, limit)):
         if pending_messages is not None:
             pending_messages.attach_to_raw_item(
-                session_id=session_id,
                 external_session_id=external_session_id,
                 raw=raw,
-                fallback_index=index,
             )
         codex_item = timeline_item_from_projection(
             timeline_projection_from_raw(raw),

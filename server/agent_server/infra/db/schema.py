@@ -1,16 +1,20 @@
 from __future__ import annotations
 
+from typing import Any
+
 from sqlalchemy import (
     BigInteger,
     Column,
     Float,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Integer,
     MetaData,
     PrimaryKeyConstraint,
     Table,
     Text,
+    UniqueConstraint,
 )
 
 metadata = MetaData()
@@ -30,6 +34,13 @@ app_releases = Table(
 )
 
 
+def _legacy_runtime_id_default(context: Any) -> str:
+    runtime = context.get_current_parameters().get("runtime")
+    if not isinstance(runtime, str) or not runtime:
+        raise ValueError("runtime is required when runtime_id is omitted")
+    return runtime
+
+
 connectors = Table(
     "connectors",
     metadata,
@@ -46,10 +57,49 @@ connectors = Table(
     Column("revoked", Integer, nullable=False, server_default="0"),
     Column("created_at", Text, nullable=False),
     Column("updated_at", Text, nullable=False),
+    Column(
+        "runtime_control_version",
+        Text,
+        nullable=False,
+        server_default="1.0",
+    ),
     # JSON blob written by the daemon to mirror the user's local agent
     # preferences (e.g. ~/.claude/settings.json fields). Read-only from the
     # backend's perspective; the daemon owns the write loop.
     Column("user_preferences", Text),
+)
+
+
+connector_runtime_types = Table(
+    "connector_runtime_types",
+    metadata,
+    Column(
+        "connector_id",
+        Text,
+        ForeignKey("connectors.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
+    Column("runtime_type", Text, nullable=False),
+    Column("implementation_type", Text, nullable=False),
+    Column("display_name", Text, nullable=False),
+    Column("description", Text),
+    Column("present", Integer, nullable=False, server_default="1"),
+    Column("available", Integer, nullable=False, server_default="1"),
+    Column("reason", Text),
+    Column("recommended", Integer, nullable=False, server_default="0"),
+    Column("recommendation_rank", Integer),
+    Column("discovery_json", Text, nullable=False),
+    Column("config_schema_json", Text),
+    Column("ui_schema_json", Text),
+    Column("defaults_json", Text, nullable=False),
+    Column("capabilities_json", Text, nullable=False),
+    Column("metadata_json", Text, nullable=False),
+    Column("instance_policy", Text, nullable=False),
+    Column("max_instances", BigInteger),
+    Column("last_discovered_at", Text, nullable=False),
+    Column("created_at", Text, nullable=False),
+    Column("updated_at", Text, nullable=False),
+    PrimaryKeyConstraint("connector_id", "runtime_type"),
 )
 
 
@@ -64,21 +114,26 @@ device_runtimes = Table(
     ),
     Column("runtime_id", Text, nullable=False),
     Column("runtime_type", Text, nullable=False),
-    Column("display_name", Text, nullable=False),
-    Column("present", Integer, nullable=False, server_default="1"),
-    Column("discovery_json", Text, nullable=False),
-    Column("inventory_metadata_json", Text, nullable=False, server_default="{}"),
-    Column("config_schema_json", Text),
-    Column("ui_schema_json", Text),
+    Column("name", Text, nullable=False),
+    Column("name_key", Text, nullable=False),
     # NULL means the runtime has not been configured. An empty JSON object is
     # a valid configured value and means "use every provider default".
     Column("config_json", Text),
     Column("active", Integer, nullable=False, server_default="0"),
     Column("status", Text, nullable=False, server_default="stopped"),
     Column("error_json", Text),
-    Column("last_discovered_at", Text, nullable=False),
+    Column("created_at", Text, nullable=False),
     Column("updated_at", Text, nullable=False),
     PrimaryKeyConstraint("connector_id", "runtime_id"),
+    UniqueConstraint("connector_id", "name_key"),
+    ForeignKeyConstraint(
+        ["connector_id", "runtime_type"],
+        [
+            "connector_runtime_types.connector_id",
+            "connector_runtime_types.runtime_type",
+        ],
+        ondelete="CASCADE",
+    ),
 )
 
 
@@ -92,11 +147,17 @@ connector_runtime_catalogs = Table(
         nullable=False,
     ),
     Column("runtime", Text, nullable=False),
+    Column(
+        "runtime_id",
+        Text,
+        nullable=False,
+        default=_legacy_runtime_id_default,
+    ),
     Column("catalog_type", Text, nullable=False),
     Column("revision", BigInteger, nullable=False),
     Column("catalog_json", Text, nullable=False),
     Column("updated_at", Text, nullable=False),
-    PrimaryKeyConstraint("connector_id", "runtime", "catalog_type"),
+    PrimaryKeyConstraint("connector_id", "runtime_id", "catalog_type"),
 )
 
 
@@ -265,6 +326,12 @@ sessions = Table(
     Column("id", Text, primary_key=True),
     Column("connector_id", Text, ForeignKey("connectors.id"), nullable=False),
     Column("runtime", Text, nullable=False),
+    Column(
+        "runtime_id",
+        Text,
+        nullable=False,
+        default=_legacy_runtime_id_default,
+    ),
     Column("origin", Text, nullable=False, server_default="connector_import"),
     Column("model_selection_id", Text),
     Column("permission_selection_id", Text),
@@ -309,6 +376,12 @@ session_active_runs = Table(
         primary_key=True,
     ),
     Column("runtime", Text, nullable=False),
+    Column(
+        "runtime_id",
+        Text,
+        nullable=False,
+        default=_legacy_runtime_id_default,
+    ),
     Column("external_session_id", Text),
     Column("status", Text, nullable=False),
     Column("params_json", Text),

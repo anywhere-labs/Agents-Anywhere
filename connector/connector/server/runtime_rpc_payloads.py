@@ -14,6 +14,7 @@ from connector.runtime_protocol import (
     RuntimeModelCatalog,
     RuntimeOperationResult,
     RuntimePermissionCatalog,
+    RuntimeTypeDescriptor,
     SessionNotice,
 )
 
@@ -32,11 +33,47 @@ def runtime_config_schema_payload(schema: RuntimeConfigSchema) -> dict[str, Any]
 def runtime_config_payload(config: RuntimeConfig) -> dict[str, Any]:
     return {
         "runtime": config.runtime,
+        **({"runtimeId": config.runtime_id} if config.runtime_id is not None else {}),
         "revision": config.revision,
         "values": dict(config.values),
         "schema": dict(config.schema) if config.schema is not None else None,
         "uiSchema": dict(config.ui_schema) if config.ui_schema is not None else None,
         "metadata": dict(config.metadata),
+    }
+
+
+def runtime_type_descriptor_payload(
+    descriptor: RuntimeTypeDescriptor,
+) -> dict[str, Any]:
+    config_schema = descriptor.config_schema
+    return {
+        "runtimeType": descriptor.runtime_type,
+        "displayName": descriptor.display_name,
+        "description": descriptor.description,
+        "available": descriptor.available,
+        "reason": descriptor.reason,
+        "recommended": descriptor.recommended,
+        "recommendationRank": descriptor.recommendation_rank,
+        "implementationType": descriptor.implementation_type,
+        "configSchema": (
+            {
+                "revision": config_schema.revision,
+                "schema": dict(config_schema.schema),
+                "uiSchema": (
+                    dict(config_schema.ui_schema)
+                    if config_schema.ui_schema is not None
+                    else None
+                ),
+                "defaults": dict(config_schema.defaults),
+                "metadata": dict(config_schema.metadata),
+            }
+            if config_schema is not None
+            else None
+        ),
+        "capabilities": dict(descriptor.capabilities),
+        "metadata": dict(descriptor.metadata),
+        "instancePolicy": descriptor.instance_policy,
+        "maxInstances": descriptor.effective_max_instances,
     }
 
 
@@ -66,6 +103,7 @@ def capability_set_payload(capabilities: RuntimeCapabilitySet) -> dict[str, Any]
     return drop_none_payload(
         {
             "runtime": capabilities.runtime,
+            "runtimeId": capabilities.runtime_id,
             "revision": capabilities.revision,
             "sessionId": capabilities.session_id,
             "connectorId": capabilities.connector_id,
@@ -85,6 +123,7 @@ def capability_payload(capability: RuntimeCapability) -> dict[str, Any]:
             "version": capability.version,
             "scope": capability.scope,
             "runtime": capability.runtime,
+            "runtimeId": capability.runtime_id,
             "sessionId": capability.session_id,
             "connectorId": capability.connector_id,
             "supported": capability.supported,
@@ -137,7 +176,9 @@ def runtime_command_payload(command: RuntimeCommand) -> dict[str, Any]:
         "enabled": command.enabled,
         "disabledReason": command.disabled_reason,
         "acceptsArgs": command.accepts_args,
-        "argsSchema": dict(command.args_schema) if command.args_schema is not None else None,
+        "argsSchema": dict(command.args_schema)
+        if command.args_schema is not None
+        else None,
         "metadata": dict(command.metadata),
     }
 
@@ -146,6 +187,7 @@ def session_state_payload(state: Any) -> dict[str, Any]:
     return {
         "sessionId": state.session_id,
         "runtime": state.runtime,
+        **({"runtimeId": state.runtime_id} if state.runtime_id is not None else {}),
         "externalSessionId": state.external_session_id,
         "status": state.status,
         "selections": dict(state.selections),
@@ -160,7 +202,16 @@ def session_notice_payload(notice: SessionNotice) -> dict[str, Any]:
         {
             "noticeId": notice.notice_id,
             "sessionId": notice.session_id,
-            "source": {"runtime": notice.runtime, **dict(notice.source)},
+            "source": drop_none_payload(
+                {
+                    **dict(notice.source),
+                    "runtime": notice.runtime,
+                    "runtimeType": (
+                        notice.runtime if notice.runtime_id is not None else None
+                    ),
+                    "runtimeId": notice.runtime_id,
+                }
+            ),
             "type": notice.type,
             "title": notice.title,
             "message": notice.message,
@@ -179,6 +230,7 @@ def session_notice_payload(notice: SessionNotice) -> dict[str, Any]:
 def model_catalog_payload(catalog: RuntimeModelCatalog) -> dict[str, Any]:
     return {
         "runtime": catalog.runtime,
+        **({"runtimeId": catalog.runtime_id} if catalog.runtime_id is not None else {}),
         "revision": catalog.revision,
         "models": [
             {
@@ -224,6 +276,7 @@ def model_catalog_payload(catalog: RuntimeModelCatalog) -> dict[str, Any]:
 def permission_catalog_payload(catalog: RuntimePermissionCatalog) -> dict[str, Any]:
     return {
         "runtime": catalog.runtime,
+        **({"runtimeId": catalog.runtime_id} if catalog.runtime_id is not None else {}),
         "revision": catalog.revision,
         "permissions": [
             {
@@ -252,6 +305,7 @@ def session_meta_payload(session: Any) -> dict[str, Any]:
         "sessionId": session.session_id,
         "externalSessionId": session.external_session_id,
         "runtime": session.runtime,
+        **({"runtimeId": session.runtime_id} if session.runtime_id is not None else {}),
         "title": session.title,
         "cwd": session.cwd,
         "orderingTime": session.ordering_time,
@@ -269,8 +323,12 @@ def agent_inventory_payload(item: RuntimeInventoryItem) -> dict[str, Any]:
             **({"reason": item.reason} if item.reason is not None else {}),
         },
         "schema": item.config_schema.schema if item.config_schema is not None else None,
-        "uiSchema": item.config_schema.ui_schema if item.config_schema is not None else None,
-        "defaults": item.config_schema.defaults if item.config_schema is not None else {},
+        "uiSchema": item.config_schema.ui_schema
+        if item.config_schema is not None
+        else None,
+        "defaults": item.config_schema.defaults
+        if item.config_schema is not None
+        else {},
         "status": "available" if item.available else "unavailable",
         "configured": item.configured,
         "capabilities": dict(item.capabilities),

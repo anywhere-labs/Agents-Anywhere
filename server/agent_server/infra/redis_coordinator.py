@@ -84,6 +84,22 @@ class RedisCoordinator:
         ttl_ms = max(1, math.ceil(ttl_seconds * 1000))
         return await self._compare_and_apply(key, value, expire_ms=ttl_ms)
 
+    async def replace_if_value(
+        self,
+        key: str,
+        expected_value: str,
+        replacement_value: str,
+        *,
+        ttl_seconds: float,
+    ) -> bool:
+        ttl_ms = max(1, math.ceil(ttl_seconds * 1000))
+        return await self._compare_and_apply(
+            key,
+            expected_value,
+            replacement_value=replacement_value,
+            expire_ms=ttl_ms,
+        )
+
     async def delete_if_value(self, key: str, value: str) -> bool:
         return await self._compare_and_apply(key, value, delete=True)
 
@@ -122,6 +138,7 @@ class RedisCoordinator:
         key: str,
         expected_value: str,
         *,
+        replacement_value: str | None = None,
         expire_ms: int | None = None,
         delete: bool = False,
     ) -> bool:
@@ -134,6 +151,8 @@ class RedisCoordinator:
                     pipeline.multi()
                     if delete:
                         pipeline.delete(key)
+                    elif replacement_value is not None and expire_ms is not None:
+                        pipeline.set(key, replacement_value, px=expire_ms)
                     elif expire_ms is not None:
                         pipeline.pexpire(key, expire_ms)
                     else:

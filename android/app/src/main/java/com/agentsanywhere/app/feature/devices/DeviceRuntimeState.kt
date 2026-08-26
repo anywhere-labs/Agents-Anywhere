@@ -3,6 +3,8 @@ package com.agentsanywhere.app.feature.devices
 import com.agentsanywhere.app.api.RemoteDeviceRuntime
 import com.agentsanywhere.app.api.RemoteDeviceRuntimeList
 import com.agentsanywhere.app.api.RemoteDeviceRuntimeStatus
+import com.agentsanywhere.app.model.RuntimeInstanceLabels
+import com.agentsanywhere.app.model.runtimeInstanceLabels
 
 data class DeviceRuntimeList(
     val connectorId: String,
@@ -28,6 +30,12 @@ data class DeviceRuntime(
     val lastDiscoveredAt: String?,
     val updatedAt: String?,
 ) {
+    val name: String
+        get() = displayName
+
+    val labels: RuntimeInstanceLabels
+        get() = runtimeInstanceLabels(name, type)
+
     val detailMessage: String?
         get() = error.stringValue("message")
             ?: error.stringValue("code")
@@ -235,7 +243,7 @@ internal fun RemoteDeviceRuntime.toDeviceRuntime(): DeviceRuntime {
 }
 
 private val deviceRuntimeComparator = compareBy<DeviceRuntime> {
-    when (it.id) {
+    when (it.type) {
         "codex" -> 0
         "claude" -> 1
         "dsh" -> 2

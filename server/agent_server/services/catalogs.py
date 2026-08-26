@@ -9,7 +9,6 @@ from agent_server.core.catalogs import (
     validate_model_catalog,
     validate_permission_catalog,
 )
-from agent_server.core.models import RuntimeName
 from agent_server.core.protocol import (
     ProtocolModelCatalog,
     ProtocolPermissionCatalog,
@@ -36,11 +35,13 @@ class CatalogService:
         *,
         catalog_type: CatalogType,
         payload: dict[str, object],
+        runtime_id: str | None = None,
     ) -> CatalogUpdateOutcome:
         catalog = self._parse(catalog_type, payload)
         outcome = await self._store.update_protocol_catalog(
             connector_id,
             runtime=catalog.runtime,
+            runtime_id=runtime_id,
             catalog_type=catalog_type,
             revision=catalog.revision,
             catalog=catalog.model_dump(mode="json"),
@@ -56,50 +57,46 @@ class CatalogService:
         self,
         connector_id: str,
         *,
-        runtime: RuntimeName,
+        runtime_id: str,
         user_id: str | None = None,
     ) -> ProtocolModelCatalog | None:
         raw = await self._store.get_protocol_catalog(
             connector_id,
-            runtime=runtime,
+            runtime_id=runtime_id,
             catalog_type="model",
             user_id=user_id,
         )
         if raw is None:
             return None
         catalog = self._parse("model", raw)
-        if catalog.runtime != runtime:
-            raise CatalogServiceError("invalid_catalog", "catalog runtime mismatch")
         return catalog
 
     async def permission_catalog(
         self,
         connector_id: str,
         *,
-        runtime: RuntimeName,
+        runtime_id: str,
         user_id: str | None = None,
     ) -> ProtocolPermissionCatalog | None:
         raw = await self._store.get_protocol_catalog(
             connector_id,
-            runtime=runtime,
+            runtime_id=runtime_id,
             catalog_type="permission",
             user_id=user_id,
         )
         if raw is None:
             return None
         catalog = self._parse("permission", raw)
-        if catalog.runtime != runtime:
-            raise CatalogServiceError("invalid_catalog", "catalog runtime mismatch")
         return catalog
 
     async def resolve_model(
         self,
         connector_id: str,
         *,
-        runtime: RuntimeName,
+        runtime_id: str,
         selection_id: str,
     ) -> tuple[str, str | None]:
-        catalog = await self.model_catalog(connector_id, runtime=runtime)
+        catalog = await self.model_catalog(connector_id, runtime_id=runtime_id)
         if catalog is None:
             raise CatalogServiceError("catalog_unavailable", "model catalog is unavailable")
         try:
@@ -114,10 +111,10 @@ class CatalogService:
         self,
         connector_id: str,
         *,
-        runtime: RuntimeName,
+        runtime_id: str,
         selection_id: str,
     ) -> dict[str, object]:
-        catalog = await self.permission_catalog(connector_id, runtime=runtime)
+        catalog = await self.permission_catalog(connector_id, runtime_id=runtime_id)
         if catalog is None:
             raise CatalogServiceError(
                 "catalog_unavailable",

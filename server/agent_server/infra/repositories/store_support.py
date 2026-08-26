@@ -30,6 +30,7 @@ from agent_server.infra.db import (
     build_engine,
     connector_protocol_capabilities as connector_protocol_capabilities_t,
     connector_runtime_catalogs as connector_runtime_catalogs_t,
+    connector_runtime_types as connector_runtime_types_t,
     connector_terminal_roots as connector_terminal_roots_t,
     connectors as connectors_t,
     dashboard_daily_metrics as dashboard_daily_metrics_t,
@@ -58,6 +59,7 @@ from agent_server.core.models import (
     SessionView,
     UserView,
 )
+from agent_server.core.runtime_identity import RuntimeIdentity
 from agent_server.infra.repositories import (
     ActiveRunRepository,
     InstanceSettingsRepository,

@@ -131,6 +131,54 @@ def test_effective_capabilities_use_runtime_session_fact_not_session_status() ->
     assert interrupt.available is True
 
 
+def test_effective_capabilities_prefer_the_exact_runtime_instance() -> None:
+    session = _session(takeover=True).model_copy(
+        update={"runtimeId": "rti_work"}
+    )
+    runtime_capabilities = ProtocolCapabilitySet(
+        revision=5,
+        capabilities=[
+            ProtocolCapability(
+                capabilityId=SESSION_SEND_MESSAGE,
+                scope="runtime",
+                runtime="codex",
+                available=False,
+                unavailableReason="provider_default_disabled",
+            ),
+            ProtocolCapability.model_validate(
+                {
+                    "capabilityId": SESSION_SEND_MESSAGE,
+                    "scope": "runtime",
+                    "runtime": "codex",
+                    "runtimeId": "rti_other",
+                    "available": False,
+                    "unavailableReason": "other_instance_disabled",
+                }
+            ),
+            ProtocolCapability.model_validate(
+                {
+                    "capabilityId": SESSION_SEND_MESSAGE,
+                    "scope": "runtime",
+                    "runtime": "codex",
+                    "runtimeId": "rti_work",
+                    "available": True,
+                }
+            ),
+        ],
+    )
+
+    effective = derive_session_effective_capabilities(
+        session=session,
+        runtime_capabilities=runtime_capabilities,
+    )
+
+    send = find_capability(effective, SESSION_SEND_MESSAGE)
+    assert send is not None
+    assert send.available is True
+    assert send.unavailableReason is None
+    assert send.model_dump(mode="json")["runtimeId"] == "rti_work"
+
+
 def test_unknown_runtime_capability_is_preserved_but_not_promoted() -> None:
     unknown_capability_id = "vendor.example.future_action"
     runtime_capabilities = ProtocolCapabilitySet(

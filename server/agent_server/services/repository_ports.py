@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, Protocol
 
 from agent_server.core.catalogs import CatalogType, CatalogUpdateOutcome
+from agent_server.core.device_runtime import RuntimeInventoryItem, RuntimeTypeDescriptor
 from agent_server.core.models import (
     ConnectorView,
     SessionRuntimeState,
@@ -35,7 +36,7 @@ class CatalogRepository(Protocol):
         self,
         connector_id: str,
         *,
-        runtime: str,
+        runtime_id: str,
         catalog_type: CatalogType,
         user_id: str | None = None,
     ) -> dict[str, Any] | None: ...
@@ -45,6 +46,7 @@ class CatalogRepository(Protocol):
         connector_id: str,
         *,
         runtime: str,
+        runtime_id: str | None = None,
         catalog_type: CatalogType,
         revision: int,
         catalog: dict[str, Any],
@@ -75,6 +77,7 @@ class SessionStateRepository(SessionLookupRepository, Protocol):
         *,
         session_id: str,
         runtime: str,
+        runtime_id: str | None = None,
         external_session_id: str | None = None,
         status: str | None = None,
         selections: dict[str, str | None] | None = None,
@@ -145,12 +148,14 @@ class ConnectorNotificationRepository(
     async def begin_dsh_session_inventory(
         self,
         connector_id: str,
+        runtime_id: str,
         scan_token: str,
     ) -> None: ...
 
     async def complete_dsh_session_inventory(
         self,
         connector_id: str,
+        runtime_id: str,
         scan_token: str,
         entries: list[dict[str, str | None]],
         *,
@@ -192,6 +197,8 @@ class ConnectorNotificationRepository(
         connector_id: str,
         session_id: str,
         external_session_id: str | None = None,
+        runtime: str | None = None,
+        runtime_id: str | None = None,
     ) -> str: ...
 
     async def set_session_archived(
@@ -226,7 +233,42 @@ class DeviceRuntimeRepository(
 ):
     async def clear_active_run(self, session_id: str) -> None: ...
 
-    async def clear_device_runtime_config(self, connector_id: str, runtime_id: str) -> dict[str, Any]: ...
+    async def clear_device_runtime_config(
+        self,
+        connector_id: str,
+        runtime_id: str,
+    ) -> dict[str, Any]: ...
+
+    async def create_device_runtime(
+        self,
+        connector_id: str,
+        *,
+        runtime_type: str,
+        name: str,
+        config: dict[str, Any],
+        active: bool,
+    ) -> dict[str, Any]: ...
+
+    async def get_connector_runtime_control_version(
+        self,
+        connector_id: str,
+        *,
+        user_id: str | None = None,
+    ) -> str: ...
+
+    async def set_connector_runtime_control_version(
+        self,
+        connector_id: str,
+        version: str,
+    ) -> None: ...
+
+    async def get_connector_runtime_type(
+        self,
+        connector_id: str,
+        runtime_type: str,
+        *,
+        user_id: str | None = None,
+    ) -> dict[str, Any]: ...
 
     async def get_device_runtime(
         self,
@@ -245,19 +287,41 @@ class DeviceRuntimeRepository(
         user_id: str | None = None,
     ) -> list[dict[str, Any]]: ...
 
+    async def list_connector_runtime_types(
+        self,
+        connector_id: str,
+        *,
+        user_id: str | None = None,
+    ) -> list[dict[str, Any]]: ...
+
     async def list_running_sessions_for_connector_agent(
         self,
         *,
         connector_id: str,
-        runtime: str,
+        runtime_id: str,
         user_id: str | None = None,
     ) -> list[SessionView]: ...
 
     async def replace_device_runtime_inventory(
         self,
         connector_id: str,
-        runtimes: list[Any],
+        runtimes: list[RuntimeInventoryItem],
+        *,
+        select_control_version: bool = True,
     ) -> list[dict[str, Any]]: ...
+
+    async def replace_connector_runtime_types(
+        self,
+        connector_id: str,
+        runtime_types: list[RuntimeTypeDescriptor],
+    ) -> list[dict[str, Any]]: ...
+
+    async def rename_device_runtime(
+        self,
+        connector_id: str,
+        runtime_id: str,
+        name: str,
+    ) -> dict[str, Any]: ...
 
     async def set_device_runtime_active(
         self,
@@ -296,6 +360,14 @@ class SessionRunRepository(
         user_id: str | None = None,
     ) -> dict[str, Any]: ...
 
+    async def get_device_runtime(
+        self,
+        connector_id: str,
+        runtime_id: str,
+        *,
+        user_id: str | None = None,
+    ) -> dict[str, Any]: ...
+
     async def clear_active_run(self, session_id: str) -> None: ...
 
     async def create_session(self, **values: Any) -> SessionView: ...
@@ -324,6 +396,8 @@ class SessionRunRepository(
         connector_id: str,
         session_id: str,
         external_session_id: str | None = None,
+        runtime: str | None = None,
+        runtime_id: str | None = None,
     ) -> str: ...
 
     async def start_active_run(self, **values: Any) -> None: ...

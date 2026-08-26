@@ -5,6 +5,7 @@ from connector.runtime_protocol.attachments import (
 )
 from connector.runtime_protocol.errors import (
     RuntimeConflictError,
+    RuntimeInstancesUnsupportedError,
     RuntimeInvalidRequestError,
     RuntimeProtocolError,
     RuntimeUnavailableError,
@@ -12,6 +13,23 @@ from connector.runtime_protocol.errors import (
     RuntimeUpstreamError,
 )
 from connector.runtime_protocol.host import RuntimeHostClient
+from connector.runtime_protocol.instance_binding import (
+    RuntimeInstance,
+    RuntimeInstanceHost,
+)
+from connector.runtime_protocol.instance_models import (
+    MAX_CONFIG_REVISION,
+    RuntimeInstanceLifecycleStatus,
+    RuntimeInstancePolicy,
+    RuntimeInstanceSpec,
+    RuntimeInstanceStatus,
+    RuntimeResourceClaim,
+    RuntimeResourceMode,
+    RuntimeScope,
+    RuntimeSourceKey,
+    RuntimeTypeDescriptor,
+    legacy_runtime_scope,
+)
 from connector.runtime_protocol.models import (
     CAPABILITY_CATALOG_EFFORT,
     CAPABILITY_CATALOG_MODEL,
@@ -36,7 +54,6 @@ from connector.runtime_protocol.models import (
     RuntimeInventoryItem,
     RuntimeModelCatalog,
     RuntimeModelItem,
-    PreparedSessionTimelineSync as PreparedSessionTimelineSync,
     RuntimeOperationResult,
     RuntimePermissionCatalog,
     RuntimePermissionItem,
@@ -48,6 +65,9 @@ from connector.runtime_protocol.models import (
     SessionMeta,
     SessionNotice,
     SessionState,
+)
+from connector.runtime_protocol.models import (
+    PreparedSessionTimelineSync as PreparedSessionTimelineSync,
 )
 from connector.runtime_protocol.protocol import AgentRuntime
 from connector.runtime_protocol.provider import RuntimeProvider
@@ -129,6 +149,7 @@ __all__ = [
     "CAPABILITY_SESSION_INTERRUPT",
     "CAPABILITY_SESSION_SEND_MESSAGE",
     "CAPABILITY_SESSION_STEER",
+    "MAX_CONFIG_REVISION",
     "AgentRuntime",
     "ArtifactContentKind",
     "ArtifactTimelineContent",
@@ -173,6 +194,13 @@ __all__ = [
     "RuntimeConflictError",
     "RuntimeHostClient",
     "RuntimeIdentity",
+    "RuntimeInstance",
+    "RuntimeInstanceHost",
+    "RuntimeInstanceLifecycleStatus",
+    "RuntimeInstancePolicy",
+    "RuntimeInstanceSpec",
+    "RuntimeInstanceStatus",
+    "RuntimeInstancesUnsupportedError",
     "RuntimeInvalidRequestError",
     "RuntimeInventoryItem",
     "RuntimeLifecycleStatus",
@@ -184,7 +212,11 @@ __all__ = [
     "RuntimeProtocolError",
     "RuntimeProvider",
     "RuntimeReasoningItem",
+    "RuntimeResourceClaim",
+    "RuntimeResourceMode",
+    "RuntimeScope",
     "RuntimeSessionStateCache",
+    "RuntimeSourceKey",
     "RuntimeStatus",
     "RuntimeStatusSink",
     "RuntimeSupervisor",
@@ -192,6 +224,7 @@ __all__ = [
     "RuntimeSystemContent",
     "RuntimeTimelineItem",
     "RuntimeTimelineSnapshot",
+    "RuntimeTypeDescriptor",
     "RuntimeUnavailableError",
     "RuntimeUnsupportedError",
     "RuntimeUpstreamError",
@@ -223,6 +256,7 @@ __all__ = [
     "WebSearchToolContent",
     "attachment_target",
     "attachments_root",
+    "legacy_runtime_scope",
     "session_attachments_dir",
     "timeline_content_hash",
 ]

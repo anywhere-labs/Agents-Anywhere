@@ -25,6 +25,9 @@ data class RemoteSession(
     val lastItemOrderSeq: Int?,
     val sortAt: String?,
     val updatedSeq: Int,
+    val runtimeId: String = runtime,
+    val runtimeType: String = runtime,
+    val runtimeName: String = runtimeType,
 )
 
 data class RemoteSessionResponse(
@@ -47,6 +50,8 @@ data class RemoteSessionCreateAndStartRequest(
     val selections: Map<String, String>,
     val attachments: List<RemoteInlineAttachmentRef>,
     val clientMessageId: String?,
+    val runtimeId: String = runtime,
+    val runtimeType: String = runtime,
 )
 
 data class RemoteInlineAttachmentRef(
@@ -87,6 +92,9 @@ data class RemoteSessionRuntimeState(
     val updatedSeq: Int,
     val createdAt: String?,
     val updatedAt: String? = null,
+    val runtimeId: String = runtime,
+    val runtimeType: String = runtime,
+    val runtimeName: String = runtimeType,
 )
 
 data class RemoteRuntimeNoticeListResponse(

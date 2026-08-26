@@ -93,7 +93,9 @@ def timeline_projection_from_sdk_event(
             raw_type="fileChange",
             status="inProgress",
             turn_id=payload.turn_id,
-            changes=tuple(file_update_change_mapping(change) for change in payload.changes),
+            changes=tuple(
+                file_update_change_mapping(change) for change in payload.changes
+            ),
         )
     if isinstance(
         payload,
@@ -290,7 +292,9 @@ def timeline_projection_from_thread_item(
             raw_type="fileChange",
             status=enum_value(root.status) or event_status,
             turn_id=turn_id,
-            changes=tuple(file_update_change_mapping(change) for change in root.changes),
+            changes=tuple(
+                file_update_change_mapping(change) for change in root.changes
+            ),
         )
     if isinstance(root, PlanThreadItem):
         return CodexTimelineProjection(
@@ -388,7 +392,9 @@ def dynamic_tool_call_output(
     return "\n".join(parts) if parts else None
 
 
-def collab_agent_tool_arguments(item: CollabAgentToolCallThreadItem) -> dict[str, object]:
+def collab_agent_tool_arguments(
+    item: CollabAgentToolCallThreadItem,
+) -> dict[str, object]:
     return {
         "senderThreadId": item.sender_thread_id,
         "receiverThreadIds": list(item.receiver_thread_ids),
@@ -428,8 +434,7 @@ def user_input_text(items: Sequence[UserInput]) -> str | None:
 def is_attachment_note_text(text: str) -> bool:
     lines = [line for line in text.splitlines() if line.strip()]
     return bool(lines) and all(
-        line.startswith(("Attached file: ", "[Attached file: "))
-        for line in lines
+        line.startswith(("Attached file: ", "[Attached file: ")) for line in lines
     )
 
 
@@ -450,7 +455,9 @@ def strip_attachment_note_suffix(text: str) -> str | None:
     return stripped if stripped else None
 
 
-def user_input_attachments(items: Sequence[UserInput]) -> tuple[Mapping[str, object], ...]:
+def user_input_attachments(
+    items: Sequence[UserInput],
+) -> tuple[Mapping[str, object], ...]:
     attachments: list[Mapping[str, object]] = []
     seen: set[str] = set()
     for item in items:

@@ -79,10 +79,19 @@ class RuntimeSyncRunner:
                 )
                 await self.push_runtime_catalogs(runtime)
                 dsh_scan_token: str | None = None
-                if runtime_id == "dsh":
+                entry = self.supervisor.entry(runtime_id)
+                runtime_type = entry.runtime_type
+                scoped_runtime_id = entry.runtime_id
+                if runtime_type == "dsh":
                     dsh_scan_token = secrets.token_hex(16)
                     await self._ingest_scanner_notifications(
-                        [_dsh_inventory_begin_notification(dsh_scan_token)]
+                        [
+                            _dsh_inventory_begin_notification(
+                                runtime_type,
+                                scoped_runtime_id,
+                                dsh_scan_token,
+                            )
+                        ]
                     )
                     sessions = await runtime.list_complete_session_inventory(
                         page_size=100,
@@ -123,6 +132,8 @@ class RuntimeSyncRunner:
                     await self._ingest_scanner_notifications(
                         [
                             _dsh_inventory_complete_notification(
+                                runtime_type,
+                                scoped_runtime_id,
                                 dsh_scan_token,
                                 sessions,
                             )
@@ -366,6 +377,7 @@ def _session_meta_notification(session: SessionMeta) -> dict[str, Any]:
             {
                 "sessionId": session.session_id,
                 "runtime": session.runtime,
+                "runtimeId": session.runtime_id,
                 "externalSessionId": session.external_session_id,
                 "title": session.title,
                 "cwd": session.cwd,
@@ -377,24 +389,32 @@ def _session_meta_notification(session: SessionMeta) -> dict[str, Any]:
     }
 
 
-def _dsh_inventory_begin_notification(scan_token: str) -> dict[str, Any]:
+def _dsh_inventory_begin_notification(
+    runtime_type: str,
+    runtime_id: str,
+    scan_token: str,
+) -> dict[str, Any]:
     return {
         "method": "session.inventory.begin",
         "params": {
-            "runtime": "dsh",
+            "runtime": runtime_type,
+            "runtimeId": runtime_id,
             "scanToken": scan_token,
         },
     }
 
 
 def _dsh_inventory_complete_notification(
+    runtime_type: str,
+    runtime_id: str,
     scan_token: str,
     sessions: tuple[SessionMeta, ...],
 ) -> dict[str, Any]:
     return {
         "method": "session.inventory.complete",
         "params": {
-            "runtime": "dsh",
+            "runtime": runtime_type,
+            "runtimeId": runtime_id,
             "scanToken": scan_token,
             "complete": True,
             "sessions": [
@@ -427,7 +447,9 @@ def _dsh_inventory_source_state(session: SessionMeta) -> str:
     if metadata.get("resumeSupported") is False or metadata.get("resumable") is False:
         return "hidden"
     local_state = metadata.get("localState") or metadata.get("local_state")
-    return "hidden" if local_state in {"archived", "deleted", "unresumable"} else "visible"
+    return (
+        "hidden" if local_state in {"archived", "deleted", "unresumable"} else "visible"
+    )
 
 
 def _timeline_sync_notification(snapshot: RuntimeTimelineSnapshot) -> dict[str, Any]:
@@ -440,6 +462,7 @@ def _timeline_sync_notification(snapshot: RuntimeTimelineSnapshot) -> dict[str, 
             {
                 "sessionId": snapshot.session_id,
                 "runtime": snapshot.runtime,
+                "runtimeId": snapshot.runtime_id,
                 "externalSessionId": snapshot.external_session_id,
                 "items": [
                     _runtime_timeline_item_payload(item) for item in server_items
@@ -462,6 +485,7 @@ def _session_state_notification(state: SessionState) -> dict[str, Any]:
             {
                 "sessionId": state.session_id,
                 "runtime": state.runtime,
+                "runtimeId": state.runtime_id,
                 "externalSessionId": state.external_session_id,
                 "status": state.status,
                 "statusReason": state.status_reason,

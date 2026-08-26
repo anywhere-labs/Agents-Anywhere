@@ -5,6 +5,7 @@ import hashlib
 import json
 
 import pytest
+from alembic import command
 from sqlalchemy import BigInteger, create_engine, inspect, text
 from sqlalchemy.ext.asyncio import create_async_engine
 
@@ -12,7 +13,11 @@ from agent_server.infra.db.engine import build_engine, resolve_db_url
 from agent_server.infra.db.legacy_import import rehearse_v1_import
 from agent_server.infra.db.migrations import (
     CURRENT_SCHEMA_REVISION,
+    CURRENT_SCHEMA_VERSION,
     DatabaseMigrationError,
+    UnversionedDatabase,
+    _alembic_config,
+    classify_database,
     database_revision,
     require_current_database,
     upgrade_database,
@@ -20,6 +25,7 @@ from agent_server.infra.db.migrations import (
 from agent_server.infra.db.schema import (
     connector_protocol_capabilities,
     connector_runtime_catalogs,
+    connector_runtime_types,
     metadata,
 )
 
@@ -31,6 +37,7 @@ def _sqlite_url(path) -> str:
 def test_protocol_clock_revisions_use_64_bit_columns() -> None:
     assert isinstance(connector_protocol_capabilities.c.revision.type, BigInteger)
     assert isinstance(connector_runtime_catalogs.c.revision.type, BigInteger)
+    assert isinstance(connector_runtime_types.c.max_instances.type, BigInteger)
 
 
 def test_runtime_database_url_is_required(monkeypatch) -> None:
@@ -117,8 +124,14 @@ def test_unversioned_v1_database_archives_then_removes_legacy_storage(
             runtime = (
                 connection.execute(
                     text(
-                        "SELECT runtime_id, present, active, status, discovery_json, config_json "
-                        "FROM device_runtimes WHERE connector_id = 'conn_legacy'"
+                        "SELECT runtime.runtime_id, runtime_type.present, runtime.active, "
+                        "runtime.status, runtime_type.discovery_json, runtime.config_json "
+                        "FROM device_runtimes AS runtime "
+                        "JOIN connector_runtime_types AS runtime_type "
+                        "ON runtime_type.connector_id = runtime.connector_id "
+                        "AND runtime_type.runtime_type = runtime.runtime_type "
+                        "WHERE runtime.connector_id = 'conn_legacy' "
+                        "AND runtime.runtime_id = 'codex'"
                     )
                 )
                 .mappings()
@@ -316,6 +329,10 @@ def test_v2_0_database_upgrades_through_current_revision(tmp_path) -> None:
         ("v2_10", "v2_11"),
         ("v2_11", "v2_12"),
         ("v2_12", "v2_13"),
+        ("v2_13", "v2_14"),
+        ("v2_14", "v2_15"),
+        ("v2_15", "v2_16"),
+        ("v2_16", "v2_17"),
     ],
 )
 def test_every_adjacent_schema_upgrade(
@@ -629,6 +646,336 @@ def test_v2_13_marks_only_existing_dsh_archives_as_legacy(tmp_path) -> None:
         engine.dispose()
 
 
+def test_v2_14_splits_runtime_storage_without_losing_dsh_state(tmp_path) -> None:
+    path = tmp_path / "v2_14-runtime-instances.sqlite3"
+    _seed_v2_13_runtime_storage(path)
+
+    upgrade_database(db_url=_sqlite_url(path), revision="v2_14")
+
+    engine = create_engine(f"sqlite:///{path}")
+    try:
+        inspector = inspect(engine)
+        assert inspector.has_table("connector_runtime_types")
+        assert "runtime_control_version" in {
+            column["name"] for column in inspector.get_columns("connectors")
+        }
+        assert {"runtime_id"}.issubset(
+            column["name"] for column in inspector.get_columns("sessions")
+        )
+        assert {"runtime_id"}.issubset(
+            column["name"]
+            for column in inspector.get_columns("session_active_runs")
+        )
+        assert inspector.get_pk_constraint("connector_runtime_catalogs")[
+            "constrained_columns"
+        ] == ["connector_id", "runtime_id", "catalog_type"]
+
+        with engine.connect() as connection:
+            assert connection.execute(
+                text(
+                    "SELECT runtime_control_version FROM connectors "
+                    "WHERE id = 'conn_runtime_storage'"
+                )
+            ).scalar_one() == "1.0"
+            type_rows = (
+                connection.execute(
+                    text(
+                        "SELECT runtime_type, implementation_type, display_name, "
+                        "present, available, discovery_json, metadata_json, "
+                        "instance_policy, max_instances "
+                        "FROM connector_runtime_types "
+                        "WHERE connector_id = 'conn_runtime_storage' "
+                        "ORDER BY runtime_type"
+                    )
+                )
+                .mappings()
+                .all()
+            )
+            instance_rows = (
+                connection.execute(
+                    text(
+                        "SELECT runtime_id, runtime_type, name, name_key, config_json, "
+                        "active, status, error_json, created_at, updated_at "
+                        "FROM device_runtimes "
+                        "WHERE connector_id = 'conn_runtime_storage' "
+                        "ORDER BY runtime_id"
+                    )
+                )
+                .mappings()
+                .all()
+            )
+            session = (
+                connection.execute(
+                    text(
+                        "SELECT runtime, runtime_id, archived, archived_at, "
+                        "dsh_archive_legacy, source_state, source_state_at, "
+                        "source_scan_token, last_read_seq, timeline_reset_seq "
+                        "FROM sessions WHERE id = 'sess_runtime_storage'"
+                    )
+                )
+                .mappings()
+                .one()
+            )
+            active_run = (
+                connection.execute(
+                    text(
+                        "SELECT runtime, runtime_id, external_session_id, status, "
+                        "params_json FROM session_active_runs "
+                        "WHERE session_id = 'sess_runtime_storage'"
+                    )
+                )
+                .mappings()
+                .one()
+            )
+            catalog = (
+                connection.execute(
+                    text(
+                        "SELECT runtime, runtime_id, catalog_type, revision, catalog_json "
+                        "FROM connector_runtime_catalogs "
+                        "WHERE connector_id = 'conn_runtime_storage'"
+                    )
+                )
+                .mappings()
+                .one()
+            )
+
+        assert [row["runtime_type"] for row in type_rows] == ["codex", "dsh"]
+        dsh_type = type_rows[1]
+        assert dsh_type["implementation_type"] == "local-service"
+        assert dsh_type["display_name"] == "Shared Runtime"
+        assert (dsh_type["present"], dsh_type["available"]) == (1, 1)
+        assert json.loads(dsh_type["discovery_json"]) == {
+            "endpoint": "/tmp/dsh.sock"
+        }
+        assert json.loads(dsh_type["metadata_json"]) == {
+            "bridgeVersion": "0.1.0",
+            "storageMode": "local",
+        }
+        assert (dsh_type["instance_policy"], dsh_type["max_instances"]) == (
+            "single",
+            1,
+        )
+
+        assert [row["runtime_id"] for row in instance_rows] == ["codex", "dsh"]
+        assert instance_rows[0]["name"] == "Shared Runtime"
+        dsh_instance = instance_rows[1]
+        assert dsh_instance["runtime_type"] == "dsh"
+        assert dsh_instance["name"] == "Shared Runtime (dsh)"
+        assert dsh_instance["name_key"] == "shared runtime (dsh)"
+        assert dsh_instance["config_json"] is None
+        assert dsh_instance["active"] == 0
+        assert dsh_instance["status"] == "error"
+        assert json.loads(dsh_instance["error_json"]) == {
+            "code": "bridge_unavailable"
+        }
+        assert dsh_instance["created_at"] == "2026-08-24T13:38:00Z"
+        assert dsh_instance["updated_at"] == "2026-08-24T13:38:00Z"
+
+        assert dict(session) == {
+            "runtime": "dsh",
+            "runtime_id": "dsh",
+            "archived": 1,
+            "archived_at": "2026-08-24T13:40:00Z",
+            "dsh_archive_legacy": 1,
+            "source_state": "missing",
+            "source_state_at": "2026-08-24T13:41:00Z",
+            "source_scan_token": "scan-preserved",
+            "last_read_seq": 7,
+            "timeline_reset_seq": 8,
+        }
+        assert dict(active_run) == {
+            "runtime": "dsh",
+            "runtime_id": "dsh",
+            "external_session_id": "dsh_external",
+            "status": "running",
+            "params_json": '{"model":"deepseek"}',
+        }
+        assert dict(catalog) == {
+            "runtime": "dsh",
+            "runtime_id": "dsh",
+            "catalog_type": "model",
+            "revision": 17,
+            "catalog_json": '{"models":["deepseek"]}',
+        }
+    finally:
+        engine.dispose()
+
+
+def test_v2_14_compatible_data_downgrades_to_v2_13(tmp_path) -> None:
+    path = tmp_path / "v2_14-compatible-downgrade.sqlite3"
+    _seed_v2_13_runtime_storage(path)
+    url = _sqlite_url(path)
+    upgrade_database(db_url=url, revision="v2_14")
+
+    command.downgrade(_alembic_config(url), "v2_13")
+
+    engine = create_engine(f"sqlite:///{path}")
+    try:
+        inspector = inspect(engine)
+        assert not inspector.has_table("connector_runtime_types")
+        assert "runtime_control_version" not in {
+            column["name"] for column in inspector.get_columns("connectors")
+        }
+        assert "runtime_id" not in {
+            column["name"] for column in inspector.get_columns("sessions")
+        }
+        assert "runtime_id" not in {
+            column["name"]
+            for column in inspector.get_columns("session_active_runs")
+        }
+        assert inspector.get_pk_constraint("connector_runtime_catalogs")[
+            "constrained_columns"
+        ] == ["connector_id", "runtime", "catalog_type"]
+        with engine.connect() as connection:
+            runtime = (
+                connection.execute(
+                    text(
+                        "SELECT runtime_id, runtime_type, display_name, "
+                        "inventory_metadata_json, config_json, active, status, error_json "
+                        "FROM device_runtimes "
+                        "WHERE connector_id = 'conn_runtime_storage' AND runtime_id = 'dsh'"
+                    )
+                )
+                .mappings()
+                .one()
+            )
+            session = (
+                connection.execute(
+                    text(
+                        "SELECT runtime, archived, dsh_archive_legacy, source_state, "
+                        "source_scan_token FROM sessions "
+                        "WHERE id = 'sess_runtime_storage'"
+                    )
+                )
+                .mappings()
+                .one()
+            )
+            revision = connection.execute(
+                text("SELECT version_num FROM alembic_version")
+            ).scalar_one()
+        assert runtime["runtime_type"] == "local-service"
+        assert runtime["display_name"] == "Shared Runtime (dsh)"
+        assert json.loads(runtime["inventory_metadata_json"])["storageMode"] == (
+            "local"
+        )
+        assert runtime["config_json"] is None
+        assert runtime["active"] == 0
+        assert runtime["status"] == "error"
+        assert json.loads(runtime["error_json"])["code"] == "bridge_unavailable"
+        assert dict(session) == {
+            "runtime": "dsh",
+            "archived": 1,
+            "dsh_archive_legacy": 1,
+            "source_state": "missing",
+            "source_scan_token": "scan-preserved",
+        }
+        assert revision == "v2_13"
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.parametrize(
+    "incompatible_sql",
+    [
+        pytest.param(
+            "INSERT INTO device_runtimes "
+            "(connector_id, runtime_id, runtime_type, name, name_key, config_json, "
+            "active, status, error_json, created_at, updated_at) VALUES "
+            "('conn_runtime_storage', 'rti_named', 'dsh', 'Named DSH', "
+            "'named dsh', NULL, 0, 'stopped', NULL, "
+            "'2026-08-24T13:50:00Z', '2026-08-24T13:50:00Z')",
+            id="named-instance",
+        ),
+        pytest.param(
+            "UPDATE sessions SET runtime_id = 'rti_session' "
+            "WHERE id = 'sess_runtime_storage'",
+            id="session-binding",
+        ),
+        pytest.param(
+            "UPDATE session_active_runs SET runtime_id = 'rti_run' "
+            "WHERE session_id = 'sess_runtime_storage'",
+            id="active-run-binding",
+        ),
+        pytest.param(
+            "UPDATE connector_runtime_catalogs SET runtime_id = 'rti_catalog' "
+            "WHERE connector_id = 'conn_runtime_storage'",
+            id="catalog-binding",
+        ),
+    ],
+)
+def test_v2_14_downgrade_rejects_instance_specific_data(
+    tmp_path,
+    incompatible_sql: str,
+) -> None:
+    path = tmp_path / "v2_14-incompatible-downgrade.sqlite3"
+    _seed_v2_13_runtime_storage(path)
+    url = _sqlite_url(path)
+    upgrade_database(db_url=url, revision="v2_14")
+    engine = create_engine(f"sqlite:///{path}")
+    try:
+        with engine.begin() as connection:
+            connection.execute(text(incompatible_sql))
+    finally:
+        engine.dispose()
+
+    with pytest.raises(RuntimeError, match="cannot downgrade v2_14"):
+        command.downgrade(_alembic_config(url), "v2_13")
+
+    engine = create_engine(f"sqlite:///{path}")
+    try:
+        with engine.connect() as connection:
+            assert connection.execute(
+                text("SELECT version_num FROM alembic_version")
+            ).scalar_one() == "v2_14"
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.parametrize(
+    "revision",
+    ["v2_10", "v2_11", "v2_12", "v2_13", "v2_14", "v2_15", "v2_16", "v2_17"],
+)
+def test_unversioned_runtime_schema_is_classified_by_actual_columns(
+    tmp_path,
+    revision: str,
+) -> None:
+    path = tmp_path / f"unversioned-{revision}.sqlite3"
+    url = _sqlite_url(path)
+    upgrade_database(db_url=url, revision=revision)
+    engine = create_engine(f"sqlite:///{path}")
+    try:
+        with engine.begin() as connection:
+            if revision == "v2_10":
+                # The immutable bootstrap schema already contains these two
+                # idempotently-added v2_11 columns. Remove them to model an
+                # actual historical unversioned v2_10 database.
+                connection.execute(
+                    text(
+                        "ALTER TABLE device_runtimes "
+                        "DROP COLUMN inventory_metadata_json"
+                    )
+                )
+                connection.execute(
+                    text(
+                        "ALTER TABLE dashboard_user_daily_facts "
+                        "DROP COLUMN dsh_agents"
+                    )
+                )
+            connection.execute(text("DROP TABLE alembic_version"))
+    finally:
+        engine.dispose()
+
+    assert asyncio.run(classify_database(url)) == UnversionedDatabase(
+        "v2",
+        revision,
+    )
+
+
+def test_current_schema_version_is_v2_17() -> None:
+    assert CURRENT_SCHEMA_REVISION == "v2_17"
+    assert CURRENT_SCHEMA_VERSION == "2.17"
+
+
 def test_current_schema_drops_legacy_approval_notice_storage(tmp_path) -> None:
     path = tmp_path / "approval-v2-2.sqlite3"
     upgrade_database(db_url=_sqlite_url(path), revision="v2_2")
@@ -784,6 +1131,107 @@ def test_v1_rehearsal_requires_postgres_target(tmp_path) -> None:
         )
 
 
+def _seed_v2_13_runtime_storage(path) -> None:
+    upgrade_database(db_url=_sqlite_url(path), revision="v2_13")
+    engine = create_engine(f"sqlite:///{path}")
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO connectors "
+                    "(id, user_id, name, status, token_hash, token_prefix, revoked, "
+                    "created_at, updated_at) VALUES "
+                    "('conn_runtime_storage', 'user_runtime_storage', 'Storage', "
+                    "'offline', 'hash', 'cxt_', 0, :now, :now)"
+                ),
+                {"now": "2026-08-24T13:38:00Z"},
+            )
+            for runtime in (
+                {
+                    "runtime_id": "codex",
+                    "runtime_type": "process",
+                    "display_name": "Shared Runtime",
+                    "discovery_json": '{"path":"/usr/local/bin/codex"}',
+                    "metadata_json": "{}",
+                    "schema_json": '{"type":"object"}',
+                    "ui_json": "{}",
+                    "config_json": '{"model":"gpt-5"}',
+                    "active": 1,
+                    "status": "running",
+                    "error_json": None,
+                },
+                {
+                    "runtime_id": "dsh",
+                    "runtime_type": "local-service",
+                    "display_name": "Shared Runtime",
+                    "discovery_json": '{"endpoint":"/tmp/dsh.sock"}',
+                    "metadata_json": (
+                        '{"bridgeVersion":"0.1.0","storageMode":"local"}'
+                    ),
+                    "schema_json": '{"type":"object"}',
+                    "ui_json": '{"endpoint":{"component":"path"}}',
+                    "config_json": None,
+                    "active": 0,
+                    "status": "error",
+                    "error_json": '{"code":"bridge_unavailable"}',
+                },
+            ):
+                connection.execute(
+                    text(
+                        "INSERT INTO device_runtimes "
+                        "(connector_id, runtime_id, runtime_type, display_name, present, "
+                        "discovery_json, inventory_metadata_json, config_schema_json, "
+                        "ui_schema_json, config_json, active, status, error_json, "
+                        "last_discovered_at, updated_at) VALUES "
+                        "('conn_runtime_storage', :runtime_id, :runtime_type, "
+                        ":display_name, 1, :discovery_json, :metadata_json, "
+                        ":schema_json, :ui_json, :config_json, :active, :status, "
+                        ":error_json, :now, :now)"
+                    ),
+                    {**runtime, "now": "2026-08-24T13:38:00Z"},
+                )
+            connection.execute(
+                text(
+                    "INSERT INTO sessions "
+                    "(id, connector_id, runtime, origin, external_session_id, title, cwd, "
+                    "status, takeover, pinned, pinned_at, archived, archived_at, "
+                    "dsh_archive_legacy, source_state, source_state_at, source_scan_token, "
+                    "last_read_seq, timeline_reset_seq, last_synced_at, source_observed_at, "
+                    "last_activity_at, seq, updated_seq, created_at, updated_at) VALUES "
+                    "('sess_runtime_storage', 'conn_runtime_storage', 'dsh', "
+                    "'connector_import', 'dsh_external', 'Preserved DSH', '/tmp/work', "
+                    "'running', 0, 1, '2026-08-24T13:39:00Z', 1, "
+                    "'2026-08-24T13:40:00Z', 1, 'missing', "
+                    "'2026-08-24T13:41:00Z', 'scan-preserved', 7, 8, "
+                    "'2026-08-24T13:42:00Z', '2026-08-24T13:43:00Z', "
+                    "'2026-08-24T13:44:00Z', 11, 12, :now, :now)"
+                ),
+                {"now": "2026-08-24T13:38:00Z"},
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO session_active_runs "
+                    "(session_id, runtime, external_session_id, status, params_json, "
+                    "started_at, updated_at) VALUES "
+                    "('sess_runtime_storage', 'dsh', 'dsh_external', 'running', "
+                    "'{\"model\":\"deepseek\"}', :now, :now)"
+                ),
+                {"now": "2026-08-24T13:38:00Z"},
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO connector_runtime_catalogs "
+                    "(connector_id, runtime, catalog_type, revision, catalog_json, "
+                    "updated_at) VALUES "
+                    "('conn_runtime_storage', 'dsh', 'model', 17, "
+                    "'{\"models\":[\"deepseek\"]}', :now)"
+                ),
+                {"now": "2026-08-24T13:38:00Z"},
+            )
+    finally:
+        engine.dispose()
+
+
 def _create_legacy_v1_database(path) -> None:
     engine = create_engine(f"sqlite:///{path}")
     metadata.create_all(engine)
@@ -801,6 +1249,7 @@ def _create_legacy_v1_database(path) -> None:
         connection.execute(text("DROP TABLE connector_protocol_capabilities"))
         connection.execute(text("DROP TABLE connector_runtime_catalogs"))
         connection.execute(text("DROP TABLE device_runtimes"))
+        connection.execute(text("DROP TABLE connector_runtime_types"))
         connection.execute(text("DROP TABLE IF EXISTS session_states"))
         connection.execute(
             text("ALTER TABLE connectors ADD COLUMN runtime_capabilities TEXT")
@@ -812,11 +1261,18 @@ def _create_legacy_v1_database(path) -> None:
         connection.execute(
             text("ALTER TABLE sessions DROP COLUMN permission_selection_id")
         )
+        connection.execute(text("ALTER TABLE sessions DROP COLUMN runtime_id"))
+        connection.execute(
+            text("ALTER TABLE session_active_runs DROP COLUMN runtime_id")
+        )
         connection.execute(
             text("ALTER TABLE connectors DROP COLUMN presence_instance_id")
         )
         connection.execute(
             text("ALTER TABLE connectors DROP COLUMN presence_connection_id")
+        )
+        connection.execute(
+            text("ALTER TABLE connectors DROP COLUMN runtime_control_version")
         )
         connection.execute(
             text(

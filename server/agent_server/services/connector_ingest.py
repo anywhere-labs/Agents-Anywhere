@@ -10,7 +10,9 @@ from agent_server.core.models import (
     ConnectorIngestResponse,
     ConnectorNotification,
     SessionRuntimeState,
+    SessionView,
 )
+from agent_server.core.runtime_identity import resolve_session_runtime_binding
 from agent_server.core.utc import utc_now
 from agent_server.infra.timeline_broker import TimelineBroker
 from agent_server.services.connector_notifications import (
@@ -82,7 +84,6 @@ class ConnectorIngestService:
         rejected: list[ConnectorIngestRejectedNotification] = []
         protocol_capabilities_changed = False
         runtime_scoped_capabilities_changed = False
-        saw_runtime_inventory = False
         saw_dsh_session_inventory_complete = False
         for index, notification in enumerate(payload.notifications):
             try:
@@ -110,7 +111,6 @@ class ConnectorIngestService:
                 continue
             accepted += 1
             if notification.method == "runtime.inventoryUpdated":
-                saw_runtime_inventory = True
                 continue
             if notification.method == "runtime.statusChanged":
                 continue
@@ -165,10 +165,6 @@ class ConnectorIngestService:
                 connector_id=connector_id,
                 reason="dsh.session.inventory",
             )
-        if saw_runtime_inventory:
-            import asyncio
-
-            asyncio.create_task(self._device_runtimes.reconcile_active(connector_id))
         return ConnectorIngestResponse(
             accepted=accepted,
             rejected=rejected,
@@ -188,7 +184,7 @@ class ConnectorIngestService:
         - does not publish session WebSocket effects; caller owns publication
         """
         if notification.method == "runtime.inventoryUpdated":
-            await self._device_runtimes.ingest_inventory(
+            await self._device_runtimes.ingest_unsolicited_inventory(
                 connector_id,
                 notification.params,
             )
@@ -210,10 +206,10 @@ class ConnectorIngestService:
         params: dict,
     ) -> None:
         if method == "runtime.inventoryUpdated":
-            await self._device_runtimes.ingest_inventory(connector_id, params)
-            import asyncio
-
-            asyncio.create_task(self._device_runtimes.reconcile_active(connector_id))
+            await self._device_runtimes.ingest_unsolicited_inventory(
+                connector_id,
+                params,
+            )
             return
         if method == "runtime.statusChanged":
             await self._apply_runtime_status(connector_id, params)
@@ -338,8 +334,9 @@ class ConnectorIngestService:
                 envelope["items"] = bucket["items"]
             runtime_state: SessionRuntimeState | None = None
             if bucket["runtime_state"]:
+                bound_session = await self._store.get_session(session_id)
                 runtime_state = runtime_state_from_ingest_effect(
-                    session_id,
+                    bound_session,
                     next_seq,
                     bucket["runtime_state"],
                 )
@@ -438,15 +435,22 @@ class ConnectorIngestService:
 
 
 def runtime_state_from_ingest_effect(
-    session_id: str,
+    session: SessionView,
     next_seq: int,
     raw_state: dict[str, Any],
 ) -> SessionRuntimeState:
     now = utc_now()
+    session_id, runtime, runtime_id = resolve_session_runtime_binding(
+        raw_state,
+        session_id=session.id,
+        runtime_type=session.runtime,
+        runtime_id=session.runtimeId or session.runtime,
+    )
     return SessionRuntimeState.model_validate(
         {
-            "sessionId": raw_state.get("sessionId") or session_id,
-            "runtime": raw_state.get("runtime") or "codex",
+            "sessionId": session_id,
+            "runtime": runtime,
+            "runtimeId": runtime_id,
             "externalSessionId": raw_state.get("externalSessionId"),
             "status": raw_state.get("status") or "idle",
             "selections": raw_state.get("selections")
@@ -479,6 +483,7 @@ def runtime_state_fingerprint(value: SessionRuntimeState) -> dict[str, Any]:
     return {
         "sessionId": value.sessionId,
         "runtime": value.runtime,
+        "runtimeId": value.runtimeId,
         "externalSessionId": value.externalSessionId,
         "status": value.status,
         "selections": value.selections,

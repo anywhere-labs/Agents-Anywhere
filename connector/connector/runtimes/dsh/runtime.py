@@ -8,6 +8,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any
 
 from connector.runtime_protocol import (
+    CAPABILITY_CATALOG_PERMISSION,
     AgentRuntime,
     PreparedSessionTimelineSync,
     RuntimeAttachment,
@@ -62,6 +63,8 @@ class DshRuntime(AgentRuntime):
         default_factory=dict, init=False
     )
     _known_sessions: dict[str, str | None] = field(default_factory=dict, init=False)
+    _bridge_session_ids: dict[str, str] = field(default_factory=dict, init=False)
+    _bridge_platform_ids: dict[str, str] = field(default_factory=dict, init=False)
     _concurrent_writer_sessions: set[str] = field(default_factory=set, init=False)
     _client_message_ids: dict[tuple[str, str], str] = field(
         default_factory=dict,
@@ -205,13 +208,15 @@ class DshRuntime(AgentRuntime):
                 raise RuntimeUpstreamError(
                     "DSH session.list entry has no externalSessionId"
                 )
-            platform_id = raw.get("sessionId")
-            if not isinstance(platform_id, str) or not platform_id:
-                platform_id = stable_runtime_session_id(
-                    self.host.connector_id,
-                    "dsh",
-                    external_id,
-                )
+            bridge_session_id = _optional_string(raw.get("sessionId"))
+            platform_id = stable_runtime_session_id(
+                getattr(self.host, "session_namespace", self.host.connector_id),
+                "dsh",
+                external_id,
+            )
+            if bridge_session_id is not None:
+                self._bridge_session_ids[platform_id] = bridge_session_id
+                self._bridge_platform_ids[bridge_session_id] = platform_id
             data = dict(raw)
             data["sessionId"] = platform_id
             metadata = _safe_metadata(data.get("metadata"))
@@ -261,7 +266,7 @@ class DshRuntime(AgentRuntime):
         external_session_id: str | None = None,
         limit: int | None = None,
     ) -> RuntimeTimelineSnapshot:
-        params = _session_params(session_id, external_session_id)
+        params = self._session_params(session_id, external_session_id)
         if limit is not None:
             params["limit"] = limit
         result = await self._request("session.getSnapshot", params)
@@ -273,7 +278,13 @@ class DshRuntime(AgentRuntime):
         items = tuple(
             [
                 await self._with_client_message_id(
-                    bridge_models.timeline_item(item, default_session_id=session_id)
+                    replace(
+                        bridge_models.timeline_item(
+                            item,
+                            default_session_id=session_id,
+                        ),
+                        session_id=session_id,
+                    )
                 )
                 for item in raw_items
             ]
@@ -299,6 +310,7 @@ class DshRuntime(AgentRuntime):
         snapshot = await self.get_session_snapshot(session_id, external_session_id)
         if snapshot.external_session_id is None:
             return PreparedSessionTimelineSync(snapshot=snapshot)
+        resolved_external_session_id = snapshot.external_session_id
         revision = snapshot.metadata.get("revision")
         if not isinstance(revision, str) or not revision:
             return PreparedSessionTimelineSync(snapshot=snapshot)
@@ -309,7 +321,7 @@ class DshRuntime(AgentRuntime):
                 key,
                 {
                     "revision": revision,
-                    "externalSessionIdHash": _sha256(snapshot.external_session_id),
+                    "externalSessionIdHash": _sha256(resolved_external_session_id),
                 },
             )
 
@@ -322,11 +334,20 @@ class DshRuntime(AgentRuntime):
     ) -> SessionState | None:
         result = await self._request(
             "session.getState",
-            _session_params(session_id, external_session_id),
+            self._session_params(session_id, external_session_id),
         )
         if result is None:
             return None
-        state = bridge_models.session_state(result)
+        state = replace(
+            bridge_models.session_state(result),
+            session_id=session_id,
+            external_session_id=(
+                _optional_string(result.get("externalSessionId"))
+                if isinstance(result, Mapping)
+                else external_session_id
+            )
+            or external_session_id,
+        )
         if not _is_concurrent_writer_state(state):
             self._concurrent_writer_sessions.discard(session_id)
         return state
@@ -338,12 +359,15 @@ class DshRuntime(AgentRuntime):
     ) -> tuple[SessionNotice, ...]:
         result = await self._request(
             "session.getNotices",
-            _session_params(session_id, external_session_id),
+            self._session_params(session_id, external_session_id),
         )
         raw_notices = result.get("notices") if isinstance(result, Mapping) else result
         if not isinstance(raw_notices, list):
             raise RuntimeUpstreamError("DSH notices result is invalid")
-        return tuple(bridge_models.notice(item) for item in raw_notices)
+        return tuple(
+            replace(bridge_models.notice(item), session_id=session_id)
+            for item in raw_notices
+        )
 
     async def get_session_capabilities(
         self,
@@ -353,10 +377,46 @@ class DshRuntime(AgentRuntime):
         capabilities = bridge_models.capability_set(
             await self._request(
                 "session.getCapabilities",
-                _session_params(session_id, external_session_id),
+                self._session_params(session_id, external_session_id),
             ),
             connector_id=self.host.connector_id,
         )
+        capabilities = replace(
+            capabilities,
+            session_id=session_id,
+            capabilities=tuple(
+                replace(capability, session_id=session_id)
+                if capability.scope == "session"
+                else capability
+                for capability in capabilities.capabilities
+            ),
+        )
+        if not any(
+            capability.capability_id == CAPABILITY_CATALOG_PERMISSION
+            for capability in capabilities.capabilities
+        ):
+            runtime_capabilities = await self.get_runtime_capabilities()
+            permission_capability = next(
+                (
+                    capability
+                    for capability in runtime_capabilities.capabilities
+                    if capability.capability_id == CAPABILITY_CATALOG_PERMISSION
+                ),
+                None,
+            )
+            if permission_capability is not None:
+                capabilities = replace(
+                    capabilities,
+                    revision=max(capabilities.revision, runtime_capabilities.revision),
+                    capabilities=(
+                        *capabilities.capabilities,
+                        replace(
+                            permission_capability,
+                            scope="session",
+                            session_id=session_id,
+                        ),
+                    ),
+                )
         return self._disable_writes_for_conflict(capabilities, session_id)
 
     async def create_and_start_session(
@@ -412,7 +472,11 @@ class DshRuntime(AgentRuntime):
         _reject_attachments(attachments)
         if client_message_id is not None:
             await self._remember_client_message_id(session_id, client_message_id)
-        params = _session_params(session_id, external_session_id, require_external=True)
+        params = self._session_params(
+            session_id,
+            external_session_id,
+            require_external=True,
+        )
         params.update(
             {
                 "content": content,
@@ -436,7 +500,11 @@ class DshRuntime(AgentRuntime):
         _reject_attachments(attachments)
         if client_message_id is not None:
             await self._remember_client_message_id(session_id, client_message_id)
-        params = _session_params(session_id, external_session_id, require_external=True)
+        params = self._session_params(
+            session_id,
+            external_session_id,
+            require_external=True,
+        )
         params.update({"content": content, "attachments": []})
         _set_optional(params, "clientMessageId", client_message_id)
         return _operation_result(await self._request("session.steer", params))
@@ -446,7 +514,7 @@ class DshRuntime(AgentRuntime):
         session_id: str,
         reason: str | None = None,
     ) -> RuntimeOperationResult:
-        params = {"sessionId": session_id}
+        params = {"sessionId": self._native_session_id(session_id)}
         _set_optional(params, "reason", reason)
         return _operation_result(await self._request("session.interrupt", params))
 
@@ -457,7 +525,11 @@ class DshRuntime(AgentRuntime):
         selections: Mapping[str, str | None],
     ) -> RuntimeOperationResult:
         self._assert_session_writable(session_id)
-        params = _session_params(session_id, external_session_id, require_external=True)
+        params = self._session_params(
+            session_id,
+            external_session_id,
+            require_external=True,
+        )
         params["selections"] = dict(selections)
         return _operation_result(
             await self._request("session.updateSelections", params)
@@ -470,7 +542,11 @@ class DshRuntime(AgentRuntime):
         query: str | None = None,
         limit: int = 50,
     ) -> tuple[RuntimeCommand, ...]:
-        params = _session_params(session_id, external_session_id, require_external=True)
+        params = self._session_params(
+            session_id,
+            external_session_id,
+            require_external=True,
+        )
         params.update(_query_params(query, limit))
         return bridge_models.commands(
             await self._request("session.listCommands", params)
@@ -485,7 +561,11 @@ class DshRuntime(AgentRuntime):
         args: tuple[str, ...] = (),
     ) -> RuntimeCommandResult:
         self._assert_session_writable(session_id)
-        params = _session_params(session_id, external_session_id, require_external=True)
+        params = self._session_params(
+            session_id,
+            external_session_id,
+            require_external=True,
+        )
         params.update({"command": command, "args": list(args)})
         _set_optional(params, "raw", raw)
         return bridge_models.command_result(
@@ -501,7 +581,7 @@ class DshRuntime(AgentRuntime):
         input_data: Mapping[str, Any] | None = None,
     ) -> RuntimeOperationResult:
         params: dict[str, Any] = {
-            "sessionId": session_id,
+            "sessionId": self._native_session_id(session_id),
             "noticeId": notice_id,
             "actionId": action_id,
         }
@@ -594,8 +674,12 @@ class DshRuntime(AgentRuntime):
             return await client.request(method, params)
         except BridgeRpcError as exc:
             if exc.bridge_code == "DSH_CONCURRENT_WRITER_DETECTED":
-                session_id = _optional_string((params or {}).get("sessionId"))
-                if session_id is not None:
+                bridge_session_id = _optional_string((params or {}).get("sessionId"))
+                if bridge_session_id is not None:
+                    session_id = self._platform_session_id(
+                        bridge_session_id,
+                        _optional_string((params or {}).get("externalSessionId")),
+                    )
                     self._concurrent_writer_sessions.add(session_id)
                     with suppress(Exception):
                         await self._publish_concurrent_writer_error(
@@ -615,6 +699,43 @@ class DshRuntime(AgentRuntime):
                 "another DeepSeek Harness process is writing this session; "
                 "stop it and force-refresh the session before retrying"
             )
+
+    def _native_session_id(self, session_id: str) -> str:
+        return self._bridge_session_ids.get(session_id, session_id)
+
+    def _platform_session_id(
+        self,
+        bridge_session_id: str,
+        external_session_id: str | None,
+    ) -> str:
+        existing = self._bridge_platform_ids.get(bridge_session_id)
+        if existing is not None:
+            return existing
+        source_id = external_session_id or bridge_session_id
+        platform_id = stable_runtime_session_id(
+            getattr(self.host, "session_namespace", self.host.connector_id),
+            "dsh",
+            source_id,
+        )
+        self._bridge_session_ids[platform_id] = bridge_session_id
+        self._bridge_platform_ids[bridge_session_id] = platform_id
+        return platform_id
+
+    def _session_params(
+        self,
+        session_id: str,
+        external_session_id: str | None,
+        *,
+        require_external: bool = False,
+    ) -> dict[str, Any]:
+        native_session_id = self._native_session_id(session_id)
+        self._bridge_session_ids.setdefault(session_id, native_session_id)
+        self._bridge_platform_ids.setdefault(native_session_id, session_id)
+        return _session_params(
+            native_session_id,
+            external_session_id,
+            require_external=require_external,
+        )
 
     def _disable_writes_for_conflict(
         self,
@@ -676,7 +797,7 @@ class DshRuntime(AgentRuntime):
             return
         raw = await client.request(
             "session.getCapabilities",
-            _session_params(session_id, external_session_id),
+            self._session_params(session_id, external_session_id),
         )
         capabilities = bridge_models.capability_set(
             raw,
@@ -750,11 +871,28 @@ class DshRuntime(AgentRuntime):
             )
             return
         if method == "session.capabilities.update":
-            await self.host.session_capabilities_update(
-                bridge_models.capability_set(
-                    params, connector_id=self.host.connector_id
-                )
+            capabilities = bridge_models.capability_set(
+                params,
+                connector_id=self.host.connector_id,
             )
+            bridge_session_id = _optional_string(params.get("sessionId"))
+            external_session_id = _optional_string(params.get("externalSessionId"))
+            if bridge_session_id is not None:
+                session_id = self._platform_session_id(
+                    bridge_session_id,
+                    external_session_id,
+                )
+                capabilities = replace(
+                    capabilities,
+                    session_id=session_id,
+                    capabilities=tuple(
+                        replace(capability, session_id=session_id)
+                        if capability.scope == "session"
+                        else capability
+                        for capability in capabilities.capabilities
+                    ),
+                )
+            await self.host.session_capabilities_update(capabilities)
             return
         if method == "catalog.model.update":
             await self.host.model_catalog_update(bridge_models.model_catalog(params))
@@ -765,7 +903,14 @@ class DshRuntime(AgentRuntime):
             )
             return
         if method == "session.meta.upsert":
-            session = bridge_models.session_meta(params)
+            native_session = bridge_models.session_meta(params)
+            session = replace(
+                native_session,
+                session_id=self._platform_session_id(
+                    native_session.session_id,
+                    native_session.external_session_id,
+                ),
+            )
             self._known_sessions[session.session_id] = session.external_session_id
             await self.host.session_meta_upsert(
                 session.session_id,
@@ -778,7 +923,14 @@ class DshRuntime(AgentRuntime):
             )
             return
         if method == "session.state.update":
-            state = bridge_models.session_state(params)
+            native_state = bridge_models.session_state(params)
+            state = replace(
+                native_state,
+                session_id=self._platform_session_id(
+                    native_state.session_id,
+                    native_state.external_session_id,
+                ),
+            )
             self._known_sessions[state.session_id] = state.external_session_id
             await self.host.session_state_update(
                 state.session_id,
@@ -792,35 +944,58 @@ class DshRuntime(AgentRuntime):
             )
             return
         if method == "timeline.item.upsert":
+            bridge_session_id = _required_string(
+                params.get("sessionId"),
+                "sessionId",
+            )
+            session_id = self._platform_session_id(
+                bridge_session_id,
+                _optional_string(params.get("externalSessionId")),
+            )
             raw_item = params.get("item")
             if isinstance(raw_item, Mapping):
                 item = await self._with_client_message_id(
-                    bridge_models.timeline_item(
-                        raw_item,
-                        default_session_id=_required_string(
-                            params.get("sessionId"), "sessionId"
+                    replace(
+                        bridge_models.timeline_item(
+                            raw_item,
+                            default_session_id=bridge_session_id,
                         ),
+                        session_id=session_id,
                     )
                 )
             else:
                 # Keep accepting the early bridge-v1 draft shape where the
                 # timeline item itself was used as the notification params.
                 item = await self._with_client_message_id(
-                    bridge_models.timeline_item(params)
+                    replace(
+                        bridge_models.timeline_item(params),
+                        session_id=session_id,
+                    )
                 )
             await self.host.timeline_item_upsert(item)
             return
         if method == "timeline.sync":
-            session_id = _required_string(params.get("sessionId"), "sessionId")
+            bridge_session_id = _required_string(
+                params.get("sessionId"),
+                "sessionId",
+            )
+            external_session_id = _optional_string(params.get("externalSessionId"))
+            session_id = self._platform_session_id(
+                bridge_session_id,
+                external_session_id,
+            )
             raw_items = params.get("items")
             if not isinstance(raw_items, list):
                 raise ValueError("DSH timeline.sync items must be an array")
             items = tuple(
                 [
                     await self._with_client_message_id(
-                        bridge_models.timeline_item(
-                            item,
-                            default_session_id=session_id,
+                        replace(
+                            bridge_models.timeline_item(
+                                item,
+                                default_session_id=bridge_session_id,
+                            ),
+                            session_id=session_id,
                         )
                     )
                     for item in raw_items
@@ -830,22 +1005,40 @@ class DshRuntime(AgentRuntime):
                 session_id,
                 "dsh",
                 items,
-                external_session_id=_optional_string(params.get("externalSessionId")),
+                external_session_id=external_session_id,
                 complete=params.get("complete") is True,
                 metadata=_safe_metadata(params.get("metadata")),
             )
             return
         if method == "notice.upsert":
-            await self.host.notice_upsert(bridge_models.notice(params))
+            native_notice = bridge_models.notice(params)
+            await self.host.notice_upsert(
+                replace(
+                    native_notice,
+                    session_id=self._platform_session_id(
+                        native_notice.session_id,
+                        _optional_string(params.get("externalSessionId")),
+                    ),
+                )
+            )
             return
         if method == "runtime.error":
             details = _safe_error_details(params.get("details"))
+            bridge_session_id = _optional_string(params.get("sessionId"))
+            external_session_id = _optional_string(params.get("externalSessionId"))
             await self.host.runtime_error(
                 "dsh",
                 _required_string(params.get("code"), "runtime error code"),
                 _required_string(params.get("message"), "runtime error message"),
-                session_id=_optional_string(params.get("sessionId")),
-                external_session_id=_optional_string(params.get("externalSessionId")),
+                session_id=(
+                    self._platform_session_id(
+                        bridge_session_id,
+                        external_session_id,
+                    )
+                    if bridge_session_id is not None
+                    else None
+                ),
+                external_session_id=external_session_id,
                 details=details,
             )
             return

@@ -3,17 +3,18 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import os
+import sys
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from connector.runtime_protocol import RuntimeInvalidRequestError
-from connector.runtime_protocol import RuntimeConfig
+from connector.runtime_protocol import RuntimeConfig, RuntimeInvalidRequestError
 from connector.runtimes.dsh.discovery import BridgeEndpoint, DshDiscovery
 from connector.runtimes.dsh.provider import DshProvider
 from connector.runtimes.dsh.runtime import DshRuntime
 from connector.runtimes.providers import default_runtime_providers
+from connector.runtimes.session_identity import stable_runtime_session_id
 from connector.server.runtime_sync import session_requires_timeline_sync
 
 
@@ -85,6 +86,31 @@ class _ListRuntime(DshRuntime):
         }
 
 
+class _BridgeSessionListRuntime(DshRuntime):
+    async def _request(self, method: str, params: Any = None) -> Any:
+        assert method == "session.list"
+        return {
+            "sessions": [
+                {
+                    "sessionId": "bridge-collision",
+                    "externalSessionId": "session-external",
+                    "runtime": "dsh",
+                    "title": "History",
+                }
+            ]
+        }
+
+
+class _NamespacedHost(_Host):
+    def __init__(self, namespace: str) -> None:
+        super().__init__()
+        self._namespace = namespace
+
+    @property
+    def session_namespace(self) -> str:
+        return self._namespace
+
+
 class _PagedListRuntime(DshRuntime):
     def __init__(
         self, *args: Any, repeated_cursor: bool = False, **kwargs: Any
@@ -149,6 +175,54 @@ class _StateRuntime(DshRuntime):
         }
 
 
+class _CapabilitiesRuntime(DshRuntime):
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.requests: list[str] = []
+
+    async def _request(self, method: str, params: Any = None) -> Any:
+        self.requests.append(method)
+        if method == "session.getCapabilities":
+            return {
+                "sessionId": params["sessionId"],
+                "externalSessionId": params["externalSessionId"],
+                "runtime": "dsh",
+                "revision": 2,
+                "capabilities": [
+                    {
+                        "capabilityId": "session.send_message",
+                        "scope": "session",
+                        "sessionId": params["sessionId"],
+                        "supported": True,
+                        "available": True,
+                        "allowed": True,
+                    }
+                ],
+            }
+        if method == "runtime.getCapabilities":
+            return {
+                "runtime": "dsh",
+                "revision": 3,
+                "capabilities": [
+                    {
+                        "capabilityId": "catalog.permission",
+                        "scope": "runtime",
+                        "supported": True,
+                        "available": True,
+                        "allowed": True,
+                    },
+                    {
+                        "capabilityId": "catalog.model",
+                        "scope": "runtime",
+                        "supported": True,
+                        "available": True,
+                        "allowed": True,
+                    },
+                ],
+            }
+        raise AssertionError(f"unexpected method: {method}")
+
+
 class _StartTurnRuntime(DshRuntime):
     async def _request(self, method: str, params: Any = None) -> Any:
         assert method == "session.startTurn"
@@ -204,7 +278,9 @@ def test_dsh_provider_identity_schema_and_validation(tmp_path: Path) -> None:
     async def run() -> None:
         provider = DshProvider(discoverer=discover)
         assert provider.runtime == "dsh"
-        assert provider.runtime_type == "local-service"
+        assert provider.runtime_type == "dsh"
+        assert provider.implementation_type == "local-service"
+        assert provider.instance_policy == "multiple"
         assert provider.display_name == "DeepSeek Harness"
         schema = await provider.get_config_schema()
         assert schema.defaults["maxRestartAttempts"] == 3
@@ -266,6 +342,108 @@ def test_dsh_session_revision_requests_timeline_sync() -> None:
             "history_cursor_missing": False,
         }
         assert session_requires_timeline_sync(sessions[0]) is True
+
+    asyncio.run(run())
+
+
+def test_dsh_session_identity_ignores_bridge_ids_across_instances() -> None:
+    async def run() -> None:
+        first_namespace = "connector-test:dsh:source-one"
+        second_namespace = "connector-test:dsh:source-two"
+        first = _BridgeSessionListRuntime(
+            config=RuntimeConfig(runtime="dsh", revision=1),
+            host=_NamespacedHost(first_namespace),  # type: ignore[arg-type]
+        )
+        second = _BridgeSessionListRuntime(
+            config=RuntimeConfig(runtime="dsh", revision=1),
+            host=_NamespacedHost(second_namespace),  # type: ignore[arg-type]
+        )
+
+        first_session = (await first.list_sessions())[0]
+        second_session = (await second.list_sessions())[0]
+
+        assert first_session.session_id == stable_runtime_session_id(
+            first_namespace,
+            "dsh",
+            "session-external",
+        )
+        assert second_session.session_id == stable_runtime_session_id(
+            second_namespace,
+            "dsh",
+            "session-external",
+        )
+        assert first_session.session_id != second_session.session_id
+        assert first_session.session_id != "bridge-collision"
+        assert second_session.session_id != "bridge-collision"
+
+    asyncio.run(run())
+
+
+def test_dsh_provider_canonicalizes_home_and_endpoint_claims(
+    tmp_path: Path,
+) -> None:
+    async def run() -> None:
+        real_home = tmp_path / "real-home"
+        endpoint_path = real_home / "agents-anywhere" / "bridge" / "endpoint.json"
+        endpoint_path.parent.mkdir(parents=True)
+        endpoint = BridgeEndpoint(
+            "127.0.0.1",
+            12345,
+            "secret-token",
+            os.getpid(),
+            endpoint_path,
+        )
+
+        async def discover(values: dict[str, Any]) -> DshDiscovery:
+            return DshDiscovery(True, True, endpoint, metadata={})
+
+        linked_home = tmp_path / "linked-home"
+        linked_home.symlink_to(real_home, target_is_directory=True)
+        provider = DshProvider(discoverer=discover)
+        direct = await provider.validate_config(
+            {"dshHome": str(real_home / ".." / "real-home")}
+        )
+        linked = await provider.validate_config({"dshHome": str(linked_home)})
+
+        assert direct.values["dshHome"] == str(real_home.resolve())
+        assert linked.values["dshHome"] == str(real_home.resolve())
+        assert provider.resource_claims(direct) == provider.resource_claims(linked)
+        source = provider.session_source_key(direct)
+        assert source == provider.session_source_key(linked)
+        assert "secret-token" not in source.key
+        assert "12345" not in source.key
+        assert str(os.getpid()) not in source.key
+
+    asyncio.run(run())
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="Darwin path identity semantics")
+def test_dsh_provider_blocks_case_and_unicode_path_aliases(tmp_path: Path) -> None:
+    async def discover(values: dict[str, Any]) -> DshDiscovery:
+        path = Path(str(values["dshHome"])) / "agents-anywhere/bridge/endpoint.json"
+        return DshDiscovery(
+            True,
+            True,
+            BridgeEndpoint("127.0.0.1", 12345, "token", os.getpid(), path),
+            metadata={},
+        )
+
+    async def run() -> None:
+        provider = DshProvider(discoverer=discover)
+        composed = tmp_path / "DSH-Caf\u00e9"
+        decomposed = tmp_path / "dsh-cafe\u0301"
+
+        first = await provider.validate_config({"dshHome": str(composed)})
+        second = await provider.validate_config({"dshHome": str(decomposed)})
+
+        first_claims = provider.resource_claims(first)
+        second_claims = provider.resource_claims(second)
+        assert [
+            (claim.kind, claim.key, claim.mode) for claim in first_claims
+        ] == [
+            (claim.kind, claim.key, claim.mode) for claim in second_claims
+        ]
+        assert provider.session_source_key(first) == provider.session_source_key(second)
 
     asyncio.run(run())
 
@@ -372,6 +550,38 @@ def test_dsh_non_conflict_state_releases_cached_writer_block() -> None:
     asyncio.run(run())
 
 
+def test_dsh_session_capabilities_inherit_permission_catalog_only() -> None:
+    async def run() -> None:
+        runtime = _CapabilitiesRuntime(
+            config=RuntimeConfig(runtime="dsh", revision=1),
+            host=_Host(),  # type: ignore[arg-type]
+        )
+
+        capability_set = await runtime.get_session_capabilities(
+            "sess_1",
+            "session-external",
+        )
+
+        capabilities = {
+            capability.capability_id: capability
+            for capability in capability_set.capabilities
+        }
+        permission = capabilities["catalog.permission"]
+        assert permission.scope == "session"
+        assert permission.session_id == "sess_1"
+        assert permission.supported is True
+        assert permission.available is True
+        assert permission.allowed is True
+        assert "catalog.model" not in capabilities
+        assert capability_set.revision == 3
+        assert runtime.requests == [
+            "session.getCapabilities",
+            "runtime.getCapabilities",
+        ]
+
+    asyncio.run(run())
+
+
 def test_dsh_snapshot_watermark_commits_history_cursor() -> None:
     async def run() -> None:
         host = _Host()
@@ -433,7 +643,11 @@ def test_dsh_live_timeline_notification_unwraps_item_envelope() -> None:
         assert len(host.timeline_items) == 1
         item = host.timeline_items[0]
         assert item.id == "message_1"
-        assert item.session_id == "sess_1"
+        assert item.session_id == stable_runtime_session_id(
+            host.connector_id,
+            "dsh",
+            "session-external",
+        )
         assert item.type == "message"
         assert item.role == "assistant"
         assert item.content["text"] == "hello from DSH"

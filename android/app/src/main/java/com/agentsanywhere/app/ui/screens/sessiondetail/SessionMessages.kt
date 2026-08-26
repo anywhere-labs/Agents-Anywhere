@@ -90,7 +90,7 @@ private val SessionWelcomeFontFamily = FontFamily(
     Font(R.font.newsreader_opsz_wght, FontWeight(650)),
 )
 
-private sealed interface TimelineRenderItem {
+internal sealed interface TimelineRenderItem {
     val key: String
     val messages: List<TimelineMessage>
 
@@ -100,7 +100,7 @@ private sealed interface TimelineRenderItem {
     }
 
     data class ToolRun(override val messages: List<TimelineMessage>) : TimelineRenderItem {
-        override val key: String = "tool-run:${messages.joinToString(":") { it.id }}"
+        override val key: String = "tool-run:${messages.firstOrNull()?.id ?: "unknown"}"
     }
 }
 
@@ -474,7 +474,7 @@ private fun AgentReplyCopyAction(
     }
 }
 
-private fun groupTimelineMessages(messages: List<TimelineMessage>): List<TimelineRenderItem> {
+internal fun groupTimelineMessages(messages: List<TimelineMessage>): List<TimelineRenderItem> {
     val result = mutableListOf<TimelineRenderItem>()
     val pendingTools = mutableListOf<TimelineMessage>()
 
@@ -1272,9 +1272,11 @@ private fun ToolActivityDetailCard(
     }
 }
 
-private fun TimelineMessage.toolSummaryTarget(): String {
+internal fun TimelineMessage.toolSummaryTarget(): String {
     return if (kind == TimelineMessageKind.ToolCall) {
-        title.ifBlank { text }
+        listOf(title.ifBlank { text }, subtitle)
+            .filter(String::isNotBlank)
+            .joinToString(" ")
     } else {
         subtitle.ifBlank { text }.ifBlank { title }
     }

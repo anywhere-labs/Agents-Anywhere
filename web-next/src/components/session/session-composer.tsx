@@ -34,7 +34,10 @@ import type {
 } from "@/features/dashboard/types"
 import { useTranslations } from "next-intl"
 import {
+  catalogItemDisabledReason,
+  catalogItemEnabled,
   catalogI18nText,
+  modelCatalogDisplayName,
   modelIdsForSelectionId,
   permissionIdForSelectionId,
   selectionIdForModelCatalog,
@@ -43,6 +46,7 @@ import {
 import { SelectionSettingsDrawer } from "@/components/session/selection-settings-drawer"
 import { CAPABILITY, capabilityIsUsable, findCapability } from "@/components/session/capabilities"
 import { useElementWidth } from "@/hooks/use-element-width"
+import { sessionRuntimeId, sessionRuntimeType } from "@/features/dashboard/runtime-instances"
 
 export type { AttachedFile }
 
@@ -101,6 +105,10 @@ export function SessionComposer({
   const composerWidth = useElementWidth(composerRef)
   const runtimeStatus = effectiveRuntimeStatus(runtimeState, session)
   const runtimeSelections = runtimeState?.selections ?? {}
+  const runtimeScope = {
+    runtimeId: sessionRuntimeId(session),
+    runtimeType: sessionRuntimeType(session),
+  }
   const isRunning = runtimeStatus === "running"
   const isWaitingApproval = runtimeStatus === "waiting_approval"
   const isBlocked = runtimeStatus === "blocked"
@@ -118,13 +126,17 @@ export function SessionComposer({
     !isWaitingApproval &&
     !isBlocked &&
     !isError
-  const canUseSendMessage = capabilityIsUsable(effectiveCapabilities, CAPABILITY.sendMessage)
-  const canUseInterrupt = capabilityIsUsable(effectiveCapabilities, CAPABILITY.interrupt)
-  const interruptCapability = findCapability(effectiveCapabilities, CAPABILITY.interrupt)
-  const canUseModelCatalog = capabilityIsUsable(effectiveCapabilities, CAPABILITY.modelCatalog)
-  const canUsePermissionCatalog = capabilityIsUsable(effectiveCapabilities, CAPABILITY.permissionCatalog)
-  const canUseEffortCatalog = capabilityIsUsable(effectiveCapabilities, CAPABILITY.effortCatalog)
-  const canUseAttachments = capabilityIsUsable(effectiveCapabilities, CAPABILITY.attachment)
+  const canUseSendMessage = capabilityIsUsable(effectiveCapabilities, CAPABILITY.sendMessage, runtimeScope)
+  const canUseInterrupt = capabilityIsUsable(effectiveCapabilities, CAPABILITY.interrupt, runtimeScope)
+  const interruptCapability = findCapability(effectiveCapabilities, CAPABILITY.interrupt, runtimeScope)
+  const canUseModelCatalog = capabilityIsUsable(effectiveCapabilities, CAPABILITY.modelCatalog, runtimeScope)
+  const canUsePermissionCatalog = capabilityIsUsable(
+    effectiveCapabilities,
+    CAPABILITY.permissionCatalog,
+    runtimeScope,
+  )
+  const canUseEffortCatalog = capabilityIsUsable(effectiveCapabilities, CAPABILITY.effortCatalog, runtimeScope)
+  const canUseAttachments = capabilityIsUsable(effectiveCapabilities, CAPABILITY.attachment, runtimeScope)
   const canSend =
     canUseSendMessage &&
     !creatingSession &&
@@ -148,17 +160,28 @@ export function SessionComposer({
     label: catalogI18nText(tNew, item.metadata, "labelKey", item.displayName),
     description: catalogI18nText(tNew, item.metadata, "descriptionKey", item.description),
     default: item.default,
+    enabled: catalogItemEnabled(item),
+    disabledReason: catalogItemDisabledReason(item),
     selectionId: item.selectionId,
   })) ?? []
   const modelItems = modelCatalog?.models.map((item) => ({
     id: item.id,
-    label: catalogI18nText(tNew, item.metadata, "labelKey", item.displayName),
+    label: modelCatalogDisplayName(
+      item,
+      modelCatalog.models,
+      catalogI18nText(tNew, item.metadata, "labelKey", item.displayName),
+      tNew("defaultReasoning"),
+    ),
     default: item.default,
+    enabled: catalogItemEnabled(item),
+    disabledReason: catalogItemDisabledReason(item),
     selectionId: item.selectionId,
     reasoningItems: item.reasoningItems.map((reasoning) => ({
       id: reasoning.id,
       label: catalogI18nText(tNew, reasoning.metadata, "labelKey", reasoning.displayName),
       default: reasoning.default,
+      enabled: catalogItemEnabled(reasoning),
+      disabledReason: catalogItemDisabledReason(reasoning),
       selectionId: reasoning.selectionId,
     })),
   })) ?? []
@@ -181,34 +204,40 @@ export function SessionComposer({
   const selectorsDisabled = permissionSelectorDisabled && modelSelectorDisabled
 
   React.useEffect(() => {
-    const hasRuntimePermission = permissionItems.some((item) => item.id === permissionValue)
+    const hasRuntimePermission = permissionItems.some((item) => item.id === permissionValue && item.enabled)
     const nextPermission = hasRuntimePermission
       ? permissionValue
-      : permissionItems.find((item) => item.default)?.id ?? permissionItems[0]?.id ?? ""
+      : permissionItems.find((item) => item.default && item.enabled)?.id
+        ?? permissionItems.find((item) => item.enabled)?.id
+        ?? ""
     setSelectedPermissionMode((current) =>
-      hasRuntimePermission || !current || !permissionItems.some((item) => item.id === current)
+      hasRuntimePermission || !current || !permissionItems.some((item) => item.id === current && item.enabled)
         ? nextPermission
         : current,
     )
   }, [permissionItems, permissionValue])
 
   React.useEffect(() => {
-    const hasRuntimeModel = modelItems.some((item) => item.id === modelValue)
+    const hasRuntimeModel = modelItems.some((item) => item.id === modelValue && item.enabled)
     const nextModel = hasRuntimeModel
       ? modelValue
-      : modelItems.find((item) => item.default)?.id ?? modelItems[0]?.id ?? ""
+      : modelItems.find((item) => item.default && item.enabled)?.id
+        ?? modelItems.find((item) => item.enabled)?.id
+        ?? ""
     setSelectedModel((current) =>
-      hasRuntimeModel || !current || !modelItems.some((item) => item.id === current) ? nextModel : current,
+      hasRuntimeModel || !current || !modelItems.some((item) => item.id === current && item.enabled) ? nextModel : current,
     )
   }, [modelItems, modelValue])
 
   React.useEffect(() => {
-    const hasRuntimeEffort = effortItems.some((item) => item.id === effortValue)
+    const hasRuntimeEffort = effortItems.some((item) => item.id === effortValue && item.enabled)
     const nextEffort = hasRuntimeEffort
       ? effortValue
-      : effortItems.find((item) => item.default)?.id ?? effortItems[0]?.id ?? ""
+      : effortItems.find((item) => item.default && item.enabled)?.id
+        ?? effortItems.find((item) => item.enabled)?.id
+        ?? ""
     setSelectedReasoning((current) =>
-      hasRuntimeEffort || !current || !effortItems.some((item) => item.id === current) ? nextEffort : current,
+      hasRuntimeEffort || !current || !effortItems.some((item) => item.id === current && item.enabled) ? nextEffort : current,
     )
   }, [effortItems, effortValue])
   const selectedModelSelection = selectionIdForModelCatalog(modelCatalog, selectedModel, selectedReasoning)
@@ -435,6 +464,7 @@ export function SessionComposer({
                       {permissionItems.map((item) => (
                         <DropdownMenuItem
                           key={item.id}
+                          disabled={!item.enabled}
                           className={cn(
                             "items-start gap-2 py-2.5",
                             selectedPermissionMode === item.id && "text-primary focus:text-primary",
@@ -444,9 +474,9 @@ export function SessionComposer({
                           <Check className={cn("mt-0.5 size-3.5", selectedPermissionMode === item.id ? "opacity-100" : "opacity-0")} />
                           <span className="min-w-0 flex-1">
                             <span className="block font-medium leading-none">{item.label}</span>
-                            {item.description ? (
+                            {(item.enabled ? item.description : item.disabledReason) ? (
                               <span className="mt-1 block whitespace-normal text-xs leading-snug text-muted-foreground">
-                                {item.description}
+                                {item.enabled ? item.description : item.disabledReason}
                               </span>
                             ) : null}
                           </span>
@@ -479,24 +509,38 @@ export function SessionComposer({
                             return (
                               <DropdownMenuItem
                                 key={modelItem.id}
+                                disabled={!modelItem.enabled}
                                 className="gap-2"
                                 onSelect={() => chooseModel(modelItem.id, "")}
                               >
                                 <Check className={cn("size-3.5", selectedModel === modelItem.id ? "opacity-100" : "opacity-0")} />
-                                <span className="truncate">{modelItem.label}</span>
+                                <span className="min-w-0 flex-1">
+                                  <span className="block truncate">{modelItem.label}</span>
+                                  {!modelItem.enabled && modelItem.disabledReason ? (
+                                    <span className="block truncate text-xs text-muted-foreground">
+                                      {modelItem.disabledReason}
+                                    </span>
+                                  ) : null}
+                                </span>
                               </DropdownMenuItem>
                             )
                           }
                           return (
                             <DropdownMenuSub key={modelItem.id}>
-                              <DropdownMenuSubTrigger className="gap-2" disabled={effortSelectorDisabled}>
+                              <DropdownMenuSubTrigger
+                                className="gap-2"
+                                disabled={effortSelectorDisabled || !modelItem.enabled}
+                              >
                                 <Check className={cn("size-3.5", selectedModel === modelItem.id ? "opacity-100" : "opacity-0")} />
-                                <span className="max-w-40 truncate">{modelItem.label}</span>
+                                <span className="max-w-40 truncate" title={modelItem.disabledReason ?? undefined}>
+                                  {modelItem.label}
+                                </span>
                               </DropdownMenuSubTrigger>
                               <DropdownMenuSubContent className="w-56">
                                 {modelEfforts.map((item) => (
                                   <DropdownMenuItem
                                     key={item.id}
+                                    disabled={!item.enabled}
                                     className="gap-2"
                                     onSelect={() => chooseModel(modelItem.id, item.id)}
                                   >
@@ -504,7 +548,14 @@ export function SessionComposer({
                                       "size-3.5",
                                       selectedModel === modelItem.id && selectedReasoning === item.id ? "opacity-100" : "opacity-0",
                                     )} />
-                                    <span className="truncate">{item.label}</span>
+                                    <span className="min-w-0 flex-1">
+                                      <span className="block truncate">{item.label}</span>
+                                      {!item.enabled && item.disabledReason ? (
+                                        <span className="block truncate text-xs text-muted-foreground">
+                                          {item.disabledReason}
+                                        </span>
+                                      ) : null}
+                                    </span>
                                   </DropdownMenuItem>
                                 ))}
                               </DropdownMenuSubContent>

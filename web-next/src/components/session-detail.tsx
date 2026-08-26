@@ -55,6 +55,7 @@ import {
   timelineClientMessageId,
 } from "@/components/session/optimistic-timeline"
 import { recordsOf, runtimeLabel, textOf } from "@/components/session/session-utils"
+import { sessionRuntimeId, sessionRuntimeType } from "@/features/dashboard/runtime-instances"
 import { useWorkspace } from "@/components/workspace-context"
 
 type SessionDetailProps = {
@@ -153,6 +154,8 @@ function nextOptimisticRuntimeState(
   return {
     sessionId: session.id,
     runtime: session.runtime,
+    runtimeId: sessionRuntimeId(session),
+    runtimeType: sessionRuntimeType(session),
     externalSessionId: session.externalSessionId,
     status,
     selections: state?.selections ?? {},
@@ -281,17 +284,20 @@ export function SessionDetail({
   const session = state?.session ?? fallbackSession
   const runtimeState = state?.state ?? null
   const runtimeStatus = effectiveRuntimeStatus(runtimeState, session)
-  const sessionRuntime = session?.runtime ?? null
+  const sessionRuntime = session ? sessionRuntimeId(session) : null
+  const sessionRuntimeScope = session
+    ? { runtimeId: sessionRuntimeId(session), runtimeType: sessionRuntimeType(session) }
+    : undefined
   const effectiveCapabilities = state?.effectiveCapabilities ?? null
   const canUseModelCatalog = Boolean(
     sessionRuntime &&
       effectiveCapabilities &&
-      capabilityIsUsable(effectiveCapabilities, CAPABILITY.modelCatalog, sessionRuntime),
+      capabilityIsUsable(effectiveCapabilities, CAPABILITY.modelCatalog, sessionRuntimeScope),
   )
   const canUsePermissionCatalog = Boolean(
     sessionRuntime &&
       effectiveCapabilities &&
-      capabilityIsUsable(effectiveCapabilities, CAPABILITY.permissionCatalog, sessionRuntime),
+      capabilityIsUsable(effectiveCapabilities, CAPABILITY.permissionCatalog, sessionRuntimeScope),
   )
   const commandSessionId = session?.id ?? null
   const composerDraft = composerDraftState.sessionId === sessionId ? composerDraftState.value : ""
@@ -1249,7 +1255,7 @@ export function SessionDetail({
   if (!session) return null
 
   const takeoverTarget = pendingTakeover ?? false
-  const takeoverAgent = runtimeLabel(session.runtime)
+  const takeoverAgent = session.runtimeName?.trim() || runtimeLabel(sessionRuntimeType(session))
   const takeoverDescription = (tSession.raw(
     takeoverTarget ? "takeoverEnableDescription" : "takeoverDisableDescription",
   ) as string[]).map((line) => line.replaceAll("{agent}", takeoverAgent))
@@ -1346,8 +1352,8 @@ export function SessionDetail({
                 <Loader2 className="size-4 animate-spin" />
                 <span>
                   {runtimeStatus === "waiting" || runtimeStatus === "pending"
-                    ? tSession("runtimePending", { runtime: runtimeLabel(session.runtime) })
-                    : tSession("runtimeWorking", { runtime: runtimeLabel(session.runtime) })}
+                    ? tSession("runtimePending", { runtime: takeoverAgent })
+                    : tSession("runtimeWorking", { runtime: takeoverAgent })}
                 </span>
               </div>
             ) : null}

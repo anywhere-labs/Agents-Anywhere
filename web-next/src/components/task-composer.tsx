@@ -47,13 +47,21 @@ import type {
 } from "@/features/dashboard/types"
 import { useTranslations } from "next-intl"
 import {
+  catalogItemDisabledReason,
+  catalogItemEnabled,
   catalogI18nText,
+  modelCatalogDisplayName,
   modelIdsForSelectionId,
   permissionIdForSelectionId,
   selectionIdForModelCatalog,
   selectionIdForPermissionCatalog,
 } from "@/components/session/catalog-selection"
 import { CAPABILITY, capabilityIsUsable } from "@/components/session/capabilities"
+import {
+  runtimeInstanceName,
+  runtimeTypeName,
+  sessionRuntimeRequestIdentity,
+} from "@/features/dashboard/runtime-instances"
 
 const NEW_SESSION_PREFERENCE_KEY = "aa-new-session-preference-v1"
 const TITLE_WRITE_MS = 58
@@ -230,13 +238,18 @@ export function TaskComposer() {
     () => selectedConnector
       ? activeRuntimes(runtimeInventory[selectedConnector.id]).map((runtime) => ({
           id: runtime.runtimeId,
-          label: runtime.displayName,
+          label: runtimeOptionLabel(runtime),
         }))
       : [],
     [runtimeInventory, selectedConnector],
   )
 
   const [selectedAgent, setSelectedAgent] = React.useState(agentOptions[0]?.id ?? "")
+  const selectedRuntime = activeRuntimes(runtimeInventory[selectedConnectorId])
+    .find((runtime) => runtime.runtimeId === selectedAgent) ?? null
+  const selectedRuntimeScope = selectedRuntime
+    ? { runtimeId: selectedRuntime.runtimeId, runtimeType: selectedRuntime.runtimeType }
+    : undefined
   const [selectedModel, setSelectedModel] = React.useState("")
   const [selectedReasoning, setSelectedReasoning] = React.useState("")
   const [selectedPermissionMode, setSelectedPermissionMode] = React.useState("")
@@ -355,12 +368,12 @@ export function TaskComposer() {
         const canUseModelCatalog = capabilityIsUsable(
           capabilitySet,
           CAPABILITY.modelCatalog,
-          selectedAgent,
+          selectedRuntimeScope,
         )
         const canUsePermissionCatalog = capabilityIsUsable(
           capabilitySet,
           CAPABILITY.permissionCatalog,
-          selectedAgent,
+          selectedRuntimeScope,
         )
         const [modelCatalogResponse, permissionCatalogResponse] = await Promise.all([
           canUseModelCatalog
@@ -398,34 +411,43 @@ export function TaskComposer() {
     return () => {
       cancelled = true
     }
-  }, [authSession?.accessToken, selectedAgent, selectedConnectorId])
+  }, [authSession?.accessToken, selectedAgent, selectedConnectorId, selectedRuntime?.runtimeType])
 
   const canUseModelCatalog = capabilityIsUsable(
     runtimeCapabilities,
     CAPABILITY.modelCatalog,
-    selectedAgent,
+    selectedRuntimeScope,
   )
   const canUsePermissionCatalog = capabilityIsUsable(
     runtimeCapabilities,
     CAPABILITY.permissionCatalog,
-    selectedAgent,
+    selectedRuntimeScope,
   )
   const canUseAttachments = capabilityIsUsable(
     runtimeCapabilities,
     CAPABILITY.attachment,
-    selectedAgent,
+    selectedRuntimeScope,
   )
 
   const models = React.useMemo(
     () => modelCatalog?.models.map((item) => ({
       id: item.id,
-      label: catalogI18nText(t, item.metadata, "labelKey", item.displayName),
+      label: modelCatalogDisplayName(
+        item,
+        modelCatalog.models,
+        catalogI18nText(t, item.metadata, "labelKey", item.displayName),
+        t("defaultReasoning"),
+      ),
       default: item.default,
+      enabled: catalogItemEnabled(item),
+      disabledReason: catalogItemDisabledReason(item),
       selectionId: item.selectionId,
       reasoningItems: item.reasoningItems.map((reasoning) => ({
         id: reasoning.id,
         label: catalogI18nText(t, reasoning.metadata, "labelKey", reasoning.displayName),
         default: reasoning.default,
+        enabled: catalogItemEnabled(reasoning),
+        disabledReason: catalogItemDisabledReason(reasoning),
         selectionId: reasoning.selectionId,
       })),
     })) ?? [],
@@ -439,34 +461,42 @@ export function TaskComposer() {
       label: catalogI18nText(t, item.metadata, "labelKey", item.displayName),
       description: catalogI18nText(t, item.metadata, "descriptionKey", item.description),
       default: item.default,
+      enabled: catalogItemEnabled(item),
+      disabledReason: catalogItemDisabledReason(item),
       selectionId: item.selectionId,
     })) ?? [],
     [permissionCatalog, t],
   )
 
   React.useEffect(() => {
-    const nextModel = models.find((option) => option.default)?.id ?? models[0]?.id ?? ""
-    setSelectedModel((current) => current && models.some((option) => option.id === current) ? current : nextModel)
+    const nextModel = models.find((option) => option.default && option.enabled)?.id
+      ?? models.find((option) => option.enabled)?.id
+      ?? ""
+    setSelectedModel((current) => current && models.some((option) => option.id === current && option.enabled) ? current : nextModel)
   }, [models])
 
   React.useEffect(() => {
-    const nextPermissionMode = permissionOptions.find((option) => option.default)?.id ?? permissionOptions[0]?.id ?? ""
+    const nextPermissionMode = permissionOptions.find((option) => option.default && option.enabled)?.id
+      ?? permissionOptions.find((option) => option.enabled)?.id
+      ?? ""
     setSelectedPermissionMode((current) =>
-      current && permissionOptions.some((option) => option.id === current) ? current : nextPermissionMode,
+      current && permissionOptions.some((option) => option.id === current && option.enabled) ? current : nextPermissionMode,
     )
   }, [permissionOptions])
 
   React.useEffect(() => {
-    const nextEffort = reasoningOptions.find((option) => option.default)?.id ?? reasoningOptions[0]?.id ?? ""
+    const nextEffort = reasoningOptions.find((option) => option.default && option.enabled)?.id
+      ?? reasoningOptions.find((option) => option.enabled)?.id
+      ?? ""
     setSelectedReasoning((current) =>
-      current && reasoningOptions.some((option) => option.id === current) ? current : nextEffort,
+      current && reasoningOptions.some((option) => option.id === current && option.enabled) ? current : nextEffort,
     )
   }, [reasoningOptions])
 
   React.useEffect(() => {
     setSelectedReasoning((current) => {
       if (!current) return current
-      return reasoningOptions.some((option) => option.id === current) ? current : ""
+      return reasoningOptions.some((option) => option.id === current && option.enabled) ? current : ""
     })
   }, [reasoningOptions])
 
@@ -480,7 +510,7 @@ export function TaskComposer() {
     if (!selectionPreference) return
 
     const modelSelection = modelIdsForSelectionId(modelCatalog, selectionPreference.model)
-    if (modelSelection && models.some((option) => option.id === modelSelection.modelId)) {
+    if (modelSelection && models.some((option) => option.id === modelSelection.modelId && option.enabled)) {
       setSelectedModel(modelSelection.modelId)
       setSelectedReasoning(modelSelection.reasoningId)
     }
@@ -489,7 +519,7 @@ export function TaskComposer() {
       permissionCatalog,
       selectionPreference.permission,
     )
-    if (permissionSelection && permissionOptions.some((option) => option.id === permissionSelection)) {
+    if (permissionSelection && permissionOptions.some((option) => option.id === permissionSelection && option.enabled)) {
       setSelectedPermissionMode(permissionSelection)
     }
   }, [
@@ -516,7 +546,7 @@ export function TaskComposer() {
   const requiresPermissionSelection = canUsePermissionCatalog && permissionOptions.length > 0
   const hasSelectionSettings = models.length > 0 || permissionOptions.length > 0
   const canCreate =
-    Boolean(authSession?.accessToken && selectedConnector && selectedAgent) &&
+    Boolean(authSession?.accessToken && selectedConnector && selectedRuntime) &&
     !creating &&
     !catalogsLoading &&
     (!requiresModelSelection || Boolean(selectedModelSelection)) &&
@@ -531,7 +561,7 @@ export function TaskComposer() {
   const showCollapsedBrand = isMobile || sidebarState === "collapsed"
 
   const handleCreate = async () => {
-    if (!authSession?.accessToken || !selectedConnector || !selectedAgent || creating) return
+    if (!authSession?.accessToken || !selectedConnector || !selectedRuntime || creating) return
     if (!prompt.trim() && attachments.length === 0) return
     if (catalogsLoading) return
     if (requiresModelSelection && !selectedModelSelection) return
@@ -546,7 +576,11 @@ export function TaskComposer() {
       id: localSessionId,
       connectorId: selectedConnector.id,
       connectorStatus: selectedConnector.status,
-      runtime: selectedAgent,
+      runtime: selectedRuntime?.runtimeType ?? selectedAgent,
+      runtimeId: selectedRuntime?.runtimeId ?? selectedAgent,
+      runtimeType: selectedRuntime?.runtimeType ?? selectedAgent,
+      runtimeName: selectedRuntime ? runtimeInstanceName(selectedRuntime) : null,
+      runtimeTypeDisplayName: selectedRuntime ? runtimeTypeName(selectedRuntime) : null,
       externalSessionId: null,
       title: prompt.trim() || null,
       cwd: workspace?.path || null,
@@ -569,7 +603,9 @@ export function TaskComposer() {
     }
     const optimisticState = {
       sessionId: localSessionId,
-      runtime: selectedAgent,
+      runtime: selectedRuntime?.runtimeType ?? selectedAgent,
+      runtimeId: selectedRuntime?.runtimeId ?? selectedAgent,
+      runtimeType: selectedRuntime?.runtimeType ?? selectedAgent,
       externalSessionId: null,
       status: "waiting" as const,
       selections: {
@@ -609,7 +645,10 @@ export function TaskComposer() {
       }
       const createBody = {
         connectorId: selectedConnector.id,
-        runtime: selectedAgent,
+        ...sessionRuntimeRequestIdentity(
+          selectedRuntime?.runtimeType ?? selectedAgent,
+          selectedRuntime?.runtimeId ?? selectedAgent,
+        ),
         title: prompt.trim() || undefined,
         cwd: workspace?.path || undefined,
       }
@@ -778,6 +817,7 @@ export function TaskComposer() {
                         {permissionOptions.map((item) => (
                           <DropdownMenuItem
                             key={item.id}
+                            disabled={!item.enabled}
                             className={cn(
                               "items-start gap-2 py-2.5",
                               selectedPermissionMode === item.id && "text-primary focus:text-primary",
@@ -787,9 +827,9 @@ export function TaskComposer() {
                             <Check className={cn("mt-0.5 size-3.5", selectedPermissionMode === item.id ? "opacity-100" : "opacity-0")} />
                             <span className="min-w-0 flex-1">
                               <span className="block font-medium leading-none">{item.label}</span>
-                              {item.description ? (
+                              {(item.enabled ? item.description : item.disabledReason) ? (
                                 <span className="mt-1 block whitespace-normal text-xs leading-snug text-muted-foreground">
-                                  {item.description}
+                                  {item.enabled ? item.description : item.disabledReason}
                                 </span>
                               ) : null}
                             </span>
@@ -815,6 +855,7 @@ export function TaskComposer() {
                               return (
                                 <DropdownMenuItem
                                   key={modelItem.id}
+                                  disabled={!modelItem.enabled}
                                   className="gap-2"
                                   onSelect={() => {
                                     setSelectedModel(modelItem.id)
@@ -822,20 +863,30 @@ export function TaskComposer() {
                                   }}
                                 >
                                   <Check className={cn("size-3.5", selectedModel === modelItem.id ? "opacity-100" : "opacity-0")} />
-                                  <span className="truncate">{modelItem.label}</span>
+                                  <span className="min-w-0 flex-1">
+                                    <span className="block truncate">{modelItem.label}</span>
+                                    {!modelItem.enabled && modelItem.disabledReason ? (
+                                      <span className="block truncate text-xs text-muted-foreground">
+                                        {modelItem.disabledReason}
+                                      </span>
+                                    ) : null}
+                                  </span>
                                 </DropdownMenuItem>
                               )
                             }
                             return (
                               <DropdownMenuSub key={modelItem.id}>
-                                <DropdownMenuSubTrigger className="gap-2">
+                                <DropdownMenuSubTrigger className="gap-2" disabled={!modelItem.enabled}>
                                   <Check className={cn("size-3.5", selectedModel === modelItem.id ? "opacity-100" : "opacity-0")} />
-                                  <span className="max-w-40 truncate">{modelItem.label}</span>
+                                  <span className="max-w-40 truncate" title={modelItem.disabledReason ?? undefined}>
+                                    {modelItem.label}
+                                  </span>
                                 </DropdownMenuSubTrigger>
                                 <DropdownMenuSubContent className="w-56">
                                   {modelEfforts.map((item) => (
                                     <DropdownMenuItem
                                       key={item.id}
+                                      disabled={!item.enabled}
                                       className="gap-2"
                                       onSelect={() => {
                                         setSelectedModel(modelItem.id)
@@ -846,7 +897,14 @@ export function TaskComposer() {
                                         "size-3.5",
                                         selectedModel === modelItem.id && selectedReasoning === item.id ? "opacity-100" : "opacity-0",
                                       )} />
-                                      <span className="truncate">{item.label}</span>
+                                      <span className="min-w-0 flex-1">
+                                        <span className="block truncate">{item.label}</span>
+                                        {!item.enabled && item.disabledReason ? (
+                                          <span className="block truncate text-xs text-muted-foreground">
+                                            {item.disabledReason}
+                                          </span>
+                                        ) : null}
+                                      </span>
                                     </DropdownMenuItem>
                                   ))}
                                 </DropdownMenuSubContent>
@@ -888,7 +946,13 @@ export function TaskComposer() {
 function activeRuntimes(runtimes: DeviceRuntimeView[] | undefined) {
   return (runtimes ?? [])
     .filter((runtime) => runtime.configured && runtime.active && runtime.status === "running")
-    .sort((a, b) => a.displayName.localeCompare(b.displayName))
+    .sort((a, b) => runtimeInstanceName(a).localeCompare(runtimeInstanceName(b)))
+}
+
+function runtimeOptionLabel(runtime: DeviceRuntimeView): string {
+  const instanceName = runtimeInstanceName(runtime)
+  const typeName = runtimeTypeName(runtime)
+  return instanceName === typeName ? instanceName : `${instanceName} · ${typeName}`
 }
 
 function sameRuntimeInventory(

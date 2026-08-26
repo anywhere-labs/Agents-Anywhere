@@ -15,6 +15,9 @@ data class NewSessionDraft(
     val runtimeLabel: String,
     val knownSessionIds: Set<String>,
     val selections: NewSessionSelections = NewSessionSelections(),
+    val runtimeId: String = runtime,
+    val runtimeType: String = runtime,
+    val runtimeName: String = runtimeLabel,
 ) {
     fun previewSession(): AgentSession {
         return AgentSession(
@@ -25,7 +28,7 @@ data class NewSessionDraft(
             summary = "",
             cwd = cwd,
             workspaceLabel = cwd.orEmpty(),
-            runtime = runtime,
+            runtime = runtimeType,
             runtimeLabel = runtimeLabel,
             status = com.agentsanywhere.app.model.SessionStatus.Idle,
             statusLabel = "",
@@ -40,6 +43,9 @@ data class NewSessionDraft(
             live = true,
             sortKey = "",
             updatedSeq = 0,
+            runtimeId = runtimeId,
+            runtimeType = runtimeType,
+            runtimeName = runtimeName,
         )
     }
 
@@ -54,7 +60,7 @@ internal fun NewSessionDraft.firstMessageRequest(
     clientMessageId: String,
 ): NewSessionCreateDraft = NewSessionCreateDraft(
     connectorId = connectorId,
-    runtime = runtime,
+    runtime = runtimeType,
     title = title,
     cwd = cwd,
     content = content.trim(),
@@ -62,4 +68,6 @@ internal fun NewSessionDraft.firstMessageRequest(
     attachments = emptyList(),
     clientMessageId = clientMessageId,
     knownSessionIds = knownSessionIds,
+    runtimeId = runtimeId,
+    runtimeType = runtimeType,
 )

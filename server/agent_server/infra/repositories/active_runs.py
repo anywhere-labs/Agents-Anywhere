@@ -17,6 +17,7 @@ class ActiveRunRepository:
         *,
         session_id: str,
         runtime: str,
+        runtime_id: str,
         status: str,
         started_at: str,
         updated_at: str,
@@ -31,6 +32,7 @@ class ActiveRunRepository:
             ).first()
             values = {
                 "runtime": runtime,
+                "runtime_id": runtime_id,
                 "external_session_id": external_session_id,
                 "status": status,
                 "params_json": params_json,
