@@ -171,11 +171,9 @@ private fun HostChoiceScreen(
                     title = stringResource(R.string.auth_official_service),
                     description = stringResource(R.string.auth_official_service_description),
                     icon = Lucide.Cloud,
-                    badge = if (officialServiceAvailable) {
-                        stringResource(R.string.auth_recommended)
-                    } else {
+                    badge = if (!officialServiceAvailable) {
                         stringResource(R.string.auth_coming_soon)
-                    },
+                    } else null,
                     enabled = officialServiceAvailable,
                     onClick = onOfficial,
                 )

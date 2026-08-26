@@ -42,7 +42,6 @@
     <string name="auth_official_service_description">Use the Agents Anywhere online service</string>
     <string name="auth_self_host_service">Self-host Service</string>
     <string name="auth_self_host_service_description">Connect to a server you deployed</string>
-    <string name="auth_recommended">Recommended</string>
     <string name="auth_coming_soon">Coming soon</string>
     <string name="auth_host_choice_hint">If you have not deployed a server, choose Official Service.</string>
     <string name="auth_self_host_login_title">Self-host Login</string>

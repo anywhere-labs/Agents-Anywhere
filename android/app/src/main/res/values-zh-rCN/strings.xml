@@ -42,7 +42,6 @@
     <string name="auth_official_service_description">使用 Agents Anywhere 在线服务</string>
     <string name="auth_self_host_service">Self-host 服务</string>
     <string name="auth_self_host_service_description">连接你自己部署的服务器</string>
-    <string name="auth_recommended">推荐</string>
     <string name="auth_coming_soon">暂未开放</string>
     <string name="auth_host_choice_hint">如果你没有部署过服务器，请选择官方服务。</string>
     <string name="auth_self_host_login_title">self-host 登录</string>
