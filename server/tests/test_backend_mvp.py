@@ -6215,7 +6215,6 @@ def test_connector_ingest_dsh_hidden_state_is_reversible_without_archiving(tmp_p
         for session in asyncio.run(
             client.app.state.store.list_sessions(
                 user_id=ADMIN_USER,
-                archived=True,
             )
         )
     }

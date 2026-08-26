@@ -88,7 +88,7 @@ def _decode_session_cursor(cursor: str) -> tuple[int, str, int, int, str]:
         if not isinstance(values[4], str) or not values[4]:
             raise ValueError
         return values
-    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+    except (binascii.Error, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
         raise ValueError("invalid session cursor") from exc
 
 
