@@ -15,7 +15,6 @@ import {
   AlertCircle,
   Archive,
   Pencil,
-  CircleHelp,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -65,11 +64,11 @@ import {
   loadConnectorRuntimeOverview,
 } from "@/features/dashboard/runtime-discovery"
 import {
+  addableRuntimeTypes,
   configuredRuntimeInstances,
   reconfigurableRuntimeInstance,
   runtimeInstanceName,
   runtimeIsAvailable,
-  runtimeTypeCanCreateInstance,
   suggestedRuntimeInstanceName,
   runtimeTypeName,
 } from "@/features/dashboard/runtime-instances"
@@ -349,6 +348,7 @@ export function DevicePage() {
   const [savingRuntimeId, setSavingRuntimeId] = React.useState<string | null>(null)
   const [runtimeActionId, setRuntimeActionId] = React.useState<string | null>(null)
   const [removeRuntime, setRemoveRuntime] = React.useState<DeviceRuntimeView | null>(null)
+  const [createRuntimeType, setCreateRuntimeType] = React.useState<RuntimeTypeView | null>(null)
   const [pendingRuntimeCreation, setPendingRuntimeCreation] = React.useState<{
     runtimeType: RuntimeTypeView
     name: string
@@ -383,6 +383,7 @@ export function DevicePage() {
       setRuntimeTypes([])
       setConfigRuntime(null)
       setRemoveRuntime(null)
+      setCreateRuntimeType(null)
       setPendingRuntimeCreation(null)
       setRenameRuntime(null)
       setSelectMode(false)
@@ -434,24 +435,7 @@ export function DevicePage() {
   const targetArchiveAll = sessionTab !== "archived"
   const allVisibleSelected = filteredSessions.length > 0 && filteredSessions.every((session) => selectedSessionIds.has(session.id))
   const configuredRuntimes = configuredRuntimeInstances(runtimes)
-  const codexType = runtimeTypes.find((runtimeType) => runtimeType.runtimeType === "codex") ?? null
-  const codexRuntimes = configuredRuntimes.filter((runtime) => runtime.runtimeType === "codex")
-  const defaultCodexRuntimeId = [...codexRuntimes]
-    .sort((left, right) => (
-      (left.createdAt ?? left.updatedAt).localeCompare(right.createdAt ?? right.updatedAt)
-    ))[0]?.runtimeId ?? null
-  const otherRuntimes = configuredRuntimes.filter((runtime) => runtime.runtimeType !== "codex")
-  const missingRuntimeTypes = runtimeTypes.filter((runtimeType) => (
-    runtimeType.runtimeType !== "codex"
-    && !configuredRuntimes.some((runtime) => runtime.runtimeType === runtimeType.runtimeType)
-  ))
-  const leadingRuntimes = otherRuntimes.filter((runtime) => runtime.runtimeType === "claude")
-  const trailingRuntimes = otherRuntimes.filter((runtime) => runtime.runtimeType !== "claude")
-  const leadingMissingTypes = missingRuntimeTypes.filter((runtimeType) => runtimeType.runtimeType === "claude")
-  const trailingMissingTypes = missingRuntimeTypes.filter((runtimeType) => runtimeType.runtimeType !== "claude")
-  const canAddCodex = codexType
-    ? codexType.available && runtimeTypeCanCreateInstance(codexType, runtimes)
-    : false
+  const availableRuntimeTypes = addableRuntimeTypes(runtimeTypes, runtimes)
 
   if (loading || !connector) {
     return (
@@ -531,6 +515,12 @@ export function DevicePage() {
     }
   }
 
+  const stageRuntimeCreation = async (name: string) => {
+    if (!createRuntimeType) return
+    setPendingRuntimeCreation({ runtimeType: createRuntimeType, name })
+    setCreateRuntimeType(null)
+  }
+
   const createAndStartRuntime = async (
     pending: NonNullable<typeof pendingRuntimeCreation>,
     config: Record<string, unknown>,
@@ -558,32 +548,13 @@ export function DevicePage() {
     }
   }
 
-  const openRuntimeTypeSettings = (runtimeType: RuntimeTypeView) => {
+  const addRuntime = (runtimeType: RuntimeTypeView) => {
     const existing = reconfigurableRuntimeInstance(runtimeType, runtimes)
     if (existing) {
       setConfigRuntime(existing)
       return
     }
-    setPendingRuntimeCreation({
-      runtimeType,
-      name: suggestedRuntimeInstanceName(runtimeType, runtimes),
-    })
-  }
-
-  const addCodexRuntime = async () => {
-    if (!codexType || !canAddCodex) return
-    const existing = reconfigurableRuntimeInstance(codexType, runtimes)
-    if (existing) {
-      await configureAndStartRuntime(existing, codexType.defaults)
-      return
-    }
-    await createAndStartRuntime(
-      {
-        runtimeType: codexType,
-        name: suggestedRuntimeInstanceName(codexType, runtimes),
-      },
-      codexType.defaults,
-    )
+    setCreateRuntimeType(runtimeType)
   }
 
   const submitRuntimeRename = async (name: string) => {
@@ -750,127 +721,6 @@ export function DevicePage() {
     }
   }
 
-  const renderRuntimeRow = (
-    runtime: DeviceRuntimeView,
-    { indented = false, removable = false }: { indented?: boolean; removable?: boolean } = {},
-  ) => (
-    <div
-      key={runtime.runtimeId}
-      className={cn(
-        "flex min-h-12 items-center gap-3 rounded-lg px-2 py-2 hover:bg-accent/30",
-        indented && "ml-5",
-      )}
-    >
-      {runtimeActionId === runtime.runtimeId ? (
-        <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" />
-      ) : (
-        <span className={cn("size-2 shrink-0 rounded-full", runtimeStatusDot(runtime))} />
-      )}
-      <div className="min-w-0 flex-1">
-        <div className="flex min-w-0 items-center gap-2">
-          <span className="truncate text-sm font-medium">{runtimeInstanceName(runtime)}</span>
-          <Badge variant="outline" className="shrink-0 font-normal">
-            {runtimeStatusLabel(runtime.status)}
-          </Badge>
-          {runtime.error ? (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Badge variant="destructive" className="shrink-0 gap-1">
-                  <AlertCircle className="size-3" />
-                  {t("runtimeIssue")}
-                </Badge>
-              </TooltipTrigger>
-              <TooltipContent side="top" className="max-w-sm">
-                {runtimeErrorMessage(runtime.error)}
-              </TooltipContent>
-            </Tooltip>
-          ) : null}
-        </div>
-        {!indented ? (
-          <p className="mt-0.5 truncate text-xs text-muted-foreground">
-            {runtimeTypeName(runtime)}
-            {!runtime.present ? ` · ${t("runtimeNotReported")}` : ""}
-          </p>
-        ) : null}
-      </div>
-      <div className="flex shrink-0 items-center gap-2">
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          onClick={() => setRenameRuntime(runtime)}
-          aria-label={t("renameRuntime", { name: runtimeInstanceName(runtime) })}
-        >
-          <Pencil />
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          onClick={() => setConfigRuntime(runtime)}
-          aria-label={t("configureRuntime", { name: runtimeInstanceName(runtime) })}
-        >
-          <Settings />
-        </Button>
-        <Switch
-          checked={runtime.active}
-          onCheckedChange={(active: boolean) => void toggleRuntime(runtime, active)}
-          disabled={runtimeActionId === runtime.runtimeId || (!runtime.active && (connector.status !== "online" || !runtimeIsAvailable(runtime)))}
-          aria-label={runtime.active ? t("deactivateRuntime", { name: runtimeInstanceName(runtime) }) : t("activateRuntime", { name: runtimeInstanceName(runtime) })}
-        />
-        {removable ? (
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="text-muted-foreground hover:text-destructive"
-            onClick={() => setRemoveRuntime(runtime)}
-            disabled={runtimeActionId === runtime.runtimeId}
-            aria-label={t("deleteRuntimeConfig", { name: runtimeInstanceName(runtime) })}
-          >
-            <Trash2 />
-          </Button>
-        ) : null}
-      </div>
-    </div>
-  )
-
-  const renderUnavailableRuntimeType = (runtimeType: RuntimeTypeView, indented = false) => (
-    <div
-      key={runtimeType.runtimeType}
-      className={cn(
-        "flex min-h-12 items-center gap-3 rounded-lg px-2 py-2 hover:bg-accent/30",
-        indented && "ml-5",
-      )}
-    >
-      <span className={cn(
-        "size-2 shrink-0 rounded-full",
-        runtimeType.available ? "bg-muted-foreground/50" : "bg-amber-500",
-      )} />
-      <div className="min-w-0 flex-1">
-        <div className="flex min-w-0 items-center gap-2">
-          <span className="truncate text-sm font-medium">{runtimeType.displayName}</span>
-          <Badge variant="outline" className="shrink-0 font-normal">
-            {runtimeType.available ? t("runtimeStatus.available") : t("runtimeStatus.unavailable")}
-          </Badge>
-        </div>
-        <p className="mt-0.5 truncate text-xs text-muted-foreground">
-          {runtimeType.reason || runtimeType.description || runtimeType.implementationType}
-        </p>
-      </div>
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon"
-        onClick={() => openRuntimeTypeSettings(runtimeType)}
-        disabled={runtimeType.schema === null}
-        aria-label={t("configureRuntime", { name: runtimeType.displayName })}
-      >
-        <Settings />
-      </Button>
-    </div>
-  )
-
   return (
     <ScrollArea className="h-full min-h-0 w-full">
       <div className="mx-auto w-full max-w-3xl px-6 py-8">
@@ -977,61 +827,122 @@ export function DevicePage() {
 
           {runtimesLoading ? <LoadingState className="min-h-24" /> : (
             <TooltipProvider>
-              <div className="flex flex-col gap-1">
-                {leadingRuntimes.map((runtime) => renderRuntimeRow(runtime))}
-                {leadingMissingTypes.map((runtimeType) => renderUnavailableRuntimeType(runtimeType))}
+              <div className="flex flex-col gap-5">
+                <div>
+                  <h3 className="mb-2 text-sm font-medium">{t("configuredRuntimes")}</h3>
+                  {configuredRuntimes.length === 0 ? (
+                    <p className="px-2 py-3 text-sm text-muted-foreground">{t("noConfiguredRuntimes")}</p>
+                  ) : (
+                    <div className="flex flex-col gap-1">
+                      {configuredRuntimes.map((runtime) => (
+                        <div key={runtime.runtimeId} className="flex min-h-12 items-center gap-3 rounded-lg px-2 py-2 hover:bg-accent/30">
+                          {runtimeActionId === runtime.runtimeId ? (
+                            <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" />
+                          ) : (
+                            <span className={cn("size-2 shrink-0 rounded-full", runtimeStatusDot(runtime))} />
+                          )}
+                          <div className="min-w-0 flex-1">
+                            <div className="flex min-w-0 items-center gap-2">
+                              <span className="truncate text-sm font-medium">{runtimeInstanceName(runtime)}</span>
+                              <Badge variant="outline" className="shrink-0 font-normal">
+                                {runtimeStatusLabel(runtime.status)}
+                              </Badge>
+                              {runtime.error ? (
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Badge variant="destructive" className="shrink-0 gap-1">
+                                      <AlertCircle className="size-3" />
+                                      {t("runtimeIssue")}
+                                    </Badge>
+                                  </TooltipTrigger>
+                                  <TooltipContent side="top" className="max-w-sm">
+                                    {runtimeErrorMessage(runtime.error)}
+                                  </TooltipContent>
+                                </Tooltip>
+                              ) : null}
+                            </div>
+                            <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                              {runtimeTypeName(runtime)}
+                              {!runtime.present ? ` · ${t("runtimeNotReported")}` : ""}
+                            </p>
+                          </div>
+                          <div className="flex shrink-0 items-center gap-2">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => setRenameRuntime(runtime)}
+                              aria-label={t("renameRuntime", { name: runtimeInstanceName(runtime) })}
+                            >
+                              <Pencil />
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => setConfigRuntime(runtime)}
+                              aria-label={t("configureRuntime", { name: runtimeInstanceName(runtime) })}
+                            >
+                              <Settings />
+                            </Button>
+                            <Switch
+                              checked={runtime.active}
+                              onCheckedChange={(active: boolean) => void toggleRuntime(runtime, active)}
+                              disabled={runtimeActionId === runtime.runtimeId || (!runtime.active && (connector.status !== "online" || !runtimeIsAvailable(runtime)))}
+                              aria-label={runtime.active ? t("deactivateRuntime", { name: runtimeInstanceName(runtime) }) : t("activateRuntime", { name: runtimeInstanceName(runtime) })}
+                            />
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="text-muted-foreground hover:text-destructive"
+                              onClick={() => setRemoveRuntime(runtime)}
+                              disabled={runtimeActionId === runtime.runtimeId}
+                              aria-label={t("deleteRuntimeConfig", { name: runtimeInstanceName(runtime) })}
+                            >
+                              <Trash2 />
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
 
-                {codexType ? (
-                  <div className="py-1">
-                    <div className="px-2 py-2 text-sm font-medium">{codexType.displayName}</div>
-                    <div className="flex flex-col gap-1 border-l border-border/70 pl-2">
-                      {codexRuntimes.length > 0
-                        ? codexRuntimes.map((runtime) => renderRuntimeRow(runtime, {
-                          indented: true,
-                          removable: runtime.runtimeId !== defaultCodexRuntimeId,
-                        }))
-                        : renderUnavailableRuntimeType(codexType, true)}
-                      {canAddCodex ? (
-                        <div className="ml-5 flex items-center gap-1 px-2 py-2">
+                <Separator />
+
+                <div>
+                  <h3 className="mb-2 text-sm font-medium">{t("availableRuntimeTypes")}</h3>
+                  {availableRuntimeTypes.length === 0 ? (
+                    <p className="px-2 py-3 text-sm text-muted-foreground">{t("noRuntimeTypes")}</p>
+                  ) : (
+                    <div className="flex flex-col gap-1">
+                      {availableRuntimeTypes.map((runtimeType) => (
+                        <div key={runtimeType.runtimeType} className="flex min-h-12 items-center gap-3 rounded-lg px-2 py-2 hover:bg-accent/30">
+                          <span className={cn(
+                            "size-2 shrink-0 rounded-full",
+                            runtimeType.available ? "bg-muted-foreground/50" : "bg-amber-500",
+                          )} />
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-sm font-medium">{runtimeType.displayName}</p>
+                            <p className="truncate text-xs text-muted-foreground">
+                              {runtimeType.description || runtimeType.reason || runtimeType.implementationType}
+                            </p>
+                          </div>
                           <Button
                             type="button"
                             variant="outline"
                             size="sm"
-                            onClick={() => void addCodexRuntime()}
-                            disabled={connector.status !== "online" || savingRuntimeId === NEW_RUNTIME_SAVING_ID}
+                            onClick={() => addRuntime(runtimeType)}
                           >
-                            {savingRuntimeId === NEW_RUNTIME_SAVING_ID
-                              ? <Loader2 className="animate-spin" />
-                              : <Plus data-icon="inline-start" />}
-                            {t("addCodexInstance")}
+                            <Plus data-icon="inline-start" />
+                            {t("addRuntime")}
                           </Button>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="icon-sm"
-                                aria-label={t("codexMultiInstanceHelpLabel")}
-                              >
-                                <CircleHelp />
-                              </Button>
-                            </TooltipTrigger>
-                            <TooltipContent side="top" className="max-w-xs">
-                              {t("codexMultiInstanceHelp")}
-                            </TooltipContent>
-                          </Tooltip>
                         </div>
-                      ) : null}
+                      ))}
                     </div>
-                  </div>
-                ) : null}
-
-                {trailingRuntimes.map((runtime) => renderRuntimeRow(runtime))}
-                {trailingMissingTypes.map((runtimeType) => renderUnavailableRuntimeType(runtimeType))}
-
-                {runtimeTypes.length === 0 && configuredRuntimes.length === 0 ? (
-                  <p className="px-2 py-3 text-sm text-muted-foreground">{t("noAgentsFound")}</p>
-                ) : null}
+                  )}
+                </div>
               </div>
             </TooltipProvider>
           )}
@@ -1195,6 +1106,23 @@ export function DevicePage() {
           onSave={(config) => configRuntime.configured
             ? saveRuntimeConfig(configRuntime, config)
             : configureAndStartRuntime(configRuntime, config)}
+        />
+      ) : null}
+
+      {createRuntimeType ? (
+        <RuntimeInstanceNameDialog
+          open
+          title={t("createRuntimeTitle", { type: createRuntimeType.displayName })}
+          description={t("createRuntimeDescription", { type: createRuntimeType.displayName })}
+          label={t("runtimeName")}
+          requiredMessage={t("runtimeNameRequired")}
+          placeholder={t("runtimeNamePlaceholder")}
+          submitLabel={t("createRuntime")}
+          cancelLabel={tCommon("cancel")}
+          initialName={suggestedRuntimeInstanceName(createRuntimeType, runtimes)}
+          saving={false}
+          onOpenChange={(open) => { if (!open) setCreateRuntimeType(null) }}
+          onSubmit={stageRuntimeCreation}
         />
       ) : null}
 

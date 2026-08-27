@@ -280,8 +280,7 @@ def test_dsh_provider_identity_schema_and_validation(tmp_path: Path) -> None:
         assert provider.runtime == "dsh"
         assert provider.runtime_type == "dsh"
         assert provider.implementation_type == "local-service"
-        assert provider.instance_policy == "single"
-        assert provider.max_instances == 1
+        assert provider.instance_policy == "multiple"
         assert provider.display_name == "DeepSeek Harness"
         schema = await provider.get_config_schema()
         assert schema.defaults["maxRestartAttempts"] == 3
