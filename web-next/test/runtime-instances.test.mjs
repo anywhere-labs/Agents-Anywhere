@@ -13,6 +13,7 @@ import { findCapability } from "../src/components/session/capabilities.ts"
 import {
   addableRuntimeTypes,
   configuredRuntimeInstances,
+  isAdditionalCodexRuntimeType,
   mergeRuntimeTypes,
   reconfigurableRuntimeInstance,
   runtimeInstanceName,
@@ -85,6 +86,35 @@ test("configured instances and addable types are mutually scoped", () => {
   assert.deepEqual(configuredRuntimeInstances([configured]), [configured])
   assert.equal(runtimeTypeCanCreateInstance(runtimeType, [configured]), false)
   assert.deepEqual(addableRuntimeTypes([runtimeType], [configured]), [])
+})
+
+test("only an additional configured Codex instance gets the multi-instance label", () => {
+  const [baseType] = mergeRuntimeTypes([], [legacyRuntime])
+  const codexType = {
+    ...baseType,
+    runtimeType: "codex",
+    displayName: "Codex",
+    instancePolicy: "multiple",
+    maxInstances: null,
+  }
+  const configuredCodex = {
+    ...legacyRuntime,
+    runtimeId: "rti_codex",
+    runtimeType: "codex",
+    configured: true,
+    config: {},
+  }
+
+  assert.equal(isAdditionalCodexRuntimeType(codexType, []), false)
+  assert.equal(isAdditionalCodexRuntimeType(codexType, [configuredCodex]), true)
+  assert.equal(
+    isAdditionalCodexRuntimeType(codexType, [{ ...configuredCodex, configured: false }]),
+    false,
+  )
+  assert.equal(
+    isAdditionalCodexRuntimeType({ ...codexType, runtimeType: "claude" }, [configuredCodex]),
+    false,
+  )
 })
 
 test("a runtime type without a configuration schema is not addable", () => {

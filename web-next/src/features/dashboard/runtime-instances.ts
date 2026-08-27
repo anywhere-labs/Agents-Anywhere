@@ -116,6 +116,17 @@ export function addableRuntimeTypes(
   return runtimeTypes.filter((runtimeType) => runtimeTypeCanCreateInstance(runtimeType, runtimes))
 }
 
+export function isAdditionalCodexRuntimeType(
+  runtimeType: RuntimeTypeView,
+  runtimes: readonly DeviceRuntimeView[],
+): boolean {
+  return runtimeType.runtimeType === "codex"
+    && runtimeType.instancePolicy === "multiple"
+    && runtimes.some((runtime) => (
+      runtime.runtimeType === "codex" && runtime.configured
+    ))
+}
+
 export function reconfigurableRuntimeInstance(
   runtimeType: Pick<RuntimeTypeView, "runtimeType">,
   runtimes: readonly DeviceRuntimeView[],

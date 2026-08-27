@@ -28,10 +28,10 @@ class FakeWebSocket:
 
 
 async def _wait_for_request(websocket: FakeWebSocket) -> dict[str, Any]:
-    for _ in range(100):
+    for _ in range(1000):
         if websocket.messages:
-            return websocket.messages[0]
-        await asyncio.sleep(0)
+            return websocket.messages.pop(0)
+        await asyncio.sleep(0.001)
     raise AssertionError("runtime discovery request was not sent")
 
 
@@ -170,6 +170,52 @@ def _receive_discovery_request(ws: Any) -> dict[str, Any]:
         "supportedControlVersions": SUPPORTED_RUNTIME_CONTROL_VERSIONS,
     }
     return request
+
+
+def _receive_and_resolve_runtime_start(ws: Any) -> dict[str, Any]:
+    request = ws.receive_json()
+    assert request["type"] == "request"
+    assert request["method"] == "runtime.start"
+    ws.send_json(
+        {
+            "id": request["id"],
+            "type": "response",
+            "ok": True,
+            "result": {"status": "running"},
+        }
+    )
+    return request
+
+
+def test_first_connector_connection_configures_default_codex(tmp_path: Any) -> None:
+    client, connector_id, access_token = _make_connector(tmp_path)
+
+    with client.websocket_connect(
+        "/connector/ws",
+        headers={"Authorization": f"Bearer {access_token}"},
+    ) as ws:
+        _send_inventory(ws)
+        request = _receive_discovery_request(ws)
+        ws.send_json(
+            {
+                "id": request["id"],
+                "type": "response",
+                "ok": True,
+                "result": _v2_discovery(),
+            }
+        )
+        start_request = _receive_and_resolve_runtime_start(ws)
+        assert start_request["params"]["runtime"] == "codex"
+        assert start_request["params"]["name"] == "Codex"
+        _wait_for_control_version(client, connector_id, "2.0")
+
+        runtimes = asyncio.run(
+            client.app.state.store.list_device_runtimes(connector_id)
+        )
+        assert len(runtimes) == 1
+        assert runtimes[0]["configured"] is True
+        assert runtimes[0]["active"] is True
+        assert runtimes[0]["status"] == "running"
 
 
 def test_new_connector_reconnect_negotiates_v2_without_manual_discovery(

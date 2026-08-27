@@ -15,6 +15,7 @@ import {
   AlertCircle,
   Archive,
   Pencil,
+  CircleHelp,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -66,6 +67,7 @@ import {
 import {
   addableRuntimeTypes,
   configuredRuntimeInstances,
+  isAdditionalCodexRuntimeType,
   reconfigurableRuntimeInstance,
   runtimeInstanceName,
   runtimeIsAvailable,
@@ -924,7 +926,31 @@ export function DevicePage() {
                             runtimeType.available ? "bg-muted-foreground/50" : "bg-amber-500",
                           )} />
                           <div className="min-w-0 flex-1">
-                            <p className="truncate text-sm font-medium">{runtimeType.displayName}</p>
+                            <div className="flex min-w-0 items-center gap-1">
+                              <p className="truncate text-sm font-medium">
+                                {isAdditionalCodexRuntimeType(runtimeType, runtimes)
+                                  ? t("codexMultiInstanceName")
+                                  : runtimeType.displayName}
+                              </p>
+                              {isAdditionalCodexRuntimeType(runtimeType, runtimes) ? (
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="icon-sm"
+                                      className="size-6 shrink-0"
+                                      aria-label={t("codexMultiInstanceHelpLabel")}
+                                    >
+                                      <CircleHelp />
+                                    </Button>
+                                  </TooltipTrigger>
+                                  <TooltipContent side="top" className="max-w-xs">
+                                    {t("codexMultiInstanceHelp")}
+                                  </TooltipContent>
+                                </Tooltip>
+                              ) : null}
+                            </div>
                             <p className="truncate text-xs text-muted-foreground">
                               {runtimeType.description || runtimeType.reason || runtimeType.implementationType}
                             </p>

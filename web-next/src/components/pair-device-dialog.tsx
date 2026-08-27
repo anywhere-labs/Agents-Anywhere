@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { Copy, Check, Loader2, CheckCircle2, ArrowLeft, ExternalLink, MonitorUp, Terminal, KeyRound, Plus, RefreshCw } from "lucide-react"
+import { Copy, Check, Loader2, CheckCircle2, ArrowLeft, ExternalLink, MonitorUp, Terminal, KeyRound, Plus, RefreshCw, CircleHelp } from "lucide-react"
 import { toast } from "sonner"
 import {
   Dialog,
@@ -22,6 +22,12 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp"
@@ -42,6 +48,7 @@ import { discoverConnectorRuntimeOverview } from "@/features/dashboard/runtime-d
 import {
   addableRuntimeTypes,
   configuredRuntimeInstances,
+  isAdditionalCodexRuntimeType,
   reconfigurableRuntimeInstance,
   runtimeInstanceName,
   runtimeTypeName,
@@ -929,25 +936,51 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
                         <CheckCircle2 className="size-4 shrink-0 text-emerald-500" aria-label={t("agentConfigured")} />
                       </div>
                     ))}
-                    {visibleRuntimeTypes.map((runtimeType) => (
-                      <div key={runtimeType.runtimeType} className="flex min-w-0 items-center gap-3 rounded-lg border border-dashed px-4 py-3">
-                        <div className="min-w-0 flex-1">
-                          <p className="truncate text-sm font-medium">{runtimeType.displayName}</p>
-                          <p className="truncate text-xs text-muted-foreground">
-                            {runtimeType.description || runtimeType.reason || runtimeType.implementationType}
-                          </p>
+                    <TooltipProvider>
+                      {visibleRuntimeTypes.map((runtimeType) => (
+                        <div key={runtimeType.runtimeType} className="flex min-w-0 items-center gap-3 rounded-lg border border-dashed px-4 py-3">
+                          <div className="min-w-0 flex-1">
+                            <div className="flex min-w-0 items-center gap-1">
+                              <p className="truncate text-sm font-medium">
+                                {isAdditionalCodexRuntimeType(runtimeType, runtimes)
+                                  ? tDevice("codexMultiInstanceName")
+                                  : runtimeType.displayName}
+                              </p>
+                              {isAdditionalCodexRuntimeType(runtimeType, runtimes) ? (
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="icon-sm"
+                                      className="size-6 shrink-0"
+                                      aria-label={tDevice("codexMultiInstanceHelpLabel")}
+                                    >
+                                      <CircleHelp />
+                                    </Button>
+                                  </TooltipTrigger>
+                                  <TooltipContent side="top" className="max-w-xs">
+                                    {tDevice("codexMultiInstanceHelp")}
+                                  </TooltipContent>
+                                </Tooltip>
+                              ) : null}
+                            </div>
+                            <p className="truncate text-xs text-muted-foreground">
+                              {runtimeType.description || runtimeType.reason || runtimeType.implementationType}
+                            </p>
+                          </div>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => addRuntime(runtimeType)}
+                          >
+                            <Plus data-icon="inline-start" />
+                            {tDevice("addRuntime")}
+                          </Button>
                         </div>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={() => addRuntime(runtimeType)}
-                        >
-                          <Plus data-icon="inline-start" />
-                          {tDevice("addRuntime")}
-                        </Button>
-                      </div>
-                    ))}
+                      ))}
+                    </TooltipProvider>
                   </>
                 )}
               </div>
