@@ -131,10 +131,24 @@ async function loadInitialSessionState(
   sessionId: string,
   options: { reason?: string } = {},
 ): Promise<SessionRemoteState> {
+  const reason = options.reason ?? "session-detail.initial-load"
   const snapshot = await dashboardApi.getSessionSnapshot(token, sessionId, INITIAL_TIMELINE_LIMIT, {
-    reason: options.reason ?? "session-detail.initial-load",
+    reason,
   })
-  return sessionStateFromSnapshot(snapshot)
+  const state = sessionStateFromSnapshot(snapshot)
+  console.info("[session_status_trace]", {
+    layer: "frontend-snapshot",
+    reason,
+    sessionId,
+    sessionStatus: state.session.status,
+    runtimeStatus: state.state?.status ?? null,
+    effectiveStatus: effectiveRuntimeStatus(state.state, state.session),
+    sessionUpdatedSeq: state.session.updatedSeq,
+    runtimeUpdatedSeq: state.state?.updatedSeq ?? null,
+    runtimeSource: state.state?.metadata?.source ?? null,
+    eventCursor: state.eventCursor,
+  })
+  return state
 }
 
 function sessionStateFromSnapshot(snapshot: SessionSnapshotResponse): SessionRemoteState {
@@ -322,6 +336,12 @@ export function SessionDetail({
   const session = state?.session ?? fallbackSession
   const runtimeState = state?.state ?? null
   const runtimeStatus = effectiveRuntimeStatus(runtimeState, session)
+  const previousStatusTraceRef = React.useRef<{
+    sessionId: string
+    sessionStatus: string
+    runtimeStatus: string | null
+    effectiveStatus: string
+  } | null>(null)
   const sessionRuntime = session ? sessionRuntimeId(session) : null
   const sessionRuntimeScope = session
     ? { runtimeId: sessionRuntimeId(session), runtimeType: sessionRuntimeType(session) }
@@ -338,6 +358,38 @@ export function SessionDetail({
       capabilityIsUsable(effectiveCapabilities, CAPABILITY.permissionCatalog, sessionRuntimeScope),
   )
   const commandSessionId = session?.id ?? null
+
+  React.useEffect(() => {
+    if (!session) return
+    const next = {
+      sessionId: session.id,
+      sessionStatus: session.status,
+      runtimeStatus: runtimeState?.status ?? null,
+      effectiveStatus: runtimeStatus,
+    }
+    const previous = previousStatusTraceRef.current
+    if (
+      previous === null ||
+      previous.sessionId !== next.sessionId ||
+      previous.sessionStatus !== next.sessionStatus ||
+      previous.runtimeStatus !== next.runtimeStatus ||
+      previous.effectiveStatus !== next.effectiveStatus
+    ) {
+      console.info("[session_status_trace]", {
+        layer: "frontend-render",
+        sessionId: session.id,
+        previous,
+        next,
+        sessionUpdatedSeq: session.updatedSeq,
+        runtimeUpdatedSeq: runtimeState?.updatedSeq ?? null,
+        runtimeSource: runtimeState?.metadata?.source ?? null,
+        eventCursor: state?.eventCursor ?? null,
+        serverTime: state?.serverTime ?? null,
+      })
+      previousStatusTraceRef.current = next
+    }
+  }, [runtimeState, runtimeStatus, session, state?.eventCursor, state?.serverTime])
+
   const composerDraft = composerDraftState.sessionId === sessionId ? composerDraftState.value : ""
   const isLocalOptimisticSession = isOptimisticSession(sessionId)
   const hasInitialSessionState = state !== null
@@ -1990,6 +2042,26 @@ function mergeSessionEvent(
       runtimeState.sessionId === current.session.id &&
       runtimeState.updatedSeq >= (current.state?.updatedSeq ?? 0),
   )
+  if (session || runtimeState) {
+    console.info("[session_status_trace]", {
+      layer: "frontend-event",
+      sessionId: event.sessionId,
+      eventType: event.type,
+      eventId: event.eventId,
+      eventSequence: event.sequence,
+      currentSessionStatus: current.session.status,
+      incomingSessionStatus: session?.status ?? null,
+      currentRuntimeStatus: current.state?.status ?? null,
+      incomingRuntimeStatus: runtimeState?.status ?? null,
+      incomingRuntimeSource: runtimeState?.metadata?.source ?? null,
+      currentSessionUpdatedSeq: current.session.updatedSeq,
+      incomingSessionUpdatedSeq: session?.updatedSeq ?? null,
+      currentRuntimeUpdatedSeq: current.state?.updatedSeq ?? null,
+      incomingRuntimeUpdatedSeq: runtimeState?.updatedSeq ?? null,
+      acceptsSession,
+      acceptsRuntimeState,
+    })
+  }
   const nextRuntimeState =
     acceptsRuntimeState &&
     runtimeState &&

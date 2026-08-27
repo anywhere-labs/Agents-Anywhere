@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
 
+from connector.logging import logger
 from connector.runtime_protocol.host import RuntimeHostClient
 from connector.runtime_protocol.models import (
     RuntimeStatus,
@@ -72,6 +73,19 @@ class RuntimeSessionStateCache:
         )
         if previous is not None and state == previous:
             return previous
+        if previous is None or previous.status != state.status:
+            logger.info(
+                "session_status_trace layer=connector runtime={} session_id={} "
+                "external_session_id={} previous_status={} next_status={} "
+                "previous_source={} next_source={}",
+                self._runtime,
+                session_id,
+                external_session_id,
+                previous.status if previous is not None else None,
+                state.status,
+                previous.metadata.get("source") if previous is not None else None,
+                state.metadata.get("source"),
+            )
         if (
             previous is not None
             and previous.external_session_id is not None

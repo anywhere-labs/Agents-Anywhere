@@ -347,6 +347,27 @@ class ConnectorIngestService:
                 ):
                     runtime_state = None
                 else:
+                    if (
+                        previous_runtime_state is None
+                        or previous_runtime_state.status != runtime_state.status
+                    ):
+                        logger.info(
+                            "session_status_trace layer=server session_id={} runtime={} "
+                            "runtime_id={} previous_status={} next_status={} source={} "
+                            "previous_updated_seq={} ingest_next_seq={}",
+                            session_id,
+                            runtime_state.runtime,
+                            runtime_state.runtimeId,
+                            previous_runtime_state.status
+                            if previous_runtime_state is not None
+                            else None,
+                            runtime_state.status,
+                            runtime_state.metadata.get("source"),
+                            previous_runtime_state.updatedSeq
+                            if previous_runtime_state is not None
+                            else None,
+                            next_seq,
+                        )
                     persisted_session = await self._store.set_session_status(
                         session_id,
                         runtime_state.status,
