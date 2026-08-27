@@ -10,7 +10,7 @@
     "method": {
       "enum": [
         "initialize", "runtime.getConfig", "runtime.getCapabilities",
-        "catalog.listModels", "catalog.listPermissions", "session.list",
+        "catalog.listModels", "catalog.listPermissions", "catalog.listAgentPresets", "session.list",
         "session.getSnapshot", "session.getState", "session.getNotices",
         "session.getCapabilities", "session.createAndStart", "session.startTurn",
         "session.steer", "session.interrupt", "session.updateSelections",

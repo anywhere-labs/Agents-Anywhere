@@ -6,6 +6,7 @@ from typing import Any
 
 from connector.runtime_protocol.models import (
     RuntimeAttachmentContent,
+    RuntimeAgentPresetCatalog,
     RuntimeCapabilitySet,
     RuntimeModelCatalog,
     RuntimePermissionCatalog,
@@ -69,6 +70,12 @@ class RuntimeHostClient(ABC):
     async def permission_catalog_update(
         self,
         catalog: RuntimePermissionCatalog,
+    ) -> None:
+        raise NotImplementedError
+
+    async def agent_preset_catalog_update(
+        self,
+        catalog: RuntimeAgentPresetCatalog,
     ) -> None:
         raise NotImplementedError
 

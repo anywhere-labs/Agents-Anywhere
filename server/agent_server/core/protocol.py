@@ -119,6 +119,28 @@ class ProtocolPermissionCatalogResponse(ProtocolWireModel):
     serverTime: str
 
 
+class ProtocolAgentPresetItem(ProtocolWireModel):
+    displayName: str
+    id: str
+    agentPreset: str
+    description: str | None = None
+    default: bool = False
+    enabled: bool = True
+    disabledReason: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ProtocolAgentPresetCatalog(ProtocolWireModel):
+    runtime: RuntimeName
+    revision: int = Field(ge=0, le=PROTOCOL_MAX_REVISION)
+    presets: list[ProtocolAgentPresetItem] = Field(default_factory=list)
+
+
+class ProtocolAgentPresetCatalogResponse(ProtocolWireModel):
+    catalog: ProtocolAgentPresetCatalog
+    serverTime: str
+
+
 class ProtocolTimelineSnapshot(ProtocolWireModel):
     items: list[TimelineItem] = Field(default_factory=list)
     nextSeq: int

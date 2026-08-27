@@ -10,6 +10,7 @@ import pytest
 
 from connector.runtime_protocol import RuntimeInvalidRequestError
 from connector.runtime_protocol import RuntimeConfig
+from connector.runtimes.dsh.bridge import BridgeRpcError
 from connector.runtimes.dsh.discovery import BridgeEndpoint, DshDiscovery
 from connector.runtimes.dsh.provider import DshProvider
 from connector.runtimes.dsh.runtime import DshRuntime
@@ -187,9 +188,42 @@ class _CapabilitiesRuntime(DshRuntime):
                         "available": True,
                         "allowed": True,
                     },
+                    {
+                        "capabilityId": "catalog.effort",
+                        "scope": "runtime",
+                        "supported": True,
+                        "available": True,
+                        "allowed": True,
+                    },
                 ],
             }
         raise AssertionError(f"unexpected method: {method}")
+
+
+class _SelectionRuntime(DshRuntime):
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.requests: list[tuple[str, dict[str, Any]]] = []
+
+    async def _request(self, method: str, params: Any = None) -> Any:
+        assert isinstance(params, dict)
+        self.requests.append((method, dict(params)))
+        requested = params["selections"]["model"]
+        normalized = (
+            "dsh:model:normalized-default"
+            if requested == "dsh:model:base-default"
+            else requested
+        )
+        return {"ok": True, "selections": {"model": normalized}}
+
+
+class _FailingSelectionClient:
+    async def request(self, method: str, params: Any = None) -> Any:
+        raise BridgeRpcError(
+            -32007,
+            "The selected model is unavailable.",
+            {"code": "MODEL_UNAVAILABLE", "retryable": False},
+        )
 
 
 class _StartTurnRuntime(DshRuntime):
@@ -222,6 +256,77 @@ class _StartTurnRuntime(DshRuntime):
             },
         )
         return {"ok": True, "result": {"accepted": True}}
+
+
+class _AgentPresetRuntime(DshRuntime):
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.requests: list[tuple[str, Any]] = []
+
+    async def _request(self, method: str, params: Any = None) -> Any:
+        self.requests.append((method, params))
+        if method == "runtime.getCapabilities":
+            return {
+                "runtime": "dsh",
+                "revision": 4,
+                "capabilities": [
+                    {
+                        "capabilityId": "catalog.agent_preset",
+                        "scope": "runtime",
+                        "supported": True,
+                        "available": True,
+                        "allowed": True,
+                    }
+                ],
+            }
+        if method == "catalog.listAgentPresets":
+            return {
+                "runtime": "dsh",
+                "revision": 7,
+                "presets": [
+                    {
+                        "id": "standard",
+                        "title": "Standard",
+                        "agentPreset": "standard",
+                        "enabled": True,
+                        "metadata": {"trust": "system", "isDefault": True},
+                    }
+                ],
+            }
+        if method == "session.createAndStart":
+            return {
+                "ok": True,
+                "result": {"externalSessionId": "dsh-created"},
+            }
+        raise AssertionError(f"unexpected method: {method}")
+
+
+def test_dsh_agent_preset_catalog_and_create_option_are_forwarded() -> None:
+    async def run() -> None:
+        runtime = _AgentPresetRuntime(
+            config=RuntimeConfig(runtime="dsh", revision=1),
+            host=_Host(),  # type: ignore[arg-type]
+        )
+
+        catalog = await runtime.list_agent_preset_catalog(limit=25)
+        assert catalog.presets[0].agent_preset == "standard"
+        assert catalog.presets[0].default is True
+
+        result = await runtime.create_and_start_session(
+            "sess-created",
+            "hello",
+            cwd="/workspace",
+            runtime_options={"dsh": {"agentPreset": "standard"}},
+        )
+        assert result.ok is True
+        create_params = next(
+            params
+            for method, params in runtime.requests
+            if method == "session.createAndStart"
+        )
+        assert create_params["agentPreset"] == "standard"
+
+    asyncio.run(run())
 
 
 def test_dsh_is_third_default_provider() -> None:
@@ -415,7 +520,7 @@ def test_dsh_non_conflict_state_releases_cached_writer_block() -> None:
     asyncio.run(run())
 
 
-def test_dsh_session_capabilities_inherit_permission_catalog_only() -> None:
+def test_dsh_session_capabilities_inherit_selection_catalogs() -> None:
     async def run() -> None:
         runtime = _CapabilitiesRuntime(
             config=RuntimeConfig(runtime="dsh", revision=1),
@@ -431,14 +536,81 @@ def test_dsh_session_capabilities_inherit_permission_catalog_only() -> None:
             capability.capability_id: capability
             for capability in capability_set.capabilities
         }
-        permission = capabilities["catalog.permission"]
-        assert permission.scope == "session"
-        assert permission.session_id == "sess_1"
-        assert permission.supported is True
-        assert permission.available is True
-        assert permission.allowed is True
-        assert "catalog.model" not in capabilities
+        for capability_id in (
+            "catalog.model",
+            "catalog.permission",
+            "catalog.effort",
+        ):
+            capability = capabilities[capability_id]
+            assert capability.scope == "session"
+            assert capability.session_id == "sess_1"
+            assert capability.supported is True
+            assert capability.available is True
+            assert capability.allowed is True
         assert capability_set.revision == 3
+
+    asyncio.run(run())
+
+
+def test_dsh_model_selection_is_forwarded_and_bridge_response_is_authoritative() -> None:
+    async def run() -> None:
+        runtime = _SelectionRuntime(
+            config=RuntimeConfig(runtime="dsh", revision=1),
+            host=_Host(),  # type: ignore[arg-type]
+        )
+
+        explicit = "dsh:model:explicit-high"
+        explicit_result = await runtime.update_session_selections(
+            "sess_1",
+            "session-external",
+            {"model": explicit},
+        )
+        default_result = await runtime.update_session_selections(
+            "sess_1",
+            "session-external",
+            {"model": "dsh:model:base-default"},
+        )
+
+        assert runtime.requests == [
+            (
+                "session.updateSelections",
+                {
+                    "sessionId": "sess_1",
+                    "externalSessionId": "session-external",
+                    "selections": {"model": explicit},
+                },
+            ),
+            (
+                "session.updateSelections",
+                {
+                    "sessionId": "sess_1",
+                    "externalSessionId": "session-external",
+                    "selections": {"model": "dsh:model:base-default"},
+                },
+            ),
+        ]
+        assert explicit_result.result["selections"] == {"model": explicit}
+        assert default_result.result["selections"] == {
+            "model": "dsh:model:normalized-default"
+        }
+
+    asyncio.run(run())
+
+
+def test_dsh_model_unavailable_is_not_reported_as_success() -> None:
+    async def run() -> None:
+        runtime = DshRuntime(
+            config=RuntimeConfig(runtime="dsh", revision=1),
+            host=_Host(),  # type: ignore[arg-type]
+        )
+        runtime._client = _FailingSelectionClient()  # type: ignore[assignment]
+
+        with pytest.raises(RuntimeInvalidRequestError, match="unavailable"):
+            await runtime.update_session_selections(
+                "sess_1",
+                "session-external",
+                {"model": "dsh:model:missing"},
+            )
 
     asyncio.run(run())
 

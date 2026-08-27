@@ -13,6 +13,7 @@ from connector.runtime_protocol.errors import (
 )
 from connector.runtime_protocol.host import RuntimeHostClient
 from connector.runtime_protocol.models import (
+    CAPABILITY_CATALOG_AGENT_PRESET,
     CAPABILITY_CATALOG_EFFORT,
     CAPABILITY_CATALOG_MODEL,
     CAPABILITY_CATALOG_PERMISSION,
@@ -25,6 +26,8 @@ from connector.runtime_protocol.models import (
     CAPABILITY_SESSION_STEER,
     RuntimeAttachment,
     RuntimeAttachmentContent,
+    RuntimeAgentPresetCatalog,
+    RuntimeAgentPresetItem,
     RuntimeCapability,
     RuntimeCapabilityScope,
     RuntimeCapabilitySet,
@@ -119,6 +122,7 @@ from connector.runtime_protocol.timeline import (
 )
 
 __all__ = [
+    "CAPABILITY_CATALOG_AGENT_PRESET",
     "CAPABILITY_CATALOG_EFFORT",
     "CAPABILITY_CATALOG_MODEL",
     "CAPABILITY_CATALOG_PERMISSION",
@@ -163,6 +167,8 @@ __all__ = [
     "ReasoningSystemContent",
     "RuntimeAttachment",
     "RuntimeAttachmentContent",
+    "RuntimeAgentPresetCatalog",
+    "RuntimeAgentPresetItem",
     "RuntimeCapability",
     "RuntimeCapabilityScope",
     "RuntimeCapabilitySet",

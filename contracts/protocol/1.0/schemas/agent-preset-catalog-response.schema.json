@@ -1,0 +1,126 @@
+{
+  "$defs": {
+    "ProtocolAgentPresetCatalog": {
+      "properties": {
+        "presets": {
+          "items": {
+            "$ref": "#/$defs/ProtocolAgentPresetItem"
+          },
+          "title": "Presets",
+          "type": "array"
+        },
+        "revision": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Revision",
+          "type": "integer"
+        },
+        "runtime": {
+          "enum": [
+            "codex",
+            "claude",
+            "opencode",
+            "acp",
+            "dsh"
+          ],
+          "title": "Runtime",
+          "type": "string"
+        }
+      },
+      "required": [
+        "runtime",
+        "revision",
+        "presets"
+      ],
+      "title": "ProtocolAgentPresetCatalog",
+      "type": "object"
+    },
+    "ProtocolAgentPresetItem": {
+      "properties": {
+        "agentPreset": {
+          "title": "Agentpreset",
+          "type": "string"
+        },
+        "default": {
+          "default": false,
+          "title": "Default",
+          "type": "boolean"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "disabledReason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Disabledreason"
+        },
+        "displayName": {
+          "title": "Displayname",
+          "type": "string"
+        },
+        "enabled": {
+          "default": true,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "metadata": {
+          "additionalProperties": true,
+          "title": "Metadata",
+          "type": "object"
+        }
+      },
+      "required": [
+        "displayName",
+        "id",
+        "agentPreset",
+        "description",
+        "default",
+        "enabled",
+        "disabledReason",
+        "metadata"
+      ],
+      "title": "ProtocolAgentPresetItem",
+      "type": "object"
+    }
+  },
+  "$id": "urn:agents-anywhere:protocol:1.0:agent-preset-catalog-response",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "catalog": {
+      "$ref": "#/$defs/ProtocolAgentPresetCatalog"
+    },
+    "serverTime": {
+      "title": "Servertime",
+      "type": "string"
+    }
+  },
+  "required": [
+    "catalog",
+    "serverTime"
+  ],
+  "title": "ProtocolAgentPresetCatalogResponse",
+  "type": "object",
+  "x-direction": "egress",
+  "x-protocol-version": "1.0",
+  "x-pydantic-mode": "serialization"
+}

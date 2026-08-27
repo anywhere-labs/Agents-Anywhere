@@ -1,0 +1,34 @@
+{
+  "runtime": "dsh",
+  "revision": 12,
+  "models": [
+    {
+      "id": "dsh:model:WyJkZWVwc2Vlay1vZmZpY2lhbCIsImRlZXBzZWVrLXY0LWZsYXNoIixudWxsXQ",
+      "title": "DeepSeek V4 Flash",
+      "default": true,
+      "enabled": true,
+      "reasoningItems": [
+        {
+          "id": "dsh:model:WyJkZWVwc2Vlay1vZmZpY2lhbCIsImRlZXBzZWVrLXY0LWZsYXNoIixudWxsXQ",
+          "title": "Default",
+          "selectionId": "dsh:model:WyJkZWVwc2Vlay1vZmZpY2lhbCIsImRlZXBzZWVrLXY0LWZsYXNoIixudWxsXQ",
+          "default": false,
+          "enabled": true,
+          "metadata": { "reasoningEffort": null }
+        },
+        {
+          "id": "dsh:model:WyJkZWVwc2Vlay1vZmZpY2lhbCIsImRlZXBzZWVrLXY0LWZsYXNoIiwiaGlnaCJd",
+          "title": "High",
+          "selectionId": "dsh:model:WyJkZWVwc2Vlay1vZmZpY2lhbCIsImRlZXBzZWVrLXY0LWZsYXNoIiwiaGlnaCJd",
+          "default": true,
+          "enabled": true,
+          "metadata": { "reasoningEffort": "high" }
+        }
+      ],
+      "metadata": {
+        "provider": "deepseek-official",
+        "model": "deepseek-v4-flash"
+      }
+    }
+  ]
+}

@@ -37,6 +37,7 @@ data class NewSessionCreateDraft(
     val attachments: List<NewSessionAttachmentPart>,
     val clientMessageId: String,
     val knownSessionIds: Set<String>,
+    val agentPreset: String? = null,
 )
 
 sealed interface NewSessionCreateOutcome {

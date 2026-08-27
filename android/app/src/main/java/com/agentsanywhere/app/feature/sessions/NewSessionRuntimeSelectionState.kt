@@ -3,11 +3,13 @@ package com.agentsanywhere.app.feature.sessions
 import com.agentsanywhere.app.api.RemoteRuntimeCapabilities
 import com.agentsanywhere.app.api.RemoteRuntimeModelCatalogResponse
 import com.agentsanywhere.app.api.RemoteRuntimePermissionCatalogResponse
+import com.agentsanywhere.app.api.RemoteRuntimeAgentPresetCatalogResponse
 import com.agentsanywhere.app.feature.devices.DeviceRuntime
 import com.agentsanywhere.app.feature.devices.DeviceRuntimeList
 
 const val MODEL_CATALOG_CAPABILITY = "catalog.model"
 const val PERMISSION_CATALOG_CAPABILITY = "catalog.permission"
+const val AGENT_PRESET_CATALOG_CAPABILITY = "catalog.agent_preset"
 
 data class NewSessionRuntimeRequestKey(
     val connectorId: String,
@@ -102,6 +104,24 @@ data class NewSessionPermission(
     val metadata: Map<String, Any?>,
 )
 
+data class NewSessionAgentPresetCatalog(
+    val runtime: String,
+    val revision: Long,
+    val presets: List<NewSessionAgentPreset>,
+    val serverTime: String?,
+)
+
+data class NewSessionAgentPreset(
+    val id: String,
+    val agentPreset: String,
+    val displayName: String,
+    val description: String?,
+    val default: Boolean,
+    val enabled: Boolean,
+    val disabledReason: String?,
+    val metadata: Map<String, Any?>,
+)
+
 data class NewSessionRemoteData<T>(
     val data: T? = null,
     val loading: Boolean = false,
@@ -154,6 +174,7 @@ data class NewSessionRuntimeSelectionState(
     val selectedModelId: String? = null,
     val selectedReasoningId: String? = null,
     val selectedPermissionId: String? = null,
+    val modelSelectionExplicit: Boolean = false,
     val selectionHints: Map<NewSessionRuntimeScope, NewSessionSelections> = emptyMap(),
 ) {
     val selectedRuntime: DeviceRuntime?
@@ -164,7 +185,7 @@ data class NewSessionRuntimeSelectionState(
 
     val reasoningOptions: List<NewSessionReasoning>
         get() = selectedModel?.reasoningItems
-            ?.filter { it.id.isNotBlank() && it.selectionId.isNotBlank() }
+            ?.filter { it.id.isNotBlank() && it.selectionId.isNotBlank() && it.enabled }
             .orEmpty()
 
     val selectedReasoning: NewSessionReasoning?
@@ -215,6 +236,7 @@ data class NewSessionRuntimeSelectionState(
             if (canUseModelCatalog) {
                 if (!modelCatalog.fresh) return false
                 val hasModels = modelCatalog.data?.models?.any { it.hasValidSelection() } == true
+                if (selectedRuntimeId == "dsh" && !hasModels) return false
                 if (hasModels && selectedModelSelectionId == null) return false
             }
             if (canUsePermissionCatalog) {
@@ -269,6 +291,7 @@ data class NewSessionRuntimeSelectionState(
             selectedModelId = null,
             selectedReasoningId = null,
             selectedPermissionId = null,
+            modelSelectionExplicit = false,
             selectionHints = nextHints,
         )
     }
@@ -331,13 +354,17 @@ data class NewSessionRuntimeSelectionState(
         value: NewSessionModelCatalog,
     ): NewSessionRuntimeSelectionState {
         if (requestKey != key) return this
-        val hint = selectionHints[NewSessionRuntimeScope(key.connectorId, key.runtimeId)]?.model
+        val remembered = selectionHints[NewSessionRuntimeScope(key.connectorId, key.runtimeId)]?.model
             ?: selectedModelSelectionId
+        val hint = remembered.takeUnless { key.runtimeId == "dsh" && !modelSelectionExplicit }
+        val explicitSelectionStillValid = modelSelectionExplicit &&
+            hint != null && value.hasSelection(hint)
         val selection = value.defaultSelection(hint)
         val next = copy(
             modelCatalog = modelCatalog.succeed(value),
             selectedModelId = selection?.modelId,
             selectedReasoningId = selection?.reasoningId,
+            modelSelectionExplicit = explicitSelectionStillValid,
         )
         return next.copy(selectionHints = next.rememberCurrentSelections())
     }
@@ -380,19 +407,28 @@ data class NewSessionRuntimeSelectionState(
     }
 
     fun selectModel(modelId: String): NewSessionRuntimeSelectionState {
-        val model = modelCatalog.data?.models?.firstOrNull { it.id == modelId } ?: return this
+        val model = modelCatalog.data?.models?.firstOrNull {
+            it.id == modelId && it.enabled
+        } ?: return this
         val reasoningId = model.reasoningItems.firstOrNull {
-            it.id.isNotBlank() && it.selectionId.isNotBlank() && it.default
+            it.id.isNotBlank() && it.selectionId.isNotBlank() && it.enabled && it.default
         }?.id ?: model.reasoningItems.firstOrNull {
-            it.id.isNotBlank() && it.selectionId.isNotBlank()
+            it.id.isNotBlank() && it.selectionId.isNotBlank() && it.enabled
         }?.id
-        val next = copy(selectedModelId = model.id, selectedReasoningId = reasoningId)
+        val next = copy(
+            selectedModelId = model.id,
+            selectedReasoningId = reasoningId,
+            modelSelectionExplicit = selectedRuntimeId == "dsh",
+        )
         return next.copy(selectionHints = next.rememberCurrentSelections())
     }
 
     fun selectReasoning(reasoningId: String): NewSessionRuntimeSelectionState {
         if (reasoningOptions.none { it.id == reasoningId }) return this
-        val next = copy(selectedReasoningId = reasoningId)
+        val next = copy(
+            selectedReasoningId = reasoningId,
+            modelSelectionExplicit = selectedRuntimeId == "dsh",
+        )
         return next.copy(selectionHints = next.rememberCurrentSelections())
     }
 
@@ -420,10 +456,13 @@ private data class ModelSelection(
 )
 
 private fun NewSessionModelCatalog.defaultSelection(hint: String?): ModelSelection? {
+    val availableModels = models.filter {
+        it.id.isNotBlank() && it.enabled && it.hasValidSelection()
+    }
     if (!hint.isNullOrBlank()) {
-        models.forEach { model ->
+        availableModels.forEach { model ->
             val validReasoning = model.reasoningItems.filter {
-                it.id.isNotBlank() && it.selectionId.isNotBlank()
+                it.id.isNotBlank() && it.selectionId.isNotBlank() && it.enabled
             }
             validReasoning.firstOrNull { it.selectionId == hint }?.let {
                 return ModelSelection(model.id, it.id)
@@ -433,30 +472,38 @@ private fun NewSessionModelCatalog.defaultSelection(hint: String?): ModelSelecti
             }
         }
     }
-    models.forEach { model ->
-        model.reasoningItems.firstOrNull {
-            it.id.isNotBlank() && it.selectionId.isNotBlank() && it.default
-        }?.let { return ModelSelection(model.id, it.id) }
-    }
-    models.firstOrNull { it.id.isNotBlank() && it.default && it.hasValidSelection() }?.let { model ->
+    val model = availableModels.firstOrNull { it.default }
+        ?: availableModels.firstOrNull()
+        ?: return null
+    model.let {
         val reasoning = model.reasoningItems.firstOrNull {
-            it.id.isNotBlank() && it.selectionId.isNotBlank()
+            it.id.isNotBlank() && it.selectionId.isNotBlank() && it.enabled && it.default
+        } ?: model.reasoningItems.firstOrNull {
+            it.id.isNotBlank() && it.selectionId.isNotBlank() && it.enabled
         }
         return ModelSelection(model.id, reasoning?.id)
     }
-    models.firstOrNull { it.id.isNotBlank() && it.hasValidSelection() }?.let { model ->
-        val reasoning = model.reasoningItems.firstOrNull {
-            it.id.isNotBlank() && it.selectionId.isNotBlank()
-        }
-        return ModelSelection(model.id, reasoning?.id)
-    }
-    return null
 }
 
 private fun NewSessionModel.hasValidSelection(): Boolean {
+    if (!enabled) return false
     return selectionId?.isNotBlank() == true || reasoningItems.any {
-        it.id.isNotBlank() && it.selectionId.isNotBlank()
+        it.id.isNotBlank() && it.selectionId.isNotBlank() && it.enabled
     }
+}
+
+private val NewSessionModel.enabled: Boolean
+    get() = metadata["enabled"] != false
+
+private val NewSessionReasoning.enabled: Boolean
+    get() = metadata["enabled"] != false
+
+private fun NewSessionModelCatalog.hasSelection(selectionId: String): Boolean = models.any { model ->
+    model.enabled && (
+        model.reasoningItems.any { it.enabled && it.selectionId == selectionId } ||
+            (model.reasoningItems.none { it.enabled && it.selectionId.isNotBlank() } &&
+                model.selectionId == selectionId)
+        )
 }
 
 internal fun RemoteRuntimeCapabilities.toNewSessionRuntimeCapabilities(): NewSessionRuntimeCapabilities {
@@ -521,6 +568,26 @@ internal fun RemoteRuntimePermissionCatalogResponse.toNewSessionPermissionCatalo
                 displayName = it.displayName,
                 description = it.description,
                 default = it.default,
+                metadata = it.metadata,
+            )
+        },
+        serverTime = serverTime,
+    )
+}
+
+internal fun RemoteRuntimeAgentPresetCatalogResponse.toNewSessionAgentPresetCatalog(): NewSessionAgentPresetCatalog {
+    return NewSessionAgentPresetCatalog(
+        runtime = catalog.runtime,
+        revision = catalog.revision,
+        presets = catalog.presets.map {
+            NewSessionAgentPreset(
+                id = it.id,
+                agentPreset = it.agentPreset,
+                displayName = it.displayName,
+                description = it.description,
+                default = it.default,
+                enabled = it.enabled,
+                disabledReason = it.disabledReason,
                 metadata = it.metadata,
             )
         },

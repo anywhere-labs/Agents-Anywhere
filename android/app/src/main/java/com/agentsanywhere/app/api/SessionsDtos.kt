@@ -47,6 +47,7 @@ data class RemoteSessionCreateAndStartRequest(
     val selections: Map<String, String>,
     val attachments: List<RemoteInlineAttachmentRef>,
     val clientMessageId: String?,
+    val agentPreset: String? = null,
 )
 
 data class RemoteInlineAttachmentRef(

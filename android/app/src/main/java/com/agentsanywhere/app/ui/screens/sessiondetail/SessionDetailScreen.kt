@@ -178,6 +178,7 @@ fun SessionDetailScreen(
     var retryMessageAction by remember(sessionId) { mutableStateOf(restoredComposerDraft.retryAction) }
     var preparedSessionCreating by remember(preparedSession) { mutableStateOf(false) }
     var preparedSelections by remember(preparedSession) { mutableStateOf(preparedSession?.selections ?: NewSessionSelections()) }
+    var preparedModelSelectionExplicit by remember(preparedSession) { mutableStateOf(false) }
     var preparedModelOptions by remember(preparedSession) { mutableStateOf(emptyList<com.agentsanywhere.app.feature.sessiondetail.RuntimeSelectionOption>()) }
     var preparedPermissionCatalog by remember(preparedSession) { mutableStateOf<NewSessionPermissionCatalog?>(null) }
     var preparedModelLoading by remember(preparedSession) { mutableStateOf(false) }
@@ -770,12 +771,20 @@ fun SessionDetailScreen(
                 onLoadPreparedModelCatalog(pending.connectorId, pending.runtime)
                     .onSuccess { catalog ->
                         preparedModelOptions = catalog.models.flatMap { model ->
-                            val reasoning = model.reasoningItems.filter { it.selectionId.isNotBlank() }
+                            if (model.metadata["enabled"] == false) return@flatMap emptyList()
+                            val reasoning = model.reasoningItems.filter {
+                                it.selectionId.isNotBlank() && it.metadata["enabled"] != false
+                            }
                             if (reasoning.isNotEmpty()) {
                                 reasoning.map { item ->
+                                    val reasoningLabel = if (item.metadata.isProviderDefaultReasoning()) {
+                                        context.getString(R.string.session_runtime_effort_default)
+                                    } else {
+                                        item.displayName
+                                    }
                                     com.agentsanywhere.app.feature.sessiondetail.RuntimeSelectionOption(
                                         selectionId = item.selectionId,
-                                        label = listOf(model.displayName, item.displayName)
+                                        label = listOf(model.displayName, reasoningLabel)
                                             .filter(String::isNotBlank).joinToString(" · "),
                                         description = item.description ?: model.description,
                                         default = item.default || (model.default && reasoning.first() == item),
@@ -794,11 +803,21 @@ fun SessionDetailScreen(
                                 }.orEmpty()
                             }
                         }.distinctBy { it.selectionId }
-                        if (preparedSelections.model == null) {
+                        val currentSelection = preparedSelections.model
+                        val currentIsValid = preparedModelOptions.any {
+                            it.selectionId == currentSelection
+                        }
+                        val preserveCurrent = if (pending.runtime == "dsh") {
+                            preparedModelSelectionExplicit && currentIsValid
+                        } else {
+                            currentIsValid
+                        }
+                        if (!preserveCurrent) {
                             preparedSelections = preparedSelections.copy(
                                 model = preparedModelOptions.firstOrNull { it.default }?.selectionId
                                     ?: preparedModelOptions.firstOrNull()?.selectionId,
                             )
+                            if (pending.runtime == "dsh") preparedModelSelectionExplicit = false
                         }
                     }
                     .onFailure { preparedModelError = it.message ?: context.getString(R.string.session_runtime_model_catalog_failed) }
@@ -1106,7 +1125,9 @@ fun SessionDetailScreen(
             ?.takeIf { canRespondToNotice }
     }
     val modelOptions = if (isPreparedSession) preparedModelOptions else remember(state.catalogs.model) {
-        state.catalogs.model?.selectionOptions().orEmpty()
+        state.catalogs.model?.selectionOptions(
+            context.getString(R.string.session_runtime_effort_default),
+        ).orEmpty()
     }
     val permissionLocalizer = runtimePermissionLocalizer()
     val permissionOptions = if (isPreparedSession) {
@@ -1450,7 +1471,10 @@ fun SessionDetailScreen(
             onRetryModels = ::loadModelCatalog,
             onRetryPermissions = ::loadPermissionCatalog,
             onSelectModel = {
-                if (isPreparedSession) preparedSelections = preparedSelections.copy(model = it)
+                if (isPreparedSession) {
+                    preparedSelections = preparedSelections.copy(model = it)
+                    if (preparedSession?.runtime == "dsh") preparedModelSelectionExplicit = true
+                }
                 else updateSelection("model", it)
             },
             onSelectPermission = {
@@ -1477,6 +1501,13 @@ fun SessionDetailScreen(
             onDismiss = { previewImage = null },
         )
     }
+}
+
+private fun Map<String, Any?>.isProviderDefaultReasoning(): Boolean {
+    val i18n = this["i18n"] as? Map<*, *>
+    return this["kind"] == "provider-default" ||
+        (containsKey("reasoningEffort") && this["reasoningEffort"] == null) ||
+        i18n?.get("labelKey") == "dashboard.new.defaultReasoning"
 }
 
 @Composable

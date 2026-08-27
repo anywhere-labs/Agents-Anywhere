@@ -1,6 +1,102 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agents-anywhere.dev/contracts/dsh-bridge/1.0/model-catalog.schema.json",
+  "$defs": {
+    "reasoningItem": {
+      "type": "object",
+      "required": ["id", "title", "selectionId", "enabled"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "title": { "type": "string", "minLength": 1 },
+        "selectionId": {
+          "type": "string",
+          "pattern": "^dsh:model:[A-Za-z0-9_-]+$"
+        },
+        "description": { "type": "string" },
+        "default": { "type": "boolean", "default": false },
+        "enabled": { "type": "boolean" },
+        "disabledReason": { "type": "string", "minLength": 1 },
+        "metadata": { "type": "object" }
+      },
+      "additionalProperties": true
+    },
+    "modelItem": {
+      "type": "object",
+      "required": ["id", "title", "enabled", "reasoningItems"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "title": { "type": "string", "minLength": 1 },
+        "selectionId": {
+          "type": "string",
+          "pattern": "^dsh:model:[A-Za-z0-9_-]+$"
+        },
+        "description": { "type": "string" },
+        "default": { "type": "boolean", "default": false },
+        "enabled": { "type": "boolean" },
+        "disabledReason": { "type": "string", "minLength": 1 },
+        "reasoningItems": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/reasoningItem" },
+          "contains": {
+            "type": "object",
+            "required": ["default"],
+            "properties": { "default": { "const": true } }
+          },
+          "minContains": 0,
+          "maxContains": 1
+        },
+        "metadata": { "type": "object" }
+      },
+      "anyOf": [
+        { "required": ["selectionId"] },
+        {
+          "properties": {
+            "reasoningItems": { "minItems": 1 }
+          }
+        }
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "reasoningItems": {
+                "contains": {
+                  "type": "object",
+                  "required": ["default"],
+                  "properties": { "default": { "const": true } }
+                }
+              }
+            }
+          },
+          "then": {
+            "required": ["default"],
+            "properties": { "default": { "const": true } }
+          }
+        },
+        {
+          "if": {
+            "required": ["default"],
+            "properties": {
+              "default": { "const": true },
+              "reasoningItems": { "minItems": 1 }
+            }
+          },
+          "then": {
+            "properties": {
+              "reasoningItems": {
+                "contains": {
+                  "type": "object",
+                  "required": ["default"],
+                  "properties": { "default": { "const": true } }
+                }
+              }
+            }
+          }
+        }
+      ],
+      "additionalProperties": true
+    }
+  },
   "type": "object",
   "required": ["runtime", "revision", "models"],
   "properties": {
@@ -8,18 +104,14 @@
     "revision": { "type": "integer", "minimum": 0 },
     "models": {
       "type": "array",
-      "items": {
+      "items": { "$ref": "#/$defs/modelItem" },
+      "contains": {
         "type": "object",
-        "required": ["id", "title", "selectionId", "enabled", "reasoningItems"],
-        "properties": {
-          "id": { "type": "string", "minLength": 1 },
-          "title": { "type": "string", "minLength": 1 },
-          "selectionId": { "pattern": "^dsh:model:[A-Za-z0-9_-]+$" },
-          "enabled": { "type": "boolean" },
-          "reasoningItems": { "type": "array" }
-        },
-        "additionalProperties": true
-      }
+        "required": ["default"],
+        "properties": { "default": { "const": true } }
+      },
+      "minContains": 0,
+      "maxContains": 1
     }
   },
   "additionalProperties": true

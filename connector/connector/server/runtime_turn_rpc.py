@@ -26,6 +26,7 @@ async def dispatch_session_create(
     params: dict[str, Any],
 ) -> dict[str, Any]:
     parsed = SessionCreateParams.parse(params)
+    kwargs = {"runtime_options": parsed.runtime_options} if parsed.runtime_options else {}
     result = await runtime.create_and_start_session(
         parsed.session_id,
         parsed.content,
@@ -34,6 +35,7 @@ async def dispatch_session_create(
         parsed.selections,
         parsed.attachments,
         parsed.client_message_id,
+        **kwargs,
     )
     return operation_result_payload(result)
 

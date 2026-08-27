@@ -155,9 +155,6 @@
     <string name="device_runtime_stopping">停止中</string>
     <string name="device_runtime_error">运行时错误</string>
     <string name="device_runtime_unknown">未知状态</string>
-    <string name="device_runtime_unknown_version">版本未知</string>
-    <string name="device_runtime_dsh_summary">DSH %1$s · profile %2$s · 原生 Session 存储</string>
-    <string name="device_runtime_dsh_shared_session">AA Web、Android 与 DSH Web 通过同一 Bridge 共享此 DSH Session。</string>
     <string name="device_detail_prepare_setup_failed">无法准备设备设置。</string>
     <string name="device_detail_delete_failed">无法删除设备。</string>
     <string name="device_detail_revoke_failed">无法撤销设备令牌。</string>
@@ -241,6 +238,12 @@
     <string name="new_session_create_failed">无法创建会话。</string>
     <string name="new_session_device">设备</string>
     <string name="new_session_agent">Agent</string>
+    <string name="new_session_work_mode">工作模式</string>
+    <string name="new_session_choose_work_mode">选择工作模式</string>
+    <string name="new_session_dsh_default_mode">DSH 默认模式</string>
+    <string name="new_session_work_mode_empty">当前没有可用的工作模式。</string>
+    <string name="new_session_work_mode_catalog_failed">无法加载工作模式。</string>
+    <string name="new_session_work_mode_default_fallback">无法加载工作模式，将使用 DSH 当前默认模式。</string>
     <string name="new_session_no_device">未选择设备</string>
     <string name="new_session_no_agent">未选择 agent</string>
     <string name="new_session_no_online_agent">没有可用的在线设备。</string>

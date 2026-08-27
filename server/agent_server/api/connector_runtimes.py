@@ -17,6 +17,8 @@ from agent_server.core.models import (
     RuntimeName,
 )
 from agent_server.core.protocol import (
+    ProtocolAgentPresetCatalog,
+    ProtocolAgentPresetCatalogResponse,
     ProtocolCapabilitiesResponse,
     ProtocolCapabilitySet,
     ProtocolModelCatalog,
@@ -230,6 +232,34 @@ async def get_connector_runtime_permission_catalog(
 
 
 @router.get(
+    "/{connector_id}/runtimes/{runtime_id}/catalogs/agent-preset",
+    response_model=ProtocolAgentPresetCatalogResponse,
+)
+async def get_connector_runtime_agent_preset_catalog(
+    connector_id: str,
+    runtime_id: RuntimeName,
+    service: DeviceRuntimeService = Depends(get_device_runtime_service),
+    manager: ConnectorRpcManager = Depends(get_rpc),
+    user_id: str = Depends(current_user_id),
+) -> ProtocolAgentPresetCatalogResponse:
+    try:
+        await service.ensure_active_running(connector_id, runtime_id, user_id=user_id)
+        result = await request_runtime_rpc(
+            manager,
+            connector_id,
+            "runtime.agentPresetCatalog",
+            runtime=runtime_id,
+            limit=200,
+        )
+    except DeviceRuntimeError as exc:
+        _raise_device_runtime_error(exc)
+    return ProtocolAgentPresetCatalogResponse(
+        catalog=parse_runtime_agent_preset_catalog_response(result),
+        serverTime=utc_now(),
+    )
+
+
+@router.get(
     "/{connector_id}/runtimes/{runtime_id}/commands",
     response_model=RuntimeCommandListResponse,
 )
@@ -313,6 +343,19 @@ def parse_runtime_permission_catalog_response(result: Any) -> ProtocolPermission
         raise_invalid_runtime_response("invalid_runtime_catalog")
     try:
         return ProtocolPermissionCatalog.model_validate(raw_catalog)
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail={"code": "invalid_runtime_catalog", "message": str(exc)},
+        ) from exc
+
+
+def parse_runtime_agent_preset_catalog_response(result: Any) -> ProtocolAgentPresetCatalog:
+    raw_catalog = result.get("catalog") if isinstance(result, dict) else None
+    if not isinstance(raw_catalog, dict):
+        raise_invalid_runtime_response("invalid_runtime_catalog")
+    try:
+        return ProtocolAgentPresetCatalog.model_validate(raw_catalog)
     except ValidationError as exc:
         raise HTTPException(
             status_code=502,

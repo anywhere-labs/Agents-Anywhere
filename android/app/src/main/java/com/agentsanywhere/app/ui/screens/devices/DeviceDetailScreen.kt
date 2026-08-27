@@ -764,8 +764,6 @@ private fun ConfiguredAgentRow(
     onSetActive: (Boolean) -> Unit,
     onDeleteConfig: () -> Unit,
 ) {
-    val dshNative = runtime.metadata["storageMode"] == "dsh-native"
-    val sharedSessionInfo = dshNative && runtime.metadata["crossProcessWriterExclusion"] == false
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -783,24 +781,6 @@ private fun ConfiguredAgentRow(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            if (dshNative) {
-                Text(
-                    text = stringResource(
-                        R.string.device_runtime_dsh_summary,
-                        runtime.metadata["dshVersion"] as? String ?: stringResource(R.string.device_runtime_unknown_version),
-                        runtime.metadata["profile"] as? String ?: "aa",
-                    ),
-                    color = LocalAAColors.current.muted,
-                    fontSize = 11.sp,
-                )
-            }
-            if (sharedSessionInfo) {
-                Text(
-                    text = stringResource(R.string.device_runtime_dsh_shared_session),
-                    color = LocalAAColors.current.muted,
-                    fontSize = 11.sp,
-                )
-            }
             Text(
                 text = runtimeStatusLabel(runtime),
                 color = if (runtime.status == DeviceRuntimeStatus.Error) {

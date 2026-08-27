@@ -1,0 +1,13 @@
+{
+  "jsonrpc": "2.0",
+  "id": "create-agent-preset",
+  "method": "session.createAndStart",
+  "params": {
+    "sessionId": "sess_agent_preset",
+    "content": "hello",
+    "clientMessageId": "msg_agent_preset",
+    "cwd": "/workspace",
+    "attachments": [],
+    "agentPreset": "standard"
+  }
+}

@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from connector.runtime_protocol import (
+    RuntimeAgentPresetCatalog,
     RuntimeCapability,
     RuntimeCapabilitySet,
     RuntimeCommand,
@@ -186,14 +187,14 @@ def model_catalog_payload(catalog: RuntimeModelCatalog) -> dict[str, Any]:
                 "displayName": model.title,
                 "selectionId": model.selection_id,
                 "description": model.description,
-                "default": False,
+                "default": model.default,
                 "reasoningItems": [
                     {
                         "id": reasoning.id,
                         "displayName": reasoning.title,
                         "selectionId": reasoning.selection_id,
                         "description": reasoning.description,
-                        "default": False,
+                        "default": reasoning.default,
                         "metadata": {
                             **dict(reasoning.metadata),
                             "enabled": reasoning.enabled,
@@ -243,6 +244,26 @@ def permission_catalog_payload(catalog: RuntimePermissionCatalog) -> dict[str, A
                 },
             }
             for permission in catalog.permissions
+        ],
+    }
+
+
+def agent_preset_catalog_payload(catalog: RuntimeAgentPresetCatalog) -> dict[str, Any]:
+    return {
+        "runtime": catalog.runtime,
+        "revision": catalog.revision,
+        "presets": [
+            {
+                "id": preset.id,
+                "displayName": preset.title,
+                "agentPreset": preset.agent_preset,
+                "description": preset.description,
+                "default": preset.default,
+                "enabled": preset.enabled,
+                "disabledReason": preset.disabled_reason,
+                "metadata": dict(preset.metadata),
+            }
+            for preset in catalog.presets
         ],
     }
 

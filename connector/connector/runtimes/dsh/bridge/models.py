@@ -4,6 +4,8 @@ from collections.abc import Mapping
 from typing import Any, cast
 
 from connector.runtime_protocol import (
+    RuntimeAgentPresetCatalog,
+    RuntimeAgentPresetItem,
     RuntimeCapability,
     RuntimeCapabilitySet,
     RuntimeCommand,
@@ -87,23 +89,32 @@ def model_catalog(value: Any) -> RuntimeModelCatalog:
                         effort.get("selectionId"), "reasoning selectionId"
                     ),
                     description=_optional_string(effort.get("description")),
+                    default=_boolean(effort.get("default"), False),
                     enabled=_boolean(effort.get("enabled"), True),
                     disabled_reason=_optional_string(effort.get("disabledReason")),
                     metadata=_dict(effort.get("metadata")),
                 )
             )
+        if sum(item.default for item in reasoning) > 1:
+            raise ValueError("model catalog contains multiple default reasoning items")
+        model_default = _boolean(item.get("default"), False)
+        if reasoning and model_default != any(entry.default for entry in reasoning):
+            raise ValueError("model and reasoning default markers are inconsistent")
         models.append(
             RuntimeModelItem(
                 id=_required_string(item.get("id"), "model id"),
                 title=_required_string(item.get("title"), "model title"),
                 selection_id=_optional_string(item.get("selectionId")),
                 description=_optional_string(item.get("description")),
+                default=model_default,
                 reasoning_items=tuple(reasoning),
                 enabled=_boolean(item.get("enabled"), True),
                 disabled_reason=_optional_string(item.get("disabledReason")),
                 metadata=_dict(item.get("metadata")),
             )
         )
+    if sum(item.default for item in models) > 1:
+        raise ValueError("model catalog contains multiple default models")
     return RuntimeModelCatalog(
         runtime=_runtime(data),
         revision=_revision(data.get("revision")),
@@ -136,8 +147,39 @@ def permission_catalog(value: Any) -> RuntimePermissionCatalog:
     )
 
 
+def agent_preset_catalog(value: Any) -> RuntimeAgentPresetCatalog:
+    data = _mapping(value, "agent preset catalog")
+    presets: list[RuntimeAgentPresetItem] = []
+    for raw in _list(data.get("presets"), "presets"):
+        item = _mapping(raw, "agent preset")
+        metadata = _dict(item.get("metadata"))
+        presets.append(
+            RuntimeAgentPresetItem(
+                id=_required_string(item.get("id"), "agent preset id"),
+                title=_required_string(item.get("title"), "agent preset title"),
+                agent_preset=_required_string(
+                    item.get("agentPreset"), "agentPreset"
+                ),
+                description=_optional_string(item.get("description")),
+                default=_boolean(metadata.get("isDefault"), False),
+                enabled=_boolean(item.get("enabled"), True),
+                disabled_reason=_optional_string(item.get("disabledReason")),
+                metadata=metadata,
+            )
+        )
+    return RuntimeAgentPresetCatalog(
+        runtime=_runtime(data),
+        revision=_revision(data.get("revision")),
+        presets=tuple(presets),
+    )
+
+
 def session_meta(value: Any, *, session_id: str | None = None) -> SessionMeta:
     data = _mapping(value, "session meta")
+    metadata = _dict(data.get("metadata"))
+    agent_preset = _optional_string(data.get("agentPreset"))
+    if agent_preset is not None:
+        metadata["agentPreset"] = agent_preset
     return SessionMeta(
         session_id=session_id or _required_string(data.get("sessionId"), "sessionId"),
         external_session_id=_required_string(
@@ -149,7 +191,7 @@ def session_meta(value: Any, *, session_id: str | None = None) -> SessionMeta:
         ordering_time=_optional_string(
             data.get("orderingTime") or data.get("lastActivityAt")
         ),
-        metadata=_dict(data.get("metadata")),
+        metadata=metadata,
     )
 
 
@@ -163,6 +205,10 @@ def session_state(value: Any) -> SessionState:
         for key, item in _dict(data.get("selections")).items()
         if isinstance(key, str) and (item is None or isinstance(item, str))
     }
+    metadata = _dict(data.get("metadata"))
+    agent_preset = _optional_string(data.get("agentPreset"))
+    if agent_preset is not None:
+        metadata["agentPreset"] = agent_preset
     return SessionState(
         session_id=_required_string(data.get("sessionId"), "sessionId"),
         external_session_id=_optional_string(data.get("externalSessionId")),
@@ -173,7 +219,7 @@ def session_state(value: Any) -> SessionState:
         error=_dict(data.get("error"))
         if isinstance(data.get("error"), Mapping)
         else None,
-        metadata=_dict(data.get("metadata")),
+        metadata=metadata,
     )
 
 

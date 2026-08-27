@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agents-anywhere.dev/contracts/dsh-bridge/1.0/agent-preset-catalog.schema.json",
+  "title": "DSH agent preset catalog",
+  "type": "object",
+  "required": ["runtime", "revision", "presets"],
+  "properties": {
+    "runtime": { "const": "dsh" },
+    "revision": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+    "presets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "title", "agentPreset", "enabled", "metadata"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "title": { "type": "string", "minLength": 1 },
+          "agentPreset": { "type": "string", "minLength": 1 },
+          "description": { "type": "string" },
+          "enabled": { "type": "boolean" },
+          "disabledReason": { "type": "string", "minLength": 1 },
+          "metadata": {
+            "type": "object",
+            "properties": {
+              "trust": { "enum": ["system", "user"] },
+              "isDefault": { "type": "boolean" }
+            },
+            "additionalProperties": true
+          }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": true
+}

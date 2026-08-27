@@ -30,6 +30,7 @@ CAPABILITY_RUNTIME_ATTACHMENT = "runtime.attachment"
 CAPABILITY_RUNTIME_CONFIG = "runtime.config"
 CAPABILITY_CATALOG_MODEL = "catalog.model"
 CAPABILITY_CATALOG_PERMISSION = "catalog.permission"
+CAPABILITY_CATALOG_AGENT_PRESET = "catalog.agent_preset"
 CAPABILITY_CATALOG_EFFORT = "catalog.effort"
 CAPABILITY_SESSION_COMMANDS = "session.commands"
 
@@ -81,6 +82,7 @@ class RuntimeReasoningItem:
     title: str
     selection_id: str
     description: str | None = None
+    default: bool = False
     enabled: bool = True
     disabled_reason: str | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
@@ -92,6 +94,7 @@ class RuntimeModelItem:
     title: str
     selection_id: str | None = None
     description: str | None = None
+    default: bool = False
     reasoning_items: tuple[RuntimeReasoningItem, ...] = ()
     enabled: bool = True
     disabled_reason: str | None = None
@@ -110,6 +113,18 @@ class RuntimePermissionItem:
 
 
 @dataclass(frozen=True, slots=True)
+class RuntimeAgentPresetItem:
+    id: str
+    title: str
+    agent_preset: str
+    description: str | None = None
+    default: bool = False
+    enabled: bool = True
+    disabled_reason: str | None = None
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
 class RuntimeModelCatalog:
     runtime: str
     revision: int
@@ -121,6 +136,13 @@ class RuntimePermissionCatalog:
     runtime: str
     revision: int
     permissions: tuple[RuntimePermissionItem, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeAgentPresetCatalog:
+    runtime: str
+    revision: int
+    presets: tuple[RuntimeAgentPresetItem, ...]
 
 
 @dataclass(frozen=True, slots=True)

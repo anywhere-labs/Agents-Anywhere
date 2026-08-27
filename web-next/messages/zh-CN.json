@@ -327,6 +327,9 @@
       "homeDirectory": "Home 目录",
       "model": "模型",
       "modelAndReasoning": "模型和推理强度",
+      "workMode": "工作模式",
+      "dshDefaultMode": "DSH 默认模式",
+      "workModeUnavailable": "无法加载工作模式，将使用 DSH 当前默认模式。",
       "permissionMode": "权限模式",
       "permissionModes": {
         "requestApproval": {

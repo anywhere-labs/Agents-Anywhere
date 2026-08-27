@@ -81,6 +81,10 @@ import com.agentsanywhere.app.feature.devices.DeviceRuntimeList
 import com.agentsanywhere.app.feature.devices.DeviceRuntimeStatus
 import com.agentsanywhere.app.feature.sessions.NewSessionDirectory
 import com.agentsanywhere.app.feature.sessions.NewSessionDraft
+import com.agentsanywhere.app.feature.sessions.AGENT_PRESET_CATALOG_CAPABILITY
+import com.agentsanywhere.app.feature.sessions.MODEL_CATALOG_CAPABILITY
+import com.agentsanywhere.app.feature.sessions.NewSessionAgentPreset
+import com.agentsanywhere.app.feature.sessions.NewSessionAgentPresetCatalog
 import com.agentsanywhere.app.feature.sessions.NewSessionModelCatalog
 import com.agentsanywhere.app.feature.sessions.NewSessionPathEntry
 import com.agentsanywhere.app.feature.sessions.NewSessionPermissionCatalog
@@ -116,12 +120,11 @@ fun NewSessionScreen(
     sessionsState: SessionsState,
     onListDirectory: suspend (String, String, String) -> Result<NewSessionDirectory>,
     onListRuntimes: suspend (String) -> Result<DeviceRuntimeList>,
-    @Suppress("UNUSED_PARAMETER")
     onLoadRuntimeCapabilities: suspend (String, String) -> Result<NewSessionRuntimeCapabilities>,
-    @Suppress("UNUSED_PARAMETER")
     onLoadModelCatalog: suspend (String, String) -> Result<NewSessionModelCatalog>,
     @Suppress("UNUSED_PARAMETER")
     onLoadPermissionCatalog: suspend (String, String) -> Result<NewSessionPermissionCatalog>,
+    onLoadAgentPresetCatalog: suspend (String, String) -> Result<NewSessionAgentPresetCatalog>,
     onPrepareSession: (NewSessionDraft) -> Unit,
 ) {
     val colors = LocalAAColors.current
@@ -147,6 +150,11 @@ fun NewSessionScreen(
     var pathError by remember { mutableStateOf<String?>(null) }
     var sheet by remember { mutableStateOf<NewSessionSheet?>(null) }
     var workspaceListExpanded by rememberSaveable { mutableStateOf(true) }
+    var agentPresetCatalog by remember { mutableStateOf<NewSessionAgentPresetCatalog?>(null) }
+    var selectedAgentPresetId by rememberSaveable { mutableStateOf<String?>(null) }
+    var agentPresetCapabilityAvailable by remember { mutableStateOf(false) }
+    var agentPresetLoading by remember { mutableStateOf(false) }
+    var agentPresetError by remember { mutableStateOf<String?>(null) }
     BackHandler { navigate(AppDestination.Sessions) }
 
     LaunchedEffect(devices) {
@@ -159,6 +167,72 @@ fun NewSessionScreen(
     val selectedDeviceOs = selectedDevice?.deviceOs
     val isWindowsDevice = isWindowsDeviceOs(selectedDeviceOs)
     val selectedRuntime = runtimeSelection.selectedRuntime
+
+    suspend fun loadRuntimeDetails(device: AgentDevice, runtime: DeviceRuntime) {
+        agentPresetCatalog = null
+        selectedAgentPresetId = null
+        agentPresetCapabilityAvailable = false
+        agentPresetLoading = false
+        agentPresetError = null
+        if (!runtime.present || !runtime.configured || !runtime.active) return
+
+        runtimeSelection = runtimeSelection.beginRuntimeDetails()
+        val requestKey = runtimeSelection.requestKey ?: return
+        agentPresetLoading = true
+        onLoadRuntimeCapabilities(device.id, runtime.id)
+            .onSuccess { capabilities ->
+                runtimeSelection = runtimeSelection.applyCapabilities(requestKey, capabilities)
+                if (runtime.id == "dsh" &&
+                    capabilities.find(MODEL_CATALOG_CAPABILITY, runtime.id)?.usable == true
+                ) {
+                    onLoadModelCatalog(device.id, runtime.id)
+                        .onSuccess { catalog ->
+                            runtimeSelection = runtimeSelection.applyModelCatalog(requestKey, catalog)
+                        }
+                        .onFailure { error ->
+                            runtimeSelection = runtimeSelection.failModelCatalog(
+                                requestKey,
+                                error.message
+                                    ?: context.getString(R.string.session_runtime_model_catalog_failed),
+                            )
+                        }
+                }
+                agentPresetCapabilityAvailable = capabilities
+                    .find(AGENT_PRESET_CATALOG_CAPABILITY, runtime.id)?.usable == true
+                if (agentPresetCapabilityAvailable) {
+                    onLoadAgentPresetCatalog(device.id, runtime.id)
+                        .onSuccess { catalog ->
+                            agentPresetCatalog = catalog
+                            selectedAgentPresetId = catalog.presets.firstOrNull {
+                                it.enabled && it.default
+                            }?.id ?: catalog.presets.firstOrNull { it.enabled }?.id
+                        }
+                        .onFailure { error ->
+                            agentPresetError = error.message
+                                ?: context.getString(R.string.new_session_work_mode_catalog_failed)
+                        }
+                }
+            }
+            .onFailure { error ->
+                runtimeSelection = runtimeSelection.failCapabilities(
+                    requestKey,
+                    error.message ?: context.getString(R.string.new_session_capabilities_failed),
+                )
+                // Capability discovery is optional for existing runtimes. Falling back keeps
+                // the current create flow compatible with older Connector/Server versions.
+                if (runtime.id == "dsh") {
+                    agentPresetError = error.message
+                        ?: context.getString(R.string.new_session_capabilities_failed)
+                }
+            }
+        agentPresetLoading = false
+    }
+
+    LaunchedEffect(selectedDevice?.id, selectedRuntime?.id) {
+        val device = selectedDevice ?: return@LaunchedEffect
+        val runtime = selectedRuntime ?: return@LaunchedEffect
+        loadRuntimeDetails(device, runtime)
+    }
 
     suspend fun loadRuntimeInventory(connectorId: String) {
         runtimeSelection = runtimeSelection.beginRuntimeInventory(connectorId)
@@ -250,13 +324,27 @@ fun NewSessionScreen(
     val selectedWorkspaceTitle = selectedWorkspace?.title?.localizedWorkspaceTitle()
         ?: pathTitle(selectedWorkspacePath, stringResource(R.string.new_session_home_directory))
     val selectedWorkspaceDetail = selectedWorkspace?.detail ?: selectedWorkspacePath
+    val selectedAgentPreset = agentPresetCatalog?.presets?.firstOrNull {
+        it.id == selectedAgentPresetId && it.enabled
+    }
+    val dshModelSelectionReady = selectedRuntime?.id != "dsh" || (
+        runtimeSelection.capabilities.fresh && (
+            !runtimeSelection.canUseModelCatalog || (
+                runtimeSelection.modelCatalog.fresh &&
+                    runtimeSelection.selectedModelSelectionId != null
+                )
+            )
+        )
     val canUseCurrentPath = isSelectableRemoteDirectory(currentPath, selectedDeviceOs)
     val effectiveWorkspacePath = if (choosePath) currentPath else selectedWorkspacePath
     val canStart = selectedDevice != null &&
         selectedRuntime != null &&
+        dshModelSelectionReady &&
         selectedRuntime.present &&
         selectedRuntime.configured &&
         selectedRuntime.active &&
+        !agentPresetLoading &&
+        (agentPresetCatalog?.presets?.any { it.enabled } != true || selectedAgentPreset != null) &&
         effectiveWorkspacePath.isNotBlank() &&
         (!choosePath || (!pathLoading && canUseCurrentPath))
 
@@ -278,6 +366,8 @@ fun NewSessionScreen(
                 cwd = effectiveWorkspacePath.trim().takeIf(String::isNotBlank),
                 deviceName = device.name,
                 runtimeLabel = runtime.displayName,
+                selections = runtimeSelection.selections.copy(permission = null),
+                agentPreset = selectedAgentPreset?.agentPreset,
                 knownSessionIds = (sessionsState.sessions + sessionsState.archivedSessions)
                     .mapTo(mutableSetOf()) { it.id },
             ),
@@ -335,6 +425,23 @@ fun NewSessionScreen(
                                 scope.launch { loadRuntimeInventory(connectorId) }
                             }
                         },
+                    )
+                }
+
+                if (agentPresetCapabilityAvailable &&
+                    (agentPresetLoading || agentPresetCatalog?.presets?.isNotEmpty() == true)
+                ) {
+                    RuntimeSelectPill(
+                        label = stringResource(R.string.new_session_work_mode),
+                        value = when {
+                            agentPresetLoading -> stringResource(R.string.device_runtime_loading)
+                            selectedAgentPreset != null -> selectedAgentPreset.displayName
+                            else -> stringResource(R.string.new_session_dsh_default_mode)
+                        },
+                        icon = Lucide.Bot,
+                        darkMode = darkMode,
+                        enabled = !agentPresetLoading && agentPresetCatalog?.presets?.isNotEmpty() == true,
+                        onClick = { sheet = NewSessionSheet.AgentPreset },
                     )
                 }
 
@@ -429,6 +536,10 @@ fun NewSessionScreen(
                     selectedRuntime?.present == false -> stringResource(R.string.device_runtime_not_present)
                     selectedRuntime?.configured == false -> stringResource(R.string.device_runtime_not_configured)
                     selectedRuntime?.active == false -> stringResource(R.string.new_session_runtime_inactive)
+                    selectedRuntime?.id == "dsh" && runtimeSelection.capabilities.errorMessage != null ->
+                        runtimeSelection.capabilities.errorMessage
+                    selectedRuntime?.id == "dsh" && runtimeSelection.modelCatalog.errorMessage != null ->
+                        runtimeSelection.modelCatalog.errorMessage
                     selectedRuntime?.detailMessage != null -> selectedRuntime.detailMessage
                     else -> null
                 }
@@ -459,12 +570,23 @@ fun NewSessionScreen(
                                             runtimeSelection.runtimes.isEmpty()
                                         ) {
                                             loadRuntimeInventory(selectedDevice.id)
+                                        } else if (selectedRuntime != null) {
+                                            loadRuntimeDetails(selectedDevice, selectedRuntime)
                                         }
                                     }
                                 },
                             )
                         }
                     }
+                }
+                agentPresetError?.let {
+                    Text(
+                        text = stringResource(R.string.new_session_work_mode_default_fallback),
+                        color = colors.muted,
+                        fontSize = 12.sp,
+                        lineHeight = 16.sp,
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+                    )
                 }
                 StartChatButton(
                     label = stringResource(R.string.new_session_start_chat),
@@ -501,6 +623,18 @@ fun NewSessionScreen(
             onSelect = { runtime ->
                 runtimeSelection = runtimeSelection.selectRuntime(runtime.id)
                 sheet = null
+            },
+        )
+        NewSessionSheet.AgentPreset -> AgentPresetPickerSheet(
+            presets = agentPresetCatalog?.presets.orEmpty(),
+            selectedPresetId = selectedAgentPresetId,
+            darkMode = darkMode,
+            onDismiss = { sheet = null },
+            onSelect = { preset ->
+                if (preset.enabled) {
+                    selectedAgentPresetId = preset.id
+                    sheet = null
+                }
             },
         )
         null -> Unit
@@ -1285,6 +1419,40 @@ private fun RuntimePickerSheet(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
+private fun AgentPresetPickerSheet(
+    presets: List<NewSessionAgentPreset>,
+    selectedPresetId: String?,
+    darkMode: Boolean,
+    onDismiss: () -> Unit,
+    onSelect: (NewSessionAgentPreset) -> Unit,
+) {
+    PickerSheet(
+        title = stringResource(R.string.new_session_choose_work_mode),
+        darkMode = darkMode,
+        onDismiss = onDismiss,
+    ) {
+        if (presets.isEmpty()) {
+            SheetEmptyText(stringResource(R.string.new_session_work_mode_empty), darkMode)
+        } else {
+            LazyColumn(modifier = Modifier.heightIn(max = 420.dp)) {
+                items(presets, key = { it.id }) { preset ->
+                    SheetChoiceRow(
+                        title = preset.displayName,
+                        subtitle = preset.disabledReason ?: preset.description.orEmpty(),
+                        selected = preset.id == selectedPresetId,
+                        darkMode = darkMode,
+                        icon = Lucide.Bot,
+                        enabled = preset.enabled,
+                        onClick = { onSelect(preset) },
+                    )
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
 private fun PickerSheet(
     title: String,
     darkMode: Boolean,
@@ -1336,6 +1504,7 @@ private fun SheetChoiceRow(
     selected: Boolean,
     darkMode: Boolean,
     icon: ImageVector,
+    enabled: Boolean = true,
     onClick: () -> Unit,
 ) {
     Row(
@@ -1343,7 +1512,9 @@ private fun SheetChoiceRow(
             .fillMaxWidth()
             .height(56.dp)
             .clip(RoundedCornerShape(14.dp))
-            .noRippleClickable(onClick = onClick)
+            .noRippleClickable {
+                if (enabled) onClick()
+            }
             .padding(horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(14.dp),
@@ -1357,7 +1528,7 @@ private fun SheetChoiceRow(
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = title,
-                color = LocalAAColors.current.ink,
+                color = if (enabled) LocalAAColors.current.ink else LocalAAColors.current.muted,
                 fontSize = 16.sp,
                 fontWeight = FontWeight.Bold,
                 maxLines = 1,
@@ -1394,6 +1565,7 @@ private fun SheetEmptyText(message: String, darkMode: Boolean) {
 private enum class NewSessionSheet {
     Device,
     Agent,
+    AgentPreset,
 }
 
 @Composable

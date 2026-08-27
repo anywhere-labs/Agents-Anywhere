@@ -31,7 +31,7 @@ class NewSessionRuntimeSelectionStateTest {
     }
 
     @Test
-    fun modelHintWinsThenReasoningDefaultPrecedesDefaultModel() {
+    fun modelHintWinsThenCatalogDefaultModelTakesPrecedence() {
         val state = stateWithCapabilities()
         val request = state.requestKey!!
         val catalog = modelCatalog(
@@ -48,20 +48,69 @@ class NewSessionRuntimeSelectionStateTest {
         )
 
         val defaulted = state.applyModelCatalog(request, catalog)
-        assertEquals("reasoning-model", defaulted.selectedModelId)
-        assertEquals("high", defaulted.selectedReasoningId)
-        assertEquals("model:reasoning:high", defaulted.selectedModelSelectionId)
+        assertEquals("default-model", defaulted.selectedModelId)
+        assertNull(defaulted.selectedReasoningId)
+        assertEquals("model:default", defaulted.selectedModelSelectionId)
 
         val hinted = defaulted
-            .selectModel("default-model")
+            .selectModel("reasoning-model")
             .beginRuntimeDetails()
         val hintedRequest = hinted.requestKey!!
         val refreshed = hinted
             .applyCapabilities(hintedRequest, capabilities())
             .applyModelCatalog(hintedRequest, catalog)
-        assertEquals("default-model", refreshed.selectedModelId)
-        assertNull(refreshed.selectedReasoningId)
-        assertEquals("model:default", refreshed.selectedModelSelectionId)
+        assertEquals("reasoning-model", refreshed.selectedModelId)
+        assertEquals("high", refreshed.selectedReasoningId)
+        assertEquals("model:reasoning:high", refreshed.selectedModelSelectionId)
+    }
+
+    @Test
+    fun dshUsesCatalogDefaultAndOnlyPreservesCurrentDraftExplicitSelection() {
+        val selectedDsh = baseState()
+            .selectRuntime("dsh")
+            .beginRuntimeDetails()
+        val request = selectedDsh.requestKey!!
+        val ready = selectedDsh.applyCapabilities(request, capabilities(runtime = "dsh"))
+        val catalog = NewSessionModelCatalog(
+            runtime = "dsh",
+            revision = 1,
+            models = listOf(
+                model(
+                    id = "flash",
+                    default = true,
+                    reasoning = listOf(
+                        reasoning("default", "dsh:model:default"),
+                        reasoning("high", "dsh:model:high", default = true),
+                        reasoning("max", "dsh:model:max"),
+                    ),
+                ),
+            ),
+            serverTime = null,
+        )
+
+        val defaulted = ready.applyModelCatalog(request, catalog)
+        assertEquals("dsh:model:high", defaulted.selectedModelSelectionId)
+        assertFalse(defaulted.modelSelectionExplicit)
+
+        val explicit = defaulted.selectReasoning("max")
+        assertTrue(explicit.modelSelectionExplicit)
+        val refreshing = explicit.beginRuntimeDetails()
+        val refreshRequest = refreshing.requestKey!!
+        val refreshed = refreshing
+            .applyCapabilities(refreshRequest, capabilities(runtime = "dsh"))
+            .applyModelCatalog(refreshRequest, catalog.copy(revision = 2))
+        assertEquals("dsh:model:max", refreshed.selectedModelSelectionId)
+
+        val returned = refreshed
+            .selectRuntime("codex")
+            .selectRuntime("dsh")
+            .beginRuntimeDetails()
+        val returnedRequest = returned.requestKey!!
+        val resetToDshDefault = returned
+            .applyCapabilities(returnedRequest, capabilities(runtime = "dsh"))
+            .applyModelCatalog(returnedRequest, catalog.copy(revision = 3))
+        assertFalse(resetToDshDefault.modelSelectionExplicit)
+        assertEquals("dsh:model:high", resetToDshDefault.selectedModelSelectionId)
     }
 
     @Test
@@ -227,7 +276,11 @@ class NewSessionRuntimeSelectionStateTest {
     }
 
     private fun baseState(active: Boolean = true): NewSessionRuntimeSelectionState {
-        val runtimes = listOf(runtime("codex", active), runtime("claude", active))
+        val runtimes = listOf(
+            runtime("codex", active),
+            runtime("claude", active),
+            runtime("dsh", active),
+        )
         return NewSessionRuntimeSelectionState()
             .beginRuntimeInventory("connector")
             .replaceRuntimeInventory(DeviceRuntimeList("connector", runtimes, null))

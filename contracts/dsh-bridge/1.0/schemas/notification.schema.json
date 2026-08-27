@@ -10,7 +10,7 @@
       "enum": [
         "session.meta.upsert", "session.state.update",
         "runtime.capabilities.update", "session.capabilities.update",
-        "catalog.model.update", "catalog.permission.update", "timeline.sync",
+        "catalog.model.update", "catalog.permission.update", "catalog.agentPreset.update", "timeline.sync",
         "timeline.item.upsert", "notice.upsert", "runtime.error",
         "$/cancelRequest"
       ]

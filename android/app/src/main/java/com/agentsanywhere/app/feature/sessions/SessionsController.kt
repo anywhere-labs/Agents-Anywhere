@@ -97,6 +97,7 @@ class SessionsController(
                         cwd = draft.cwd?.trim()?.takeIf(String::isNotBlank),
                         content = draft.content.trim(),
                         selections = draft.selections.toMap(),
+                        agentPreset = draft.agentPreset,
                         attachments = draft.attachments.map(NewSessionAttachmentPart::toInlineAttachmentRef),
                         clientMessageId = draft.clientMessageId,
                     ),
@@ -267,6 +268,25 @@ class SessionsController(
                     runtime = runtime,
                 ).toNewSessionPermissionCatalog()
             }.wrapNewSessionFailure("Could not load the permission catalog.")
+        }
+    }
+
+    suspend fun loadNewSessionAgentPresetCatalog(
+        connectorId: String,
+        runtime: String,
+    ): Result<NewSessionAgentPresetCatalog> {
+        val auth = newSessionAuth() ?: return Result.failure(
+            IllegalStateException("Sign in again to load the work mode catalog."),
+        )
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                devicesApi.getDeviceRuntimeAgentPresetCatalog(
+                    serverUrl = auth.serverUrl,
+                    authorizationToken = auth.accessToken,
+                    deviceId = connectorId,
+                    runtime = runtime,
+                ).toNewSessionAgentPresetCatalog()
+            }.wrapNewSessionFailure("Could not load the work mode catalog.")
         }
     }
 

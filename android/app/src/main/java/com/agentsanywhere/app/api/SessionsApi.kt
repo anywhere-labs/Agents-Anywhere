@@ -33,6 +33,15 @@ class SessionsApi(
             request.selections.filterValues(String::isNotBlank).takeIf { it.isNotEmpty() }?.let {
                 put("selections", JSONObject(it))
             }
+            request.agentPreset?.takeIf(String::isNotBlank)?.let { agentPreset ->
+                put(
+                    "runtimeOptions",
+                    JSONObject().put(
+                        "dsh",
+                        JSONObject().put("agentPreset", agentPreset),
+                    ),
+                )
+            }
             request.attachments.takeIf { it.isNotEmpty() }?.let { attachments ->
                 put(
                     "attachments",

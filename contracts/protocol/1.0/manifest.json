@@ -65,6 +65,22 @@
       "slug": "permission-catalog-response"
     },
     {
+      "direction": "bidirectional",
+      "model": "ProtocolAgentPresetCatalog",
+      "path": "schemas/agent-preset-catalog.schema.json",
+      "pydanticMode": "validation",
+      "sha256": "7e44aba0bc7d3105c8b14d38519b9068fdca2a5c1df254cae17ea37c336da497",
+      "slug": "agent-preset-catalog"
+    },
+    {
+      "direction": "egress",
+      "model": "ProtocolAgentPresetCatalogResponse",
+      "path": "schemas/agent-preset-catalog-response.schema.json",
+      "pydanticMode": "serialization",
+      "sha256": "9419393df10311ae166ab8ed41c6913377719bf13e8f1490ab27616d7245a0a1",
+      "slug": "agent-preset-catalog-response"
+    },
+    {
       "direction": "egress",
       "model": "ProtocolSessionSnapshotResponse",
       "path": "schemas/session-snapshot-response.schema.json",

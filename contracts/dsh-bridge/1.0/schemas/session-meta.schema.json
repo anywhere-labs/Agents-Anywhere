@@ -9,6 +9,7 @@
     "runtime": { "const": "dsh" },
     "title": { "type": ["string", "null"] },
     "cwd": { "type": ["string", "null"] },
+    "agentPreset": { "type": ["string", "null"], "minLength": 1 },
     "orderingTime": { "type": ["string", "null"], "format": "date-time" },
     "revision": { "type": "string", "minLength": 1 }
   },

@@ -7,6 +7,7 @@ from typing import Any
 from connector.logging import logger
 from connector.runtime_protocol import (
     RuntimeAttachmentContent,
+    RuntimeAgentPresetCatalog,
     RuntimeCapabilitySet,
     RuntimeModelCatalog,
     RuntimePermissionCatalog,
@@ -16,6 +17,7 @@ from connector.runtime_protocol import (
 )
 from connector.runtime_protocol.host import RuntimeHostClient
 from connector.server.runtime_rpc_payloads import (
+    agent_preset_catalog_payload,
     capability_set_payload,
     model_catalog_payload,
     permission_catalog_payload,
@@ -157,6 +159,18 @@ class ConnectorRuntimeHost(RuntimeHostClient):
             {
                 "catalogType": "permission",
                 "catalog": permission_catalog_payload(catalog),
+            },
+        )
+
+    async def agent_preset_catalog_update(
+        self,
+        catalog: RuntimeAgentPresetCatalog,
+    ) -> None:
+        await self._notify_server(
+            "runtime.catalog.updated",
+            {
+                "catalogType": "agent_preset",
+                "catalog": agent_preset_catalog_payload(catalog),
             },
         )
 

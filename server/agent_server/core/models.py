@@ -551,6 +551,18 @@ class InlineAttachmentRef(BaseModel):
     contentBase64: str = Field(min_length=1)
 
 
+class DshRuntimeCreateOptions(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    agentPreset: str | None = Field(default=None, min_length=1, max_length=255)
+
+
+class SessionRuntimeOptions(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    dsh: DshRuntimeCreateOptions | None = None
+
+
 class SessionCreateAndStartRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -562,6 +574,7 @@ class SessionCreateAndStartRequest(BaseModel):
     selections: dict[str, str | None] = Field(default_factory=dict)
     attachments: list[InlineAttachmentRef] = Field(default_factory=list, max_length=10)
     clientMessageId: str | None = None
+    runtimeOptions: SessionRuntimeOptions = Field(default_factory=SessionRuntimeOptions)
 
 
 class SessionView(BaseModel):

@@ -115,6 +115,15 @@ def runtime_selections(params: dict[str, Any]) -> dict[str, str | None]:
     return selections
 
 
+def runtime_options(params: dict[str, Any]) -> dict[str, Any]:
+    raw = params.get("runtimeOptions") or {}
+    if not isinstance(raw, dict):
+        raise TypeError("runtimeOptions must be an object")
+    if any(not isinstance(key, str) or not key for key in raw):
+        raise ValueError("runtimeOptions keys must be non-empty strings")
+    return dict(raw)
+
+
 def optional_mapping(value: Any) -> dict[str, Any] | None:
     if value is None:
         return None
@@ -267,6 +276,7 @@ class SessionCreateParams:
     selections: dict[str, str | None]
     attachments: tuple[RuntimeAttachment, ...]
     client_message_id: str | None
+    runtime_options: dict[str, Any]
 
     @classmethod
     def parse(cls, params: dict[str, Any]) -> SessionCreateParams:
@@ -278,6 +288,7 @@ class SessionCreateParams:
             selections=runtime_selections(params),
             attachments=runtime_attachments(params),
             client_message_id=optional_string(params.get("clientMessageId")),
+            runtime_options=runtime_options(params),
         )
 
 

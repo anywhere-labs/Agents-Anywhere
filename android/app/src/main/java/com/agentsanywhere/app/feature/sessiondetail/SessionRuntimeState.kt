@@ -373,14 +373,23 @@ private fun permissionTranslationByLabelKey(labelKey: String?): RuntimePermissio
         else -> null
     }
 
-internal fun RemoteRuntimeModelCatalog.selectionOptions(): List<RuntimeSelectionOption> {
+internal fun RemoteRuntimeModelCatalog.selectionOptions(
+    defaultReasoningLabel: String? = null,
+): List<RuntimeSelectionOption> {
     return models.flatMap { model ->
-        val reasoning = model.reasoningItems.filter { it.selectionId.isNotBlank() }
+        if (model.metadata["enabled"] == false) return@flatMap emptyList()
+        val reasoning = model.reasoningItems.filter {
+            it.selectionId.isNotBlank() && it.metadata["enabled"] != false
+        }
         if (reasoning.isNotEmpty()) {
             reasoning.map { item ->
+                val reasoningLabel = defaultReasoningLabel
+                    ?.takeIf { item.metadata.isProviderDefaultReasoning() }
+                    ?: item.displayName
                 RuntimeSelectionOption(
                     selectionId = item.selectionId,
-                    label = listOf(model.displayName, item.displayName).filter(String::isNotBlank).joinToString(" · "),
+                    label = listOf(model.displayName, reasoningLabel)
+                        .filter(String::isNotBlank).joinToString(" · "),
                     description = item.description ?: model.description,
                     default = item.default || (model.default && reasoning.first() == item),
                 )
@@ -398,6 +407,13 @@ internal fun RemoteRuntimeModelCatalog.selectionOptions(): List<RuntimeSelection
             }.orEmpty()
         }
     }.distinctBy { it.selectionId }
+}
+
+private fun Map<String, Any?>.isProviderDefaultReasoning(): Boolean {
+    val i18n = this["i18n"] as? Map<*, *>
+    return this["kind"] == "provider-default" ||
+        (containsKey("reasoningEffort") && this["reasoningEffort"] == null) ||
+        i18n?.get("labelKey") == "dashboard.new.defaultReasoning"
 }
 
 internal fun RemoteRuntimePermissionCatalog.selectionOptions(): List<RuntimeSelectionOption> =

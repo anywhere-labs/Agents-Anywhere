@@ -13,6 +13,7 @@ RUNTIME_ATTACHMENT: Final = "runtime.attachment"
 RUNTIME_CONFIG: Final = "runtime.config"
 CATALOG_MODEL: Final = "catalog.model"
 CATALOG_PERMISSION: Final = "catalog.permission"
+CATALOG_AGENT_PRESET: Final = "catalog.agent_preset"
 CATALOG_EFFORT: Final = "catalog.effort"
 
 

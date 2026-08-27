@@ -184,6 +184,19 @@ class DevicesApi(
         ).toRemoteRuntimePermissionCatalogResponse()
     }
 
+    fun getDeviceRuntimeAgentPresetCatalog(
+        serverUrl: String,
+        authorizationToken: String,
+        deviceId: String,
+        runtime: String,
+    ): RemoteRuntimeAgentPresetCatalogResponse {
+        return client.getJson(
+            serverUrl = serverUrl,
+            path = "/connectors/${deviceId.urlEncode()}/runtimes/${runtime.urlEncode()}/catalogs/agent-preset",
+            authorizationToken = authorizationToken,
+        ).toRemoteRuntimeAgentPresetCatalogResponse()
+    }
+
     fun claimPairing(
         serverUrl: String,
         authorizationToken: String,
@@ -346,6 +359,32 @@ class DevicesApi(
             displayName = optString("displayName", ""),
             description = optNullableString("description"),
             default = optBoolean("default", false),
+            metadata = optJSONObject("metadata").toMap(),
+        )
+    }
+
+    private fun JSONObject.toRemoteRuntimeAgentPresetCatalogResponse(): RemoteRuntimeAgentPresetCatalogResponse {
+        val catalog = optJSONObject("catalog") ?: JSONObject()
+        return RemoteRuntimeAgentPresetCatalogResponse(
+            catalog = RemoteRuntimeAgentPresetCatalog(
+                runtime = catalog.optString("runtime", ""),
+                revision = catalog.optLong("revision", 0L),
+                presets = catalog.optJSONArray("presets")
+                    .toObjectList { toRemoteRuntimeAgentPreset() },
+            ),
+            serverTime = optNullableString("serverTime"),
+        )
+    }
+
+    private fun JSONObject.toRemoteRuntimeAgentPreset(): RemoteRuntimeAgentPreset {
+        return RemoteRuntimeAgentPreset(
+            id = optString("id", ""),
+            agentPreset = optString("agentPreset", ""),
+            displayName = optString("displayName", ""),
+            description = optNullableString("description"),
+            default = optBoolean("default", false),
+            enabled = optBoolean("enabled", true),
+            disabledReason = optNullableString("disabledReason"),
             metadata = optJSONObject("metadata").toMap(),
         )
     }

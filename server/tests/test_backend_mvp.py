@@ -636,6 +636,8 @@ def test_session_create_and_start_preallocates_session_and_passes_selections(tmp
         "size": 5,
         "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
     }
+
+
     timeline_attachment = create_params["timelineAttachments"][0]
     assert timeline_attachment == {
         "fileId": attachment["fileId"],
@@ -665,6 +667,77 @@ def test_session_create_and_start_preallocates_session_and_passes_selections(tmp
     assert active["status"] == "running"
     assert active["externalSessionId"] == "thr_create_and_start"
     assert "turnId" not in active
+
+
+def test_dsh_create_and_start_forwards_agent_preset_runtime_option(tmp_path):
+    app = create_app(tmp_path / "test.sqlite3")
+    client = TestClient(app)
+    headers = auth_headers(client)
+    connector_response = client.post("/connectors", headers=headers, json={"name": "dsh"})
+    connector_id = connector_response.json()["connector"]["id"]
+
+    class FakeCreateRpc:
+        def __init__(self) -> None:
+            self.requests: list[tuple[str, dict[str, Any]]] = []
+
+        async def is_online(self, requested_connector_id: str) -> bool:
+            return requested_connector_id == connector_id
+
+        async def request(
+            self,
+            requested_connector_id: str,
+            method: str,
+            params: dict[str, Any],
+            *,
+            timeout: float = 30,
+        ) -> dict[str, str]:
+            assert requested_connector_id == connector_id
+            self.requests.append((method, params))
+            return {
+                "sessionId": params["sessionId"],
+                "externalSessionId": "dsh-agent-preset",
+            }
+
+    fake_rpc = FakeCreateRpc()
+    app.state.rpc = fake_rpc
+
+    response = client.post(
+        "/sessions/create-and-start",
+        headers=headers,
+        json={
+            "connectorId": connector_id,
+            "runtime": "dsh",
+            "content": "hello",
+            "runtimeOptions": {"dsh": {"agentPreset": "standard"}},
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    method, params = fake_rpc.requests[0]
+    assert method == "session.create"
+    assert params["runtimeOptions"] == {"dsh": {"agentPreset": "standard"}}
+
+
+def test_non_dsh_create_rejects_dsh_runtime_options(tmp_path):
+    app = create_app(tmp_path / "test.sqlite3")
+    client = TestClient(app)
+    headers = auth_headers(client)
+    connector_response = client.post("/connectors", headers=headers, json={"name": "codex"})
+    connector_id = connector_response.json()["connector"]["id"]
+    app.state.rpc = FakeLocalRpc()
+
+    response = client.post(
+        "/sessions/create-and-start",
+        headers=headers,
+        json={
+            "connectorId": connector_id,
+            "runtime": "codex",
+            "content": "hello",
+            "runtimeOptions": {"dsh": {"agentPreset": "standard"}},
+        },
+    )
+
+    assert response.status_code == 422, response.text
 
 
 def test_session_state_reads_runtime_status_over_stale_db_status(tmp_path):
@@ -3997,6 +4070,78 @@ def test_patch_session_selections_routes_to_runtime_and_reads_live_state(tmp_pat
     assert "selections" not in params
     assert "modelSelectionId" not in params
     assert "permissionSelectionId" not in params
+
+
+def test_patch_session_selections_uses_runtime_normalized_selection(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, _, session_id, headers = create_connector_and_session(client)
+
+    class NormalizingSelectionRpc(FakeLocalRpc):
+        async def request(
+            self,
+            connector_id: str,
+            method: str,
+            params: dict[str, Any],
+            *,
+            timeout: float = 30,
+        ) -> Any:
+            if method != "session.selections.update":
+                return await super().request(
+                    connector_id,
+                    method,
+                    params,
+                    timeout=timeout,
+                )
+            self.requests.append((connector_id, method, params, timeout))
+            normalized = "dsh:model:normalized-default"
+            self.runtime_states[params["sessionId"]] = {
+                "sessionId": params["sessionId"],
+                "runtime": params["runtime"],
+                "externalSessionId": params.get("externalSessionId"),
+                "status": "idle",
+                "selections": {"model": normalized},
+                "metadata": {},
+            }
+            return {"ok": True, "selections": {"model": normalized}}
+
+    fake_rpc = NormalizingSelectionRpc()
+    client.app.state.rpc = fake_rpc
+    asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
+    asyncio.run(
+        client.app.state.store.update_protocol_capabilities(
+            connector_id,
+            {
+                "revision": 1,
+                "capabilities": [
+                    {
+                        "capabilityId": "catalog.model",
+                        "scope": "runtime",
+                        "runtime": "codex",
+                        "supported": True,
+                        "available": True,
+                        "allowed": True,
+                    }
+                ],
+            },
+        )
+    )
+    client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
+
+    response = client.patch(
+        f"/sessions/{session_id}/runtime/selections",
+        headers=headers,
+        json={"selections": {"model": "dsh:model:base-default"}},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["state"]["selections"] == {
+        "model": "dsh:model:normalized-default"
+    }
+    state = client.get(f"/sessions/{session_id}/runtime/state", headers=headers)
+    assert state.status_code == 200, state.text
+    assert state.json()["state"]["selections"] == {
+        "model": "dsh:model:normalized-default"
+    }
 
 
 def test_patch_session_selections_does_not_persist_runtime_rejection(tmp_path):

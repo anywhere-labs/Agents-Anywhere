@@ -156,9 +156,6 @@
     <string name="device_runtime_stopping">Stopping</string>
     <string name="device_runtime_error">Runtime error</string>
     <string name="device_runtime_unknown">Unknown state</string>
-    <string name="device_runtime_unknown_version">unknown version</string>
-    <string name="device_runtime_dsh_summary">DSH %1$s · profile %2$s · native session storage</string>
-    <string name="device_runtime_dsh_shared_session">AA Web, Android, and DSH Web share this DSH session through the same bridge.</string>
     <string name="device_detail_prepare_setup_failed">Could not prepare device setup.</string>
     <string name="device_detail_delete_failed">Could not delete device.</string>
     <string name="device_detail_revoke_failed">Could not revoke device token.</string>
@@ -242,6 +239,12 @@
     <string name="new_session_create_failed">Could not create session.</string>
     <string name="new_session_device">Device</string>
     <string name="new_session_agent">Agent</string>
+    <string name="new_session_work_mode">Work mode</string>
+    <string name="new_session_choose_work_mode">Choose work mode</string>
+    <string name="new_session_dsh_default_mode">DSH default</string>
+    <string name="new_session_work_mode_empty">No work modes are currently available.</string>
+    <string name="new_session_work_mode_catalog_failed">Could not load work modes.</string>
+    <string name="new_session_work_mode_default_fallback">Work modes could not be loaded. DSH will use its current default.</string>
     <string name="new_session_no_device">No device</string>
     <string name="new_session_no_agent">No agent</string>
     <string name="new_session_no_online_agent">No online device with an attached agent.</string>

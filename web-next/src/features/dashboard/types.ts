@@ -24,6 +24,11 @@ export type {
   ProtocolPermissionCatalogResponse,
   ProtocolPermissionItem,
 } from "@/generated/protocol/v1/permission-catalog-response";
+export type {
+  ProtocolAgentPresetCatalog,
+  ProtocolAgentPresetCatalogResponse,
+  ProtocolAgentPresetItem,
+} from "@/generated/protocol/v1/agent-preset-catalog-response";
 
 export type { ProtocolCapability, ProtocolCapabilitySet, ProtocolCapabilitiesResponse };
 
@@ -234,6 +239,11 @@ export type SessionCreateAndStartRequest = {
   selections?: Record<string, string | null>;
   attachments?: InlineAttachmentRef[];
   clientMessageId?: string | null;
+  runtimeOptions?: {
+    dsh?: {
+      agentPreset?: string;
+    };
+  };
 };
 
 export type SessionCreateResponse = {

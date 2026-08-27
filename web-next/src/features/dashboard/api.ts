@@ -28,6 +28,7 @@ import type {
   ProtocolCapabilitiesResponse,
   ProtocolModelCatalogResponse,
   ProtocolPermissionCatalogResponse,
+  ProtocolAgentPresetCatalogResponse,
   RpcResponse,
   SessionCommandListResponse,
   SessionCreateAndStartRequest,
@@ -763,6 +764,17 @@ export class DashboardApi {
   ): Promise<ProtocolPermissionCatalogResponse> {
     return this.client.get<ProtocolPermissionCatalogResponse>(
       `/connectors/${encodeURIComponent(connectorId)}/runtimes/${encodeURIComponent(runtimeId)}/catalogs/permission`,
+      { token },
+    );
+  }
+
+  getConnectorRuntimeAgentPresetCatalog(
+    token: string,
+    connectorId: string,
+    runtimeId: string,
+  ): Promise<ProtocolAgentPresetCatalogResponse> {
+    return this.client.get<ProtocolAgentPresetCatalogResponse>(
+      `/connectors/${encodeURIComponent(connectorId)}/runtimes/${encodeURIComponent(runtimeId)}/catalogs/agent-preset`,
       { token },
     );
   }

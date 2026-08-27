@@ -1,0 +1,33 @@
+{
+  "runtime": "dsh",
+  "revision": 13,
+  "models": [
+    {
+      "id": "dsh:model:WyJkZWVwc2Vlay1vZmZpY2lhbCIsImRlZXBzZWVrLXY0LXBybyIsbnVsbF0",
+      "title": "DeepSeek V4 Pro",
+      "default": true,
+      "enabled": true,
+      "reasoningItems": [
+        {
+          "id": "dsh:model:WyJkZWVwc2Vlay1vZmZpY2lhbCIsImRlZXBzZWVrLXY0LXBybyIsbnVsbF0",
+          "title": "Default",
+          "selectionId": "dsh:model:WyJkZWVwc2Vlay1vZmZpY2lhbCIsImRlZXBzZWVrLXY0LXBybyIsbnVsbF0",
+          "default": true,
+          "enabled": true,
+          "metadata": {
+            "reasoningEffort": null,
+            "kind": "provider-default"
+          }
+        },
+        {
+          "id": "dsh:model:WyJkZWVwc2Vlay1vZmZpY2lhbCIsImRlZXBzZWVrLXY0LXBybyIsImhpZ2giXQ",
+          "title": "High",
+          "selectionId": "dsh:model:WyJkZWVwc2Vlay1vZmZpY2lhbCIsImRlZXBzZWVrLXY0LXBybyIsImhpZ2giXQ",
+          "default": false,
+          "enabled": true,
+          "metadata": { "reasoningEffort": "high" }
+        }
+      ]
+    }
+  ]
+}

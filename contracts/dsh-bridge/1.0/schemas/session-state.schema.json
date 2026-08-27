@@ -8,6 +8,7 @@
     "externalSessionId": { "type": "string", "minLength": 1 },
     "runtime": { "const": "dsh" },
     "status": { "enum": ["idle", "pending", "running", "stopping", "waiting_approval", "blocked", "error", "disconnected"] },
+    "agentPreset": { "type": ["string", "null"], "minLength": 1 },
     "selections": { "type": "object", "additionalProperties": { "type": ["string", "null"] } },
     "statusReason": { "type": "string" },
     "error": { "type": "object" },

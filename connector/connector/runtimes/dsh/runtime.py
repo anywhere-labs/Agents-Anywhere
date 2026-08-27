@@ -8,10 +8,14 @@ from dataclasses import dataclass, field, replace
 from typing import Any
 
 from connector.runtime_protocol import (
+    CAPABILITY_CATALOG_AGENT_PRESET,
+    CAPABILITY_CATALOG_EFFORT,
+    CAPABILITY_CATALOG_MODEL,
     CAPABILITY_CATALOG_PERMISSION,
     AgentRuntime,
     PreparedSessionTimelineSync,
     RuntimeAttachment,
+    RuntimeAgentPresetCatalog,
     RuntimeCapabilitySet,
     RuntimeCommand,
     RuntimeCommandResult,
@@ -117,6 +121,30 @@ class DshRuntime(AgentRuntime):
     ) -> RuntimePermissionCatalog:
         return bridge_models.permission_catalog(
             await self._request("catalog.listPermissions", _query_params(query, limit))
+        )
+
+    async def list_agent_preset_catalog(
+        self,
+        query: str | None = None,
+        limit: int = 100,
+    ) -> RuntimeAgentPresetCatalog:
+        capabilities = await self.get_runtime_capabilities()
+        capability = next(
+            (
+                item
+                for item in capabilities.capabilities
+                if item.capability_id == CAPABILITY_CATALOG_AGENT_PRESET
+            ),
+            None,
+        )
+        if capability is None or not (
+            capability.supported and capability.available and capability.allowed
+        ):
+            raise RuntimeUnsupportedError("list_agent_preset_catalog")
+        return bridge_models.agent_preset_catalog(
+            await self._request(
+                "catalog.listAgentPresets", _query_params(query, limit)
+            )
         )
 
     async def list_sessions(
@@ -358,30 +386,35 @@ class DshRuntime(AgentRuntime):
             ),
             connector_id=self.host.connector_id,
         )
-        if not any(
-            capability.capability_id == CAPABILITY_CATALOG_PERMISSION
+        inherited_catalog_ids = {
+            CAPABILITY_CATALOG_MODEL,
+            CAPABILITY_CATALOG_PERMISSION,
+            CAPABILITY_CATALOG_EFFORT,
+        }
+        present_catalog_ids = {
+            capability.capability_id
             for capability in capabilities.capabilities
-        ):
+            if capability.capability_id in inherited_catalog_ids
+        }
+        missing_catalog_ids = inherited_catalog_ids - present_catalog_ids
+        if missing_catalog_ids:
             runtime_capabilities = await self.get_runtime_capabilities()
-            permission_capability = next(
-                (
-                    capability
-                    for capability in runtime_capabilities.capabilities
-                    if capability.capability_id == CAPABILITY_CATALOG_PERMISSION
-                ),
-                None,
+            inherited_capabilities = tuple(
+                replace(
+                    capability,
+                    scope="session",
+                    session_id=session_id,
+                )
+                for capability in runtime_capabilities.capabilities
+                if capability.capability_id in missing_catalog_ids
             )
-            if permission_capability is not None:
+            if inherited_capabilities:
                 capabilities = replace(
                     capabilities,
                     revision=max(capabilities.revision, runtime_capabilities.revision),
                     capabilities=(
                         *capabilities.capabilities,
-                        replace(
-                            permission_capability,
-                            scope="session",
-                            session_id=session_id,
-                        ),
+                        *inherited_capabilities,
                     ),
                 )
         return self._disable_writes_for_conflict(capabilities, session_id)
@@ -395,6 +428,7 @@ class DshRuntime(AgentRuntime):
         selections: Mapping[str, str | None] | None = None,
         attachments: tuple[RuntimeAttachment, ...] = (),
         client_message_id: str | None = None,
+        runtime_options: Mapping[str, Any] | None = None,
     ) -> RuntimeOperationResult:
         _reject_attachments(attachments)
         if client_message_id is not None:
@@ -408,6 +442,11 @@ class DshRuntime(AgentRuntime):
         _set_optional(params, "title", title)
         _set_optional(params, "cwd", cwd)
         _set_optional(params, "clientMessageId", client_message_id)
+        _set_optional(
+            params,
+            "agentPreset",
+            _agent_preset_from_runtime_options(runtime_options),
+        )
         operation = _operation_result(
             await self._request("session.createAndStart", params)
         )
@@ -656,6 +695,7 @@ class DshRuntime(AgentRuntime):
             "session.commands",
             "catalog.model",
             "catalog.permission",
+            "catalog.effort",
         }
         return replace(
             capability_set,
@@ -961,6 +1001,7 @@ def _runtime_error(method: str, error: BridgeRpcError) -> Exception:
         return RuntimeConflictError(message)
     if code in {
         "INVALID_SELECTION",
+        "MODEL_UNAVAILABLE",
         "SESSION_NOT_FOUND",
         "COMMAND_NOT_FOUND",
         "INVALID_INTERACTION_RESPONSE",
@@ -997,6 +1038,32 @@ def _query_params(query: str | None, limit: int) -> dict[str, Any]:
     params: dict[str, Any] = {"limit": limit}
     _set_optional(params, "query", query)
     return params
+
+
+def _agent_preset_from_runtime_options(
+    runtime_options: Mapping[str, Any] | None,
+) -> str | None:
+    if not runtime_options:
+        return None
+    unknown_runtime_keys = set(runtime_options) - {"dsh"}
+    if unknown_runtime_keys:
+        raise RuntimeInvalidRequestError("unsupported DSH runtime options")
+    raw_dsh = runtime_options.get("dsh")
+    if raw_dsh is None:
+        return None
+    if not isinstance(raw_dsh, Mapping):
+        raise RuntimeInvalidRequestError("runtimeOptions.dsh must be an object")
+    unknown_dsh_keys = set(raw_dsh) - {"agentPreset"}
+    if unknown_dsh_keys:
+        raise RuntimeInvalidRequestError("unsupported DSH create option")
+    agent_preset = raw_dsh.get("agentPreset")
+    if agent_preset is None:
+        return None
+    if not isinstance(agent_preset, str) or not agent_preset:
+        raise RuntimeInvalidRequestError(
+            "runtimeOptions.dsh.agentPreset must be a non-empty string"
+        )
+    return agent_preset
 
 
 def _reject_attachments(attachments: tuple[RuntimeAttachment, ...]) -> None:

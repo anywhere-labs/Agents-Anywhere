@@ -15,6 +15,7 @@ data class NewSessionDraft(
     val runtimeLabel: String,
     val knownSessionIds: Set<String>,
     val selections: NewSessionSelections = NewSessionSelections(),
+    val agentPreset: String? = null,
 ) {
     fun previewSession(): AgentSession {
         return AgentSession(
@@ -59,6 +60,7 @@ internal fun NewSessionDraft.firstMessageRequest(
     cwd = cwd,
     content = content.trim(),
     selections = selections,
+    agentPreset = agentPreset,
     attachments = emptyList(),
     clientMessageId = clientMessageId,
     knownSessionIds = knownSessionIds,

@@ -77,3 +77,25 @@ data class RemoteRuntimePermission(
     val default: Boolean,
     val metadata: Map<String, Any?>,
 )
+
+data class RemoteRuntimeAgentPresetCatalogResponse(
+    val catalog: RemoteRuntimeAgentPresetCatalog,
+    val serverTime: String?,
+)
+
+data class RemoteRuntimeAgentPresetCatalog(
+    val runtime: String,
+    val revision: Long,
+    val presets: List<RemoteRuntimeAgentPreset>,
+)
+
+data class RemoteRuntimeAgentPreset(
+    val id: String,
+    val agentPreset: String,
+    val displayName: String,
+    val description: String?,
+    val default: Boolean,
+    val enabled: Boolean,
+    val disabledReason: String?,
+    val metadata: Map<String, Any?>,
+)

@@ -130,6 +130,11 @@ class SessionRunService:
             )
 
         selections = _selections_from_mapping(payload.selections)
+        runtime_options = payload.runtimeOptions.model_dump(exclude_none=True)
+        if runtime_options and payload.runtime != "dsh":
+            raise SessionRunInvalidConfigError(
+                "runtimeOptions.dsh is only valid for the dsh runtime"
+            )
         session = await self._store.create_session(
             connector_id=payload.connectorId,
             user_id=user_id,
@@ -151,6 +156,8 @@ class SessionRunService:
             params["cwd"] = payload.cwd
         if selections:
             params["selections"] = selections
+        if runtime_options:
+            params["runtimeOptions"] = runtime_options
         if payload.clientMessageId:
             params["clientMessageId"] = payload.clientMessageId
         persisted_attachment_refs: list[dict[str, Any]] = []
@@ -663,6 +670,12 @@ def _runtime_state_from_selection_result(
 ) -> SessionRuntimeState:
     now = utc_now()
     raw_state = result.get("state") if isinstance(result, dict) else None
+    response_selections = (
+        result.get("selections") if isinstance(result, dict) else None
+    )
+    authoritative_selections = (
+        response_selections if isinstance(response_selections, dict) else selections
+    )
     if isinstance(raw_state, dict):
         return SessionRuntimeState.model_validate(
             {
@@ -673,7 +686,7 @@ def _runtime_state_from_selection_result(
                 "status": raw_state.get("status") or "idle",
                 "selections": raw_state.get("selections")
                 if isinstance(raw_state.get("selections"), dict)
-                else selections,
+                else authoritative_selections,
                 "statusReason": raw_state.get("statusReason"),
                 "error": raw_state.get("error")
                 if isinstance(raw_state.get("error"), dict)
@@ -691,7 +704,7 @@ def _runtime_state_from_selection_result(
         runtime=session.runtime,
         externalSessionId=session.externalSessionId,
         status="idle",
-        selections=selections,
+        selections=authoritative_selections,
         updatedSeq=session.updatedSeq,
         createdAt=now,
         updatedAt=now,

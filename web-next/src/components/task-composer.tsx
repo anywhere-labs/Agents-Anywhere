@@ -41,6 +41,7 @@ import { useElementWidth } from "@/hooks/use-element-width"
 import type {
   DeviceRuntimeView,
   InlineAttachmentRef,
+  ProtocolAgentPresetCatalog,
   ProtocolCapabilitySet,
   ProtocolModelCatalog,
   ProtocolPermissionCatalog,
@@ -241,11 +242,16 @@ export function TaskComposer() {
   const [selectedAgent, setSelectedAgent] = React.useState(agentOptions[0]?.id ?? "")
   const [selectedModel, setSelectedModel] = React.useState("")
   const [selectedReasoning, setSelectedReasoning] = React.useState("")
+  const [modelSelectionExplicit, setModelSelectionExplicit] = React.useState(false)
   const [selectedPermissionMode, setSelectedPermissionMode] = React.useState("")
+  const [selectedAgentPreset, setSelectedAgentPreset] = React.useState("")
+  const [agentPresetExplicit, setAgentPresetExplicit] = React.useState(false)
   const [workspace, setWorkspace] = React.useState<WorkspaceSelection | null>(null)
   const [prompt, setPrompt] = React.useState("")
   const [modelCatalog, setModelCatalog] = React.useState<ProtocolModelCatalog | null>(null)
   const [permissionCatalog, setPermissionCatalog] = React.useState<ProtocolPermissionCatalog | null>(null)
+  const [agentPresetCatalog, setAgentPresetCatalog] = React.useState<ProtocolAgentPresetCatalog | null>(null)
+  const [agentPresetCatalogError, setAgentPresetCatalogError] = React.useState(false)
   const [runtimeCapabilities, setRuntimeCapabilities] = React.useState<ProtocolCapabilitySet | null>(null)
   const [catalogsLoading, setCatalogsLoading] = React.useState(false)
   const [creating, setCreating] = React.useState(false)
@@ -306,6 +312,12 @@ export function TaskComposer() {
   }, [selectedConnector?.id])
 
   React.useEffect(() => {
+    setModelSelectionExplicit(false)
+    setSelectedAgentPreset("")
+    setAgentPresetExplicit(false)
+  }, [selectedAgent, selectedConnectorId])
+
+  React.useEffect(() => {
     const connectorId = selectedConnectorId
 
     if (!connectorId || agentOptions.length === 0) {
@@ -339,6 +351,8 @@ export function TaskComposer() {
       setModelCatalog(null)
       setPermissionCatalog(null)
       setRuntimeCapabilities(null)
+      setAgentPresetCatalog(null)
+      setAgentPresetCatalogError(false)
       setCatalogsLoading(false)
       return
     }
@@ -347,6 +361,8 @@ export function TaskComposer() {
     setModelCatalog(null)
     setPermissionCatalog(null)
     setRuntimeCapabilities(null)
+    setAgentPresetCatalog(null)
+    setAgentPresetCatalogError(false)
     dashboardApi.getConnectorRuntimeCapabilities(
       authSession.accessToken,
       selectedConnectorId,
@@ -364,7 +380,12 @@ export function TaskComposer() {
           CAPABILITY.permissionCatalog,
           selectedAgent,
         )
-        const [modelCatalogResponse, permissionCatalogResponse] = await Promise.all([
+        const canUseAgentPresetCatalog = selectedAgent === "dsh" && capabilityIsUsable(
+          capabilitySet,
+          CAPABILITY.agentPresetCatalog,
+          selectedAgent,
+        )
+        const [modelCatalogResponse, permissionCatalogResponse, agentPresetResult] = await Promise.all([
           canUseModelCatalog
             ? dashboardApi.getConnectorRuntimeModelCatalog(
                 authSession.accessToken,
@@ -379,20 +400,32 @@ export function TaskComposer() {
                 selectedAgent,
               )
             : Promise.resolve(null),
+          canUseAgentPresetCatalog
+            ? dashboardApi.getConnectorRuntimeAgentPresetCatalog(
+                authSession.accessToken,
+                selectedConnectorId,
+                selectedAgent,
+              ).then((response) => ({ response, failed: false }))
+                .catch(() => ({ response: null, failed: true }))
+            : Promise.resolve({ response: null, failed: false }),
         ])
-        return { capabilitySet, modelCatalogResponse, permissionCatalogResponse }
+        return { capabilitySet, modelCatalogResponse, permissionCatalogResponse, agentPresetResult }
       })
-      .then(({ capabilitySet, modelCatalogResponse, permissionCatalogResponse }) => {
+      .then(({ capabilitySet, modelCatalogResponse, permissionCatalogResponse, agentPresetResult }) => {
         if (cancelled) return
         setRuntimeCapabilities(capabilitySet)
         setModelCatalog(modelCatalogResponse?.catalog ?? null)
         setPermissionCatalog(permissionCatalogResponse?.catalog ?? null)
+        setAgentPresetCatalog(agentPresetResult.response?.catalog ?? null)
+        setAgentPresetCatalogError(agentPresetResult.failed)
       })
       .catch(() => {
         if (cancelled) return
         setRuntimeCapabilities(null)
         setModelCatalog(null)
         setPermissionCatalog(null)
+        setAgentPresetCatalog(null)
+        setAgentPresetCatalogError(selectedAgent === "dsh")
       })
       .finally(() => {
         if (!cancelled) setCatalogsLoading(false)
@@ -412,6 +445,11 @@ export function TaskComposer() {
     CAPABILITY.permissionCatalog,
     selectedAgent,
   )
+  const canUseAgentPresetCatalog = selectedAgent === "dsh" && capabilityIsUsable(
+    runtimeCapabilities,
+    CAPABILITY.agentPresetCatalog,
+    selectedAgent,
+  )
   const canUseAttachments = capabilityIsUsable(
     runtimeCapabilities,
     CAPABILITY.attachment,
@@ -419,7 +457,9 @@ export function TaskComposer() {
   )
 
   const models = React.useMemo(
-    () => modelCatalog?.models.map((item) => ({
+    () => modelCatalog?.models
+      .filter((item) => selectedAgent !== "dsh" || item.metadata.enabled !== false)
+      .map((item) => ({
       id: item.id,
       label: modelCatalogDisplayName(
         item,
@@ -429,17 +469,36 @@ export function TaskComposer() {
       ),
       default: item.default,
       selectionId: item.selectionId,
-      reasoningItems: item.reasoningItems.map((reasoning) => ({
-        id: reasoning.id,
-        label: catalogI18nText(t, reasoning.metadata, "labelKey", reasoning.displayName),
-        default: reasoning.default,
-        selectionId: reasoning.selectionId,
-      })),
+      reasoningItems: item.reasoningItems
+        .filter((reasoning) => selectedAgent !== "dsh" || reasoning.metadata.enabled !== false)
+        .map((reasoning) => ({
+          id: reasoning.id,
+          label: catalogI18nText(t, reasoning.metadata, "labelKey", reasoning.displayName),
+          default: reasoning.default,
+          selectionId: reasoning.selectionId,
+        })),
     })) ?? [],
-    [modelCatalog, t],
+    [modelCatalog, selectedAgent, t],
   )
   const selectedModelItem = models.find((item) => item.id === selectedModel)
   const reasoningOptions = selectedModelItem?.reasoningItems ?? []
+
+  React.useEffect(() => {
+    if (selectedAgent !== "dsh" || !modelSelectionExplicit) return
+    const modelIsValid = models.some((item) => item.id === selectedModel)
+    const reasoningIsValid = reasoningOptions.length === 0
+      ? selectedReasoning === ""
+      : reasoningOptions.some((item) => item.id === selectedReasoning)
+    if (!modelIsValid || !reasoningIsValid) setModelSelectionExplicit(false)
+  }, [
+    modelSelectionExplicit,
+    models,
+    reasoningOptions,
+    selectedAgent,
+    selectedModel,
+    selectedReasoning,
+  ])
+
   const permissionOptions = React.useMemo(
     () => visiblePermissionItems(permissionCatalog).map((item) => ({
       id: item.id,
@@ -450,11 +509,27 @@ export function TaskComposer() {
     })),
     [permissionCatalog, t],
   )
+  const agentPresetOptions = React.useMemo(
+    () => agentPresetCatalog?.presets.map((item) => ({
+      id: item.id,
+      agentPreset: item.agentPreset,
+      label: item.displayName,
+      description: item.description,
+      default: item.default,
+      enabled: item.enabled,
+      disabledReason: item.disabledReason,
+    })) ?? [],
+    [agentPresetCatalog],
+  )
 
   React.useEffect(() => {
     const nextModel = models.find((option) => option.default)?.id ?? models[0]?.id ?? ""
-    setSelectedModel((current) => current && models.some((option) => option.id === current) ? current : nextModel)
-  }, [models])
+    setSelectedModel((current) =>
+      selectedAgent === "dsh" && !modelSelectionExplicit
+        ? nextModel
+        : current && models.some((option) => option.id === current) ? current : nextModel,
+    )
+  }, [modelSelectionExplicit, models, selectedAgent])
 
   React.useEffect(() => {
     const nextPermissionMode = permissionOptions.find((option) => option.default)?.id ?? permissionOptions[0]?.id ?? ""
@@ -466,9 +541,22 @@ export function TaskComposer() {
   React.useEffect(() => {
     const nextEffort = reasoningOptions.find((option) => option.default)?.id ?? reasoningOptions[0]?.id ?? ""
     setSelectedReasoning((current) =>
-      current && reasoningOptions.some((option) => option.id === current) ? current : nextEffort,
+      selectedAgent === "dsh" && !modelSelectionExplicit
+        ? nextEffort
+        : current && reasoningOptions.some((option) => option.id === current) ? current : nextEffort,
     )
-  }, [reasoningOptions])
+  }, [modelSelectionExplicit, reasoningOptions, selectedAgent])
+
+  React.useEffect(() => {
+    const currentIsEnabled = agentPresetOptions.some(
+      (option) => option.id === selectedAgentPreset && option.enabled,
+    )
+    if (currentIsEnabled) return
+    const nextPreset = agentPresetOptions.find((option) => option.enabled && option.default)
+      ?? agentPresetOptions.find((option) => option.enabled)
+    setSelectedAgentPreset(nextPreset?.id ?? "")
+    setAgentPresetExplicit(false)
+  }, [agentPresetOptions, selectedAgentPreset])
 
   React.useEffect(() => {
     setSelectedReasoning((current) => {
@@ -486,10 +574,12 @@ export function TaskComposer() {
     selectionPreferenceAppliedForScopeRef.current = scope
     if (!selectionPreference) return
 
-    const modelSelection = modelIdsForSelectionId(modelCatalog, selectionPreference.model)
-    if (modelSelection && models.some((option) => option.id === modelSelection.modelId)) {
-      setSelectedModel(modelSelection.modelId)
-      setSelectedReasoning(modelSelection.reasoningId)
+    if (selectedAgent !== "dsh") {
+      const modelSelection = modelIdsForSelectionId(modelCatalog, selectionPreference.model)
+      if (modelSelection && models.some((option) => option.id === modelSelection.modelId)) {
+        setSelectedModel(modelSelection.modelId)
+        setSelectedReasoning(modelSelection.reasoningId)
+      }
     }
 
     const permissionSelection = permissionIdForSelectionId(
@@ -512,6 +602,9 @@ export function TaskComposer() {
   ])
 
   const selectedPermissionOption = permissionOptions.find((option) => option.id === selectedPermissionMode)
+  const selectedAgentPresetOption = agentPresetOptions.find(
+    (option) => option.id === selectedAgentPreset && option.enabled,
+  )
   const modelLabel = selectedModelItem?.label ?? t("defaultModel")
   const selectedReasoningOption = reasoningOptions.find((option) => option.id === selectedReasoning)
   const effortLabel = selectedReasoningOption?.label ?? t("defaultReasoning")
@@ -522,6 +615,7 @@ export function TaskComposer() {
   const requiresModelSelection = canUseModelCatalog && models.length > 0
   const requiresPermissionSelection = canUsePermissionCatalog && permissionOptions.length > 0
   const hasSelectionSettings = models.length > 0 || permissionOptions.length > 0
+  const hasAgentPresetSettings = canUseAgentPresetCatalog && agentPresetOptions.length > 0
   const canCreate =
     Boolean(authSession?.accessToken && selectedConnector && selectedAgent) &&
     !creating &&
@@ -619,6 +713,9 @@ export function TaskComposer() {
         runtime: selectedAgent,
         title: prompt.trim() || undefined,
         cwd: workspace?.path || undefined,
+        runtimeOptions: selectedAgent === "dsh" && agentPresetExplicit && selectedAgentPresetOption
+          ? { dsh: { agentPreset: selectedAgentPresetOption.agentPreset } }
+          : undefined,
       }
       const nextPreference = withNewSessionSelectionPreference(
         preference,
@@ -751,6 +848,51 @@ export function TaskComposer() {
                   />
                 ) : null}
 
+                {hasAgentPresetSettings ? (
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button variant="ghost" size="sm" className="max-w-64 gap-1.5 text-muted-foreground">
+                        <span className="truncate text-foreground">
+                          {selectedAgentPresetOption?.label ?? t("dshDefaultMode")}
+                        </span>
+                        <ChevronDown className="shrink-0 opacity-50" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="start" className="w-72">
+                      {agentPresetOptions.map((item) => (
+                        <DropdownMenuItem
+                          key={item.id}
+                          disabled={!item.enabled}
+                          className={cn(
+                            "items-start gap-2 py-2.5",
+                            selectedAgentPreset === item.id && "text-primary focus:text-primary",
+                          )}
+                          onSelect={() => {
+                            setSelectedAgentPreset(item.id)
+                            setAgentPresetExplicit(true)
+                          }}
+                        >
+                          <Check className={cn("mt-0.5", selectedAgentPreset === item.id ? "opacity-100" : "opacity-0")} />
+                          <span className="min-w-0 flex-1">
+                            <span className="block font-medium leading-none">{item.label}</span>
+                            {item.description || item.disabledReason ? (
+                              <span className="mt-1 block whitespace-normal text-xs leading-snug text-muted-foreground">
+                                {item.disabledReason ?? item.description}
+                              </span>
+                            ) : null}
+                          </span>
+                        </DropdownMenuItem>
+                      ))}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                ) : null}
+
+                {selectedAgent === "dsh" && agentPresetCatalogError ? (
+                  <span className="px-2 text-xs text-muted-foreground">
+                    {t("workModeUnavailable")}
+                  </span>
+                ) : null}
+
                 {compactSelectors && hasSelectionSettings ? (
                   <SelectionSettingsDrawer
                     disabled={selectorsLoading}
@@ -767,6 +909,7 @@ export function TaskComposer() {
                     selectedModel={selectedModel}
                     selectedReasoning={selectedReasoning}
                     onModelChange={(modelId, reasoningId) => {
+                      setModelSelectionExplicit(true)
                       setSelectedModel(modelId)
                       setSelectedReasoning(reasoningId)
                     }}
@@ -824,6 +967,7 @@ export function TaskComposer() {
                                   key={modelItem.id}
                                   className="gap-2"
                                   onSelect={() => {
+                                    setModelSelectionExplicit(true)
                                     setSelectedModel(modelItem.id)
                                     setSelectedReasoning("")
                                   }}
@@ -845,6 +989,7 @@ export function TaskComposer() {
                                       key={item.id}
                                       className="gap-2"
                                       onSelect={() => {
+                                        setModelSelectionExplicit(true)
                                         setSelectedModel(modelItem.id)
                                         setSelectedReasoning(item.id)
                                       }}

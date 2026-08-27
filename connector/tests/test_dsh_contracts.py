@@ -14,8 +14,9 @@ from connector.runtimes.dsh.identity import (
     permission_selection_id,
     timeline_item_id,
 )
-from connector.runtimes.dsh.bridge.models import timeline_item
+from connector.runtimes.dsh.bridge.models import model_catalog, timeline_item
 from connector.runtimes.session_identity import stable_runtime_session_id
+from connector.server.runtime_rpc_payloads import model_catalog_payload
 
 ROOT = Path(__file__).resolve().parents[2]
 CONTRACT = ROOT / "contracts" / "dsh-bridge" / "1.0"
@@ -34,9 +35,83 @@ def test_dsh_request_fixtures() -> None:
     schema = json.loads((CONTRACT / "schemas" / "request.schema.json").read_text())
     validator = Draft202012Validator(schema)
     for path in sorted((CONTRACT / "fixtures" / "valid").glob("*.json")):
+        if path.name.startswith("model-catalog-"):
+            continue
         validator.validate(json.loads(path.read_text()))
     for path in sorted((CONTRACT / "fixtures" / "invalid").glob("*.json")):
         assert not validator.is_valid(json.loads(path.read_text()))
+
+
+def test_dsh_model_catalog_default_fixtures_are_valid_and_forwarded() -> None:
+    schema = json.loads(
+        (CONTRACT / "schemas" / "model-catalog.schema.json").read_text()
+    )
+    validator = Draft202012Validator(schema)
+    fixtures = sorted(
+        (CONTRACT / "fixtures" / "valid").glob("model-catalog-default-*.json")
+    )
+
+    assert len(fixtures) == 2
+    for path in fixtures:
+        value = json.loads(path.read_text())
+        validator.validate(value)
+        parsed = model_catalog(value)
+        payload = model_catalog_payload(parsed)
+
+        assert payload["models"][0]["default"] is True
+        defaults = [
+            item
+            for item in payload["models"][0]["reasoningItems"]
+            if item["default"]
+        ]
+        assert len(defaults) == 1
+        expected = next(
+            item["selectionId"]
+            for item in value["models"][0]["reasoningItems"]
+            if item.get("default") is True
+        )
+        assert defaults[0]["selectionId"] == expected
+
+
+def test_dsh_model_catalog_missing_defaults_falls_back_to_false() -> None:
+    parsed = model_catalog(
+        {
+            "runtime": "dsh",
+            "revision": 1,
+            "models": [
+                {
+                    "id": "model",
+                    "title": "Model",
+                    "selectionId": "selection",
+                    "enabled": True,
+                    "reasoningItems": [],
+                }
+            ],
+        }
+    )
+
+    assert parsed.models[0].default is False
+
+
+def test_dsh_model_catalog_rejects_ambiguous_defaults() -> None:
+    value = {
+        "runtime": "dsh",
+        "revision": 1,
+        "models": [
+            {
+                "id": model_id,
+                "title": model_id,
+                "selectionId": f"selection:{model_id}",
+                "default": True,
+                "enabled": True,
+                "reasoningItems": [],
+            }
+            for model_id in ("one", "two")
+        ],
+    }
+
+    with pytest.raises(ValueError, match="multiple default models"):
+        model_catalog(value)
 
 
 def test_dsh_identity_fixture_matches_connector_implementations() -> None:

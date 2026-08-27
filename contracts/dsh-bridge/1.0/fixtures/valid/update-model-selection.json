@@ -1,0 +1,12 @@
+{
+  "jsonrpc": "2.0",
+  "id": "update-model-selection",
+  "method": "session.updateSelections",
+  "params": {
+    "sessionId": "sess_dsh_62c4d9d6d438a080662cfd23",
+    "externalSessionId": "dsh-session-id",
+    "selections": {
+      "model": "dsh:model:WyJkZWVwc2Vlay1vZmZpY2lhbCIsImRlZXBzZWVrLXY0LWZsYXNoIixudWxsXQ"
+    }
+  }
+}

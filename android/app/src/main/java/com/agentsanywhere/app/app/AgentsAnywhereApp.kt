@@ -61,6 +61,7 @@ import com.agentsanywhere.app.feature.sessions.NewSessionCreateOutcome
 import com.agentsanywhere.app.feature.sessions.NewSessionDraft
 import com.agentsanywhere.app.feature.sessions.NewSessionModelCatalog
 import com.agentsanywhere.app.feature.sessions.NewSessionPermissionCatalog
+import com.agentsanywhere.app.feature.sessions.NewSessionAgentPresetCatalog
 import com.agentsanywhere.app.feature.sessions.NewSessionRuntimeCapabilities
 import com.agentsanywhere.app.feature.sessions.beginSessionRequest
 import com.agentsanywhere.app.feature.sessions.mergedWithRefresh
@@ -666,6 +667,9 @@ fun AgentsAnywhereApp(
         onLoadNewSessionPermissionCatalog = { connectorId, runtime ->
             sessionsController.loadNewSessionPermissionCatalog(connectorId, runtime)
         },
+        onLoadNewSessionAgentPresetCatalog = { connectorId, runtime ->
+            sessionsController.loadNewSessionAgentPresetCatalog(connectorId, runtime)
+        },
         onSessionChanged = { session ->
             sessionsState = sessionsState.withPatchedSession(session)
         },
@@ -732,6 +736,7 @@ private fun AgentsAnywhereNavHost(
     onLoadNewSessionRuntimeCapabilities: suspend (String, String) -> Result<NewSessionRuntimeCapabilities>,
     onLoadNewSessionModelCatalog: suspend (String, String) -> Result<NewSessionModelCatalog>,
     onLoadNewSessionPermissionCatalog: suspend (String, String) -> Result<NewSessionPermissionCatalog>,
+    onLoadNewSessionAgentPresetCatalog: suspend (String, String) -> Result<NewSessionAgentPresetCatalog>,
     onSessionChanged: (AgentSession) -> Unit,
     onMobileLoginQrRequested: (MobileLoginQrPayload) -> Unit,
 ) {
@@ -820,6 +825,7 @@ private fun AgentsAnywhereNavHost(
                     onLoadRuntimeCapabilities = onLoadNewSessionRuntimeCapabilities,
                     onLoadModelCatalog = onLoadNewSessionModelCatalog,
                     onLoadPermissionCatalog = onLoadNewSessionPermissionCatalog,
+                    onLoadAgentPresetCatalog = onLoadNewSessionAgentPresetCatalog,
                     onPrepareSession = onPrepareSession,
                 )
                 AppDestination.SessionDetail -> SessionDetailScreen(
@@ -938,6 +944,7 @@ private val NewSessionDraftSaver = listSaver<NewSessionDraft?, Any>(
                 ArrayList(draft.knownSessionIds),
                 draft.selections.model.orEmpty(),
                 draft.selections.permission.orEmpty(),
+                draft.agentPreset.orEmpty(),
             )
         }
     },
@@ -958,6 +965,7 @@ private val NewSessionDraftSaver = listSaver<NewSessionDraft?, Any>(
                     model = (values[7] as String).takeIf(String::isNotBlank),
                     permission = (values[8] as String).takeIf(String::isNotBlank),
                 ),
+                agentPreset = (values.getOrNull(9) as? String)?.takeIf(String::isNotBlank),
             )
         }
     },

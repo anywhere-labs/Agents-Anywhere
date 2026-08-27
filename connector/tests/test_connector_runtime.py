@@ -32,6 +32,8 @@ from connector.runtime_protocol import (
     PreparedSessionTimelineSync,
     ReasoningSystemContent,
     RuntimeAttachmentContent,
+    RuntimeAgentPresetCatalog,
+    RuntimeAgentPresetItem,
     RuntimeCapability,
     RuntimeCapabilitySet,
     RuntimeCommand,
@@ -348,6 +350,27 @@ class FakeAgentRuntime(AgentRuntime):
                     id="read-only",
                     title="Read only",
                     selection_id="sel_permission_readonly",
+                ),
+            ),
+        )
+
+    async def list_agent_preset_catalog(
+        self,
+        query: str | None = None,
+        limit: int = 100,
+    ) -> RuntimeAgentPresetCatalog:
+        self.calls.append(
+            ("runtime.agentPresetCatalog", {"query": query, "limit": limit})
+        )
+        return RuntimeAgentPresetCatalog(
+            runtime=self.runtime_id,
+            revision=9,
+            presets=(
+                RuntimeAgentPresetItem(
+                    id="standard",
+                    title="Standard",
+                    agent_preset="standard",
+                    default=True,
                 ),
             ),
         )
@@ -2195,6 +2218,23 @@ async def _exercise_runtime() -> None:
     assert (
         ws.messages[-1]["result"]["catalog"]["permissions"][0]["selectionId"]
         == "sel_permission_readonly"
+    )
+
+    await client.handle_message(
+        {
+            "id": "rpc_12",
+            "type": "request",
+            "method": "runtime.agentPresetCatalog",
+            "params": {"runtime": "codex", "limit": 20},
+        }
+    )
+    assert runtime.calls[-1] == (
+        "runtime.agentPresetCatalog",
+        {"query": None, "limit": 20},
+    )
+    assert (
+        ws.messages[-1]["result"]["catalog"]["presets"][0]["agentPreset"]
+        == "standard"
     )
 
 

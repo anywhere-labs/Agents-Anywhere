@@ -258,7 +258,9 @@ class CodexRuntime(AgentRuntime):
         selections: Mapping[str, str | None] | None = None,
         attachments: tuple[RuntimeAttachment, ...] = (),
         client_message_id: str | None = None,
+        runtime_options: Mapping[str, Any] | None = None,
     ) -> RuntimeOperationResult:
+        _ = runtime_options
         return await self._turns.create_and_start_session(
             session_id=session_id,
             content=content,

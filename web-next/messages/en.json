@@ -327,6 +327,9 @@
       "homeDirectory": "Home directory",
       "model": "Model",
       "modelAndReasoning": "Model and reasoning",
+      "workMode": "Work mode",
+      "dshDefaultMode": "DSH default",
+      "workModeUnavailable": "Work modes could not be loaded. DSH will use its current default.",
       "permissionMode": "Permission mode",
       "permissionModes": {
         "requestApproval": {

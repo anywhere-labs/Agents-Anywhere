@@ -38,6 +38,7 @@ class NewSessionDraftTest {
             runtimeLabel = "Codex",
             knownSessionIds = setOf("existing"),
             selections = selections,
+            agentPreset = "standard",
         )
 
         val request = prepared.firstMessageRequest(
@@ -49,6 +50,7 @@ class NewSessionDraftTest {
         assertEquals("fix the tests", request.content)
         assertEquals("gpt-5.6:high", request.selections.model)
         assertEquals("full-access", request.selections.permission)
+        assertEquals("standard", request.agentPreset)
         assertEquals(setOf("existing"), request.knownSessionIds)
     }
 }

@@ -15,6 +15,7 @@ from connector.server.runtime_rpc_params import (
     SessionReadParams,
 )
 from connector.server.runtime_rpc_payloads import (
+    agent_preset_catalog_payload,
     agent_inventory_payload,
     capability_set_payload,
     model_catalog_payload,
@@ -58,6 +59,7 @@ class RuntimeRpcHandler:
         "runtime.commands",
         "runtime.modelCatalog",
         "runtime.permissionCatalog",
+        "runtime.agentPresetCatalog",
         "session.discover",
         "session.create",
         "session.sync",
@@ -155,6 +157,14 @@ class RuntimeRpcHandler:
                 limit=parsed.limit,
             )
             return {"catalog": permission_catalog_payload(catalog)}
+        if method == "runtime.agentPresetCatalog":
+            runtime = self._resolve_agent_runtime(params)
+            parsed = RuntimeCatalogParams.parse(params)
+            catalog = await runtime.list_agent_preset_catalog(
+                query=parsed.query,
+                limit=parsed.limit,
+            )
+            return {"catalog": agent_preset_catalog_payload(catalog)}
         if method == "session.discover":
             return await discover_sessions(
                 self._resolve_agent_runtime(params),
