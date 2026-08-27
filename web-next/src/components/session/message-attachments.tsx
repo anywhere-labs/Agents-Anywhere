@@ -331,10 +331,11 @@ function LoadingAttachment({
     <Attachment
       orientation={orientation}
       state="processing"
+      size={orientation === "horizontal" ? "sm" : "default"}
       className={cn(
         orientation === "vertical"
           ? "aa-attachment-shimmer h-48 w-[min(420px,85vw)] items-center justify-center rounded-lg border-0 bg-muted/40 has-data-[slot=attachment-content]:hidden"
-          : "w-[min(420px,85vw)]",
+          : "w-[min(320px,75vw)]",
       )}
     >
       {orientation === "horizontal" ? (
@@ -371,7 +372,7 @@ function FileAttachment({
   const details = attachmentDetails(mediaType, size ?? attachment.size)
 
   return (
-    <Attachment state={state} className="w-[min(640px,85vw)] rounded-xl border-border/70 bg-transparent px-2 py-2">
+    <Attachment state={state} size="sm" className="w-[min(320px,75vw)] rounded-lg border-border/70 bg-transparent">
       <AttachmentMedia className="bg-transparent text-muted-foreground">
         {state === "uploading" ? <Loader2 className="animate-spin" /> : <FileText />}
       </AttachmentMedia>

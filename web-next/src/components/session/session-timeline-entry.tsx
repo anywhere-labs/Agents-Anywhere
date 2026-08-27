@@ -125,10 +125,12 @@ function copyTimelineValue(value: string) {
 
 function MessageCard({ token, session, item }: { token: string; session: SessionView; item: TimelineItem }) {
   const tSession = useTranslations("dashboard.session")
-  const text = stripInjectedAttachmentMentions(messageText(item))
+  const tNew = useTranslations("dashboard.new")
   const attachments = extractAttachments(item.content)
   const isUser = item.role === "user"
   const hasAttachments = attachments.length > 0
+  const message = stripInjectedAttachmentMentions(messageText(item))
+  const text = hasAttachments && message.trim() === tNew("attachmentOnlyPrompt") ? "" : message
   const showUserStatus = isUser && item.status === "failed"
   if (!text && !hasAttachments) {
     if (item.role === "assistant") return null
