@@ -26,7 +26,6 @@ import {
   isOptimisticTimelineItem,
   markOptimisticItemFailed,
   mergeTimelineItems,
-  revokeOptimisticItemResources,
   timelineClientMessageId,
   withServerAttachments,
 } from "@/components/session/optimistic-timeline"
@@ -1004,7 +1003,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       for (const message of prev) {
         const resolved = message.sessionId === sessionId && resolvedClientMessageIds.has(message.clientMessageId)
         if (resolved) {
-          revokeOptimisticItemResources(message.item)
+          // The reconciled server item owns the preview URL after replacing this optimistic item.
           continue
         }
         next.push(message)

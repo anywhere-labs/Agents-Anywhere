@@ -51,6 +51,7 @@ import { sessionRuntimeId, sessionRuntimeType } from "@/features/dashboard/runti
 export type { AttachedFile }
 
 export function SessionComposer({
+  token,
   session,
   runtimeState,
   pendingInteractionCount,
@@ -72,6 +73,7 @@ export function SessionComposer({
   onCommand,
   onToggleTakeover,
 }: {
+  token: string
   session: SessionView
   runtimeState?: SessionRuntimeState | null
   pendingInteractionCount: number
@@ -102,15 +104,17 @@ export function SessionComposer({
   const {
     attachments,
     isDragging,
+    uploadsPending,
+    uploadFailed,
+    allUploaded,
     add,
     remove,
     clear,
-    restoreIfEmpty,
     onDragEnter,
     onDragLeave,
     onDragOver,
     onDrop,
-  } = useAttachments()
+  } = useAttachments({ sessionId: creatingSession ? undefined : session.id, token })
   const composerRef = React.useRef<HTMLDivElement | null>(null)
   const valueRef = React.useRef(value)
   valueRef.current = value
@@ -158,6 +162,7 @@ export function SessionComposer({
     acceptsUserInput
   const canRunCommand = !creatingSession && !sending && !interrupting && acceptsUserInput
   const hasInput = value.trim().length > 0 || attachments.length > 0
+  const attachmentsReady = attachments.length === 0 || (allUploaded && !uploadsPending && !uploadFailed)
   const activeSessionCanInterrupt = Boolean(
     connectorOnline &&
     interruptCapability?.supported &&
@@ -313,6 +318,7 @@ export function SessionComposer({
     canSend &&
     session.takeover &&
     hasInput &&
+    attachmentsReady &&
     (attachments.length === 0 || canUseAttachments)
   const concurrentWriter = runtimeState?.error?.code === "DSH_CONCURRENT_WRITER_DETECTED"
   const updateValue = React.useCallback((nextValue: string) => {
@@ -335,14 +341,13 @@ export function SessionComposer({
     const text = value
     const files = attachments
     updateValue("")
-    clear()
+    clear({ revokePreviews: false })
     const sent = await onSend(text, files, {
       ...(selectedModelSelection ? { model: selectedModelSelection } : {}),
       ...(selectedPermissionSelection ? { permission: selectedPermissionSelection } : {}),
     })
     if (!sent && valueRef.current === "") {
       updateValue(text)
-      restoreIfEmpty(files)
     }
   }
 
@@ -438,7 +443,7 @@ export function SessionComposer({
               onAttach={add}
               isDragging={isDragging}
               className="size-8"
-              disabled={!canUseAttachments || sourceUnavailable}
+              disabled={!canUseAttachments || sourceUnavailable || creatingSession}
             />
             {attachments.length > 0 && !canUseAttachments ? (
               <span className="px-2 text-xs text-amber-600 dark:text-amber-400">

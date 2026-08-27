@@ -308,6 +308,7 @@ export function SessionDetail({
   const [runtimeCommands, setRuntimeCommands] = React.useState<RuntimeCommand[]>([])
   const [commandsLoading, setCommandsLoading] = React.useState(false)
   const [blockingInteractionStackHeight, setBlockingInteractionStackHeight] = React.useState(0)
+  const [composerHeight, setComposerHeight] = React.useState(144)
   const [timelineGroupOpenByKey, setTimelineGroupOpenByKey] = React.useState<Record<string, boolean>>({})
   const [timelineItemOpenById, setTimelineItemOpenById] = React.useState<Record<string, boolean>>({})
   const [composerDraftState, setComposerDraftState] = React.useState<ComposerDraftState>(() => ({
@@ -316,6 +317,7 @@ export function SessionDetail({
   }))
   const timelineRef = React.useRef<HTMLDivElement | null>(null)
   const timelineContentRef = React.useRef<HTMLDivElement | null>(null)
+  const composerContainerRef = React.useRef<HTMLDivElement | null>(null)
   const nextSeqRef = React.useRef(0)
   const autoScrollOnNextUpdateRef = React.useRef(false)
   const forceScrollOnNextUpdateRef = React.useRef(false)
@@ -985,6 +987,10 @@ export function SessionDetail({
     selections: { model?: string; permission?: string },
   ): Promise<boolean> => {
     if (!session || (!content.trim() && attachments.length === 0)) return false
+    const uploadedAttachments = attachments.flatMap((attachment) =>
+      attachment.uploaded ? [attachment.uploaded] : [],
+    )
+    if (uploadedAttachments.length !== attachments.length) return false
     const clientMessageId = createClientId("msg")
     const messageText = content.trim() || tNew("attachmentOnlyPrompt")
     forceScrollOnNextUpdateRef.current = true
@@ -1029,12 +1035,8 @@ export function SessionDetail({
             : current,
         )
       }
-      const files = attachments.map((attachment) => attachment.file)
-      const upload = files.length > 0
-        ? await dashboardApi.uploadSessionAttachments(token, session.id, files)
-        : null
       await dashboardApi.sendSessionMessage(token, session.id, messageText, {
-        attachments: upload?.attachments.map((attachment) => ({ fileId: attachment.fileId })) ?? [],
+        attachments: uploadedAttachments.map((attachment) => ({ fileId: attachment.fileId })),
         clientMessageId,
       })
       scrollToBottomThrottled()
@@ -1366,10 +1368,8 @@ export function SessionDetail({
     [state?.notices],
   )
   const blockingInteractionCount = blockingInteractionList.length
-  const timelineBottomPadding = blockingInteractionStackHeight > 0
-    ? `calc(11rem + ${blockingInteractionStackHeight}px)`
-    : undefined
-  const scrollBottomButtonOffset = `calc(9rem + ${blockingInteractionStackHeight}px)`
+  const timelineBottomPadding = `calc(${composerHeight}px + ${blockingInteractionStackHeight}px + 2rem)`
+  const scrollBottomButtonOffset = `calc(${composerHeight}px + ${blockingInteractionStackHeight}px + 0.5rem)`
   const interactionTargetIds = React.useMemo(
     () => new Set(timelineInteractions.map(noticeTimelineTargetId).filter((id): id is string => Boolean(id))),
     [timelineInteractions],
@@ -1380,6 +1380,16 @@ export function SessionDetail({
       setBlockingInteractionStackHeight(0)
     }
   }, [blockingInteractionCount, blockingInteractionStackHeight])
+
+  React.useLayoutEffect(() => {
+    const node = composerContainerRef.current
+    if (!node) return
+    const publishHeight = () => setComposerHeight(Math.ceil(node.getBoundingClientRect().height))
+    publishHeight()
+    const resizeObserver = new ResizeObserver(publishHeight)
+    resizeObserver.observe(node)
+    return () => resizeObserver.disconnect()
+  }, [session?.id])
   const timelineGroups = React.useMemo(
     () => groupTimelineItems(state?.items ?? [], interactionTargetIds),
     [interactionTargetIds, state?.items],
@@ -1437,7 +1447,7 @@ export function SessionDetail({
             className={cn(
               "mx-auto flex w-full min-w-0 max-w-[calc(48rem+2rem)] flex-col gap-3 overflow-hidden px-4 pb-44 pt-20",
             )}
-            style={timelineBottomPadding ? { paddingBottom: timelineBottomPadding } : undefined}
+            style={{ paddingBottom: timelineBottomPadding }}
           >
             {loadingOlder ? (
               <div className="flex justify-center py-2 text-muted-foreground">
@@ -1537,8 +1547,9 @@ export function SessionDetail({
           onHeightChange={setBlockingInteractionStackHeight}
           onRespondInteraction={handleRespondInteraction}
         />
-        <div className="pointer-events-auto relative">
+        <div ref={composerContainerRef} className="pointer-events-auto relative">
           <SessionComposer
+            token={token}
             session={session}
             runtimeState={runtimeState}
             pendingInteractionCount={blockingInteractionCount}

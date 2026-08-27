@@ -81,7 +81,8 @@ function MessageAttachmentItem({
     path: shouldReadFromDevice ? attachment.path : undefined,
     fallbackName: name,
   })
-  const openUrl = presetUrl || deviceFile.objectUrl || sessionAttachmentUrl
+  const openUrl = deviceFile.objectUrl
+    || (attachment.fileId.startsWith("file_") ? sessionAttachmentUrl : presetUrl || sessionAttachmentUrl)
   const resolvedName = deviceFile.name || name
   const resolvedMediaType = deviceFile.mediaType || mediaType
   const resolvedSize = deviceFile.size ?? attachment.size
@@ -116,7 +117,8 @@ function MessageAttachmentItem({
       return (
         <ImageAttachment
           name={resolvedName}
-          src={attachment.previewUrl}
+          src={openUrl}
+          previewUrl={attachment.previewUrl}
           previewOpen={previewOpen}
           setPreviewOpen={setPreviewOpen}
         />
@@ -137,6 +139,7 @@ function MessageAttachmentItem({
       <ImageAttachment
         name={resolvedName}
         src={openUrl}
+        previewUrl={attachment.previewUrl}
         previewOpen={previewOpen}
         setPreviewOpen={setPreviewOpen}
       />
@@ -231,14 +234,58 @@ function useDeviceAttachmentFile({
 function ImageAttachment({
   name,
   src,
+  previewUrl,
   previewOpen,
   setPreviewOpen,
 }: {
   name: string
   src: string
+  previewUrl?: string
   previewOpen: boolean
   setPreviewOpen: (open: boolean) => void
 }) {
+  const [displayedSrc, setDisplayedSrc] = useState<string | null>(previewUrl ?? null)
+  const [loading, setLoading] = useState(!previewUrl)
+
+  useEffect(() => {
+    if (!src) {
+      setLoading(false)
+      return
+    }
+    if (src === displayedSrc) {
+      setLoading(false)
+      return
+    }
+    let cancelled = false
+    const image = new Image()
+    setLoading(!displayedSrc)
+    image.onload = () => {
+      if (cancelled) return
+      setDisplayedSrc(src)
+      setLoading(false)
+    }
+    image.onerror = () => {
+      if (!cancelled) setLoading(false)
+    }
+    image.src = src
+    return () => {
+      cancelled = true
+    }
+  }, [displayedSrc, previewUrl, src])
+
+  if (!displayedSrc) {
+    return (
+      <div
+        role="status"
+        aria-label={`Loading ${name}`}
+        className={cn(
+          "h-48 w-[min(420px,85vw)] overflow-hidden rounded-lg bg-muted/40",
+          loading && "aa-attachment-shimmer",
+        )}
+      />
+    )
+  }
+
   return (
     <>
       <button
@@ -249,7 +296,7 @@ function ImageAttachment({
       >
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
-          src={src}
+          src={displayedSrc}
           alt={name}
           loading="lazy"
           className="block h-auto max-h-[70vh] max-w-full rounded-lg object-contain"
@@ -262,7 +309,7 @@ function ImageAttachment({
         >
           <DialogTitle className="sr-only">{name}</DialogTitle>
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={src} alt={name} className="max-h-full max-w-full object-contain" />
+          <img src={displayedSrc} alt={name} className="max-h-full max-w-full object-contain" />
         </DialogContent>
       </Dialog>
     </>
@@ -286,13 +333,13 @@ function LoadingAttachment({
       state="processing"
       className={cn(
         orientation === "vertical"
-          ? "h-48 w-[min(420px,85vw)] items-center justify-center rounded-lg border-0 bg-muted/40 has-data-[slot=attachment-content]:hidden"
+          ? "aa-attachment-shimmer h-48 w-[min(420px,85vw)] items-center justify-center rounded-lg border-0 bg-muted/40 has-data-[slot=attachment-content]:hidden"
           : "w-[min(420px,85vw)]",
       )}
     >
-      <AttachmentMedia variant={orientation === "vertical" ? "image" : "icon"}>
-        <Loader2 className="animate-spin" />
-      </AttachmentMedia>
+      {orientation === "horizontal" ? (
+        <AttachmentMedia variant="icon"><Loader2 className="animate-spin" /></AttachmentMedia>
+      ) : null}
       {orientation === "horizontal" ? (
         <AttachmentContent>
           <AttachmentTitle>{name}</AttachmentTitle>
