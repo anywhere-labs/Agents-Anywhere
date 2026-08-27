@@ -437,7 +437,9 @@ export function DevicePage() {
   const codexType = runtimeTypes.find((runtimeType) => runtimeType.runtimeType === "codex") ?? null
   const codexRuntimes = configuredRuntimes.filter((runtime) => runtime.runtimeType === "codex")
   const defaultCodexRuntimeId = [...codexRuntimes]
-    .sort((left, right) => left.createdAt.localeCompare(right.createdAt))[0]?.runtimeId ?? null
+    .sort((left, right) => (
+      (left.createdAt ?? left.updatedAt).localeCompare(right.createdAt ?? right.updatedAt)
+    ))[0]?.runtimeId ?? null
   const otherRuntimes = configuredRuntimes.filter((runtime) => runtime.runtimeType !== "codex")
   const missingRuntimeTypes = runtimeTypes.filter((runtimeType) => (
     runtimeType.runtimeType !== "codex"
@@ -448,7 +450,7 @@ export function DevicePage() {
   const leadingMissingTypes = missingRuntimeTypes.filter((runtimeType) => runtimeType.runtimeType === "claude")
   const trailingMissingTypes = missingRuntimeTypes.filter((runtimeType) => runtimeType.runtimeType !== "claude")
   const canAddCodex = codexType
-    ? runtimeTypeCanCreateInstance(codexType, runtimes)
+    ? codexType.available && runtimeTypeCanCreateInstance(codexType, runtimes)
     : false
 
   if (loading || !connector) {

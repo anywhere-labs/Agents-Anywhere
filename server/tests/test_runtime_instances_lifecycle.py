@@ -193,7 +193,7 @@ def _discover_types(
     return response
 
 
-def test_v2_discovery_persists_types_without_creating_instances(tmp_path: Any) -> None:
+def test_v2_discovery_creates_and_starts_one_default_instance(tmp_path: Any) -> None:
     client, rpc, connector_id, headers = _make_client(
         tmp_path,
         _v2_discovery(implementation_type=None),
@@ -201,13 +201,16 @@ def test_v2_discovery_persists_types_without_creating_instances(tmp_path: Any) -
 
     response = _discover_types(client, connector_id, headers)
 
-    assert rpc.requests == [
-        (
-            connector_id,
-            "runtime.discover",
-            {"supportedControlVersions": SUPPORTED_RUNTIME_CONTROL_VERSIONS},
-        )
+    assert [request[1] for request in rpc.requests] == [
+        "runtime.discover",
+        "runtime.start",
     ]
+    assert rpc.requests[0][2] == {
+        "supportedControlVersions": SUPPORTED_RUNTIME_CONTROL_VERSIONS
+    }
+    assert rpc.requests[1][2]["runtime"] == "codex"
+    assert rpc.requests[1][2]["name"] == "Codex"
+    assert rpc.requests[1][2]["config"] == {"home": "/tmp/codex"}
     runtime_type = response.json()["runtimeTypes"][0]
     assert runtime_type == {
         "connectorId": connector_id,
@@ -241,7 +244,12 @@ def test_v2_discovery_persists_types_without_creating_instances(tmp_path: Any) -
     }
     listed = client.get(f"/connectors/{connector_id}/runtimes", headers=headers)
     assert listed.status_code == 200, listed.text
-    assert listed.json()["runtimes"] == []
+    default_runtime = listed.json()["runtimes"][0]
+    assert default_runtime["name"] == "Codex"
+    assert default_runtime["configured"] is True
+    assert default_runtime["active"] is True
+    assert default_runtime["status"] == "running"
+    assert default_runtime["config"] == {"home": "/tmp/codex"}
     assert (
         asyncio.run(
             client.app.state.store.get_connector_runtime_control_version(connector_id)
@@ -257,13 +265,13 @@ def test_v2_discovery_persists_types_without_creating_instances(tmp_path: Any) -
     assert updated[0]["displayName"] == "Codex Updated"
     assert updated[0]["implementationType"] == "agent-sdk"
     assert updated[0]["createdAt"] == runtime_type["createdAt"]
-    assert (
-        client.get(
-            f"/connectors/{connector_id}/runtimes",
-            headers=headers,
-        ).json()["runtimes"]
-        == []
-    )
+    refreshed_runtimes = client.get(
+        f"/connectors/{connector_id}/runtimes",
+        headers=headers,
+    ).json()["runtimes"]
+    assert len(refreshed_runtimes) == 1
+    assert refreshed_runtimes[0]["runtimeId"] == default_runtime["runtimeId"]
+    assert refreshed_runtimes[0]["name"] == "Codex"
 
 
 def test_legacy_discovery_falls_back_to_type_equal_instance(tmp_path: Any) -> None:
@@ -451,7 +459,10 @@ def test_v2_create_active_requires_valid_config(tmp_path: Any) -> None:
         headers=headers,
     )
     assert listed.status_code == 200, listed.text
-    assert listed.json()["runtimes"] == []
+    runtimes = listed.json()["runtimes"]
+    assert len(runtimes) == 1
+    assert runtimes[0]["name"] == "Codex"
+    assert runtimes[0]["config"] == {"home": "/tmp/codex"}
 
 
 def test_v2_create_enforces_runtime_type_instance_limit(tmp_path: Any) -> None:
@@ -461,18 +472,17 @@ def test_v2_create_enforces_runtime_type_instance_limit(tmp_path: Any) -> None:
     )
     _discover_types(client, connector_id, headers)
 
-    for index in range(2):
-        response = client.post(
-            f"/connectors/{connector_id}/runtimes",
-            headers=headers,
-            json={
-                "runtimeType": "codex",
-                "name": f"Codex {index + 1}",
-                "config": {"home": f"/codex/{index + 1}"},
-                "active": False,
-            },
-        )
-        assert response.status_code == 201, response.text
+    response = client.post(
+        f"/connectors/{connector_id}/runtimes",
+        headers=headers,
+        json={
+            "runtimeType": "codex",
+            "name": "Codex 2",
+            "config": {"home": "/codex/2"},
+            "active": False,
+        },
+    )
+    assert response.status_code == 201, response.text
 
     rejected = client.post(
         f"/connectors/{connector_id}/runtimes",
@@ -496,6 +506,10 @@ def test_v2_lifecycle_sends_type_and_instance_identity_and_clear_is_soft(
 ) -> None:
     client, rpc, connector_id, headers = _make_client(tmp_path, _v2_discovery())
     _discover_types(client, connector_id, headers)
+    default_runtime_id = client.get(
+        f"/connectors/{connector_id}/runtimes",
+        headers=headers,
+    ).json()["runtimes"][0]["runtimeId"]
     rpc.requests.clear()
 
     created = client.post(
@@ -570,10 +584,14 @@ def test_v2_lifecycle_sends_type_and_instance_identity_and_clear_is_soft(
         headers=headers,
     )
     assert listed_after_type_disappears.status_code == 200
-    assert [
+    listed_ids = {
         item["runtimeId"] for item in listed_after_type_disappears.json()["runtimes"]
-    ] == [runtime_id]
-    assert listed_after_type_disappears.json()["runtimes"][0]["present"] is False
+    }
+    assert listed_ids == {default_runtime_id, runtime_id}
+    assert all(
+        item["present"] is False
+        for item in listed_after_type_disappears.json()["runtimes"]
+    )
     rejected = client.post(
         f"/connectors/{connector_id}/runtimes",
         headers=headers,
@@ -705,7 +723,7 @@ def test_legacy_fallback_adds_deterministic_compatibility_instance(
         headers=headers,
         json={
             "runtimeType": "codex",
-            "name": "Codex",
+            "name": "Named Codex",
             "config": {"home": "/named/codex"},
             "active": False,
         },
@@ -722,7 +740,7 @@ def test_legacy_fallback_adds_deterministic_compatibility_instance(
     by_id = {runtime["runtimeId"]: runtime for runtime in runtimes}
     assert by_id["codex"]["name"] == "Codex (codex)"
     assert by_id["codex"]["runtimeType"] == "codex"
-    assert by_id[named.json()["runtimeId"]]["name"] == "Codex"
+    assert by_id[named.json()["runtimeId"]]["name"] == "Named Codex"
     assert by_id[named.json()["runtimeId"]]["config"] == {"home": "/named/codex"}
     assert (
         asyncio.run(

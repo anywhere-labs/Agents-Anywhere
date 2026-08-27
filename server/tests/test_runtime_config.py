@@ -782,7 +782,7 @@ def test_deactivation_settles_sessions_without_persisted_notices(tmp_path):
     assert asyncio.run(store.get_session(session.id)).status == "idle"
 
 
-def test_explicit_discovery_stops_runtime_that_server_has_not_activated(tmp_path):
+def test_explicit_discovery_activates_default_runtime(tmp_path):
     client, rpc, connector_id, headers = _make_client(tmp_path)
     rpc.inventory = _inventory(status="running")
 
@@ -792,9 +792,12 @@ def test_explicit_discovery_stops_runtime_that_server_has_not_activated(tmp_path
     )
 
     assert response.status_code == 200, response.text
-    assert response.json()["runtimes"][0]["status"] == "stopped"
+    runtime = response.json()["runtimes"][0]
+    assert runtime["configured"] is True
+    assert runtime["active"] is True
+    assert runtime["status"] == "running"
     assert [request[1] for request in rpc.requests] == [
         "runtime.discover",
-        "runtime.stop",
+        "runtime.start",
     ]
     assert rpc.requests[0][2] == {"supportedControlVersions": ["2.0", "1.0"]}

@@ -28,11 +28,30 @@ class FakeWebSocket:
 
 
 async def _wait_for_request(websocket: FakeWebSocket) -> dict[str, Any]:
-    for _ in range(100):
+    for _ in range(1000):
         if websocket.messages:
-            return websocket.messages[0]
-        await asyncio.sleep(0)
+            return websocket.messages.pop(0)
+        await asyncio.sleep(0.001)
     raise AssertionError("runtime discovery request was not sent")
+
+
+async def _resolve_runtime_start(
+    manager: Any,
+    connector_id: str,
+    websocket: FakeWebSocket,
+) -> dict[str, Any]:
+    request = await _wait_for_request(websocket)
+    assert request["method"] == "runtime.start"
+    manager.resolve_response(
+        connector_id,
+        {
+            "id": request["id"],
+            "type": "response",
+            "ok": True,
+            "result": {"status": "running"},
+        },
+    )
+    return request
 
 
 def _make_connector(tmp_path: Any) -> tuple[TestClient, str, str]:
@@ -172,6 +191,21 @@ def _receive_discovery_request(ws: Any) -> dict[str, Any]:
     return request
 
 
+def _receive_and_resolve_runtime_start(ws: Any) -> dict[str, Any]:
+    request = ws.receive_json()
+    assert request["type"] == "request"
+    assert request["method"] == "runtime.start"
+    ws.send_json(
+        {
+            "id": request["id"],
+            "type": "response",
+            "ok": True,
+            "result": {"status": "running"},
+        }
+    )
+    return request
+
+
 def test_new_connector_reconnect_negotiates_v2_without_manual_discovery(
     tmp_path: Any,
 ) -> None:
@@ -194,6 +228,8 @@ def test_new_connector_reconnect_negotiates_v2_without_manual_discovery(
                 "result": _v2_discovery(),
             }
         )
+        start_request = _receive_and_resolve_runtime_start(ws)
+        assert start_request["params"]["name"] == "Codex"
         _wait_for_control_version(client, connector_id, "2.0")
 
         _send_inventory(ws, display_name="Stale Legacy Descriptor")
@@ -252,6 +288,8 @@ def test_old_connector_reconnect_remains_on_runtime_control_v1(tmp_path: Any) ->
                 "result": _legacy_inventory(display_name="Negotiated Legacy Codex"),
             },
         )
+        start_request = await _resolve_runtime_start(manager, connector_id, websocket)
+        assert start_request["params"]["runtimeId"] == "codex"
         await task
         assert await manager.unregister(connector_id, connection)
         runtime_types = await client.app.state.store.list_connector_runtime_types(
@@ -309,6 +347,7 @@ def test_abandoned_negotiation_cannot_overwrite_a_reconnect(tmp_path: Any) -> No
                 "result": _v2_discovery(),
             },
         )
+        await _resolve_runtime_start(manager, connector_id, second_ws)
         await second_task
         assert await manager.unregister(connector_id, second)
         assert (
@@ -406,6 +445,7 @@ def test_explicit_discovery_does_not_block_inventory_before_response(
                 "result": _v2_discovery(),
             },
         )
+        await _resolve_runtime_start(manager, connector_id, websocket)
         runtime_types = await discovery_task
         assert runtime_types[0].displayName == "Codex V2"
         assert await manager.unregister(connector_id, connection)
