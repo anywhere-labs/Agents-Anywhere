@@ -545,25 +545,39 @@ async def _exercise_persistent_sync_state(tmp_path) -> None:
         return b"data", f"{file_id}.txt", "text/plain"
 
     state_path = tmp_path / "connector-state.json"
+    first_store = JsonSyncStateStore(state_path)
     first = ConnectorRuntimeHost(
         connector_id="conn_1",
         notifier=notify,
         attachment_downloader=download,
-        sync_state_store=JsonSyncStateStore(state_path),
+        sync_state_store=first_store,
     )
 
     await first.sync_state_write("codex/history/cursor/thread_1", {"position": 7})
+    assert first_store.flush() is True
 
+    second_store = JsonSyncStateStore(state_path)
     second = ConnectorRuntimeHost(
+        connector_id="conn_1",
+        notifier=notify,
+        attachment_downloader=download,
+        sync_state_store=second_store,
+    )
+
+    assert await second.sync_state_read("codex/history/cursor/thread_1") == {
+        "position": 7
+    }
+    await second.sync_state_delete("codex/history/cursor/thread_1")
+    assert await second.sync_state_read("codex/history/cursor/thread_1") is None
+    assert second_store.flush() is True
+
+    restored = ConnectorRuntimeHost(
         connector_id="conn_1",
         notifier=notify,
         attachment_downloader=download,
         sync_state_store=JsonSyncStateStore(state_path),
     )
-
-    assert await second.sync_state_read("codex/history/cursor/thread_1") == {"position": 7}
-    await second.sync_state_delete("codex/history/cursor/thread_1")
-    assert await first.sync_state_read("codex/history/cursor/thread_1") is None
+    assert await restored.sync_state_read("codex/history/cursor/thread_1") is None
 
 
 def test_connector_runtime_host_maps_attachment_download() -> None:

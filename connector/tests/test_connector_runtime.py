@@ -5,6 +5,7 @@ import base64
 import hashlib
 import json
 import sys
+import threading
 from collections.abc import Mapping
 from types import SimpleNamespace
 from typing import Any, Self
@@ -1326,6 +1327,28 @@ def test_runtime_sync_reconciles_complete_dsh_inventory_only() -> None:
     asyncio.run(_exercise_runtime_sync_reconciles_complete_dsh_inventory_only())
 
 
+def test_sync_state_flush_runs_in_worker_thread(monkeypatch) -> None:
+    asyncio.run(_exercise_sync_state_flush_runs_in_worker_thread(monkeypatch))
+
+
+async def _exercise_sync_state_flush_runs_in_worker_thread(monkeypatch) -> None:
+    client = _client()
+    store = client.sync_state_store
+    assert store is not None
+    main_thread_id = threading.get_ident()
+    flush_thread_ids: list[int] = []
+
+    def flush() -> bool:
+        flush_thread_ids.append(threading.get_ident())
+        return False
+
+    monkeypatch.setattr(store, "flush", flush)
+    await client._flush_sync_state()
+
+    assert len(flush_thread_ids) == 1
+    assert flush_thread_ids[0] != main_thread_id
+
+
 async def _exercise_runtime_host_notification_ingest_fallback() -> None:
     client = _client()
     enqueued: list[tuple[str, dict[str, Any]]] = []
@@ -1387,6 +1410,7 @@ async def _exercise_runtime_sync_pushes_each_session_snapshot_before_next_meta()
     runtime = SyncRuntime()
     host = RecordingRuntimeHost()
     ingested_batches: list[list[dict[str, Any]]] = []
+    sync_state_flushes = 0
 
     async def ingest_notifications(notifications: list[dict[str, Any]]) -> None:
         ingested_batches.append(list(notifications))
@@ -1404,6 +1428,11 @@ async def _exercise_runtime_sync_pushes_each_session_snapshot_before_next_meta()
             elif notification["method"] == "notice.upsert":
                 host.events.append(("notice", session_id))
 
+    async def flush_sync_state() -> bool:
+        nonlocal sync_state_flushes
+        sync_state_flushes += 1
+        return True
+
     runner = RuntimeSyncRunner(
         config=ConnectorConfig(
             server_url="http://127.0.0.1:8000",
@@ -1415,6 +1444,7 @@ async def _exercise_runtime_sync_pushes_each_session_snapshot_before_next_meta()
         preferences_reader=dict,
         send_notification=unused_notification_sender,
         ingest_notifications=ingest_notifications,
+        flush_sync_state=flush_sync_state,
     )
 
     await runner.sync_existing_once()
@@ -1437,6 +1467,7 @@ async def _exercise_runtime_sync_pushes_each_session_snapshot_before_next_meta()
     ]
     sync_call = next(call for call in runtime.calls if call[0] == "session.sync")
     assert sync_call[1]["limit"] is None
+    assert sync_state_flushes == 1
     assert [notification["method"] for notification in ingested_batches[0]] == [
         "session.meta.upsert",
         "timeline.sync",

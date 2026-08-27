@@ -29,6 +29,7 @@ from connector.server.runtime_rpc_payloads import session_notice_payload
 NotificationSender = Callable[[str, dict[str, Any]], Awaitable[None]]
 IngestNotificationSender = Callable[[list[dict[str, Any]]], Awaitable[None]]
 PreferencesReader = Callable[[], dict[str, Any]]
+SyncStateFlusher = Callable[[], Awaitable[bool]]
 ACTIVE_SESSION_SYNC_SKIP_STATUSES: frozenset[RuntimeStatus] = frozenset(
     {"waiting", "pending", "running", "waiting_approval", "stopping"}
 )
@@ -45,6 +46,7 @@ class RuntimeSyncRunner:
         preferences_reader: PreferencesReader,
         send_notification: NotificationSender,
         ingest_notifications: IngestNotificationSender | None = None,
+        flush_sync_state: SyncStateFlusher | None = None,
     ) -> None:
         self.config = config
         self.supervisor = supervisor
@@ -52,6 +54,7 @@ class RuntimeSyncRunner:
         self.preferences_reader = preferences_reader
         self.send_notification = send_notification
         self.ingest_notifications = ingest_notifications
+        self.flush_sync_state = flush_sync_state
         self._last_preferences: dict[str, Any] | None = None
         self._last_active_session_updates: dict[
             str, tuple[SessionMeta, SessionState]
@@ -201,6 +204,13 @@ class RuntimeSyncRunner:
                 logger.warning("existing {} session sync timed out", runtime_id)
             except Exception:  # noqa: BLE001
                 logger.exception("existing {} session sync failed", runtime_id)
+        if self.flush_sync_state is not None:
+            try:
+                await self.flush_sync_state()
+            except Exception:  # noqa: BLE001
+                logger.exception(
+                    "history scanner sync state flush failed scan_id={}", scan_id
+                )
         logger.info(
             "history scanner cycle completed scan_id={} runtimes={} elapsed_ms={:.1f}",
             scan_id,
