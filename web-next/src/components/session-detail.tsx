@@ -341,6 +341,17 @@ export function SessionDetail({
   const composerDraft = composerDraftState.sessionId === sessionId ? composerDraftState.value : ""
   const isLocalOptimisticSession = isOptimisticSession(sessionId)
   const hasInitialSessionState = state !== null
+
+  React.useEffect(() => {
+    setSourceErrorCode(null)
+  }, [sessionId])
+
+  React.useEffect(() => {
+    if (session?.id === sessionId && session.sourceAvailability === "archived") {
+      setSourceErrorCode("session_archived")
+    }
+  }, [session?.id, session?.sourceAvailability, sessionId])
+
   const handleCommandQueryChange = React.useCallback((query: string | null) => {
     setCommandQuery(query)
   }, [])
