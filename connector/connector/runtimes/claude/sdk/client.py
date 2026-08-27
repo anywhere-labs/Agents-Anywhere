@@ -28,6 +28,7 @@ def new_sdk_client(
     client_factory: ClaudeClientFactory | None = None,
     can_use_tool: Any | None = None,
     stderr: Callable[[str], None] | None = None,
+    settings_path: str | None = None,
 ) -> Any:
     options = build_sdk_options(
         sdk,
@@ -35,6 +36,7 @@ def new_sdk_client(
         session,
         can_use_tool=can_use_tool,
         stderr=stderr,
+        settings_path=settings_path,
     )
     if client_factory is not None:
         return client_factory(sdk, options)
@@ -53,6 +55,7 @@ def build_sdk_options(
     session: ClaudeSession,
     can_use_tool: Any | None = None,
     stderr: Callable[[str], None] | None = None,
+    settings_path: str | None = None,
 ) -> Any:
     values = dict(config_values)
     kwargs: dict[str, Any] = {
@@ -86,6 +89,8 @@ def build_sdk_options(
         kwargs["can_use_tool"] = can_use_tool
     if stderr is not None:
         kwargs["stderr"] = stderr
+    if settings_path is not None:
+        kwargs["settings"] = settings_path
     hooks = _permission_hooks(sdk)
     if hooks is not None:
         kwargs["hooks"] = hooks

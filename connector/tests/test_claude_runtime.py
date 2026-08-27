@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import stat
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -270,6 +272,7 @@ async def _test_claude_runtime_starts_turn_and_projects_timeline() -> None:
     assert client.options.kwargs["resume"] == "claude_session_0"
     assert client.options.kwargs["cwd"] == "/Users/t4wefan"
     assert client.options.kwargs["extra_args"] == {"replay-user-messages": None}
+    assert "settings" not in client.options.kwargs
     assert runtime._sessions["sess_1"].cwd == "/Users/t4wefan"
     assert runtime._sessions["sess_1"].external_session_id == "claude_session_1"
     assert [update["status"] for update in host.session_state_updates] == [
@@ -1591,24 +1594,7 @@ async def _test_claude_runtime_applies_model_gateway_to_sdk_options() -> None:
     client = _FakeClaudeClient(
         messages=[SimpleNamespace(type="result", session_id="claude_gateway")]
     )
-    runtime = _runtime(
-        client=client,
-        config=RuntimeConfig(
-            runtime="claude",
-            revision=4,
-            values={
-                "environment": {
-                    "EXAMPLE": "1",
-                    "ANTHROPIC_BASE_URL": "https://old.example",
-                    "ANTHROPIC_AUTH_TOKEN": "old-secret",
-                },
-                "modelGateway": {
-                    "baseUrl": "https://gateway.example/anthropic",
-                    "apiKey": "gateway-secret",
-                },
-            },
-        ),
-    )
+    runtime = _runtime(client=client, config=_gateway_config())
 
     result = await runtime.start_turn(
         "sess_gateway",
@@ -1627,6 +1613,16 @@ async def _test_claude_runtime_applies_model_gateway_to_sdk_options() -> None:
         "ANTHROPIC_AUTH_TOKEN": "gateway-secret",
         "ANTHROPIC_API_KEY": "",
     }
+    assert client.settings_payload == {
+        "env": {
+            "ANTHROPIC_BASE_URL": "https://gateway.example/anthropic",
+            "ANTHROPIC_AUTH_TOKEN": "gateway-secret",
+            "ANTHROPIC_API_KEY": "",
+        }
+    }
+    assert client.settings_mode == 0o600
+    assert client.settings_path is not None
+    assert client.settings_path.exists() is False
 
 
 def test_claude_runtime_applies_custom_model_effort_to_sdk_options() -> None:
@@ -2241,7 +2237,7 @@ async def _test_claude_runtime_interrupts_active_turn() -> None:
     host = _RecordingHost()
     release = asyncio.Event()
     client = _BlockingClaudeClient(release)
-    runtime = _runtime(host=host, client=client)
+    runtime = _runtime(host=host, client=client, config=_gateway_config())
 
     result = await runtime.start_turn("sess_interrupt", None, "wait")
     assert result.ok is True
@@ -2268,6 +2264,8 @@ async def _test_claude_runtime_interrupts_active_turn() -> None:
     release.set()
 
     assert client.disconnected is True
+    assert client.settings_path is not None
+    assert client.settings_path.exists() is False
     assert runtime._sessions["sess_interrupt"].active_turn_id is None
     assert host.session_state_updates[-1]["status"] == "idle"
 
@@ -2454,7 +2452,7 @@ def test_claude_runtime_includes_redacted_stderr_in_error_state() -> None:
 async def _test_claude_runtime_includes_redacted_stderr_in_error_state() -> None:
     host = _RecordingHost()
     client = _StderrFailingClaudeClient()
-    runtime = _runtime(host=host, client=client)
+    runtime = _runtime(host=host, client=client, config=_gateway_config())
 
     result = await runtime.start_turn("sess_stderr", None, "hello")
     task = runtime._sessions["sess_stderr"].active_task
@@ -2473,6 +2471,8 @@ async def _test_claude_runtime_includes_redacted_stderr_in_error_state() -> None
     assert "api_key=***" in state.error["message"]
     assert "secret-token" not in state.error["message"]
     assert "blocked" not in [update["status"] for update in host.session_state_updates]
+    assert client.settings_path is not None
+    assert client.settings_path.exists() is False
 
 
 def test_claude_runtime_sets_permission_keepalive_hook_when_available() -> None:
@@ -2664,6 +2664,24 @@ def _config() -> RuntimeConfig:
     )
 
 
+def _gateway_config() -> RuntimeConfig:
+    return RuntimeConfig(
+        runtime="claude",
+        revision=4,
+        values={
+            "environment": {
+                "EXAMPLE": "1",
+                "ANTHROPIC_BASE_URL": "https://old.example",
+                "ANTHROPIC_AUTH_TOKEN": "old-secret",
+            },
+            "modelGateway": {
+                "baseUrl": "https://gateway.example/anthropic",
+                "apiKey": "gateway-secret",
+            },
+        },
+    )
+
+
 def _capability_available(capability_set: Any, capability_id: str) -> bool:
     return next(
         capability.available
@@ -2685,9 +2703,19 @@ class _FakeClaudeClient:
         self.disconnected = False
         self.interrupted = False
         self.queries: list[str] = []
+        self.settings_path: Path | None = None
+        self.settings_payload: dict[str, Any] | None = None
+        self.settings_mode: int | None = None
 
     async def connect(self) -> None:
         self.connected = True
+        raw_settings_path = self.options.kwargs.get("settings")
+        if isinstance(raw_settings_path, str):
+            self.settings_path = Path(raw_settings_path)
+            self.settings_payload = json.loads(
+                self.settings_path.read_text(encoding="utf-8")
+            )
+            self.settings_mode = stat.S_IMODE(self.settings_path.stat().st_mode)
 
     async def disconnect(self) -> None:
         self.disconnected = True
