@@ -61,11 +61,11 @@ class DshProvider(RuntimeProvider):
 
     @property
     def instance_policy(self) -> RuntimeInstancePolicy:
-        return "multiple"
+        return "single"
 
     @property
-    def max_instances(self) -> int | None:
-        return None
+    def max_instances(self) -> int:
+        return 1
 
     async def discover(self) -> RuntimeTypeDescriptor:
         values = provider_config.default_config_values()

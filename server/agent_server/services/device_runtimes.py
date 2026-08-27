@@ -193,6 +193,7 @@ class DeviceRuntimeService:
             connector_id,
             connection=connection,
         )
+        await self.ensure_default_runtimes(connector_id)
         await self.reconcile_active(connector_id)
 
     async def discover(
@@ -200,6 +201,7 @@ class DeviceRuntimeService:
     ) -> list[DeviceRuntimeView]:
         await self.list_runtimes(connector_id, user_id=user_id)
         await self._discover(connector_id)
+        await self.ensure_default_runtimes(connector_id)
         await self.reconcile_active(connector_id)
         return await self.list_runtimes(connector_id, user_id=user_id)
 
@@ -211,8 +213,106 @@ class DeviceRuntimeService:
     ) -> list[RuntimeTypeView]:
         await self.list_runtime_types(connector_id, user_id=user_id)
         await self._discover(connector_id)
+        await self.ensure_default_runtimes(connector_id)
         await self.reconcile_active(connector_id)
         return await self.list_runtime_types(connector_id, user_id=user_id)
+
+    async def ensure_default_runtimes(self, connector_id: str) -> None:
+        """Create one ready-to-start instance for each usable Agent type."""
+
+        async with self._runtime_lock(connector_id, "@instances"):
+            try:
+                control_version = await self._get_control_version(connector_id)
+                runtime_types = [
+                    RuntimeTypeView.model_validate(row)
+                    for row in await self._store.list_connector_runtime_types(
+                        connector_id
+                    )
+                ]
+                runtimes = [
+                    DeviceRuntimeView.model_validate(row)
+                    for row in await self._store.list_device_runtimes(connector_id)
+                ]
+            except KeyError:
+                return
+
+            changed = False
+            for runtime_type in runtime_types:
+                if (
+                    not runtime_type.present
+                    or not runtime_type.available
+                    or runtime_type.schema_ is None
+                ):
+                    continue
+
+                instances = [
+                    runtime
+                    for runtime in runtimes
+                    if runtime.runtimeType == runtime_type.runtimeType
+                ]
+                if any(runtime.configured for runtime in instances):
+                    continue
+
+                defaults = dict(runtime_type.defaults)
+                try:
+                    self._validate(defaults, runtime_type.schema_)
+                    reusable = min(
+                        (runtime for runtime in instances if not runtime.configured),
+                        key=lambda runtime: (
+                            runtime.runtimeId != runtime.runtimeType,
+                            runtime.createdAt,
+                            runtime.runtimeId,
+                        ),
+                        default=None,
+                    )
+                    if reusable is not None:
+                        configured = DeviceRuntimeView.model_validate(
+                            await self._store.set_device_runtime_config(
+                                connector_id,
+                                reusable.runtimeId,
+                                defaults,
+                            )
+                        )
+                        configured = DeviceRuntimeView.model_validate(
+                            await self._store.set_device_runtime_active(
+                                connector_id,
+                                configured.runtimeId,
+                                True,
+                            )
+                        )
+                    elif control_version == "2.0":
+                        configured = DeviceRuntimeView.model_validate(
+                            await self._store.create_device_runtime(
+                                connector_id,
+                                runtime_type=runtime_type.runtimeType,
+                                name=_default_runtime_name(runtime_type, runtimes),
+                                config=defaults,
+                                active=True,
+                            )
+                        )
+                    else:
+                        continue
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "default runtime bootstrap failed connector_id={} "
+                        "runtime_type={} error_type={} error={}",
+                        connector_id,
+                        runtime_type.runtimeType,
+                        exc.__class__.__name__,
+                        exc,
+                    )
+                    continue
+
+                runtimes = [
+                    runtime
+                    for runtime in runtimes
+                    if runtime.runtimeId != configured.runtimeId
+                ]
+                runtimes.append(configured)
+                changed = True
+
+            if changed:
+                await self._publish(connector_id, "runtime.defaults")
 
     async def _discover(
         self,
@@ -952,3 +1052,16 @@ def _config_revision(runtime: DeviceRuntimeView) -> int:
         MAX_JAVASCRIPT_SAFE_INTEGER,
         max(1, int(parsed.timestamp() * 1000)),
     )
+
+
+def _default_runtime_name(
+    runtime_type: RuntimeTypeView,
+    runtimes: list[DeviceRuntimeView],
+) -> str:
+    existing = {runtime.name.strip().casefold() for runtime in runtimes}
+    if runtime_type.displayName.strip().casefold() not in existing:
+        return runtime_type.displayName
+    suffix = 2
+    while f"{runtime_type.displayName} {suffix}".casefold() in existing:
+        suffix += 1
+    return f"{runtime_type.displayName} {suffix}"
