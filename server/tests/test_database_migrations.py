@@ -335,6 +335,7 @@ def test_v2_0_database_upgrades_through_current_revision(tmp_path) -> None:
         ("v2_16", "v2_17"),
         ("v2_17", "v2_18"),
         ("v2_18", "v2_19"),
+        ("v2_19", "v2_20"),
     ],
 )
 def test_every_adjacent_schema_upgrade(
@@ -935,7 +936,7 @@ def test_v2_14_downgrade_rejects_instance_specific_data(
 
 @pytest.mark.parametrize(
     "revision",
-    ["v2_10", "v2_11", "v2_12", "v2_13", "v2_14", "v2_15", "v2_16", "v2_17", "v2_18", "v2_19"],
+    ["v2_10", "v2_11", "v2_12", "v2_13", "v2_14", "v2_15", "v2_16", "v2_17", "v2_18", "v2_19", "v2_20"],
 )
 def test_unversioned_runtime_schema_is_classified_by_actual_columns(
     tmp_path,
@@ -973,9 +974,26 @@ def test_unversioned_runtime_schema_is_classified_by_actual_columns(
     )
 
 
-def test_current_schema_version_is_v2_19() -> None:
-    assert CURRENT_SCHEMA_REVISION == "v2_19"
-    assert CURRENT_SCHEMA_VERSION == "2.19"
+def test_current_schema_version_is_v2_20() -> None:
+    assert CURRENT_SCHEMA_REVISION == "v2_20"
+    assert CURRENT_SCHEMA_VERSION == "2.20"
+
+
+def test_v2_20_adds_session_source_observation_details(tmp_path) -> None:
+    path = tmp_path / "session-source-observation.sqlite3"
+    url = _sqlite_url(path)
+    upgrade_database(db_url=url, revision="v2_19")
+    upgrade_database(db_url=url, revision="v2_20")
+
+    engine = create_engine(f"sqlite:///{path}")
+    try:
+        columns = {
+            column["name"] for column in inspect(engine).get_columns("sessions")
+        }
+    finally:
+        engine.dispose()
+
+    assert {"source_state_reason", "source_observation_origin"}.issubset(columns)
 
 
 def test_current_schema_drops_legacy_approval_notice_storage(tmp_path) -> None:

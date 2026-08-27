@@ -28,8 +28,18 @@ from agent_server.services.ingest_effects import IngestEffect
 from agent_server.services.repository_ports import ConnectorNotificationRepository
 
 TIMELINE_SYNC_PUSH_LIMIT = 100
-DSH_SESSION_INVENTORY_LIMIT = 10_000
-DSH_SOURCE_STATES = {"visible", "hidden"}
+SESSION_INVENTORY_LIMIT = 10_000
+SESSION_SOURCE_STATES = {
+    "available",
+    "archived",
+    "unavailable",
+    "deleted",
+    "missing",
+    "unknown",
+    "visible",
+    "hidden",
+}
+SESSION_SOURCE_ORIGINS = {"event", "inventory", "operation"}
 TURN_END_OUTCOMES = {"completed", "interrupted", "cancelled", "failed"}
 
 
@@ -52,7 +62,8 @@ class ConnectorNotificationService:
             RuntimeCatalogNotificationHandler(store),
             SessionStateNotificationHandler(store),
             SessionTurnEndedNotificationHandler(store),
-            DshSessionInventoryNotificationHandler(store),
+            SessionSourceNotificationHandler(store),
+            SessionInventoryNotificationHandler(store),
             SessionNotificationHandler(store),
             TimelineNotificationHandler(store),
             InteractionNotificationHandler(store),
@@ -273,9 +284,7 @@ class SessionNotificationHandler:
         session_id = params["sessionId"]
         external_session_id = params.get("externalSessionId")
         runtime, runtime_id = runtime_identity_from_params(params)
-        is_dsh = runtime == "dsh"
-        should_archive = False if is_dsh else _session_meta_should_archive(params)
-        source_state = _dsh_session_meta_source_state(params) if is_dsh else None
+        source_observation = _session_meta_source_observation(params, runtime)
         try:
             if isinstance(external_session_id, str):
                 session_id = await self._store.resolve_connector_session_id(
@@ -301,10 +310,13 @@ class SessionNotificationHandler:
                 source_observed_at=params.get("sourceObservedAt"),
                 last_activity_at=params.get("lastActivityAt"),
                 mark_read_on_change=True,
-                source_state=source_state,
+                source_state=None,
             )
-            if should_archive and not session.archived:
-                session = await self._store.set_session_archived(session.id, True)
+            if source_observation is not None:
+                session = await self._store.update_session_source_state(
+                    session.id,
+                    **source_observation,
+                )
             return IngestEffect(session_id=session.id, session_changed=True)
         except KeyError:
             try:
@@ -319,19 +331,78 @@ class SessionNotificationHandler:
                     last_synced_at=params.get("lastSyncedAt"),
                     source_observed_at=params.get("sourceObservedAt"),
                     last_activity_at=params.get("lastActivityAt"),
-                    source_state=source_state,
+                    source_state=None,
                 )
             except ValueError as exc:
                 raise NotificationValidationError(
                     "session_identity_conflict",
                     str(exc),
                 ) from exc
-            if should_archive and not session.archived:
-                session = await self._store.set_session_archived(session.id, True)
+            if source_observation is not None:
+                session = await self._store.update_session_source_state(
+                    session.id,
+                    **source_observation,
+                )
             return IngestEffect(session_id=session.id, session_changed=True)
 
 
-class DshSessionInventoryNotificationHandler:
+class SessionSourceNotificationHandler:
+    async def apply(
+        self,
+        *,
+        connector_id: str,
+        method: str,
+        params: dict[str, Any],
+    ) -> IngestEffect | None:
+        if method != "session.source.updated":
+            return None
+        runtime, runtime_id = runtime_identity_from_params(params)
+        session_id = params.get("sessionId")
+        external_session_id = _string_or_none(params.get("externalSessionId"))
+        if not isinstance(session_id, str) or not session_id:
+            raise NotificationValidationError(
+                "invalid_session_source_session",
+                "session source observation sessionId must be a non-empty string",
+            )
+        observation = _validated_session_source_observation(params)
+        if external_session_id is not None:
+            try:
+                session_id = await self._store.resolve_connector_session_id(
+                    connector_id=connector_id,
+                    session_id=session_id,
+                    external_session_id=external_session_id,
+                    runtime=runtime,
+                    runtime_id=runtime_id,
+                )
+            except KeyError:
+                pass
+        try:
+            session = await self._store.get_session(session_id)
+            _require_session_binding(
+                session,
+                connector_id=connector_id,
+                runtime=runtime,
+                runtime_id=runtime_id,
+            )
+        except KeyError:
+            session = await self._store.upsert_connector_session(
+                connector_id=connector_id,
+                session_id=session_id,
+                runtime=runtime,
+                runtime_id=runtime_id,
+                external_session_id=external_session_id,
+            )
+        session = await self._store.update_session_source_state(
+            session.id,
+            **observation,
+        )
+        return IngestEffect(session_id=session.id, session_changed=True)
+
+    def __init__(self, store: ConnectorNotificationRepository) -> None:
+        self._store = store
+
+
+class SessionInventoryNotificationHandler:
     METHODS: ClassVar[set[str]] = {
         "session.inventory.begin",
         "session.inventory.complete",
@@ -350,11 +421,6 @@ class DshSessionInventoryNotificationHandler:
         if method not in self.METHODS:
             return None
         runtime, runtime_id = runtime_identity_from_params(params)
-        if runtime != "dsh":
-            raise NotificationValidationError(
-                "invalid_session_inventory_runtime",
-                "session inventory reconciliation is only supported for dsh",
-            )
         scan_token = params.get("scanToken")
         if not isinstance(scan_token, str) or not 16 <= len(scan_token) <= 128:
             raise NotificationValidationError(
@@ -362,8 +428,9 @@ class DshSessionInventoryNotificationHandler:
                 "session inventory scanToken must contain 16 to 128 characters",
             )
         if method == "session.inventory.begin":
-            await self._store.begin_dsh_session_inventory(
+            await self._store.begin_session_inventory(
                 connector_id,
+                runtime,
                 runtime_id,
                 scan_token,
             )
@@ -371,10 +438,10 @@ class DshSessionInventoryNotificationHandler:
 
         raw_sessions = params.get("sessions")
         complete = params.get("complete")
-        if not isinstance(raw_sessions, list) or len(raw_sessions) > DSH_SESSION_INVENTORY_LIMIT:
+        if not isinstance(raw_sessions, list) or len(raw_sessions) > SESSION_INVENTORY_LIMIT:
             raise NotificationValidationError(
                 "invalid_session_inventory_sessions",
-                f"session inventory sessions must contain at most {DSH_SESSION_INVENTORY_LIMIT} entries",
+                f"session inventory sessions must contain at most {SESSION_INVENTORY_LIMIT} entries",
             )
         if not isinstance(complete, bool):
             raise NotificationValidationError(
@@ -392,7 +459,12 @@ class DshSessionInventoryNotificationHandler:
                 )
             session_id = raw.get("sessionId")
             external_session_id = raw.get("externalSessionId")
-            source_state = raw.get("sourceState")
+            raw_source_state = raw.get("sourceState")
+            source_state = (
+                raw_source_state.get("availability")
+                if isinstance(raw_source_state, dict)
+                else raw_source_state
+            )
             if not isinstance(session_id, str) or not session_id:
                 raise NotificationValidationError(
                     "invalid_session_inventory_entry",
@@ -405,10 +477,10 @@ class DshSessionInventoryNotificationHandler:
                     "invalid_session_inventory_entry",
                     "session inventory entry externalSessionId must be a non-empty string",
                 )
-            if source_state not in DSH_SOURCE_STATES:
+            if source_state not in SESSION_SOURCE_STATES:
                 raise NotificationValidationError(
                     "invalid_session_inventory_entry",
-                    "session inventory entry sourceState must be visible or hidden",
+                    "session inventory entry sourceState is invalid",
                 )
             if session_id in session_ids or (
                 external_session_id is not None
@@ -426,10 +498,21 @@ class DshSessionInventoryNotificationHandler:
                     "session_id": session_id,
                     "external_session_id": external_session_id,
                     "source_state": source_state,
+                    "reason": (
+                        raw_source_state.get("reason")
+                        if isinstance(raw_source_state, dict)
+                        else None
+                    ),
+                    "observed_at": (
+                        raw_source_state.get("observedAt")
+                        if isinstance(raw_source_state, dict)
+                        else None
+                    ),
                 }
             )
-        changed = await self._store.complete_dsh_session_inventory(
+        changed = await self._store.complete_session_inventory(
             connector_id,
+            runtime,
             runtime_id,
             scan_token,
             entries,
@@ -1036,6 +1119,76 @@ def _session_meta_should_archive(params: dict[str, Any]) -> bool:
         ("localState", "local_state"),
     )
     return local_state in {"archived", "deleted", "unresumable"}
+
+
+def _validated_session_source_observation(params: dict[str, Any]) -> dict[str, Any]:
+    availability = params.get("availability")
+    if availability not in SESSION_SOURCE_STATES:
+        raise NotificationValidationError(
+            "invalid_session_source_availability",
+            "session source observation availability is invalid",
+        )
+    observation_origin = params.get("observationOrigin")
+    if observation_origin not in SESSION_SOURCE_ORIGINS:
+        raise NotificationValidationError(
+            "invalid_session_source_origin",
+            "session source observation origin is invalid",
+        )
+    reason = params.get("reason")
+    observed_at = params.get("observedAt")
+    if reason is not None and not isinstance(reason, str):
+        raise NotificationValidationError(
+            "invalid_session_source_reason",
+            "session source observation reason must be a string",
+        )
+    if observed_at is not None and not isinstance(observed_at, str):
+        raise NotificationValidationError(
+            "invalid_session_source_observed_at",
+            "session source observation observedAt must be a string",
+        )
+    return {
+        "availability": availability,
+        "reason": reason,
+        "observed_at": observed_at,
+        "observation_origin": observation_origin,
+    }
+
+
+def _session_meta_source_observation(
+    params: dict[str, Any],
+    runtime: str,
+) -> dict[str, Any] | None:
+    source_state = params.get("sourceState")
+    if isinstance(source_state, dict):
+        return _validated_session_source_observation(
+            {
+                "availability": source_state.get("availability"),
+                "reason": source_state.get("reason"),
+                "observedAt": source_state.get("observedAt"),
+                "observationOrigin": source_state.get(
+                    "observationOrigin",
+                    "inventory",
+                ),
+            }
+        )
+    if runtime == "dsh":
+        return {
+            "availability": _dsh_session_meta_source_state(params),
+            "reason": None,
+            "observed_at": params.get("sourceObservedAt"),
+            "observation_origin": "inventory",
+        }
+    if not _session_meta_should_archive(params):
+        return None
+    metadata = params.get("metadata") if isinstance(params.get("metadata"), dict) else {}
+    deleted = _bool_param(params, metadata, ("localDeleted", "local_deleted"))
+    local_state = _string_param(params, metadata, ("localState", "local_state"))
+    return {
+        "availability": "deleted" if deleted or local_state == "deleted" else "archived",
+        "reason": "legacy session metadata",
+        "observed_at": params.get("sourceObservedAt"),
+        "observation_origin": "inventory",
+    }
 
 
 def _dsh_session_meta_source_state(params: dict[str, Any]) -> str:

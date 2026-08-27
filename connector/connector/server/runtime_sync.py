@@ -19,6 +19,7 @@ from connector.runtime_protocol import (
     RuntimeUnsupportedError,
     SessionMeta,
     SessionNotice,
+    SessionSourceObservation,
     SessionState,
 )
 from connector.server.errors import ConnectorNetworkError
@@ -78,25 +79,39 @@ class RuntimeSyncRunner:
                     "existing session sync runtime started runtime={}", runtime_id
                 )
                 await self.push_runtime_catalogs(runtime)
-                dsh_scan_token: str | None = None
+                inventory_scan_token: str | None = None
                 entry = self.supervisor.entry(runtime_id)
                 runtime_type = entry.runtime_type
                 scoped_runtime_id = entry.runtime_id
-                if runtime_type == "dsh":
-                    dsh_scan_token = secrets.token_hex(16)
+                if runtime.supports_complete_session_inventory():
+                    inventory_scan_token = secrets.token_hex(16)
                     await self._ingest_scanner_notifications(
                         [
-                            _dsh_inventory_begin_notification(
+                            _inventory_begin_notification(
                                 runtime_type,
                                 scoped_runtime_id,
-                                dsh_scan_token,
+                                inventory_scan_token,
                             )
                         ]
                     )
-                    sessions = await runtime.list_complete_session_inventory(
-                        page_size=100,
-                        force=False,
-                    )
+                    try:
+                        sessions = await runtime.list_complete_session_inventory(
+                            page_size=100,
+                            force=False,
+                        )
+                    except Exception:
+                        await self._ingest_scanner_notifications(
+                            [
+                                _inventory_complete_notification(
+                                    runtime_type,
+                                    scoped_runtime_id,
+                                    inventory_scan_token,
+                                    (),
+                                    complete=False,
+                                )
+                            ]
+                        )
+                        raise
                 else:
                     sessions = await runtime.list_sessions(limit=100, force=False)
                 timeline_sync_count = sum(
@@ -128,14 +143,15 @@ class RuntimeSyncRunner:
                             session.external_session_id,
                         )
                         continue
-                if dsh_scan_token is not None:
+                if inventory_scan_token is not None:
                     await self._ingest_scanner_notifications(
                         [
-                            _dsh_inventory_complete_notification(
+                            _inventory_complete_notification(
                                 runtime_type,
                                 scoped_runtime_id,
-                                dsh_scan_token,
+                                inventory_scan_token,
                                 sessions,
+                                complete=True,
                             )
                         ]
                     )
@@ -176,6 +192,16 @@ class RuntimeSyncRunner:
           timeline snapshot, current state, and active notices
         - publishes an active session's meta and state once per distinct update
         """
+        if session.source_state is not None:
+            await self.host.session_source_update(
+                SessionSourceObservation(
+                    session_id=session.session_id,
+                    external_session_id=session.external_session_id,
+                    runtime=session.runtime,
+                    runtime_id=session.runtime_id,
+                    state=session.source_state,
+                )
+            )
         if not session_requires_timeline_sync(session):
             if session_sync_changed(session) is False:
                 return
@@ -383,13 +409,23 @@ def _session_meta_notification(session: SessionMeta) -> dict[str, Any]:
                 "cwd": session.cwd,
                 "lastActivityAt": session.ordering_time,
                 "sourceObservedAt": session.ordering_time,
+                "sourceState": (
+                    {
+                        "availability": session.source_state.availability,
+                        "reason": session.source_state.reason,
+                        "observedAt": session.source_state.observed_at,
+                        "observationOrigin": session.source_state.observation_origin,
+                    }
+                    if session.source_state is not None
+                    else None
+                ),
                 "metadata": dict(session.metadata),
             }
         ),
     }
 
 
-def _dsh_inventory_begin_notification(
+def _inventory_begin_notification(
     runtime_type: str,
     runtime_id: str,
     scan_token: str,
@@ -404,11 +440,13 @@ def _dsh_inventory_begin_notification(
     }
 
 
-def _dsh_inventory_complete_notification(
+def _inventory_complete_notification(
     runtime_type: str,
     runtime_id: str,
     scan_token: str,
     sessions: tuple[SessionMeta, ...],
+    *,
+    complete: bool,
 ) -> dict[str, Any]:
     return {
         "method": "session.inventory.complete",
@@ -416,13 +454,13 @@ def _dsh_inventory_complete_notification(
             "runtime": runtime_type,
             "runtimeId": runtime_id,
             "scanToken": scan_token,
-            "complete": True,
+            "complete": complete,
             "sessions": [
                 _drop_none(
                     {
                         "sessionId": session.session_id,
                         "externalSessionId": session.external_session_id,
-                        "sourceState": _dsh_inventory_source_state(session),
+                        "sourceState": _inventory_source_state(session),
                     }
                 )
                 for session in sessions
@@ -431,7 +469,16 @@ def _dsh_inventory_complete_notification(
     }
 
 
-def _dsh_inventory_source_state(session: SessionMeta) -> str:
+def _inventory_source_state(session: SessionMeta) -> str | dict[str, Any]:
+    if session.source_state is not None:
+        return _drop_none(
+            {
+                "availability": session.source_state.availability,
+                "reason": session.source_state.reason,
+                "observedAt": session.source_state.observed_at,
+                "observationOrigin": session.source_state.observation_origin,
+            }
+        )
     metadata = session.metadata
     if any(
         metadata.get(key) is True

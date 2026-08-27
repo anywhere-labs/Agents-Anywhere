@@ -6348,6 +6348,123 @@ def test_connector_ingest_archives_local_hidden_session_meta(tmp_path):
     assert state.json()["session"]["archivedAt"] is not None
 
 
+def test_connector_source_event_archives_and_restores_codex_session(tmp_path):
+    client = make_client(tmp_path)
+    session_id, access_token, _, headers = create_connector_and_session(client)
+    connector_headers = {"Authorization": f"Bearer {access_token}"}
+
+    archived = client.post(
+        "/connector/ingest",
+        headers=connector_headers,
+        json={
+            "notifications": [
+                {
+                    "method": "session.source.updated",
+                    "params": {
+                        "sessionId": session_id,
+                        "runtime": "codex",
+                        "externalSessionId": "thr_1",
+                        "availability": "archived",
+                        "reason": "thread/archived",
+                        "observedAt": "2026-08-27T12:00:00Z",
+                        "observationOrigin": "event",
+                    },
+                }
+            ]
+        },
+    )
+
+    assert archived.status_code == 200, archived.text
+    session = session_view_for_assertions(client, session_id, headers)["session"]
+    assert session["archived"] is True
+    assert session["userArchived"] is False
+    assert session["archiveSource"] == "runtime"
+    assert session["sourceAvailability"] == "archived"
+    assert session["sourceObservationOrigin"] == "event"
+
+    restored = client.post(
+        "/connector/ingest",
+        headers=connector_headers,
+        json={
+            "notifications": [
+                {
+                    "method": "session.source.updated",
+                    "params": {
+                        "sessionId": session_id,
+                        "runtime": "codex",
+                        "externalSessionId": "thr_1",
+                        "availability": "available",
+                        "reason": "thread/unarchived",
+                        "observedAt": "2026-08-27T12:01:00Z",
+                        "observationOrigin": "event",
+                    },
+                }
+            ]
+        },
+    )
+
+    assert restored.status_code == 200, restored.text
+    session = session_view_for_assertions(client, session_id, headers)["session"]
+    assert session["archived"] is False
+    assert session["sourceAvailability"] == "available"
+
+
+def test_session_inventory_does_not_overwrite_newer_source_event(tmp_path):
+    client = make_client(tmp_path)
+    session_id, access_token, _, headers = create_connector_and_session(client)
+    connector_headers = {"Authorization": f"Bearer {access_token}"}
+    scan_token = "codex-inventory-scan-token-0001"
+
+    response = client.post(
+        "/connector/ingest",
+        headers=connector_headers,
+        json={
+            "notifications": [
+                {
+                    "method": "session.inventory.begin",
+                    "params": {"runtime": "codex", "scanToken": scan_token},
+                },
+                {
+                    "method": "session.source.updated",
+                    "params": {
+                        "sessionId": session_id,
+                        "runtime": "codex",
+                        "externalSessionId": "thr_1",
+                        "availability": "archived",
+                        "observedAt": "2026-08-27T12:01:00Z",
+                        "observationOrigin": "event",
+                    },
+                },
+                {
+                    "method": "session.inventory.complete",
+                    "params": {
+                        "runtime": "codex",
+                        "scanToken": scan_token,
+                        "complete": True,
+                        "sessions": [
+                            {
+                                "sessionId": session_id,
+                                "externalSessionId": "thr_1",
+                                "sourceState": {
+                                    "availability": "available",
+                                    "observedAt": "2026-08-27T12:00:00Z",
+                                    "observationOrigin": "inventory",
+                                },
+                            }
+                        ],
+                    },
+                },
+            ]
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    session = session_view_for_assertions(client, session_id, headers)["session"]
+    assert session["archived"] is True
+    assert session["sourceAvailability"] == "archived"
+    assert session["sourceObservationOrigin"] == "event"
+
+
 def test_connector_ingest_dsh_hidden_state_is_reversible_without_archiving(tmp_path):
     client = make_client(tmp_path)
     _, access_token, _, headers = create_connector_and_session(client)

@@ -495,6 +495,9 @@ class RuntimeInstance(AgentRuntime):
             session_meta_for_instance(session, self.instance) for session in sessions
         )
 
+    def supports_complete_session_inventory(self) -> bool:
+        return self.native_runtime.supports_complete_session_inventory()
+
     async def get_session_snapshot(
         self,
         session_id: str,
