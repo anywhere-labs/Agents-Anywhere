@@ -4,6 +4,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import (
     AfterValidator,
+    AliasChoices,
     BaseModel,
     ConfigDict,
     Field,
@@ -100,6 +101,8 @@ class ConnectorView(BaseModel):
 
 class ConnectorCreateRequest(BaseModel):
     name: str = "Codex Connector"
+    connectorId: str | None = Field(default=None, validation_alias=AliasChoices("connectorId", "connector_id"))
+    connectorToken: str | None = Field(default=None, validation_alias=AliasChoices("connectorToken", "connector_token"))
 
 
 class ConnectorUpdateRequest(BaseModel):

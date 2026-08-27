@@ -886,6 +886,49 @@ def test_oauth_authorize_rejects_unregistered_redirects(tmp_path):
     assert response.status_code == 422
 
 
+def test_dsh_oauth_authorization_code_loopback_round_trip(tmp_path):
+    client = make_client(tmp_path)
+    token = admin_token(client)
+    verifier = "dsh-verifier-secret-12345"
+    loopback_uri = "http://127.0.0.1:18234/callback"
+    auth = client.get(
+        "/oauth/authorize",
+        headers=bearer(token),
+        params={
+            "response_type": "code",
+            "client_id": "agents-anywhere-dsh",
+            "redirect_uri": loopback_uri,
+            "code_challenge": pkce_challenge(verifier),
+            "code_challenge_method": "S256",
+            "scope": "profile",
+            "state": "dsh-state-xyz",
+        },
+        follow_redirects=False,
+    )
+    assert auth.status_code in (302, 307), auth.text
+    redirected = urlparse(auth.headers["location"])
+    assert redirected.scheme == "http"
+    assert redirected.netloc == "127.0.0.1:18234"
+    params = parse_qs(redirected.query)
+    assert params["state"] == ["dsh-state-xyz"]
+    code = params["code"][0]
+
+    good = client.post(
+        "/oauth/token",
+        data={
+            "grant_type": "authorization_code",
+            "code": code,
+            "client_id": "agents-anywhere-dsh",
+            "redirect_uri": loopback_uri,
+            "code_verifier": verifier,
+        },
+    )
+    assert good.status_code == 200, good.text
+    token_body = good.json()
+    assert token_body["access_token"]
+    assert client.get("/auth/me", headers=bearer(token_body["access_token"])).json()["userId"] == "user1"
+
+
 def test_fs_preview_token_is_consumed_once(tmp_path):
     client = make_client(tmp_path)
     token = admin_token(client)
@@ -1009,3 +1052,32 @@ def test_mobile_login_exchange_rejects_user_mismatch(tmp_path):
         json={"userId": "other", "loginToken": qr_body["loginToken"]},
     )
     assert exchanged.status_code == 401
+
+
+def test_create_connector_with_stable_connector_id(tmp_path):
+    client = make_client(tmp_path)
+    token = admin_token(client)
+    stable_id = "conn_stable_desktop_123"
+    first = client.post(
+        "/connectors",
+        headers=bearer(token),
+        json={"name": "My MacBook", "connectorId": stable_id},
+    )
+    assert first.status_code == 200, first.text
+    assert first.json()["connector"]["id"] == stable_id
+    assert first.json()["connector"]["name"] == "My MacBook"
+
+    # Second call with same stable connectorId updates in place and does not duplicate
+    second = client.post(
+        "/connectors",
+        headers=bearer(token),
+        json={"name": "My MacBook Pro", "connectorId": stable_id},
+    )
+    assert second.status_code == 200, second.text
+    assert second.json()["connector"]["id"] == stable_id
+    assert second.json()["connector"]["name"] == "My MacBook Pro"
+
+    # Listing connectors shows only 1 device
+    listed = client.get("/connectors", headers=bearer(token)).json()["connectors"]
+    assert len([c for c in listed if c["id"] == stable_id]) == 1
+

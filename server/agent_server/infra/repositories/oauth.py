@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+from urllib.parse import urlsplit
+
 from agent_server.infra.repositories.store_support import *
 
 
 FIRST_PARTY_OAUTH_CLIENT_ID = "agents-anywhere-mobile"
+DSH_OAUTH_CLIENT_ID = "agents-anywhere-dsh"
 FIRST_PARTY_OAUTH_REDIRECT_URI = "agents-anywhere://oauth/callback"
+FIRST_PARTY_OAUTH_CLIENT_IDS = {FIRST_PARTY_OAUTH_CLIENT_ID, DSH_OAUTH_CLIENT_ID}
 
 
 class OAuthRepositoryMixin:
@@ -68,11 +72,17 @@ class OAuthRepositoryMixin:
         redirect_uri = _normalize_redirect_uri(redirect_uri)
         if client_id == FIRST_PARTY_OAUTH_CLIENT_ID:
             allowed_redirects = [FIRST_PARTY_OAUTH_REDIRECT_URI]
+            if redirect_uri not in allowed_redirects:
+                raise ValueError("redirect uri is not registered")
+        elif client_id == DSH_OAUTH_CLIENT_ID:
+            parsed = urlsplit(redirect_uri)
+            if parsed.scheme != "http" or parsed.hostname not in {"127.0.0.1", "localhost"}:
+                raise ValueError("redirect uri is not registered")
         else:
             client = await self.get_oauth_client(client_id)
             allowed_redirects = client.redirectUris
-        if redirect_uri not in allowed_redirects:
-            raise ValueError("redirect uri is not registered")
+            if redirect_uri not in allowed_redirects:
+                raise ValueError("redirect uri is not registered")
         if code_challenge_method != "S256":
             raise ValueError("code challenge method must be S256")
         if not code_challenge:
@@ -83,18 +93,20 @@ class OAuthRepositoryMixin:
         now = now_dt.isoformat().replace("+00:00", "Z")
         expires_at = (now_dt + timedelta(minutes=5)).isoformat().replace("+00:00", "Z")
         async with self._engine.begin() as conn:
-            if client_id == FIRST_PARTY_OAUTH_CLIENT_ID:
+            if client_id in FIRST_PARTY_OAUTH_CLIENT_IDS:
                 existing_client = (
                     await conn.execute(
-                        select(oauth_clients_t.c.id).where(oauth_clients_t.c.id == FIRST_PARTY_OAUTH_CLIENT_ID)
+                        select(oauth_clients_t.c.id).where(oauth_clients_t.c.id == client_id)
                     )
                 ).first()
                 if existing_client is None:
+                    name = "Agents Anywhere DSH" if client_id == DSH_OAUTH_CLIENT_ID else "Agents Anywhere Mobile"
+                    redirects = [redirect_uri] if client_id == DSH_OAUTH_CLIENT_ID else [FIRST_PARTY_OAUTH_REDIRECT_URI]
                     await conn.execute(
                         insert(oauth_clients_t).values(
-                            id=FIRST_PARTY_OAUTH_CLIENT_ID,
-                            name="Agents Anywhere Mobile",
-                            redirect_uris_json=_json_dumps([FIRST_PARTY_OAUTH_REDIRECT_URI]),
+                            id=client_id,
+                            name=name,
+                            redirect_uris_json=_json_dumps(redirects),
                             created_at=now,
                             updated_at=now,
                         )

@@ -221,12 +221,12 @@ def _migrate_runtime_inventory(bind: Any) -> None:
 def _add_runtime_id(table_name: str) -> None:
     op.add_column(table_name, sa.Column("runtime_id", sa.Text(), nullable=True))
     op.execute(sa.text(f"UPDATE {table_name} SET runtime_id = runtime"))
-    op.alter_column(
-        table_name,
-        "runtime_id",
-        existing_type=sa.Text(),
-        nullable=False,
-    )
+    with op.batch_alter_table(table_name) as batch_op:
+        batch_op.alter_column(
+            "runtime_id",
+            existing_type=sa.Text(),
+            nullable=False,
+        )
 
 
 def _reject_incompatible_downgrade(bind: Any) -> None:

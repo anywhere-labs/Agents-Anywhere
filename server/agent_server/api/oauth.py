@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import RedirectResponse
@@ -21,7 +21,21 @@ from agent_server.infra.repositories.facade import Store
 
 router = APIRouter(tags=["oauth"])
 FIRST_PARTY_CLIENT_ID = "agents-anywhere-mobile"
+DSH_CLIENT_ID = "agents-anywhere-dsh"
 FIRST_PARTY_REDIRECT_URI = "agents-anywhere://oauth/callback"
+FIRST_PARTY_CLIENT_IDS = {FIRST_PARTY_CLIENT_ID, DSH_CLIENT_ID}
+
+
+def _validate_client_and_redirect(client_id: str, redirect_uri: str) -> None:
+    if client_id not in FIRST_PARTY_CLIENT_IDS:
+        raise HTTPException(status_code=404, detail="oauth client not found")
+    if client_id == FIRST_PARTY_CLIENT_ID:
+        if redirect_uri != FIRST_PARTY_REDIRECT_URI:
+            raise HTTPException(status_code=422, detail="redirect uri is not allowed")
+    elif client_id == DSH_CLIENT_ID:
+        parsed = urlsplit(redirect_uri)
+        if parsed.scheme != "http" or parsed.hostname not in {"127.0.0.1", "localhost"}:
+            raise HTTPException(status_code=422, detail="redirect uri is not allowed")
 
 
 @router.get("/.well-known/oauth-authorization-server", response_model=OAuthMetadataResponse)
@@ -97,10 +111,7 @@ async def _create_authorization_redirect(
 ) -> str:
     if response_type != "code":
         raise HTTPException(status_code=422, detail="response_type must be code")
-    if client_id != FIRST_PARTY_CLIENT_ID:
-        raise HTTPException(status_code=404, detail="oauth client not found")
-    if redirect_uri != FIRST_PARTY_REDIRECT_URI:
-        raise HTTPException(status_code=422, detail="redirect uri is not allowed")
+    _validate_client_and_redirect(client_id, redirect_uri)
     try:
         code = await db.create_oauth_authorization_code(
             client_id=client_id,
@@ -131,10 +142,7 @@ async def oauth_token(
 ) -> OAuthTokenResponse:
     if grant_type != "authorization_code":
         raise HTTPException(status_code=422, detail="grant_type must be authorization_code")
-    if client_id != FIRST_PARTY_CLIENT_ID:
-        raise HTTPException(status_code=404, detail="oauth client not found")
-    if redirect_uri != FIRST_PARTY_REDIRECT_URI:
-        raise HTTPException(status_code=422, detail="redirect uri is not allowed")
+    _validate_client_and_redirect(client_id, redirect_uri)
     try:
         user, scope = await db.consume_oauth_authorization_code(
             code=code,

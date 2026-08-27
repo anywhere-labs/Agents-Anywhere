@@ -57,7 +57,10 @@ async def create_connector(
     broker: TimelineBroker = Depends(get_timeline_broker),
 ) -> ConnectorCreateResponse:
     connector, token, prefix = await store.create_connector(
-        name=payload.name, user_id=user_id
+        name=payload.name,
+        user_id=user_id,
+        connector_id=payload.connectorId,
+        connector_token=payload.connectorToken,
     )
     await publish_dashboard_changed(
         store,

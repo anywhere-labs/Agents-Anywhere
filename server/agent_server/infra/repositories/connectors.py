@@ -221,25 +221,67 @@ class ConnectorRepositoryMixin:
             )
 
 
-    async def create_connector(self, *, name: str, user_id: str) -> tuple[ConnectorView, str, str]:
-        connector_id = f"conn_{secrets.token_urlsafe(10)}"
-        token = _new_connector_token()
+    async def create_connector(
+        self,
+        *,
+        name: str,
+        user_id: str,
+        connector_id: str | None = None,
+        connector_token: str | None = None,
+    ) -> tuple[ConnectorView, str, str]:
+        token = connector_token or _new_connector_token()
         prefix = token[:12]
         now = utc_now()
         async with self._engine.begin() as conn:
-            await conn.execute(
-                insert(connectors_t).values(
-                    id=connector_id,
-                    user_id=user_id,
-                    name=name,
-                    status="offline",
-                    token_hash=_hash_token(token),
-                    token_prefix=prefix,
-                    created_at=now,
-                    updated_at=now,
+            cid = connector_id
+            if not cid:
+                # Check if an active connector with the same name already exists for this user
+                existing_by_name = (
+                    await conn.execute(
+                        select(connectors_t).where(
+                            connectors_t.c.user_id == user_id,
+                            connectors_t.c.name == name,
+                            connectors_t.c.revoked == 0,
+                        )
+                    )
+                ).mappings().first()
+                if existing_by_name is not None:
+                    cid = existing_by_name["id"]
+            if not cid:
+                cid = f"conn_{secrets.token_urlsafe(10)}"
+
+            existing = (
+                await conn.execute(
+                    select(connectors_t).where(connectors_t.c.id == cid)
                 )
-            )
-        return await self.get_connector(connector_id), token, prefix
+            ).mappings().first()
+            if existing is not None:
+                await conn.execute(
+                    update(connectors_t)
+                    .where(connectors_t.c.id == cid)
+                    .values(
+                        user_id=user_id,
+                        name=name,
+                        token_hash=_hash_token(token),
+                        token_prefix=prefix,
+                        revoked=0,
+                        updated_at=now,
+                    )
+                )
+            else:
+                await conn.execute(
+                    insert(connectors_t).values(
+                        id=cid,
+                        user_id=user_id,
+                        name=name,
+                        status="offline",
+                        token_hash=_hash_token(token),
+                        token_prefix=prefix,
+                        created_at=now,
+                        updated_at=now,
+                    )
+                )
+        return await self.get_connector(cid), token, prefix
 
 
     async def create_pairing(self, *, server_url: str | None, ttl_seconds: int) -> dict[str, str]:
