@@ -657,10 +657,19 @@ export async function fsList(
 export type FilterValue = {
   connectorId: string | "all"
   runtime: string | "all"
-  status: SessionStatus | "all"
+  status: SessionStatusFilter
 }
 
+export type SessionStatusFilter = "all" | "running" | "attention" | "idle" | "error" | "archived"
+
 export const defaultFilter: FilterValue = { connectorId: "all", runtime: "all", status: "all" }
+
+const groupedStatuses: Record<Exclude<SessionStatusFilter, "all" | "archived">, readonly SessionStatus[]> = {
+  running: ["running", "stopping"],
+  attention: ["waiting", "pending", "waiting_approval"],
+  idle: ["idle"],
+  error: ["error", "blocked"],
+}
 
 export function filterSessions(
   list: SessionView[],
@@ -670,7 +679,12 @@ export function filterSessions(
   return list.filter((s) => {
     if (filter.connectorId !== "all" && s.connectorId !== filter.connectorId) return false
     if (filter.runtime !== "all" && s.runtime !== filter.runtime) return false
-    if (filter.status !== "all" && s.status !== filter.status) return false
+    if (filter.status === "archived") {
+      if (!s.archived) return false
+    } else {
+      if (s.archived) return false
+      if (filter.status !== "all" && !groupedStatuses[filter.status].includes(s.status)) return false
+    }
     if (query.trim() && !(s.title ?? "").toLowerCase().includes(query.trim().toLowerCase())) return false
     return true
   })

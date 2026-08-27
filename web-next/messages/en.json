@@ -250,6 +250,7 @@
   "dashboard": {
     "actions": {
       "archive": "Archive",
+      "archiveChat": "Archive chat",
       "collapse": "Collapse sidebar",
       "copiedDeviceId": "Device ID copied",
       "copiedSessionId": "Session ID copied",
@@ -263,6 +264,7 @@
       "open": "Open",
       "pairDevice": "Pair device",
       "pin": "Pin",
+      "pinChat": "Pin chat",
       "refresh": "Refresh",
       "rename": "Rename",
       "retry": "Retry",
@@ -270,7 +272,9 @@
       "sessionOptions": "Session options",
       "signOut": "Sign out",
       "unarchive": "Unarchive",
-      "unpin": "Unpin"
+      "unarchiveChat": "Unarchive chat",
+      "unpin": "Unpin",
+      "unpinChat": "Unpin chat"
     },
     "account": {
       "menu": "Account menu"
@@ -296,6 +300,7 @@
     "filters": {
       "active": "Active",
       "all": "All",
+      "allActive": "All active",
       "archived": "Archived",
       "status": "Status",
       "devices": "Devices",
@@ -303,6 +308,9 @@
       "allStatus": "All statuses",
       "allDevices": "All devices",
       "allAgents": "All agents",
+      "inProgress": "In progress",
+      "issues": "Issues",
+      "needsAttention": "Needs attention",
       "clear": "Clear filters"
     },
     "nav": {

@@ -250,6 +250,7 @@
   "dashboard": {
     "actions": {
       "archive": "归档",
+      "archiveChat": "归档聊天",
       "collapse": "折叠侧栏",
       "copiedDeviceId": "已复制设备 ID",
       "copiedSessionId": "已复制会话 ID",
@@ -263,6 +264,7 @@
       "open": "打开",
       "pairDevice": "配对设备",
       "pin": "置顶",
+      "pinChat": "置顶聊天",
       "refresh": "刷新",
       "rename": "重命名",
       "retry": "重试",
@@ -270,7 +272,9 @@
       "sessionOptions": "会话选项",
       "signOut": "退出登录",
       "unarchive": "取消归档",
-      "unpin": "取消置顶"
+      "unarchiveChat": "取消归档",
+      "unpin": "取消置顶",
+      "unpinChat": "取消置顶"
     },
     "account": {
       "menu": "账号菜单"
@@ -302,6 +306,7 @@
     "filters": {
       "active": "活跃",
       "all": "全部",
+      "allActive": "全部活跃",
       "archived": "已归档",
       "status": "状态",
       "devices": "设备",
@@ -309,6 +314,9 @@
       "allStatus": "全部状态",
       "allDevices": "全部设备",
       "allAgents": "全部 Agent",
+      "inProgress": "进行中",
+      "issues": "异常",
+      "needsAttention": "待处理",
       "clear": "清除筛选"
     },
     "new": {

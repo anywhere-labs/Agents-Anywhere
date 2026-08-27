@@ -15,7 +15,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { cn } from "@/lib/utils"
-import { defaultFilter, type FilterValue, type SessionStatus } from "@/lib/demo-api"
+import { defaultFilter, type FilterValue, type SessionStatusFilter } from "@/lib/demo-api"
 import { useWorkspace } from "@/components/workspace-context"
 import { useTranslations } from "next-intl"
 import { runtimeLabel } from "@/components/session/session-utils"
@@ -28,16 +28,13 @@ export function SessionFilterMenu() {
   const active = filter.connectorId !== "all" || filter.runtime !== "all" || filter.status !== "all"
 
   const update = (patch: Partial<FilterValue>) => setFilter({ ...filter, ...patch })
-  const statuses: { value: SessionStatus | "all"; label: string }[] = [
-    { value: "all", label: t("filters.allStatus") },
-    { value: "running", label: t("sessionStatus.running") },
+  const statuses: { value: SessionStatusFilter; label: string }[] = [
+    { value: "all", label: t("filters.allActive") },
+    { value: "running", label: t("filters.inProgress") },
+    { value: "attention", label: t("filters.needsAttention") },
     { value: "idle", label: t("sessionStatus.idle") },
-    { value: "pending", label: t("sessionStatus.pending") },
-    { value: "waiting", label: t("sessionStatus.waiting") },
-    { value: "waiting_approval", label: t("sessionStatus.waitingApproval") },
-    { value: "error", label: t("sessionStatus.error") },
-    { value: "blocked", label: t("sessionStatus.blocked") },
-    { value: "stopping", label: t("sessionStatus.stopping") },
+    { value: "error", label: t("filters.issues") },
+    { value: "archived", label: t("filters.archived") },
   ]
 
   // Derive unique runtimes from sessions
@@ -91,7 +88,7 @@ export function SessionFilterMenu() {
           label={t("filters.status")}
           options={statuses}
           value={filter.status}
-          onSelect={(v) => update({ status: v as SessionStatus | "all" })}
+          onSelect={(v) => update({ status: v as SessionStatusFilter })}
         />
         {active && (
           <>
