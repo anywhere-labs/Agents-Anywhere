@@ -1371,6 +1371,7 @@
     "saveConflict": "The file changed on disk. Refresh before saving again.",
     "saveBeforeLeavingEdit": "Save or refresh before leaving edit mode.",
     "saveBeforeClose": "Save or refresh before closing this preview.",
+    "emptyDirectory": "This folder is empty",
     "binaryUnavailable": "Preview unavailable"
   }
 }
