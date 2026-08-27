@@ -40,6 +40,9 @@ RPC_LOG_PARTIAL_SECRET_KEYS = frozenset(
 )
 CONNECTOR_WS_MAX_NOTIFICATION_BYTES = 900 * 1024
 CRITICAL_RPC_METHODS = frozenset({"interaction.respond", "session.notices"})
+SESSION_LOAD_RPC_METHODS = frozenset(
+    {"session.state", "session.notices", "session.capabilities"}
+)
 
 
 class WebSocketSender(Protocol):
@@ -202,7 +205,13 @@ class ConnectorRpcChannel:
         method = message.get("method")
         if not isinstance(request_id, str) or not isinstance(method, str):
             return
-        task = asyncio.create_task(self.process_request(message, dispatch))
+        task = asyncio.create_task(
+            self.process_request(
+                message,
+                dispatch,
+                scheduled_at=time.monotonic(),
+            )
+        )
         self._request_tasks.add(task)
         task.add_done_callback(self.handle_request_task_done)
 
@@ -210,15 +219,38 @@ class ConnectorRpcChannel:
         self,
         message: dict[str, Any],
         dispatch: ConnectorDispatcher,
+        *,
+        scheduled_at: float | None = None,
     ) -> None:
         method = message.get("method")
+        request_id = message.get("id")
+        request_started_at = scheduled_at or time.monotonic()
+        semaphore_wait_started_at = time.monotonic()
         semaphore = (
             self._critical_request_semaphore
             if method in CRITICAL_RPC_METHODS
             else self._request_semaphore
         )
         async with semaphore:
+            queue_elapsed_ms = (time.monotonic() - request_started_at) * 1000
+            semaphore_elapsed_ms = (time.monotonic() - semaphore_wait_started_at) * 1000
+            dispatch_started_at = time.monotonic()
             await self.handle_message(message, dispatch)
+            dispatch_elapsed_ms = (time.monotonic() - dispatch_started_at) * 1000
+        total_elapsed_ms = (time.monotonic() - request_started_at) * 1000
+        if method in SESSION_LOAD_RPC_METHODS or total_elapsed_ms >= 100:
+            logger.info(
+                "connector rpc timing method={} id={} queue_elapsed_ms={:.1f} "
+                "semaphore_elapsed_ms={:.1f} dispatch_elapsed_ms={:.1f} "
+                "total_elapsed_ms={:.1f} active_requests={}",
+                method,
+                request_id,
+                queue_elapsed_ms,
+                semaphore_elapsed_ms,
+                dispatch_elapsed_ms,
+                total_elapsed_ms,
+                len(self._request_tasks),
+            )
 
     def handle_request_task_done(self, task: asyncio.Task[None]) -> None:
         self._request_tasks.discard(task)

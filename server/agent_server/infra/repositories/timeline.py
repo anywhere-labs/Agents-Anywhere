@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 
+from loguru import logger
 from sqlalchemy import case, func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncConnection
 
@@ -386,16 +388,37 @@ class TimelineRepositoryMixin:
                 if lock is None:
                     lock = asyncio.Lock()
                     self._timeline_locks[session_id] = lock
-            async with lock:
-                yield
-            return
-
-        lock_key = session_timeline_lock_key(session_id)
-        async with self._engine.connect() as conn:
-            await conn.execute(text("SELECT pg_advisory_lock(:k)"), {"k": lock_key})
+            wait_started_at = time.monotonic()
+            await lock.acquire()
+            wait_elapsed_ms = (time.monotonic() - wait_started_at) * 1000
+            hold_started_at = time.monotonic()
             try:
                 yield
             finally:
+                hold_elapsed_ms = (time.monotonic() - hold_started_at) * 1000
+                lock.release()
+                if wait_elapsed_ms >= 50 or hold_elapsed_ms >= 250:
+                    logger.info(
+                        "timeline writer lock timing session_id={} backend=sqlite "
+                        "wait_elapsed_ms={:.1f} hold_elapsed_ms={:.1f}",
+                        session_id,
+                        wait_elapsed_ms,
+                        hold_elapsed_ms,
+                    )
+            return
+
+        lock_key = session_timeline_lock_key(session_id)
+        connection_started_at = time.monotonic()
+        async with self._engine.connect() as conn:
+            connection_elapsed_ms = (time.monotonic() - connection_started_at) * 1000
+            wait_started_at = time.monotonic()
+            await conn.execute(text("SELECT pg_advisory_lock(:k)"), {"k": lock_key})
+            wait_elapsed_ms = (time.monotonic() - wait_started_at) * 1000
+            hold_started_at = time.monotonic()
+            try:
+                yield
+            finally:
+                hold_elapsed_ms = (time.monotonic() - hold_started_at) * 1000
                 try:
                     await conn.execute(
                         text("SELECT pg_advisory_unlock(:k)"),
@@ -403,6 +426,20 @@ class TimelineRepositoryMixin:
                     )
                 except Exception:  # noqa: BLE001, S110
                     pass
+                if (
+                    connection_elapsed_ms >= 50
+                    or wait_elapsed_ms >= 50
+                    or hold_elapsed_ms >= 250
+                ):
+                    logger.info(
+                        "timeline writer lock timing session_id={} backend=postgres "
+                        "connection_elapsed_ms={:.1f} wait_elapsed_ms={:.1f} "
+                        "hold_elapsed_ms={:.1f}",
+                        session_id,
+                        connection_elapsed_ms,
+                        wait_elapsed_ms,
+                        hold_elapsed_ms,
+                    )
 
 
 async def update_source_observed_at(

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
@@ -115,6 +116,7 @@ class ClaudeHistorySyncer:
                 commit=commit_local_retry,
             )
 
+        history_started_at = time.monotonic()
         try:
             info, messages = await self._read_history(external_session_id)
         except Exception as exc:
@@ -125,10 +127,22 @@ class ClaudeHistorySyncer:
             raise RuntimeUpstreamError(
                 f"Claude history sync failed for session {external_session_id}"
             ) from exc
+        history_elapsed_ms = (time.monotonic() - history_started_at) * 1000
 
         cursor = cursor_for(info, messages)
+        cursor_started_at = time.monotonic()
         previous_cursor = await self.cursor_store.read(external_session_id)
+        cursor_elapsed_ms = (time.monotonic() - cursor_started_at) * 1000
         if previous_cursor == cursor:
+            logger.info(
+                "Claude history sync unchanged session_id={} external_session_id={} messages={} "
+                "history_elapsed_ms={:.1f} cursor_elapsed_ms={:.1f}",
+                session_id,
+                external_session_id,
+                len(messages),
+                history_elapsed_ms,
+                cursor_elapsed_ms,
+            )
             return PreparedSessionTimelineSync(
                 snapshot=None,
                 commit=self.session_sync_commit(pending_session_sync),
@@ -139,16 +153,34 @@ class ClaudeHistorySyncer:
         else:
             sync_messages = messages_after_cursor(messages, previous_cursor)
         session = _history_session(session_id, external_session_id, info)
+        match_started_at = time.monotonic()
         client_message_matches = await _match_history_client_messages(
             session=session,
             messages=sync_messages,
             pending_messages=self.pending_messages,
             prefer_latest=previous_cursor is None,
         )
+        match_elapsed_ms = (time.monotonic() - match_started_at) * 1000
+        projection_started_at = time.monotonic()
         items = await asyncer.asyncify(_history_items_from_messages)(
             session,
             sync_messages,
             client_message_matches=client_message_matches,
+        )
+        projection_elapsed_ms = (time.monotonic() - projection_started_at) * 1000
+        logger.info(
+            "Claude history sync prepared session_id={} external_session_id={} messages={} "
+            "sync_messages={} items={} history_elapsed_ms={:.1f} cursor_elapsed_ms={:.1f} "
+            "match_elapsed_ms={:.1f} projection_elapsed_ms={:.1f}",
+            session_id,
+            external_session_id,
+            len(messages),
+            len(sync_messages),
+            len(items),
+            history_elapsed_ms,
+            cursor_elapsed_ms,
+            match_elapsed_ms,
+            projection_elapsed_ms,
         )
         snapshot = RuntimeTimelineSnapshot(
             session_id=session_id,
@@ -190,15 +222,26 @@ class ClaudeHistorySyncer:
         cwd: str | None = None,
     ) -> tuple[object | None, tuple[object, ...]]:
         sdk = load_sdk(self.sdk_loader)
+        info_started_at = time.monotonic()
         info = await read_sdk_session_info(
             sdk,
             session_id=external_session_id,
             directory=cwd,
         )
+        info_elapsed_ms = (time.monotonic() - info_started_at) * 1000
+        messages_started_at = time.monotonic()
         messages = await read_sdk_session_messages(
             sdk,
             session_id=external_session_id,
             directory=cwd,
+        )
+        logger.info(
+            "Claude history SDK read completed external_session_id={} messages={} "
+            "info_elapsed_ms={:.1f} messages_elapsed_ms={:.1f}",
+            external_session_id,
+            len(messages),
+            info_elapsed_ms,
+            (time.monotonic() - messages_started_at) * 1000,
         )
         return info, messages
 
