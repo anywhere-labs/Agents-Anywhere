@@ -115,6 +115,17 @@ export function useAttachments() {
     })
   }, [])
 
+  const restoreIfEmpty = useCallback((files: AttachedFile[]) => {
+    const restored = processFiles(files.map((item) => item.file))
+    setAttachments((prev) => {
+      if (prev.length > 0) {
+        revokePreviews(restored)
+        return prev
+      }
+      return restored
+    })
+  }, [])
+
   const add = useCallback((files: AttachedFile[]) => {
     setAttachments((prev) => mergeFiles(prev, files))
   }, [])
@@ -175,7 +186,18 @@ export function useAttachments() {
     [add],
   )
 
-  return { attachments, isDragging, add, remove, clear, onDragEnter, onDragLeave, onDragOver, onDrop }
+  return {
+    attachments,
+    isDragging,
+    add,
+    remove,
+    clear,
+    restoreIfEmpty,
+    onDragEnter,
+    onDragLeave,
+    onDragOver,
+    onDrop,
+  }
 }
 
 export function AttachmentButton({

@@ -99,9 +99,21 @@ export function SessionComposer({
 }) {
   const tSession = useTranslations("dashboard.session")
   const tNew = useTranslations("dashboard.new")
-  const { attachments, isDragging, add, remove, clear, onDragEnter, onDragLeave, onDragOver, onDrop } =
-    useAttachments()
+  const {
+    attachments,
+    isDragging,
+    add,
+    remove,
+    clear,
+    restoreIfEmpty,
+    onDragEnter,
+    onDragLeave,
+    onDragOver,
+    onDrop,
+  } = useAttachments()
   const composerRef = React.useRef<HTMLDivElement | null>(null)
+  const valueRef = React.useRef(value)
+  valueRef.current = value
   const composerWidth = useElementWidth(composerRef)
   const runtimeStatus = effectiveRuntimeStatus(runtimeState, session)
   const runtimeSelections = runtimeState?.selections ?? {}
@@ -303,6 +315,10 @@ export function SessionComposer({
     hasInput &&
     (attachments.length === 0 || canUseAttachments)
   const concurrentWriter = runtimeState?.error?.code === "DSH_CONCURRENT_WRITER_DETECTED"
+  const updateValue = React.useCallback((nextValue: string) => {
+    valueRef.current = nextValue
+    onValueChange(nextValue)
+  }, [onValueChange])
 
   const submit = async () => {
     if (!hasInput) return
@@ -310,7 +326,7 @@ export function SessionComposer({
     if (commandQuery !== null && attachments.length === 0) {
       if (command && canRunCommand) {
         const parsed = parseCommandValue(value)
-        onValueChange("")
+        updateValue("")
         onCommand(command.id, { args: parsed.args, raw: parsed.raw })
       }
       return
@@ -318,13 +334,15 @@ export function SessionComposer({
     if (!canSubmitMessage) return
     const text = value
     const files = attachments
+    updateValue("")
+    clear()
     const sent = await onSend(text, files, {
       ...(selectedModelSelection ? { model: selectedModelSelection } : {}),
       ...(selectedPermissionSelection ? { permission: selectedPermissionSelection } : {}),
     })
-    if (sent) {
-      onValueChange("")
-      clear()
+    if (!sent && valueRef.current === "") {
+      updateValue(text)
+      restoreIfEmpty(files)
     }
   }
 
@@ -379,7 +397,7 @@ export function SessionComposer({
                       disabled={!command.enabled}
                       onClick={() => {
                         if (!command.enabled) return
-                        onValueChange("")
+                        updateValue("")
                         onCommand(command.id, { args: [], raw: `/${command.id}` })
                       }}
                     >
@@ -401,7 +419,7 @@ export function SessionComposer({
             ) : null}
             <Textarea
               value={value}
-              onChange={(event) => onValueChange(event.currentTarget.value)}
+              onChange={(event) => updateValue(event.currentTarget.value)}
               onKeyDown={(event) => {
                 if (event.nativeEvent.isComposing) return
                 if (event.key === "Enter" && !event.shiftKey) {
