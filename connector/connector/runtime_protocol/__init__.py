@@ -75,7 +75,10 @@ from connector.runtime_protocol.models import (
 )
 from connector.runtime_protocol.protocol import AgentRuntime
 from connector.runtime_protocol.provider import RuntimeProvider
-from connector.runtime_protocol.state_cache import RuntimeSessionStateCache
+from connector.runtime_protocol.state_cache import (
+    RuntimeSessionSourceStateCache,
+    RuntimeSessionStateCache,
+)
 from connector.runtime_protocol.supervisor import (
     RuntimeSupervisor,
 )
@@ -220,6 +223,7 @@ __all__ = [
     "RuntimeResourceMode",
     "RuntimeScope",
     "RuntimeSessionStateCache",
+    "RuntimeSessionSourceStateCache",
     "RuntimeSourceKey",
     "RuntimeStatus",
     "RuntimeStatusSink",

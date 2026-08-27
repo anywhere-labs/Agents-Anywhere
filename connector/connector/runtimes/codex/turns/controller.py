@@ -10,6 +10,7 @@ from connector.runtime_protocol import (
     RuntimeModelCatalog,
     RuntimeOperationResult,
     RuntimePermissionCatalog,
+    RuntimeSessionSourceStateCache,
     RuntimeSessionStateCache,
 )
 from connector.runtime_protocol.host import RuntimeHostClient
@@ -35,6 +36,7 @@ class CodexTurnController:
     host: RuntimeHostClient
     client: CodexRuntimeClient | None
     session_states: RuntimeSessionStateCache
+    source_states: RuntimeSessionSourceStateCache
     active_turn_ids: dict[str, str]
     notices: CodexNoticeRegistry
     ensure_started: EnsureStarted
@@ -53,6 +55,7 @@ class CodexTurnController:
             host=self.host,
             client=self.client,
             session_states=self.session_states,
+            source_states=self.source_states,
             active_turn_ids=self.active_turn_ids,
             notices=self.notices,
             ensure_started=self.ensure_started,

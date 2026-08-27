@@ -82,6 +82,14 @@ class SessionRunInstancesUnsupportedError(SessionRunConflictError):
         )
 
 
+SESSION_SOURCE_ERROR_CODES = {
+    "archived": "session_archived",
+    "unavailable": "session_unavailable",
+    "deleted": "session_deleted",
+    "missing": "session_missing",
+}
+
+
 @dataclass(frozen=True, slots=True)
 class PersistedInlineAttachment:
     file_id: str
@@ -314,6 +322,8 @@ class SessionRunService:
         except KeyError:
             raise SessionRunNotFoundError("session not found") from None
 
+        if session.archived:
+            raise SessionRunConflictError(_session_source_error_detail(session))
         if not session.takeover:
             raise SessionRunConflictError("session is read-only until takeover is enabled")
         if not await self._manager.is_online(session.connectorId):
@@ -372,7 +382,50 @@ class SessionRunService:
         except ConnectorRpcError as exc:
             await self._store.clear_active_run(session_id)
             raise SessionRunUpstreamError(exc.message or exc.code) from exc
+        if isinstance(result, dict) and result.get("ok") is False:
+            await self._store.clear_active_run(session_id)
+            await self._persist_operation_source_state(session, result)
+            code = result.get("code")
+            message = result.get("message")
+            raise SessionRunConflictError(
+                {
+                    "code": code if isinstance(code, str) else "runtime_operation_failed",
+                    "message": (
+                        message
+                        if isinstance(message, str)
+                        else "runtime operation failed"
+                    ),
+                }
+            )
         return RpcResponsePayload(ok=True, result=result)
+
+    async def _persist_operation_source_state(
+        self,
+        session: SessionView,
+        result: dict[str, Any],
+    ) -> None:
+        source_state = result.get("sourceState")
+        if not isinstance(source_state, dict):
+            return
+        availability = source_state.get("availability")
+        observation_origin = source_state.get("observationOrigin")
+        if availability not in SESSION_SOURCE_ERROR_CODES:
+            return
+        if observation_origin not in {"event", "inventory", "operation"}:
+            return
+        if source_state.get("sessionId") not in {None, session.id}:
+            return
+        if source_state.get("runtime") not in {None, session.runtime}:
+            return
+        reason = source_state.get("reason")
+        observed_at = source_state.get("observedAt")
+        await self._store.update_session_source_state(
+            session.id,
+            availability=availability,
+            reason=reason if isinstance(reason, str) else None,
+            observed_at=observed_at if isinstance(observed_at, str) else None,
+            observation_origin=observation_origin,
+        )
 
     async def _read_runtime_status(self, session: SessionView) -> SessionStatus:
         params: dict[str, Any] = {
@@ -794,6 +847,16 @@ class SessionRunService:
             raise SessionRunUpstreamError(exc.message or exc.code) from exc
         await self._store.clear_active_run(session_id)
         return RpcResponsePayload(ok=True, result=result)
+
+
+def _session_source_error_detail(session: SessionView) -> dict[str, str]:
+    availability = session.sourceAvailability
+    code = SESSION_SOURCE_ERROR_CODES.get(availability, "session_archived")
+    if session.userArchived and session.archiveSource == "user":
+        message = "session is archived in Agents Anywhere"
+    else:
+        message = f"session is {availability} in the local runtime"
+    return {"code": code, "message": message}
 
 
 def _selections_from_mapping(value: dict[str, str | None]) -> dict[str, str]:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any
 
 import asyncer
@@ -13,7 +14,10 @@ from connector.runtime_protocol import (
     RuntimeModelCatalog,
     RuntimeInvalidRequestError,
     RuntimePermissionCatalog,
+    RuntimeSessionSourceStateCache,
     RuntimeSessionStateCache,
+    SessionSourceObservation,
+    SessionSourceState,
 )
 from connector.runtime_protocol.host import RuntimeHostClient
 from connector.runtime_protocol.models import (
@@ -29,6 +33,7 @@ from connector.runtimes.codex.domain.pending_messages import (
 )
 from connector.runtimes.codex.domain.selections import selections_from_thread_state
 from connector.runtimes.codex.sdk.runtime_client import CodexRuntimeClient
+from connector.runtimes.codex.sessions.inventory import list_all_codex_threads
 from connector.runtimes.codex.timeline.accumulator import CodexTimelineAccumulator
 
 ListModelCatalog = Callable[[str | None, int], Awaitable[RuntimeModelCatalog]]
@@ -41,11 +46,16 @@ def _session_sync_key(thread_id: str) -> str:
     return f"codex/session-sync/{thread_id}"
 
 
+def _utc_now() -> str:
+    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+
+
 @dataclass(slots=True)
 class CodexSessionReader:
     host: RuntimeHostClient
     client: CodexRuntimeClient | None
     session_states: RuntimeSessionStateCache
+    source_states: RuntimeSessionSourceStateCache
     ensure_started: EnsureStarted
     list_model_catalog: ListModelCatalog
     list_permission_catalog: ListPermissionCatalog
@@ -66,7 +76,12 @@ class CodexSessionReader:
             return ()
         await self.ensure_started()
         started_at = time.monotonic()
-        result = await self.client.list_threads(limit=limit, cursor=cursor)
+        result = await self.client.list_threads(
+            limit=limit,
+            cursor=cursor,
+            archived=False,
+        )
+        observed_at = _utc_now()
         sessions: list[SessionMeta] = []
         for thread_ref_mapping in result.threads:
             thread_ref = dict(thread_ref_mapping)
@@ -77,6 +92,8 @@ class CodexSessionReader:
                 thread_id,
                 thread_ref,
                 force=force,
+                availability="available",
+                observed_at=observed_at,
             )
             sessions.append(session)
         elapsed_ms = (time.monotonic() - started_at) * 1000
@@ -90,11 +107,53 @@ class CodexSessionReader:
         )
         return tuple(sessions[:limit])
 
+    async def list_complete_session_inventory(
+        self,
+        page_size: int = 100,
+        force: bool = False,
+    ) -> tuple[SessionMeta, ...]:
+        if self.client is None:
+            return ()
+        await self.ensure_started()
+        observed_at = _utc_now()
+        active_threads = await list_all_codex_threads(
+            self.client,
+            archived=False,
+            page_size=page_size,
+        )
+        archived_threads = await list_all_codex_threads(
+            self.client,
+            archived=True,
+            page_size=page_size,
+        )
+        sessions_by_thread_id: dict[str, SessionMeta] = {}
+        for availability, threads in (
+            ("available", active_threads),
+            ("archived", archived_threads),
+        ):
+            for thread_ref_mapping in threads:
+                thread_ref = dict(thread_ref_mapping)
+                thread_id = codex_sessions.thread_id_from_result(thread_ref)
+                if thread_id is None:
+                    continue
+                sessions_by_thread_id[thread_id] = (
+                    await self._session_meta_from_thread_ref(
+                        thread_id,
+                        thread_ref,
+                        force=force,
+                        availability=availability,
+                        observed_at=observed_at,
+                    )
+                )
+        return tuple(sessions_by_thread_id.values())
+
     async def _session_meta_from_thread_ref(
         self,
         thread_id: str,
         thread_ref: dict[str, Any],
         force: bool,
+        availability: str,
+        observed_at: str,
     ) -> SessionMeta:
         local_state = codex_sessions.local_thread_state(thread_ref)
         sync_marker = codex_sessions.thread_sync_marker(thread_ref)
@@ -104,7 +163,11 @@ class CodexSessionReader:
             previous_sync.get("marker") if isinstance(previous_sync, dict) else None
         )
         changed = force or sync_marker is None or previous_marker != sync_marker
-        hidden = local_state in {"archived", "deleted", "unresumable"}
+        hidden = availability != "available" or local_state in {
+            "archived",
+            "deleted",
+            "unresumable",
+        }
         title = codex_sessions.thread_title(thread_ref)
         cwd = codex_sessions.thread_cwd(thread_ref)
         ordering_time = codex_sessions.thread_ordering_time(thread_ref)
@@ -126,6 +189,20 @@ class CodexSessionReader:
             self._pending_sync_states[session_id] = (sync_key, sync_state)
         else:
             await self.host.sync_state_write(sync_key, sync_state)
+        source_state = SessionSourceState(
+            availability="archived" if hidden else "available",
+            reason="codex.thread/list archived" if hidden else "codex.thread/list active",
+            observed_at=observed_at,
+            observation_origin="inventory",
+        )
+        self.source_states.remember(
+            SessionSourceObservation(
+                session_id=session_id,
+                external_session_id=thread_id,
+                runtime="codex",
+                state=source_state,
+            )
+        )
         return SessionMeta(
             session_id=session_id,
             external_session_id=thread_id,
@@ -133,6 +210,7 @@ class CodexSessionReader:
             title=title,
             cwd=cwd,
             ordering_time=ordering_time,
+            source_state=source_state,
             metadata={
                 "local_state": local_state,
                 "hidden": hidden,
@@ -146,7 +224,6 @@ class CodexSessionReader:
                 },
             },
         )
-
     async def prepare_session_timeline_sync(
         self,
         session_id: str,

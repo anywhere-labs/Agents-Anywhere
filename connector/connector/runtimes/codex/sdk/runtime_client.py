@@ -122,6 +122,7 @@ class CodexRuntimeClient(Protocol):
         self,
         limit: int = 100,
         cursor: str | None = None,
+        archived: bool | None = None,
     ) -> CodexThreadListResult: ...
     async def read_thread(
         self,

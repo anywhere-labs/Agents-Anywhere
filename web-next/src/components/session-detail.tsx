@@ -18,6 +18,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { Marker, MarkerContent, MarkerIcon } from "@/components/ui/marker"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { createClientId } from "@/lib/id"
+import { isApiError } from "@/lib/api/errors"
 import { cn } from "@/lib/utils"
 import { dashboardApi } from "@/features/dashboard/api"
 import type {
@@ -119,6 +120,11 @@ type ComposerDraftState = {
   sessionId: string
   value: string
 }
+type SessionSourceErrorCode =
+  | "session_archived"
+  | "session_unavailable"
+  | "session_deleted"
+  | "session_missing"
 
 async function loadInitialSessionState(
   token: string,
@@ -282,6 +288,7 @@ export function SessionDetail({
   const [showScrollBottom, setShowScrollBottom] = React.useState(false)
   const [loadingOlder, setLoadingOlder] = React.useState(false)
   const [pendingTakeover, setPendingTakeover] = React.useState<boolean | null>(null)
+  const [sourceErrorCode, setSourceErrorCode] = React.useState<SessionSourceErrorCode | null>(null)
   const [commandQuery, setCommandQuery] = React.useState<string | null>(null)
   const [runtimeCommands, setRuntimeCommands] = React.useState<RuntimeCommand[]>([])
   const [commandsLoading, setCommandsLoading] = React.useState(false)
@@ -969,7 +976,12 @@ export function SessionDetail({
       scrollToBottomThrottled()
       return true
     } catch (err) {
-      const message = err instanceof Error ? err.message : tSession("sendFailed")
+      const nextSourceErrorCode = sessionSourceErrorCode(err)
+      const message = nextSourceErrorCode
+        ? sourceErrorMessage(nextSourceErrorCode, tSession)
+        : err instanceof Error
+          ? err.message
+          : tSession("sendFailed")
       markOptimisticMessageFailed(clientMessageId, message)
       setState((current) => {
         if (!current) return current
@@ -986,7 +998,24 @@ export function SessionDetail({
           ),
         }
       })
-      toast.error(err instanceof Error ? err.message : tSession("sendFailed"))
+      if (nextSourceErrorCode) {
+        const sourceAvailability = sourceAvailabilityFromError(nextSourceErrorCode)
+        const nextSession: SessionView = {
+          ...session,
+          archived: true,
+          archivedAt: session.archivedAt ?? new Date().toISOString(),
+          sourceAvailability,
+          sourceAvailabilityReason: message,
+          sourceAvailabilityUpdatedAt: new Date().toISOString(),
+          sourceObservationOrigin: "operation",
+          archiveSource: session.userArchived ? "both" : "runtime",
+        }
+        setState((current) => current ? { ...current, session: nextSession } : current)
+        onSessionUpdated?.(nextSession)
+        setSourceErrorCode(nextSourceErrorCode)
+      } else {
+        toast.error(err instanceof Error ? err.message : tSession("sendFailed"))
+      }
       return false
     } finally {
       setSending(false)
@@ -1309,6 +1338,9 @@ export function SessionDetail({
   if (!session) return null
 
   const takeoverTarget = pendingTakeover ?? false
+  const sourceErrorDialog = sourceErrorCode
+    ? sourceErrorDialogContent(sourceErrorCode, tSession)
+    : null
   const takeoverAgent = session.runtimeName?.trim() || runtimeLabel(sessionRuntimeType(session))
   const takeoverDescription = (tSession.raw(
     takeoverTarget ? "takeoverEnableDescription" : "takeoverDisableDescription",
@@ -1491,8 +1523,81 @@ export function SessionDetail({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <Dialog
+        open={sourceErrorDialog !== null}
+        onOpenChange={(open: boolean) => {
+          if (!open) setSourceErrorCode(null)
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{sourceErrorDialog?.title}</DialogTitle>
+            <DialogDescription>{sourceErrorDialog?.description}</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button onClick={() => setSourceErrorCode(null)}>{tCommon("gotIt")}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
+}
+
+function sessionSourceErrorCode(error: unknown): SessionSourceErrorCode | null {
+  if (!isApiError(error)) return null
+  if (
+    error.code === "session_archived" ||
+    error.code === "session_unavailable" ||
+    error.code === "session_deleted" ||
+    error.code === "session_missing"
+  ) {
+    return error.code
+  }
+  return null
+}
+
+function sourceAvailabilityFromError(
+  code: SessionSourceErrorCode,
+): SessionView["sourceAvailability"] {
+  if (code === "session_archived") return "archived"
+  if (code === "session_deleted") return "deleted"
+  if (code === "session_missing") return "missing"
+  return "unavailable"
+}
+
+function sourceErrorDialogContent(
+  code: SessionSourceErrorCode,
+  tSession: ReturnType<typeof useTranslations>,
+): { title: string; description: string } {
+  if (code === "session_archived") {
+    return {
+      title: tSession("sourceArchivedTitle"),
+      description: tSession("sourceArchivedDescription"),
+    }
+  }
+  if (code === "session_deleted") {
+    return {
+      title: tSession("sourceDeletedTitle"),
+      description: tSession("sourceDeletedDescription"),
+    }
+  }
+  if (code === "session_missing") {
+    return {
+      title: tSession("sourceMissingTitle"),
+      description: tSession("sourceMissingDescription"),
+    }
+  }
+  return {
+    title: tSession("sourceUnavailableTitle"),
+    description: tSession("sourceUnavailableDescription"),
+  }
+}
+
+function sourceErrorMessage(
+  code: SessionSourceErrorCode,
+  tSession: ReturnType<typeof useTranslations>,
+): string {
+  return sourceErrorDialogContent(code, tSession).description
 }
 
 function BlockingInteractionStack({

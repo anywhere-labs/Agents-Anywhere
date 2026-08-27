@@ -7,6 +7,8 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
+import pytest
+from openai_codex import InvalidRequestError
 from openai_codex.generated.v2_all import (
     AgentMessageThreadItem,
     ApprovalsReviewer,
@@ -54,6 +56,7 @@ from connector.runtime_protocol import (
     RuntimeCapabilitySet,
     RuntimeConfig,
     RuntimeInvalidRequestError,
+    SessionSourceObservation,
     SessionNotice,
     SystemTimelineItem,
     TimelineSource,
@@ -457,6 +460,7 @@ class FakeCodexClient:
                     },
                 ]
             },
+            "thread/list/archived": {"threads": []},
             "thread/read": {
                 "thread": {
                     "id": "thread_1",
@@ -527,6 +531,7 @@ class FakeCodexClient:
         self,
         limit: int = 100,
         cursor: str | None = None,
+        archived: bool | None = None,
     ) -> CodexThreadListResult:
         params: dict[str, Any] = {
             "limit": limit,
@@ -534,9 +539,17 @@ class FakeCodexClient:
         }
         if cursor is not None:
             params["cursor"] = cursor
-        result = self.record_request("thread/list", params)
+        if archived is not None:
+            params["archived"] = archived
+        result = self.record_request(
+            "thread/list/archived" if archived else "thread/list",
+            params,
+        )
         threads = result["threads"]
-        return CodexThreadListResult(threads=tuple(threads))
+        return CodexThreadListResult(
+            threads=tuple(threads),
+            next_cursor=result.get("nextCursor"),
+        )
 
     async def read_thread(
         self,
@@ -641,6 +654,7 @@ class FakeHost(RuntimeHostClient):
     def __init__(self) -> None:
         self.meta_upserts: list[dict[str, Any]] = []
         self.state_updates: list[dict[str, Any]] = []
+        self.source_updates: list[SessionSourceObservation] = []
         self.turn_ends: list[dict[str, Any]] = []
         self.lifecycle_events: list[str] = []
         self.timeline_syncs: list[dict[str, Any]] = []
@@ -701,6 +715,12 @@ class FakeHost(RuntimeHostClient):
                 "metadata": dict(metadata or {}),
             }
         )
+
+    async def session_source_update(
+        self,
+        observation: SessionSourceObservation,
+    ) -> None:
+        self.source_updates.append(observation)
 
     async def session_turn_ended(
         self,
@@ -1898,6 +1918,146 @@ async def _test_codex_runtime_lists_sessions_from_thread_list() -> None:
     )
 
 
+def test_codex_runtime_complete_inventory_reads_active_and_archived_threads() -> None:
+    asyncio.run(_test_codex_runtime_complete_inventory_reads_active_and_archived_threads())
+
+
+async def _test_codex_runtime_complete_inventory_reads_active_and_archived_threads() -> (
+    None
+):
+    client = FakeCodexClient()
+    client.results["thread/list"] = {
+        "threads": [{"id": "thread_active", "name": "Active"}]
+    }
+    client.results["thread/list/archived"] = {
+        "threads": [{"id": "thread_archived", "name": "Archived"}]
+    }
+    runtime = CodexRuntime(config=_config(), host=FakeHost(), client=client)
+
+    sessions = await runtime.list_complete_session_inventory(page_size=25)
+
+    by_external_id = {session.external_session_id: session for session in sessions}
+    assert by_external_id["thread_active"].source_state is not None
+    assert by_external_id["thread_active"].source_state.availability == "available"
+    assert by_external_id["thread_archived"].source_state is not None
+    assert by_external_id["thread_archived"].source_state.availability == "archived"
+    assert by_external_id["thread_archived"].metadata["sync"][
+        "requires_timeline_sync"
+    ] is False
+    assert [request for request in client.requests if request[0].startswith("thread/list")] == [
+        ("thread/list", {"limit": 25, "sortKey": "updated_at", "archived": False}),
+        (
+            "thread/list/archived",
+            {"limit": 25, "sortKey": "updated_at", "archived": True},
+        ),
+    ]
+
+
+def test_codex_runtime_projects_thread_archive_events_to_source_state() -> None:
+    asyncio.run(_test_codex_runtime_projects_thread_archive_events_to_source_state())
+
+
+async def _test_codex_runtime_projects_thread_archive_events_to_source_state() -> None:
+    host = FakeHost()
+    runtime = CodexRuntime(config=_config(), host=host, client=FakeCodexClient())
+    session_id = stable_session_id("conn_test", "thread_1")
+
+    await runtime._handle_notification(
+        {"method": "thread/archived", "params": {"threadId": "thread_1"}}
+    )
+    blocked = await runtime.start_turn(session_id, "thread_1", "hello")
+    await runtime._handle_notification(
+        {"method": "thread/unarchived", "params": {"threadId": "thread_1"}}
+    )
+
+    assert blocked.code == "session_archived"
+    assert not any(request[0] == "turn/start" for request in runtime.client.requests)
+    assert [item.state.availability for item in host.source_updates] == [
+        "archived",
+        "available",
+    ]
+    assert all(item.state.observation_origin == "event" for item in host.source_updates)
+
+
+def test_codex_runtime_start_turn_returns_archived_source_error() -> None:
+    asyncio.run(_test_codex_runtime_start_turn_returns_archived_source_error())
+
+
+async def _test_codex_runtime_start_turn_returns_archived_source_error() -> None:
+    client = FakeCodexClient()
+    client.results["turn/start"] = InvalidRequestError(
+        -32600,
+        "session thread_1 is archived",
+    )
+    host = FakeHost()
+    runtime = CodexRuntime(config=_config(), host=host, client=client)
+
+    result = await runtime.start_turn(
+        "sess_1",
+        "thread_1",
+        "hello",
+        client_message_id="cm_1",
+    )
+
+    assert result.ok is False
+    assert result.code == "session_archived"
+    assert result.source_observation is not None
+    assert result.source_observation.state.observation_origin == "operation"
+    assert host.source_updates[-1].state.availability == "archived"
+    assert runtime._pending_messages.pending_message_by_client_id(
+        "thread_1",
+        "cm_1",
+    ) is None
+
+
+def test_codex_runtime_does_not_misclassify_ambiguous_active_thread_error() -> None:
+    asyncio.run(_test_codex_runtime_does_not_misclassify_ambiguous_active_thread_error())
+
+
+async def _test_codex_runtime_does_not_misclassify_ambiguous_active_thread_error() -> (
+    None
+):
+    client = FakeCodexClient()
+    client.results["thread/list"] = {"threads": [{"id": "thread_1"}]}
+    client.results["thread/list/archived"] = {"threads": []}
+    client.results["turn/start"] = InvalidRequestError(
+        -32600,
+        "thread is owned by another app-server",
+    )
+    host = FakeHost()
+    runtime = CodexRuntime(config=_config(), host=host, client=client)
+
+    with pytest.raises(InvalidRequestError):
+        await runtime.start_turn("sess_1", "thread_1", "hello")
+
+    assert host.source_updates == []
+
+
+def test_codex_runtime_reconciles_ambiguous_archived_thread_error() -> None:
+    asyncio.run(_test_codex_runtime_reconciles_ambiguous_archived_thread_error())
+
+
+async def _test_codex_runtime_reconciles_ambiguous_archived_thread_error() -> None:
+    client = FakeCodexClient()
+    client.results["thread/list"] = {"threads": []}
+    client.results["thread/list/archived"] = {"threads": [{"id": "thread_1"}]}
+    client.results["turn/start"] = InvalidRequestError(
+        -32600,
+        "invalid thread state",
+    )
+    host = FakeHost()
+    runtime = CodexRuntime(config=_config(), host=host, client=client)
+
+    result = await runtime.start_turn("sess_1", "thread_1", "hello")
+
+    assert result.code == "session_archived"
+    assert host.source_updates[-1].state.availability == "archived"
+    assert [request[0] for request in client.requests[-2:]] == [
+        "thread/list",
+        "thread/list/archived",
+    ]
+
+
 def test_codex_runtime_session_sync_marker_skips_unchanged_timeline() -> None:
     asyncio.run(_test_codex_runtime_session_sync_marker_skips_unchanged_timeline())
 
@@ -1994,7 +2154,12 @@ async def _test_codex_runtime_list_sessions_passes_cursor_to_runtime() -> None:
 
     assert client.requests[-1] == (
         "thread/list",
-        {"limit": 5, "sortKey": "updated_at", "cursor": "next-page"},
+        {
+            "limit": 5,
+            "sortKey": "updated_at",
+            "cursor": "next-page",
+            "archived": False,
+        },
     )
 
 

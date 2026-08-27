@@ -426,6 +426,16 @@ class SessionRunRepository(
 
     async def update_session_snapshot(self, **values: Any) -> SessionView: ...
 
+    async def update_session_source_state(
+        self,
+        session_id: str,
+        *,
+        availability: str,
+        reason: str | None,
+        observed_at: str | None,
+        observation_origin: str,
+    ) -> SessionView: ...
+
     async def upsert_connector_session(self, **values: Any) -> SessionView: ...
 
 

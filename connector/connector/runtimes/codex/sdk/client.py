@@ -211,13 +211,17 @@ class CodexSdkClient:
         self,
         limit: int = 100,
         cursor: str | None = None,
+        archived: bool | None = None,
     ) -> CodexThreadListResult:
         thread_list = getattr(self._client, "thread_list", None)
         if not callable(thread_list):
             raise RuntimeInvalidRequestError(
                 "Codex SDK client does not expose thread_list()"
             )
-        result = await thread_list(cursor=cursor, limit=limit)
+        params: dict[str, Any] = {"cursor": cursor, "limit": limit}
+        if archived is not None:
+            params["archived"] = archived
+        result = await thread_list(**params)
         return thread_list_result(result)
 
     async def read_thread(

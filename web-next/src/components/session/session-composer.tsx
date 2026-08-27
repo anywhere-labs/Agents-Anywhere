@@ -116,9 +116,11 @@ export function SessionComposer({
   const isWaiting = runtimeStatus === "waiting" || runtimeStatus === "pending"
   const isError = runtimeStatus === "error"
   const isDisconnected = runtimeStatus === "disconnected"
+  const sourceUnavailable = session.archived
   const connectorOnline = session.connectorStatus === "online"
   const acceptsUserInput =
     connectorOnline &&
+    !sourceUnavailable &&
     !isDisconnected &&
     !isWaiting &&
     !isRunning &&
@@ -197,9 +199,9 @@ export function SessionComposer({
   const effortLabel = effortItems.find((item) => item.id === selectedReasoning)?.label ?? tNew("reasoning")
   const hasSelectors = Boolean(permissionItems.length > 0 || modelItems.length > 0)
   const compactSelectors = hasSelectors && composerWidth > 0 && composerWidth < 560
-  const permissionSelectorDisabled = creatingSession || !canUsePermissionCatalog
-  const modelSelectorDisabled = creatingSession || !canUseModelCatalog
-  const effortSelectorDisabled = creatingSession || !canUseEffortCatalog
+  const permissionSelectorDisabled = creatingSession || sourceUnavailable || !canUsePermissionCatalog
+  const modelSelectorDisabled = creatingSession || sourceUnavailable || !canUseModelCatalog
+  const effortSelectorDisabled = creatingSession || sourceUnavailable || !canUseEffortCatalog
   const selectorsDisabled = permissionSelectorDisabled && modelSelectorDisabled
 
   React.useEffect(() => {
@@ -268,6 +270,8 @@ export function SessionComposer({
   }
   const placeholder = creatingSession
     ? tSession("creatingPlaceholder")
+    : sourceUnavailable
+      ? tSession("sourceUnavailablePlaceholder")
     : !session.takeover
     ? tSession("readOnlyPlaceholder")
     : isDisconnected || !connectorOnline
@@ -314,12 +318,14 @@ export function SessionComposer({
     if (!canSubmitMessage) return
     const text = value
     const files = attachments
-    onValueChange("")
-    clear()
-    await onSend(text, files, {
+    const sent = await onSend(text, files, {
       ...(selectedModelSelection ? { model: selectedModelSelection } : {}),
       ...(selectedPermissionSelection ? { permission: selectedPermissionSelection } : {}),
     })
+    if (sent) {
+      onValueChange("")
+      clear()
+    }
   }
 
   const primaryAction = () => {
@@ -404,7 +410,7 @@ export function SessionComposer({
                 }
               }}
               placeholder={placeholder}
-              disabled={!connectorOnline || creatingSession}
+              disabled={!connectorOnline || creatingSession || sourceUnavailable}
               className="min-h-12 max-h-40 resize-none overflow-y-auto rounded-none border-0 bg-transparent p-0 text-sm shadow-none focus-visible:ring-0 dark:bg-transparent"
             />
           </div>
@@ -414,7 +420,7 @@ export function SessionComposer({
               onAttach={add}
               isDragging={isDragging}
               className="size-8"
-              disabled={!canUseAttachments}
+              disabled={!canUseAttachments || sourceUnavailable}
             />
             {attachments.length > 0 && !canUseAttachments ? (
               <span className="px-2 text-xs text-amber-600 dark:text-amber-400">
