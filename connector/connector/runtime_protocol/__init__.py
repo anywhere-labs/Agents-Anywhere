@@ -64,6 +64,10 @@ from connector.runtime_protocol.models import (
     SelectionScope,
     SessionMeta,
     SessionNotice,
+    SessionSourceAvailability,
+    SessionSourceObservation,
+    SessionSourceObservationOrigin,
+    SessionSourceState,
     SessionState,
 )
 from connector.runtime_protocol.models import (
@@ -231,6 +235,10 @@ __all__ = [
     "SelectionScope",
     "SessionMeta",
     "SessionNotice",
+    "SessionSourceAvailability",
+    "SessionSourceObservation",
+    "SessionSourceObservationOrigin",
+    "SessionSourceState",
     "SessionState",
     "SystemContentKind",
     "SystemTimelineContent",

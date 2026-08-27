@@ -16,6 +16,7 @@ from connector.runtime_protocol import (
     RuntimePermissionCatalog,
     RuntimeTypeDescriptor,
     SessionNotice,
+    SessionSourceObservation,
 )
 
 
@@ -79,14 +80,45 @@ def runtime_type_descriptor_payload(
 
 def operation_result_payload(result: RuntimeOperationResult) -> dict[str, Any]:
     payload = _operation_result_without_turn_data(result.result)
-    if result.ok and result.code is None and result.message is None:
+    source_state = (
+        session_source_observation_payload(result.source_observation)
+        if result.source_observation is not None
+        else None
+    )
+    if (
+        result.ok
+        and result.code is None
+        and result.message is None
+        and source_state is None
+    ):
         return payload
     return {
         "ok": result.ok,
         **({"code": result.code} if result.code is not None else {}),
         **({"message": result.message} if result.message is not None else {}),
+        **({"sourceState": source_state} if source_state is not None else {}),
         **payload,
     }
+
+
+def session_source_observation_payload(
+    observation: SessionSourceObservation,
+) -> dict[str, Any]:
+    state = observation.state
+    return drop_none_payload({
+        "sessionId": observation.session_id,
+        "externalSessionId": observation.external_session_id,
+        "runtime": observation.runtime,
+        **(
+            {"runtimeId": observation.runtime_id}
+            if observation.runtime_id is not None
+            else {}
+        ),
+        "availability": state.availability,
+        "reason": state.reason,
+        "observedAt": state.observed_at,
+        "observationOrigin": state.observation_origin,
+    })
 
 
 def command_result_payload(result: RuntimeCommandResult) -> dict[str, Any]:
@@ -301,7 +333,7 @@ def permission_catalog_payload(catalog: RuntimePermissionCatalog) -> dict[str, A
 
 
 def session_meta_payload(session: Any) -> dict[str, Any]:
-    return {
+    payload = {
         "sessionId": session.session_id,
         "externalSessionId": session.external_session_id,
         "runtime": session.runtime,
@@ -311,6 +343,14 @@ def session_meta_payload(session: Any) -> dict[str, Any]:
         "orderingTime": session.ordering_time,
         "metadata": dict(session.metadata),
     }
+    if session.source_state is not None:
+        payload["sourceState"] = {
+            "availability": session.source_state.availability,
+            "reason": session.source_state.reason,
+            "observedAt": session.source_state.observed_at,
+            "observationOrigin": session.source_state.observation_origin,
+        }
+    return payload
 
 
 def agent_inventory_payload(item: RuntimeInventoryItem) -> dict[str, Any]:

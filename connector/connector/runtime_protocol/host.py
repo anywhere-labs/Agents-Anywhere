@@ -12,6 +12,7 @@ from connector.runtime_protocol.models import (
     RuntimeStatus,
     RuntimeTimelineItem,
     SessionNotice,
+    SessionSourceObservation,
 )
 
 
@@ -51,6 +52,12 @@ class RuntimeHostClient(ABC):
         status_reason: str | None = None,
         error: Mapping[str, Any] | None = None,
         metadata: Mapping[str, Any] | None = None,
+    ) -> None:
+        raise NotImplementedError
+
+    async def session_source_update(
+        self,
+        observation: SessionSourceObservation,
     ) -> None:
         raise NotImplementedError
 

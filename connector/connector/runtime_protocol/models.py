@@ -21,6 +21,15 @@ CommandScope = Literal["runtime", "session", "turn"]
 RuntimeCapabilityScope = Literal["runtime", "session"]
 NoticeType = Literal["notification", "interaction"]
 NoticeSeverity = Literal["info", "success", "warning", "error"]
+SessionSourceAvailability = Literal[
+    "available",
+    "archived",
+    "unavailable",
+    "deleted",
+    "missing",
+    "unknown",
+]
+SessionSourceObservationOrigin = Literal["event", "inventory", "operation"]
 
 CAPABILITY_SESSION_SEND_MESSAGE = "session.send_message"
 CAPABILITY_SESSION_INTERRUPT = "session.interrupt"
@@ -155,6 +164,23 @@ class RuntimeCapabilitySet:
 
 
 @dataclass(frozen=True, slots=True)
+class SessionSourceState:
+    availability: SessionSourceAvailability
+    reason: str | None = None
+    observed_at: str | None = None
+    observation_origin: SessionSourceObservationOrigin = "inventory"
+
+
+@dataclass(frozen=True, slots=True)
+class SessionSourceObservation:
+    session_id: str
+    external_session_id: str | None
+    runtime: str
+    state: SessionSourceState
+    runtime_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class SessionMeta:
     session_id: str
     external_session_id: str | None
@@ -162,6 +188,7 @@ class SessionMeta:
     title: str | None = None
     cwd: str | None = None
     ordering_time: str | None = None
+    source_state: SessionSourceState | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
     runtime_id: str | None = None
 
@@ -280,3 +307,4 @@ class RuntimeOperationResult:
     code: str | None = None
     message: str | None = None
     result: Mapping[str, Any] = field(default_factory=dict)
+    source_observation: SessionSourceObservation | None = None

@@ -15,6 +15,8 @@ from connector.runtime_protocol import (
     RuntimePermissionItem,
     RuntimeTimelineItem,
     SessionNotice,
+    SessionSourceObservation,
+    SessionSourceState,
 )
 from connector.server.runtime_host import ConnectorRuntimeHost
 from connector.server.sync_state import JsonSyncStateStore
@@ -38,6 +40,10 @@ def test_connector_runtime_host_maps_runtime_capabilities_to_backend_notificatio
 
 def test_connector_runtime_host_maps_session_capabilities_to_backend_notification() -> None:
     asyncio.run(_exercise_session_capability_notification())
+
+
+def test_connector_runtime_host_maps_session_source_observation() -> None:
+    asyncio.run(_exercise_session_source_notification())
 
 
 def test_connector_runtime_host_maps_catalogs_to_backend_notifications() -> None:
@@ -108,6 +114,48 @@ async def _exercise_timeline_item_notification() -> None:
                     "revision": 3,
                     "contentHash": "sha256:abc",
                 },
+            },
+        )
+    ]
+
+
+async def _exercise_session_source_notification() -> None:
+    notifications: list[tuple[str, dict[str, Any]]] = []
+
+    async def notify(method: str, params: dict[str, Any]) -> None:
+        notifications.append((method, params))
+
+    async def download(session_id: str, file_id: str) -> tuple[bytes, str, str]:
+        raise AssertionError(f"unexpected download: {session_id}/{file_id}")
+
+    host = ConnectorRuntimeHost("conn_1", notify, download)
+    await host.session_source_update(
+        SessionSourceObservation(
+            session_id="sess_1",
+            external_session_id="thread_1",
+            runtime="codex",
+            runtime_id="rti_codex_one",
+            state=SessionSourceState(
+                availability="archived",
+                reason="thread/archived",
+                observed_at="2026-08-27T12:00:00Z",
+                observation_origin="event",
+            ),
+        )
+    )
+
+    assert notifications == [
+        (
+            "session.source.updated",
+            {
+                "sessionId": "sess_1",
+                "externalSessionId": "thread_1",
+                "runtime": "codex",
+                "runtimeId": "rti_codex_one",
+                "availability": "archived",
+                "reason": "thread/archived",
+                "observedAt": "2026-08-27T12:00:00Z",
+                "observationOrigin": "event",
             },
         )
     ]

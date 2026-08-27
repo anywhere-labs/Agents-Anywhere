@@ -28,6 +28,7 @@ from connector.runtime_protocol.models import (
     RuntimeTimelineSnapshot,
     SessionMeta,
     SessionNotice,
+    SessionSourceObservation,
     SessionState,
 )
 from connector.runtime_protocol.protocol import AgentRuntime
@@ -157,6 +158,17 @@ def timeline_snapshot_for_instance(
     )
 
 
+def session_source_observation_for_instance(
+    value: SessionSourceObservation,
+    instance: RuntimeInstanceSpec,
+) -> SessionSourceObservation:
+    return replace(
+        value,
+        runtime=instance.runtime_type,
+        runtime_id=instance.runtime_id,
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class RuntimeInstanceHost(RuntimeHostClient):
     """Bind runtime-to-Connector effects to one immutable instance identity."""
@@ -220,6 +232,15 @@ class RuntimeInstanceHost(RuntimeHostClient):
             status_reason=status_reason,
             error=error,
             metadata=self.instance_metadata(metadata),
+        )
+
+    async def session_source_update(
+        self,
+        observation: SessionSourceObservation,
+    ) -> None:
+        self._validate_native_runtime(observation.runtime)
+        await self.base.session_source_update(
+            session_source_observation_for_instance(observation, self.instance)
         )
 
     async def session_turn_ended(
