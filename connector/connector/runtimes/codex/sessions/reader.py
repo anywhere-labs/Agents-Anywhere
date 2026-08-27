@@ -249,6 +249,10 @@ class CodexSessionReader:
         external_session_id: str | None = None,
     ) -> SessionState | None:
         cached = self.session_states.get(session_id)
+        if cached is None and external_session_id is not None:
+            cached = self.session_states.get_by_external_session_id(
+                external_session_id
+            )
         if cached is not None:
             return cached
         if external_session_id is None:

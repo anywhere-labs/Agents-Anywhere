@@ -2183,6 +2183,34 @@ async def _test_codex_runtime_session_state_defaults_to_idle_for_known_external_
     assert state.runtime == "codex"
 
 
+def test_codex_runtime_resolves_live_session_state_by_external_session_id() -> None:
+    asyncio.run(_test_codex_runtime_resolves_live_session_state_by_external_session_id())
+
+
+async def _test_codex_runtime_resolves_live_session_state_by_external_session_id() -> (
+    None
+):
+    client = FakeCodexClient()
+    runtime = CodexRuntime(config=_config(), host=FakeHost(), client=client)
+    await runtime._session_states.update(
+        session_id="sess_live",
+        external_session_id="thread_1",
+        status="running",
+        metadata={"source": "codex.turn/started"},
+    )
+
+    state = await runtime.get_session_state(
+        "sess_scanner",
+        external_session_id="thread_1",
+    )
+
+    assert state is not None
+    assert state.session_id == "sess_live"
+    assert state.status == "running"
+    assert state.metadata["source"] == "codex.turn/started"
+    assert not any(method == "thread/read" for method, _params in client.requests)
+
+
 def test_codex_runtime_reads_current_session_selections_from_thread() -> None:
     asyncio.run(_test_codex_runtime_reads_current_session_selections_from_thread())
 
