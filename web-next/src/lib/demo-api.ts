@@ -671,6 +671,12 @@ const groupedStatuses: Record<Exclude<SessionStatusFilter, "all" | "archived">, 
   error: ["error", "blocked"],
 }
 
+function isUserArchived(session: SessionView): boolean {
+  if (typeof session.userArchived === "boolean") return session.userArchived
+  if (session.archiveSource) return session.archiveSource === "user" || session.archiveSource === "both"
+  return session.archived
+}
+
 export function filterSessions(
   list: SessionView[],
   filter: FilterValue,
@@ -680,7 +686,7 @@ export function filterSessions(
     if (filter.connectorId !== "all" && s.connectorId !== filter.connectorId) return false
     if (filter.runtime !== "all" && s.runtime !== filter.runtime) return false
     if (filter.status === "archived") {
-      if (!s.archived) return false
+      if (!isUserArchived(s)) return false
     } else {
       if (s.archived) return false
       if (filter.status !== "all" && !groupedStatuses[filter.status].includes(s.status)) return false
