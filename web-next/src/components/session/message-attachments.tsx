@@ -279,7 +279,7 @@ function ImageAttachment({
         role="status"
         aria-label={`Loading ${name}`}
         className={cn(
-          "h-48 w-[min(420px,85vw)] overflow-hidden rounded-lg bg-muted/40",
+          "h-40 w-[min(360px,75vw)] overflow-hidden rounded-lg bg-muted/40",
           loading && "aa-attachment-shimmer",
         )}
       />
@@ -292,14 +292,14 @@ function ImageAttachment({
         type="button"
         aria-label={`Preview ${name}`}
         onClick={() => setPreviewOpen(true)}
-        className="block w-fit max-w-[min(720px,85vw)] rounded-lg p-0 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+        className="block w-fit max-w-[min(360px,75vw)] rounded-lg p-0 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
       >
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src={displayedSrc}
           alt={name}
           loading="lazy"
-          className="block h-auto max-h-[70vh] max-w-full rounded-lg object-contain"
+          className="block h-auto max-h-[360px] max-w-full rounded-lg object-contain"
         />
       </button>
       <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
@@ -334,7 +334,7 @@ function LoadingAttachment({
       size={orientation === "horizontal" ? "sm" : "default"}
       className={cn(
         orientation === "vertical"
-          ? "aa-attachment-shimmer h-48 w-[min(420px,85vw)] items-center justify-center rounded-lg border-0 bg-muted/40 has-data-[slot=attachment-content]:hidden"
+          ? "aa-attachment-shimmer h-40 w-[min(360px,75vw)] items-center justify-center rounded-lg border-0 bg-muted/40 has-data-[slot=attachment-content]:hidden"
           : "w-[min(320px,75vw)]",
       )}
     >
