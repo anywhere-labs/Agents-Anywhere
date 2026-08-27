@@ -285,6 +285,7 @@ type WorkspaceState = {
   // Actions
   openSession: (id: string) => void
   goHome: () => void
+  replaceHome: () => void
   navigate: (page: AppPage, sub?: string) => void
   navigateToDevice: (connectorId: string) => void
   navigateToWorkspace: (connectorId: string, workspacePath: string) => void
@@ -750,6 +751,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   )
 
   const goHome = React.useCallback(() => pushRoute({ page: "home" }), [pushRoute])
+  const replaceHome = React.useCallback(() => replaceRoute({ page: "home" }), [replaceRoute])
 
   const navigate = React.useCallback(
     (page: AppPage, sub?: string) => {
@@ -1098,6 +1100,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     optimisticMessages,
     openSession,
     goHome,
+    replaceHome,
     navigate,
     navigateToDevice,
     navigateToWorkspace,

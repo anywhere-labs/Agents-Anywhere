@@ -273,6 +273,7 @@ export function SessionDetail({
     getOptimisticSessionState,
     isOptimisticSession,
     markOptimisticMessageFailed,
+    replaceHome,
   } = useWorkspace()
   const initialOptimisticState = getOptimisticSessionState(sessionId)
   const [state, setState] = React.useState<SessionRemoteState | null>(() =>
@@ -1341,6 +1342,11 @@ export function SessionDetail({
   const sourceErrorDialog = sourceErrorCode
     ? sourceErrorDialogContent(sourceErrorCode, tSession)
     : null
+  const dismissSourceErrorDialog = () => {
+    const shouldLeaveSession = sourceErrorCode === "session_archived"
+    setSourceErrorCode(null)
+    if (shouldLeaveSession) replaceHome()
+  }
   const takeoverAgent = session.runtimeName?.trim() || runtimeLabel(sessionRuntimeType(session))
   const takeoverDescription = (tSession.raw(
     takeoverTarget ? "takeoverEnableDescription" : "takeoverDisableDescription",
@@ -1526,7 +1532,7 @@ export function SessionDetail({
       <Dialog
         open={sourceErrorDialog !== null}
         onOpenChange={(open: boolean) => {
-          if (!open) setSourceErrorCode(null)
+          if (!open) dismissSourceErrorDialog()
         }}
       >
         <DialogContent>
@@ -1535,7 +1541,7 @@ export function SessionDetail({
             <DialogDescription>{sourceErrorDialog?.description}</DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button onClick={() => setSourceErrorCode(null)}>{tCommon("gotIt")}</Button>
+            <Button onClick={dismissSourceErrorDialog}>{tCommon("gotIt")}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
