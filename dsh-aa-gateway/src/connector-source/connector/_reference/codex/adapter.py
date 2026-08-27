@@ -1,0 +1,2083 @@
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import json
+import time
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from typing import Any
+from uuid import uuid4
+
+from pydantic import ValidationError
+
+from connector._reference.codex.ipc_client import CodexIpcClient
+from connector._reference.codex.ipc_protocol import (
+    CodexIpcBroadcast,
+    CodexIpcClientStatusChangedBroadcast,
+    CodexIpcConnectionResetBroadcast,
+    CodexIpcFollowerInterruptTurnParams,
+    CodexIpcFollowerStartTurnParams,
+    CodexIpcFollowerSteerTurnParams,
+    CodexIpcFollowingChangedBroadcast,
+    CodexIpcFollowingStatusRequestedBroadcast,
+    CodexIpcRequest,
+    CodexIpcRouterMessage,
+    CodexIpcStreamStateChangedBroadcast,
+)
+from connector._reference.codex.ipc_publisher import CodexIpcPublisher
+from connector._reference.codex.ipc_state import (
+    CodexIpcAppliedState,
+    CodexIpcStateError,
+    CodexIpcStateRegistry,
+    codex_ipc_active_turn_id,
+    codex_ipc_thread_snapshot,
+)
+from connector._reference.codex.reducer import (
+    CODEX_APPROVAL_METHODS,
+    ReductionResult,
+    TimelineReducer,
+)
+from connector._reference.codex.rpc import JsonRpcStdioClient
+from connector._reference.legacy.interactions import approval_notice
+from connector.logging import logger
+from connector.runtime_protocol.attachments import attachment_target
+from connector.server.catalogs import (
+    model_catalog_from_runtime_items,
+    permission_catalog_from_items,
+)
+from connector.server.protocol import protocol_selection_id
+from connector.server.sync_state import SyncStateStore
+from connector.time import utc_now
+
+AttachmentDownloader = Callable[[str, str], Awaitable[tuple[bytes, str, str]]]
+"""(session_id, file_id) -> (data, original_name, media_type)"""
+
+EXISTING_SYNC_SCAN_TIMEOUT_SECONDS = 1200.0
+EXISTING_SYNC_CHANGED_THREAD_TIMEOUT_SECONDS = 1200.0
+
+
+def _thread_id_from_result(value: dict[str, Any]) -> str | None:
+    thread = value.get("thread") if isinstance(value.get("thread"), dict) else value
+    if not isinstance(thread, dict):
+        return None
+    for key in ("id", "thread_id", "threadId"):
+        if isinstance(thread.get(key), str):
+            return thread[key]
+    nested = thread.get("thread")
+    if isinstance(nested, dict) and isinstance(nested.get("id"), str):
+        return nested["id"]
+    return None
+
+
+def _timeline_attachments(params: dict[str, Any]) -> list[dict[str, Any]]:
+    raw = params.get("timelineAttachments")
+    if not isinstance(raw, list):
+        raw = params.get("attachments")
+    if not isinstance(raw, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            continue
+        file_id = entry.get("fileId") or entry.get("id")
+        if not isinstance(file_id, str) or not file_id:
+            continue
+        item: dict[str, Any] = {"fileId": file_id}
+        for key in ("name", "mediaType", "size", "sha256"):
+            value = entry.get(key)
+            if value is not None:
+                item[key] = value
+        out.append(item)
+    return out
+
+
+def _turn_id_from_result(value: dict[str, Any]) -> str | None:
+    turn = value.get("turn") if isinstance(value.get("turn"), dict) else value
+    if not isinstance(turn, dict):
+        return None
+    for key in ("id", "turn_id", "turnId"):
+        if isinstance(turn.get(key), str):
+            return turn[key]
+    nested = turn.get("turn")
+    if isinstance(nested, dict) and isinstance(nested.get("id"), str):
+        return nested["id"]
+    return None
+
+
+def _model_list_items(result: dict[str, Any] | None) -> list[dict[str, Any]]:
+    if not isinstance(result, dict):
+        return []
+    for key in ("models", "items", "data"):
+        value = result.get(key)
+        if isinstance(value, list):
+            return [item for item in value if isinstance(item, dict)]
+    nested = result.get("modelCatalog") or result.get("catalog")
+    if isinstance(nested, dict):
+        return _model_list_items(nested)
+    return []
+
+
+def _codex_model_item_with_reasoning(item: dict[str, Any]) -> dict[str, Any]:
+    if any(
+        isinstance(item.get(key), list)
+        for key in (
+            "reasoningItems",
+            "reasoning_items",
+            "reasoningEfforts",
+            "reasoning_efforts",
+            "supportedReasoningEfforts",
+            "supported_reasoning_efforts",
+            "efforts",
+        )
+    ):
+        return item
+    return item
+
+
+def _codex_model_selection_from_runtime_settings(
+    settings: dict[str, Any],
+    model_list_result: dict[str, Any] | None,
+) -> str | None:
+    model_id = _optional_string(settings.get("model"))
+    if model_id is None:
+        return None
+    reasoning_id = _optional_string(settings.get("effort"))
+    catalog = model_catalog_from_runtime_items(
+        "codex",
+        revision=0,
+        items=[_codex_model_item_with_reasoning(item) for item in _model_list_items(model_list_result)],
+    )
+    model = next((item for item in catalog.models if item.id == model_id), None)
+    if model is None:
+        return None
+    if reasoning_id is not None:
+        reasoning = next((item for item in model.reasoningItems if item.id == reasoning_id), None)
+        return reasoning.selectionId if reasoning is not None else None
+    return model.selectionId
+
+
+def _codex_model_settings_from_selection_id(
+    selection_id: str | None,
+    model_list_result: dict[str, Any] | None,
+) -> dict[str, str]:
+    if not selection_id:
+        return {}
+    catalog = model_catalog_from_runtime_items(
+        "codex",
+        revision=0,
+        items=[_codex_model_item_with_reasoning(item) for item in _model_list_items(model_list_result)],
+    )
+    for model in catalog.models:
+        if model.selectionId == selection_id:
+            return {"model": model.id}
+        for reasoning in model.reasoningItems:
+            if reasoning.selectionId == selection_id:
+                return {"model": model.id, "effort": reasoning.id}
+    return {}
+
+
+@dataclass(slots=True)
+class CodexAdapter:
+    """Adapter around Codex app-server.
+
+    The adapter does not talk to the backend directly. It returns normalized
+    notification payloads so the connector runtime can forward them over its
+    backend WebSocket.
+    """
+
+    rpc: JsonRpcStdioClient | None = None
+    reducer: TimelineReducer | None = None
+    notification_sink: Callable[[str, dict[str, Any]], Awaitable[None]] | None = None
+    attachment_downloader: AttachmentDownloader | None = None
+    sync_state_store: SyncStateStore | None = None
+    ipc_client: CodexIpcClient | None = None
+    _started: bool = False
+    _loaded_thread_ids: set[str] = field(default_factory=set)
+    _history_sync_tasks: dict[str, asyncio.Task[None]] = field(default_factory=dict)
+    _existing_thread_sync_markers: dict[str, str] = field(default_factory=dict)
+    _existing_thread_names: dict[str, str | None] = field(default_factory=dict)
+    _model_list_result: dict[str, Any] | None = None
+    _ipc_state_registry: CodexIpcStateRegistry = field(
+        default_factory=CodexIpcStateRegistry,
+        init=False,
+        repr=False,
+    )
+    _ipc_followed_by_client: dict[str, str] = field(default_factory=dict)
+    _ipc_resyncing_threads: set[str] = field(default_factory=set)
+    _ipc_connection_client_id: str | None = None
+    _ipc_publisher: CodexIpcPublisher = field(init=False, repr=False)
+    _ipc_refresh_tasks: dict[str, asyncio.Task[None]] = field(default_factory=dict)
+    _start_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        if self.rpc is None:
+            self.rpc = JsonRpcStdioClient()
+        if self.reducer is None:
+            self.reducer = TimelineReducer()
+        self._ipc_publisher = CodexIpcPublisher(self.ipc_client)
+        if self.ipc_client is not None:
+            self.ipc_client.set_message_handler(self.handle_ipc_message)
+            self.ipc_client.set_request_handler(
+                self.handle_ipc_request,
+                can_handle=self.can_handle_ipc_request,
+            )
+
+    def forget_sync_state(self) -> None:
+        """Drop the in-memory "I already told the backend about thread X"
+        markers so the next `sync_existing_sessions` re-ingests everything.
+
+        This is only used when an explicit full resync is requested.
+        """
+        self._existing_thread_sync_markers.clear()
+        self._existing_thread_names.clear()
+
+    def forget_persisted_sync_state(self, connector_id: str) -> None:
+        self.forget_sync_state()
+        if self.sync_state_store is not None:
+            self.sync_state_store.delete_runtime("codex", connector_id)
+
+    async def start(self) -> None:
+        async with self._start_lock:
+            assert self.rpc is not None
+            await self.rpc.start(self.handle_notification)
+            if self._started:
+                return
+            await self._best_effort_bootstrap_reads()
+            self._started = True
+
+    async def stop(self) -> None:
+        tasks = [
+            *self._history_sync_tasks.values(),
+            *self._ipc_refresh_tasks.values(),
+        ]
+        self._history_sync_tasks.clear()
+        self._ipc_refresh_tasks.clear()
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        if self.rpc is not None:
+            await self.rpc.close()
+        if self.ipc_client is not None:
+            await self.ipc_client.close()
+        self._ipc_state_registry.reset()
+        self._ipc_followed_by_client.clear()
+        self._ipc_resyncing_threads.clear()
+        self._ipc_connection_client_id = None
+        self._ipc_publisher.reset()
+        self._started = False
+        self._model_list_result = None
+
+    async def create_session(self, params: dict[str, Any]) -> dict[str, Any]:
+        await self.start()
+        assert self.rpc is not None
+        assert self.reducer is not None
+        selected_model_settings = _codex_model_settings_from_selection_id(
+            _optional_string(params.get("modelSelectionId")),
+            self._model_list_result,
+        )
+        native_permission = _codex_native_permission_settings(
+            _optional_string(params.get("permissionSelectionId"))
+        )
+        result = await self.rpc.request(
+            "thread/start",
+            {
+                "cwd": params.get("cwd"),
+                "model": selected_model_settings.get("model") or params.get("model"),
+                "approvalPolicy": native_permission.get("approvalPolicy"),
+                "sandbox": native_permission.get("sandbox"),
+                "ephemeral": params.get("ephemeral", False),
+            },
+        )
+        thread_id = _thread_id_from_result(result)
+        if thread_id is None:
+            raise RuntimeError(f"Codex thread/start did not return a thread id: {json.dumps(result, ensure_ascii=False)}")
+        self._loaded_thread_ids.add(thread_id)
+        thread = result.get("thread") if isinstance(result.get("thread"), dict) else result
+        if isinstance(thread, dict):
+            await self._ipc_publisher.load_thread(
+                thread,
+                fallback_thread_id=thread_id,
+                activate=True,
+            )
+        session_id = params.get("sessionId")
+        connector_id = params.get("connectorId")
+        if not isinstance(session_id, str) and isinstance(connector_id, str):
+            session_id = stable_session_id(connector_id, thread_id)
+        if isinstance(session_id, str):
+            self.reducer.bind_session(session_id, thread_id)
+        runtime_settings, observed_permission_selection_id = _runtime_settings_and_permission_selection_from_codex_result(result)
+        runtime_settings = {
+            **selected_model_settings,
+            **runtime_settings,
+        }
+        model_selection_id = (
+            _codex_model_selection_from_runtime_settings(runtime_settings, self._model_list_result)
+            or _optional_string(params.get("modelSelectionId"))
+        )
+        permission_selection_id = observed_permission_selection_id or _optional_string(params.get("permissionSelectionId"))
+        if permission_selection_id is not None and "permissionMode" not in runtime_settings:
+            permission_mode = _codex_permission_id_from_selection_id(permission_selection_id)
+            if permission_mode is not None:
+                runtime_settings["permissionMode"] = permission_mode
+        response: dict[str, Any] = {
+            "sessionId": session_id,
+            "externalSessionId": thread_id,
+            "thread": result.get("thread") or result,
+            "backendNotifications": [],
+        }
+        if runtime_settings:
+            response["runtimeSettings"] = runtime_settings
+        if model_selection_id is not None:
+            response["modelSelectionId"] = model_selection_id
+        if permission_selection_id is not None:
+            response["permissionSelectionId"] = permission_selection_id
+        if isinstance(session_id, str):
+            session_update: dict[str, Any] = {
+                "sessionId": session_id,
+                "runtime": "codex",
+                "externalSessionId": thread_id,
+                "status": "idle",
+                "cwd": params.get("cwd"),
+            }
+            if runtime_settings:
+                session_update["runtimeSettings"] = runtime_settings
+            if model_selection_id is not None:
+                session_update["modelSelectionId"] = model_selection_id
+            if permission_selection_id is not None:
+                session_update["permissionSelectionId"] = permission_selection_id
+            response["backendNotifications"] = [{"method": "session.updated", "params": session_update}]
+        return response
+
+    async def sync_session(self, params: dict[str, Any]) -> dict[str, Any]:
+        await self.start()
+        await self._discover_ipc_router()
+        assert self.rpc is not None
+        assert self.reducer is not None
+        session_id = _required_string(params, "sessionId")
+        thread_id = _required_string(params, "externalSessionId")
+        self.reducer.bind_session(session_id, thread_id)
+        await self._follow_ipc_thread(thread_id)
+        started = time.perf_counter()
+        logger.info("codex session sync started session_id={} thread_id={}", session_id, thread_id)
+        try:
+            await self._ensure_thread_loaded(thread_id, force=True)
+        except RuntimeError as exc:
+            reason = _unresumable_thread_failure_reason(str(exc))
+            if reason is None:
+                raise
+            logger.info(
+                "codex session sync skipped unavailable thread session_id={} thread_id={} reason={} error={}",
+                session_id,
+                thread_id,
+                reason,
+                exc,
+            )
+            return {
+                "thread": {},
+                "unavailableReason": reason,
+                "backendNotifications": [
+                    {
+                        "method": "session.updated",
+                        "params": {
+                            "sessionId": session_id,
+                            "runtime": "codex",
+                            "externalSessionId": thread_id,
+                            "status": "idle",
+                            "localState": reason,
+                            "sourceObservedAt": utc_now(),
+                        },
+                    }
+                ],
+            }
+        reduced, thread = await self._reduce_current_timeline(session_id, thread_id)
+        self._add_runtime_selection_to_reduction(reduced, thread)
+        elapsed_ms = (time.perf_counter() - started) * 1000
+        logger.info(
+            "codex session sync completed session_id={} thread_id={} timeline_items={} approvals={} elapsed_ms={:.1f}",
+            session_id,
+            thread_id,
+            len(reduced.timeline_items),
+            len(reduced.approvals),
+            elapsed_ms,
+        )
+        return {
+            "thread": thread,
+            "backendNotifications": _backend_notifications_from_reduction(reduced, timeline_method="timeline.sync"),
+        }
+
+    async def sync_existing_sessions(
+        self,
+        connector_id: str,
+        *,
+        limit: int = 100,
+        force: bool = False,
+        notification_sink: Callable[[list[dict[str, Any]]], Awaitable[None]] | None = None,
+    ) -> dict[str, Any]:
+        await self.start()
+        await self._discover_ipc_router()
+        assert self.rpc is not None
+        assert self.reducer is not None
+
+        list_result = await asyncio.wait_for(
+            self.rpc.request("thread/list", {"limit": limit, "sortKey": "updated_at"}),
+            timeout=EXISTING_SYNC_SCAN_TIMEOUT_SECONDS,
+        )
+        thread_refs = _thread_refs_from_list_result(list_result)
+        notifications: list[dict[str, Any]] = []
+        synced_threads: list[str] = []
+        skipped_threads: list[str] = []
+        notification_count = 0
+        started = time.perf_counter()
+        logger.info(
+            "codex existing thread sync started connector_id={} threads={} force={}",
+            connector_id,
+            len(thread_refs),
+            force,
+        )
+        for thread_ref in thread_refs:
+            thread_id = _thread_id_from_result(thread_ref)
+            if not thread_id:
+                continue
+            local_state = _local_thread_state(thread_ref)
+            if local_state in {"archived", "deleted", "unresumable"}:
+                logger.info(
+                    "codex skipping local {} thread thread_id={}",
+                    local_state,
+                    thread_id,
+                )
+                skipped_threads.append(thread_id)
+                continue
+            session_id = stable_session_id(connector_id, thread_id)
+            self.reducer.bind_session(session_id, thread_id)
+            await self._follow_ipc_thread(thread_id)
+            sync_marker = _thread_sync_marker(thread_ref)
+            current_name = _optional_string(thread_ref.get("name"))
+            persisted_state = (
+                self.sync_state_store.get("codex", connector_id, thread_id)
+                if self.sync_state_store is not None
+                else None
+            )
+            previous_marker = self._existing_thread_sync_markers.get(thread_id)
+            if previous_marker is None and persisted_state is not None:
+                previous_marker = _optional_string((persisted_state.fingerprint or {}).get("marker"))
+                if previous_marker is not None:
+                    self._existing_thread_sync_markers[thread_id] = previous_marker
+                previous_name = _optional_string((persisted_state.metadata or {}).get("name"))
+                if previous_name is not None:
+                    self._existing_thread_names[thread_id] = previous_name
+            if not force and sync_marker is not None and previous_marker == sync_marker:
+                # Codex may rename a thread without bumping updatedAt — diff
+                # the name independently and push a title-only update.
+                if self._existing_thread_names.get(thread_id) != current_name:
+                    rename_notification = {
+                        "method": "session.updated",
+                        "params": {
+                            "sessionId": session_id,
+                            "title": current_name,
+                            "sourceObservedAt": utc_now(),
+                        },
+                    }
+                    notification_count += 1
+                    if notification_sink is not None:
+                        await notification_sink([rename_notification])
+                    else:
+                        notifications.append(rename_notification)
+                    self._existing_thread_names[thread_id] = current_name
+                    self._persist_sync_state(connector_id, thread_id, sync_marker, current_name)
+                skipped_threads.append(thread_id)
+                continue
+            try:
+                reduced, _thread = await asyncio.wait_for(
+                    self._sync_changed_existing_thread(
+                        session_id,
+                        thread_id,
+                        thread_ref=thread_ref,
+                    ),
+                    timeout=EXISTING_SYNC_CHANGED_THREAD_TIMEOUT_SECONDS,
+                )
+            except TimeoutError:
+                logger.warning(
+                    "codex existing thread sync timed out thread_id={} timeout_s={}",
+                    thread_id,
+                    EXISTING_SYNC_CHANGED_THREAD_TIMEOUT_SECONDS,
+                )
+                continue
+            except Exception as exc:
+                reason = _unresumable_thread_failure_reason(str(exc))
+                if reason is not None:
+                    logger.info(
+                        "codex skipping {} thread thread_id={} error={}",
+                        reason,
+                        thread_id,
+                        exc,
+                    )
+                    skipped_threads.append(thread_id)
+                    if sync_marker is not None:
+                        self._existing_thread_sync_markers[thread_id] = sync_marker
+                    continue
+                logger.warning("codex existing thread sync failed thread_id={} error={}", thread_id, exc)
+                continue
+            if _is_imported_external_thread(reduced.timeline_items):
+                logger.info(
+                    "codex skipping imported external thread thread_id={} items={}",
+                    thread_id,
+                    len(reduced.timeline_items),
+                )
+                skipped_threads.append(thread_id)
+                if sync_marker is not None:
+                    self._existing_thread_sync_markers[thread_id] = sync_marker
+                    self._persist_sync_state(connector_id, thread_id, sync_marker, current_name)
+                continue
+            if reduced.session_update is not None:
+                reduced.session_update["runtime"] = "codex"
+                last_activity_at = _codex_time(thread_ref.get("updatedAt") or thread_ref.get("updated_at"))
+                if last_activity_at is not None:
+                    reduced.session_update["lastActivityAt"] = last_activity_at
+            thread_notifications = _backend_notifications_from_reduction(reduced, timeline_method="timeline.sync")
+            notification_count += len(thread_notifications)
+            if notification_sink is not None:
+                await notification_sink(thread_notifications)
+            else:
+                notifications.extend(thread_notifications)
+            if sync_marker is not None:
+                self._existing_thread_sync_markers[thread_id] = sync_marker
+            self._existing_thread_names[thread_id] = current_name
+            self._persist_sync_state(connector_id, thread_id, sync_marker, current_name)
+            synced_threads.append(thread_id)
+
+        elapsed_ms = (time.perf_counter() - started) * 1000
+        logger.info(
+            "codex existing thread sync completed connector_id={} synced_threads={} skipped_threads={} notifications={} elapsed_ms={:.1f}",
+            connector_id,
+            len(synced_threads),
+            len(skipped_threads),
+            notification_count,
+            elapsed_ms,
+        )
+        return {
+            "threads": synced_threads,
+            "skippedThreads": skipped_threads,
+            "backendNotifications": notifications,
+        }
+
+    async def _discover_ipc_router(self) -> bool:
+        if self.ipc_client is None:
+            return False
+        connected = await self.ipc_client.ensure_connected()
+        client_id = self.ipc_client.client_id if connected else None
+        if client_id != self._ipc_connection_client_id:
+            self._ipc_state_registry.reset()
+            self._ipc_followed_by_client.clear()
+            self._ipc_resyncing_threads.clear()
+            self._ipc_publisher.reset_connection()
+            self._ipc_connection_client_id = client_id
+        return connected
+
+    async def _follow_ipc_thread(self, thread_id: str, *, force: bool = False) -> bool:
+        if self.ipc_client is None or not self.ipc_client.is_connected:
+            return False
+        if self._ipc_publisher.is_active(thread_id):
+            await self._stop_following_ipc_thread(thread_id)
+            return False
+        client_id = self.ipc_client.client_id
+        if client_id is None:
+            return False
+        if not force and self._ipc_followed_by_client.get(thread_id) == client_id:
+            return True
+        self._ipc_followed_by_client[thread_id] = client_id
+        sent = await self.ipc_client.send_broadcast(
+            "thread-stream-following-changed",
+            {
+                "conversationId": thread_id,
+                "hostId": "local",
+                "following": True,
+            },
+        )
+        if not sent and self._ipc_followed_by_client.get(thread_id) == client_id:
+            self._ipc_followed_by_client.pop(thread_id, None)
+        return sent
+
+    async def _stop_following_ipc_thread(self, thread_id: str) -> None:
+        client_id = self._ipc_followed_by_client.pop(thread_id, None)
+        self._ipc_resyncing_threads.discard(thread_id)
+        self._ipc_state_registry.discard(thread_id)
+        if (
+            client_id is None
+            or self.ipc_client is None
+            or not self.ipc_client.is_connected
+        ):
+            return
+        await self.ipc_client.send_broadcast(
+            "thread-stream-following-changed",
+            {
+                "conversationId": thread_id,
+                "hostId": "local",
+                "following": False,
+            },
+        )
+
+    async def handle_ipc_message(self, message: CodexIpcRouterMessage) -> None:
+        if not isinstance(message, CodexIpcBroadcast):
+            return
+        if message.sourceClientId == self._ipc_connection_client_id:
+            return
+
+        if message.method == "thread-stream-following-changed":
+            try:
+                following = CodexIpcFollowingChangedBroadcast.model_validate(
+                    message.model_dump()
+                )
+            except ValidationError as exc:
+                logger.warning(
+                    "ignoring invalid codex IPC following update validation_errors={}",
+                    exc.error_count(),
+                )
+                return
+            await self._ipc_publisher.handle_following(following)
+            return
+
+        if message.method == "ipc-connection-reset":
+            try:
+                CodexIpcConnectionResetBroadcast.model_validate(message.model_dump())
+            except ValidationError as exc:
+                logger.warning(
+                    "ignoring invalid codex IPC reset validation_errors={}",
+                    exc.error_count(),
+                )
+                return
+            followed_threads = list(self._ipc_followed_by_client)
+            self._ipc_state_registry.reset()
+            self._ipc_followed_by_client.clear()
+            self._ipc_resyncing_threads.clear()
+            self._ipc_publisher.reset_connection()
+            for thread_id in followed_threads:
+                await self._follow_ipc_thread(thread_id, force=True)
+            return
+
+        if message.method == "thread-stream-following-status-requested":
+            try:
+                requested = CodexIpcFollowingStatusRequestedBroadcast.model_validate(
+                    message.model_dump()
+                )
+            except ValidationError as exc:
+                logger.warning(
+                    "ignoring invalid codex IPC following status request validation_errors={}",
+                    exc.error_count(),
+                )
+                return
+            thread_id = requested.params.conversationId
+            if thread_id in self._ipc_followed_by_client:
+                await self._follow_ipc_thread(thread_id, force=True)
+            return
+
+        if message.method == "client-status-changed":
+            try:
+                status = CodexIpcClientStatusChangedBroadcast.model_validate(
+                    message.model_dump()
+                )
+            except ValidationError:
+                return
+            if status.params.status == "disconnected":
+                self._ipc_state_registry.remove_owner(status.params.clientId)
+                self._ipc_publisher.remove_follower(status.params.clientId)
+            return
+
+        if message.method != "thread-stream-state-changed":
+            return
+        try:
+            state_message = CodexIpcStreamStateChangedBroadcast.model_validate(
+                message.model_dump()
+            )
+        except ValidationError as exc:
+            logger.warning(
+                "ignoring invalid codex IPC stream state validation_errors={}",
+                exc.error_count(),
+            )
+            return
+
+        thread_id = state_message.params.conversationId
+        if self._ipc_followed_by_client.get(thread_id) != self._ipc_connection_client_id:
+            return
+        try:
+            applied = await self._ipc_state_registry.apply(state_message)
+        except CodexIpcStateError as exc:
+            cause = exc.__cause__ or exc
+            logger.warning(
+                "codex IPC state desynchronized thread_id={} error_type={} error={}",
+                thread_id,
+                type(exc).__name__,
+                cause,
+            )
+            self._ipc_state_registry.discard(thread_id)
+            if thread_id in self._ipc_resyncing_threads:
+                return
+            self._ipc_resyncing_threads.add(thread_id)
+            if not await self._follow_ipc_thread(thread_id, force=True):
+                self._ipc_resyncing_threads.discard(thread_id)
+            return
+        if state_message.params.change.type == "snapshot":
+            self._ipc_resyncing_threads.discard(thread_id)
+        if (
+            self._ipc_followed_by_client.get(thread_id)
+            != self._ipc_connection_client_id
+            or self._ipc_publisher.is_active(thread_id)
+        ):
+            self._ipc_state_registry.discard(thread_id)
+            return
+        await self._emit_ipc_state(applied)
+
+    def can_handle_ipc_request(self, request: CodexIpcRequest) -> bool:
+        if request.method == "thread-follower-start-turn":
+            try:
+                params = CodexIpcFollowerStartTurnParams.model_validate(request.params)
+            except ValidationError:
+                return False
+            return self._ipc_publisher.is_active(params.conversationId)
+        if request.method == "thread-follower-interrupt-turn":
+            try:
+                params = CodexIpcFollowerInterruptTurnParams.model_validate(
+                    request.params
+                )
+            except ValidationError:
+                return False
+            return self._ipc_publisher.is_active(params.conversationId)
+        if request.method != "thread-follower-steer-turn":
+            return False
+        try:
+            params = CodexIpcFollowerSteerTurnParams.model_validate(request.params)
+        except ValidationError:
+            return False
+        return self._ipc_publisher.active_turn_id(params.conversationId) is not None
+
+    async def handle_ipc_request(self, request: CodexIpcRequest) -> dict[str, Any]:
+        if request.method == "thread-follower-start-turn":
+            params = CodexIpcFollowerStartTurnParams.model_validate(request.params)
+            if not self._ipc_publisher.is_active(params.conversationId):
+                raise RuntimeError("Codex thread is not owned by this Connector")
+            assert self.rpc is not None
+            turn_params = params.turnStartParams.model_dump(
+                mode="python",
+                exclude={"clientUserMessageId", "additionalContext"},
+                exclude_defaults=True,
+                exclude_none=True,
+            )
+            turn_params["threadId"] = params.conversationId
+            result = await self.rpc.request("turn/start", turn_params)
+            return {"result": result}
+        if request.method == "thread-follower-interrupt-turn":
+            params = CodexIpcFollowerInterruptTurnParams.model_validate(request.params)
+            turn_id = (
+                params.expectedTurnId
+                or self._ipc_publisher.active_turn_id(params.conversationId)
+            )
+            if turn_id is None:
+                raise RuntimeError("Codex thread has no active turn to interrupt")
+            assert self.rpc is not None
+            result = await self.rpc.request(
+                "turn/interrupt",
+                {"threadId": params.conversationId, "turnId": turn_id},
+            )
+            return {"result": result}
+        if request.method != "thread-follower-steer-turn":
+            raise ValueError(f"unsupported Codex IPC request: {request.method}")
+        params = CodexIpcFollowerSteerTurnParams.model_validate(request.params)
+        turn_id = self._ipc_publisher.active_turn_id(params.conversationId)
+        if turn_id is None:
+            raise RuntimeError("Codex thread has no active turn to steer")
+        result = await self._steer_local(
+            thread_id=params.conversationId,
+            turn_id=turn_id,
+            input_items=params.input,
+            client_message_id=params.clientUserMessageId,
+            additional_context=params.additionalContext,
+        )
+        return {"result": result}
+
+    async def _emit_ipc_state(self, applied: CodexIpcAppliedState) -> None:
+        assert self.reducer is not None
+        thread_id = applied.thread_state.conversation_id
+        session_id = self.reducer.session_for_thread(thread_id)
+        if session_id is None:
+            return
+        thread = codex_ipc_thread_snapshot(applied.thread_state.conversation_state)
+        scope = applied.patch_scope
+        if applied.kind == "snapshot" or scope.requires_timeline_sync:
+            reduced = self.reducer.reduce_thread_snapshot(
+                session_id,
+                thread,
+                fallback_thread_id=thread_id,
+            )
+            self._add_runtime_selection_to_reduction(reduced, thread)
+            await self._emit_reduction(reduced, timeline_method="timeline.sync")
+            return
+
+        if scope.metadata_changed:
+            reduced = self.reducer.reduce_thread_metadata(
+                session_id,
+                thread,
+                fallback_thread_id=thread_id,
+            )
+            self._add_runtime_selection_to_reduction(reduced, thread)
+            await self._emit_reduction(reduced, timeline_method="timeline.itemUpsert")
+
+        history = applied.thread_state.conversation_state.turnHistory
+        if history is None:
+            return
+        for entity_key, item_indexes in scope.item_indexes_by_entity.items():
+            turn = history.history.entitiesByKey.get(entity_key)
+            if turn is None or any(index >= len(turn.items) for index in item_indexes):
+                await self._follow_ipc_thread(thread_id, force=True)
+                return
+            reduced = self.reducer.reduce_turn_item_snapshots(
+                session_id,
+                thread_id,
+                turn.model_dump(mode="python"),
+                item_indexes,
+            )
+            await self._emit_reduction(
+                reduced,
+                timeline_method="timeline.itemUpsert",
+            )
+
+    async def _emit_reduction(
+        self,
+        reduced: ReductionResult,
+        *,
+        timeline_method: str,
+    ) -> None:
+        if self.notification_sink is None:
+            return
+        for notification in _backend_notifications_from_reduction(
+            reduced,
+            timeline_method=timeline_method,
+        ):
+            await self.notification_sink(notification["method"], notification["params"])
+
+    def _add_runtime_selection_to_reduction(
+        self,
+        reduced: ReductionResult,
+        thread: dict[str, Any],
+    ) -> None:
+        if reduced.session_update is None:
+            return
+        runtime_settings, permission_selection_id = (
+            _runtime_settings_and_permission_selection_from_codex_result(thread)
+        )
+        model_selection_id = _codex_model_selection_from_runtime_settings(
+            runtime_settings,
+            self._model_list_result,
+        )
+        if runtime_settings:
+            reduced.session_update["runtimeSettings"] = runtime_settings
+        if model_selection_id:
+            reduced.session_update["modelSelectionId"] = model_selection_id
+        if permission_selection_id:
+            reduced.session_update["permissionSelectionId"] = permission_selection_id
+
+    def _persist_sync_state(
+        self,
+        connector_id: str,
+        thread_id: str,
+        sync_marker: str | None,
+        current_name: str | None,
+    ) -> None:
+        if self.sync_state_store is None or sync_marker is None:
+            return
+        self.sync_state_store.set(
+            "codex",
+            connector_id,
+            thread_id,
+            fingerprint={"marker": sync_marker},
+            metadata={"name": current_name},
+        )
+
+    async def _sync_changed_existing_thread(
+        self,
+        session_id: str,
+        thread_id: str,
+        *,
+        thread_ref: dict[str, Any],
+    ) -> tuple[ReductionResult, dict[str, Any] | None]:
+        await self._ensure_thread_loaded(thread_id)
+        return await self._reduce_current_timeline(
+            session_id,
+            thread_id,
+            thread_ref=thread_ref,
+        )
+
+    async def start_turn(self, params: dict[str, Any]) -> dict[str, Any]:
+        await self.start()
+        assert self.rpc is not None
+        assert self.reducer is not None
+        session_id = _required_string(params, "sessionId")
+        thread_id = _optional_string(params.get("externalSessionId")) or self.reducer.thread_for_session(session_id)
+        if thread_id is None:
+            raise ValueError("externalSessionId is required before starting a Codex turn")
+        content = _required_string(params, "content")
+        self.reducer.bind_session(session_id, thread_id)
+        backend_notifications: list[dict[str, Any]] = []
+        try:
+            await self._ensure_thread_loaded(thread_id)
+        except RuntimeError as exc:
+            if _unresumable_thread_failure_reason(str(exc)) != "deleted":
+                raise
+            thread_id, backend_notifications = await self._replace_missing_thread_for_turn(
+                params,
+                session_id=session_id,
+                old_thread_id=thread_id,
+                error=exc,
+            )
+
+        attachments = params.get("attachments") or []
+        cwd = _optional_string(params.get("cwd"))
+        text_content, extra_inputs = await self._materialize_attachments(
+            content, attachments, cwd, session_id
+        )
+
+        input_items: list[dict[str, Any]] = [
+            {"type": "text", "text": text_content, "text_elements": []},
+            *extra_inputs,
+        ]
+        client_message_id = _optional_string(params.get("clientMessageId")) or str(uuid4())
+        timeline_attachments = _timeline_attachments(params)
+        if client_message_id:
+            self.reducer.register_client_message(
+                session_id=session_id,
+                thread_id=thread_id,
+                client_message_id=client_message_id,
+                text=text_content,
+                attachments=timeline_attachments,
+            )
+        native_permission = _codex_native_permission_settings(
+            _optional_string(params.get("permissionSelectionId"))
+        )
+        selected_model_settings = _codex_model_settings_from_selection_id(
+            _optional_string(params.get("modelSelectionId")),
+            self._model_list_result,
+        )
+        turn_params = {
+            "threadId": thread_id,
+            "input": input_items,
+            "approvalPolicy": native_permission.get("approvalPolicy"),
+            "sandboxPolicy": native_permission.get("sandboxPolicy"),
+            "model": selected_model_settings.get("model") or params.get("model"),
+            "effort": selected_model_settings.get("effort") or params.get("effort"),
+            "approvalsReviewer": native_permission.get("approvalsReviewer"),
+        }
+        logger.info(
+            "starting codex turn with runtime selection session_id={} thread_id={} model={} effort={} model_selection_id={} permission_selection_id={}",
+            session_id,
+            thread_id,
+            turn_params.get("model"),
+            turn_params.get("effort"),
+            params.get("modelSelectionId"),
+            params.get("permissionSelectionId"),
+        )
+        ipc_result = await self._start_turn_through_ipc(
+            thread_id=thread_id,
+            turn_params=turn_params,
+            client_message_id=client_message_id,
+            additional_context=params.get("additionalContext"),
+        )
+        if ipc_result is not None:
+            result = ipc_result
+            turn_id = _turn_id_from_result(result)
+            if turn_id:
+                self.reducer.register_client_message(
+                    session_id=session_id,
+                    thread_id=thread_id,
+                    turn_id=turn_id,
+                    client_message_id=client_message_id,
+                    text=text_content,
+                    attachments=timeline_attachments,
+                )
+            running = self.reducer.reduce_notification(
+                {
+                    "method": "turn/started",
+                    "params": {
+                        "platformSessionId": session_id,
+                        "threadId": thread_id,
+                        "turnId": turn_id,
+                        "turn": result.get("turn") or result,
+                    },
+                }
+            )
+            logger.info(
+                "started codex turn through IPC session_id={} thread_id={} turn_id={}",
+                session_id,
+                thread_id,
+                turn_id,
+            )
+            return {
+                "turnId": turn_id,
+                "turn": result.get("turn") or result,
+                "externalSessionId": thread_id,
+                "backendNotifications": [
+                    *backend_notifications,
+                    *_backend_notifications_from_reduction(
+                        running,
+                        timeline_method="timeline.itemUpsert",
+                    ),
+                ],
+            }
+
+        await self._claim_ipc_thread(thread_id)
+        try:
+            result = await self.rpc.request("turn/start", turn_params)
+        except RuntimeError as exc:
+            recovered = await self._recover_missing_thread_for_turn_start(
+                params,
+                session_id=session_id,
+                thread_id=thread_id,
+                error=exc,
+            )
+            if recovered is None:
+                raise
+            thread_id, extra_notifications = recovered
+            backend_notifications.extend(extra_notifications)
+            self.reducer.bind_session(session_id, thread_id)
+            turn_params["threadId"] = thread_id
+            await self._claim_ipc_thread(thread_id)
+            if client_message_id:
+                self.reducer.register_client_message(
+                    session_id=session_id,
+                    thread_id=thread_id,
+                    client_message_id=client_message_id,
+                    text=text_content,
+                    attachments=timeline_attachments,
+                )
+            result = await self.rpc.request("turn/start", turn_params)
+        turn_id = _turn_id_from_result(result)
+        if client_message_id and turn_id:
+            self.reducer.register_client_message(
+                session_id=session_id,
+                thread_id=thread_id,
+                turn_id=turn_id,
+                client_message_id=client_message_id,
+                text=text_content,
+                attachments=timeline_attachments,
+            )
+        logger.info(
+            "codex turn started session_id={} thread_id={} turn_id={} input_chars={} attachments={}",
+            session_id,
+            thread_id,
+            turn_id,
+            len(text_content),
+            len(attachments),
+        )
+        return {
+            "turnId": turn_id,
+            "turn": result.get("turn") or result,
+            "externalSessionId": thread_id,
+            "backendNotifications": backend_notifications,
+        }
+
+    async def _start_turn_through_ipc(
+        self,
+        *,
+        thread_id: str,
+        turn_params: dict[str, Any],
+        client_message_id: str,
+        additional_context: Any,
+    ) -> dict[str, Any] | None:
+        await self._discover_ipc_router()
+        if (
+            self.ipc_client is None
+            or not self.ipc_client.is_connected
+            or self._ipc_publisher.is_active(thread_id)
+        ):
+            return None
+        ipc_turn_params = {
+            "input": turn_params["input"],
+            "clientUserMessageId": client_message_id,
+        }
+        for key in ("approvalPolicy", "sandboxPolicy"):
+            if turn_params.get(key) is not None:
+                ipc_turn_params[key] = turn_params[key]
+        if additional_context is not None:
+            ipc_turn_params["additionalContext"] = additional_context
+        ipc_params = CodexIpcFollowerStartTurnParams.model_validate(
+            {
+                "conversationId": thread_id,
+                "turnStartParams": ipc_turn_params,
+            }
+        )
+        remote_state = self._ipc_state_registry.get(thread_id)
+        try:
+            response = await self.ipc_client.send_request(
+                "thread-follower-start-turn",
+                ipc_params.model_dump(
+                    mode="json", exclude_defaults=True, exclude_none=True
+                ),
+                target_client_id=(
+                    remote_state.owner_client_id if remote_state is not None else None
+                ),
+            )
+        except RuntimeError as exc:
+            if not _ipc_owner_unavailable(str(exc)):
+                raise
+            return None
+        result = response.get("result") if isinstance(response, dict) else response
+        if not isinstance(result, dict):
+            raise RuntimeError("Codex IPC owner returned an invalid turn/start result")
+        return result
+
+    async def _materialize_attachments(
+        self,
+        content: str,
+        attachments: list[Any],
+        cwd: str | None,
+        session_id: str,
+    ) -> tuple[str, list[dict[str, Any]]]:
+        """Download each attachment to the connector user attachment dir and translate
+        into codex `UserInput` items.
+
+        Codex's `turn/start` `input` array supports text / image / localImage /
+        skill / mention — there is no generic file input. So:
+
+          * image/* attachments → `localImage` input item
+          * everything else     → mention appended to the leading text item so
+            the model can inspect the materialized local path later.
+        """
+        if not attachments:
+            return content, []
+        if self.attachment_downloader is None:
+            logger.warning("dropping {} attachments — no downloader is wired", len(attachments))
+            return content, []
+
+        text = content
+        items: list[dict[str, Any]] = []
+        for att in attachments:
+            file_id = _attachment_file_id(att)
+            if file_id is None:
+                continue
+            try:
+                data, original_name, media_type = await self.attachment_downloader(
+                    session_id, file_id
+                )
+            except Exception as exc:
+                logger.exception("attachment download failed file_id={}", file_id)
+                text += f"\n\n[Failed to load attachment {file_id}: {exc}]"
+                continue
+            target = attachment_target(session_id, file_id, original_name)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+            try:
+                target.chmod(0o600)
+            except OSError:
+                pass
+
+            if media_type.startswith("image/"):
+                items.append({"type": "localImage", "path": str(target)})
+            else:
+                # Path-mention fallback: tell the model the file is sitting at
+                # this absolute path and let it call fs.readText if curious.
+                text += (
+                    f"\n\n[Attached file: {original_name} ({media_type or 'unknown type'},"
+                    f" {len(data)} bytes) at {target}]"
+                )
+        return text, items
+
+    async def steer_turn(self, params: dict[str, Any]) -> dict[str, Any]:
+        await self.start()
+        assert self.reducer is not None
+        session_id = _required_string(params, "sessionId")
+        thread_id = _optional_string(params.get("externalSessionId"))
+        if thread_id is None:
+            thread_id = self.reducer.thread_for_session(session_id)
+        if thread_id is None:
+            raise ValueError("externalSessionId is required before steering a Codex turn")
+        turn_id = _required_string(params, "turnId")
+        content = _required_string(params, "content")
+        text_content, extra_inputs = await self._materialize_attachments(
+            content,
+            params.get("attachments") or [],
+            _optional_string(params.get("cwd")),
+            session_id,
+        )
+        input_items: list[dict[str, Any]] = [
+            {"type": "text", "text": text_content, "text_elements": []},
+            *extra_inputs,
+        ]
+        client_message_id = (
+            _optional_string(params.get("clientMessageId")) or str(uuid4())
+        )
+        self.reducer.register_client_message(
+            session_id=session_id,
+            thread_id=thread_id,
+            turn_id=turn_id,
+            client_message_id=client_message_id,
+            text=text_content,
+            attachments=_timeline_attachments(params),
+        )
+
+        await self._discover_ipc_router()
+        if self._ipc_publisher.is_active(thread_id):
+            result = await self._steer_local(
+                thread_id=thread_id,
+                turn_id=turn_id,
+                input_items=input_items,
+                client_message_id=client_message_id,
+                additional_context=params.get("additionalContext"),
+            )
+            return {"steered": True, "turnId": turn_id, **result}
+
+        remote_state = self._ipc_state_registry.get(thread_id)
+        if (
+            remote_state is not None
+            and codex_ipc_active_turn_id(remote_state.conversation_state) is not None
+            and self.ipc_client is not None
+            and self.ipc_client.is_connected
+        ):
+            ipc_params = CodexIpcFollowerSteerTurnParams(
+                conversationId=thread_id,
+                clientUserMessageId=client_message_id,
+                input=input_items,
+                serviceTier=_optional_string(params.get("serviceTier")),
+                attachments=params.get("timelineAttachments") or [],
+                additionalContext=params.get("additionalContext"),
+                restoreMessage=params.get("restoreMessage"),
+            )
+            response = await self.ipc_client.send_request(
+                "thread-follower-steer-turn",
+                ipc_params.model_dump(mode="json", exclude_none=True),
+                target_client_id=remote_state.owner_client_id,
+            )
+            result = response.get("result") if isinstance(response, dict) else response
+            if not isinstance(result, dict):
+                result = {"result": result}
+            logger.info(
+                "steered codex turn through IPC session_id={} thread_id={} turn_id={} owner_client_id={}",
+                session_id,
+                thread_id,
+                turn_id,
+                remote_state.owner_client_id,
+            )
+            return {"steered": True, "turnId": turn_id, **result}
+
+        result = await self._steer_local(
+            thread_id=thread_id,
+            turn_id=turn_id,
+            input_items=input_items,
+            client_message_id=client_message_id,
+            additional_context=params.get("additionalContext"),
+        )
+        return {"steered": True, "turnId": turn_id, **result}
+
+    async def _steer_local(
+        self,
+        *,
+        thread_id: str,
+        turn_id: str,
+        input_items: list[dict[str, Any]],
+        client_message_id: str | None = None,
+        additional_context: Any = None,
+    ) -> dict[str, Any]:
+        assert self.rpc is not None
+        request: dict[str, Any] = {
+            "threadId": thread_id,
+            "input": input_items,
+            "expectedTurnId": turn_id,
+        }
+        if client_message_id is not None:
+            request["clientUserMessageId"] = client_message_id
+        if additional_context is not None:
+            request["additionalContext"] = additional_context
+        return await self.rpc.request("turn/steer", request)
+
+    async def interrupt_turn(self, params: dict[str, Any]) -> dict[str, Any]:
+        await self.start()
+        assert self.rpc is not None
+        assert self.reducer is not None
+        session_id = _optional_string(params.get("sessionId"))
+        thread_id = _optional_string(params.get("externalSessionId"))
+        if thread_id is None and session_id is not None:
+            thread_id = self.reducer.thread_for_session(session_id)
+        if thread_id is None:
+            raise ValueError("externalSessionId is required before interrupting a Codex turn")
+        turn_id = _optional_string(params.get("turnId"))
+        await self._discover_ipc_router()
+        remote_state = self._ipc_state_registry.get(thread_id)
+        if (
+            remote_state is not None
+            and self.ipc_client is not None
+            and self.ipc_client.is_connected
+            and not self._ipc_publisher.is_active(thread_id)
+        ):
+            request_params = {"conversationId": thread_id}
+            if turn_id is not None:
+                request_params["expectedTurnId"] = turn_id
+            response = await self.ipc_client.send_request(
+                "thread-follower-interrupt-turn",
+                request_params,
+                target_client_id=remote_state.owner_client_id,
+            )
+            result = response.get("result") if isinstance(response, dict) else response
+            if not isinstance(result, dict):
+                result = {"result": result}
+            logger.info(
+                "interrupted codex turn through IPC thread_id={} turn_id={} owner_client_id={}",
+                thread_id,
+                turn_id,
+                remote_state.owner_client_id,
+            )
+            return {"interrupted": True, **result}
+        if turn_id is None:
+            turn_id = self._ipc_publisher.active_turn_id(thread_id)
+        if turn_id is None:
+            raise ValueError("turnId is required before interrupting a Codex turn")
+        try:
+            result = await self.rpc.request("turn/interrupt", {"threadId": thread_id, "turnId": turn_id})
+        except RuntimeError as exc:
+            reason = _soft_interrupt_failure_reason(str(exc))
+            if reason is None:
+                raise
+            logger.info(
+                "codex interrupt treated as already finished thread_id={} turn_id={} reason={}",
+                thread_id,
+                turn_id,
+                reason,
+            )
+            return {"interrupted": False, "reason": reason}
+        return {"interrupted": True, **result}
+
+    async def resolve_approval(self, params: dict[str, Any]) -> dict[str, Any]:
+        await self.start()
+        assert self.rpc is not None
+        request_id = params.get("requestId")
+        if request_id is None:
+            raise ValueError("requestId is required to resolve a Codex approval")
+        decision = _approval_decision(params.get("status"))
+        await self.rpc.respond(request_id, {"decision": decision})
+        logger.info(
+            "codex approval resolved request_id={} approval_id={} status={} decision={}",
+            request_id,
+            params.get("approvalId"),
+            params.get("status"),
+            decision,
+        )
+        return {"resolved": True}
+
+    async def _claim_ipc_thread(self, thread_id: str) -> None:
+        await self._stop_following_ipc_thread(thread_id)
+        await self._ipc_publisher.activate(thread_id)
+
+    async def handle_notification(self, message: dict[str, Any]) -> None:
+        assert self.reducer is not None
+        reduced = self.reducer.reduce_notification(message)
+        thread_id = _thread_id_from_turn_message(message)
+        if thread_id is not None and self._ipc_publisher.is_active(thread_id):
+            projected_to_ipc = await self._ipc_publisher.handle_notification(message)
+            if not projected_to_ipc:
+                self._schedule_ipc_snapshot_refresh(message)
+        self._schedule_history_sync_after_turn_completion(message)
+        if message.get("method") == "turn/completed":
+            session_id = _session_id_from_reduction(reduced)
+            thread_id = _thread_id_from_turn_message(message)
+            logger.info(
+                "codex turn completed session_id={} thread_id={} timeline_items={} approvals={}",
+                session_id,
+                thread_id,
+                len(reduced.timeline_items),
+                len(reduced.approvals),
+            )
+        elif message.get("method") == "item/completed":
+            completed_item = _completed_item_from_message(message)
+            if completed_item is not None and completed_item.get("type") in {"agentMessage", "userMessage"}:
+                session_id = _session_id_from_reduction(reduced)
+                thread_id = _thread_id_from_turn_message(message)
+                logger.info(
+                    "codex message completed session_id={} thread_id={} item_id={} item_type={}",
+                    session_id,
+                    thread_id,
+                    completed_item.get("id"),
+                    completed_item.get("type"),
+                )
+        for notification in _backend_notifications_from_reduction(reduced, timeline_method="timeline.itemUpsert"):
+            if self.notification_sink is not None:
+                await self.notification_sink(notification["method"], notification["params"])
+
+    def reduce_notification_for_test(self, message: dict[str, Any]) -> ReductionResult:
+        assert self.reducer is not None
+        return self.reducer.reduce_notification(message)
+
+    async def _resume_thread(self, thread_id: str) -> None:
+        assert self.rpc is not None
+        await self.rpc.request("thread/resume", {"threadId": thread_id})
+
+    async def _ensure_thread_loaded(self, thread_id: str, *, force: bool = False) -> None:
+        if not force and thread_id in self._loaded_thread_ids:
+            return
+        await self._resume_thread(thread_id)
+        self._loaded_thread_ids.add(thread_id)
+
+    async def _create_replacement_thread(self, params: dict[str, Any]) -> dict[str, Any]:
+        return await self.create_session(
+            {
+                "sessionId": _required_string(params, "sessionId"),
+                "cwd": params.get("cwd"),
+                "model": params.get("model"),
+                "modelSelectionId": params.get("modelSelectionId"),
+                "permissionSelectionId": params.get("permissionSelectionId"),
+                "ephemeral": params.get("ephemeral", False),
+            }
+        )
+
+    async def _recover_missing_thread_for_turn_start(
+        self,
+        params: dict[str, Any],
+        *,
+        session_id: str,
+        thread_id: str,
+        error: RuntimeError,
+    ) -> tuple[str, list[dict[str, Any]]] | None:
+        if _unresumable_thread_failure_reason(str(error)) != "deleted":
+            return None
+        logger.warning(
+            "codex turn/start target thread missing; forcing resume before retry session_id={} thread_id={} error={}",
+            session_id,
+            thread_id,
+            error,
+        )
+        self._loaded_thread_ids.discard(thread_id)
+        try:
+            await self._ensure_thread_loaded(thread_id, force=True)
+        except RuntimeError as resume_error:
+            if _unresumable_thread_failure_reason(str(resume_error)) != "deleted":
+                raise
+            return await self._replace_missing_thread_for_turn(
+                params,
+                session_id=session_id,
+                old_thread_id=thread_id,
+                error=resume_error,
+            )
+        return thread_id, []
+
+    async def _replace_missing_thread_for_turn(
+        self,
+        params: dict[str, Any],
+        *,
+        session_id: str,
+        old_thread_id: str,
+        error: RuntimeError,
+    ) -> tuple[str, list[dict[str, Any]]]:
+        logger.warning(
+            "codex thread rollout missing; creating replacement thread session_id={} old_thread_id={} error={}",
+            session_id,
+            old_thread_id,
+            error,
+        )
+        replacement = await self._create_replacement_thread(params)
+        thread_id = replacement["externalSessionId"]
+        self.reducer.bind_session(session_id, thread_id)
+        backend_notifications = replacement["backendNotifications"]
+        for notification in backend_notifications:
+            if notification.get("method") == "session.updated":
+                notification.get("params", {}).pop("status", None)
+        for notification in backend_notifications:
+            if self.notification_sink is not None:
+                await self.notification_sink(notification["method"], notification["params"])
+        return thread_id, backend_notifications
+
+    async def _best_effort_bootstrap_reads(self) -> None:
+        assert self.rpc is not None
+        for method, params in (
+            ("account/read", None),
+            ("model/list", None),
+            ("thread/loaded/list", None),
+        ):
+            try:
+                result = await self.rpc.request(method, params)
+                if method == "model/list":
+                    self._model_list_result = result
+            except Exception as exc:  # pragma: no cover - defensive against version drift
+                logger.debug("codex bootstrap read failed method={} error={}", method, exc)
+
+    async def model_catalog(self, *, revision: int) -> dict[str, Any] | None:
+        await self.start()
+        items = [_codex_model_item_with_reasoning(item) for item in _model_list_items(self._model_list_result)]
+        return model_catalog_from_runtime_items(
+            "codex",
+            revision=revision,
+            items=items,
+        ).model_dump(mode="json")
+
+    async def permission_catalog(self, *, revision: int) -> dict[str, Any] | None:
+        return permission_catalog_from_items(
+            "codex",
+            revision=revision,
+            items=_codex_permission_catalog_items(),
+        ).model_dump(mode="json")
+
+    async def _reduce_current_timeline(
+        self,
+        session_id: str,
+        thread_id: str,
+        *,
+        thread_ref: dict[str, Any] | None = None,
+    ) -> tuple[ReductionResult, dict[str, Any]]:
+        assert self.rpc is not None
+        assert self.reducer is not None
+        snapshot_result = await self.rpc.request("thread/read", {"threadId": thread_id, "includeTurns": True})
+        thread = snapshot_result.get("thread") if isinstance(snapshot_result.get("thread"), dict) else snapshot_result
+        if not isinstance(thread, dict):
+            thread = {}
+        await self._ipc_publisher.load_thread(
+            thread,
+            fallback_thread_id=thread_id,
+        )
+        return self.reducer.reduce_thread_snapshot(
+            session_id,
+            thread,
+            fallback_thread_id=thread_id,
+        ), thread
+
+    def _schedule_ipc_snapshot_refresh(self, message: dict[str, Any]) -> None:
+        params = message.get("params") if isinstance(message.get("params"), dict) else {}
+        thread_id = _optional_string(params.get("threadId")) or _nested_string(
+            params, "thread", "id"
+        )
+        if thread_id is None:
+            return
+        old_task = self._ipc_refresh_tasks.get(thread_id)
+        if old_task is not None and not old_task.done():
+            old_task.cancel()
+        self._ipc_refresh_tasks[thread_id] = asyncio.create_task(
+            self._delayed_refresh_ipc_snapshot(thread_id)
+        )
+
+    async def _delayed_refresh_ipc_snapshot(self, thread_id: str) -> None:
+        try:
+            await asyncio.sleep(0.05)
+            assert self.rpc is not None
+            snapshot_result = await self.rpc.request(
+                "thread/read",
+                {"threadId": thread_id, "includeTurns": True},
+            )
+            thread = (
+                snapshot_result.get("thread")
+                if isinstance(snapshot_result.get("thread"), dict)
+                else snapshot_result
+            )
+            if isinstance(thread, dict):
+                await self._ipc_publisher.load_thread(
+                    thread,
+                    fallback_thread_id=thread_id,
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception(
+                "codex IPC owner snapshot refresh failed thread_id={}",
+                thread_id,
+            )
+        finally:
+            current = self._ipc_refresh_tasks.get(thread_id)
+            if current is asyncio.current_task():
+                self._ipc_refresh_tasks.pop(thread_id, None)
+
+    def _schedule_history_sync_after_turn_completion(self, message: dict[str, Any]) -> None:
+        if message.get("method") != "turn/completed":
+            return
+        params = message.get("params") if isinstance(message.get("params"), dict) else {}
+        thread_id = _optional_string(params.get("threadId")) or _nested_string(params, "thread", "id")
+        if thread_id is None:
+            return
+        session_id = _optional_string(params.get("platformSessionId"))
+        if session_id is None and self.reducer is not None:
+            session_id = self.reducer.session_for_thread(thread_id)
+        if session_id is None:
+            return
+        old_task = self._history_sync_tasks.get(thread_id)
+        if old_task is not None and not old_task.done():
+            old_task.cancel()
+        self._history_sync_tasks[thread_id] = asyncio.create_task(self._delayed_push_thread_snapshot(session_id, thread_id))
+
+    async def _delayed_push_thread_snapshot(self, session_id: str, thread_id: str) -> None:
+        try:
+            await asyncio.sleep(0.5)
+            reduced, _thread = await self._reduce_current_timeline(session_id, thread_id)
+            if not reduced.timeline_items:
+                return
+            notification_count = 0
+            for notification in _backend_notifications_from_reduction(reduced, timeline_method="timeline.sync"):
+                notification_count += 1
+                if self.notification_sink is not None:
+                    await self.notification_sink(notification["method"], notification["params"])
+            logger.info(
+                "codex turn snapshot synced session_id={} thread_id={} timeline_items={} notifications={}",
+                session_id,
+                thread_id,
+                len(reduced.timeline_items),
+                notification_count,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("codex delayed thread snapshot sync failed thread_id={}", thread_id)
+
+
+def _backend_notifications_from_reduction(
+    reduced: ReductionResult,
+    *,
+    timeline_method: str = "timeline.sync",
+) -> list[dict[str, Any]]:
+    notifications: list[dict[str, Any]] = []
+    if reduced.session_update:
+        notifications.append({"method": "session.updated", "params": reduced.session_update})
+    if reduced.timeline_items:
+        session_id = reduced.timeline_items[0]["sessionId"]
+        if timeline_method == "timeline.itemUpsert":
+            for item in reduced.timeline_items:
+                notifications.append({"method": timeline_method, "params": {"sessionId": session_id, "item": item}})
+        else:
+            notifications.append({"method": timeline_method, "params": {"sessionId": session_id, "items": reduced.timeline_items}})
+    for approval in reduced.approvals:
+        notifications.append({"method": "notice.upsert", "params": approval_notice(approval)})
+    for notice in reduced.notices:
+        notifications.append({"method": "notice.upsert", "params": notice})
+    return notifications
+
+
+def _session_id_from_reduction(reduced: ReductionResult) -> str | None:
+    if reduced.timeline_items:
+        value = reduced.timeline_items[0].get("sessionId")
+        return value if isinstance(value, str) else None
+    if reduced.session_update:
+        value = reduced.session_update.get("sessionId")
+        return value if isinstance(value, str) else None
+    if reduced.approvals:
+        value = reduced.approvals[0].get("sessionId")
+        return value if isinstance(value, str) else None
+    return None
+
+
+def _thread_id_from_turn_message(message: dict[str, Any]) -> str | None:
+    params = message.get("params") if isinstance(message.get("params"), dict) else {}
+    return _optional_string(params.get("threadId")) or _nested_string(params, "thread", "id")
+
+
+def _completed_item_from_message(message: dict[str, Any]) -> dict[str, Any] | None:
+    params = message.get("params") if isinstance(message.get("params"), dict) else {}
+    item = params.get("item")
+    return item if isinstance(item, dict) else None
+
+
+def stable_session_id(connector_id: str, thread_id: str) -> str:
+    digest = hashlib.sha256(f"{connector_id}:codex:{thread_id}".encode("utf-8")).hexdigest()[:24]
+    return f"sess_codex_{digest}"
+
+
+# Token only emitted by Claude Code when its transcript is serialised into a
+# Codex thread; never appears in native Codex output.
+_EXTERNAL_AGENT_TOOL_CALL_MARKER = "[external_agent_tool_call:"
+
+
+def _is_imported_external_thread(timeline_items: list[dict[str, Any]]) -> bool:
+    for item in timeline_items:
+        if not isinstance(item, dict):
+            continue
+        if item.get("type") != "message":
+            continue
+        if item.get("role") != "assistant":
+            continue
+        content = item.get("content")
+        if not isinstance(content, dict):
+            continue
+        text = content.get("text")
+        if isinstance(text, str) and _EXTERNAL_AGENT_TOOL_CALL_MARKER in text:
+            return True
+    return False
+
+
+def _thread_sync_marker(thread_ref: dict[str, Any]) -> str | None:
+    updated_at = thread_ref.get("updatedAt") or thread_ref.get("updated_at")
+    if updated_at is not None:
+        return f"updated:{_codex_time(updated_at) or str(updated_at)}"
+    try:
+        encoded = json.dumps(thread_ref, ensure_ascii=False, sort_keys=True, default=str)
+    except TypeError:
+        return None
+    return f"ref:{hashlib.sha256(encoded.encode('utf-8')).hexdigest()}"
+
+
+def _thread_refs_from_list_result(result: dict[str, Any]) -> list[dict[str, Any]]:
+    for key in ("threads", "data", "items"):
+        value = result.get(key)
+        if isinstance(value, list):
+            return [item for item in value if isinstance(item, dict)]
+    nested = result.get("thread")
+    if isinstance(nested, dict):
+        return [nested]
+    if _thread_id_from_result(result):
+        return [result]
+    logger.debug("codex thread/list returned no recognizable thread list: {}", json.dumps(result, ensure_ascii=False))
+    return []
+
+
+def _local_thread_state(thread_ref: dict[str, Any]) -> str:
+    """Best-effort local thread state from Codex list metadata.
+
+    Codex app-server is versioned independently, so keep this deliberately
+    tolerant: if any common archived/deleted flag is present we treat the
+    thread as not resumable and never publish it to the backend.
+    """
+    for key in ("localState", "local_state", "lifecycleState", "lifecycle_state"):
+        value = thread_ref.get(key)
+        if isinstance(value, str):
+            normalized = value.lower()
+            if normalized in {"active", "archived", "deleted", "unresumable", "unknown"}:
+                return normalized
+    status = thread_ref.get("status")
+    if isinstance(status, dict):
+        status = status.get("type") or status.get("state")
+    if isinstance(status, str):
+        normalized_status = status.lower()
+        if normalized_status in {"archived", "deleted", "unresumable"}:
+            return normalized_status
+    for key in ("archived", "isArchived", "is_archived"):
+        if thread_ref.get(key) is True:
+            return "archived"
+    for key in ("deleted", "isDeleted", "is_deleted"):
+        if thread_ref.get(key) is True:
+            return "deleted"
+    for key in ("archivedAt", "archived_at"):
+        if thread_ref.get(key):
+            return "archived"
+    for key in ("deletedAt", "deleted_at", "removedAt", "removed_at"):
+        if thread_ref.get(key):
+            return "deleted"
+    if thread_ref.get("resumeSupported") is False or thread_ref.get("resumable") is False:
+        return "unresumable"
+    return "active"
+
+
+def _required_string(params: dict[str, Any], key: str) -> str:
+    value = params.get(key)
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"{key} is required")
+    return value
+
+
+def _optional_string(value: Any) -> str | None:
+    return value if isinstance(value, str) and value else None
+
+
+def _sandbox_mode(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        if value in {"read-only", "workspace-write", "danger-full-access"}:
+            return value
+        return {
+            "readOnly": "read-only",
+            "workspaceWrite": "workspace-write",
+            "dangerFullAccess": "danger-full-access",
+        }.get(value)
+    if isinstance(value, dict):
+        sandbox_type = value.get("type")
+        if isinstance(sandbox_type, str):
+            return {
+                "readOnly": "read-only",
+                "workspaceWrite": "workspace-write",
+                "dangerFullAccess": "danger-full-access",
+                "read-only": "read-only",
+                "workspace-write": "workspace-write",
+                "danger-full-access": "danger-full-access",
+            }.get(sandbox_type)
+    return None
+
+
+def _codex_permission_catalog_items() -> list[dict[str, Any]]:
+    return [
+        {
+            "id": "untrusted_workspace_write",
+            "label": "Ask for untrusted commands",
+            "description": "Run trusted commands automatically in workspace-write sandbox; ask before untrusted commands.",
+            "default": True,
+            "identity": {
+                "approval_policy": "untrusted",
+                "sandbox": "workspace-write",
+            },
+            "runtimeSettings": {"permissionMode": "untrusted_workspace_write"},
+            "nativeSettings": {
+                "approvalPolicy": "untrusted",
+                "sandbox": "workspace-write",
+                "sandboxPolicy": {"type": "workspaceWrite", "networkAccess": False},
+            },
+        },
+        {
+            "id": "on_request_workspace_write",
+            "label": "Ask when requested",
+            "description": "Use workspace-write sandbox and let the model decide when to ask for approval.",
+            "identity": {
+                "approval_policy": "on-request",
+                "sandbox": "workspace-write",
+            },
+            "runtimeSettings": {"permissionMode": "on_request_workspace_write"},
+            "nativeSettings": {
+                "approvalPolicy": "on-request",
+                "sandbox": "workspace-write",
+                "sandboxPolicy": {"type": "workspaceWrite", "networkAccess": False},
+            },
+        },
+        {
+            "id": "on_request_read_only",
+            "label": "Read only",
+            "description": "Run commands in read-only sandbox; ask before work that needs writes.",
+            "identity": {
+                "approval_policy": "on-request",
+                "sandbox": "read-only",
+            },
+            "runtimeSettings": {"permissionMode": "on_request_read_only"},
+            "nativeSettings": {
+                "approvalPolicy": "on-request",
+                "sandbox": "read-only",
+                "sandboxPolicy": {"type": "readOnly", "networkAccess": False},
+            },
+        },
+        {
+            "id": "never_workspace_write",
+            "label": "Never ask, workspace write",
+            "description": "Do not prompt for approvals; failures are returned to the model. Commands stay sandboxed to workspace writes.",
+            "identity": {
+                "approval_policy": "never",
+                "sandbox": "workspace-write",
+            },
+            "runtimeSettings": {"permissionMode": "never_workspace_write"},
+            "nativeSettings": {
+                "approvalPolicy": "never",
+                "sandbox": "workspace-write",
+                "sandboxPolicy": {"type": "workspaceWrite", "networkAccess": False},
+            },
+        },
+        {
+            "id": "never_danger_full_access",
+            "label": "Full access ⚠️",
+            "description": "Never ask and run without sandboxing. Use only in externally sandboxed environments.",
+            "identity": {
+                "approval_policy": "never",
+                "sandbox": "danger-full-access",
+            },
+            "runtimeSettings": {"permissionMode": "never_danger_full_access"},
+            "nativeSettings": {
+                "approvalPolicy": "never",
+                "sandbox": "danger-full-access",
+                "sandboxPolicy": {"type": "dangerFullAccess"},
+            },
+        },
+    ]
+
+
+def _codex_permission_selection_id(item: dict[str, Any]) -> str:
+    identity = item.get("identity") if isinstance(item.get("identity"), dict) else {"permission_id": item["id"]}
+    return protocol_selection_id("codex", "permission", identity)
+
+
+def _codex_native_permission_settings(selection_id: str | None) -> dict[str, Any]:
+    if selection_id is None:
+        return {}
+    for item in _codex_permission_catalog_items():
+        if _codex_permission_selection_id(item) == selection_id:
+            native_settings = item.get("nativeSettings")
+            return dict(native_settings) if isinstance(native_settings, dict) else {}
+    return {}
+
+
+def _codex_permission_id_from_selection_id(selection_id: str) -> str | None:
+    for item in _codex_permission_catalog_items():
+        if _codex_permission_selection_id(item) == selection_id:
+            return str(item["id"])
+    return None
+
+
+def _codex_permission_state_from_native_result(
+    value: dict[str, Any],
+) -> tuple[str | None, str | None]:
+    approval_policy = _first_optional_string(
+        value,
+        "approvalPolicy",
+        ("turnStartParams", "approvalPolicy"),
+        ("threadSettings", "approvalPolicy"),
+        ("settings", "approvalPolicy"),
+        ("latestTurnStartParams", "approvalPolicy"),
+    )
+    sandbox = _sandbox_mode(
+        _first_present(
+            value,
+            "sandbox",
+            "sandboxPolicy",
+            ("turnStartParams", "sandbox"),
+            ("turnStartParams", "sandboxPolicy"),
+            ("threadSettings", "sandbox"),
+            ("threadSettings", "sandboxPolicy"),
+            ("settings", "sandbox"),
+            ("settings", "sandboxPolicy"),
+            ("latestTurnStartParams", "sandbox"),
+            ("latestTurnStartParams", "sandboxPolicy"),
+        )
+    )
+    if approval_policy is None and sandbox is None:
+        return None, None
+    for item in _codex_permission_catalog_items():
+        native = item.get("nativeSettings")
+        if not isinstance(native, dict):
+            continue
+        if approval_policy is not None and native.get("approvalPolicy") != approval_policy:
+            continue
+        if sandbox is not None and native.get("sandbox") != sandbox:
+            continue
+        return str(item["id"]), _codex_permission_selection_id(item)
+    return None, None
+
+
+def _first_optional_string(
+    value: dict[str, Any],
+    *paths: str | tuple[str, ...],
+) -> str | None:
+    for path in paths:
+        candidate = _nested_value(value, path)
+        if (text := _optional_string(candidate)) is not None:
+            return text
+    return None
+
+
+def _first_present(
+    value: dict[str, Any],
+    *paths: str | tuple[str, ...],
+) -> Any:
+    for path in paths:
+        candidate = _nested_value(value, path)
+        if candidate is not None:
+            return candidate
+    return None
+
+
+def _nested_value(value: dict[str, Any], path: str | tuple[str, ...]) -> Any:
+    keys = (path,) if isinstance(path, str) else path
+    current: Any = value
+    for key in keys:
+        if not isinstance(current, dict):
+            return None
+        current = current.get(key)
+    return current
+
+
+def _runtime_settings_and_permission_selection_from_codex_result(value: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
+    settings = _runtime_settings_from_codex_result(value)
+    permission_mode, permission_selection_id = _codex_permission_state_from_native_result(value)
+    if permission_mode is not None:
+        settings["permissionMode"] = permission_mode
+    return settings, permission_selection_id
+
+
+def _runtime_settings_from_codex_result(value: dict[str, Any]) -> dict[str, Any]:
+    settings: dict[str, Any] = {}
+    if not isinstance(value, dict):
+        return settings
+    model = _optional_string(value.get("model"))
+    if model is not None:
+        settings["model"] = model
+    effort = _optional_string(value.get("reasoningEffort")) or _optional_string(value.get("effort"))
+    if effort is not None:
+        settings["effort"] = effort
+    return settings
+
+
+def _codex_time(value: Any) -> str | None:
+    if isinstance(value, int | float):
+        seconds = float(value)
+        if seconds > 10_000_000_000:
+            seconds = seconds / 1000
+        return datetime.fromtimestamp(seconds, UTC).isoformat().replace("+00:00", "Z")
+    return _optional_string(value)
+
+
+def _nested_string(data: dict[str, Any], key: str, nested_key: str) -> str | None:
+    nested = data.get(key)
+    if isinstance(nested, dict):
+        return _optional_string(nested.get(nested_key))
+    return None
+
+
+def _approval_decision(status: Any) -> str:
+    if status == "approved_for_session":
+        return "acceptForSession"
+    if status == "approved":
+        return "accept"
+    if status == "cancelled":
+        return "cancel"
+    return "decline"
+
+
+def _soft_interrupt_failure_reason(error_text: str) -> str | None:
+    message = error_text
+    try:
+        parsed = json.loads(error_text)
+        if isinstance(parsed, dict):
+            raw = parsed.get("message")
+            if isinstance(raw, str):
+                message = raw
+    except json.JSONDecodeError:
+        pass
+    normalized = message.lower()
+    if "thread not found" in normalized:
+        return "thread_not_found"
+    if "turn not found" in normalized:
+        return "turn_not_found"
+    return None
+
+
+def _unresumable_thread_failure_reason(error_text: str) -> str | None:
+    message = error_text
+    try:
+        parsed = json.loads(error_text)
+        if isinstance(parsed, dict):
+            raw = parsed.get("message")
+            if isinstance(raw, str):
+                message = raw
+    except json.JSONDecodeError:
+        pass
+    normalized = message.lower()
+    if (
+        "thread not found" in normalized
+        or "session not found" in normalized
+        or "no rollout found" in normalized
+        or "id not found" in normalized
+    ):
+        return "deleted"
+    if "archived" in normalized:
+        return "archived"
+    if "cannot resume" in normalized or "not resumable" in normalized or "unresumable" in normalized:
+        return "unresumable"
+    if "failed to load configuration" in normalized and "model provider" in normalized:
+        return "missing_model_provider"
+    if "model provider" in normalized and "not found" in normalized:
+        return "missing_model_provider"
+    return None
+
+
+def _ipc_owner_unavailable(error_text: str) -> bool:
+    return "no-client-found" in error_text.lower()
+
+
+def _attachment_file_id(att: Any) -> str | None:
+    if isinstance(att, dict):
+        candidate = att.get("fileId")
+        if isinstance(candidate, str) and candidate:
+            return candidate
+    return None
+
+
+def _attachment_name_from(att: Any) -> str | None:
+    if isinstance(att, dict):
+        candidate = att.get("name")
+        if isinstance(candidate, str) and candidate:
+            return candidate
+    return None
+
+
+__all__ = ["CODEX_APPROVAL_METHODS", "CodexAdapter", "JsonRpcStdioClient", "TimelineReducer"]

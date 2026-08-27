@@ -1,0 +1,16 @@
+node_modules
+lib
+.DS_Store
+*.log
+src/**/*.d.ts
+
+# Python (bundled anywhere-cli)
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/.pytest_cache/
+**/.ruff_cache/
+**/.mypy_cache/
+src/connector-source/.venv/
+src/connector-source/build/
+src/connector-source/dist/
