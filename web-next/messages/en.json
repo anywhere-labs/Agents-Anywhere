@@ -300,7 +300,7 @@
     "filters": {
       "active": "Active",
       "all": "All",
-      "allActive": "All active",
+      "allActive": "Active sessions",
       "archived": "Archived",
       "status": "Status",
       "devices": "Devices",

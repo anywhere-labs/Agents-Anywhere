@@ -660,16 +660,9 @@ export type FilterValue = {
   status: SessionStatusFilter
 }
 
-export type SessionStatusFilter = "all" | "running" | "attention" | "idle" | "error" | "archived"
+export type SessionStatusFilter = "all" | "archived"
 
 export const defaultFilter: FilterValue = { connectorId: "all", runtime: "all", status: "all" }
-
-const groupedStatuses: Record<Exclude<SessionStatusFilter, "all" | "archived">, readonly SessionStatus[]> = {
-  running: ["running", "stopping"],
-  attention: ["waiting", "pending", "waiting_approval"],
-  idle: ["idle"],
-  error: ["error", "blocked"],
-}
 
 function isUserArchived(session: SessionView): boolean {
   if (typeof session.userArchived === "boolean") return session.userArchived
@@ -689,7 +682,6 @@ export function filterSessions(
       if (!isUserArchived(s) || s.sourceAvailability === "archived") return false
     } else {
       if (s.archived) return false
-      if (filter.status !== "all" && !groupedStatuses[filter.status].includes(s.status)) return false
     }
     if (query.trim() && !(s.title ?? "").toLowerCase().includes(query.trim().toLowerCase())) return false
     return true

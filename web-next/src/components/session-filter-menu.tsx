@@ -30,10 +30,6 @@ export function SessionFilterMenu() {
   const update = (patch: Partial<FilterValue>) => setFilter({ ...filter, ...patch })
   const statuses: { value: SessionStatusFilter; label: string }[] = [
     { value: "all", label: t("filters.allActive") },
-    { value: "running", label: t("filters.inProgress") },
-    { value: "attention", label: t("filters.needsAttention") },
-    { value: "idle", label: t("sessionStatus.idle") },
-    { value: "error", label: t("filters.issues") },
     { value: "archived", label: t("filters.archived") },
   ]
 

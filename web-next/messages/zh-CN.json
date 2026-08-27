@@ -306,7 +306,7 @@
     "filters": {
       "active": "活跃",
       "all": "全部",
-      "allActive": "全部活跃",
+      "allActive": "活跃会话",
       "archived": "已归档",
       "status": "状态",
       "devices": "设备",
