@@ -686,7 +686,7 @@ export function filterSessions(
     if (filter.connectorId !== "all" && s.connectorId !== filter.connectorId) return false
     if (filter.runtime !== "all" && s.runtime !== filter.runtime) return false
     if (filter.status === "archived") {
-      if (!isUserArchived(s)) return false
+      if (!isUserArchived(s) || s.sourceAvailability === "archived") return false
     } else {
       if (s.archived) return false
       if (filter.status !== "all" && !groupedStatuses[filter.status].includes(s.status)) return false

@@ -391,9 +391,8 @@ function SessionSidebarItem({
   const [renaming, setRenaming] = React.useState(false)
   const isBusy = item.status === "running" || item.status === "waiting" || item.status === "pending"
   const isWaitingApproval = item.status === "waiting_approval"
-  const isError = item.status === "error"
   const isUnreadIdle = item.unread && item.status === "idle"
-  const hasStatusIndicator = isBusy || isWaitingApproval || isError || isUnreadIdle
+  const hasStatusIndicator = isBusy || isWaitingApproval || isUnreadIdle
 
   React.useEffect(() => {
     if (!renameOpen) setTitleDraft(item.title ?? "")
@@ -452,7 +451,6 @@ function SessionSidebarItem({
                 <span className="min-w-0 flex-1 truncate">{item.title}</span>
                 <SessionSidebarIndicator
                   busy={isBusy}
-                  error={isError}
                   unreadIdle={isUnreadIdle}
                   waitingApproval={isWaitingApproval}
                 />
@@ -587,12 +585,10 @@ function SessionSidebarItem({
 
 function SessionSidebarIndicator({
   busy,
-  error,
   unreadIdle,
   waitingApproval,
 }: {
   busy: boolean
-  error: boolean
   unreadIdle: boolean
   waitingApproval: boolean
 }) {
@@ -603,14 +599,6 @@ function SessionSidebarIndicator({
       <span className="ml-2 shrink-0 rounded-full bg-emerald-500/20 px-2 py-0.5 text-[11px] font-medium leading-4 text-emerald-400 ring-1 ring-emerald-500/20">
         {t("sessionStatus.waitingApproval")}
       </span>
-    )
-  }
-  if (error) {
-    return (
-      <span
-        aria-label={t("sessionStatus.error")}
-        className="ml-2 size-2 shrink-0 rounded-full bg-destructive"
-      />
     )
   }
   if (busy) {
