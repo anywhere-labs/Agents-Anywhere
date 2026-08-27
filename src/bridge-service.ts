@@ -38,6 +38,7 @@ import {
   stringField,
 } from './bridge/wire/validation.js'
 import {
+  type AppDownloadQrInfo,
   type BridgeInfo,
   type ConnectorCredentials,
   type ConnectorHostApi,
@@ -46,7 +47,10 @@ import {
   type ConnectorStateSnapshot,
   type EnvironmentInfo,
   INITIAL_ENVIRONMENT,
+  INITIAL_OAUTH,
   INITIAL_PAIRING,
+  type MobileLoginQrData,
+  type MobileLoginStatusInfo,
   type OperationResult,
   type PairingStartResult,
   type PairingState,
@@ -567,6 +571,8 @@ export class AgentsAnywhereConnectorService extends TypertRemoteService implemen
     connection: 'disconnected',
     bridge: null,
     device: null,
+    account: null,
+    oauth: { ...INITIAL_OAUTH },
     pairing: { ...INITIAL_PAIRING },
     environment: { ...INITIAL_ENVIRONMENT },
     dataDir: '~/.agents-anywhere',
@@ -675,6 +681,49 @@ export class AgentsAnywhereConnectorService extends TypertRemoteService implemen
     return this.coordinator.restart()
   }
 
+  // ── HostApi: OAuth & Account ──
+  @Remote('startOAuthLogin')
+  async startOAuthLogin(serverUrl?: string): Promise<OperationResult> {
+    this.wireCoordinatorEvents()
+    return this.coordinator.startOAuthLogin(serverUrl)
+  }
+
+  @Remote('cancelOAuthLogin')
+  async cancelOAuthLogin(): Promise<OperationResult> {
+    this.wireCoordinatorEvents()
+    return this.coordinator.cancelOAuthLogin()
+  }
+
+  @Remote('createMobileLoginQr')
+  async createMobileLoginQr(): Promise<MobileLoginQrData | null> {
+    this.wireCoordinatorEvents()
+    return this.coordinator.createMobileLoginQr()
+  }
+
+  @Remote('getMobileLoginStatus')
+  async getMobileLoginStatus(loginToken: string): Promise<MobileLoginStatusInfo | null> {
+    this.wireCoordinatorEvents()
+    return this.coordinator.getMobileLoginStatus(loginToken)
+  }
+
+  @Remote('confirmMobileLogin')
+  async confirmMobileLogin(loginToken: string, approved: boolean): Promise<MobileLoginStatusInfo | null> {
+    this.wireCoordinatorEvents()
+    return this.coordinator.confirmMobileLogin(loginToken, approved)
+  }
+
+  @Remote('getAppDownloadQr')
+  async getAppDownloadQr(serverUrl?: string): Promise<AppDownloadQrInfo | null> {
+    this.wireCoordinatorEvents()
+    return this.coordinator.getAppDownloadQr(serverUrl)
+  }
+
+  @Remote('logout')
+  async logout(): Promise<OperationResult> {
+    this.wireCoordinatorEvents()
+    return this.coordinator.logout()
+  }
+
   // ── HostApi: pairing ──
   @Remote('startPairing')
   async startPairing(serverUrl?: string): Promise<PairingStartResult> {
@@ -750,6 +799,8 @@ export class AgentsAnywhereConnectorService extends TypertRemoteService implemen
         connection: snapshot.connection,
         bridge: snapshot.bridge,
         device: snapshot.device,
+        account: snapshot.account,
+        oauth: snapshot.oauth,
         pairing: snapshot.pairing,
         environment: snapshot.environment,
         dataDir: snapshot.dataDir,
@@ -945,7 +996,7 @@ function buildTypertContribution(): unknown {
     result: { mode: 'src-json' },
   })
   return {
-    package: '@agents-anywhere/dsh-aa-connector',
+    package: '@agents-anywhere/dsh-aa-gateway',
     face: 'host',
     schemas: [],
     model: { services: [], events: [], objects: [] },
@@ -954,6 +1005,24 @@ function buildTypertContribution(): unknown {
       noArg('start'),
       noArg('stop'),
       noArg('restart'),
+      withArg('startOAuthLogin', 'serverUrl', true),
+      noArg('cancelOAuthLogin'),
+      noArg('createMobileLoginQr'),
+      withArg('getMobileLoginStatus', 'loginToken', false),
+      {
+        id: 'src:agentsAnywhereConnector#confirmMobileLogin',
+        service: 'agentsAnywhereConnector',
+        namespace: 'agentsAnywhereConnector',
+        method: 'confirmMobileLogin',
+        invocation: { kind: 'direct' },
+        parameters: [
+          { name: 'loginToken', wire: 'loginToken', source: 'json', codec: { mode: 'src-json' } },
+          { name: 'approved', wire: 'approved', source: 'json', codec: { mode: 'src-json' } },
+        ],
+        result: { mode: 'src-json' },
+      },
+      withArg('getAppDownloadQr', 'serverUrl', true),
+      noArg('logout'),
       withArg('startPairing', 'serverUrl', true),
       noArg('cancelPairing'),
       noArg('clearCredentials'),

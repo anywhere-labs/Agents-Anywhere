@@ -21,16 +21,22 @@ import {
   type ConnectorStateSnapshot,
   type DeviceBinding,
   type EnvironmentInfo,
+  INITIAL_OAUTH,
   type LogLevel,
+  type MobileLoginQrData,
+  type MobileLoginStatusInfo,
+  type OAuthLoginState,
+  type OAuthLoginStatus,
   type PairingState,
   type PairingStatus,
   type PythonStatus,
+  type UserAccount,
   type UvSource,
 } from '../../common/types.js'
 
 // Re-export the shared types under the legacy aliases the cards import.
-export type { ConnectorRuntimeState, PairingStatus, PythonStatus, UvSource, LogLevel }
-export type { BridgeInfo, ConnectionState, DeviceBinding, EnvironmentInfo, PairingState, ConnectorLog }
+export type { ConnectorRuntimeState, PairingStatus, PythonStatus, UvSource, LogLevel, OAuthLoginStatus }
+export type { BridgeInfo, ConnectionState, DeviceBinding, EnvironmentInfo, PairingState, ConnectorLog, UserAccount, OAuthLoginState, MobileLoginQrData, MobileLoginStatusInfo }
 
 /**
  * The cards consume a slightly wider shape than the wire DTO (they also
@@ -42,6 +48,8 @@ export interface ConnectorState {
   connection: ConnectionState
   bridge: BridgeInfo | null
   device: DeviceBinding | null
+  account: UserAccount | null
+  oauth: OAuthLoginState
   pairing: PairingState
   environment: EnvironmentInfo
   logs: ConnectorLog[]
@@ -66,6 +74,8 @@ function reducer(state: ConnectorState, action: Action): ConnectorState {
         connection: action.snapshot.connection,
         bridge: action.snapshot.bridge,
         device: action.snapshot.device,
+        account: action.snapshot.account,
+        oauth: action.snapshot.oauth,
         pairing: action.snapshot.pairing,
         environment: action.snapshot.environment,
         logs: state.logs, // logs come from getLogs, not getState
@@ -90,6 +100,8 @@ function defaultState(): ConnectorState {
     connection: 'disconnected',
     bridge: null,
     device: null,
+    account: null,
+    oauth: { ...INITIAL_OAUTH },
     pairing: {
       status: 'idle',
       code: null,
@@ -120,6 +132,13 @@ export interface ConnectorActions {
   stop(): Promise<void>
   restart(): Promise<void>
   setServerUrl(serverUrl: string): Promise<void>
+  startOAuthLogin(serverUrl?: string): Promise<void>
+  cancelOAuthLogin(): Promise<void>
+  createMobileLoginQr(): Promise<MobileLoginQrData | null>
+  getMobileLoginStatus(loginToken: string): Promise<MobileLoginStatusInfo | null>
+  confirmMobileLogin(loginToken: string, approved: boolean): Promise<MobileLoginStatusInfo | null>
+  getAppDownloadQr(serverUrl?: string): Promise<{ iosQr: string; androidQr: string } | null>
+  logout(): Promise<void>
   startPairing(): Promise<void>
   cancelPairing(): Promise<void>
   clearCredentials(): Promise<void>
@@ -208,14 +227,66 @@ export function useConnectorStore(host: ConnectorHostApi): {
         }
       },
       setServerUrl: async (serverUrl) => {
-        // Persisted server URL — refresh will pull it back via getState once
-        // the host picks it up. (The startPairing call also carries it.)
         try {
           await requireHost().startPairing(serverUrl)
         } catch (error) {
           dispatch({ type: 'pairing-error', message: errorMessage(error) })
         }
         await refresh()
+      },
+      startOAuthLogin: async (serverUrl) => {
+        try {
+          const result = await requireHost().startOAuthLogin(serverUrl)
+          if (!result.ok) dispatch({ type: 'runtime-error', message: result.error ?? 'OAuth login failed' })
+          await refresh()
+        } catch (error) {
+          dispatch({ type: 'runtime-error', message: errorMessage(error) })
+        }
+      },
+      cancelOAuthLogin: async () => {
+        try {
+          await requireHost().cancelOAuthLogin()
+          await refresh()
+        } catch (error) {
+          dispatch({ type: 'runtime-error', message: errorMessage(error) })
+        }
+      },
+      createMobileLoginQr: async () => {
+        try {
+          return await requireHost().createMobileLoginQr()
+        } catch (error) {
+          dispatch({ type: 'runtime-error', message: errorMessage(error) })
+          return null
+        }
+      },
+      getMobileLoginStatus: async (loginToken) => {
+        try {
+          return await requireHost().getMobileLoginStatus(loginToken)
+        } catch (error) {
+          return null
+        }
+      },
+      confirmMobileLogin: async (loginToken, approved) => {
+        try {
+          return await requireHost().confirmMobileLogin(loginToken, approved)
+        } catch (error) {
+          return null
+        }
+      },
+      getAppDownloadQr: async (serverUrl) => {
+        try {
+          return await requireHost().getAppDownloadQr(serverUrl)
+        } catch (error) {
+          return null
+        }
+      },
+      logout: async () => {
+        try {
+          await requireHost().logout()
+          await refresh()
+        } catch (error) {
+          dispatch({ type: 'runtime-error', message: errorMessage(error) })
+        }
       },
       startPairing: async () => {
         try {

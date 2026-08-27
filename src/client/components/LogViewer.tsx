@@ -7,7 +7,7 @@ import type {
   LogLevel,
 } from '../stores/connector-store.js'
 
-const LOCALE_NS = 'dsh-aa-connector'
+const LOCALE_NS = 'dsh-aa-gateway'
 
 interface LogViewerProps {
   state: ConnectorState

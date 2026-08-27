@@ -1,13 +1,13 @@
 /**
- * Shared types for the dsh-aa-connector plugin.
+ * Shared types for the dsh-aa-gateway plugin.
  *
  * This file is the single source of truth for the wire contract between the
- * Host (Node.js, `@agents-anywhere/dsh-aa-connector`) and the Client
+ * Host (Node.js, `@agents-anywhere/dsh-aa-gateway`) and the Client
  * (browser, exposed through the DSH `settings.section` slot). Both sides
  * import from here so the implementation stays in lockstep.
  */
 
-export const PLUGIN_NAMESPACE = 'dsh-aa-connector'
+export const PLUGIN_NAMESPACE = 'dsh-aa-gateway'
 export const BRIDGE_DESCRIPTOR_FILENAME = 'endpoint.json'
 
 /** Stable identity used by the bridge locator discovery file. */
@@ -41,6 +41,15 @@ export type PairingStatus =
   | 'cancelled'
   | 'error'
 
+export type OAuthLoginStatus =
+  | 'idle'
+  | 'opening_browser'
+  | 'waiting_callback'
+  | 'registering_device'
+  | 'success'
+  | 'cancelled'
+  | 'error'
+
 export type PythonStatus = 'pending' | 'ready' | 'error'
 
 export type UvSource =
@@ -66,6 +75,52 @@ export interface DeviceBinding {
   readonly deviceId: string
   readonly deviceName: string
   readonly pairedAt: number
+}
+
+export interface UserAccount {
+  readonly userId: string
+  readonly role?: string | undefined
+  readonly avatar?: string | null | undefined
+  readonly serverUrl: string
+  readonly loggedInAt: number
+}
+
+export interface OAuthLoginState {
+  status: OAuthLoginStatus
+  serverUrl: string
+  lastError: string | null
+}
+
+export interface MobileLoginQrData {
+  userId: string
+  loginToken: string
+  expiresAt: string
+  qrPayload: string
+  qrImage: string
+  serverTime: string
+}
+
+export type MobileScanStatus =
+  | 'pending_scan'
+  | 'pending_web_confirm'
+  | 'approved'
+  | 'rejected'
+  | 'expired'
+  | 'consumed'
+
+export interface MobileLoginStatusInfo {
+  status: MobileScanStatus
+  userId: string | null
+  deviceName: string | null
+  expiresAt: string | null
+  requestedAt: string | null
+  approvedAt: string | null
+  serverTime: string
+}
+
+export interface AppDownloadQrInfo {
+  iosQr: string
+  androidQr: string
 }
 
 export interface BridgeInfo {
@@ -132,6 +187,8 @@ export interface ConnectorStateSnapshot {
   connection: ConnectionState
   bridge: BridgeInfo | null
   device: DeviceBinding | null
+  account: UserAccount | null
+  oauth: OAuthLoginState
   pairing: PairingState
   environment: EnvironmentInfo
   dataDir: string
@@ -154,7 +211,16 @@ export interface ConnectorHostApi {
   stop(): Promise<OperationResult>
   restart(): Promise<OperationResult>
 
-  // ── Pairing ──
+  // ── OAuth2 Login & Account ──
+  startOAuthLogin(serverUrl?: string): Promise<OperationResult>
+  cancelOAuthLogin(): Promise<OperationResult>
+  createMobileLoginQr(): Promise<MobileLoginQrData | null>
+  getMobileLoginStatus(loginToken: string): Promise<MobileLoginStatusInfo | null>
+  confirmMobileLogin(loginToken: string, approved: boolean): Promise<MobileLoginStatusInfo | null>
+  getAppDownloadQr(serverUrl?: string): Promise<AppDownloadQrInfo | null>
+  logout(): Promise<OperationResult>
+
+  // ── Legacy Pairing & Credentials ──
   startPairing(serverUrl?: string): Promise<PairingStartResult>
   cancelPairing(): Promise<OperationResult>
   clearCredentials(): Promise<OperationResult>
@@ -209,6 +275,13 @@ export interface ConnectorRuntimeErrorEvent extends ConnectorClientEvent {
 }
 
 // ─── Cordis registration ──────────────────────────────────────────────────
+
+/** Default empty OAuth state, mirrored on the Host and Client. */
+export const INITIAL_OAUTH: OAuthLoginState = {
+  status: 'idle',
+  serverUrl: 'https://api.anywhere.app.com',
+  lastError: null,
+}
 
 /** Default empty pairing state, mirrored on the Host and Client. */
 export const INITIAL_PAIRING: PairingState = {

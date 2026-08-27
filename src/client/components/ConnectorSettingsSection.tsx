@@ -7,9 +7,9 @@ import { LogViewer } from './LogViewer.js'
 import { EnvironmentCard } from './EnvironmentCard.js'
 import { useConnectorStore } from '../stores/connector-store.js'
 import { Button } from './Card.js'
-import type { AgentsAnywhereConnectorLocaleKey } from '../locales.js'
+import type { AgentsAnywhereGatewayLocaleKey } from '../locales.js'
 
-const LOCALE_NS = 'dsh-aa-connector'
+const LOCALE_NS = 'dsh-aa-gateway'
 
 export type SectionTab = 'overview' | 'logs' | 'environment'
 
@@ -36,10 +36,10 @@ export function ConnectorSettingsSection({ t, host }: ShellProps): JSX.Element {
   const [followTail, setFollowTail] = useState(true)
 
   return (
-    <section style={pageStyle} aria-labelledby="dsh-aa-connector-heading">
+    <section style={pageStyle} aria-labelledby="dsh-aa-gateway-heading">
       <header style={headerStyle}>
         <div style={titleColumnStyle}>
-          <h2 id="dsh-aa-connector-heading" style={headingStyle}>{t('heading.title')}</h2>
+          <h2 id="dsh-aa-gateway-heading" style={headingStyle}>{t('heading.title')}</h2>
           <p style={subtitleStyle}>{t('heading.subtitle')}</p>
         </div>
         {tab === 'overview' && (
@@ -116,7 +116,7 @@ function TabButton({ id, active, onSelect, label }: TabButtonProps): JSX.Element
 }
 
 // Compile-time-only sanity: keeps the locale key type imported and reachable.
-function _tKey(key: AgentsAnywhereConnectorLocaleKey): string {
+function _tKey(key: AgentsAnywhereGatewayLocaleKey): string {
   return key
 }
 void _tKey

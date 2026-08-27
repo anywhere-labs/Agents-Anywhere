@@ -20,31 +20,40 @@
  */
 
 import { EventEmitter } from 'node:events'
-import { existsSync, unlinkSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import os from 'node:os'
 import path from 'node:path'
 import {
+  type AppDownloadQrInfo,
   type BridgeInfo,
   type ConnectorCredentials,
   type ConnectorHostApi,
   type ConnectorLog,
   type ConnectorLogChunk,
   type ConnectorStateSnapshot,
+  type DeviceBinding,
   type EnvironmentInfo,
   INITIAL_ENVIRONMENT,
+  INITIAL_OAUTH,
   INITIAL_PAIRING,
+  type MobileLoginQrData,
+  type MobileLoginStatusInfo,
   type OperationResult,
   type PairingStartResult,
   type PairingState,
+  type UserAccount,
 } from '../common/types.js'
 import { EnvDetector, type UvResolutionResult } from './env-detector.js'
+import { OAuthClient, saveStableDeviceId } from './oauth-client.js'
 import { ProcessRunner, type CommandSpec, type ConnectorLogEvent } from './process-runner.js'
 import { RpcClient, runnerToTransport } from './rpc-client.js'
 
 export interface CoordinatorOptions {
   /** Optional factory for tests to inject a deterministic EnvDetector. */
   envDetectorFactory?: () => EnvDetector
+  /** Optional OAuthClient instance. */
+  oauthClient?: OAuthClient
   /** Working directory for the spawned CLI subprocess. */
   cwd?: string
   /** Subprocess graceful-stop deadline; forwarded to the runner. */
@@ -69,13 +78,16 @@ const LOG_BUFFER_LIMIT = 500
 
 export class ConnectorCoordinator extends EventEmitter implements ConnectorHostApi {
   private readonly runner: ProcessRunner
+  private readonly oauthClient: OAuthClient
   private client: RpcClient | null = null
   private snapshot: ConnectorStateSnapshot
   private readonly logs: ConnectorLog[] = []
   private envDetectorFactory: () => EnvDetector
   private readonly cwd: string
   private readonly configPath: string
+  private readonly accountPath: string
   private teardownInFlight = false
+  private currentUserToken: string | null = null
 
   constructor(options: CoordinatorOptions = {}) {
     super()
@@ -84,16 +96,83 @@ export class ConnectorCoordinator extends EventEmitter implements ConnectorHostA
         ? {}
         : { gracefulStopMs: options.gracefulStopMs },
     )
+    this.oauthClient = options.oauthClient ?? new OAuthClient()
     this.envDetectorFactory = options.envDetectorFactory ?? (() => new EnvDetector())
     this.cwd = options.cwd ?? process.cwd()
     this.configPath = options.configPath ?? path.join(os.homedir(), '.agents-anywhere', 'connector.json')
-    this.snapshot = initialSnapshot()
+    this.accountPath = path.join(path.dirname(this.configPath), 'account.json')
+    const { account, userToken } = this.loadPersistedAccount()
+    this.currentUserToken = userToken
+    this.snapshot = initialSnapshot(account)
     this.runner.on('state', (state) => this.handleRunnerState(state))
     this.runner.on('log', (entry) => this.handleRunnerLog(entry))
     this.runner.on('error', (error) => {
       this.snapshot = { ...this.snapshot, runtimeError: error.message }
       this.emit('state', this.snapshot)
     })
+  }
+
+  private loadPersistedAccount(): { account: UserAccount | null; userToken: string | null } {
+    const candidatePaths = [
+      path.join(os.homedir(), '.dsh', 'agents-anywhere', 'account.json'),
+      this.accountPath,
+    ]
+    for (const p of candidatePaths) {
+      try {
+        if (existsSync(p)) {
+          const raw = readFileSync(p, 'utf-8')
+          const data = JSON.parse(raw) as Partial<UserAccount> & { userToken?: string }
+          if (data && typeof data.userId === 'string' && typeof data.serverUrl === 'string') {
+            const account: UserAccount = {
+              userId: data.userId,
+              ...(data.role !== undefined ? { role: data.role } : {}),
+              avatar: data.avatar ?? null,
+              serverUrl: data.serverUrl,
+              loggedInAt: data.loggedInAt || Date.now(),
+            }
+            return { account, userToken: data.userToken ?? null }
+          }
+        }
+      } catch {
+        // Ignore corrupt state
+      }
+    }
+    return { account: null, userToken: null }
+  }
+
+  private savePersistedAccount(account: UserAccount, userToken?: string): void {
+    const targetPaths = [
+      path.join(os.homedir(), '.dsh', 'agents-anywhere', 'account.json'),
+      this.accountPath,
+    ]
+    const content = JSON.stringify({ ...account, userToken: userToken ?? this.currentUserToken }, null, 2)
+    for (const p of targetPaths) {
+      try {
+        const dir = path.dirname(p)
+        if (!existsSync(dir)) {
+          mkdirSync(dir, { recursive: true })
+        }
+        writeFileSync(p, content, 'utf-8')
+      } catch {
+        // Ignore write errors
+      }
+    }
+  }
+
+  private clearPersistedAccount(): void {
+    const targetPaths = [
+      path.join(os.homedir(), '.dsh', 'agents-anywhere', 'account.json'),
+      this.accountPath,
+    ]
+    for (const p of targetPaths) {
+      try {
+        if (existsSync(p)) {
+          unlinkSync(p)
+        }
+      } catch {
+        // Ignore
+      }
+    }
   }
 
   /** Read-only accessor used by the Cordis-side service. */
@@ -115,7 +194,13 @@ export class ConnectorCoordinator extends EventEmitter implements ConnectorHostA
       try {
         const remote = await this.client.send<unknown>('connector.getState')
         if (isPythonState(remote)) {
-          this.snapshot = { ...this.snapshot, ...mapRuntimeFromPython(remote), logBufferSize: this.logs.length }
+          this.snapshot = {
+            ...this.snapshot,
+            ...mapRuntimeFromPython(remote, this.configPath, this.snapshot.device),
+            account: this.snapshot.account,
+            oauth: this.snapshot.oauth,
+            logBufferSize: this.logs.length,
+          }
         }
       } catch {
         // Fall through to the local snapshot.
@@ -226,6 +311,114 @@ export class ConnectorCoordinator extends EventEmitter implements ConnectorHostA
     return this.start()
   }
 
+  // ─── OAuth2 & Account ───────────────────────────────────────────────────
+
+  async startOAuthLogin(serverUrl?: string): Promise<OperationResult> {
+    const targetUrl = serverUrl !== undefined && serverUrl.length > 0 ? serverUrl : this.snapshot.oauth.serverUrl
+    this.updateSnapshot({
+      oauth: { status: 'opening_browser', serverUrl: targetUrl, lastError: null },
+      pairing: { ...this.snapshot.pairing, serverUrl: targetUrl },
+    })
+
+    try {
+      this.updateSnapshot({
+        oauth: { status: 'waiting_callback', serverUrl: targetUrl, lastError: null },
+      })
+      const result = await this.oauthClient.startLoginFlow(targetUrl)
+      if (!result.ok || !result.credentials || !result.account) {
+        const err = result.error ?? 'OAuth authorization failed'
+        this.updateSnapshot({ oauth: { status: 'error', serverUrl: targetUrl, lastError: err } })
+        return { ok: false, error: err }
+      }
+
+      this.currentUserToken = result.userToken ?? null
+      this.savePersistedAccount(result.account, result.userToken)
+      this.updateSnapshot({
+        account: result.account,
+        oauth: { status: 'registering_device', serverUrl: targetUrl, lastError: null },
+      })
+
+      const saveRes = await this.saveCredentials(result.credentials)
+      if (!saveRes.ok) {
+        const err = saveRes.error ?? 'failed to save credentials'
+        this.updateSnapshot({ oauth: { status: 'error', serverUrl: targetUrl, lastError: err } })
+        return saveRes
+      }
+
+      this.updateSnapshot({
+        oauth: { status: 'success', serverUrl: targetUrl, lastError: null },
+      })
+      return { ok: true }
+    } catch (error) {
+      const err = errorMessage(error)
+      this.updateSnapshot({ oauth: { status: 'error', serverUrl: targetUrl, lastError: err } })
+      return { ok: false, error: err }
+    }
+  }
+
+  async cancelOAuthLogin(): Promise<OperationResult> {
+    this.oauthClient.cancel()
+    this.updateSnapshot({
+      oauth: { status: 'cancelled', serverUrl: this.snapshot.oauth.serverUrl, lastError: null },
+    })
+    return { ok: true }
+  }
+
+  async createMobileLoginQr(): Promise<MobileLoginQrData | null> {
+    if (!this.currentUserToken || !this.snapshot.account) {
+      return null
+    }
+    try {
+      return await this.oauthClient.createMobileLoginQr(this.snapshot.account.serverUrl, this.currentUserToken)
+    } catch (error) {
+      return null
+    }
+  }
+
+  async getMobileLoginStatus(loginToken: string): Promise<MobileLoginStatusInfo | null> {
+    if (!this.currentUserToken || !this.snapshot.account) {
+      return null
+    }
+    try {
+      return await this.oauthClient.getMobileLoginStatus(this.snapshot.account.serverUrl, this.currentUserToken, loginToken)
+    } catch (error) {
+      return null
+    }
+  }
+
+  async confirmMobileLogin(loginToken: string, approved: boolean): Promise<MobileLoginStatusInfo | null> {
+    if (!this.currentUserToken || !this.snapshot.account) {
+      return null
+    }
+    try {
+      return await this.oauthClient.confirmMobileLogin(this.snapshot.account.serverUrl, this.currentUserToken, loginToken, approved)
+    } catch (error) {
+      return null
+    }
+  }
+
+  async getAppDownloadQr(serverUrl?: string): Promise<AppDownloadQrInfo | null> {
+    const targetUrl = serverUrl || this.snapshot.account?.serverUrl || this.snapshot.oauth.serverUrl
+    try {
+      return await this.oauthClient.getAppDownloadQr(targetUrl)
+    } catch (error) {
+      return null
+    }
+  }
+
+  async logout(): Promise<OperationResult> {
+    this.currentUserToken = null
+    this.oauthClient.cancel()
+    await this.clearCredentials()
+    this.updateSnapshot({
+      account: null,
+      oauth: { ...INITIAL_OAUTH, serverUrl: this.snapshot.oauth.serverUrl },
+    })
+    return { ok: true }
+  }
+
+  // ─── Legacy Pairing ─────────────────────────────────────────────────────
+
   async startPairing(serverUrl?: string): Promise<PairingStartResult> {
     const targetUrl = serverUrl !== undefined && serverUrl.length > 0 ? serverUrl : this.snapshot.pairing.serverUrl
     if (targetUrl.length > 0 && targetUrl !== this.snapshot.pairing.serverUrl) {
@@ -270,6 +463,15 @@ export class ConnectorCoordinator extends EventEmitter implements ConnectorHostA
   }
 
   async clearCredentials(): Promise<OperationResult> {
+    this.clearPersistedAccount()
+    const syncStatePath = path.join(path.dirname(this.configPath), 'connector-state.json')
+    if (existsSync(syncStatePath)) {
+      try {
+        unlinkSync(syncStatePath)
+      } catch {
+        // ignore
+      }
+    }
     if (this.client !== null) {
       try {
         await this.client.send('connector.clearCredentials', undefined)
@@ -284,11 +486,20 @@ export class ConnectorCoordinator extends EventEmitter implements ConnectorHostA
         return { ok: false, error: errorMessage(error) }
       }
     }
-    this.updateSnapshot({ device: null, pairing: { ...INITIAL_PAIRING, serverUrl: this.snapshot.pairing.serverUrl } })
+    this.updateSnapshot({ device: null, account: null, pairing: { ...INITIAL_PAIRING, serverUrl: this.snapshot.pairing.serverUrl } })
     return { ok: true }
   }
 
   async saveCredentials(credentials: ConnectorCredentials): Promise<OperationResult> {
+    saveStableDeviceId(credentials.connectorId)
+    const syncStatePath = path.join(path.dirname(this.configPath), 'connector-state.json')
+    if (existsSync(syncStatePath)) {
+      try {
+        unlinkSync(syncStatePath)
+      } catch {
+        // ignore
+      }
+    }
     const ensured = await this.ensureRpcProcess()
     if (!ensured.ok) return ensured
     const client = this.client
@@ -300,8 +511,9 @@ export class ConnectorCoordinator extends EventEmitter implements ConnectorHostA
         connectorToken: credentials.connectorToken,
       })
       // Reflect the saved credential as a paired device immediately.
+      const hostDeviceName = os.hostname() || '本机设备'
       this.updateSnapshot({
-        device: { deviceId: credentials.connectorId, deviceName: 'Connector', pairedAt: Date.now() },
+        device: { deviceId: credentials.connectorId, deviceName: hostDeviceName, pairedAt: Date.now() },
         pairing: { ...this.snapshot.pairing, serverUrl: credentials.serverUrl, status: 'claimed', code: null },
       })
       // Use `restart` rather than `start`: a leftover connector-runtime file
@@ -412,7 +624,7 @@ export class ConnectorCoordinator extends EventEmitter implements ConnectorHostA
           // current snapshot. Python's control loop fires the same payload
           // back-to-back (poll + emit_state pairs); emitting every duplicate
           // floods the snapshot diff pipeline and ties up the event loop.
-          const next = mapRuntimeFromPython(params)
+          const next = mapRuntimeFromPython(params, this.configPath, this.snapshot.device)
           const previous = this.snapshot
           const unchanged =
             previous.runtime === next.runtime &&
@@ -421,7 +633,13 @@ export class ConnectorCoordinator extends EventEmitter implements ConnectorHostA
             previous.device?.deviceId === next.device?.deviceId &&
             previous.device?.deviceName === next.device?.deviceName
           if (unchanged) return
-          this.snapshot = { ...this.snapshot, ...next, logBufferSize: this.logs.length }
+          this.snapshot = {
+            ...this.snapshot,
+            ...next,
+            account: this.snapshot.account,
+            oauth: this.snapshot.oauth,
+            logBufferSize: this.logs.length,
+          }
           this.emit('state', this.getSnapshot())
           return
         }
@@ -465,7 +683,7 @@ export class ConnectorCoordinator extends EventEmitter implements ConnectorHostA
   }
 }
 
-function initialSnapshot(): ConnectorStateSnapshot {
+function initialSnapshot(account: UserAccount | null = null): ConnectorStateSnapshot {
   return {
     version: 1,
     runtime: 'stopped',
@@ -473,6 +691,8 @@ function initialSnapshot(): ConnectorStateSnapshot {
     connection: 'disconnected',
     bridge: null,
     device: null,
+    account,
+    oauth: { ...INITIAL_OAUTH },
     pairing: { ...INITIAL_PAIRING },
     environment: { ...INITIAL_ENVIRONMENT },
     dataDir: '~/.agents-anywhere',
@@ -538,19 +758,36 @@ function isPythonPairing(value: unknown): value is PythonPairingPayload {
 }
 
 /** Map the `anywhere-cli rpc` state payload onto the plugin's runtime fields. */
-function mapRuntimeFromPython(state: PythonConnectorState): Partial<ConnectorStateSnapshot> {
+function mapRuntimeFromPython(
+  state: PythonConnectorState,
+  configPath?: string,
+  prevDevice?: DeviceBinding | null,
+): Partial<ConnectorStateSnapshot> {
   const running = state.running === true
   const failed = state.status === 'error' || state.status === 'expired credential'
+  let device: DeviceBinding | null = null
+  if (state.hasConfig === true) {
+    let connectorId = prevDevice?.deviceId || 'connector'
+    if (configPath && existsSync(configPath)) {
+      try {
+        const raw = readFileSync(configPath, 'utf-8')
+        const parsed = JSON.parse(raw) as { connectorId?: string }
+        if (parsed.connectorId) connectorId = parsed.connectorId
+      } catch {
+        // ignore
+      }
+    }
+    device = {
+      deviceId: connectorId,
+      deviceName: prevDevice?.deviceName || os.hostname() || '本机设备',
+      pairedAt: prevDevice?.pairedAt || Date.now(),
+    }
+  }
   return {
     runtime: running ? 'running' : failed ? 'error' : 'stopped',
     connection: running ? 'connected' : 'disconnected',
     runtimeError: typeof state.lastError === 'string' ? state.lastError : null,
-    // The connector only knows "credentials saved" (hasConfig); it does not
-    // expose a device name/id/pairedAt. Surface a minimal binding so the UI's
-    // paired/unpaired metric stays correct.
-    device: state.hasConfig === true
-      ? { deviceId: 'connector', deviceName: 'Connector', pairedAt: 0 }
-      : null,
+    device,
   }
 }
 

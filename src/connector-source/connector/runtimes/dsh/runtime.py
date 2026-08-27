@@ -205,13 +205,11 @@ class DshRuntime(AgentRuntime):
                 raise RuntimeUpstreamError(
                     "DSH session.list entry has no externalSessionId"
                 )
-            platform_id = raw.get("sessionId")
-            if not isinstance(platform_id, str) or not platform_id:
-                platform_id = stable_runtime_session_id(
-                    self.host.connector_id,
-                    "dsh",
-                    external_id,
-                )
+            platform_id = stable_runtime_session_id(
+                self.host.connector_id,
+                "dsh",
+                external_id,
+            )
             data = dict(raw)
             data["sessionId"] = platform_id
             metadata = _safe_metadata(data.get("metadata"))

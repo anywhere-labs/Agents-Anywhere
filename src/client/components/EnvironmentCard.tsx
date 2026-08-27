@@ -21,7 +21,7 @@ const PYPI_MIRROR_OPTIONS: ReadonlyArray<{ id: string; label: string; url: strin
   { id: 'official', label: 'PyPI 官方源', url: 'https://pypi.org/simple' },
 ]
 
-const LOCALE_NS = 'dsh-aa-connector'
+const LOCALE_NS = 'dsh-aa-gateway'
 
 interface EnvironmentCardProps {
   state: ConnectorState

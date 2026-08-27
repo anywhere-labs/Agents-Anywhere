@@ -1115,9 +1115,7 @@ export class SessionManager {
 
   private async ensureBinding(platformSessionId: string, externalSessionId: string): Promise<void> {
     const byPlatform = this.metadata.bindingForPlatform(platformSessionId)
-    const byExternal = this.metadata.bindingForExternal(externalSessionId)
-    if ((byPlatform !== undefined && byPlatform.externalSessionId !== externalSessionId)
-      || (byExternal !== undefined && byExternal.platformSessionId !== platformSessionId)) {
+    if (byPlatform !== undefined && byPlatform.externalSessionId !== externalSessionId) {
       throw new BridgeError('SESSION_BINDING_CONFLICT', 'The supplied AA and DSH Session IDs do not match.', {
         retryable: false,
         sessionId: platformSessionId,
@@ -1133,7 +1131,10 @@ export class SessionManager {
         externalSessionId,
       })
     }
-    if (byPlatform === undefined) await this.metadata.bind(platformSessionId, externalSessionId)
+    const byExternal = this.metadata.bindingForExternal(externalSessionId)
+    if (byPlatform === undefined || byExternal?.platformSessionId !== platformSessionId) {
+      await this.metadata.bind(platformSessionId, externalSessionId)
+    }
   }
 
   private async metaFor(

@@ -1,6 +1,6 @@
 import type { UserConfig } from 'tsdown'
 
-const id = '@agents-anywhere/dsh-aa-connector'
+const id = '@agents-anywhere/dsh-aa-gateway'
 
 /** Browser bundle consumed by the DSH client module loader. */
 const config: UserConfig = {

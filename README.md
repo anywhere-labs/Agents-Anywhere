@@ -1,6 +1,6 @@
-# Agents Anywhere ↔ DeepSeek Harness Connector (`dsh-aa-connector`)
+# Agents Anywhere ↔ DeepSeek Harness Gateway (`dsh-aa-gateway`)
 
-`@agents-anywhere/dsh-aa-connector` 把原来的 `dsh-aa-bridge`（DSH 进程内
+`@agents-anywhere/dsh-aa-gateway` 把原来的 `dsh-aa-bridge`（DSH 进程内
 JSON-RPC 桥接插件）整体迁入新插件，并预留 Connector CLI 子进程管理、设置
 页面 UI 容器、以及 desktop-next 控制台迁移的扩展点。
 
@@ -16,8 +16,8 @@ JSON-RPC 桥接插件）整体迁入新插件，并预留 Connector CLI 子进�
 ## 插件包结构
 
 ```text
-dsh-aa-connector/
-├── package.json              # @agents-anywhere/dsh-aa-connector
+dsh-aa-gateway/
+├── package.json              # @agents-anywhere/dsh-aa-gateway
 ├── tsconfig*.json
 ├── tsdown.config.ts          # 浏览器 bundle
 ├── cordis.patch.yml          # 注册 AgentsAnywhereConnectorService
@@ -59,7 +59,7 @@ pnpm verify
 ## 本地安装
 
 ```bash
-dsh plugin --profile web add /absolute/path/to/dsh-aa-connector
+dsh plugin --profile web add /absolute/path/to/dsh-aa-gateway
 dsh web
 ```
 

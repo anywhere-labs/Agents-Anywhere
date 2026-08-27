@@ -1,8 +1,8 @@
 import type { CSSProperties } from 'react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
-import { PairingDialog } from './PairingDialog.js'
-import { PasteCredentialsDialog } from './PasteCredentialsDialog.js'
+import { Button, Card, KeyValueRow, StatusPill, codeSurface } from './Card.js'
+import { OnboardingWizard } from './OnboardingWizard.js'
 import type {
   ConnectorActions,
   ConnectorState,
@@ -10,7 +10,9 @@ import type {
   ConnectionState,
 } from '../stores/connector-store.js'
 
-const LOCALE_NS = 'dsh-aa-connector'
+const LOCALE_NS = 'dsh-aa-gateway'
+const ONBOARDING_COMPLETED_KEY = 'dsh-aa-gateway:onboarding-completed'
+const LEGACY_ONBOARDING_COMPLETED_KEY = 'dsh-aa-connector:onboarding-completed'
 
 type MetricTone = 'default' | 'success' | 'error'
 
@@ -21,23 +23,61 @@ interface OverviewCardProps {
 }
 
 /**
- * Overview tab — mirrors the desktop-next overview view exactly:
- *
- *   1. Two metric cards side-by-side (Connector / Credential), each with a
- *      tone-colored value and border.
- *   2. A stacked action-card list (Start pairing / Paste credentials) below a
- *      top border, matching desktop-next's `border-t pt-5` section.
- *
- * Runtime start/stop/restart controls live in the section header, and
- * credential clearing lives in the Environment tab — matching how desktop-next
- * places those outside the Overview body.
+ * Overview tab:
+ *   - When NOT logged in or onboarding in progress: renders the interactive OnboardingWizard (4-step onboarding).
+ *   - When logged in & onboarding completed: renders the live dashboard with account details, device binding, metrics, and actions.
  */
 export function OverviewCard({ state, actions, t }: OverviewCardProps): JSX.Element {
-  const [pairOpen, setPairOpen] = useState(false)
-  const [pasteOpen, setPasteOpen] = useState(false)
-  const isPaired = state.device !== null
+  const [showWizard, setShowWizard] = useState(false)
+  const [onboardingDone, setOnboardingDone] = useState(() => {
+    if (typeof window === 'undefined') return false
+    try {
+      const current = localStorage.getItem(ONBOARDING_COMPLETED_KEY)
+      if (current !== null) return current === 'true'
+      return localStorage.getItem(LEGACY_ONBOARDING_COMPLETED_KEY) === 'true'
+    } catch {
+      return false
+    }
+  })
+
+  // If user logs out, reset onboarding status so next login runs onboarding
+  useEffect(() => {
+    if (!state.account && !state.device) {
+      setOnboardingDone(false)
+      try {
+        localStorage.removeItem(ONBOARDING_COMPLETED_KEY)
+        localStorage.removeItem(LEGACY_ONBOARDING_COMPLETED_KEY)
+      } catch {
+        // ignore
+      }
+    }
+  }, [state.account, state.device])
+
+  const handleFinishOnboarding = () => {
+    setOnboardingDone(true)
+    setShowWizard(false)
+    try {
+      localStorage.setItem(ONBOARDING_COMPLETED_KEY, 'true')
+      localStorage.removeItem(LEGACY_ONBOARDING_COMPLETED_KEY)
+    } catch {
+      // ignore
+    }
+  }
+
+  const isPaired = (state.device !== null || state.account !== null) && onboardingDone
   const runtimeTone = runtimeToneOf(state.runtime, state.connection)
   const credentialTone = credentialToneOf(state)
+
+  if (!isPaired || showWizard) {
+    return (
+      <OnboardingWizard
+        state={state}
+        actions={actions}
+        onFinish={handleFinishOnboarding}
+        t={t}
+      />
+    )
+  }
 
   return (
     <>
@@ -56,35 +96,33 @@ export function OverviewCard({ state, actions, t }: OverviewCardProps): JSX.Elem
         />
       </section>
 
+      {/* Logged in Account Card */}
+      <Card
+        title={t('account.title')}
+        actions={
+          <Button variant="ghost" onClick={() => void actions.logout()}>
+            {t('account.logout')}
+          </Button>
+        }
+      >
+        <KeyValueRow label={t('account.userId')} value={state.account?.userId || '已连接账号'} />
+        <KeyValueRow label={t('account.server')} value={state.account?.serverUrl || state.oauth?.serverUrl || 'AA Server'} />
+        <KeyValueRow
+          label="当前设备"
+          value={state.device?.deviceName || '本机设备'}
+          hint={`设备 ID: ${state.device?.deviceId || '已自动绑定'}`}
+        />
+      </Card>
+
+      {/* Action to re-run onboarding wizard if user wants to download mobile app or scan again */}
       <section style={actionsSectionStyle}>
         <ActionCard
-          icon="plus"
-          title={isPaired ? t('overview.action.repair.title') : t('overview.action.pair.title')}
-          description={isPaired ? t('overview.action.repair.description') : t('overview.action.pair.description')}
-          onClick={() => setPairOpen(true)}
-        />
-        <ActionCard
-          icon="clipboard"
-          title={t('overview.action.paste.title')}
-          description={t('overview.action.paste.description')}
-          onClick={() => setPasteOpen(true)}
+          icon="sparkles"
+          title="手机 App 扫码登录 / 下载"
+          description="重新打开手机 App 下载二维码或手机扫码一键免密登录"
+          onClick={() => setShowWizard(true)}
         />
       </section>
-
-      <PairingDialog
-        open={pairOpen}
-        onOpenChange={setPairOpen}
-        state={state}
-        actions={actions}
-        t={t}
-      />
-      <PasteCredentialsDialog
-        open={pasteOpen}
-        onOpenChange={setPasteOpen}
-        actions={actions}
-        onPairingStarted={() => setPairOpen(true)}
-        t={t}
-      />
     </>
   )
 }
@@ -110,7 +148,7 @@ interface ActionCardProps {
   title: string
   description: string
   onClick: () => void
-  icon: 'plus' | 'clipboard'
+  icon: 'sparkles'
 }
 
 function ActionCard({ title, description, onClick, icon }: ActionCardProps): JSX.Element {
@@ -127,7 +165,7 @@ function ActionCard({ title, description, onClick, icon }: ActionCardProps): JSX
       onMouseLeave={() => setHovered(false)}
     >
       <div style={actionIconStyle} aria-hidden="true">
-        {icon === 'plus' ? <PlusGlyph /> : <ClipboardGlyph />}
+        <SparklesGlyph />
       </div>
       <div style={actionTitleStyle}>{title}</div>
       <p style={actionDescriptionStyle}>{description}</p>
@@ -135,19 +173,10 @@ function ActionCard({ title, description, onClick, icon }: ActionCardProps): JSX
   )
 }
 
-function PlusGlyph(): JSX.Element {
+function SparklesGlyph(): JSX.Element {
   return (
     <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-      <path d="M8 3v10M3 8h10" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-    </svg>
-  )
-}
-
-function ClipboardGlyph(): JSX.Element {
-  return (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-      <rect x="4" y="3" width="11" height="12" rx="2" stroke="currentColor" strokeWidth="1.4" />
-      <path d="M6.5 3V2.5A1.5 1.5 0 0 1 8 1h3a1.5 1.5 0 0 1 1.5 1.5V3" stroke="currentColor" strokeWidth="1.4" />
+      <path d="M8 1.5l1.5 4 4 1.5-4 1.5-1.5 4-1.5-4-4-1.5 4-1.5 1.5-4z" stroke="currentColor" strokeWidth="1.3" />
     </svg>
   )
 }
@@ -159,7 +188,7 @@ function runtimeToneOf(runtime: ConnectorRuntimeState, connection: ConnectionSta
 }
 
 function credentialToneOf(state: ConnectorState): MetricTone {
-  return state.device === null ? 'default' : 'success'
+  return state.device === null && state.account === null ? 'default' : 'success'
 }
 
 function metricBorderColor(tone: MetricTone): string {
@@ -203,12 +232,12 @@ function runtimeDetail(runtime: ConnectorRuntimeState, connection: ConnectionSta
 }
 
 function credentialLabel(state: ConnectorState, t: TranslateNS<typeof LOCALE_NS>): string {
-  if (state.device === null) return t('overview.metric.credential.value.unpaired')
+  if (state.device === null && state.account === null) return t('overview.metric.credential.value.unpaired')
   return t('overview.metric.credential.value.paired')
 }
 
 function credentialDetail(state: ConnectorState, t: TranslateNS<typeof LOCALE_NS>): string {
-  if (state.device === null) return t('overview.metric.credential.detail.unpaired')
+  if (state.device === null && state.account === null) return t('overview.metric.credential.detail.unpaired')
   return t('overview.metric.credential.detail.paired')
 }
 

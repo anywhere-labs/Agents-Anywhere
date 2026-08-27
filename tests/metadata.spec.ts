@@ -43,4 +43,18 @@ describe('bridge metadata', () => {
       contentHash: sha256Hex('two'),
     })).rejects.toMatchObject({ data: { code: 'IDEMPOTENCY_CONFLICT' } })
   })
+
+  it('smoothly re-binds external sessions to new platform sessions across connector resets', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'aa-dsh-bridge-'))
+    roots.push(root)
+    const store = new MetadataStore(root)
+    await store.initialize()
+    await expect(store.bind('platform-old', 'external-1')).resolves.toMatchObject({ platformSessionId: 'platform-old' })
+    await expect(store.bind('platform-new', 'external-1')).resolves.toMatchObject({ platformSessionId: 'platform-new' })
+
+    // Simulate restart and initialize()
+    const store2 = new MetadataStore(root)
+    await expect(store2.initialize()).resolves.toBeUndefined()
+    expect(store2.bindingForExternal('external-1')?.platformSessionId).toBe('platform-new')
+  })
 })

@@ -12,11 +12,14 @@
  */
 
 import {
+  type AppDownloadQrInfo,
   type ConnectorCredentials,
   type ConnectorHostApi,
   type ConnectorLogChunk,
   type ConnectorStateSnapshot,
   type EnvironmentInfo,
+  type MobileLoginQrData,
+  type MobileLoginStatusInfo,
   type OperationResult,
   type PairingStartResult,
 } from '../../common/types.js'
@@ -51,6 +54,17 @@ export function createHostApi(rpc: HostRpc): ConnectorHostApi {
     start: () => call<OperationResult>('start'),
     stop: () => call<OperationResult>('stop'),
     restart: () => call<OperationResult>('restart'),
+    startOAuthLogin: (serverUrl) =>
+      call<OperationResult>('startOAuthLogin', serverUrl === undefined ? {} : { serverUrl }),
+    cancelOAuthLogin: () => call<OperationResult>('cancelOAuthLogin'),
+    createMobileLoginQr: () => call<MobileLoginQrData | null>('createMobileLoginQr'),
+    getMobileLoginStatus: (loginToken: string) =>
+      call<MobileLoginStatusInfo | null>('getMobileLoginStatus', { loginToken }),
+    confirmMobileLogin: (loginToken: string, approved: boolean) =>
+      call<MobileLoginStatusInfo | null>('confirmMobileLogin', { loginToken, approved }),
+    getAppDownloadQr: (serverUrl?: string) =>
+      call<AppDownloadQrInfo | null>('getAppDownloadQr', serverUrl === undefined ? {} : { serverUrl }),
+    logout: () => call<OperationResult>('logout'),
     startPairing: (serverUrl) =>
       call<PairingStartResult>('startPairing', serverUrl === undefined ? {} : { serverUrl }),
     cancelPairing: () => call<OperationResult>('cancelPairing'),

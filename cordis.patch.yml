@@ -1,6 +1,6 @@
 - insert:
-    - id: agents-anywhere-connector
-      name: '@agents-anywhere/dsh-aa-connector'
+    - id: agents-anywhere-gateway
+      name: '@agents-anywhere/dsh-aa-gateway'
       config:
         bridge:
           stateRoot: !!js dshHomePath('agents-anywhere', 'bridge')

@@ -7,6 +7,7 @@ import { isRecord } from '../wire/validation.js'
 import {
   readJsonDirectory,
   readOptionalJson,
+  removeFile,
   writeJsonAtomic,
   writeJsonNoClobber,
 } from './files.js'
@@ -61,9 +62,13 @@ export class MetadataStore {
       const record = bindingRecord(value)
       const byPlatform = this.bindingsByPlatform.get(record.platformSessionId)
       const byExternal = this.bindingsByExternal.get(record.externalSessionId)
-      if ((byPlatform !== undefined && byPlatform.externalSessionId !== record.externalSessionId)
-        || (byExternal !== undefined && byExternal.platformSessionId !== record.platformSessionId)) {
-        throw bindingConflict(record.platformSessionId, record.externalSessionId)
+      if (byPlatform !== undefined && byPlatform.externalSessionId !== record.externalSessionId) {
+        await removeFile(this.path('bindings', record.platformSessionId)).catch(() => undefined)
+        continue
+      }
+      if (byExternal !== undefined && byExternal.platformSessionId !== record.platformSessionId) {
+        await removeFile(this.path('bindings', byExternal.platformSessionId)).catch(() => undefined)
+        this.bindingsByPlatform.delete(byExternal.platformSessionId)
       }
       this.bindingsByPlatform.set(record.platformSessionId, record)
       this.bindingsByExternal.set(record.externalSessionId, record)
@@ -99,19 +104,19 @@ export class MetadataStore {
   private async bindCore(platformSessionId: string, externalSessionId: string): Promise<BindingRecord> {
     const knownPlatform = this.bindingsByPlatform.get(platformSessionId)
     const knownExternal = this.bindingsByExternal.get(externalSessionId)
-    if ((knownPlatform !== undefined && knownPlatform.externalSessionId !== externalSessionId)
-      || (knownExternal !== undefined && knownExternal.platformSessionId !== platformSessionId)) {
+    if (knownPlatform !== undefined && knownPlatform.externalSessionId !== externalSessionId) {
       throw bindingConflict(platformSessionId, externalSessionId)
     }
-    if (knownPlatform !== undefined) return knownPlatform
+    if (knownExternal !== undefined && knownExternal.platformSessionId !== platformSessionId) {
+      await removeFile(this.path('bindings', knownExternal.platformSessionId)).catch(() => undefined)
+      this.bindingsByPlatform.delete(knownExternal.platformSessionId)
+    }
+    if (knownPlatform !== undefined && knownPlatform.externalSessionId === externalSessionId) {
+      return knownPlatform
+    }
     const record: BindingRecord = { version: 1, platformSessionId, externalSessionId }
     const path = this.path('bindings', platformSessionId)
-    if (await writeJsonNoClobber(path, record) === 'exists') {
-      const existing = bindingRecord(await readOptionalJson<unknown>(path))
-      if (existing.platformSessionId !== platformSessionId || existing.externalSessionId !== externalSessionId) {
-        throw bindingConflict(platformSessionId, externalSessionId)
-      }
-    }
+    await writeJsonAtomic(path, record)
     this.bindingsByPlatform.set(platformSessionId, record)
     this.bindingsByExternal.set(externalSessionId, record)
     return record

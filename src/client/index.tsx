@@ -7,17 +7,17 @@ import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import type { ConnectorHostApi } from '../common/types.js'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 import { ConnectorSettingsSection } from './components/ConnectorSettingsSection.js'
-import { en, zh, type AgentsAnywhereConnectorLocaleKey } from './locales.js'
+import { en, zh, type AgentsAnywhereGatewayLocaleKey } from './locales.js'
 import { createHostApi, type HostRpc } from './stores/host-binding.js'
 import { startNavIconPatcher } from './nav-icon-style.js'
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface LocaleNamespaceMap {
-    'dsh-aa-connector': AgentsAnywhereConnectorLocaleKey
+    'dsh-aa-gateway': AgentsAnywhereGatewayLocaleKey
   }
 }
 
-const LOCALE_NS = 'dsh-aa-connector'
+const LOCALE_NS = 'dsh-aa-gateway'
 
 /** Stable DOM selector hook used by the navigation icon CSS. */
 export const NAV_SECTION_ID = 'agents-anywhere'

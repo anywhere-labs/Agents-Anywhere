@@ -100,6 +100,52 @@ export const zh = {
   'pairing.status.cancelled': '已取消',
   'pairing.status.error': '配对失败',
 
+  // Account & Auth
+  'account.title': '当前登录账号',
+  'account.userId': '账号 ID',
+  'account.server': '服务器',
+  'account.logout': '退出登录',
+  'account.relogin': '重新登录',
+  'account.empty': '未登录',
+
+  // Onboarding
+  'onboarding.title': '快速开始使用 Agents Anywhere',
+  'onboarding.subtitle': '按照以下步骤，用手机随时随地远程控制 DSH',
+  'onboarding.step1.nav': '1. 网站登录',
+  'onboarding.step2.nav': '2. 移动端下载',
+  'onboarding.step3.nav': '3. 手机扫码登录',
+  'onboarding.step4.nav': '4. 自动配对完成',
+
+  'onboarding.step1.title': '第一步：登录 Agents Anywhere 账号',
+  'onboarding.step1.desc': '在浏览器中登录或注册你的 Agents Anywhere 账号，授权后将自动把当前电脑绑定到该账号。',
+  'onboarding.step1.serverLabel': 'AA Server 服务器地址',
+  'onboarding.step1.loginBtn': '前往浏览器登录并绑定设备',
+  'onboarding.step1.waiting': '正在等待浏览器授权...',
+  'onboarding.step1.cancel': '取消授权',
+
+  'onboarding.step2.title': '第二步：下载移动端 App',
+  'onboarding.step2.desc': '使用手机扫描下方二维码，下载 Agents Anywhere 移动端应用。',
+  'onboarding.step2.ios': 'iOS (App Store / TestFlight)',
+  'onboarding.step2.android': 'Android (APK 安装包)',
+  'onboarding.step2.nextBtn': '已安装 App，下一步：扫码登录',
+
+  'onboarding.step3.title': '第三步：手机扫码免密登录',
+  'onboarding.step3.desc': '打开 Agents Anywhere App，点击右上角「扫一扫」扫描下方二维码，自动登录同一个账号。',
+  'onboarding.step3.qrGenerating': '正在生成登录二维码...',
+  'onboarding.step3.qrAlt': '移动端登录二维码',
+  'onboarding.step3.waitingScan': '等待手机扫码中...',
+  'onboarding.step3.pendingConfirm': '手机已扫码，等待确认...',
+  'onboarding.step3.confirmed': '手机登录成功！',
+  'onboarding.step3.expired': '二维码已过期，点击刷新',
+  'onboarding.step3.refresh': '刷新二维码',
+  'onboarding.step3.nextBtn': '下一步：查看设备',
+
+  'onboarding.step4.title': '第四步：全链路配置就绪！',
+  'onboarding.step4.desc': '当前设备已成功连接至 Agents Anywhere，手机 App 也已登录。',
+  'onboarding.step4.deviceReady': '本机设备正常运行中',
+  'onboarding.step4.mobileReady': '手机端已关联本设备',
+  'onboarding.step4.finishBtn': '完成引导，进入概览',
+
   // Logs
   'logs.title': '实时日志',
   'logs.description': '滚动展示 Connector 子进程与 Bridge 端的日志流。',
@@ -160,7 +206,7 @@ export const zh = {
   'environment.data.open': '在文件管理器中打开',
 } as const
 
-export type AgentsAnywhereConnectorLocaleKey = keyof typeof zh
+export type AgentsAnywhereGatewayLocaleKey = keyof typeof zh
 
 export const en = {
   // Header / shell
@@ -256,6 +302,52 @@ export const en = {
   'pairing.status.cancelled': 'Cancelled',
   'pairing.status.error': 'Pairing failed',
 
+  // Account & Auth
+  'account.title': 'Current Account',
+  'account.userId': 'Account ID',
+  'account.server': 'Server',
+  'account.logout': 'Sign Out',
+  'account.relogin': 'Re-authenticate',
+  'account.empty': 'Not signed in',
+
+  // Onboarding
+  'onboarding.title': 'Get Started with Agents Anywhere',
+  'onboarding.subtitle': 'Follow these steps to control DSH on your computer right from your phone',
+  'onboarding.step1.nav': '1. Web Login',
+  'onboarding.step2.nav': '2. Download App',
+  'onboarding.step3.nav': '3. Mobile Scan Login',
+  'onboarding.step4.nav': '4. Device Ready',
+
+  'onboarding.step1.title': 'Step 1: Sign in with Agents Anywhere',
+  'onboarding.step1.desc': 'Sign in or register in your browser. Once authorized, this computer will be automatically linked to your account.',
+  'onboarding.step1.serverLabel': 'AA Server Address',
+  'onboarding.step1.loginBtn': 'Open Browser to Sign in & Pair',
+  'onboarding.step1.waiting': 'Waiting for browser authorization...',
+  'onboarding.step1.cancel': 'Cancel Authorization',
+
+  'onboarding.step2.title': 'Step 2: Download Mobile App',
+  'onboarding.step2.desc': 'Scan the QR codes below with your phone to download the Agents Anywhere mobile app.',
+  'onboarding.step2.ios': 'iOS (App Store / TestFlight)',
+  'onboarding.step2.android': 'Android (APK Download)',
+  'onboarding.step2.nextBtn': 'I have installed the app, Next: Scan to Login',
+
+  'onboarding.step3.title': 'Step 3: Scan QR Code to Sign In on Mobile',
+  'onboarding.step3.desc': 'Open the mobile app, tap the QR scanner in the top right, and scan this code to log in without typing your password.',
+  'onboarding.step3.qrGenerating': 'Generating sign-in QR code...',
+  'onboarding.step3.qrAlt': 'Mobile Sign-in QR Code',
+  'onboarding.step3.waitingScan': 'Waiting for scan from phone...',
+  'onboarding.step3.pendingConfirm': 'Scanned! Waiting for confirmation...',
+  'onboarding.step3.confirmed': 'Mobile sign-in confirmed!',
+  'onboarding.step3.expired': 'QR code expired. Click to refresh.',
+  'onboarding.step3.refresh': 'Refresh QR Code',
+  'onboarding.step3.nextBtn': 'Next: View Device',
+
+  'onboarding.step4.title': 'Step 4: Everything is Ready!',
+  'onboarding.step4.desc': 'This computer is actively connected to Agents Anywhere and your phone is signed in.',
+  'onboarding.step4.deviceReady': 'Local device is running and connected',
+  'onboarding.step4.mobileReady': 'Phone is linked to this device',
+  'onboarding.step4.finishBtn': 'Finish & Go to Overview',
+
   // Logs
   'logs.title': 'Live logs',
   'logs.description': 'Scrolling stream of Connector subprocess and Bridge logs.',
@@ -314,4 +406,4 @@ export const en = {
   'environment.data.dir': 'Directory path',
   'environment.data.copy': 'Copy path',
   'environment.data.open': 'Open in file manager',
-} as const satisfies Record<AgentsAnywhereConnectorLocaleKey, string>
+} as const satisfies Record<AgentsAnywhereGatewayLocaleKey, string>

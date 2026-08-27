@@ -32,7 +32,7 @@ const DARK_ICON_URL = "url(\"data:image/svg+xml;utf8," + buildLogoSvg("%23f5f5f5
 const NAV_LABEL_MARKERS = ['Agent 远程', 'Agent Remote']
 
 /** Marker class we attach once the row has been patched. */
-const PATCHED_CLASS = 'dsh-aa-connector-nav-patched'
+const PATCHED_CLASS = 'dsh-aa-gateway-nav-patched'
 
 interface PatcherState {
   observer: MutationObserver | null
@@ -106,9 +106,9 @@ function patchRow(row: HTMLElement): void {
   // cell is `display: flex; gap: 8px`, so the spacing between icon and label
   // must come from that gap — NOT from a margin here, or the icon drifts out
   // of alignment with the shell's own nav rows.
-  if (row.querySelector('[data-aa-connector-nav-icon="true"]') !== null) return
+  if (row.querySelector('[data-aa-gateway-nav-icon="true"]') !== null) return
   const icon = document.createElement('span')
-  icon.dataset.aaConnectorNavIcon = 'true'
+  icon.dataset.aaGatewayNavIcon = 'true'
   icon.setAttribute('aria-hidden', 'true')
   icon.style.cssText = [
     'flex: none',
@@ -123,12 +123,12 @@ function patchRow(row: HTMLElement): void {
 }
 
 function applyThemeStyle(): void {
-  if (document.getElementById('dsh-aa-connector-nav-theme-style') !== null) return
+  if (document.getElementById('dsh-aa-gateway-nav-theme-style') !== null) return
   const style = document.createElement('style')
-  style.id = 'dsh-aa-connector-nav-theme-style'
-  style.dataset.plugin = '@agents-anywhere/dsh-aa-connector'
+  style.id = 'dsh-aa-gateway-nav-theme-style'
+  style.dataset.plugin = '@agents-anywhere/dsh-aa-gateway'
   style.textContent = `
-body[data-ds-dark-theme] .${PATCHED_CLASS} [data-aa-connector-nav-icon="true"] {
+body[data-ds-dark-theme] .${PATCHED_CLASS} [data-aa-gateway-nav-icon="true"] {
   background-image: ${DARK_ICON_URL} !important;
 }
 `
