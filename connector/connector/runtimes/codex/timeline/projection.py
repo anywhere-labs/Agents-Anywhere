@@ -14,6 +14,10 @@ from connector.runtimes.codex.sdk.events import CodexSdkEvent
 from connector.runtimes.codex.timeline.content import (
     codex_timeline_content_from_mapping,
 )
+from connector.runtimes.codex.timeline.agent_calls import (
+    codex_agent_call_content,
+    collab_agent_arguments_from_raw,
+)
 from connector.runtimes.codex.timeline.events import raw_item_from_notification
 from connector.runtimes.codex.timeline.identity import (
     client_message_id_from_raw,
@@ -231,9 +235,10 @@ class CodexTimelineProjection:
         if self.raw_type in {
             "mcpToolCall",
             "dynamicToolCall",
-            "collabAgentToolCall",
         }:
             return self.mcp_tool_call_content()
+        if self.raw_type == "collabAgentToolCall":
+            return self.agent_call_content()
         if self.raw_type == "webSearch":
             return self.web_search_content()
         if self.raw_type == "function_call":
@@ -298,6 +303,13 @@ class CodexTimelineProjection:
             "result": self.output,
             "error": self.message,
         }
+
+    def agent_call_content(self) -> Mapping[str, Any]:
+        return codex_agent_call_content(
+            native_action=self.name,
+            arguments=self.arguments,
+            output=self.output,
+        ).to_mapping()
 
     def web_search_content(self) -> Mapping[str, Any]:
         return {
@@ -423,10 +435,18 @@ def timeline_projection_from_raw(raw: Mapping[str, Any]) -> CodexTimelineProject
         message=first_string_from_mapping(raw_dict, "message"),
         name=first_string_from_mapping(raw_dict, "name", "function", "tool"),
         server=first_string_from_mapping(raw_dict, "server"),
-        arguments=raw_dict.get("arguments") or raw_dict.get("input"),
+        arguments=(
+            collab_agent_arguments_from_raw(raw_dict)
+            if raw_type == "collabAgentToolCall"
+            else raw_dict.get("arguments") or raw_dict.get("input")
+        ),
         command=first_string_from_mapping(raw_dict, "command", "cmd"),
         aggregated_output=first_string_from_mapping(raw_dict, "aggregatedOutput"),
-        output=raw_dict.get("output") or raw_dict.get("outputText"),
+        output=(
+            raw_dict.get("agentsStates")
+            if raw_type == "collabAgentToolCall"
+            else raw_dict.get("output") or raw_dict.get("outputText")
+        ),
         exit_code=(
             raw_dict.get("exitCode")
             if isinstance(raw_dict.get("exitCode"), int)

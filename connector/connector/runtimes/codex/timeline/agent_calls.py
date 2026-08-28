@@ -1,0 +1,65 @@
+from __future__ import annotations
+
+from collections.abc import Mapping
+from typing import Any
+
+from connector.runtime_protocol import (
+    AgentCallAction,
+    AgentCallToolContent,
+    RuntimeAgentCall,
+)
+
+
+def codex_agent_call_content(
+    native_action: str | None,
+    arguments: Any,
+    output: Any,
+) -> AgentCallToolContent:
+    call_arguments = arguments if isinstance(arguments, Mapping) else {}
+    targets = _string_tuple(call_arguments.get("receiverThreadIds"))
+    agents = output if isinstance(output, Mapping) else {}
+    return RuntimeAgentCall(
+        action=codex_agent_call_action(native_action),
+        title=native_action or "agent",
+        prompt=_optional_string(call_arguments.get("prompt")),
+        agent_id=targets[0] if len(targets) == 1 else None,
+        caller_id=_optional_string(call_arguments.get("senderThreadId")),
+        target_ids=targets,
+        model=_optional_string(call_arguments.get("model")),
+        reasoning_effort=_optional_string(call_arguments.get("reasoningEffort")),
+        agents=dict(agents),
+        input=dict(call_arguments),
+        output=dict(agents) if agents else None,
+        metadata={"nativeAction": native_action or "agent"},
+    ).to_timeline_content()
+
+
+def codex_agent_call_action(value: str | None) -> AgentCallAction:
+    actions: dict[str, AgentCallAction] = {
+        "spawnAgent": "spawn",
+        "sendInput": "send_input",
+        "resumeAgent": "resume",
+        "wait": "wait",
+        "closeAgent": "close",
+    }
+    return actions.get(value or "", "unknown")
+
+
+def collab_agent_arguments_from_raw(raw: Mapping[str, Any]) -> Mapping[str, Any]:
+    return {
+        "senderThreadId": raw.get("senderThreadId"),
+        "receiverThreadIds": raw.get("receiverThreadIds") or [],
+        "prompt": raw.get("prompt"),
+        "model": raw.get("model"),
+        "reasoningEffort": raw.get("reasoningEffort"),
+    }
+
+
+def _string_tuple(value: Any) -> tuple[str, ...]:
+    if not isinstance(value, list | tuple):
+        return ()
+    return tuple(item for item in value if isinstance(item, str) and item)
+
+
+def _optional_string(value: Any) -> str | None:
+    return value if isinstance(value, str) and value else None

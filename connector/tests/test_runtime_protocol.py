@@ -11,6 +11,7 @@ from connector.runtime_protocol import (
     CAPABILITY_SESSION_INTERRUPT,
     CAPABILITY_SESSION_SEND_MESSAGE,
     AgentRuntime,
+    AgentCallToolContent,
     CommandToolContent,
     FileChangeToolContent,
     McpToolContent,
@@ -24,6 +25,7 @@ from connector.runtime_protocol import (
     RuntimeInventoryItem,
     RuntimeModelItem,
     RuntimeOperationResult,
+    RuntimeAgentCall,
     RuntimeProvider,
     RuntimeReasoningItem,
     RuntimeUnsupportedError,
@@ -32,6 +34,7 @@ from connector.runtime_protocol import (
     ToolCallContent,
     ToolTimelineContent,
     WebSearchToolContent,
+    complete_agent_call_content,
     complete_tool_content,
 )
 
@@ -137,6 +140,7 @@ def test_runtime_protocol_operation_results_include_code() -> None:
 @pytest.mark.parametrize(
     "call",
     [
+        AgentCallToolContent(description="Inspect repository"),
         CommandToolContent(command="pwd"),
         FileChangeToolContent(metadata={"changes": [{"path": "app.py"}]}),
         McpToolContent(metadata={"server": "github", "tool": "search"}),
@@ -160,6 +164,55 @@ def test_complete_tool_content_preserves_concrete_kind(
     assert completed.output == "done"
     assert completed.metadata["result"] == {"content": "done"}
     assert completed.metadata["outputText"] == "done"
+
+
+def test_runtime_agent_call_serializes_and_completes_platform_content() -> None:
+    call = RuntimeAgentCall(
+        action="spawn",
+        title="Inspect repository",
+        description="Inspect repository",
+        agent_type="explorer",
+        prompt="Inspect the repository",
+        run_in_background=True,
+        parent_item_id="parent_1",
+        caller_id="thread_parent",
+        target_ids=("thread_child",),
+        model="gpt-test",
+        reasoning_effort="high",
+        input={"prompt": "Inspect the repository"},
+    ).to_timeline_content()
+
+    completed = complete_agent_call_content(
+        call,
+        output="done",
+        result={"status": "completed"},
+        is_error=False,
+        agent_id="agent_1",
+        agents={"agent_1": {"status": "completed"}},
+        usage={"durationMs": 1200, "tokens": 42, "toolCalls": 3},
+    )
+
+    assert completed.to_mapping() == {
+        "kind": "agent_call",
+        "title": "Inspect repository",
+        "input": {"prompt": "Inspect the repository"},
+        "output": "done",
+        "result": {"status": "completed"},
+        "isError": False,
+        "action": "spawn",
+        "description": "Inspect repository",
+        "agentType": "explorer",
+        "prompt": "Inspect the repository",
+        "runInBackground": True,
+        "parentItemId": "parent_1",
+        "agentId": "agent_1",
+        "callerId": "thread_parent",
+        "targetIds": ["thread_child"],
+        "model": "gpt-test",
+        "reasoningEffort": "high",
+        "agents": {"agent_1": {"status": "completed"}},
+        "usage": {"durationMs": 1200, "tokens": 42, "toolCalls": 3},
+    }
 
 
 def test_runtime_protocol_ordering_time_belongs_only_to_session_meta() -> None:

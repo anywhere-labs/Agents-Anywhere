@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from connector.runtime_protocol import (
+    AgentCallToolContent,
     CommandToolContent,
     ErrorSystemContent,
     FileChangeToolContent,
@@ -28,6 +29,10 @@ from connector.runtime_protocol import (
     complete_tool_content,
 )
 from connector.runtimes.claude.domain.session import ClaudeSession
+from connector.runtimes.claude.timeline.agent_calls import (
+    claude_agent_call_content,
+    complete_claude_agent_call_content,
+)
 
 
 CLAUDE_INTERRUPTED_REQUEST_MARKERS = frozenset(
@@ -48,6 +53,8 @@ class ClaudeToolBlock:
     tool_result: Any = None
     is_error: bool = False
     is_synthetic: bool = False
+    parent_tool_use_id: str | None = None
+    tool_result_metadata: Mapping[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -246,13 +253,14 @@ class ClaudeMessageProjector:
                 pending = self._tool_call_lookup.get(block.tool_use_id)
             call = pending.block if pending is not None else None
             result_turn_id = pending.turn_id if pending is not None else turn_id
+            parent_item_id = _parent_tool_item_id(session, call)
             return ToolTimelineItem(
                 id=item_id,
                 type="tool",
                 status="failed" if block.is_error else "done",
                 role="tool",
                 turn_id=result_turn_id,
-                content=_tool_result_content(block, call),
+                content=_tool_result_content(block, call, parent_item_id),
                 source=TimelineSource(
                     runtime="claude",
                     external_session_id=session.external_session_id,
@@ -270,7 +278,10 @@ class ClaudeMessageProjector:
             status="running",
             role="tool",
             turn_id=turn_id,
-            content=_tool_call_content(block),
+            content=_tool_call_content(
+                block,
+                parent_item_id=_parent_tool_item_id(session, block),
+            ),
             source=TimelineSource(
                 runtime="claude",
                 external_session_id=session.external_session_id,
@@ -338,6 +349,10 @@ def message_tool_blocks(message: Any) -> tuple[ClaudeToolBlock, ...]:
     content = _message_content(message)
     if not isinstance(content, list | tuple):
         return ()
+    parent_tool_use_id = _string(
+        _extract(message, "parent_tool_use_id", "parentToolUseId")
+    )
+    result_metadata = _mapping(_extract(message, "tool_use_result", "toolUseResult"))
     blocks: list[ClaudeToolBlock] = []
     for block in content:
         block_type = _block_type(block)
@@ -353,6 +368,7 @@ def message_tool_blocks(message: Any) -> tuple[ClaudeToolBlock, ...]:
                     or "tool",
                     tool_input=_extract(block, "input", "tool_input", "toolInput")
                     or {},
+                    parent_tool_use_id=parent_tool_use_id,
                 )
             )
         elif block_type == "tool_result":
@@ -363,6 +379,8 @@ def message_tool_blocks(message: Any) -> tuple[ClaudeToolBlock, ...]:
                     or _stable_id("tool", repr(block)),
                     tool_result=_extract(block, "content", "result", "toolResult"),
                     is_error=_extract(block, "is_error", "isError") is True,
+                    parent_tool_use_id=parent_tool_use_id,
+                    tool_result_metadata=result_metadata,
                 )
             )
     return tuple(blocks)
@@ -518,7 +536,10 @@ def _system_block_metadata(block: Any) -> Mapping[str, Any]:
     }
 
 
-def _tool_call_content(block: ClaudeToolBlock) -> ToolTimelineContent:
+def _tool_call_content(
+    block: ClaudeToolBlock,
+    parent_item_id: str | None = None,
+) -> ToolTimelineContent:
     tool_name = block.tool_name or "tool"
     tool_input = block.tool_input if isinstance(block.tool_input, Mapping) else {}
     common = {
@@ -570,6 +591,12 @@ def _tool_call_content(block: ClaudeToolBlock) -> ToolTimelineContent:
                 "questions": tool_input.get("questions", []),
             },
         )
+    if tool_name == "Agent":
+        return claude_agent_call_content(
+            tool_use_id=block.tool_use_id,
+            tool_input=tool_input,
+            parent_item_id=parent_item_id,
+        )
     mcp_parts = _mcp_parts(tool_name)
     if mcp_parts is not None:
         server, tool = mcp_parts
@@ -600,6 +627,7 @@ def _tool_call_content(block: ClaudeToolBlock) -> ToolTimelineContent:
 def _tool_result_content(
     block: ClaudeToolBlock,
     call: ClaudeToolBlock | None,
+    parent_item_id: str | None = None,
 ) -> ToolTimelineContent:
     output = _result_text(block.tool_result)
     result_metadata: dict[str, Any] = {
@@ -614,8 +642,22 @@ def _tool_result_content(
         **({"synthetic": True, "missingResult": True} if block.is_synthetic else {}),
         **({"error": output} if block.is_error else {}),
     }
-    call_content = _tool_call_content(call) if call is not None else None
+    call_content = (
+        _tool_call_content(call, parent_item_id=parent_item_id)
+        if call is not None
+        else None
+    )
     if call_content is not None:
+        if isinstance(call_content, AgentCallToolContent):
+            details = dict(block.tool_result_metadata or {})
+            return complete_claude_agent_call_content(
+                call_content,
+                output=output,
+                result=block.tool_result,
+                is_error=block.is_error,
+                result_details=details,
+                metadata=result_metadata,
+            )
         return complete_tool_content(
             call_content,
             output=output,
@@ -640,6 +682,15 @@ def _tool_result_exit_code(result: Any) -> int | None:
         return None
     value = result.get("exit_code", result.get("exitCode"))
     return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _parent_tool_item_id(
+    session: ClaudeSession,
+    block: ClaudeToolBlock | None,
+) -> str | None:
+    if block is None or block.parent_tool_use_id is None:
+        return None
+    return stable_tool_item_id(session, block.parent_tool_use_id)
 
 
 def _file_changes(
@@ -734,6 +785,10 @@ def _preview_text(value: str, limit: int = 4000) -> str:
 
 def _string(value: Any) -> str | None:
     return value if isinstance(value, str) and value else None
+
+
+def _mapping(value: Any) -> Mapping[str, Any] | None:
+    return value if isinstance(value, Mapping) else None
 
 
 def _mcp_parts(tool_name: str | None) -> tuple[str, str] | None:

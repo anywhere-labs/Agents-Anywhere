@@ -2639,6 +2639,96 @@ async def _test_claude_runtime_failed_tool_result_preserves_kind() -> None:
     assert tool.content["error"] == "exit 1"
 
 
+def test_claude_runtime_projects_agent_calls_with_parent_and_usage() -> None:
+    asyncio.run(_test_claude_runtime_projects_agent_calls_with_parent_and_usage())
+
+
+async def _test_claude_runtime_projects_agent_calls_with_parent_and_usage() -> None:
+    host = _RecordingHost()
+    runtime = _runtime(
+        host=host,
+        client=_FakeClaudeClient(
+            messages=[
+                SimpleNamespace(
+                    type="assistant",
+                    session_id="claude_agent_call",
+                    parent_tool_use_id="parent_agent_call",
+                    message={
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": "agent_call_1",
+                                "name": "Agent",
+                                "input": {
+                                    "description": "Inspect repository",
+                                    "subagent_type": "explorer",
+                                    "prompt": "Inspect the repository",
+                                    "run_in_background": False,
+                                },
+                            }
+                        ],
+                    },
+                ),
+                SimpleNamespace(
+                    type="user",
+                    session_id="claude_agent_call",
+                    tool_use_result={
+                        "status": "completed",
+                        "agentId": "agent_42",
+                        "agentType": "explorer",
+                        "resolvedModel": "claude-test",
+                        "totalDurationMs": 1500,
+                        "totalTokens": 321,
+                        "totalToolUseCount": 4,
+                    },
+                    message={
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": "agent_call_1",
+                                "content": "inspection complete",
+                            }
+                        ],
+                    },
+                ),
+                SimpleNamespace(type="result", session_id="claude_agent_call"),
+            ]
+        ),
+    )
+
+    await runtime.start_turn("sess_agent_call", None, "inspect")
+    task = runtime._sessions["sess_agent_call"].active_task
+    assert task is not None
+    await task
+
+    running, completed = [
+        item for item in host.timeline_item_upserts if item.type == "tool"
+    ]
+    assert running.id == completed.id
+    assert running.status == "running"
+    assert running.content["kind"] == "agent_call"
+    assert running.content["action"] == "invoke"
+    assert running.content["description"] == "Inspect repository"
+    assert running.content["agentType"] == "explorer"
+    assert running.content["prompt"] == "Inspect the repository"
+    assert running.content["runInBackground"] is False
+    assert running.content["parentItemId"].startswith("claude_tool_")
+    assert completed.status == "done"
+    assert completed.content["kind"] == "agent_call"
+    assert completed.content["agentId"] == "agent_42"
+    assert completed.content["targetIds"] == ["agent_42"]
+    assert completed.content["model"] == "claude-test"
+    assert completed.content["agents"] == {"agent_42": {"status": "completed"}}
+    assert completed.content["usage"] == {
+        "durationMs": 1500,
+        "tokens": 321,
+        "toolCalls": 4,
+    }
+    assert completed.content["output"] == "inspection complete"
+
+
 def test_claude_runtime_projects_error_blocks_as_failed_system_items() -> None:
     asyncio.run(_test_claude_runtime_projects_error_blocks_as_failed_system_items())
 

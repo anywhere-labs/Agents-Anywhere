@@ -3,6 +3,11 @@ from connector.runtime_protocol.attachments import (
     attachments_root,
     session_attachments_dir,
 )
+from connector.runtime_protocol.agent_calls import (
+    AgentCallAction,
+    RuntimeAgentCall,
+    complete_agent_call_content,
+)
 from connector.runtime_protocol.errors import (
     RuntimeConflictError,
     RuntimeInstancesUnsupportedError,
@@ -95,6 +100,7 @@ from connector.runtime_protocol.supervisor_models import (
     RuntimeSupervisorEntry,
 )
 from connector.runtime_protocol.timeline import (
+    AgentCallToolContent,
     ArtifactContentKind,
     ArtifactTimelineContent,
     ArtifactTimelineItem,
@@ -166,6 +172,8 @@ __all__ = [
     "CAPABILITY_SESSION_STEER",
     "MAX_CONFIG_REVISION",
     "AgentRuntime",
+    "AgentCallAction",
+    "AgentCallToolContent",
     "ArtifactContentKind",
     "ArtifactTimelineContent",
     "ArtifactTimelineItem",
@@ -214,6 +222,7 @@ __all__ = [
     "RuntimeConflictError",
     "RuntimeHostClient",
     "RuntimeIdentity",
+    "RuntimeAgentCall",
     "RuntimeInstance",
     "RuntimeInstanceHost",
     "RuntimeInstanceLifecycleStatus",
@@ -282,6 +291,7 @@ __all__ = [
     "attachment_target",
     "attachments_root",
     "complete_tool_content",
+    "complete_agent_call_content",
     "legacy_runtime_scope",
     "session_attachments_dir",
     "timeline_content_hash",

@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from connector.runtime_protocol import (
+    AgentCallToolContent,
     CommandToolContent,
     CompactMarkerContent,
     CompactSystemContent,
@@ -64,6 +65,47 @@ def codex_message_content_from_mapping(content: Mapping[str, Any]) -> TimelineCo
 
 def codex_tool_content_from_mapping(content: Mapping[str, Any]) -> TimelineContent:
     kind = content_kind_from_mapping(content)
+    if kind == "agent_call":
+        return AgentCallToolContent(
+            title=optional_string_field(content, "title"),
+            action=string_field(content, "action") or "unknown",
+            description=optional_string_field(content, "description"),
+            agent_type=optional_string_field(content, "agentType"),
+            prompt=optional_string_field(content, "prompt"),
+            run_in_background=bool_field(content, "runInBackground"),
+            parent_item_id=optional_string_field(content, "parentItemId"),
+            agent_id=optional_string_field(content, "agentId"),
+            caller_id=optional_string_field(content, "callerId"),
+            target_ids=string_tuple_field(content, "targetIds"),
+            model=optional_string_field(content, "model"),
+            reasoning_effort=optional_string_field(content, "reasoningEffort"),
+            agents=mapping_field(content, "agents"),
+            usage=mapping_field(content, "usage"),
+            input=optional_field(content, "input"),
+            output=optional_field(content, "output"),
+            metadata=mapping_without(
+                content,
+                (
+                    "kind",
+                    "title",
+                    "action",
+                    "description",
+                    "agentType",
+                    "prompt",
+                    "runInBackground",
+                    "parentItemId",
+                    "agentId",
+                    "callerId",
+                    "targetIds",
+                    "model",
+                    "reasoningEffort",
+                    "agents",
+                    "usage",
+                    "input",
+                    "output",
+                ),
+            ),
+        )
     if kind == "command":
         return CommandToolContent(
             command=string_field(content, "command"),
@@ -215,6 +257,23 @@ def optional_string_field(content: Mapping[str, Any], key: str) -> str | None:
 def int_field(content: Mapping[str, Any], key: str) -> int | None:
     value = content.get(key)
     return value if isinstance(value, int) else None
+
+
+def bool_field(content: Mapping[str, Any], key: str) -> bool | None:
+    value = content.get(key)
+    return value if isinstance(value, bool) else None
+
+
+def mapping_field(content: Mapping[str, Any], key: str) -> Mapping[str, Any]:
+    value = content.get(key)
+    return dict(value) if isinstance(value, Mapping) else {}
+
+
+def string_tuple_field(content: Mapping[str, Any], key: str) -> tuple[str, ...]:
+    value = content.get(key)
+    if not isinstance(value, list | tuple):
+        return ()
+    return tuple(item for item in value if isinstance(item, str) and item)
 
 
 def optional_field(content: Mapping[str, Any], key: str) -> Any:

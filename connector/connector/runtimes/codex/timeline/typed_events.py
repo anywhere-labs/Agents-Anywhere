@@ -271,7 +271,6 @@ def timeline_projection_from_thread_item(
             status=enum_value(root.status) or event_status,
             role="tool",
             turn_id=turn_id,
-            server="codex.collab",
             name=enum_value(root.tool) or "agent",
             arguments=collab_agent_tool_arguments(root),
             output=collab_agent_tool_output(root.agents_states),
