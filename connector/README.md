@@ -1,5 +1,7 @@
 # Anywhere CLI
 
+> Development note: this repository is currently under active local development.
+
 Local runtime connector for Agents Anywhere. It runs on the machine that owns
 the workspace and agent runtimes, connects to the server over HTTP/WebSocket,
 executes connector RPC locally, and uploads normalized runtime/session state
