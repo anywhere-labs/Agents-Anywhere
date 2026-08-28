@@ -294,7 +294,6 @@ export class DashboardApi {
     options: SessionSnapshotRequestOptions = {},
   ): Promise<SessionSnapshotResponse> {
     const reason = options.reason ?? "unspecified";
-    const startedAt = performance.now();
     console.info("[AgentsAnywhere] session snapshot request", {
       sessionId,
       limit,
@@ -302,29 +301,10 @@ export class DashboardApi {
       requestedAt: new Date().toISOString(),
       stack: new Error().stack,
     });
-    return this.client
-      .get<SessionSnapshotResponse>(
-        `/sessions/${encodeURIComponent(sessionId)}/snapshot`,
-        { token, query: { limit } },
-      )
-      .then((response) => {
-        console.info("[AgentsAnywhere] session snapshot response", {
-          sessionId,
-          reason,
-          items: response.timeline.items.length,
-          elapsedMs: Math.round((performance.now() - startedAt) * 10) / 10,
-        });
-        return response;
-      })
-      .catch((error: unknown) => {
-        console.warn("[AgentsAnywhere] session snapshot failed", {
-          sessionId,
-          reason,
-          elapsedMs: Math.round((performance.now() - startedAt) * 10) / 10,
-          error: error instanceof Error ? error.message : String(error),
-        });
-        throw error;
-      });
+    return this.client.get<SessionSnapshotResponse>(
+      `/sessions/${encodeURIComponent(sessionId)}/snapshot`,
+      { token, query: { limit } },
+    );
   }
 
   syncSession(token: string, sessionId: string): Promise<RpcResponse<Record<string, unknown>>> {

@@ -670,16 +670,6 @@ async def session_timeline(
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
 ) -> ProtocolTimelineResponse:
-    request_started_at = time.monotonic()
-    logger.info(
-        "session timeline request started session_id={} mode={} after_seq={} "
-        "before_order_seq={} limit={}",
-        session_id,
-        mode,
-        after_seq,
-        before_order_seq,
-        limit,
-    )
     try:
         await db.get_session(session_id, user_id=user_id)
         if mode == "latest":
@@ -707,16 +697,6 @@ async def session_timeline(
         next_seq = await db.get_session_seq(session_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="session not found") from None
-    logger.info(
-        "session timeline request completed session_id={} mode={} items={} has_more={} "
-        "next_seq={} elapsed_ms={:.1f}",
-        session_id,
-        mode,
-        len(items),
-        has_more,
-        next_seq,
-        (time.monotonic() - request_started_at) * 1000,
-    )
     return ProtocolTimelineResponse(
         sessionId=session_id,
         items=items,
@@ -746,11 +726,6 @@ async def session_snapshot(
     catalogs: CatalogService = Depends(get_catalog_service),
 ) -> ProtocolSessionSnapshotResponse:
     snapshot_started_at = time.monotonic()
-    logger.info(
-        "session snapshot request started session_id={} limit={}",
-        session_id,
-        limit,
-    )
 
     def log_snapshot_stage(stage: str, stage_started_at: float) -> None:
         logger.info(
@@ -816,15 +791,6 @@ async def session_snapshot(
         log_snapshot_stage("catalogs_and_sequence", stage_started_at)
     except KeyError:
         raise HTTPException(status_code=404, detail="session not found") from None
-    logger.info(
-        "session snapshot request completed session_id={} items={} has_more={} "
-        "next_seq={} elapsed_ms={:.1f}",
-        session_id,
-        len(items),
-        has_more,
-        next_seq,
-        (time.monotonic() - snapshot_started_at) * 1000,
-    )
     return ProtocolSessionSnapshotResponse(
         session=session.model_dump(mode="json"),
         state=(

@@ -74,30 +74,18 @@ class RuntimeSyncRunner:
             await asyncio.sleep(self.config.sync_interval_seconds)
 
     async def sync_existing_once(self) -> None:
-        scan_id = secrets.token_hex(6)
-        scan_started_at = time.monotonic()
-        logger.info(
-            "history scanner cycle started scan_id={} runtimes={}",
-            scan_id,
-            len(self.supervisor.runtimes),
-        )
         for runtime_id in self.supervisor.runtimes:
             runtime_started_at = time.monotonic()
             try:
                 runtime = self.supervisor.resolve_runtime(runtime_id)
                 logger.info(
-                    "existing session sync runtime started scan_id={} runtime={}",
-                    scan_id,
-                    runtime_id,
+                    "existing session sync runtime started runtime={}", runtime_id
                 )
-                catalogs_started_at = time.monotonic()
                 await self.push_runtime_catalogs(runtime)
-                catalogs_elapsed_ms = (time.monotonic() - catalogs_started_at) * 1000
                 inventory_scan_token: str | None = None
                 entry = self.supervisor.entry(runtime_id)
                 runtime_type = entry.runtime_type
                 scoped_runtime_id = entry.runtime_id
-                discovery_started_at = time.monotonic()
                 if runtime.supports_complete_session_inventory():
                     inventory_scan_token = secrets.token_hex(16)
                     await self._ingest_scanner_notifications(
@@ -129,27 +117,18 @@ class RuntimeSyncRunner:
                         raise
                 else:
                     sessions = await runtime.list_sessions(limit=100, force=False)
-                discovery_elapsed_ms = (time.monotonic() - discovery_started_at) * 1000
                 timeline_sync_count = sum(
                     1 for session in sessions if session_requires_timeline_sync(session)
                 )
                 logger.info(
-                    "existing session sync runtime discovered scan_id={} runtime={} sessions={} "
-                    "timeline_syncs={} catalogs_elapsed_ms={:.1f} discovery_elapsed_ms={:.1f}",
-                    scan_id,
+                    "existing session sync runtime discovered runtime={} sessions={} timeline_syncs={}",
                     runtime_id,
                     len(sessions),
                     timeline_sync_count,
-                    catalogs_elapsed_ms,
-                    discovery_elapsed_ms,
                 )
                 for session in sessions:
                     try:
-                        await self.sync_existing_session(
-                            runtime,
-                            session,
-                            scan_id=scan_id,
-                        )
+                        await self.sync_existing_session(runtime, session)
                     except ConnectorNetworkError as exc:
                         logger.warning(
                             "existing session sync network failure runtime={} session_id={} external_session_id={} error={}",
@@ -180,9 +159,7 @@ class RuntimeSyncRunner:
                         ]
                     )
                 logger.info(
-                    "existing session sync runtime completed scan_id={} runtime={} sessions={} "
-                    "elapsed_ms={:.1f}",
-                    scan_id,
+                    "existing session sync runtime completed runtime={} sessions={} elapsed_ms={:.1f}",
                     runtime_id,
                     len(sessions),
                     (time.monotonic() - runtime_started_at) * 1000,
@@ -208,22 +185,12 @@ class RuntimeSyncRunner:
             try:
                 await self.flush_sync_state()
             except Exception:  # noqa: BLE001
-                logger.exception(
-                    "history scanner sync state flush failed scan_id={}", scan_id
-                )
-        logger.info(
-            "history scanner cycle completed scan_id={} runtimes={} elapsed_ms={:.1f}",
-            scan_id,
-            len(self.supervisor.runtimes),
-            (time.monotonic() - scan_started_at) * 1000,
-        )
+                logger.exception("history scanner sync state flush failed")
 
     async def sync_existing_session(
         self,
         runtime: AgentRuntime,
         session: SessionMeta,
-        *,
-        scan_id: str = "manual",
     ) -> None:
         """Publish one discovered session and any required fresh timeline.
 
@@ -257,27 +224,18 @@ class RuntimeSyncRunner:
             )
             return
         logger.info(
-            "existing session timeline sync started scan_id={} runtime={} session_id={} "
-            "external_session_id={}",
-            scan_id,
+            "existing session timeline sync started runtime={} session_id={} external_session_id={}",
             session.runtime,
             session.session_id,
             session.external_session_id,
         )
-        session_started_at = time.monotonic()
         read_elapsed_ms = 0.0
-        state_elapsed_ms = 0.0
-        prepare_elapsed_ms = 0.0
-        notices_elapsed_ms = 0.0
         publish_elapsed_ms = 0.0
-        commit_elapsed_ms = 0.0
         synced_items = 0
-        state_started_at = time.monotonic()
         state = await runtime.get_session_state(
             session.session_id,
             session.external_session_id,
         )
-        state_elapsed_ms = (time.monotonic() - state_started_at) * 1000
         if state is not None and state.status in ACTIVE_SESSION_SYNC_SKIP_STATUSES:
             active_update = (session, state)
             if (
@@ -306,12 +264,10 @@ class RuntimeSyncRunner:
             )
             return
         self._last_active_session_updates.pop(session.session_id, None)
-        prepare_started_at = time.monotonic()
         prepared = await runtime.prepare_session_timeline_sync(
             session.session_id,
             session.external_session_id,
         )
-        prepare_elapsed_ms = (time.monotonic() - prepare_started_at) * 1000
         snapshot: RuntimeTimelineSnapshot | None = None
         if prepared is not None:
             snapshot = prepared.snapshot
@@ -332,12 +288,10 @@ class RuntimeSyncRunner:
                 snapshot.complete,
                 read_elapsed_ms,
             )
-        notices_started_at = time.monotonic()
         notices = await runtime.get_session_notices(
             session.session_id,
             session.external_session_id,
         )
-        notices_elapsed_ms = (time.monotonic() - notices_started_at) * 1000
         notifications = [_session_meta_notification(session)]
         if snapshot is not None:
             notifications.append(_timeline_sync_notification(snapshot))
@@ -348,9 +302,7 @@ class RuntimeSyncRunner:
         await self._ingest_scanner_notifications(notifications)
         publish_elapsed_ms = (time.monotonic() - publish_started_at) * 1000
         if prepared is not None and prepared.commit is not None:
-            commit_started_at = time.monotonic()
             await prepared.commit()
-            commit_elapsed_ms = (time.monotonic() - commit_started_at) * 1000
         if publish_elapsed_ms >= 250 or synced_items >= 100:
             logger.info(
                 "existing session timeline sync published runtime={} session_id={} items={} elapsed_ms={:.1f}",
@@ -360,22 +312,13 @@ class RuntimeSyncRunner:
                 publish_elapsed_ms,
             )
         logger.info(
-            "existing session sync completed scan_id={} runtime={} session_id={} items={} "
-            "notices={} state_elapsed_ms={:.1f} prepare_elapsed_ms={:.1f} "
-            "read_elapsed_ms={:.1f} notices_elapsed_ms={:.1f} publish_elapsed_ms={:.1f} "
-            "commit_elapsed_ms={:.1f} total_elapsed_ms={:.1f}",
-            scan_id,
+            "existing session sync completed runtime={} session_id={} items={} notices={} read_elapsed_ms={:.1f} publish_elapsed_ms={:.1f}",
             session.runtime,
             session.session_id,
             synced_items,
             len(notices),
-            state_elapsed_ms,
-            prepare_elapsed_ms,
             read_elapsed_ms,
-            notices_elapsed_ms,
             publish_elapsed_ms,
-            commit_elapsed_ms,
-            (time.monotonic() - session_started_at) * 1000,
         )
 
     async def _ingest_scanner_notifications(
