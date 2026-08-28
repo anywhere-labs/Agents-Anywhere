@@ -42,6 +42,8 @@ def timeline_item_type_from_raw_type(value: str) -> str:
         "mcpToolCall",
         "dynamicToolCall",
         "collabAgentToolCall",
+        "SubAgentActivityThreadItem",
+        "subAgentActivity",
         "webSearch",
         "function_call",
         "function_call_output",
@@ -111,6 +113,8 @@ def timeline_item_role_from_values(raw_type: str, role: str | None) -> str | Non
         return "assistant"
     if raw_type in {
         "commandExecution",
+        "SubAgentActivityThreadItem",
+        "subAgentActivity",
         "function_call",
         "function_call_output",
         "custom_tool_call",

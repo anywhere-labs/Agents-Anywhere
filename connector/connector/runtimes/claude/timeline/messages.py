@@ -323,9 +323,16 @@ def message_text(message: Any) -> str | None:
 def is_synthetic_control_message(message: Any) -> bool:
     role = message_role(message)
     text = message_text(message)
+    origin = _extract(message, "origin")
+    if _extract(origin, "kind") == "task-notification":
+        return True
     if text is None:
         return False
     normalized = text.strip()
+    if normalized.startswith("<task-notification>") and normalized.endswith(
+        "</task-notification>"
+    ):
+        return True
     if role == "user" and normalized in CLAUDE_INTERRUPTED_REQUEST_MARKERS:
         return True
     return (

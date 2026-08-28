@@ -113,6 +113,7 @@ from connector.runtimes.codex.timeline.items import (
     CodexMessageTimelineItem,
     CodexReasoningItem,
     CodexRuntimeMessageItem,
+    CodexSubAgentActivityItem,
     CodexSystemTimelineItem,
     CodexTimelineItem,
     CodexToolTimelineItem,
@@ -271,6 +272,10 @@ def test_codex_timeline_native_item_classes_are_explicitly_mapped() -> None:
     assert codex_timeline_item_class("commandExecution") is CodexCommandExecutionItem
     assert (
         codex_timeline_item_class("collabAgentToolCall") is CodexCollabAgentToolCallItem
+    )
+    assert (
+        codex_timeline_item_class("SubAgentActivityThreadItem")
+        is CodexSubAgentActivityItem
     )
     assert codex_timeline_item_class("mcpToolCall") is CodexMcpToolCallItem
     assert codex_timeline_item_class("dynamicToolCall") is CodexDynamicToolCallItem
@@ -2807,6 +2812,106 @@ async def _test_codex_runtime_reads_typed_collab_agent_item_from_snapshot() -> N
             }
         },
     }
+
+
+def test_codex_runtime_reads_typed_subagent_activity_from_snapshot() -> None:
+    asyncio.run(_test_codex_runtime_reads_typed_subagent_activity_from_snapshot())
+
+
+async def _test_codex_runtime_reads_typed_subagent_activity_from_snapshot() -> None:
+    client = FakeCodexClient()
+    client.results["thread/read"] = {
+        "thread": Thread.model_validate(
+            {
+                "id": "thread_1",
+                "cliVersion": "0.1.0",
+                "createdAt": 1,
+                "cwd": "/repo",
+                "ephemeral": False,
+                "modelProvider": "openai",
+                "preview": "hello",
+                "sessionId": "codex_session_1",
+                "source": "appServer",
+                "status": {"type": "notLoaded"},
+                "turns": [
+                    {
+                        "id": "turn_subagent",
+                        "status": "completed",
+                        "items": [
+                            {
+                                "id": "subagent_1",
+                                "type": "subAgentActivity",
+                                "agentPath": "/root/research_jingtian_sun",
+                                "agentThreadId": "thread_2",
+                                "kind": "started",
+                            }
+                        ],
+                    }
+                ],
+                "updatedAt": 2,
+            }
+        )
+    }
+    runtime = CodexRuntime(config=_config(), host=FakeHost(), client=client)
+
+    snapshot = await runtime.get_session_snapshot(
+        "sess_1",
+        external_session_id="thread_1",
+    )
+
+    assert len(snapshot.items) == 1
+    item = snapshot.items[0]
+    assert item.type == "tool"
+    assert item.role == "tool"
+    assert item.source["rawType"] == "SubAgentActivityThreadItem"
+    assert item.content == {
+        "kind": "agent_call",
+        "title": "research_jingtian_sun",
+        "input": {
+            "receiverThreadIds": ["thread_2"],
+            "description": "research_jingtian_sun",
+            "agentPath": "/root/research_jingtian_sun",
+        },
+        "nativeAction": "spawnAgent",
+        "action": "spawn",
+        "description": "research_jingtian_sun",
+        "agentId": "thread_2",
+        "targetIds": ["thread_2"],
+    }
+
+
+@pytest.mark.parametrize(
+    ("kind", "action"),
+    [
+        ("started", "spawn"),
+        ("interacted", "send_input"),
+        ("interrupted", "close"),
+    ],
+)
+def test_codex_runtime_maps_subagent_activity_kinds(kind: str, action: str) -> None:
+    projection = timeline_projection_from_raw(
+        {
+            "id": f"subagent_{kind}",
+            "type": "subAgentActivity",
+            "agentPath": "/root/research_agent",
+            "agentThreadId": "thread_2",
+            "kind": kind,
+            "status": "completed",
+        }
+    )
+
+    item = timeline_item_from_projection(
+        projection,
+        external_session_id="thread_1",
+        fallback_index=0,
+        event="thread/read",
+    )
+    platform_item = item.to_platform_item(session_id="sess_1", order_seq=1)
+
+    assert platform_item.type == "tool"
+    assert platform_item.content["kind"] == "agent_call"
+    assert platform_item.content["action"] == action
+    assert platform_item.content["description"] == "research_agent"
 
 
 @pytest.mark.parametrize(

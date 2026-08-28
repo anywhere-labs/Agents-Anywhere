@@ -17,6 +17,8 @@ from connector.runtimes.codex.timeline.content import (
 from connector.runtimes.codex.timeline.agent_calls import (
     codex_agent_call_content,
     collab_agent_arguments_from_raw,
+    subagent_activity_arguments_from_raw,
+    subagent_activity_native_action,
 )
 from connector.runtimes.codex.timeline.events import raw_item_from_notification
 from connector.runtimes.codex.timeline.identity import (
@@ -237,7 +239,11 @@ class CodexTimelineProjection:
             "dynamicToolCall",
         }:
             return self.mcp_tool_call_content()
-        if self.raw_type == "collabAgentToolCall":
+        if self.raw_type in {
+            "collabAgentToolCall",
+            "SubAgentActivityThreadItem",
+            "subAgentActivity",
+        }:
             return self.agent_call_content()
         if self.raw_type == "webSearch":
             return self.web_search_content()
@@ -433,11 +439,19 @@ def timeline_projection_from_raw(raw: Mapping[str, Any]) -> CodexTimelineProject
         or text_from_value(raw_dict),
         input_value=raw_dict.get("input"),
         message=first_string_from_mapping(raw_dict, "message"),
-        name=first_string_from_mapping(raw_dict, "name", "function", "tool"),
+        name=(
+            subagent_activity_native_action(
+                first_string_from_mapping(raw_dict, "kind", "activityKind")
+            )
+            if raw_type in {"SubAgentActivityThreadItem", "subAgentActivity"}
+            else first_string_from_mapping(raw_dict, "name", "function", "tool")
+        ),
         server=first_string_from_mapping(raw_dict, "server"),
         arguments=(
             collab_agent_arguments_from_raw(raw_dict)
             if raw_type == "collabAgentToolCall"
+            else subagent_activity_arguments_from_raw(raw_dict)
+            if raw_type in {"SubAgentActivityThreadItem", "subAgentActivity"}
             else raw_dict.get("arguments") or raw_dict.get("input")
         ),
         command=first_string_from_mapping(raw_dict, "command", "cmd"),

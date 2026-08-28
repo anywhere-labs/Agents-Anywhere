@@ -20,7 +20,12 @@ def codex_agent_call_content(
     agents = output if isinstance(output, Mapping) else {}
     return RuntimeAgentCall(
         action=codex_agent_call_action(native_action),
-        title=native_action or "agent",
+        title=(
+            _optional_string(call_arguments.get("description"))
+            or native_action
+            or "agent"
+        ),
+        description=_optional_string(call_arguments.get("description")),
         prompt=_optional_string(call_arguments.get("prompt")),
         agent_id=targets[0] if len(targets) == 1 else None,
         caller_id=_optional_string(call_arguments.get("senderThreadId")),
@@ -53,6 +58,42 @@ def collab_agent_arguments_from_raw(raw: Mapping[str, Any]) -> Mapping[str, Any]
         "model": raw.get("model"),
         "reasoningEffort": raw.get("reasoningEffort"),
     }
+
+
+def subagent_activity_native_action(kind: str | None) -> str:
+    return {
+        "started": "spawnAgent",
+        "interacted": "sendInput",
+        "interrupted": "closeAgent",
+    }.get(kind or "", "agent")
+
+
+def subagent_activity_arguments(
+    *,
+    agent_path: str,
+    agent_thread_id: str,
+) -> Mapping[str, Any]:
+    return {
+        "receiverThreadIds": [agent_thread_id],
+        "description": _subagent_display_name(agent_path),
+        "agentPath": agent_path,
+    }
+
+
+def subagent_activity_arguments_from_raw(raw: Mapping[str, Any]) -> Mapping[str, Any]:
+    agent_path = _optional_string(raw.get("agentPath") or raw.get("agent_path")) or "Agent"
+    agent_thread_id = _optional_string(
+        raw.get("agentThreadId") or raw.get("agent_thread_id")
+    )
+    return subagent_activity_arguments(
+        agent_path=agent_path,
+        agent_thread_id=agent_thread_id or agent_path,
+    )
+
+
+def _subagent_display_name(agent_path: str) -> str:
+    name = agent_path.rstrip("/").rsplit("/", 1)[-1]
+    return name or "Agent"
 
 
 def _string_tuple(value: Any) -> tuple[str, ...]:

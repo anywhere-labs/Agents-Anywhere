@@ -448,6 +448,16 @@ async def _test_claude_runtime_projects_result_only_reply() -> None:
     client = _FakeClaudeClient(
         messages=[
             SimpleNamespace(
+                type="user",
+                uuid="live_task_notification",
+                session_id="claude_live_controls",
+                origin={"kind": "task-notification"},
+                message={
+                    "role": "user",
+                    "content": "<task-notification><status>stopped</status></task-notification>",
+                },
+            ),
+            SimpleNamespace(
                 type="result",
                 uuid="result_1",
                 session_id="claude_result_only",
@@ -591,6 +601,7 @@ async def _test_claude_runtime_drops_live_synthetic_control_messages() -> None:
         if item.type == "message"
     ]
     assert "[Request interrupted by user for tool use]" not in texts
+    assert not any("task-notification" in str(text) for text in texts)
     assert "No response requested." not in texts
     assert "actual answer" in texts
 
@@ -1449,6 +1460,16 @@ async def _test_claude_runtime_history_drops_synthetic_control_messages() -> Non
                 ),
                 SimpleNamespace(
                     type="user",
+                    uuid="history_task_notification",
+                    session_id=external_session_id,
+                    origin={"kind": "task-notification"},
+                    message={
+                        "role": "user",
+                        "content": "<task-notification><status>stopped</status></task-notification>",
+                    },
+                ),
+                SimpleNamespace(
+                    type="user",
                     uuid="history_interrupted_user",
                     session_id=external_session_id,
                     message={
@@ -1526,6 +1547,7 @@ async def _test_claude_runtime_history_drops_synthetic_control_messages() -> Non
     ]
     assert "[Request interrupted by user]" not in texts
     assert "[Request interrupted by user for tool use]" not in texts
+    assert not any("task-notification" in str(text) for text in texts)
     assert texts.count("No response requested.") == 1
     assert "actual answer" in texts
 
