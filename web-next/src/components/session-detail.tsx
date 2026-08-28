@@ -1491,6 +1491,21 @@ export function SessionDetail({
                   onItemOpenChange={handleTimelineItemOpenChange}
                   onRespondInteraction={handleRespondInteraction}
                 />
+              ) : group.kind === "agent-calls" ? (
+                <AgentCallGroup
+                  key={group.key}
+                  group={group}
+                  token={token}
+                  session={session}
+                  interactionByTarget={interactionByTarget}
+                  resolvingNoticeId={resolvingNoticeId}
+                  resolvingActionId={resolvingActionId}
+                  open={timelineGroupOpenByKey[group.key] ?? true}
+                  itemOpenById={timelineItemOpenById}
+                  onOpenChange={(open) => handleTimelineGroupOpenChange(group.key, open)}
+                  onItemOpenChange={handleTimelineItemOpenChange}
+                  onRespondInteraction={handleRespondInteraction}
+                />
               ) : (
                 <TimelineEntry
                   key={group.item.id}
@@ -1772,12 +1787,21 @@ type TimelineReconnectGroup = {
   items: TimelineItem[]
 }
 
-type TimelineGroup = TimelineSingleGroup | TimelineToolRunGroup | TimelineReconnectGroup
+type TimelineAgentCallGroup = {
+  kind: "agent-calls"
+  key: string
+  parentItemId: string
+  items: TimelineItem[]
+}
+
+type TimelineGroup = TimelineSingleGroup | TimelineToolRunGroup | TimelineReconnectGroup | TimelineAgentCallGroup
 
 function groupTimelineItems(items: TimelineItem[], interactionTargetIds: Set<string>): TimelineGroup[] {
   const groups: TimelineGroup[] = []
   let pendingTools: TimelineItem[] = []
   let pendingReconnects: TimelineItem[] = []
+  let pendingAgentCalls: TimelineItem[] = []
+  let pendingAgentParentId: string | null = null
 
   const flushTools = () => {
     if (pendingTools.length >= 2) {
@@ -1805,7 +1829,34 @@ function groupTimelineItems(items: TimelineItem[], interactionTargetIds: Set<str
     pendingReconnects = []
   }
 
+  const flushAgentCalls = () => {
+    if (pendingAgentCalls.length >= 2 && pendingAgentParentId) {
+      groups.push({
+        kind: "agent-calls",
+        key: `agent-calls:${pendingAgentParentId}:${pendingAgentCalls[0]?.id ?? "unknown"}`,
+        parentItemId: pendingAgentParentId,
+        items: pendingAgentCalls,
+      })
+    } else {
+      for (const item of pendingAgentCalls) groups.push({ kind: "single", item })
+    }
+    pendingAgentCalls = []
+    pendingAgentParentId = null
+  }
+
   for (const item of items) {
+    const agentParentId = nestedAgentParentId(item)
+    if (agentParentId && !interactionTargetIds.has(item.id)) {
+      flushReconnects()
+      flushTools()
+      if (pendingAgentParentId && pendingAgentParentId !== agentParentId) {
+        flushAgentCalls()
+      }
+      pendingAgentParentId = agentParentId
+      pendingAgentCalls.push(item)
+      continue
+    }
+    flushAgentCalls()
     if (isReconnectErrorItem(item) && !interactionTargetIds.has(item.id)) {
       flushTools()
       pendingReconnects.push(item)
@@ -1819,9 +1870,15 @@ function groupTimelineItems(items: TimelineItem[], interactionTargetIds: Set<str
     flushTools()
     groups.push({ kind: "single", item })
   }
+  flushAgentCalls()
   flushReconnects()
   flushTools()
   return groups
+}
+
+function nestedAgentParentId(item: TimelineItem): string | null {
+  if (item.type !== "tool" || textOf(item.content.kind) !== "agent_call") return null
+  return textOf(item.content.parentItemId)
 }
 
 function isReconnectErrorItem(item: TimelineItem): boolean {
@@ -1943,6 +2000,72 @@ function ToolRunGroup({
                 kind="tool"
                 status={status}
                 title={summary}
+              />
+            </button>
+          </Marker>
+        </CollapsibleTrigger>
+        <CollapsibleContent className="min-w-0 max-w-full overflow-hidden">
+          <div className="flex flex-col gap-2">
+            {group.items.map((item) => (
+              <TimelineEntry
+                key={item.id}
+                token={token}
+                session={session}
+                item={item}
+                interaction={interactionByTarget.get(item.id)}
+                resolvingNoticeId={resolvingNoticeId}
+                resolvingActionId={resolvingActionId}
+                toolOpen={itemOpenById[item.id] ?? false}
+                onToolOpenChange={(open) => onItemOpenChange(item.id, open)}
+                onRespondInteraction={onRespondInteraction}
+              />
+            ))}
+          </div>
+        </CollapsibleContent>
+      </div>
+    </Collapsible>
+  )
+}
+
+function AgentCallGroup({
+  group,
+  token,
+  session,
+  interactionByTarget,
+  resolvingNoticeId,
+  resolvingActionId,
+  open,
+  itemOpenById,
+  onOpenChange,
+  onItemOpenChange,
+  onRespondInteraction,
+}: {
+  group: TimelineAgentCallGroup
+  token: string
+  session: SessionView
+  interactionByTarget: Map<string | null, Notice>
+  resolvingNoticeId: string | null
+  resolvingActionId: string | null
+  open: boolean
+  itemOpenById: Record<string, boolean>
+  onOpenChange: (open: boolean) => void
+  onItemOpenChange: (itemId: string, open: boolean) => void
+  onRespondInteraction: (noticeId: string, actionId: string, input?: Record<string, unknown>) => void
+}) {
+  const tSession = useTranslations("dashboard.session")
+  const status = toolRunStatus(group.items)
+
+  return (
+    <Collapsible open={open} onOpenChange={onOpenChange} className="min-w-0 max-w-full overflow-hidden">
+      <div className="flex min-w-0 max-w-full flex-col gap-2 overflow-hidden">
+        <CollapsibleTrigger asChild>
+          <Marker asChild className="w-full">
+            <button type="button" className="text-left">
+              <ToolMarkerRowContent
+                collapsible
+                kind="agent_call"
+                status={status}
+                title={tSession("agentCallGroupSummary", { count: group.items.length })}
               />
             </button>
           </Marker>

@@ -840,6 +840,7 @@
       "toolAgentWait": "等待 Agent",
       "toolAgentClose": "关闭 Agent",
       "toolAgentUnknown": "Agent 调用",
+      "agentCallGroupSummary": "调用了 {count} 个子 Agent",
       "fileChangeAdded": "新增",
       "fileChangeModified": "修改",
       "fileChangeDeleted": "删除",

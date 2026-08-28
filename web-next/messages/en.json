@@ -840,6 +840,7 @@
       "toolAgentWait": "Waited for agent",
       "toolAgentClose": "Closed agent",
       "toolAgentUnknown": "Agent call",
+      "agentCallGroupSummary": "Called {count} sub-agents",
       "fileChangeAdded": "Added",
       "fileChangeModified": "Modified",
       "fileChangeDeleted": "Deleted",
