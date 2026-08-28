@@ -30,6 +30,15 @@ from connector.runtime_protocol import (
 from connector.runtimes.claude.domain.session import ClaudeSession
 
 
+CLAUDE_INTERRUPTED_REQUEST_MARKERS = frozenset(
+    {
+        "[Request interrupted by user]",
+        "[Request interrupted by user for tool use]",
+    }
+)
+CLAUDE_NO_RESPONSE_MARKER = "No response requested."
+
+
 @dataclass(frozen=True, slots=True)
 class ClaudeToolBlock:
     block_type: str
@@ -298,6 +307,31 @@ def message_text(message: Any) -> str | None:
         return text
     result = _extract(message, "result")
     return result if isinstance(result, str) and result else None
+
+
+def is_synthetic_control_message(message: Any) -> bool:
+    role = message_role(message)
+    text = message_text(message)
+    if text is None:
+        return False
+    normalized = text.strip()
+    if role == "user" and normalized in CLAUDE_INTERRUPTED_REQUEST_MARKERS:
+        return True
+    return (
+        role == "assistant"
+        and normalized == CLAUDE_NO_RESPONSE_MARKER
+        and message_model(message) == "<synthetic>"
+    )
+
+
+def message_model(message: Any) -> str | None:
+    nested = _extract(message, "message")
+    if isinstance(nested, Mapping):
+        value = _extract(nested, "model")
+        if isinstance(value, str) and value:
+            return value
+    value = _extract(message, "model")
+    return value if isinstance(value, str) and value else None
 
 
 def message_tool_blocks(message: Any) -> tuple[ClaudeToolBlock, ...]:

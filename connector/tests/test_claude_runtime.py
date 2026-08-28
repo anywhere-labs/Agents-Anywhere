@@ -529,6 +529,72 @@ async def _test_claude_runtime_projects_live_system_messages() -> None:
     assert assistant_items[0].content["text"] == "answer"
 
 
+def test_claude_runtime_drops_live_synthetic_control_messages() -> None:
+    asyncio.run(_test_claude_runtime_drops_live_synthetic_control_messages())
+
+
+async def _test_claude_runtime_drops_live_synthetic_control_messages() -> None:
+    host = _RecordingHost()
+    client = _FakeClaudeClient(
+        messages=[
+            SimpleNamespace(
+                type="user",
+                uuid="live_interrupted_user",
+                session_id="claude_live_controls",
+                message={
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "[Request interrupted by user for tool use]",
+                        }
+                    ],
+                },
+            ),
+            SimpleNamespace(
+                type="assistant",
+                uuid="live_synthetic_assistant",
+                session_id="claude_live_controls",
+                message={
+                    "id": "msg_live_synthetic",
+                    "model": "<synthetic>",
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "No response requested."}],
+                },
+            ),
+            SimpleNamespace(
+                type="assistant",
+                uuid="live_real_assistant",
+                session_id="claude_live_controls",
+                message={
+                    "id": "msg_live_real",
+                    "model": "claude-sonnet-5",
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "actual answer"}],
+                },
+            ),
+            SimpleNamespace(type="result", session_id="claude_live_controls"),
+        ]
+    )
+    runtime = _runtime(host=host, client=client)
+
+    result = await runtime.start_turn("sess_live_controls", None, "hello")
+    task = runtime._sessions["sess_live_controls"].active_task
+
+    assert result.ok is True
+    assert task is not None
+    await task
+
+    texts = [
+        item.content.get("text")
+        for item in host.timeline_item_upserts
+        if item.type == "message"
+    ]
+    assert "[Request interrupted by user for tool use]" not in texts
+    assert "No response requested." not in texts
+    assert "actual answer" in texts
+
+
 def test_claude_runtime_lists_sessions_and_returns_local_snapshot() -> None:
     asyncio.run(_test_claude_runtime_lists_sessions_and_returns_local_snapshot())
 
@@ -1363,6 +1429,105 @@ async def _test_claude_runtime_scanner_syncs_delta_after_cursor() -> None:
     assert sync["complete"] is False
     assert [item.role for item in sync["items"]] == ["assistant"]
     assert sync["items"][0].content["text"] == "second"
+
+
+def test_claude_runtime_history_drops_synthetic_control_messages() -> None:
+    asyncio.run(_test_claude_runtime_history_drops_synthetic_control_messages())
+
+
+async def _test_claude_runtime_history_drops_synthetic_control_messages() -> None:
+    host = _RecordingHost()
+    external_session_id = "claude_history_controls"
+    sdk = _HistorySdk(
+        messages={
+            external_session_id: [
+                SimpleNamespace(
+                    type="user",
+                    uuid="history_real_user",
+                    session_id=external_session_id,
+                    message={"role": "user", "content": "hello"},
+                ),
+                SimpleNamespace(
+                    type="user",
+                    uuid="history_interrupted_user",
+                    session_id=external_session_id,
+                    message={
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": "[Request interrupted by user]",
+                            }
+                        ],
+                    },
+                ),
+                SimpleNamespace(
+                    type="user",
+                    uuid="history_interrupted_tool_user",
+                    session_id=external_session_id,
+                    message={
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": "[Request interrupted by user for tool use]",
+                            }
+                        ],
+                    },
+                ),
+                SimpleNamespace(
+                    type="assistant",
+                    uuid="history_synthetic_assistant",
+                    session_id=external_session_id,
+                    message={
+                        "id": "msg_history_synthetic",
+                        "model": "<synthetic>",
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": "No response requested."}],
+                    },
+                ),
+                SimpleNamespace(
+                    type="assistant",
+                    uuid="history_real_same_text",
+                    session_id=external_session_id,
+                    message={
+                        "id": "msg_history_real_same_text",
+                        "model": "claude-sonnet-5",
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": "No response requested."}],
+                    },
+                ),
+                SimpleNamespace(
+                    type="assistant",
+                    uuid="history_real_assistant",
+                    session_id=external_session_id,
+                    message={
+                        "id": "msg_history_real",
+                        "model": "claude-sonnet-5",
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": "actual answer"}],
+                    },
+                ),
+            ]
+        }
+    )
+    runtime = _runtime(host=host, sdk=sdk)
+
+    handled = await runtime.sync_session_timeline(
+        "sess_history_controls",
+        external_session_id,
+    )
+
+    assert handled is True
+    texts = [
+        item.content.get("text")
+        for item in host.timeline_syncs[-1]["items"]
+        if item.type == "message"
+    ]
+    assert "[Request interrupted by user]" not in texts
+    assert "[Request interrupted by user for tool use]" not in texts
+    assert texts.count("No response requested.") == 1
+    assert "actual answer" in texts
 
 
 def test_claude_runtime_scanner_skips_active_session_without_storing_cursor() -> None:

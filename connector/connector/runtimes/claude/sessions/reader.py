@@ -41,6 +41,7 @@ from connector.runtimes.claude.sessions.sync_state import ClaudeSessionSyncState
 from connector.runtimes.claude.timeline.messages import (
     ClaudeMessageProjector,
     ClaudePendingToolCall,
+    is_synthetic_control_message,
     is_task_event_tool_name,
     message_id,
     message_role,
@@ -327,7 +328,8 @@ def _history_items_from_messages(
         role = message_role(message)
         text = message_text(message)
         native_id = message_id(message)
-        if role == "user" and text:
+        synthetic_control = is_synthetic_control_message(message)
+        if role == "user" and text and not synthetic_control:
             turn_index += 1
             turn_seed = native_id or f"{session.external_session_id}:{turn_index}"
         if turn_seed is None:
@@ -348,7 +350,7 @@ def _history_items_from_messages(
                 event="claude.history.system",
             )
         )
-        if role not in {"user", "assistant", "system"} or not text:
+        if synthetic_control or role not in {"user", "assistant", "system"} or not text:
             continue
         client_message = matches.get(native_id or "")
         items.append(
@@ -390,7 +392,7 @@ def _history_tool_call_context(
         role = message_role(message)
         text = message_text(message)
         native_id = message_id(message)
-        if role == "user" and text:
+        if role == "user" and text and not is_synthetic_control_message(message):
             turn_index += 1
             turn_seed = native_id or f"{session.external_session_id}:{turn_index}"
         if turn_seed is None:
@@ -436,7 +438,12 @@ def _history_user_messages(
         for role in (message_role(message),)
         for native_id in (message_id(message),)
         for text in (message_text(message),)
-        if role == "user" and native_id is not None and text is not None
+        if (
+            role == "user"
+            and native_id is not None
+            and text is not None
+            and not is_synthetic_control_message(message)
+        )
     )
 
 

@@ -42,6 +42,7 @@ from connector.runtimes.claude.sdk.settings import (
 from connector.runtimes.claude.sessions.cache import ClaudeSessionStore
 from connector.runtimes.claude.timeline.messages import (
     ClaudeMessageProjector,
+    is_synthetic_control_message,
     message_id,
     message_role,
     message_session_id,
@@ -156,7 +157,13 @@ class ClaudeTurnRunner:
                 role = message_role(message)
                 text = message_text(message)
                 native_message_id = message_id(message)
-                if role == "user" and text and native_message_id:
+                synthetic_control = is_synthetic_control_message(message)
+                if (
+                    role == "user"
+                    and text
+                    and native_message_id
+                    and not synthetic_control
+                ):
                     replayed_user_message = (native_message_id, text)
                     if response_external_session_confirmed:
                         user_message_published = (
@@ -189,7 +196,11 @@ class ClaudeTurnRunner:
                     message=message,
                     event="claude.turn.system",
                 )
-                has_visible_message = role in {"assistant", "system"} and bool(text)
+                has_visible_message = (
+                    not synthetic_control
+                    and role in {"assistant", "system"}
+                    and bool(text)
+                )
                 if not user_message_published and (
                     stream_item is not None
                     or terminal_message is not None
@@ -243,6 +254,8 @@ class ClaudeTurnRunner:
                     await self.notifications.timeline_activity.timeline_item_upsert(
                         item
                     )
+                if synthetic_control:
+                    continue
                 if role not in {"assistant", "system"}:
                     continue
                 if not text:
