@@ -84,8 +84,7 @@ export interface BridgeConfig {
   maxPendingInteractions?: number
   /**
    * Working directory for the spawned `anywhere-cli start` subprocess.
-   * Defaults to the bundled `src/connector-source/` shipped with the plugin
-   * so users do not need to clone the connector project separately.
+   * Defaults to `Agents-Anywhere/connector`.
    */
   connectorCwd?: string
 }
@@ -1049,36 +1048,30 @@ function generatePairingCode(): string {
 /**
  * Resolve the `anywhere-cli` Python project directory.
  *
- * Resolution order (first directory that contains `pyproject.toml` wins):
- *
- *   1. The bundle-included `src/connector-source/` — ships with the plugin so
- *      end users never need a separate checkout. `import.meta.url` points at
- *      `lib/bridge-service.js`, so `../src/connector-source/` is the sibling
- *      source tree one level above `lib/`.
- *   2. A sibling `Agents-Anywhere/connector/` directory — dev workspaces that
- *      clone the upstream repo next to the plugin checkout.
- *   3. `<process.cwd()>/Agents-Anywhere/connector` — the layout DSH hands to
- *      the cordis plugin loader when launching from the upstream repo.
- *
- * Falls back to the bundle directory so misconfigured installs get a clear
- * "no pyproject.toml" surface rather than a silent cwd-mismatch crash.
+ * Resolution order:
+ *   1. Sibling `../connector/` relative to `dsh-aa-gateway`
+ *   2. Walking up parent directories for `connector/` or `Agents-Anywhere/connector/`
+ *   3. `<process.cwd()>/connector` or `<process.cwd()>/Agents-Anywhere/connector`
  */
 function defaultConnectorCwd(): string {
   const here = new URL(import.meta.url)
-  const candidates: string[] = [
-    new URL('../src/connector-source/', here).pathname,
-  ]
-  // Walk up from the installed plugin location looking for `Agents-Anywhere/connector`.
   const herePath = fileURLToPath(here)
+  const candidates: string[] = [
+    resolve(dirname(herePath), '..', 'connector'),
+    resolve(dirname(herePath), '..', '..', 'connector'),
+  ]
+  // Walk up from the installed plugin location looking for `Agents-Anywhere/connector` or `connector`.
   for (let cursor = dirname(herePath); cursor !== '/' && cursor !== '.'; cursor = dirname(cursor)) {
+    candidates.push(resolve(cursor, 'connector'))
     candidates.push(resolve(cursor, 'Agents-Anywhere', 'connector'))
   }
   // Always also try cwd.
+  candidates.push(resolve(process.cwd(), 'connector'))
   candidates.push(resolve(process.cwd(), 'Agents-Anywhere', 'connector'))
   for (const candidate of candidates) {
     if (existsSync(join(candidate, 'pyproject.toml'))) return candidate
   }
-  return new URL('../src/connector-source/', here).pathname
+  return resolve(dirname(herePath), '..', 'connector')
 }
 
 export default AgentsAnywhereConnectorService

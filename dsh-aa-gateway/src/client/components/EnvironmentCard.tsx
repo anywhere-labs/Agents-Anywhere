@@ -119,18 +119,6 @@ export function EnvironmentCard({ state, actions, t }: EnvironmentCardProps): JS
           </Button>
         </div>
       </Card>
-
-      <Card title={t('credential.clear.title')} description={t('credential.clear.description')}>
-        <div>
-          <Button
-            variant="secondary"
-            onClick={() => { void actions.clearCredentials() }}
-            disabled={state.device === null && state.pairing.code === null}
-          >
-            {t('credential.clear.action')}
-          </Button>
-        </div>
-      </Card>
     </>
   )
 }

@@ -111,10 +111,10 @@ export const zh = {
   // Onboarding
   'onboarding.title': '快速开始使用 Agents Anywhere',
   'onboarding.subtitle': '按照以下步骤，用手机随时随地远程控制 DSH',
-  'onboarding.step1.nav': '1. 网站登录',
-  'onboarding.step2.nav': '2. 移动端下载',
-  'onboarding.step3.nav': '3. 手机扫码登录',
-  'onboarding.step4.nav': '4. 自动配对完成',
+  'onboarding.step1.nav': '登录账号',
+  'onboarding.step2.nav': '下载 App',
+  'onboarding.step3.nav': '扫码登录',
+  'onboarding.step4.nav': '完成',
 
   'onboarding.step1.title': '第一步：登录 Agents Anywhere 账号',
   'onboarding.step1.desc': '在浏览器中登录或注册你的 Agents Anywhere 账号，授权后将自动把当前电脑绑定到该账号。',
@@ -313,10 +313,10 @@ export const en = {
   // Onboarding
   'onboarding.title': 'Get Started with Agents Anywhere',
   'onboarding.subtitle': 'Follow these steps to control DSH on your computer right from your phone',
-  'onboarding.step1.nav': '1. Web Login',
-  'onboarding.step2.nav': '2. Download App',
-  'onboarding.step3.nav': '3. Mobile Scan Login',
-  'onboarding.step4.nav': '4. Device Ready',
+  'onboarding.step1.nav': 'Sign In',
+  'onboarding.step2.nav': 'Download',
+  'onboarding.step3.nav': 'Scan Login',
+  'onboarding.step4.nav': 'Ready',
 
   'onboarding.step1.title': 'Step 1: Sign in with Agents Anywhere',
   'onboarding.step1.desc': 'Sign in or register in your browser. Once authorized, this computer will be automatically linked to your account.',

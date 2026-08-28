@@ -1,1 +1,0 @@
-"""Claude local history synchronization."""

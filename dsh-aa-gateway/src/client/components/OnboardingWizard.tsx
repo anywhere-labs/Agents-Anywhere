@@ -37,6 +37,11 @@ export function OnboardingWizard({ state, actions, onFinish, t }: OnboardingWiza
           <h2 style={wizardTitleStyle}>{t('onboarding.title')}</h2>
           <p style={wizardSubtitleStyle}>{t('onboarding.subtitle')}</p>
         </div>
+        {onFinish && (
+          <Button variant="ghost" onClick={onFinish} style={{ fontSize: 13 }}>
+            {t('action.cancel')}
+          </Button>
+        )}
       </header>
 
       {/* Stepper Navigation */}
@@ -83,6 +88,7 @@ export function OnboardingWizard({ state, actions, onFinish, t }: OnboardingWiza
             serverDraft={serverDraft}
             setServerDraft={setServerDraft}
             onNext={() => setCurrentStep(2)}
+            onCancel={onFinish}
             t={t}
           />
         )}
@@ -91,7 +97,7 @@ export function OnboardingWizard({ state, actions, onFinish, t }: OnboardingWiza
             state={state}
             actions={actions}
             onNext={() => setCurrentStep(3)}
-            onBack={() => setCurrentStep(1)}
+            onCancel={onFinish}
             t={t}
           />
         )}
@@ -100,7 +106,7 @@ export function OnboardingWizard({ state, actions, onFinish, t }: OnboardingWiza
             state={state}
             actions={actions}
             onNext={() => setCurrentStep(4)}
-            onBack={() => setCurrentStep(2)}
+            onCancel={onFinish}
             t={t}
           />
         )}
@@ -125,6 +131,7 @@ function Step1WebLogin({
   serverDraft,
   setServerDraft,
   onNext,
+  onCancel,
   t,
 }: {
   state: ConnectorState
@@ -132,6 +139,7 @@ function Step1WebLogin({
   serverDraft: string
   setServerDraft: (val: string) => void
   onNext: () => void
+  onCancel?: (() => void) | undefined
   t: TranslateNS<typeof LOCALE_NS>
 }) {
   const isAuthorizing =
@@ -198,14 +206,26 @@ function Step1WebLogin({
               <Button variant="ghost" onClick={() => void actions.startOAuthLogin(serverDraft)}>
                 {t('account.relogin')}
               </Button>
+              {onCancel && (
+                <Button variant="ghost" onClick={onCancel}>
+                  {t('action.cancel')}
+                </Button>
+              )}
             </>
           ) : (
-            <Button
-              variant="primary"
-              onClick={() => void actions.startOAuthLogin(serverDraft)}
-            >
-              {t('onboarding.step1.loginBtn')}
-            </Button>
+            <>
+              <Button
+                variant="primary"
+                onClick={() => void actions.startOAuthLogin(serverDraft)}
+              >
+                {t('onboarding.step1.loginBtn')}
+              </Button>
+              {onCancel && (
+                <Button variant="ghost" onClick={onCancel}>
+                  {t('action.cancel')}
+                </Button>
+              )}
+            </>
           )}
         </div>
       </div>
@@ -219,13 +239,13 @@ function Step2DownloadApp({
   state,
   actions,
   onNext,
-  onBack,
+  onCancel,
   t,
 }: {
   state: ConnectorState
   actions: ConnectorActions
   onNext: () => void
-  onBack: () => void
+  onCancel?: (() => void) | undefined
   t: TranslateNS<typeof LOCALE_NS>
 }) {
   const [iosQr, setIosQr] = useState<string | null>(null)
@@ -272,9 +292,11 @@ function Step2DownloadApp({
         <Button variant="primary" onClick={onNext}>
           {t('onboarding.step2.nextBtn')} →
         </Button>
-        <Button variant="ghost" onClick={onBack}>
-          ← {t('action.cancel')}
-        </Button>
+        {onCancel && (
+          <Button variant="ghost" onClick={onCancel}>
+            {t('action.cancel')}
+          </Button>
+        )}
       </div>
     </Card>
   )
@@ -286,13 +308,13 @@ function Step3MobileQrLogin({
   state,
   actions,
   onNext,
-  onBack,
+  onCancel,
   t,
 }: {
   state: ConnectorState
   actions: ConnectorActions
   onNext: () => void
-  onBack: () => void
+  onCancel?: (() => void) | undefined
   t: TranslateNS<typeof LOCALE_NS>
 }) {
   const [qrData, setQrData] = useState<MobileLoginQrData | null>(null)
@@ -403,9 +425,11 @@ function Step3MobileQrLogin({
         <Button variant="primary" onClick={onNext}>
           {t('onboarding.step3.nextBtn')} →
         </Button>
-        <Button variant="ghost" onClick={onBack}>
-          ← {t('action.cancel')}
-        </Button>
+        {onCancel && (
+          <Button variant="ghost" onClick={onCancel}>
+            {t('action.cancel')}
+          </Button>
+        )}
       </div>
     </Card>
   )
@@ -457,9 +481,11 @@ function Step4AllReady({
         <Button variant="primary" onClick={() => onFinish?.()}>
           {t('onboarding.step4.finishBtn')} 🎉
         </Button>
-        <Button variant="ghost" onClick={onBack}>
-          ← 上一步
-        </Button>
+        {onFinish && (
+          <Button variant="ghost" onClick={() => onFinish()}>
+            {t('action.cancel')}
+          </Button>
+        )}
       </div>
     </Card>
   )
@@ -533,32 +559,39 @@ const stepperNavStyle: CSSProperties = {
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'space-between',
-  gap: 8,
-  padding: '10px 14px',
-  borderRadius: 10,
+  gap: 4,
+  padding: '6px 10px',
+  borderRadius: 8,
   background: 'var(--dsw-alias-bg-layer-2)',
   border: '1px solid var(--dsw-alias-border-l2)',
+  boxSizing: 'border-box',
+  width: '100%',
 }
 
 const stepperDividerStyle: CSSProperties = {
   flex: 1,
   height: 1,
   background: 'var(--dsw-alias-border-l2)',
-  minWidth: 12,
+  minWidth: 4,
+  maxWidth: 20,
+  flexShrink: 1,
 }
 
 const stepNavButtonStyle: CSSProperties = {
-  display: 'flex',
+  display: 'inline-flex',
   alignItems: 'center',
-  gap: 8,
+  justifyContent: 'center',
+  gap: 6,
   background: 'transparent',
   border: 'none',
-  padding: '4px 8px',
+  padding: '4px 6px',
   borderRadius: 6,
   cursor: 'pointer',
   font: 'inherit',
   color: 'var(--dsw-alias-label-tertiary)',
-  transition: 'all 150ms ease',
+  transition: 'all 120ms ease',
+  whiteSpace: 'nowrap',
+  flexShrink: 0,
 }
 
 const stepNavButtonActiveStyle: CSSProperties = {
@@ -571,14 +604,22 @@ const stepNavButtonCompletedStyle: CSSProperties = {
 }
 
 const stepCircleStyle: CSSProperties = {
-  width: 22,
-  height: 22,
+  width: 20,
+  height: 20,
+  minWidth: 20,
+  minHeight: 20,
+  maxWidth: 20,
+  maxHeight: 20,
+  aspectRatio: '1 / 1',
   borderRadius: '50%',
   display: 'inline-flex',
   alignItems: 'center',
   justifyContent: 'center',
   fontSize: 11,
   fontWeight: 600,
+  lineHeight: 1,
+  flexShrink: 0,
+  boxSizing: 'border-box',
   background: 'var(--dsw-alias-bg-layer-3)',
   color: 'var(--dsw-alias-label-secondary)',
 }
@@ -586,15 +627,18 @@ const stepCircleStyle: CSSProperties = {
 const stepCircleActiveStyle: CSSProperties = {
   background: 'var(--dsw-alias-brand-primary)',
   color: 'var(--dsw-alias-label-primary-inverted)',
+  boxShadow: '0 0 0 2px var(--dsw-alias-bg-layer-2), 0 0 0 3px var(--dsw-alias-brand-primary)',
 }
 
 const stepCircleCompletedStyle: CSSProperties = {
   background: 'var(--dsw-alias-state-success-tertiary)',
   color: 'var(--dsw-alias-state-success-primary)',
+  border: '1px solid var(--dsw-alias-state-success-primary)',
 }
 
 const stepNavLabelStyle: CSSProperties = {
   fontSize: 12,
+  whiteSpace: 'nowrap',
 }
 
 const stepCardWrapperStyle: CSSProperties = {

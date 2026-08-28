@@ -701,10 +701,8 @@ function initialSnapshot(account: UserAccount | null = null): ConnectorStateSnap
 }
 
 function buildConnectorEnv(_env: EnvironmentInfo): Record<string, string> {
-  // Keep uv's project virtualenv OUT of the bundled source tree. If uv created
-  // `.venv` inside `src/connector-source/`, the plugin package would grow a
-  // runtime artifact and the "no cached bytecode/virtualenv" invariant breaks.
-  // Pointing uv at a data-dir venv keeps the source tree clean and read-only.
+  // Keep uv's project virtualenv OUT of the source tree. Pointing uv at a
+  // data-dir venv keeps the source tree clean and read-only.
   //
   // NOTE: intentionally no `UV_DEFAULT_INDEX` here. A hard-coded mirror
   // (e.g. the Tsinghua index) stalls `uv run` on networks that cannot reach

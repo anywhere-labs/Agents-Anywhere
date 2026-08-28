@@ -64,7 +64,7 @@ export function OverviewCard({ state, actions, t }: OverviewCardProps): JSX.Elem
     }
   }
 
-  const isPaired = (state.device !== null || state.account !== null) && onboardingDone
+  const isPaired = onboardingDone
   const runtimeTone = runtimeToneOf(state.runtime, state.connection)
   const credentialTone = credentialToneOf(state)
 
@@ -96,23 +96,36 @@ export function OverviewCard({ state, actions, t }: OverviewCardProps): JSX.Elem
         />
       </section>
 
-      {/* Logged in Account Card */}
-      <Card
-        title={t('account.title')}
-        actions={
-          <Button variant="ghost" onClick={() => void actions.logout()}>
-            {t('account.logout')}
-          </Button>
-        }
-      >
-        <KeyValueRow label={t('account.userId')} value={state.account?.userId || '已连接账号'} />
-        <KeyValueRow label={t('account.server')} value={state.account?.serverUrl || state.oauth?.serverUrl || 'AA Server'} />
-        <KeyValueRow
-          label="当前设备"
-          value={state.device?.deviceName || '本机设备'}
-          hint={`设备 ID: ${state.device?.deviceId || '已自动绑定'}`}
-        />
-      </Card>
+      {/* Logged in Account Card or Unauthenticated Card */}
+      {state.account ? (
+        <Card
+          title={t('account.title')}
+          actions={
+            <Button variant="ghost" onClick={() => void actions.logout()}>
+              {t('account.logout')}
+            </Button>
+          }
+        >
+          <KeyValueRow label={t('account.userId')} value={state.account.userId} />
+          <KeyValueRow label={t('account.server')} value={state.account.serverUrl || state.oauth?.serverUrl || 'AA Server'} />
+          <KeyValueRow
+            label="当前设备"
+            value={state.device?.deviceName || '本机设备'}
+            hint={`设备 ID: ${state.device?.deviceId || '已自动绑定'}`}
+          />
+        </Card>
+      ) : (
+        <Card title={t('account.title')}>
+          <p style={{ margin: 0, color: 'var(--dsw-alias-label-secondary)' }}>
+            {t('account.empty')}
+          </p>
+          <div style={{ marginTop: 8 }}>
+            <Button variant="primary" onClick={() => setShowWizard(true)}>
+              {t('onboarding.step1.loginBtn')}
+            </Button>
+          </div>
+        </Card>
+      )}
 
       {/* Action to re-run onboarding wizard if user wants to download mobile app or scan again */}
       <section style={actionsSectionStyle}>
