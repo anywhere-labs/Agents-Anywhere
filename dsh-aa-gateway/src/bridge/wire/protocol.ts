@@ -92,7 +92,7 @@ export interface SessionMeta {
 /** Stable AA timeline item emitted by the DSH event projector. */
 export interface TimelineItem {
   id: string
-  type: 'message' | 'assistant_activity' | 'tool_call' | 'tool_result' | 'command' | 'turn_status'
+  type: 'message' | 'assistant_activity' | 'tool' | 'tool_call' | 'tool_result' | 'command' | 'turn_status'
   orderSeq: number
   revision: number
   contentHash: string

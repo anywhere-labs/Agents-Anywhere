@@ -265,6 +265,41 @@ def _project_payload_timeline_item(
                 ),
             },
         )
+    if native_type == "tool":
+        native_status = _optional_string(payload.get("status")) or "done"
+        name = str(payload.get("name") or "tool")
+        arguments = payload.get("arguments", {})
+        if not isinstance(arguments, Mapping):
+            arguments = {}
+        output = payload.get("output") or payload.get("text", "")
+        call_id = payload.get("callId")
+        failed = payload.get("isError") is True
+        status = "running" if native_status == "running" else "failed" if failed else "done"
+        call_kind = "command" if name.lower() in {"bash", "shell", "sh"} else "tool"
+        command = arguments.get("command") or arguments.get("cmd") if isinstance(arguments, dict) else None
+        description = arguments.get("description") if isinstance(arguments, dict) else None
+        return (
+            "tool",
+            status,
+            "assistant" if status == "running" else "tool",
+            {
+                "kind": "tool_call" if status == "running" else "tool_result",
+                "toolName": name,
+                "name": name,
+                "title": name,
+                "callKind": call_kind,
+                **({"command": command} if command else {}),
+                **({"description": description} if description else {}),
+                "input": arguments,
+                "arguments": arguments,
+                "output": output,
+                "text": output,
+                "toolUseId": call_id,
+                "callId": call_id,
+                "isError": failed,
+                **({"error": payload["error"]} if "error" in payload else {}),
+            },
+        )
     if native_type == "tool_call":
         return (
             "tool",

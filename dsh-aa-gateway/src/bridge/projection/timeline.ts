@@ -92,28 +92,54 @@ export function projectTimeline(
         break
       }
       case 'tool/call': {
+        const callId = String(event.data.callId)
         const payload = {
-          callId: String(event.data.callId),
+          callId,
           name: event.data.name,
           arguments: parseToolArguments(event.data.arguments),
           turn: event.data.turn,
           step: event.data.step,
+          status: 'running',
         }
-        set(items, header, 'tool_call', String(event.data.callId), event.seq, payload)
+        set(items, header, 'tool', callId, event.seq, payload)
         break
       }
       case 'tool/result': {
-        const block = event.data.message.content[0]
-        const callId = String(block.toolCallId)
+        const block = event.data.message?.content?.[0]
+        const rawBlock = (block !== undefined && typeof block === 'object' && block !== null) ? block as unknown as Record<string, unknown> : undefined
+        const callId = String(rawBlock?.toolCallId ?? '')
+        if (!callId) break
+        const id = timelineItemId(String(header.id), 'tool', callId)
+        const previous = items.get(id)
+        const isError = rawBlock?.isError === true || event.data.error !== undefined
+        let outputText = ''
+        if (rawBlock !== undefined) {
+          if (Array.isArray(rawBlock.content)) {
+            outputText = textContent(rawBlock.content as ContentBlock[])
+          } else if (typeof rawBlock.content === 'string') {
+            outputText = rawBlock.content
+          } else if (typeof rawBlock.text === 'string') {
+            outputText = rawBlock.text
+          }
+        }
         const payload: Record<string, unknown> = {
+          ...(previous?.payload ?? { callId, name: 'tool', arguments: {} }),
           callId,
-          text: textContent(block.content),
-          isError: block.isError === true || event.data.error !== undefined,
+          text: outputText,
+          output: outputText,
+          isError,
+          status: isError ? 'failed' : 'done',
           turn: event.data.turn,
           step: event.data.step,
           ...(event.data.error === undefined ? {} : { error: event.data.error }),
         }
-        set(items, header, 'tool_result', callId, event.seq, payload)
+        upsert(items, {
+          id,
+          type: 'tool',
+          orderSeq: previous?.orderSeq ?? event.seq,
+          revision: (previous?.revision ?? 0) + 1,
+          payload,
+        })
         break
       }
       case 'command/run': {

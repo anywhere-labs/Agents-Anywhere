@@ -1471,11 +1471,16 @@ function projectedItemsForEvent(
       ids.push(timelineItemId(externalSessionId, 'assistant_activity', `${event.data.turn}:${event.data.step}`))
       break
     case 'tool/call':
-      ids.push(timelineItemId(externalSessionId, 'tool_call', String(event.data.callId)))
+      ids.push(timelineItemId(externalSessionId, 'tool', String(event.data.callId)))
       break
-    case 'tool/result':
-      ids.push(timelineItemId(externalSessionId, 'tool_result', String(event.data.message.content[0].toolCallId)))
+    case 'tool/result': {
+      const block = event.data.message?.content?.[0]
+      const callId = String(block && typeof block === 'object' && 'toolCallId' in block ? block.toolCallId : '')
+      if (callId) {
+        ids.push(timelineItemId(externalSessionId, 'tool', callId))
+      }
       break
+    }
     case 'command/run':
     case 'command/done':
       ids.push(timelineItemId(externalSessionId, 'command', String(event.data.commandId)))

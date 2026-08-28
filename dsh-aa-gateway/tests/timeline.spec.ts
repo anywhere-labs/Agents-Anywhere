@@ -41,8 +41,37 @@ describe('timeline projection', () => {
     const items = projectTimeline(header, events)
     expect(items).toHaveLength(2)
     expect(items[0]?.payload).toMatchObject({ role: 'user', text: 'hello', messageId: 'user-message' })
-    expect(items[1]?.payload).toMatchObject({ callId: 'call-1', name: 'read', arguments: { path: 'file' } })
+    expect(items[1]?.payload).toMatchObject({ callId: 'call-1', name: 'read', arguments: { path: 'file' }, status: 'running' })
+    expect(items[1]?.type).toBe('tool')
     expect(JSON.stringify(items)).not.toContain('secret-provider')
     expect(JSON.stringify(items)).not.toContain('internal context')
+  })
+
+  it('merges tool/call and tool/result into one unified done tool item', () => {
+    const events = [
+      {
+        type: 'tool/call', seq: 1, time: 2,
+        data: { turn: 1, step: 1, callId: CallId('call-bash-1'), name: 'bash', arguments: '{"command":"sw_vers"}' },
+      },
+      {
+        type: 'tool/result', seq: 2, time: 3,
+        data: {
+          turn: 1, step: 1, callId: CallId('call-bash-1'),
+          message: {
+            content: [{ type: 'tool_result', toolCallId: 'call-bash-1', content: [{ type: 'text', text: 'macOS 15.0.1' }] }],
+          },
+        },
+      },
+    ] as unknown as SessionEvent[]
+    const items = projectTimeline(header, events)
+    expect(items).toHaveLength(1)
+    expect(items[0]?.type).toBe('tool')
+    expect(items[0]?.payload).toMatchObject({
+      callId: 'call-bash-1',
+      name: 'bash',
+      arguments: { command: 'sw_vers' },
+      text: 'macOS 15.0.1',
+      status: 'done',
+    })
   })
 })
