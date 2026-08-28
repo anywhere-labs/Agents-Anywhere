@@ -214,6 +214,9 @@ export class ConnectorCoordinator extends EventEmitter implements ConnectorHostA
     if (!ensured.ok) return ensured
     const client = this.client
     if (client === null) return this.failStart('connector rpc is unavailable')
+    if (!existsSync(this.configPath)) {
+      return { ok: false, error: 'no connector credentials configured' }
+    }
     try {
       await client.send('connector.start', undefined)
       this.updateSnapshot({ runtime: 'running', connection: 'connected' })
@@ -287,11 +290,6 @@ export class ConnectorCoordinator extends EventEmitter implements ConnectorHostA
   }
 
   async stop(): Promise<OperationResult> {
-    if (this.snapshot.runtime === 'stopped') return { ok: true }
-    // `stopping` is a transient intermediate; we don't model it in the public
-    // ConnectorRuntimeState union, so we mark the runner intent via the
-    // internal runner state and let the runner's exit event flip the
-    // ConnectorState to `stopped` cleanly.
     if (this.client !== null) {
       try {
         await this.client.send('connector.stop', undefined)
@@ -409,16 +407,16 @@ export class ConnectorCoordinator extends EventEmitter implements ConnectorHostA
   async logout(): Promise<OperationResult> {
     this.currentUserToken = null
     this.oauthClient.cancel()
-    await this.clearCredentials()
-    await this.stop()
+    const res = await this.clearCredentials()
     this.updateSnapshot({
       runtime: 'stopped',
       connection: 'disconnected',
       device: null,
       account: null,
+      pairing: { ...INITIAL_PAIRING, serverUrl: this.snapshot.pairing.serverUrl },
       oauth: { ...INITIAL_OAUTH, serverUrl: this.snapshot.oauth.serverUrl },
     })
-    return { ok: true }
+    return res
   }
 
   // ─── Legacy Pairing ─────────────────────────────────────────────────────
@@ -468,24 +466,32 @@ export class ConnectorCoordinator extends EventEmitter implements ConnectorHostA
 
   async clearCredentials(): Promise<OperationResult> {
     this.clearPersistedAccount()
-    const syncStatePath = path.join(path.dirname(this.configPath), 'connector-state.json')
-    if (existsSync(syncStatePath)) {
-      try {
-        unlinkSync(syncStatePath)
-      } catch {
-        // ignore
-      }
-    }
-    if (existsSync(this.configPath)) {
-      try {
-        unlinkSync(this.configPath)
-      } catch {
-        // ignore
+    const targetDirs = [
+      path.dirname(this.configPath),
+      path.join(os.homedir(), '.dsh', 'agents-anywhere'),
+      path.join(os.homedir(), '.agents-anywhere'),
+    ]
+    const filesToClear = [
+      'connector.json',
+      'connector-state.json',
+      'connector-runtime.json',
+      'account.json',
+    ]
+    for (const dir of targetDirs) {
+      for (const file of filesToClear) {
+        const filePath = path.join(dir, file)
+        if (existsSync(filePath)) {
+          try {
+            unlinkSync(filePath)
+          } catch {
+            // ignore
+          }
+        }
       }
     }
     if (this.client !== null) {
       try {
-        await this.client.send('connector.clearCredentials', undefined)
+        await this.client.send('connector.stop', undefined)
       } catch {
         // ignore
       }
@@ -499,6 +505,7 @@ export class ConnectorCoordinator extends EventEmitter implements ConnectorHostA
       pairing: { ...INITIAL_PAIRING, serverUrl: this.snapshot.pairing.serverUrl },
       oauth: { ...INITIAL_OAUTH, serverUrl: this.snapshot.oauth.serverUrl },
     })
+    await this.ensureRpcProcess()
     return { ok: true }
   }
 

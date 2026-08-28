@@ -633,6 +633,7 @@ export class AgentsAnywhereConnectorService extends TypertRemoteService implemen
     }
     this.metadata = new MetadataStore(this.config.stateRoot)
     this.coordinator = new ConnectorCoordinator({ cwd: this.config.connectorCwd })
+    this.wireCoordinatorEvents()
   }
 
   private patchState(patch: Partial<ConnectorStateSnapshot>): ConnectorStateSnapshot {
@@ -658,6 +659,8 @@ export class AgentsAnywhereConnectorService extends TypertRemoteService implemen
 
   @Remote('getState')
   async getState(): Promise<ConnectorStateSnapshot> {
+    const liveSnapshot = await this.coordinator.getState()
+    this.patchState(liveSnapshot)
     return this.snapshotState()
   }
 

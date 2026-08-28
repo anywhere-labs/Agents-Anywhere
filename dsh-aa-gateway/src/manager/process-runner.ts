@@ -138,8 +138,13 @@ export class ProcessRunner extends EventEmitter {
     child.on('exit', (code, signal) => {
       this.flushBuffers()
       this.current = null
-      this.emit('state', 'crashed', { exitCode: code, signal })
-      this.state = 'crashed'
+      if (this.state === 'stopping') {
+        this.state = 'stopped'
+        this.emit('state', 'stopped', { exitCode: code, signal })
+      } else {
+        this.state = 'crashed'
+        this.emit('state', 'crashed', { exitCode: code, signal })
+      }
     })
 
     this.setState('running')
@@ -149,7 +154,10 @@ export class ProcessRunner extends EventEmitter {
   /** Stop the child with SIGTERM → SIGKILL escalation. Resolves when exited. */
   async stop(): Promise<void> {
     const child = this.current
-    if (child === null) return
+    if (child === null) {
+      this.setState('stopped')
+      return
+    }
     this.setState('stopping')
 
     await new Promise<void>((resolve) => {
