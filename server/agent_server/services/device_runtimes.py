@@ -75,6 +75,7 @@ class DeviceRuntimeInstancesUnsupportedError(DeviceRuntimeError):
 
 
 SUPPORTED_RUNTIME_CONTROL_VERSIONS = ["2.0", "1.0"]
+PAIRING_DEFAULT_RUNTIME_TYPES = ("codex", "claude")
 
 
 class DeviceRuntimeService:
@@ -189,10 +190,13 @@ class DeviceRuntimeService:
         connector_id: str,
         connection: ConnectorConnection,
     ) -> None:
+        configure_defaults = await self._pairing_defaults_required(connector_id)
         await self._discover(
             connector_id,
             connection=connection,
         )
+        if configure_defaults:
+            await self.configure_pairing_defaults(connector_id)
         await self.reconcile_active(connector_id)
 
     async def discover(
@@ -213,6 +217,117 @@ class DeviceRuntimeService:
         await self._discover(connector_id)
         await self.reconcile_active(connector_id)
         return await self.list_runtime_types(connector_id, user_id=user_id)
+
+    async def configure_pairing_defaults(self, connector_id: str) -> None:
+        """Configure default Codex and Claude instances on their first connection."""
+
+        async with self._runtime_lock(connector_id, "@instances"):
+            try:
+                control_version = await self._get_control_version(connector_id)
+                runtime_types = {
+                    runtime_type.runtimeType: runtime_type
+                    for runtime_type in (
+                        RuntimeTypeView.model_validate(row)
+                        for row in await self._store.list_connector_runtime_types(
+                            connector_id
+                        )
+                    )
+                }
+                runtimes = [
+                    DeviceRuntimeView.model_validate(row)
+                    for row in await self._store.list_device_runtimes(connector_id)
+                ]
+            except KeyError:
+                return
+
+            if control_version != "2.0":
+                return
+
+            changed = False
+            for runtime_type_id in PAIRING_DEFAULT_RUNTIME_TYPES:
+                runtime_type = runtime_types.get(runtime_type_id)
+                instances = [
+                    runtime
+                    for runtime in runtimes
+                    if runtime.runtimeType == runtime_type_id
+                ]
+                reusable = next(
+                    (
+                        runtime
+                        for runtime in instances
+                        if not runtime.configured
+                        and runtime.runtimeId == runtime.runtimeType
+                    ),
+                    None,
+                )
+                if (
+                    runtime_type is None
+                    or not runtime_type.present
+                    or not runtime_type.available
+                    or runtime_type.schema_ is None
+                    or any(runtime.configured for runtime in instances)
+                    or (instances and reusable is None)
+                ):
+                    continue
+
+                config = dict(runtime_type.defaults)
+                try:
+                    self._validate(config, runtime_type.schema_)
+                    if reusable is not None:
+                        runtime = DeviceRuntimeView.model_validate(
+                            await self._store.set_device_runtime_config(
+                                connector_id,
+                                reusable.runtimeId,
+                                config,
+                            )
+                        )
+                        runtime = DeviceRuntimeView.model_validate(
+                            await self._store.set_device_runtime_active(
+                                connector_id,
+                                runtime.runtimeId,
+                                True,
+                            )
+                        )
+                    else:
+                        runtime = DeviceRuntimeView.model_validate(
+                            await self._store.create_device_runtime(
+                                connector_id,
+                                runtime_type=runtime_type_id,
+                                name=_default_runtime_name(runtime_type, runtimes),
+                                config=config,
+                                active=True,
+                            )
+                        )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "pairing default runtime configuration failed "
+                        "connector_id={} runtime_type={} error_type={} error={}",
+                        connector_id,
+                        runtime_type_id,
+                        exc.__class__.__name__,
+                        exc,
+                    )
+                    continue
+
+                runtimes = [
+                    current
+                    for current in runtimes
+                    if current.runtimeId != runtime.runtimeId
+                ]
+                runtimes.append(runtime)
+                changed = True
+
+            if changed:
+                await self._publish(connector_id, "runtime.pairing_defaults")
+
+    async def _pairing_defaults_required(self, connector_id: str) -> bool:
+        try:
+            runtime_types = await self._store.list_connector_runtime_types(
+                connector_id
+            )
+        except KeyError:
+            return False
+        return not runtime_types
 
     async def _discover(
         self,
@@ -952,3 +1067,16 @@ def _config_revision(runtime: DeviceRuntimeView) -> int:
         MAX_JAVASCRIPT_SAFE_INTEGER,
         max(1, int(parsed.timestamp() * 1000)),
     )
+
+
+def _default_runtime_name(
+    runtime_type: RuntimeTypeView,
+    runtimes: list[DeviceRuntimeView],
+) -> str:
+    existing = {runtime.name.strip().casefold() for runtime in runtimes}
+    if runtime_type.displayName.strip().casefold() not in existing:
+        return runtime_type.displayName
+    suffix = 2
+    while f"{runtime_type.displayName} {suffix}".casefold() in existing:
+        suffix += 1
+    return f"{runtime_type.displayName} {suffix}"

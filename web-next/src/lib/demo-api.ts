@@ -68,6 +68,12 @@ export type SessionView = {
   pinnedAt?: string | null
   archived: boolean
   archivedAt?: string | null
+  userArchived?: boolean
+  sourceAvailability?: "available" | "archived" | "unavailable" | "deleted" | "missing" | "unknown"
+  sourceAvailabilityReason?: string | null
+  sourceAvailabilityUpdatedAt?: string | null
+  sourceObservationOrigin?: "event" | "inventory" | "operation" | null
+  archiveSource?: "user" | "runtime" | "both" | null
   unread: boolean
   lastReadSeq: number
   latestTurnEndSeq: number
@@ -651,10 +657,18 @@ export async function fsList(
 export type FilterValue = {
   connectorId: string | "all"
   runtime: string | "all"
-  status: SessionStatus | "all"
+  status: SessionStatusFilter
 }
 
+export type SessionStatusFilter = "all" | "archived"
+
 export const defaultFilter: FilterValue = { connectorId: "all", runtime: "all", status: "all" }
+
+function isUserArchived(session: SessionView): boolean {
+  if (typeof session.userArchived === "boolean") return session.userArchived
+  if (session.archiveSource) return session.archiveSource === "user" || session.archiveSource === "both"
+  return session.archived
+}
 
 export function filterSessions(
   list: SessionView[],
@@ -664,7 +678,11 @@ export function filterSessions(
   return list.filter((s) => {
     if (filter.connectorId !== "all" && s.connectorId !== filter.connectorId) return false
     if (filter.runtime !== "all" && s.runtime !== filter.runtime) return false
-    if (filter.status !== "all" && s.status !== filter.status) return false
+    if (filter.status === "archived") {
+      if (!isUserArchived(s) || s.sourceAvailability === "archived") return false
+    } else {
+      if (s.archived) return false
+    }
     if (query.trim() && !(s.title ?? "").toLowerCase().includes(query.trim().toLowerCase())) return false
     return true
   })

@@ -4738,6 +4738,92 @@ def test_send_message_records_active_run(tmp_path):
     assert active["params"]["content"] == "hi"
 
 
+def test_send_message_rejects_persisted_runtime_archived_session(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, _, session_id, headers = create_connector_and_session(client)
+    fake_rpc = FakeLocalRpc()
+    client.app.state.rpc = fake_rpc
+    asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
+    client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
+    asyncio.run(
+        client.app.state.store.update_session_source_state(
+            session_id,
+            availability="archived",
+            reason="thread/archived",
+            observed_at="2026-08-27T12:00:00Z",
+            observation_origin="event",
+        )
+    )
+
+    response = client.post(
+        f"/sessions/{session_id}/runtime/messages",
+        headers=headers,
+        json={"content": "hi"},
+    )
+
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"]["code"] == "session_archived"
+    assert not any(method == "session.send_message" for _, method, _, _ in fake_rpc.requests)
+
+
+def test_send_message_persists_runtime_source_failure_and_clears_run(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, _, session_id, headers = create_connector_and_session(client)
+
+    class ArchivedSessionRpc(FakeLocalRpc):
+        async def request(
+            self,
+            connector_id: str,
+            method: str,
+            params: dict[str, Any],
+            *,
+            timeout: float = 30,
+        ) -> Any:
+            if method != "session.send_message":
+                return await super().request(
+                    connector_id,
+                    method,
+                    params,
+                    timeout=timeout,
+                )
+            self.requests.append((connector_id, method, params, timeout))
+            return {
+                "ok": False,
+                "code": "session_archived",
+                "message": "Codex session is archived",
+                "sourceState": {
+                    "sessionId": session_id,
+                    "externalSessionId": params.get("externalSessionId"),
+                    "runtime": "codex",
+                    "availability": "archived",
+                    "reason": "JSON-RPC error -32600",
+                    "observedAt": "2026-08-27T12:00:00Z",
+                    "observationOrigin": "operation",
+                },
+            }
+
+    fake_rpc = ArchivedSessionRpc()
+    client.app.state.rpc = fake_rpc
+    asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
+    client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
+
+    response = client.post(
+        f"/sessions/{session_id}/runtime/messages",
+        headers=headers,
+        json={"content": "hi"},
+    )
+
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"]["code"] == "session_archived"
+    snapshot = client.get(f"/sessions/{session_id}/snapshot", headers=headers)
+    assert snapshot.status_code == 200, snapshot.text
+    session = snapshot.json()["session"]
+    assert session["archived"] is True
+    assert session["sourceAvailability"] == "archived"
+    assert session["sourceObservationOrigin"] == "operation"
+    assert asyncio.run(client.app.state.store.get_active_run(session_id)) is None
+
+
 def _create_claude_session(client, connector_id, headers, fake_rpc):
     """Insert a Claude session bound to the existing connector and mark
     it ready for turn.start (online + takeover)."""
@@ -6346,6 +6432,123 @@ def test_connector_ingest_archives_local_hidden_session_meta(tmp_path):
     assert state.status_code == 200, state.text
     assert state.json()["session"]["archived"] is True
     assert state.json()["session"]["archivedAt"] is not None
+
+
+def test_connector_source_event_archives_and_restores_codex_session(tmp_path):
+    client = make_client(tmp_path)
+    session_id, access_token, _, headers = create_connector_and_session(client)
+    connector_headers = {"Authorization": f"Bearer {access_token}"}
+
+    archived = client.post(
+        "/connector/ingest",
+        headers=connector_headers,
+        json={
+            "notifications": [
+                {
+                    "method": "session.source.updated",
+                    "params": {
+                        "sessionId": session_id,
+                        "runtime": "codex",
+                        "externalSessionId": "thr_1",
+                        "availability": "archived",
+                        "reason": "thread/archived",
+                        "observedAt": "2026-08-27T12:00:00Z",
+                        "observationOrigin": "event",
+                    },
+                }
+            ]
+        },
+    )
+
+    assert archived.status_code == 200, archived.text
+    session = session_view_for_assertions(client, session_id, headers)["session"]
+    assert session["archived"] is True
+    assert session["userArchived"] is False
+    assert session["archiveSource"] == "runtime"
+    assert session["sourceAvailability"] == "archived"
+    assert session["sourceObservationOrigin"] == "event"
+
+    restored = client.post(
+        "/connector/ingest",
+        headers=connector_headers,
+        json={
+            "notifications": [
+                {
+                    "method": "session.source.updated",
+                    "params": {
+                        "sessionId": session_id,
+                        "runtime": "codex",
+                        "externalSessionId": "thr_1",
+                        "availability": "available",
+                        "reason": "thread/unarchived",
+                        "observedAt": "2026-08-27T12:01:00Z",
+                        "observationOrigin": "event",
+                    },
+                }
+            ]
+        },
+    )
+
+    assert restored.status_code == 200, restored.text
+    session = session_view_for_assertions(client, session_id, headers)["session"]
+    assert session["archived"] is False
+    assert session["sourceAvailability"] == "available"
+
+
+def test_session_inventory_does_not_overwrite_newer_source_event(tmp_path):
+    client = make_client(tmp_path)
+    session_id, access_token, _, headers = create_connector_and_session(client)
+    connector_headers = {"Authorization": f"Bearer {access_token}"}
+    scan_token = "codex-inventory-scan-token-0001"
+
+    response = client.post(
+        "/connector/ingest",
+        headers=connector_headers,
+        json={
+            "notifications": [
+                {
+                    "method": "session.inventory.begin",
+                    "params": {"runtime": "codex", "scanToken": scan_token},
+                },
+                {
+                    "method": "session.source.updated",
+                    "params": {
+                        "sessionId": session_id,
+                        "runtime": "codex",
+                        "externalSessionId": "thr_1",
+                        "availability": "archived",
+                        "observedAt": "2026-08-27T12:01:00Z",
+                        "observationOrigin": "event",
+                    },
+                },
+                {
+                    "method": "session.inventory.complete",
+                    "params": {
+                        "runtime": "codex",
+                        "scanToken": scan_token,
+                        "complete": True,
+                        "sessions": [
+                            {
+                                "sessionId": session_id,
+                                "externalSessionId": "thr_1",
+                                "sourceState": {
+                                    "availability": "available",
+                                    "observedAt": "2026-08-27T12:00:00Z",
+                                    "observationOrigin": "inventory",
+                                },
+                            }
+                        ],
+                    },
+                },
+            ]
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    session = session_view_for_assertions(client, session_id, headers)["session"]
+    assert session["archived"] is True
+    assert session["sourceAvailability"] == "archived"
+    assert session["sourceObservationOrigin"] == "event"
 
 
 def test_connector_ingest_dsh_hidden_state_is_reversible_without_archiving(tmp_path):

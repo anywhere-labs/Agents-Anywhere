@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from connector.runtime_protocol import RuntimeSessionStateCache
+from connector.runtime_protocol import (
+    RuntimeSessionSourceStateCache,
+    RuntimeSessionStateCache,
+)
 from connector.runtime_protocol.host import RuntimeHostClient
 from connector.runtimes.codex.domain import sessions as codex_sessions
 from connector.runtimes.codex.domain.approvals import is_approval_request
@@ -25,6 +28,7 @@ class CodexNotificationProjector:
 
     host: RuntimeHostClient
     session_states: RuntimeSessionStateCache
+    source_states: RuntimeSessionSourceStateCache
     active_turn_ids: dict[str, str]
     timeline: CodexTimelineAccumulator
     notices: CodexNoticeRegistry
@@ -83,6 +87,28 @@ class CodexNotificationProjector:
                     thread_id,
                 )
         if session_id is None or thread_id is None:
+            return
+        source_availability = {
+            "thread/archived": "archived",
+            "thread/unarchived": "available",
+            "thread/deleted": "deleted",
+        }.get(event.event_type)
+        if source_availability is not None:
+            self.active_turn_ids.pop(session_id, None)
+            await self.source_states.update(
+                session_id=session_id,
+                external_session_id=thread_id,
+                availability=source_availability,
+                reason=event.event_type,
+                observed_at=None,
+                observation_origin="event",
+            )
+            await self.session_states.update(
+                session_id=session_id,
+                external_session_id=thread_id,
+                status="idle",
+                metadata={"source": f"codex.{event.event_type}"},
+            )
             return
         if is_approval_request(event.event_type):
             await self.notice_handler.handle_approval_request(

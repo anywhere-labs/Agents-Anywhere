@@ -18,6 +18,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { Marker, MarkerContent, MarkerIcon } from "@/components/ui/marker"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { createClientId } from "@/lib/id"
+import { isApiError } from "@/lib/api/errors"
 import { cn } from "@/lib/utils"
 import { dashboardApi } from "@/features/dashboard/api"
 import type {
@@ -119,16 +120,35 @@ type ComposerDraftState = {
   sessionId: string
   value: string
 }
+type SessionSourceErrorCode =
+  | "session_archived"
+  | "session_unavailable"
+  | "session_deleted"
+  | "session_missing"
 
 async function loadInitialSessionState(
   token: string,
   sessionId: string,
   options: { reason?: string } = {},
 ): Promise<SessionRemoteState> {
+  const reason = options.reason ?? "session-detail.initial-load"
   const snapshot = await dashboardApi.getSessionSnapshot(token, sessionId, INITIAL_TIMELINE_LIMIT, {
-    reason: options.reason ?? "session-detail.initial-load",
+    reason,
   })
-  return sessionStateFromSnapshot(snapshot)
+  const state = sessionStateFromSnapshot(snapshot)
+  console.info("[session_status_trace]", {
+    layer: "frontend-snapshot",
+    reason,
+    sessionId,
+    sessionStatus: state.session.status,
+    runtimeStatus: state.state?.status ?? null,
+    effectiveStatus: effectiveRuntimeStatus(state.state, state.session),
+    sessionUpdatedSeq: state.session.updatedSeq,
+    runtimeUpdatedSeq: state.state?.updatedSeq ?? null,
+    runtimeSource: state.state?.metadata?.source ?? null,
+    eventCursor: state.eventCursor,
+  })
+  return state
 }
 
 function sessionStateFromSnapshot(snapshot: SessionSnapshotResponse): SessionRemoteState {
@@ -267,6 +287,7 @@ export function SessionDetail({
     getOptimisticSessionState,
     isOptimisticSession,
     markOptimisticMessageFailed,
+    replaceHome,
   } = useWorkspace()
   const initialOptimisticState = getOptimisticSessionState(sessionId)
   const [state, setState] = React.useState<SessionRemoteState | null>(() =>
@@ -282,10 +303,12 @@ export function SessionDetail({
   const [showScrollBottom, setShowScrollBottom] = React.useState(false)
   const [loadingOlder, setLoadingOlder] = React.useState(false)
   const [pendingTakeover, setPendingTakeover] = React.useState<boolean | null>(null)
+  const [sourceErrorCode, setSourceErrorCode] = React.useState<SessionSourceErrorCode | null>(null)
   const [commandQuery, setCommandQuery] = React.useState<string | null>(null)
   const [runtimeCommands, setRuntimeCommands] = React.useState<RuntimeCommand[]>([])
   const [commandsLoading, setCommandsLoading] = React.useState(false)
   const [blockingInteractionStackHeight, setBlockingInteractionStackHeight] = React.useState(0)
+  const [composerHeight, setComposerHeight] = React.useState(144)
   const [timelineGroupOpenByKey, setTimelineGroupOpenByKey] = React.useState<Record<string, boolean>>({})
   const [timelineItemOpenById, setTimelineItemOpenById] = React.useState<Record<string, boolean>>({})
   const [composerDraftState, setComposerDraftState] = React.useState<ComposerDraftState>(() => ({
@@ -294,6 +317,7 @@ export function SessionDetail({
   }))
   const timelineRef = React.useRef<HTMLDivElement | null>(null)
   const timelineContentRef = React.useRef<HTMLDivElement | null>(null)
+  const composerContainerRef = React.useRef<HTMLDivElement | null>(null)
   const nextSeqRef = React.useRef(0)
   const autoScrollOnNextUpdateRef = React.useRef(false)
   const forceScrollOnNextUpdateRef = React.useRef(false)
@@ -314,6 +338,12 @@ export function SessionDetail({
   const session = state?.session ?? fallbackSession
   const runtimeState = state?.state ?? null
   const runtimeStatus = effectiveRuntimeStatus(runtimeState, session)
+  const previousStatusTraceRef = React.useRef<{
+    sessionId: string
+    sessionStatus: string
+    runtimeStatus: string | null
+    effectiveStatus: string
+  } | null>(null)
   const sessionRuntime = session ? sessionRuntimeId(session) : null
   const sessionRuntimeScope = session
     ? { runtimeId: sessionRuntimeId(session), runtimeType: sessionRuntimeType(session) }
@@ -330,9 +360,52 @@ export function SessionDetail({
       capabilityIsUsable(effectiveCapabilities, CAPABILITY.permissionCatalog, sessionRuntimeScope),
   )
   const commandSessionId = session?.id ?? null
+
+  React.useEffect(() => {
+    if (!session) return
+    const next = {
+      sessionId: session.id,
+      sessionStatus: session.status,
+      runtimeStatus: runtimeState?.status ?? null,
+      effectiveStatus: runtimeStatus,
+    }
+    const previous = previousStatusTraceRef.current
+    if (
+      previous === null ||
+      previous.sessionId !== next.sessionId ||
+      previous.sessionStatus !== next.sessionStatus ||
+      previous.runtimeStatus !== next.runtimeStatus ||
+      previous.effectiveStatus !== next.effectiveStatus
+    ) {
+      console.info("[session_status_trace]", {
+        layer: "frontend-render",
+        sessionId: session.id,
+        previous,
+        next,
+        sessionUpdatedSeq: session.updatedSeq,
+        runtimeUpdatedSeq: runtimeState?.updatedSeq ?? null,
+        runtimeSource: runtimeState?.metadata?.source ?? null,
+        eventCursor: state?.eventCursor ?? null,
+        serverTime: state?.serverTime ?? null,
+      })
+      previousStatusTraceRef.current = next
+    }
+  }, [runtimeState, runtimeStatus, session, state?.eventCursor, state?.serverTime])
+
   const composerDraft = composerDraftState.sessionId === sessionId ? composerDraftState.value : ""
   const isLocalOptimisticSession = isOptimisticSession(sessionId)
   const hasInitialSessionState = state !== null
+
+  React.useEffect(() => {
+    setSourceErrorCode(null)
+  }, [sessionId])
+
+  React.useEffect(() => {
+    if (session?.id === sessionId && session.sourceAvailability === "archived") {
+      setSourceErrorCode("session_archived")
+    }
+  }, [session?.id, session?.sourceAvailability, sessionId])
+
   const handleCommandQueryChange = React.useCallback((query: string | null) => {
     setCommandQuery(query)
   }, [])
@@ -914,6 +987,10 @@ export function SessionDetail({
     selections: { model?: string; permission?: string },
   ): Promise<boolean> => {
     if (!session || (!content.trim() && attachments.length === 0)) return false
+    const uploadedAttachments = attachments.flatMap((attachment) =>
+      attachment.uploaded ? [attachment.uploaded] : [],
+    )
+    if (uploadedAttachments.length !== attachments.length) return false
     const clientMessageId = createClientId("msg")
     const messageText = content.trim() || tNew("attachmentOnlyPrompt")
     forceScrollOnNextUpdateRef.current = true
@@ -958,18 +1035,19 @@ export function SessionDetail({
             : current,
         )
       }
-      const files = attachments.map((attachment) => attachment.file)
-      const upload = files.length > 0
-        ? await dashboardApi.uploadSessionAttachments(token, session.id, files)
-        : null
       await dashboardApi.sendSessionMessage(token, session.id, messageText, {
-        attachments: upload?.attachments.map((attachment) => ({ fileId: attachment.fileId })) ?? [],
+        attachments: uploadedAttachments.map((attachment) => ({ fileId: attachment.fileId })),
         clientMessageId,
       })
       scrollToBottomThrottled()
       return true
     } catch (err) {
-      const message = err instanceof Error ? err.message : tSession("sendFailed")
+      const nextSourceErrorCode = sessionSourceErrorCode(err)
+      const message = nextSourceErrorCode
+        ? sourceErrorMessage(nextSourceErrorCode, tSession)
+        : err instanceof Error
+          ? err.message
+          : tSession("sendFailed")
       markOptimisticMessageFailed(clientMessageId, message)
       setState((current) => {
         if (!current) return current
@@ -986,7 +1064,24 @@ export function SessionDetail({
           ),
         }
       })
-      toast.error(err instanceof Error ? err.message : tSession("sendFailed"))
+      if (nextSourceErrorCode) {
+        const sourceAvailability = sourceAvailabilityFromError(nextSourceErrorCode)
+        const nextSession: SessionView = {
+          ...session,
+          archived: true,
+          archivedAt: session.archivedAt ?? new Date().toISOString(),
+          sourceAvailability,
+          sourceAvailabilityReason: message,
+          sourceAvailabilityUpdatedAt: new Date().toISOString(),
+          sourceObservationOrigin: "operation",
+          archiveSource: session.userArchived ? "both" : "runtime",
+        }
+        setState((current) => current ? { ...current, session: nextSession } : current)
+        onSessionUpdated?.(nextSession)
+        setSourceErrorCode(nextSourceErrorCode)
+      } else {
+        toast.error(err instanceof Error ? err.message : tSession("sendFailed"))
+      }
       return false
     } finally {
       setSending(false)
@@ -1273,10 +1368,8 @@ export function SessionDetail({
     [state?.notices],
   )
   const blockingInteractionCount = blockingInteractionList.length
-  const timelineBottomPadding = blockingInteractionStackHeight > 0
-    ? `calc(11rem + ${blockingInteractionStackHeight}px)`
-    : undefined
-  const scrollBottomButtonOffset = `calc(9rem + ${blockingInteractionStackHeight}px)`
+  const timelineBottomPadding = `calc(${composerHeight}px + ${blockingInteractionStackHeight}px + 2rem)`
+  const scrollBottomButtonOffset = `calc(${composerHeight}px + ${blockingInteractionStackHeight}px + 0.5rem)`
   const interactionTargetIds = React.useMemo(
     () => new Set(timelineInteractions.map(noticeTimelineTargetId).filter((id): id is string => Boolean(id))),
     [timelineInteractions],
@@ -1287,6 +1380,16 @@ export function SessionDetail({
       setBlockingInteractionStackHeight(0)
     }
   }, [blockingInteractionCount, blockingInteractionStackHeight])
+
+  React.useLayoutEffect(() => {
+    const node = composerContainerRef.current
+    if (!node) return
+    const publishHeight = () => setComposerHeight(Math.ceil(node.getBoundingClientRect().height))
+    publishHeight()
+    const resizeObserver = new ResizeObserver(publishHeight)
+    resizeObserver.observe(node)
+    return () => resizeObserver.disconnect()
+  }, [session?.id])
   const timelineGroups = React.useMemo(
     () => groupTimelineItems(state?.items ?? [], interactionTargetIds),
     [interactionTargetIds, state?.items],
@@ -1309,6 +1412,14 @@ export function SessionDetail({
   if (!session) return null
 
   const takeoverTarget = pendingTakeover ?? false
+  const sourceErrorDialog = sourceErrorCode
+    ? sourceErrorDialogContent(sourceErrorCode, tSession)
+    : null
+  const dismissSourceErrorDialog = () => {
+    const shouldLeaveSession = sourceErrorCode === "session_archived"
+    setSourceErrorCode(null)
+    if (shouldLeaveSession) replaceHome()
+  }
   const takeoverAgent = session.runtimeName?.trim() || runtimeLabel(sessionRuntimeType(session))
   const takeoverDescription = (tSession.raw(
     takeoverTarget ? "takeoverEnableDescription" : "takeoverDisableDescription",
@@ -1336,7 +1447,7 @@ export function SessionDetail({
             className={cn(
               "mx-auto flex w-full min-w-0 max-w-[calc(48rem+2rem)] flex-col gap-3 overflow-hidden px-4 pb-44 pt-20",
             )}
-            style={timelineBottomPadding ? { paddingBottom: timelineBottomPadding } : undefined}
+            style={{ paddingBottom: timelineBottomPadding }}
           >
             {loadingOlder ? (
               <div className="flex justify-center py-2 text-muted-foreground">
@@ -1436,8 +1547,9 @@ export function SessionDetail({
           onHeightChange={setBlockingInteractionStackHeight}
           onRespondInteraction={handleRespondInteraction}
         />
-        <div className="pointer-events-auto relative">
+        <div ref={composerContainerRef} className="pointer-events-auto relative">
           <SessionComposer
+            token={token}
             session={session}
             runtimeState={runtimeState}
             pendingInteractionCount={blockingInteractionCount}
@@ -1491,8 +1603,81 @@ export function SessionDetail({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <Dialog
+        open={sourceErrorDialog !== null}
+        onOpenChange={(open: boolean) => {
+          if (!open) dismissSourceErrorDialog()
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{sourceErrorDialog?.title}</DialogTitle>
+            <DialogDescription>{sourceErrorDialog?.description}</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button onClick={dismissSourceErrorDialog}>{tCommon("gotIt")}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
+}
+
+function sessionSourceErrorCode(error: unknown): SessionSourceErrorCode | null {
+  if (!isApiError(error)) return null
+  if (
+    error.code === "session_archived" ||
+    error.code === "session_unavailable" ||
+    error.code === "session_deleted" ||
+    error.code === "session_missing"
+  ) {
+    return error.code
+  }
+  return null
+}
+
+function sourceAvailabilityFromError(
+  code: SessionSourceErrorCode,
+): SessionView["sourceAvailability"] {
+  if (code === "session_archived") return "archived"
+  if (code === "session_deleted") return "deleted"
+  if (code === "session_missing") return "missing"
+  return "unavailable"
+}
+
+function sourceErrorDialogContent(
+  code: SessionSourceErrorCode,
+  tSession: ReturnType<typeof useTranslations>,
+): { title: string; description: string } {
+  if (code === "session_archived") {
+    return {
+      title: tSession("sourceArchivedTitle"),
+      description: tSession("sourceArchivedDescription"),
+    }
+  }
+  if (code === "session_deleted") {
+    return {
+      title: tSession("sourceDeletedTitle"),
+      description: tSession("sourceDeletedDescription"),
+    }
+  }
+  if (code === "session_missing") {
+    return {
+      title: tSession("sourceMissingTitle"),
+      description: tSession("sourceMissingDescription"),
+    }
+  }
+  return {
+    title: tSession("sourceUnavailableTitle"),
+    description: tSession("sourceUnavailableDescription"),
+  }
+}
+
+function sourceErrorMessage(
+  code: SessionSourceErrorCode,
+  tSession: ReturnType<typeof useTranslations>,
+): string {
+  return sourceErrorDialogContent(code, tSession).description
 }
 
 function BlockingInteractionStack({
@@ -1868,6 +2053,26 @@ function mergeSessionEvent(
       runtimeState.sessionId === current.session.id &&
       runtimeState.updatedSeq >= (current.state?.updatedSeq ?? 0),
   )
+  if (session || runtimeState) {
+    console.info("[session_status_trace]", {
+      layer: "frontend-event",
+      sessionId: event.sessionId,
+      eventType: event.type,
+      eventId: event.eventId,
+      eventSequence: event.sequence,
+      currentSessionStatus: current.session.status,
+      incomingSessionStatus: session?.status ?? null,
+      currentRuntimeStatus: current.state?.status ?? null,
+      incomingRuntimeStatus: runtimeState?.status ?? null,
+      incomingRuntimeSource: runtimeState?.metadata?.source ?? null,
+      currentSessionUpdatedSeq: current.session.updatedSeq,
+      incomingSessionUpdatedSeq: session?.updatedSeq ?? null,
+      currentRuntimeUpdatedSeq: current.state?.updatedSeq ?? null,
+      incomingRuntimeUpdatedSeq: runtimeState?.updatedSeq ?? null,
+      acceptsSession,
+      acceptsRuntimeState,
+    })
+  }
   const nextRuntimeState =
     acceptsRuntimeState &&
     runtimeState &&

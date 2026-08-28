@@ -347,6 +347,8 @@ sessions = Table(
     Column("dsh_archive_legacy", Integer, nullable=False, server_default="0"),
     Column("source_state", Text, nullable=False, server_default="visible"),
     Column("source_state_at", Text),
+    Column("source_state_reason", Text),
+    Column("source_observation_origin", Text),
     Column("source_scan_token", Text),
     Column("last_read_seq", Integer, nullable=False, server_default="0"),
     Column("latest_turn_end_seq", Integer, nullable=False, server_default="0"),

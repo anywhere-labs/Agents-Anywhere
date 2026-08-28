@@ -26,7 +26,6 @@ import {
   isOptimisticTimelineItem,
   markOptimisticItemFailed,
   mergeTimelineItems,
-  revokeOptimisticItemResources,
   timelineClientMessageId,
   withServerAttachments,
 } from "@/components/session/optimistic-timeline"
@@ -153,6 +152,12 @@ function mapSession(session: RealSessionView): SessionView {
     pinnedAt: session.pinnedAt,
     archived: session.archived,
     archivedAt: session.archivedAt,
+    userArchived: session.userArchived,
+    sourceAvailability: session.sourceAvailability,
+    sourceAvailabilityReason: session.sourceAvailabilityReason,
+    sourceAvailabilityUpdatedAt: session.sourceAvailabilityUpdatedAt,
+    sourceObservationOrigin: session.sourceObservationOrigin,
+    archiveSource: session.archiveSource,
     unread: session.unread,
     lastReadSeq: session.lastReadSeq,
     latestTurnEndSeq: session.latestTurnEndSeq,
@@ -285,6 +290,7 @@ type WorkspaceState = {
   // Actions
   openSession: (id: string) => void
   goHome: () => void
+  replaceHome: () => void
   navigate: (page: AppPage, sub?: string) => void
   navigateToDevice: (connectorId: string) => void
   navigateToWorkspace: (connectorId: string, workspacePath: string) => void
@@ -484,7 +490,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     setSessionPages((current) => {
       const next = {
         active: loadedBeyondFirstPageRef.current.active ? current.active : message.sessionPages.active,
-        archived: message.sessionPages.archived,
+        archived: loadedBeyondFirstPageRef.current.archived ? current.archived : message.sessionPages.archived,
       }
       return sameStableValue(current, next) ? current : next
     })
@@ -539,13 +545,14 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
 
   const loadMoreSessions = React.useCallback(async () => {
     const token = authSession?.accessToken
-    const page = sessionPages.active
-    if (!token || !page.hasMore || !page.nextCursor || loadingSessionPagesRef.current.active) return
-    loadingSessionPagesRef.current.active = true
-    setLoadingSessionPages((current) => ({ ...current, active: true }))
+    const pageKind = filter.status === "archived" ? "archived" : "active"
+    const page = sessionPages[pageKind]
+    if (!token || !page.hasMore || !page.nextCursor || loadingSessionPagesRef.current[pageKind]) return
+    loadingSessionPagesRef.current[pageKind] = true
+    setLoadingSessionPages((current) => ({ ...current, [pageKind]: true }))
     try {
       const response = await dashboardApi.listSessions(token, {
-        archived: false,
+        archived: pageKind === "archived",
         limit: 100,
         cursor: page.nextCursor,
       })
@@ -555,18 +562,18 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
         incoming.forEach((session) => merged.set(session.id, session))
         return sortSessions(Array.from(merged.values()))
       })
-      loadedBeyondFirstPageRef.current.active = true
+      loadedBeyondFirstPageRef.current[pageKind] = true
       setSessionPages((current) => ({
         ...current,
-        active: { hasMore: response.hasMore, nextCursor: response.nextCursor },
+        [pageKind]: { hasMore: response.hasMore, nextCursor: response.nextCursor },
       }))
     } catch {
       // Keep the current cursor so reaching the sentinel can retry later.
     } finally {
-      loadingSessionPagesRef.current.active = false
-      setLoadingSessionPages((current) => ({ ...current, active: false }))
+      loadingSessionPagesRef.current[pageKind] = false
+      setLoadingSessionPages((current) => ({ ...current, [pageKind]: false }))
     }
-  }, [authSession?.accessToken, sessionPages.active, sortSessions])
+  }, [authSession?.accessToken, filter.status, sessionPages, sortSessions])
 
   React.useEffect(() => {
     initialLoadDoneRef.current = false
@@ -750,6 +757,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   )
 
   const goHome = React.useCallback(() => pushRoute({ page: "home" }), [pushRoute])
+  const replaceHome = React.useCallback(() => replaceRoute({ page: "home" }), [replaceRoute])
 
   const navigate = React.useCallback(
     (page: AppPage, sub?: string) => {
@@ -995,7 +1003,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       for (const message of prev) {
         const resolved = message.sessionId === sessionId && resolvedClientMessageIds.has(message.clientMessageId)
         if (resolved) {
-          revokeOptimisticItemResources(message.item)
+          // The reconciled server item owns the preview URL after replacing this optimistic item.
           continue
         }
         next.push(message)
@@ -1076,8 +1084,8 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     connectors,
     sessions,
     isLoading,
-    hasMoreSessions: sessionPages.active.hasMore,
-    isLoadingMoreSessions: loadingSessionPages.active,
+    hasMoreSessions: sessionPages[filter.status === "archived" ? "archived" : "active"].hasMore,
+    isLoadingMoreSessions: loadingSessionPages[filter.status === "archived" ? "archived" : "active"],
     routeReady,
     page,
     activeSessionId,
@@ -1098,6 +1106,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     optimisticMessages,
     openSession,
     goHome,
+    replaceHome,
     navigate,
     navigateToDevice,
     navigateToWorkspace,

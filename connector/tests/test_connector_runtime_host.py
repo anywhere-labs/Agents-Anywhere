@@ -15,6 +15,8 @@ from connector.runtime_protocol import (
     RuntimePermissionItem,
     RuntimeTimelineItem,
     SessionNotice,
+    SessionSourceObservation,
+    SessionSourceState,
 )
 from connector.server.runtime_host import ConnectorRuntimeHost
 from connector.server.sync_state import JsonSyncStateStore
@@ -38,6 +40,10 @@ def test_connector_runtime_host_maps_runtime_capabilities_to_backend_notificatio
 
 def test_connector_runtime_host_maps_session_capabilities_to_backend_notification() -> None:
     asyncio.run(_exercise_session_capability_notification())
+
+
+def test_connector_runtime_host_maps_session_source_observation() -> None:
+    asyncio.run(_exercise_session_source_notification())
 
 
 def test_connector_runtime_host_maps_catalogs_to_backend_notifications() -> None:
@@ -108,6 +114,48 @@ async def _exercise_timeline_item_notification() -> None:
                     "revision": 3,
                     "contentHash": "sha256:abc",
                 },
+            },
+        )
+    ]
+
+
+async def _exercise_session_source_notification() -> None:
+    notifications: list[tuple[str, dict[str, Any]]] = []
+
+    async def notify(method: str, params: dict[str, Any]) -> None:
+        notifications.append((method, params))
+
+    async def download(session_id: str, file_id: str) -> tuple[bytes, str, str]:
+        raise AssertionError(f"unexpected download: {session_id}/{file_id}")
+
+    host = ConnectorRuntimeHost("conn_1", notify, download)
+    await host.session_source_update(
+        SessionSourceObservation(
+            session_id="sess_1",
+            external_session_id="thread_1",
+            runtime="codex",
+            runtime_id="rti_codex_one",
+            state=SessionSourceState(
+                availability="archived",
+                reason="thread/archived",
+                observed_at="2026-08-27T12:00:00Z",
+                observation_origin="event",
+            ),
+        )
+    )
+
+    assert notifications == [
+        (
+            "session.source.updated",
+            {
+                "sessionId": "sess_1",
+                "externalSessionId": "thread_1",
+                "runtime": "codex",
+                "runtimeId": "rti_codex_one",
+                "availability": "archived",
+                "reason": "thread/archived",
+                "observedAt": "2026-08-27T12:00:00Z",
+                "observationOrigin": "event",
             },
         )
     ]
@@ -497,25 +545,39 @@ async def _exercise_persistent_sync_state(tmp_path) -> None:
         return b"data", f"{file_id}.txt", "text/plain"
 
     state_path = tmp_path / "connector-state.json"
+    first_store = JsonSyncStateStore(state_path)
     first = ConnectorRuntimeHost(
         connector_id="conn_1",
         notifier=notify,
         attachment_downloader=download,
-        sync_state_store=JsonSyncStateStore(state_path),
+        sync_state_store=first_store,
     )
 
     await first.sync_state_write("codex/history/cursor/thread_1", {"position": 7})
+    assert first_store.flush() is True
 
+    second_store = JsonSyncStateStore(state_path)
     second = ConnectorRuntimeHost(
+        connector_id="conn_1",
+        notifier=notify,
+        attachment_downloader=download,
+        sync_state_store=second_store,
+    )
+
+    assert await second.sync_state_read("codex/history/cursor/thread_1") == {
+        "position": 7
+    }
+    await second.sync_state_delete("codex/history/cursor/thread_1")
+    assert await second.sync_state_read("codex/history/cursor/thread_1") is None
+    assert second_store.flush() is True
+
+    restored = ConnectorRuntimeHost(
         connector_id="conn_1",
         notifier=notify,
         attachment_downloader=download,
         sync_state_store=JsonSyncStateStore(state_path),
     )
-
-    assert await second.sync_state_read("codex/history/cursor/thread_1") == {"position": 7}
-    await second.sync_state_delete("codex/history/cursor/thread_1")
-    assert await first.sync_state_read("codex/history/cursor/thread_1") is None
+    assert await restored.sync_state_read("codex/history/cursor/thread_1") is None
 
 
 def test_connector_runtime_host_maps_attachment_download() -> None:

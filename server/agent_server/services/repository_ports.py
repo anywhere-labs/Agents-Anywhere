@@ -147,22 +147,34 @@ class ConnectorNotificationRepository(
 ):
     async def clear_active_run(self, session_id: str) -> None: ...
 
-    async def begin_dsh_session_inventory(
+    async def begin_session_inventory(
         self,
         connector_id: str,
+        runtime: str,
         runtime_id: str,
         scan_token: str,
     ) -> None: ...
 
-    async def complete_dsh_session_inventory(
+    async def complete_session_inventory(
         self,
         connector_id: str,
+        runtime: str,
         runtime_id: str,
         scan_token: str,
-        entries: list[dict[str, str | None]],
+        entries: list[dict[str, Any]],
         *,
         complete: bool,
     ) -> list[str]: ...
+
+    async def update_session_source_state(
+        self,
+        session_id: str,
+        *,
+        availability: str,
+        reason: str | None,
+        observed_at: str | None,
+        observation_origin: str,
+    ) -> SessionView: ...
 
     async def get_session_runtime(self, session_id: str) -> str | None: ...
 
@@ -413,6 +425,16 @@ class SessionRunRepository(
     async def start_active_run(self, **values: Any) -> None: ...
 
     async def update_session_snapshot(self, **values: Any) -> SessionView: ...
+
+    async def update_session_source_state(
+        self,
+        session_id: str,
+        *,
+        availability: str,
+        reason: str | None,
+        observed_at: str | None,
+        observation_origin: str,
+    ) -> SessionView: ...
 
     async def upsert_connector_session(self, **values: Any) -> SessionView: ...
 

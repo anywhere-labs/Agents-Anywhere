@@ -35,6 +35,10 @@ from connector.runtimes.claude.sdk.events import (
     terminal_event_from_message,
 )
 from connector.runtimes.claude.sdk.stderr import ClaudeStderrBuffer
+from connector.runtimes.claude.sdk.settings import (
+    create_gateway_settings_file,
+    remove_gateway_settings_file,
+)
 from connector.runtimes.claude.sessions.cache import ClaudeSessionStore
 from connector.runtimes.claude.timeline.messages import (
     ClaudeMessageProjector,
@@ -78,6 +82,7 @@ class ClaudeTurnRunner:
         turn_id = execution.turn_id
         stderr = ClaudeStderrBuffer(session.session_id)
         client: object | None = None
+        settings_path: str | None = None
         terminal: ClaudeTerminalEvent | None = None
         reserved_user_item = None
         attachment_mappings: tuple[dict[str, object], ...] = ()
@@ -86,6 +91,7 @@ class ClaudeTurnRunner:
         user_message_published = False
         try:
             sdk = load_sdk(self.sdk_loader)
+            settings_path = create_gateway_settings_file(self.config.values)
             client = new_sdk_client(
                 sdk=sdk,
                 config_values=self.config.values,
@@ -97,6 +103,7 @@ class ClaudeTurnRunner:
                     turn_id,
                 ),
                 stderr=stderr.record,
+                settings_path=settings_path,
             )
             execution.client = client
             await connect_client(client)
@@ -309,6 +316,7 @@ class ClaudeTurnRunner:
                     "Claude SDK disconnect failed session_id={}",
                     session.session_id,
                 )
+            remove_gateway_settings_file(settings_path)
             execution.client = None
             if terminal is None:
                 terminal = failed_terminal_event(

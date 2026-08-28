@@ -52,6 +52,7 @@ from connector.server.urls import (
 )
 
 INGEST_ONLY_NOTIFICATION_METHODS = frozenset({"timeline.sync"})
+SYNC_STATE_FLUSH_INTERVAL_SECONDS = 1.0
 
 
 class BackendRpcClient:
@@ -122,12 +123,14 @@ class BackendRpcClient:
             preferences_reader=self._preferences_reader,
             send_notification=self.send_backend_notification,
             ingest_notifications=self.ingest_notifications,
+            flush_sync_state=self._flush_sync_state,
         )
         self._runtime_sync_task: asyncio.Task[None] | None = None
 
     async def run_forever(self) -> None:
         self._http_client = self._new_http_client(timeout=60)
-        flush_task = asyncio.create_task(self._ingest.flush_loop())
+        ingest_flush_task = asyncio.create_task(self._ingest.flush_loop())
+        sync_state_flush_task = asyncio.create_task(self._sync_state_flush_loop())
         try:
             while True:
                 try:
@@ -178,11 +181,16 @@ class BackendRpcClient:
                     await asyncio.sleep(self.config.reconnect_seconds)
         finally:
             await self._timeline_notifications.close()
-            flush_task.cancel()
+            ingest_flush_task.cancel()
+            sync_state_flush_task.cancel()
             if self._runtime_sync_task is not None:
                 self._runtime_sync_task.cancel()
             try:
-                await flush_task
+                await ingest_flush_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            try:
+                await sync_state_flush_task
             except (asyncio.CancelledError, Exception):
                 pass
             if self._runtime_sync_task is not None:
@@ -191,6 +199,10 @@ class BackendRpcClient:
                 except (asyncio.CancelledError, Exception):
                     pass
                 self._runtime_sync_task = None
+            try:
+                await self._flush_sync_state()
+            except Exception:  # noqa: BLE001
+                logger.exception("final sync state flush failed")
             if self._http_client is not None:
                 await self._http_client.aclose()
                 self._http_client = None
@@ -305,6 +317,25 @@ class BackendRpcClient:
         while True:
             await self.send_notification("connector.heartbeat", {})
             await asyncio.sleep(self.config.heartbeat_seconds)
+
+    async def _sync_state_flush_loop(self) -> None:
+        while True:
+            await asyncio.sleep(SYNC_STATE_FLUSH_INTERVAL_SECONDS)
+            try:
+                await self._flush_sync_state()
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001
+                logger.exception("periodic sync state flush failed")
+
+    async def _flush_sync_state(self) -> bool:
+        store = self.sync_state_store
+        if store is None:
+            return False
+        flushed = await asyncio.to_thread(store.flush)
+        if flushed:
+            logger.debug("sync state changes flushed")
+        return flushed
 
     async def _publish_runtime_status(
         self,

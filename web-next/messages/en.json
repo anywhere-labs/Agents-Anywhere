@@ -250,6 +250,7 @@
   "dashboard": {
     "actions": {
       "archive": "Archive",
+      "archiveChat": "Archive chat",
       "collapse": "Collapse sidebar",
       "copiedDeviceId": "Device ID copied",
       "copiedSessionId": "Session ID copied",
@@ -263,6 +264,7 @@
       "open": "Open",
       "pairDevice": "Pair device",
       "pin": "Pin",
+      "pinChat": "Pin chat",
       "refresh": "Refresh",
       "rename": "Rename",
       "retry": "Retry",
@@ -270,7 +272,9 @@
       "sessionOptions": "Session options",
       "signOut": "Sign out",
       "unarchive": "Unarchive",
-      "unpin": "Unpin"
+      "unarchiveChat": "Unarchive chat",
+      "unpin": "Unpin",
+      "unpinChat": "Unpin chat"
     },
     "account": {
       "menu": "Account menu"
@@ -296,6 +300,7 @@
     "filters": {
       "active": "Active",
       "all": "All",
+      "allActive": "Active sessions",
       "archived": "Archived",
       "status": "Status",
       "devices": "Devices",
@@ -303,6 +308,9 @@
       "allStatus": "All statuses",
       "allDevices": "All devices",
       "allAgents": "All agents",
+      "inProgress": "In progress",
+      "issues": "Issues",
+      "needsAttention": "Needs attention",
       "clear": "Clear filters"
     },
     "nav": {
@@ -382,6 +390,19 @@
       "agent": "Agent",
       "createFailed": "Failed to create session.",
       "attachmentOnlyPrompt": "(No text content.)",
+      "imagePreview": {
+        "close": "Close",
+        "counter": "{current} / {total}",
+        "download": "Download original",
+        "loadFailed": "Failed to load image",
+        "loading": "Loading...",
+        "next": "Next image",
+        "previous": "Previous image",
+        "resetZoom": "Reset zoom",
+        "retry": "Reload",
+        "zoomIn": "Zoom in",
+        "zoomOut": "Zoom out"
+      },
       "newSessionAttachmentsUnsupported": "Attachments for new sessions need the new create-and-start upload flow and are not available yet.",
       "deviceOffline": "No online device is available.",
       "dropTitle": "Drop files here",
@@ -450,6 +471,9 @@
       "configuredRuntimes": "Configured",
       "unconfiguredRuntimes": "Instances to configure",
       "availableRuntimeTypes": "Available to add",
+      "codexMultiInstanceName": "Codex (multi-instance)",
+      "codexMultiInstanceHelpLabel": "About Codex multi-instance support",
+      "codexMultiInstanceHelp": "Codex supports multiple instances. Create separate instances for different accounts, workspaces, or environments.",
       "discoveredRuntimes": "Discovered, not configured",
       "noConfiguredRuntimes": "No runtimes have been configured.",
       "noUnconfiguredRuntimes": "No runtime instances are waiting for configuration.",
@@ -726,6 +750,15 @@
       "loadFailed": "Failed to load session.",
       "loadRuntimeSettingsFailed": "Failed to load runtime settings.",
       "sendFailed": "Failed to send message.",
+      "sourceUnavailablePlaceholder": "This session can no longer continue",
+      "sourceArchivedTitle": "Session archived in Codex",
+      "sourceArchivedDescription": "This session was archived in the local Codex client and cannot continue. Unarchive it to resume the conversation.",
+      "sourceDeletedTitle": "Session deleted in Codex",
+      "sourceDeletedDescription": "This session was deleted in the local Codex client and cannot continue.",
+      "sourceMissingTitle": "Codex session not found",
+      "sourceMissingDescription": "This session can no longer be found in the local Codex client and cannot continue.",
+      "sourceUnavailableTitle": "Codex session unavailable",
+      "sourceUnavailableDescription": "This session is unavailable in the local Codex client and cannot continue right now.",
       "updateSelectionsFailed": "Failed to update model or permission.",
       "updateTakeoverFailed": "Failed to update takeover.",
       "interruptFailed": "Failed to interrupt session.",
@@ -1354,6 +1387,7 @@
     "saveConflict": "The file changed on disk. Refresh before saving again.",
     "saveBeforeLeavingEdit": "Save or refresh before leaving edit mode.",
     "saveBeforeClose": "Save or refresh before closing this preview.",
+    "emptyDirectory": "This folder is empty",
     "binaryUnavailable": "Preview unavailable"
   }
 }

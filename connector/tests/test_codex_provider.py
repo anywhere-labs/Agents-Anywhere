@@ -570,9 +570,9 @@ class _FakeSdkClient:
         self,
         limit: int = 100,
         cursor: str | None = None,
+        archived: bool | None = None,
     ) -> CodexThreadListResult:
-        _ = limit
-        _ = cursor
+        _ = limit, cursor, archived
         return CodexThreadListResult(threads=())
 
     async def read_thread(

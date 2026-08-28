@@ -107,8 +107,15 @@ function mergeOptimisticAttachmentMetadata(serverItem: TimelineItem, optimisticI
   const optimisticAttachments = attachmentsFromContent(optimisticItem.content)
   if (serverAttachments.length === 0 && optimisticAttachments.length === 0) return serverItem
 
+  const optimisticByFileId = new Map(
+    optimisticAttachments.flatMap((attachment) =>
+      typeof attachment.fileId === "string" ? [[attachment.fileId, attachment] as const] : [],
+    ),
+  )
   const nextAttachments = (serverAttachments.length > 0 ? serverAttachments : optimisticAttachments).map((attachment, index) => {
-    const optimistic = optimisticAttachments[index]
+    const optimistic = typeof attachment.fileId === "string"
+      ? optimisticByFileId.get(attachment.fileId) ?? optimisticAttachments[index]
+      : optimisticAttachments[index]
     if (!optimistic || typeof optimistic !== "object") return attachment
     const optimisticPreviewUrl = optimistic.previewUrl
     return {
@@ -156,11 +163,13 @@ export function buildOptimisticUserMessage({
   const lastOrderSeq = items.reduce((max, item) => Math.max(max, item.orderSeq), 0)
   const orderSeq = Math.max(lastOrderSeq + 1, nextSeq + 1)
   const optimisticAttachments = attachments.map((attachment) => ({
-    fileId: `optimistic:${attachment.id}`,
-    name: attachment.name,
-    size: attachment.size,
-    mediaType: attachment.file.type,
-    previewUrl: attachment.type === "image" ? URL.createObjectURL(attachment.file) : undefined,
+    fileId: attachment.uploaded?.fileId ?? `optimistic:${attachment.id}`,
+    name: attachment.uploaded?.name ?? attachment.name,
+    size: attachment.uploaded?.size ?? attachment.size,
+    mediaType: attachment.uploaded?.mediaType ?? attachment.mediaType,
+    openUrl: attachment.uploaded?.openUrl,
+    downloadUrl: attachment.uploaded?.downloadUrl,
+    previewUrl: attachment.type === "image" ? attachment.preview : undefined,
     optimistic: true,
   }))
   return {
@@ -187,11 +196,19 @@ export function withServerAttachments(
 ): TimelineItem {
   if (attachments.length === 0) return item
   const optimisticAttachments = attachmentsFromContent(item.content)
+  const optimisticByFileId = new Map(
+    optimisticAttachments.flatMap((attachment) =>
+      typeof attachment.fileId === "string" ? [[attachment.fileId, attachment] as const] : [],
+    ),
+  )
   const nextAttachments = attachments.map((attachment, index) => {
-    const optimistic = optimisticAttachments[index]
-    if (optimistic) revokeOptimisticAttachmentPreview(optimistic)
+    const optimistic = typeof attachment.fileId === "string"
+      ? optimisticByFileId.get(attachment.fileId) ?? optimisticAttachments[index]
+      : optimisticAttachments[index]
     return {
+      ...optimistic,
       ...attachment,
+      previewUrl: attachment.previewUrl ?? optimistic?.previewUrl,
       optimistic: false,
     }
   })

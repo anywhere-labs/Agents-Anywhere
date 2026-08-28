@@ -27,6 +27,8 @@ from connector.runtime_protocol import (
     RuntimeTimelineSnapshot,
     SessionMeta,
     SessionNotice,
+    SessionSourceObservation,
+    SessionSourceState,
     SessionState,
 )
 from connector.runtimes.session_identity import stable_runtime_session_id
@@ -172,6 +174,21 @@ class RecordingHost(RuntimeHostClient):
             ("meta", {"runtime": runtime, "metadata": dict(metadata or {})})
         )
 
+    async def session_source_update(
+        self,
+        observation: SessionSourceObservation,
+    ) -> None:
+        self.calls.append(
+            (
+                "source",
+                {
+                    "runtime": observation.runtime,
+                    "runtimeId": observation.runtime_id,
+                    "availability": observation.state.availability,
+                },
+            )
+        )
+
     async def session_turn_ended(
         self,
         session_id: str,
@@ -295,6 +312,17 @@ def test_runtime_instance_host_scopes_side_effects_and_storage() -> None:
         host = RuntimeInstanceHost(base=base, instance=instance, source_key=source)
 
         await host.session_meta_upsert("sess", "codex", metadata={"native": True})
+        await host.session_source_update(
+            SessionSourceObservation(
+                session_id="sess",
+                external_session_id="thread",
+                runtime="codex",
+                state=SessionSourceState(
+                    availability="archived",
+                    observation_origin="event",
+                ),
+            )
+        )
         await host.session_turn_ended(
             "sess",
             "codex",
@@ -323,14 +351,20 @@ def test_runtime_instance_host_scopes_side_effects_and_storage() -> None:
             "kind": "codex_home",
             "key": "/tmp/codex-home",
         }
-        turn_end = base.calls[1][1]
+        source_observation = base.calls[1][1]
+        assert source_observation == {
+            "runtime": "codex",
+            "runtimeId": "rti_codex_one",
+            "availability": "archived",
+        }
+        turn_end = base.calls[2][1]
         assert turn_end["turnId"] == "turn_1"
         assert turn_end["metadata"]["runtimeId"] == "rti_codex_one"
-        timeline = base.calls[2][1]
+        timeline = base.calls[3][1]
         assert timeline["runtime"] == "codex"
         assert timeline["runtimeId"] == "rti_codex_one"
-        assert base.calls[3][1]["details"]["runtimeId"] == "rti_codex_one"
-        sync_key = base.calls[4][1]["key"]
+        assert base.calls[4][1]["details"]["runtimeId"] == "rti_codex_one"
+        sync_key = base.calls[5][1]["key"]
         assert sync_key.startswith("codex/instances/rti_codex_one/")
         assert sync_key.endswith("/history/cursor")
         assert host.session_namespace.startswith("conn_test:codex:rti_codex_one:")

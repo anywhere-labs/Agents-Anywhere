@@ -637,6 +637,19 @@ class SessionView(BaseModel):
     pinnedAt: str | None = None
     archived: bool = False
     archivedAt: str | None = None
+    userArchived: bool = False
+    sourceAvailability: Literal[
+        "available",
+        "archived",
+        "unavailable",
+        "deleted",
+        "missing",
+        "unknown",
+    ] = "available"
+    sourceAvailabilityReason: str | None = None
+    sourceAvailabilityUpdatedAt: str | None = None
+    sourceObservationOrigin: Literal["event", "inventory", "operation"] | None = None
+    archiveSource: Literal["user", "runtime", "both"] | None = None
     unread: bool = False
     lastReadSeq: int = 0
     latestTurnEndSeq: int = 0

@@ -51,6 +51,7 @@ import { sessionRuntimeId, sessionRuntimeType } from "@/features/dashboard/runti
 export type { AttachedFile }
 
 export function SessionComposer({
+  token,
   session,
   runtimeState,
   pendingInteractionCount,
@@ -72,6 +73,7 @@ export function SessionComposer({
   onCommand,
   onToggleTakeover,
 }: {
+  token: string
   session: SessionView
   runtimeState?: SessionRuntimeState | null
   pendingInteractionCount: number
@@ -99,9 +101,23 @@ export function SessionComposer({
 }) {
   const tSession = useTranslations("dashboard.session")
   const tNew = useTranslations("dashboard.new")
-  const { attachments, isDragging, add, remove, clear, onDragEnter, onDragLeave, onDragOver, onDrop } =
-    useAttachments()
+  const {
+    attachments,
+    isDragging,
+    uploadsPending,
+    uploadFailed,
+    allUploaded,
+    add,
+    remove,
+    clear,
+    onDragEnter,
+    onDragLeave,
+    onDragOver,
+    onDrop,
+  } = useAttachments({ sessionId: creatingSession ? undefined : session.id, token })
   const composerRef = React.useRef<HTMLDivElement | null>(null)
+  const valueRef = React.useRef(value)
+  valueRef.current = value
   const composerWidth = useElementWidth(composerRef)
   const runtimeStatus = effectiveRuntimeStatus(runtimeState, session)
   const runtimeSelections = runtimeState?.selections ?? {}
@@ -116,9 +132,11 @@ export function SessionComposer({
   const isWaiting = runtimeStatus === "waiting" || runtimeStatus === "pending"
   const isError = runtimeStatus === "error"
   const isDisconnected = runtimeStatus === "disconnected"
+  const sourceUnavailable = session.archived
   const connectorOnline = session.connectorStatus === "online"
   const acceptsUserInput =
     connectorOnline &&
+    !sourceUnavailable &&
     !isDisconnected &&
     !isWaiting &&
     !isRunning &&
@@ -144,6 +162,7 @@ export function SessionComposer({
     acceptsUserInput
   const canRunCommand = !creatingSession && !sending && !interrupting && acceptsUserInput
   const hasInput = value.trim().length > 0 || attachments.length > 0
+  const attachmentsReady = attachments.length === 0 || (allUploaded && !uploadsPending && !uploadFailed)
   const activeSessionCanInterrupt = Boolean(
     connectorOnline &&
     interruptCapability?.supported &&
@@ -197,9 +216,9 @@ export function SessionComposer({
   const effortLabel = effortItems.find((item) => item.id === selectedReasoning)?.label ?? tNew("reasoning")
   const hasSelectors = Boolean(permissionItems.length > 0 || modelItems.length > 0)
   const compactSelectors = hasSelectors && composerWidth > 0 && composerWidth < 560
-  const permissionSelectorDisabled = creatingSession || !canUsePermissionCatalog
-  const modelSelectorDisabled = creatingSession || !canUseModelCatalog
-  const effortSelectorDisabled = creatingSession || !canUseEffortCatalog
+  const permissionSelectorDisabled = creatingSession || sourceUnavailable || !canUsePermissionCatalog
+  const modelSelectorDisabled = creatingSession || sourceUnavailable || !canUseModelCatalog
+  const effortSelectorDisabled = creatingSession || sourceUnavailable || !canUseEffortCatalog
   const selectorsDisabled = permissionSelectorDisabled && modelSelectorDisabled
 
   React.useEffect(() => {
@@ -268,6 +287,8 @@ export function SessionComposer({
   }
   const placeholder = creatingSession
     ? tSession("creatingPlaceholder")
+    : sourceUnavailable
+      ? tSession("sourceUnavailablePlaceholder")
     : !session.takeover
     ? tSession("readOnlyPlaceholder")
     : isDisconnected || !connectorOnline
@@ -297,8 +318,13 @@ export function SessionComposer({
     canSend &&
     session.takeover &&
     hasInput &&
+    attachmentsReady &&
     (attachments.length === 0 || canUseAttachments)
   const concurrentWriter = runtimeState?.error?.code === "DSH_CONCURRENT_WRITER_DETECTED"
+  const updateValue = React.useCallback((nextValue: string) => {
+    valueRef.current = nextValue
+    onValueChange(nextValue)
+  }, [onValueChange])
 
   const submit = async () => {
     if (!hasInput) return
@@ -306,7 +332,7 @@ export function SessionComposer({
     if (commandQuery !== null && attachments.length === 0) {
       if (command && canRunCommand) {
         const parsed = parseCommandValue(value)
-        onValueChange("")
+        updateValue("")
         onCommand(command.id, { args: parsed.args, raw: parsed.raw })
       }
       return
@@ -314,12 +340,15 @@ export function SessionComposer({
     if (!canSubmitMessage) return
     const text = value
     const files = attachments
-    onValueChange("")
-    clear()
-    await onSend(text, files, {
+    updateValue("")
+    clear({ revokePreviews: false })
+    const sent = await onSend(text, files, {
       ...(selectedModelSelection ? { model: selectedModelSelection } : {}),
       ...(selectedPermissionSelection ? { permission: selectedPermissionSelection } : {}),
     })
+    if (!sent && valueRef.current === "") {
+      updateValue(text)
+    }
   }
 
   const primaryAction = () => {
@@ -373,7 +402,7 @@ export function SessionComposer({
                       disabled={!command.enabled}
                       onClick={() => {
                         if (!command.enabled) return
-                        onValueChange("")
+                        updateValue("")
                         onCommand(command.id, { args: [], raw: `/${command.id}` })
                       }}
                     >
@@ -395,7 +424,7 @@ export function SessionComposer({
             ) : null}
             <Textarea
               value={value}
-              onChange={(event) => onValueChange(event.currentTarget.value)}
+              onChange={(event) => updateValue(event.currentTarget.value)}
               onKeyDown={(event) => {
                 if (event.nativeEvent.isComposing) return
                 if (event.key === "Enter" && !event.shiftKey) {
@@ -404,7 +433,7 @@ export function SessionComposer({
                 }
               }}
               placeholder={placeholder}
-              disabled={!connectorOnline || creatingSession}
+              disabled={!connectorOnline || creatingSession || sourceUnavailable}
               className="min-h-12 max-h-40 resize-none overflow-y-auto rounded-none border-0 bg-transparent p-0 text-sm shadow-none focus-visible:ring-0 dark:bg-transparent"
             />
           </div>
@@ -414,7 +443,7 @@ export function SessionComposer({
               onAttach={add}
               isDragging={isDragging}
               className="size-8"
-              disabled={!canUseAttachments}
+              disabled={!canUseAttachments || sourceUnavailable || creatingSession}
             />
             {attachments.length > 0 && !canUseAttachments ? (
               <span className="px-2 text-xs text-amber-600 dark:text-amber-400">

@@ -8,8 +8,10 @@ from connector.runtime_protocol import (
     RuntimeAttachment,
     RuntimeInvalidRequestError,
     RuntimeOperationResult,
+    RuntimeSessionSourceStateCache,
     RuntimeSessionStateCache,
     RuntimeUnsupportedError,
+    SessionSourceObservation,
 )
 from connector.runtime_protocol.host import RuntimeHostClient
 from connector.runtimes.codex.domain.notices import CodexNoticeRegistry
@@ -28,6 +30,9 @@ from connector.runtimes.codex.sdk.runtime_client import (
     CodexSteerTurnRequest,
     CodexTurnInputAttachment,
 )
+from connector.runtimes.codex.sessions.inventory import (
+    reconcile_codex_thread_availability,
+)
 from connector.runtimes.codex.turns.attachments import materialize_codex_attachments
 
 EnsureStarted = Callable[[], Awaitable[None]]
@@ -38,6 +43,7 @@ class CodexTurnActions:
     host: RuntimeHostClient
     client: CodexRuntimeClient | None
     session_states: RuntimeSessionStateCache
+    source_states: RuntimeSessionSourceStateCache
     active_turn_ids: dict[str, str]
     notices: CodexNoticeRegistry
     ensure_started: EnsureStarted
@@ -58,6 +64,14 @@ class CodexTurnActions:
         _ = cwd
         if self.client is None or external_session_id is None:
             raise RuntimeUnsupportedError("start_turn")
+        cached_source = self.source_states.get(session_id)
+        if cached_source is not None and cached_source.state.availability in {
+            "archived",
+            "unavailable",
+            "deleted",
+            "missing",
+        }:
+            return _source_failure_result(cached_source)
         await self.ensure_started()
         effective_selections = dict(selections or {})
         if not effective_selections:
@@ -120,6 +134,23 @@ class CodexTurnActions:
                 )
             )
         except Exception as exc:
+            source_observation = await self._source_observation_from_error(
+                session_id=session_id,
+                external_session_id=external_session_id,
+                error=exc,
+            )
+            if source_observation is not None:
+                self.pending_messages.pending_message_by_client_id(
+                    external_session_id,
+                    client_message_id,
+                )
+                await self._set_session_state(
+                    session_id=session_id,
+                    external_session_id=external_session_id,
+                    status="idle",
+                    metadata={"source": "codex.turn/start.source-unavailable"},
+                )
+                return _source_failure_result(source_observation)
             await self._set_session_state(
                 session_id=session_id,
                 external_session_id=external_session_id,
@@ -170,6 +201,38 @@ class CodexTurnActions:
                 "turn": dict(result.payload),
                 "externalSessionId": external_session_id,
             },
+        )
+
+    async def _source_observation_from_error(
+        self,
+        *,
+        session_id: str,
+        external_session_id: str,
+        error: Exception,
+    ) -> SessionSourceObservation | None:
+        message = str(error)
+        normalized = message.lower()
+        if "is archived" in normalized:
+            availability = "archived"
+        elif getattr(error, "code", None) == -32600 or "-32600" in normalized:
+            try:
+                availability = await reconcile_codex_thread_availability(
+                    self.client,
+                    external_session_id,
+                )
+            except Exception:  # noqa: BLE001
+                return None
+            if availability == "available":
+                return None
+        else:
+            return None
+        return await self.source_states.update(
+            session_id=session_id,
+            external_session_id=external_session_id,
+            availability=availability,
+            reason=message,
+            observed_at=None,
+            observation_origin="operation",
         )
 
     async def steer_turn(
@@ -376,6 +439,25 @@ def turn_completed_before_start_returned(state: Any | None) -> bool:
         "codex.turn/cancelled",
         "codex.turn/failed",
     }
+
+
+def _source_failure_result(
+    observation: SessionSourceObservation,
+) -> RuntimeOperationResult:
+    availability = observation.state.availability
+    code = {
+        "archived": "session_archived",
+        "unavailable": "session_unavailable",
+        "deleted": "session_deleted",
+        "missing": "session_missing",
+    }.get(availability, "session_unavailable")
+    return RuntimeOperationResult(
+        ok=False,
+        code=code,
+        message=f"Codex session is {availability}",
+        result={"externalSessionId": observation.external_session_id},
+        source_observation=observation,
+    )
 
 
 def content_with_codex_attachment_notes(

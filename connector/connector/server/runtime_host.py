@@ -13,6 +13,7 @@ from connector.runtime_protocol import (
     RuntimeStatus,
     RuntimeTimelineItem,
     SessionNotice,
+    SessionSourceObservation,
 )
 from connector.runtime_protocol.host import RuntimeHostClient
 from connector.server.runtime_rpc_payloads import (
@@ -21,6 +22,7 @@ from connector.server.runtime_rpc_payloads import (
     permission_catalog_payload,
     server_payload_without_turn_data,
     session_notice_payload,
+    session_source_observation_payload,
 )
 from connector.server.sync_state import RuntimeSyncState, SyncStateStore
 
@@ -97,6 +99,15 @@ class ConnectorRuntimeHost(RuntimeHostClient):
             "metadata": instance_metadata,
         }
         await self._notify_server("session.state.updated", _drop_none(payload))
+
+    async def session_source_update(
+        self,
+        observation: SessionSourceObservation,
+    ) -> None:
+        await self._notify_server(
+            "session.source.updated",
+            _drop_none(session_source_observation_payload(observation)),
+        )
 
     async def session_turn_ended(
         self,

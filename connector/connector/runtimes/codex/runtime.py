@@ -17,6 +17,7 @@ from connector.runtime_protocol import (
     RuntimeModelCatalog,
     RuntimeOperationResult,
     RuntimePermissionCatalog,
+    RuntimeSessionSourceStateCache,
     RuntimeSessionStateCache,
     RuntimeTimelineSnapshot,
     SessionMeta,
@@ -61,6 +62,7 @@ class CodexRuntime(AgentRuntime):
             self.host,
             on_state_updated=self.publish_session_capabilities_for_state,
         )
+        self._source_states = RuntimeSessionSourceStateCache("codex", self.host)
         self._notices = CodexNoticeRegistry()
         self._pending_messages = PendingClientMessageRegistry(
             connector_id=getattr(
@@ -76,6 +78,7 @@ class CodexRuntime(AgentRuntime):
         self._notifications = CodexNotificationProjector(
             host=self.host,
             session_states=self._session_states,
+            source_states=self._source_states,
             active_turn_ids=self._active_turn_ids,
             timeline=self._timeline,
             notices=self._notices,
@@ -93,6 +96,7 @@ class CodexRuntime(AgentRuntime):
             host=self.host,
             client=self.client,
             session_states=self._session_states,
+            source_states=self._source_states,
             ensure_started=self.start,
             list_model_catalog=self._catalogs.list_model_catalog,
             list_permission_catalog=self._catalogs.list_permission_catalog,
@@ -103,6 +107,7 @@ class CodexRuntime(AgentRuntime):
             host=self.host,
             client=self.client,
             session_states=self._session_states,
+            source_states=self._source_states,
             active_turn_ids=self._active_turn_ids,
             notices=self._notices,
             ensure_started=self.start,
@@ -158,6 +163,16 @@ class CodexRuntime(AgentRuntime):
         force: bool = False,
     ) -> tuple[SessionMeta, ...]:
         return await self._session_reader.list_sessions(limit, cursor, force)
+
+    async def list_complete_session_inventory(
+        self,
+        page_size: int = 100,
+        force: bool = False,
+    ) -> tuple[SessionMeta, ...]:
+        return await self._session_reader.list_complete_session_inventory(
+            page_size,
+            force,
+        )
 
     async def get_session_state(
         self,

@@ -145,6 +145,12 @@ export type SessionView = {
   pinnedAt: string | null;
   archived: boolean;
   archivedAt: string | null;
+  userArchived?: boolean;
+  sourceAvailability?: "available" | "archived" | "unavailable" | "deleted" | "missing" | "unknown";
+  sourceAvailabilityReason?: string | null;
+  sourceAvailabilityUpdatedAt?: string | null;
+  sourceObservationOrigin?: "event" | "inventory" | "operation" | null;
+  archiveSource?: "user" | "runtime" | "both" | null;
   unread: boolean;
   lastReadSeq: number;
   latestTurnEndSeq: number;
