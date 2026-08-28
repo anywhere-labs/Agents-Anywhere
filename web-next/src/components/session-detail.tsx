@@ -283,6 +283,7 @@ export function SessionDetail({
     addOptimisticMessage,
     clearResolvedOptimisticMessages,
     composerInsertion,
+    consumeComposerInsertion,
     getOptimisticItems,
     getOptimisticSessionState,
     isOptimisticSession,
@@ -632,7 +633,8 @@ export function SessionDetail({
         value: `${currentValue}${separator}${composerInsertion.text}`,
       }
     })
-  }, [composerInsertion, sessionId])
+    consumeComposerInsertion(composerInsertion.id)
+  }, [composerInsertion, consumeComposerInsertion, sessionId])
 
   React.useEffect(() => {
     if (!state) {
