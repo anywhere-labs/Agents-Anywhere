@@ -127,3 +127,96 @@ def test_control_api_rejects_non_local_host(
 
     assert response.status == 403
     assert calls == []
+
+
+def test_ensure_split_layout_recovers_orphaned_legacy_processes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = {control.SERVER_PORT: True, control.WEB_PORT: True}
+    calls: list[str] = []
+
+    monkeypatch.setattr(control, "screen_sessions", set)
+    monkeypatch.setattr(control, "port_open", lambda port: state[port])
+    monkeypatch.setattr(control, "_health_ok", lambda: state[control.SERVER_PORT])
+
+    def stop_server() -> None:
+        if state[control.SERVER_PORT]:
+            calls.append("stop-server")
+        state[control.SERVER_PORT] = False
+
+    def stop_web() -> None:
+        if state[control.WEB_PORT]:
+            calls.append("stop-web")
+        state[control.WEB_PORT] = False
+
+    def start_server() -> None:
+        calls.append("start-server")
+        state[control.SERVER_PORT] = True
+
+    def start_web() -> None:
+        calls.append("start-web")
+        state[control.WEB_PORT] = True
+
+    monkeypatch.setattr(control, "_stop_server_processes", stop_server)
+    monkeypatch.setattr(control, "_stop_web_processes", stop_web)
+    monkeypatch.setattr(control, "ensure_infrastructure", lambda: calls.append("infra"))
+    monkeypatch.setattr(control, "run_migrations", lambda: calls.append("migrate"))
+    monkeypatch.setattr(control, "start_server", start_server)
+    monkeypatch.setattr(control, "start_web", start_web)
+
+    assert control.ensure_split_layout() is True
+    assert calls == [
+        "stop-server",
+        "stop-web",
+        "infra",
+        "migrate",
+        "start-server",
+        "start-web",
+    ]
+
+
+def test_stop_port_processes_refuses_foreign_owner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(control, "port_open", lambda _port: True)
+    monkeypatch.setattr(control, "_listener_pids", lambda _port: {123})
+    monkeypatch.setattr(control, "_process_is_owned", lambda *_args, **_kwargs: False)
+
+    with pytest.raises(DevControlError, match="outside this checkout"):
+        control._stop_port_processes(
+            name="Server",
+            port=control.SERVER_PORT,
+            cwd=control.ROOT / "server",
+            command_markers=("uvicorn",),
+        )
+
+
+def test_stop_connector_cleans_orphaned_owned_process_group(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    process_state = {100, 101}
+    terminated: list[tuple[set[int], str]] = []
+
+    monkeypatch.setattr(control, "stop_screen", lambda _name: None)
+    monkeypatch.setattr(control, "_connector_process_pids", lambda: set(process_state))
+    monkeypatch.setattr(
+        control,
+        "_process_cwd",
+        lambda pid: control.ROOT / "connector" if pid == 101 else None,
+    )
+    monkeypatch.setattr(
+        control,
+        "_process_command",
+        lambda pid: "python -m connector.cli start" if pid == 101 else "login",
+    )
+    monkeypatch.setattr(control, "_process_group_ids", lambda pids: {500} if pids else set())
+
+    def terminate(pids: set[int], *, name: str) -> None:
+        terminated.append((pids, name))
+        process_state.clear()
+
+    monkeypatch.setattr(control, "_terminate_process_groups", terminate)
+
+    control.stop_connector()
+
+    assert terminated == [({101}, "Connector")]

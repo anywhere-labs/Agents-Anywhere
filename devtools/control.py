@@ -5,6 +5,7 @@ import base64
 import json
 import os
 import re
+import signal
 import shlex
 import socket
 import subprocess
@@ -155,12 +156,159 @@ def port_open(port: int) -> bool:
         return False
 
 
-def connector_process_running() -> bool:
+def _listener_pids(port: int) -> set[int]:
     result = _run(
-        ["pgrep", "-f", "[a]nywhere-cli start|[c]onnector\\.cli start"],
+        ["lsof", "-nP", "-t", f"-iTCP:{port}", "-sTCP:LISTEN"],
         check=False,
     )
-    return result.returncode == 0
+    return {int(line) for line in result.stdout.splitlines() if line.isdigit()}
+
+
+def _matching_process_pids(pattern: str) -> set[int]:
+    result = _run(["pgrep", "-f", pattern], check=False)
+    return {int(line) for line in result.stdout.splitlines() if line.isdigit()}
+
+
+def _process_command(pid: int) -> str:
+    result = _run(["ps", "-p", str(pid), "-o", "command="], check=False)
+    return result.stdout.strip()
+
+
+def _process_cwd(pid: int) -> Path | None:
+    result = _run(
+        ["lsof", "-a", "-p", str(pid), "-d", "cwd", "-Fn"],
+        check=False,
+    )
+    for line in result.stdout.splitlines():
+        if line.startswith("n"):
+            return Path(line[1:]).resolve()
+    return None
+
+
+def _process_is_owned(
+    pid: int,
+    *,
+    cwd: Path,
+    command_markers: tuple[str, ...],
+) -> bool:
+    process_cwd = _process_cwd(pid)
+    command = _process_command(pid)
+    return (
+        process_cwd == cwd.resolve()
+        and all(marker in command for marker in command_markers)
+    )
+
+
+def _process_group_ids(pids: set[int]) -> set[int]:
+    groups: set[int] = set()
+    for pid in pids:
+        try:
+            groups.add(os.getpgid(pid))
+        except ProcessLookupError:
+            continue
+    return groups
+
+
+def _process_group_exists(group_id: int) -> bool:
+    try:
+        os.killpg(group_id, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _terminate_process_groups(pids: set[int], *, name: str) -> None:
+    groups = _process_group_ids(pids)
+    if not groups:
+        return
+    if os.getpgrp() in groups:
+        raise DevControlError(f"Refusing to stop the Dev Control process group for {name}")
+
+    for group_id in groups:
+        try:
+            os.killpg(group_id, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        except PermissionError as exc:
+            raise DevControlError(f"Permission denied stopping {name}") from exc
+
+    try:
+        _wait_until(
+            lambda: not any(_process_group_exists(group_id) for group_id in groups),
+            timeout=5,
+            message=f"Timed out stopping {name}",
+        )
+        return
+    except DevControlError:
+        pass
+
+    for group_id in groups:
+        try:
+            os.killpg(group_id, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        except PermissionError as exc:
+            raise DevControlError(f"Permission denied stopping {name}") from exc
+    _wait_until(
+        lambda: not any(_process_group_exists(group_id) for group_id in groups),
+        timeout=5,
+        message=f"Timed out force-stopping {name}",
+    )
+
+
+def _stop_port_processes(
+    *,
+    name: str,
+    port: int,
+    cwd: Path,
+    command_markers: tuple[str, ...],
+) -> None:
+    if not port_open(port):
+        return
+    pids = _listener_pids(port)
+    if not pids:
+        raise DevControlError(f"Could not identify the process using {name} port {port}")
+    if any(
+        not _process_is_owned(pid, cwd=cwd, command_markers=command_markers)
+        for pid in pids
+    ):
+        raise DevControlError(
+            f"{name} port {port} is owned by a process outside this checkout"
+        )
+    _terminate_process_groups(pids, name=name)
+    _wait_until(
+        lambda: not port_open(port),
+        timeout=10,
+        message=f"{name} port {port} was not released",
+    )
+
+
+def _stop_server_processes() -> None:
+    _stop_port_processes(
+        name="Server",
+        port=SERVER_PORT,
+        cwd=ROOT / "server",
+        command_markers=("uvicorn", "agent_server.app:create_app"),
+    )
+
+
+def _stop_web_processes() -> None:
+    _stop_port_processes(
+        name="Web",
+        port=WEB_PORT,
+        cwd=ROOT / "web-next",
+        command_markers=("next",),
+    )
+
+
+def _connector_process_pids() -> set[int]:
+    return _matching_process_pids("[a]nywhere-cli start|[c]onnector\\.cli start")
+
+
+def connector_process_running() -> bool:
+    return bool(_connector_process_pids())
 
 
 def _health_ok() -> bool:
@@ -179,6 +327,47 @@ def stop_screen(name: str) -> None:
         lambda: name not in screen_sessions(),
         timeout=10,
         message=f"Timed out stopping {name}",
+    )
+
+
+def stop_server() -> None:
+    stop_screen(SERVER_SESSION)
+    _stop_server_processes()
+
+
+def stop_web() -> None:
+    stop_screen(WEB_SESSION)
+    _stop_web_processes()
+
+
+def stop_connector() -> None:
+    stop_screen(LEGACY_CONNECTOR_SESSION)
+    stop_screen(CONNECTOR_SESSION)
+
+    candidates = _connector_process_pids()
+    if not candidates:
+        return
+    connector_cwd = ROOT / "connector"
+    owned = {
+        pid
+        for pid in candidates
+        if _process_cwd(pid) == connector_cwd.resolve()
+        and (
+            "connector.cli start" in _process_command(pid)
+            or "anywhere-cli start" in _process_command(pid)
+        )
+    }
+    candidate_groups = _process_group_ids(candidates)
+    owned_groups = _process_group_ids(owned)
+    if candidate_groups - owned_groups:
+        raise DevControlError(
+            "A Connector process outside this checkout is still running"
+        )
+    _terminate_process_groups(owned, name="Connector")
+    _wait_until(
+        lambda: not _connector_process_pids(),
+        timeout=10,
+        message="Connector process was not released",
     )
 
 
@@ -333,21 +522,26 @@ def start_connector() -> None:
 
 
 def ensure_split_layout() -> bool:
-    migrated = LEGACY_STACK_SESSION in screen_sessions()
-    if migrated:
+    sessions = screen_sessions()
+    legacy_stack = LEGACY_STACK_SESSION in sessions
+    unmanaged_server = port_open(SERVER_PORT) and SERVER_SESSION not in sessions
+    unmanaged_web = port_open(WEB_PORT) and WEB_SESSION not in sessions
+    migrated = legacy_stack or unmanaged_server or unmanaged_web
+
+    if legacy_stack:
         stop_screen(LEGACY_STACK_SESSION)
-        _wait_until(
-            lambda: not port_open(SERVER_PORT) and not port_open(WEB_PORT),
-            timeout=15,
-            message="Legacy stack did not release its ports",
-        )
+    if unmanaged_server:
+        _stop_server_processes()
+    if unmanaged_web:
+        _stop_web_processes()
+
     ensure_infrastructure()
     if not _health_ok():
-        stop_screen(SERVER_SESSION)
+        stop_server()
         run_migrations()
         start_server()
     if not port_open(WEB_PORT):
-        stop_screen(WEB_SESSION)
+        stop_web()
         start_web()
     return migrated
 
@@ -356,12 +550,7 @@ def restart_server() -> None:
     migrated = ensure_split_layout()
     if migrated:
         return
-    stop_screen(SERVER_SESSION)
-    _wait_until(
-        lambda: not port_open(SERVER_PORT),
-        timeout=10,
-        message="Server port was not released",
-    )
+    stop_server()
     ensure_infrastructure()
     run_migrations()
     start_server()
@@ -371,25 +560,19 @@ def restart_connector(credential: str | None = None) -> None:
     ensure_split_layout()
     if credential:
         save_connector_credential(credential)
-    stop_screen(LEGACY_CONNECTOR_SESSION)
-    stop_screen(CONNECTOR_SESSION)
+    stop_connector()
     start_connector()
 
 
 def restart_all(credential: str | None = None) -> None:
-    ensure_split_layout()
-    stop_screen(SERVER_SESSION)
-    _wait_until(
-        lambda: not port_open(SERVER_PORT),
-        timeout=10,
-        message="Server port was not released",
-    )
-    run_migrations()
-    start_server()
+    migrated = ensure_split_layout()
+    if not migrated:
+        stop_server()
+        run_migrations()
+        start_server()
     if credential:
         save_connector_credential(credential)
-    stop_screen(LEGACY_CONNECTOR_SESSION)
-    stop_screen(CONNECTOR_SESSION)
+    stop_connector()
     start_connector()
 
 
