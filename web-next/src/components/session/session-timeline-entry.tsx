@@ -45,7 +45,7 @@ export function TimelineEntry({
   resolvingActionId: string | null
   toolOpen?: boolean
   onToolOpenChange?: (open: boolean) => void
-  onRespondInteraction: (noticeId: string, actionId: string) => void
+  onRespondInteraction: (noticeId: string, actionId: string, input?: Record<string, unknown>) => void
 }) {
   let entry: React.ReactNode
   if (item.type === "message") {

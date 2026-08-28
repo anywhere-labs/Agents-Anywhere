@@ -40,11 +40,11 @@ import { InteractionCard, NotificationCard } from "@/components/session/session-
 import { SessionSkeleton, SessionSkeletonInline } from "@/components/session/session-skeleton"
 import { TimelineEntry } from "@/components/session/session-timeline-entry"
 import {
-  isCreatedFileChange,
   JsonBlock,
   timelineItemStatusIsActive,
   ToolMarkerRowContent,
 } from "@/components/session/session-tool-cards"
+import { timelineRunCounts } from "@/components/session/timeline-summary"
 import { CAPABILITY, capabilityIsUsable } from "@/components/session/capabilities"
 import { SessionComposer, type AttachedFile } from "@/components/session/session-composer"
 import {
@@ -55,7 +55,7 @@ import {
   preserveOptimisticItems,
   timelineClientMessageId,
 } from "@/components/session/optimistic-timeline"
-import { isVisibleTimelineItem, recordsOf, runtimeLabel, textOf } from "@/components/session/session-utils"
+import { isVisibleTimelineItem, runtimeLabel, textOf } from "@/components/session/session-utils"
 import { sessionRuntimeId, sessionRuntimeType } from "@/features/dashboard/runtime-instances"
 import { useWorkspace } from "@/components/workspace-context"
 
@@ -1154,13 +1154,17 @@ export function SessionDetail({
     })
   }, [])
 
-  const handleRespondInteraction = async (noticeId: string, actionId: string) => {
+  const handleRespondInteraction = async (
+    noticeId: string,
+    actionId: string,
+    input?: Record<string, unknown>,
+  ) => {
     if (resolvingNoticeId) return
     setResolvingNoticeId(noticeId)
     setResolvingActionId(actionId)
     try {
       if (!session) return
-      const response = await dashboardApi.respondInteraction(token, session.id, noticeId, actionId)
+      const response = await dashboardApi.respondInteraction(token, session.id, noticeId, actionId, input)
       if (response.ok) {
         removeNoticeFromState(noticeId)
         return
@@ -1691,7 +1695,7 @@ function BlockingInteractionStack({
   resolvingNoticeId: string | null
   resolvingActionId: string | null
   onHeightChange: (height: number) => void
-  onRespondInteraction: (noticeId: string, actionId: string) => void
+  onRespondInteraction: (noticeId: string, actionId: string, input?: Record<string, unknown>) => void
 }) {
   const stackRef = React.useRef<HTMLDivElement | null>(null)
 
@@ -1920,7 +1924,7 @@ function ToolRunGroup({
   itemOpenById: Record<string, boolean>
   onOpenChange: (open: boolean) => void
   onItemOpenChange: (itemId: string, open: boolean) => void
-  onRespondInteraction: (noticeId: string, actionId: string) => void
+  onRespondInteraction: (noticeId: string, actionId: string, input?: Record<string, unknown>) => void
 }) {
   const tSession = useTranslations("dashboard.session")
   const summary = toolRunSummary(group.items, tSession)
@@ -1973,33 +1977,11 @@ function toolRunSummary(
   items: TimelineItem[],
   tSession: (key: string, values?: Record<string, string | number>) => string,
 ): string {
-  let commands = 0
-  let createdFiles = 0
-  let changedFiles = 0
-  let reasoning = 0
-  for (const item of items) {
-    if (item.type === "system" && textOf(item.content.kind) === "reasoning") {
-      reasoning += 1
-      continue
-    }
-    const kind = textOf(item.content.kind)
-    if (kind === "command") {
-      commands += 1
-      continue
-    }
-    if (kind === "file_change") {
-      for (const change of recordsOf(item.content.changes)) {
-        if (isCreatedFileChange(change)) createdFiles += 1
-        else changedFiles += 1
-      }
-    }
-  }
+  const counts = timelineRunCounts(items)
 
   const parts: string[] = []
-  if (reasoning > 0) parts.push(tSession("toolSummaryReasoning", { count: reasoning }))
-  if (commands > 0) parts.push(tSession("toolSummaryCommands", { count: commands }))
-  if (changedFiles > 0) parts.push(tSession("toolSummaryChangedFiles", { count: changedFiles }))
-  if (createdFiles > 0) parts.push(tSession("toolSummaryCreatedFiles", { count: createdFiles }))
+  if (counts.reasoning > 0) parts.push(tSession("toolSummaryReasoning", { count: counts.reasoning }))
+  if (counts.tools > 0) parts.push(tSession("toolSummaryTools", { count: counts.tools }))
   return parts.length > 0 ? parts.join(", ") : tSession("toolSummaryItems", { count: items.length })
 }
 

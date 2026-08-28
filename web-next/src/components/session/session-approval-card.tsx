@@ -1,17 +1,31 @@
 "use client"
 
+import * as React from "react"
 import { Check, CircleAlert, CircleCheck, Info, Loader2, ShieldCheck, TriangleAlert, X } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
+import { Input } from "@/components/ui/input"
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
+import {
+  buildInputRequestPayload,
+  createInputRequestDrafts,
+  inputRequestIsComplete,
+  readInputRequestForm,
+  type InputRequestDraft,
+  type InputRequestDrafts,
+  type InputRequestForm,
+  type InputRequestQuestion,
+} from "@/components/session/input-request"
 import { cn } from "@/lib/utils"
-import type { Notice } from "@/features/dashboard/types"
+import type { Notice, NoticeAction } from "@/features/dashboard/types"
 import { useTranslations } from "next-intl"
 
 type InteractionCardProps = {
   notice: Notice
   resolvingNoticeId: string | null
   resolvingActionId: string | null
-  onRespondInteraction: (noticeId: string, actionId: string) => void
+  onRespondInteraction: (noticeId: string, actionId: string, input?: Record<string, unknown>) => void
   compact?: boolean
 }
 
@@ -22,9 +36,51 @@ export function InteractionCard({
   onRespondInteraction,
   compact,
 }: InteractionCardProps) {
+  const tSession = useTranslations("dashboard.session")
   const resolving = resolvingNoticeId === notice.noticeId
   const disabled = resolvingNoticeId !== null || notice.status === "response_accepted" || notice.status === "resolving"
   const Icon = notice.severity === "error" ? CircleAlert : ShieldCheck
+  const inputRequest = React.useMemo(() => readInputRequestForm(notice), [notice])
+  const [inputDrafts, setInputDrafts] = React.useState<InputRequestDrafts>(() => (
+    inputRequest ? createInputRequestDrafts(inputRequest) : {}
+  ))
+
+  React.useEffect(() => {
+    setInputDrafts(inputRequest ? createInputRequestDrafts(inputRequest) : {})
+  }, [inputRequest])
+
+  const respond = (action: NoticeAction) => {
+    const input = inputRequest?.action.actionId === action.actionId
+      ? buildInputRequestPayload(inputRequest, inputDrafts)
+      : undefined
+    onRespondInteraction(notice.noticeId, action.actionId, input)
+  }
+
+  const actionButtons = (
+    <div className="flex flex-wrap gap-2 md:justify-end md:flex-nowrap">
+      {notice.actions.map((action) => {
+        const submitDisabled = inputRequest?.action.actionId === action.actionId
+          && !inputRequestIsComplete(inputRequest, inputDrafts)
+        return (
+          <Button
+            key={action.actionId}
+            type="button"
+            variant={action.style === "primary" ? "default" : "outline"}
+            size="sm"
+            className="whitespace-nowrap"
+            disabled={disabled || submitDisabled}
+            onClick={() => respond(action)}
+          >
+            {resolving && resolvingActionId === action.actionId
+              ? <Loader2 className="size-3.5 animate-spin" />
+              : actionIcon(action.actionId)}
+            {action.label}
+          </Button>
+        )
+      })}
+    </div>
+  )
+
   return (
     <div className={cn(
       "rounded-xl border bg-card p-3 shadow-sm",
@@ -42,23 +98,7 @@ export function InteractionCard({
               <div className="wrap-break-word text-sm font-medium">{notice.title}</div>
             </div>
           </div>
-          <div className="flex flex-wrap gap-2 md:justify-end md:flex-nowrap">
-            {notice.actions.map((action) => (
-              <Button
-                key={action.actionId}
-                variant={action.style === "primary" ? "default" : "outline"}
-                size="sm"
-                className="whitespace-nowrap"
-                disabled={disabled}
-                onClick={() => onRespondInteraction(notice.noticeId, action.actionId)}
-              >
-                {resolving && resolvingActionId === action.actionId
-                  ? <Loader2 className="size-3.5 animate-spin" />
-                  : actionIcon(action.actionId)}
-                {action.label}
-              </Button>
-            ))}
-          </div>
+          {!inputRequest ? actionButtons : null}
         </div>
         {notice.message || notice.status === "failed" ? (
           <div className="min-w-0 pl-6">
@@ -70,10 +110,235 @@ export function InteractionCard({
             ) : null}
           </div>
         ) : null}
+        {inputRequest ? (
+          <div className="flex flex-col gap-3 pl-6">
+            <InputRequestFields
+              noticeId={notice.noticeId}
+              form={inputRequest}
+              drafts={inputDrafts}
+              disabled={disabled}
+              otherLabel={tSession("inputRequestOther")}
+              onDraftChange={(questionId, draft) => {
+                setInputDrafts((current) => ({ ...current, [questionId]: draft }))
+              }}
+            />
+            <div className="flex justify-end">{actionButtons}</div>
+          </div>
+        ) : null}
       </div>
     </div>
   )
 }
+
+function InputRequestFields({
+  noticeId,
+  form,
+  drafts,
+  disabled,
+  otherLabel,
+  onDraftChange,
+}: {
+  noticeId: string
+  form: InputRequestForm
+  drafts: InputRequestDrafts
+  disabled: boolean
+  otherLabel: string
+  onDraftChange: (questionId: string, draft: InputRequestDraft) => void
+}) {
+  return (
+    <div className="flex flex-col gap-4">
+      {form.questions.map((question) => (
+        <InputRequestQuestionFields
+          key={question.id}
+          noticeId={noticeId}
+          question={question}
+          draft={drafts[question.id] ?? emptyInputRequestDraft()}
+          disabled={disabled}
+          otherLabel={otherLabel}
+          onChange={(draft) => onDraftChange(question.id, draft)}
+        />
+      ))}
+    </div>
+  )
+}
+
+function InputRequestQuestionFields({
+  noticeId,
+  question,
+  draft,
+  disabled,
+  otherLabel,
+  onChange,
+}: {
+  noticeId: string
+  question: InputRequestQuestion
+  draft: InputRequestDraft
+  disabled: boolean
+  otherLabel: string
+  onChange: (draft: InputRequestDraft) => void
+}) {
+  const fieldId = `${noticeId}-${question.id}`
+
+  return (
+    <fieldset className="min-w-0 border-0 p-0">
+      <legend className="mb-2 min-w-0">
+        {question.header ? (
+          <span className="block text-xs font-medium text-muted-foreground">{question.header}</span>
+        ) : null}
+        <span className="mt-0.5 block wrap-break-word text-sm text-foreground">{question.prompt}</span>
+      </legend>
+      {question.multiple ? (
+        <div className="grid gap-1.5">
+          {question.options.map((option) => {
+            const optionId = `${fieldId}-${option.id}`
+            return (
+              <div key={option.id} className="flex min-w-0 items-start gap-2 rounded-md px-2 py-1.5 hover:bg-muted/50">
+                <Checkbox
+                  id={optionId}
+                  checked={draft.optionIds.includes(option.id)}
+                  disabled={disabled}
+                  onCheckedChange={(checked) => {
+                    const optionIds = checked === true
+                      ? [...draft.optionIds, option.id]
+                      : draft.optionIds.filter((id) => id !== option.id)
+                    onChange({ ...draft, optionIds })
+                  }}
+                />
+                <OptionLabel htmlFor={optionId} label={option.label} description={option.description} />
+              </div>
+            )
+          })}
+          {question.allowCustom ? (
+            <CustomAnswerField
+              id={`${fieldId}-custom`}
+              multiple
+              label={otherLabel}
+              draft={draft}
+              disabled={disabled}
+              onChange={onChange}
+            />
+          ) : null}
+        </div>
+      ) : (
+        <RadioGroup
+          value={draft.useCustom ? CUSTOM_ANSWER_VALUE : draft.optionIds[0] ?? ""}
+          disabled={disabled}
+          className="gap-1.5"
+          onValueChange={(value) => {
+            if (value === CUSTOM_ANSWER_VALUE) {
+              onChange({ ...draft, optionIds: [], useCustom: true })
+              return
+            }
+            onChange({ optionIds: [value], customText: "", useCustom: false })
+          }}
+        >
+          {question.options.map((option) => {
+            const optionId = `${fieldId}-${option.id}`
+            return (
+              <div key={option.id} className="flex min-w-0 items-start gap-2 rounded-md px-2 py-1.5 hover:bg-muted/50">
+                <RadioGroupItem id={optionId} value={option.id} />
+                <OptionLabel htmlFor={optionId} label={option.label} description={option.description} />
+              </div>
+            )
+          })}
+          {question.allowCustom ? (
+            <CustomAnswerField
+              id={`${fieldId}-custom`}
+              multiple={false}
+              label={otherLabel}
+              draft={draft}
+              disabled={disabled}
+              onChange={onChange}
+            />
+          ) : null}
+        </RadioGroup>
+      )}
+    </fieldset>
+  )
+}
+
+function OptionLabel({
+  htmlFor,
+  label,
+  description,
+}: {
+  htmlFor: string
+  label: string
+  description: string | null
+}) {
+  return (
+    <label htmlFor={htmlFor} className="min-w-0 flex-1 cursor-pointer text-sm">
+      <span className="block wrap-break-word text-foreground">{label}</span>
+      {description ? (
+        <span className="mt-0.5 block wrap-break-word text-xs text-muted-foreground">{description}</span>
+      ) : null}
+    </label>
+  )
+}
+
+function CustomAnswerField({
+  id,
+  multiple,
+  label,
+  draft,
+  disabled,
+  onChange,
+}: {
+  id: string
+  multiple: boolean
+  label: string
+  draft: InputRequestDraft
+  disabled: boolean
+  onChange: (draft: InputRequestDraft) => void
+}) {
+  const selectCustom = () => {
+    onChange({
+      ...draft,
+      optionIds: multiple ? draft.optionIds : [],
+      useCustom: true,
+    })
+  }
+
+  return (
+    <div className="flex min-w-0 items-center gap-2 rounded-md px-2 py-1.5 hover:bg-muted/50">
+      {multiple ? (
+        <Checkbox
+          id={`${id}-selector`}
+          checked={draft.useCustom}
+          disabled={disabled}
+          onCheckedChange={(checked) => {
+            const useCustom = checked === true
+            onChange({ ...draft, useCustom, customText: useCustom ? draft.customText : "" })
+          }}
+        />
+      ) : (
+        <RadioGroupItem id={`${id}-selector`} value={CUSTOM_ANSWER_VALUE} />
+      )}
+      <label htmlFor={id} className="shrink-0 cursor-pointer text-sm text-foreground">{label}</label>
+      <Input
+        id={id}
+        value={draft.customText}
+        disabled={disabled}
+        className="h-8 flex-1 rounded-md"
+        onFocus={selectCustom}
+        onChange={(event) => {
+          onChange({
+            ...draft,
+            optionIds: multiple ? draft.optionIds : [],
+            customText: event.target.value,
+            useCustom: true,
+          })
+        }}
+      />
+    </div>
+  )
+}
+
+function emptyInputRequestDraft(): InputRequestDraft {
+  return { optionIds: [], customText: "", useCustom: false }
+}
+
+const CUSTOM_ANSWER_VALUE = "__custom_answer__"
 
 export function InteractionHeaderNotice({
   blockingInteractionCount,

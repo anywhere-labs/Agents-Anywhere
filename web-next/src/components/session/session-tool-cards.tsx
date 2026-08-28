@@ -49,7 +49,7 @@ export function ToolCard({
   resolvingActionId: string | null
   open?: boolean
   onOpenChange?: (open: boolean) => void
-  onRespondInteraction: (noticeId: string, actionId: string) => void
+  onRespondInteraction: (noticeId: string, actionId: string, input?: Record<string, unknown>) => void
 }) {
   const tSession = useTranslations("dashboard.session")
   const kind = timelineToolKind(item)
