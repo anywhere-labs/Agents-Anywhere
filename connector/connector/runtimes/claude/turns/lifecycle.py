@@ -457,7 +457,7 @@ class ClaudeTurnRunner:
                     execution.finished.set()
                     return False
                 try:
-                    await self.interactions.close_open_approval_notices(
+                    await self.interactions.close_open_interaction_notices(
                         session,
                         status="closed",
                         reason=terminal.status,

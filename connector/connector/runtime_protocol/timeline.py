@@ -4,7 +4,7 @@ import hashlib
 import json
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, ClassVar, Literal
 
 from connector.runtime_protocol.models import RuntimeTimelineItem
@@ -241,6 +241,33 @@ class WebSearchToolContent(ToolTimelineContent):
 class UnknownToolContent(ToolTimelineContent):
     expected_kind: ClassVar[str | None] = "unknown"
     kind: ToolContentKind = "unknown"
+
+
+def complete_tool_content(
+    call: ToolTimelineContent,
+    *,
+    output: Any,
+    result: Any,
+    is_error: bool,
+    exit_code: int | None = None,
+    metadata: Mapping[str, Any] | None = None,
+) -> ToolTimelineContent:
+    """Complete a tool call without changing its semantic content kind."""
+
+    completed_metadata = {
+        **dict(call.metadata),
+        "result": result,
+        "isError": is_error,
+        **dict(metadata or {}),
+    }
+    if is_error and "error" not in completed_metadata:
+        completed_metadata["error"] = output
+    return replace(
+        call,
+        output=output,
+        exit_code=call.exit_code if exit_code is None else exit_code,
+        metadata=completed_metadata,
+    )
 
 
 @dataclass(frozen=True, slots=True)

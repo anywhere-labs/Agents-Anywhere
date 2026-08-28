@@ -8,8 +8,10 @@ from typing import Any
 
 from connector.runtime_protocol import (
     CommandToolContent,
+    ErrorSystemContent,
     FileChangeToolContent,
     GenericSystemContent,
+    InputRequestToolContent,
     MarkdownMessageContent,
     McpToolContent,
     MessageTimelineItem,
@@ -19,9 +21,11 @@ from connector.runtime_protocol import (
     TimelineSource,
     ToolCallContent,
     ToolResultContent,
+    ToolTimelineContent,
     ToolTimelineItem,
     UnknownSystemContent,
     WebSearchToolContent,
+    complete_tool_content,
 )
 from connector.runtimes.claude.domain.session import ClaudeSession
 
@@ -52,11 +56,16 @@ class ClaudeSystemBlock:
 
 
 class ClaudeMessageProjector:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        tool_call_lookup: Mapping[str, ClaudePendingToolCall] | None = None,
+        ignored_task_tool_use_ids: frozenset[str] | None = None,
+    ) -> None:
         self._order_by_id: dict[str, int] = {}
         self._next_order_seq = 1
         self._tool_calls: dict[str, ClaudePendingToolCall] = {}
-        self._ignored_task_tool_use_ids: set[str] = set()
+        self._tool_call_lookup = dict(tool_call_lookup or {})
+        self._ignored_task_tool_use_ids: set[str] = set(ignored_task_tool_use_ids or ())
 
     def message_item(
         self,
@@ -172,7 +181,7 @@ class ClaudeMessageProjector:
                 SystemTimelineItem(
                     id=item_id,
                     type="system",
-                    status="done",
+                    status="failed" if block.block_type == "error" else "done",
                     role="system",
                     turn_id=turn_id,
                     content=content,
@@ -222,25 +231,27 @@ class ClaudeMessageProjector:
             self._next_order_seq += 1
             self._order_by_id[item_id] = order_seq
 
-        source = TimelineSource(
-            runtime="claude",
-            external_session_id=session.external_session_id,
-            turn_id=turn_id,
-            native_item_id=block.tool_use_id,
-            native_item_type=block.block_type,
-            event=f"claude.{block.block_type}",
-        )
         if block.block_type == "tool_result":
             pending = self._tool_calls.pop(item_id, None)
+            if pending is None:
+                pending = self._tool_call_lookup.get(block.tool_use_id)
             call = pending.block if pending is not None else None
+            result_turn_id = pending.turn_id if pending is not None else turn_id
             return ToolTimelineItem(
                 id=item_id,
                 type="tool",
                 status="failed" if block.is_error else "done",
                 role="tool",
-                turn_id=turn_id,
+                turn_id=result_turn_id,
                 content=_tool_result_content(block, call),
-                source=source,
+                source=TimelineSource(
+                    runtime="claude",
+                    external_session_id=session.external_session_id,
+                    turn_id=result_turn_id,
+                    native_item_id=block.tool_use_id,
+                    native_item_type=block.block_type,
+                    event=f"claude.{block.block_type}",
+                ),
             ).to_platform_item(session_id=session.session_id, order_seq=order_seq)
 
         self._tool_calls[item_id] = ClaudePendingToolCall(block=block, turn_id=turn_id)
@@ -251,7 +262,14 @@ class ClaudeMessageProjector:
             role="tool",
             turn_id=turn_id,
             content=_tool_call_content(block),
-            source=source,
+            source=TimelineSource(
+                runtime="claude",
+                external_session_id=session.external_session_id,
+                turn_id=turn_id,
+                native_item_id=block.tool_use_id,
+                native_item_type=block.block_type,
+                event=f"claude.{block.block_type}",
+            ),
         ).to_platform_item(session_id=session.session_id, order_seq=order_seq)
 
 
@@ -414,6 +432,8 @@ def _block_type(block: Any) -> str | None:
         return "tool_result"
     if "thinking" in name or "reasoning" in name:
         return "thinking"
+    if "error" in name:
+        return "error"
     if "system" in name:
         return "system"
     return None
@@ -431,6 +451,11 @@ def _system_content(block: ClaudeSystemBlock) -> Any:
         )
     if block.block_type == "system":
         return GenericSystemContent(
+            text=block.text,
+            metadata=metadata,
+        )
+    if block.block_type == "error":
+        return ErrorSystemContent(
             text=block.text,
             metadata=metadata,
         )
@@ -459,7 +484,7 @@ def _system_block_metadata(block: Any) -> Mapping[str, Any]:
     }
 
 
-def _tool_call_content(block: ClaudeToolBlock) -> Any:
+def _tool_call_content(block: ClaudeToolBlock) -> ToolTimelineContent:
     tool_name = block.tool_name or "tool"
     tool_input = block.tool_input if isinstance(block.tool_input, Mapping) else {}
     common = {
@@ -485,10 +510,11 @@ def _tool_call_content(block: ClaudeToolBlock) -> Any:
         )
     if tool_name in {"Edit", "Write", "MultiEdit", "NotebookEdit"}:
         return FileChangeToolContent(
+            input=dict(tool_input),
             metadata={
                 **common,
                 "changes": _file_changes(tool_name, tool_input),
-            }
+            },
         )
     if tool_name in {"WebFetch", "WebSearch"}:
         return WebSearchToolContent(
@@ -499,6 +525,15 @@ def _tool_call_content(block: ClaudeToolBlock) -> Any:
                 "query": _string(tool_input.get("query")),
                 "url": _string(tool_input.get("url")),
                 "action": dict(tool_input),
+            },
+        )
+    if tool_name == "AskUserQuestion":
+        return InputRequestToolContent(
+            title=tool_name,
+            input=dict(tool_input),
+            metadata={
+                **common,
+                "questions": tool_input.get("questions", []),
             },
         )
     mcp_parts = _mcp_parts(tool_name)
@@ -531,38 +566,46 @@ def _tool_call_content(block: ClaudeToolBlock) -> Any:
 def _tool_result_content(
     block: ClaudeToolBlock,
     call: ClaudeToolBlock | None,
-) -> Any:
+) -> ToolTimelineContent:
     output = _result_text(block.tool_result)
-    result_metadata = {
+    result_metadata: dict[str, Any] = {
         "toolUseId": block.tool_use_id,
         "toolName": call.tool_name if call else None,
         "input": call.tool_input if call else None,
-        "result": block.tool_result,
         "text": output,
         "outputText": output,
         "outputPreview": _preview_text(output),
         "outputLength": len(output),
         "isError": block.is_error,
-        **(
-            {"synthetic": True, "missingResult": True}
-            if block.is_synthetic
-            else {}
-        ),
+        **({"synthetic": True, "missingResult": True} if block.is_synthetic else {}),
         **({"error": output} if block.is_error else {}),
     }
     call_content = _tool_call_content(call) if call is not None else None
+    if call_content is not None:
+        return complete_tool_content(
+            call_content,
+            output=output,
+            result=block.tool_result,
+            is_error=block.is_error,
+            exit_code=_tool_result_exit_code(block.tool_result),
+            metadata=result_metadata,
+        )
     return ToolResultContent(
-        title=call_content.title if call_content is not None else None,
-        command=call_content.command if call_content is not None else None,
-        input=call_content.input if call_content is not None else None,
         output=output,
-        exit_code=call_content.exit_code if call_content is not None else None,
+        exit_code=_tool_result_exit_code(block.tool_result),
         metadata={
-            **(dict(call_content.metadata) if call_content is not None else {}),
             **result_metadata,
-            **({"callKind": call_content.kind} if call_content is not None else {}),
+            "result": block.tool_result,
+            "orphan": True,
         },
     )
+
+
+def _tool_result_exit_code(result: Any) -> int | None:
+    if not isinstance(result, Mapping):
+        return None
+    value = result.get("exit_code", result.get("exitCode"))
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
 def _file_changes(

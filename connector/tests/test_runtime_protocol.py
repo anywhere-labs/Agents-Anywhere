@@ -11,6 +11,9 @@ from connector.runtime_protocol import (
     CAPABILITY_SESSION_INTERRUPT,
     CAPABILITY_SESSION_SEND_MESSAGE,
     AgentRuntime,
+    CommandToolContent,
+    FileChangeToolContent,
+    McpToolContent,
     RuntimeCapability,
     RuntimeCapabilitySet,
     RuntimeCommandResult,
@@ -26,6 +29,10 @@ from connector.runtime_protocol import (
     RuntimeUnsupportedError,
     SessionMeta,
     SessionState,
+    ToolCallContent,
+    ToolTimelineContent,
+    WebSearchToolContent,
+    complete_tool_content,
 )
 
 
@@ -125,6 +132,34 @@ def test_runtime_protocol_operation_results_include_code() -> None:
     assert operation.code == "conflict"
     assert operation.message == "busy"
     assert command.code == "disabled"
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        CommandToolContent(command="pwd"),
+        FileChangeToolContent(metadata={"changes": [{"path": "app.py"}]}),
+        McpToolContent(metadata={"server": "github", "tool": "search"}),
+        WebSearchToolContent(metadata={"query": "Claude SDK"}),
+        ToolCallContent(title="Read"),
+    ],
+)
+def test_complete_tool_content_preserves_concrete_kind(
+    call: ToolTimelineContent,
+) -> None:
+    completed = complete_tool_content(
+        call,
+        output="done",
+        result={"content": "done"},
+        is_error=False,
+        metadata={"outputText": "done"},
+    )
+
+    assert type(completed) is type(call)
+    assert completed.kind == call.kind
+    assert completed.output == "done"
+    assert completed.metadata["result"] == {"content": "done"}
+    assert completed.metadata["outputText"] == "done"
 
 
 def test_runtime_protocol_ordering_time_belongs_only_to_session_meta() -> None:

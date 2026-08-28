@@ -13,6 +13,13 @@ from connector.runtime_protocol.errors import (
     RuntimeUpstreamError,
 )
 from connector.runtime_protocol.host import RuntimeHostClient
+from connector.runtime_protocol.interactions import (
+    InputRequestAnswer,
+    InputRequestForm,
+    InputRequestOption,
+    InputRequestQuestion,
+    InputRequestValidationError,
+)
 from connector.runtime_protocol.instance_binding import (
     RuntimeInstance,
     RuntimeInstanceHost,
@@ -142,6 +149,7 @@ from connector.runtime_protocol.timeline import (
     UnknownSystemContent,
     UnknownToolContent,
     WebSearchToolContent,
+    complete_tool_content,
     timeline_content_hash,
 )
 
@@ -175,7 +183,12 @@ __all__ = [
     "GenericMarkerContent",
     "GenericSystemContent",
     "ImageArtifactContent",
+    "InputRequestAnswer",
+    "InputRequestForm",
+    "InputRequestOption",
+    "InputRequestQuestion",
     "InputRequestToolContent",
+    "InputRequestValidationError",
     "MarkdownMessageContent",
     "MarkerContentKind",
     "MarkerTimelineContent",
@@ -268,6 +281,7 @@ __all__ = [
     "WebSearchToolContent",
     "attachment_target",
     "attachments_root",
+    "complete_tool_content",
     "legacy_runtime_scope",
     "session_attachments_dir",
     "timeline_content_hash",
