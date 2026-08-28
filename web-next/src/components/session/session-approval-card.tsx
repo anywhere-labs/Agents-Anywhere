@@ -88,20 +88,22 @@ export function InteractionCard({
       compact && "rounded-lg",
     )}>
       <div className="flex flex-col gap-3">
-        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-          <div className="flex min-w-0 gap-2">
-            <Icon className={cn(
-              "mt-0.5 size-4 shrink-0",
-              notice.severity === "error" ? "text-destructive" : "text-muted-foreground",
-            )} />
-            <div className="min-w-0">
-              <div className="wrap-break-word text-sm font-medium">{notice.title}</div>
+        {!inputRequest ? (
+          <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+            <div className="flex min-w-0 gap-2">
+              <Icon className={cn(
+                "mt-0.5 size-4 shrink-0",
+                notice.severity === "error" ? "text-destructive" : "text-muted-foreground",
+              )} />
+              <div className="min-w-0">
+                <div className="wrap-break-word text-sm font-medium">{notice.title}</div>
+              </div>
             </div>
+            {actionButtons}
           </div>
-          {!inputRequest ? actionButtons : null}
-        </div>
+        ) : null}
         {notice.message || notice.status === "failed" ? (
-          <div className="min-w-0 pl-6">
+          <div className={cn("min-w-0", !inputRequest && "pl-6")}>
             {notice.message ? (
               <p className="wrap-break-word text-sm text-muted-foreground">{notice.message}</p>
             ) : null}
@@ -111,7 +113,7 @@ export function InteractionCard({
           </div>
         ) : null}
         {inputRequest ? (
-          <div className="flex flex-col gap-3 pl-6">
+          <div className="flex flex-col gap-3">
             <InputRequestFields
               noticeId={notice.noticeId}
               form={inputRequest}
