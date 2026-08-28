@@ -2081,6 +2081,7 @@ function AgentCallGroup({
                 interaction={interactionByTarget.get(item.id)}
                 resolvingNoticeId={resolvingNoticeId}
                 resolvingActionId={resolvingActionId}
+                nestedAgentCall
                 toolOpen={itemOpenById[item.id] ?? false}
                 onToolOpenChange={(open) => onItemOpenChange(item.id, open)}
                 onRespondInteraction={onRespondInteraction}

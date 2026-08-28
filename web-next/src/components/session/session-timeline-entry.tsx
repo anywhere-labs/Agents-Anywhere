@@ -34,6 +34,7 @@ export function TimelineEntry({
   resolvingNoticeId,
   resolvingActionId,
   toolOpen,
+  nestedAgentCall = false,
   onToolOpenChange,
   onRespondInteraction,
 }: {
@@ -44,6 +45,7 @@ export function TimelineEntry({
   resolvingNoticeId: string | null
   resolvingActionId: string | null
   toolOpen?: boolean
+  nestedAgentCall?: boolean
   onToolOpenChange?: (open: boolean) => void
   onRespondInteraction: (noticeId: string, actionId: string, input?: Record<string, unknown>) => void
 }) {
@@ -54,7 +56,7 @@ export function TimelineEntry({
   }
   if (item.type === "tool" || isFileChangeArtifact(item)) {
     entry = (
-      <div className={cn(isNestedAgentCall(item) && "ml-5 border-l border-border/60 pl-3")}>
+      <div className={cn(nestedAgentCall && isNestedAgentCall(item) && "ml-5 border-l border-border/60 pl-3")}>
         <ToolCard
           item={item}
           token={token}
