@@ -18,9 +18,10 @@ test("timeline run summary counts every semantic tool kind", () => {
     item("input-request", "tool", "input_request"),
     item("generic", "tool", "tool_call"),
     item("orphan", "tool", "tool_result"),
+    item("agent-call", "tool", "agent_call"),
     item("history-file-change", "artifact", "file_change"),
     item("diff", "artifact", "diff"),
   ]
 
-  assert.deepEqual(timelineRunCounts(items), { reasoning: 2, tools: 8 })
+  assert.deepEqual(timelineRunCounts(items), { reasoning: 2, tools: 9 })
 })

@@ -327,6 +327,35 @@ export type TimelineStatus =
 
 export type TimelineRole = "user" | "assistant" | "system" | "tool";
 
+export type AgentCallAction =
+  | "invoke"
+  | "spawn"
+  | "send_input"
+  | "resume"
+  | "wait"
+  | "close"
+  | "unknown";
+
+export type AgentCallTimelineContent = {
+  kind: "agent_call";
+  action: AgentCallAction;
+  title?: string;
+  description?: string;
+  agentType?: string;
+  prompt?: string;
+  runInBackground?: boolean;
+  parentItemId?: string;
+  agentId?: string;
+  callerId?: string;
+  targetIds?: string[];
+  model?: string;
+  reasoningEffort?: string;
+  agents?: Record<string, { status?: string; message?: string | null }>;
+  usage?: { durationMs?: number; tokens?: number; toolCalls?: number };
+  input?: unknown;
+  output?: unknown;
+};
+
 export type TimelineItem = {
   id: string;
   sessionId: string;

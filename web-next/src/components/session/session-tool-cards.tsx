@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { Check, ChevronDown, Code2, Copy, FilePenLine, Hammer, Loader2, TerminalSquare } from "lucide-react"
+import { Bot, Check, ChevronDown, Code2, Copy, FilePenLine, Hammer, Loader2, TerminalSquare } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
@@ -61,8 +61,10 @@ export function ToolCard({
     textOf(item.content.error)
   const changes = recordsOf(item.content.changes)
   const displayOutput = changes.length > 0 ? null : output
+  const agentPrompt = kind === "agent_call" ? textOf(item.content.prompt) : null
+  const agentDetails = kind === "agent_call" ? timelineAgentDetails(item) : null
   const title = timelineToolTitle(item, session, tSession)
-  const hasDetail = Boolean(command || displayOutput || changes.length > 0 || interaction)
+  const hasDetail = Boolean(command || agentPrompt || agentDetails || displayOutput || changes.length > 0 || interaction)
   const shouldOpenForInteraction = Boolean(interaction)
   const [localOpen, setLocalOpen] = React.useState(shouldOpenForInteraction)
   const actualOpen = open ?? localOpen
@@ -108,6 +110,8 @@ export function ToolCard({
             token={token}
             session={session}
             command={command}
+            agentPrompt={agentPrompt}
+            agentDetails={agentDetails}
             output={displayOutput}
             changes={changes}
           />
@@ -204,6 +208,12 @@ export function timelineToolTitle(
     return firstTextOf(item.content.path, item.content.filePath, item.content.file, item.content.uri) ?? kind
   }
   const input = recordOf(item.content.input)
+  if (kind === "agent_call") {
+    const action = timelineAgentActionTitle(textOf(item.content.action), tSession)
+    const description = firstTextOf(item.content.description, item.content.title)
+      ?? compactAgentPrompt(textOf(item.content.prompt))
+    return description ? `${action}：${description}` : action
+  }
   const command = timelineToolCommand(item)
   const toolName = firstTextOf(item.content.toolName, item.content.name, item.content.tool, item.content.title)
   const target = timelineToolTarget(item, session)
@@ -256,22 +266,36 @@ export function ToolDetailPanel({
   token,
   session,
   command,
+  agentPrompt,
+  agentDetails,
   output,
   changes,
 }: {
   token: string
   session: SessionView
   command: string | null
+  agentPrompt: string | null
+  agentDetails: Record<string, unknown> | null
   output: string | null
   changes: Array<Record<string, unknown>>
 }) {
-  const hasContent = Boolean(command || output || changes.length > 0)
+  const hasContent = Boolean(command || agentPrompt || agentDetails || output || changes.length > 0)
   if (!hasContent) return null
   return (
     <div className="min-w-0 max-w-full overflow-hidden rounded-xl border border-border bg-background">
       {command ? <CodePanel label="command" code={command} language="bash" flush /> : null}
-      {changes.length > 0 ? (
+      {agentPrompt ? (
         <div className={cn(command && "border-t")}>
+          <CodePanel label="prompt" code={agentPrompt} language="text" flush />
+        </div>
+      ) : null}
+      {agentDetails ? (
+        <div className={cn((command || agentPrompt) && "border-t")}>
+          <CodePanel label="agent" code={JSON.stringify(agentDetails, null, 2)} language="json" flush />
+        </div>
+      ) : null}
+      {changes.length > 0 ? (
+        <div className={cn((command || agentPrompt || agentDetails) && "border-t")}>
           {changes.map((change, index) => (
             <FileChangeRow
               token={token}
@@ -283,7 +307,7 @@ export function ToolDetailPanel({
         </div>
       ) : null}
       {output ? (
-        <div className={cn((command || changes.length > 0) && "border-t")}>
+        <div className={cn((command || agentPrompt || agentDetails || changes.length > 0) && "border-t")}>
           <CodePanel label="output" code={output} language="text" flush />
         </div>
       ) : null}
@@ -513,7 +537,47 @@ function ToolIcon({ kind, status }: { kind: string; status: TimelineItem["status
   const className = cn("size-4", status === "failed" ? "text-destructive" : "text-muted-foreground")
   if (kind === "command") return <TerminalSquare className={className} />
   if (kind === "file_change") return <FilePenLine className={className} />
+  if (kind === "agent_call") return <Bot className={className} />
   return <Hammer className={className} />
+}
+
+function timelineAgentActionTitle(
+  action: string | null,
+  tSession: (key: string, values?: Record<string, string | number>) => string,
+): string {
+  const key = {
+    invoke: "toolAgentInvoke",
+    spawn: "toolAgentSpawn",
+    send_input: "toolAgentSendInput",
+    resume: "toolAgentResume",
+    wait: "toolAgentWait",
+    close: "toolAgentClose",
+  }[action ?? ""] ?? "toolAgentUnknown"
+  return tSession(key)
+}
+
+function compactAgentPrompt(value: string | null): string | null {
+  if (!value) return null
+  const compact = value.replace(/\s+/g, " ").trim()
+  if (compact.length <= 80) return compact
+  return `${compact.slice(0, 79)}…`
+}
+
+function timelineAgentDetails(item: TimelineItem): Record<string, unknown> | null {
+  const details = Object.fromEntries(
+    [
+      ["agentType", item.content.agentType],
+      ["agentId", item.content.agentId],
+      ["callerId", item.content.callerId],
+      ["targetIds", item.content.targetIds],
+      ["model", item.content.model],
+      ["reasoningEffort", item.content.reasoningEffort],
+      ["runInBackground", item.content.runInBackground],
+      ["usage", item.content.usage],
+      ["agents", item.content.agents],
+    ].filter(([, value]) => value !== null && value !== undefined),
+  )
+  return Object.keys(details).length > 0 ? details : null
 }
 
 export function TimelineStatusBadge({ status }: { status: TimelineItem["status"] }) {
