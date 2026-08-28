@@ -106,7 +106,7 @@ async def _test_codex_sdk_client_delegates_runtime_protocol_methods() -> None:
 
     assert native.started is True
     assert native.stopped is True
-    assert native.requests == [("thread/list", {"limit": 1})]
+    assert native.requests == [("thread/list", {"limit": 1, "modelProviders": []})]
     assert native.responses == [("req_1", {"decision": "approve"})]
     assert result.threads == ()
 
@@ -674,12 +674,15 @@ class _NativeSdkClient:
         self,
         cursor: str | None = None,
         limit: int | None = None,
+        model_providers: list[str] | None = None,
     ) -> dict[str, Any]:
         params: dict[str, Any] = {}
         if cursor is not None:
             params["cursor"] = cursor
         if limit is not None:
             params["limit"] = limit
+        if model_providers is not None:
+            params["modelProviders"] = model_providers
         self.requests.append(("thread/list", params))
         return {"ok": True}
 
