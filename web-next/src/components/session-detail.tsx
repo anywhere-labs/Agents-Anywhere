@@ -55,7 +55,7 @@ import {
   preserveOptimisticItems,
   timelineClientMessageId,
 } from "@/components/session/optimistic-timeline"
-import { recordsOf, runtimeLabel, textOf } from "@/components/session/session-utils"
+import { isVisibleTimelineItem, recordsOf, runtimeLabel, textOf } from "@/components/session/session-utils"
 import { sessionRuntimeId, sessionRuntimeType } from "@/features/dashboard/runtime-instances"
 import { useWorkspace } from "@/components/workspace-context"
 
@@ -1391,7 +1391,7 @@ export function SessionDetail({
     return () => resizeObserver.disconnect()
   }, [session?.id])
   const timelineGroups = React.useMemo(
-    () => groupTimelineItems(state?.items ?? [], interactionTargetIds),
+    () => groupTimelineItems((state?.items ?? []).filter(isVisibleTimelineItem), interactionTargetIds),
     [interactionTargetIds, state?.items],
   )
 
@@ -1456,7 +1456,7 @@ export function SessionDetail({
             ) : null}
             {loading && !state ? <SessionSkeletonInline /> : null}
             {state &&
-            state.items.length === 0 &&
+            timelineGroups.length === 0 &&
             detachedInteractions.length === 0 &&
             detachedNotifications.length === 0 &&
             blockingInteractionList.length === 0 ? (

@@ -1,5 +1,7 @@
 import type { TimelineItem } from "@/features/dashboard/types"
 
+const CLAUDE_INTERRUPTED_REQUEST_MARKER = "[Request interrupted by user]"
+
 export function messageText(item: TimelineItem): string {
   return (
     textOf(item.content.text) ||
@@ -7,6 +9,15 @@ export function messageText(item: TimelineItem): string {
     textOf(item.content.message) ||
     textOf(item.content.rawText) ||
     ""
+  )
+}
+
+export function isVisibleTimelineItem(item: TimelineItem): boolean {
+  return !(
+    item.type === "message" &&
+    item.role === "user" &&
+    textOf(item.source.runtime) === "claude" &&
+    messageText(item).trim() === CLAUDE_INTERRUPTED_REQUEST_MARKER
   )
 }
 
