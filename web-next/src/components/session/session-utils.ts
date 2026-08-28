@@ -1,5 +1,11 @@
 import type { TimelineItem } from "@/features/dashboard/types"
 
+const CLAUDE_INTERRUPTED_REQUEST_MARKERS = new Set([
+  "[Request interrupted by user]",
+  "[Request interrupted by user for tool use]",
+])
+const CLAUDE_NO_RESPONSE_MARKER = "No response requested."
+
 export function messageText(item: TimelineItem): string {
   return (
     textOf(item.content.text) ||
@@ -8,6 +14,13 @@ export function messageText(item: TimelineItem): string {
     textOf(item.content.rawText) ||
     ""
   )
+}
+
+export function isVisibleTimelineItem(item: TimelineItem): boolean {
+  if (item.type !== "message" || textOf(item.source.runtime) !== "claude") return true
+  const text = messageText(item).trim()
+  if (item.role === "user" && CLAUDE_INTERRUPTED_REQUEST_MARKERS.has(text)) return false
+  return !(item.role === "assistant" && text === CLAUDE_NO_RESPONSE_MARKER)
 }
 
 export function runtimeLabel(runtime: string): string {

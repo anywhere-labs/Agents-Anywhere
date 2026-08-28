@@ -14,6 +14,7 @@ class ClaudeApprovalDecision:
     allowed: bool
     action_id: str
     message: str | None = None
+    updated_input: Mapping[str, Any] | None = None
 
 
 def approval_notice(
@@ -73,7 +74,7 @@ def approval_notice(
 
 
 def decision_from_action(action_id: str) -> ClaudeApprovalDecision:
-    if action_id in {"approve", "approved", "accept"}:
+    if action_id in {"approve", "approved", "accept", "submit"}:
         return ClaudeApprovalDecision(allowed=True, action_id=action_id)
     return ClaudeApprovalDecision(
         allowed=False,
@@ -114,7 +115,12 @@ def notice_transition(
     clear_actions: bool = False,
     metadata: Mapping[str, Any] | None = None,
 ) -> SessionNotice:
-    context: dict[str, Any] = {"approvalStatus": status}
+    status_key = (
+        "inputStatus"
+        if notice.interaction_type == "input_request"
+        else "approvalStatus"
+    )
+    context: dict[str, Any] = {status_key: status}
     if decision is not None:
         context["responseActionId"] = decision.action_id
         context["decision"] = "approved" if decision.allowed else "rejected"

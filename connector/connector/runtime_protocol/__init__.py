@@ -3,6 +3,11 @@ from connector.runtime_protocol.attachments import (
     attachments_root,
     session_attachments_dir,
 )
+from connector.runtime_protocol.agent_calls import (
+    AgentCallAction,
+    RuntimeAgentCall,
+    complete_agent_call_content,
+)
 from connector.runtime_protocol.errors import (
     RuntimeConflictError,
     RuntimeInstancesUnsupportedError,
@@ -13,6 +18,13 @@ from connector.runtime_protocol.errors import (
     RuntimeUpstreamError,
 )
 from connector.runtime_protocol.host import RuntimeHostClient
+from connector.runtime_protocol.interactions import (
+    InputRequestAnswer,
+    InputRequestForm,
+    InputRequestOption,
+    InputRequestQuestion,
+    InputRequestValidationError,
+)
 from connector.runtime_protocol.instance_binding import (
     RuntimeInstance,
     RuntimeInstanceHost,
@@ -88,6 +100,7 @@ from connector.runtime_protocol.supervisor_models import (
     RuntimeSupervisorEntry,
 )
 from connector.runtime_protocol.timeline import (
+    AgentCallToolContent,
     ArtifactContentKind,
     ArtifactTimelineContent,
     ArtifactTimelineItem,
@@ -142,6 +155,7 @@ from connector.runtime_protocol.timeline import (
     UnknownSystemContent,
     UnknownToolContent,
     WebSearchToolContent,
+    complete_tool_content,
     timeline_content_hash,
 )
 
@@ -158,6 +172,8 @@ __all__ = [
     "CAPABILITY_SESSION_STEER",
     "MAX_CONFIG_REVISION",
     "AgentRuntime",
+    "AgentCallAction",
+    "AgentCallToolContent",
     "ArtifactContentKind",
     "ArtifactTimelineContent",
     "ArtifactTimelineItem",
@@ -175,7 +191,12 @@ __all__ = [
     "GenericMarkerContent",
     "GenericSystemContent",
     "ImageArtifactContent",
+    "InputRequestAnswer",
+    "InputRequestForm",
+    "InputRequestOption",
+    "InputRequestQuestion",
     "InputRequestToolContent",
+    "InputRequestValidationError",
     "MarkdownMessageContent",
     "MarkerContentKind",
     "MarkerTimelineContent",
@@ -201,6 +222,7 @@ __all__ = [
     "RuntimeConflictError",
     "RuntimeHostClient",
     "RuntimeIdentity",
+    "RuntimeAgentCall",
     "RuntimeInstance",
     "RuntimeInstanceHost",
     "RuntimeInstanceLifecycleStatus",
@@ -268,6 +290,8 @@ __all__ = [
     "WebSearchToolContent",
     "attachment_target",
     "attachments_root",
+    "complete_tool_content",
+    "complete_agent_call_content",
     "legacy_runtime_scope",
     "session_attachments_dir",
     "timeline_content_hash",

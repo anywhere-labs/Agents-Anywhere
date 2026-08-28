@@ -27,6 +27,7 @@ from connector.runtimes.claude.sdk.history import (
 from connector.runtimes.claude.sessions.cache import ClaudeSessionStore
 from connector.runtimes.claude.sessions.reader import (
     _history_items_from_messages,
+    _history_tool_call_context,
     _match_history_client_messages,
     _sdk_session_metadata,
     _session_title,
@@ -139,6 +140,12 @@ class ClaudeHistorySyncer:
         else:
             sync_messages = messages_after_cursor(messages, previous_cursor)
         session = _history_session(session_id, external_session_id, info)
+        tool_call_lookup, ignored_task_tool_use_ids = await asyncer.asyncify(
+            _history_tool_call_context
+        )(
+            session,
+            messages,
+        )
         client_message_matches = await _match_history_client_messages(
             session=session,
             messages=sync_messages,
@@ -149,6 +156,8 @@ class ClaudeHistorySyncer:
             session,
             sync_messages,
             client_message_matches=client_message_matches,
+            tool_call_lookup=tool_call_lookup,
+            ignored_task_tool_use_ids=ignored_task_tool_use_ids,
         )
         snapshot = RuntimeTimelineSnapshot(
             session_id=session_id,

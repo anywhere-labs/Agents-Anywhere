@@ -34,6 +34,7 @@ export function TimelineEntry({
   resolvingNoticeId,
   resolvingActionId,
   toolOpen,
+  nestedAgentCall = false,
   onToolOpenChange,
   onRespondInteraction,
 }: {
@@ -44,8 +45,9 @@ export function TimelineEntry({
   resolvingNoticeId: string | null
   resolvingActionId: string | null
   toolOpen?: boolean
+  nestedAgentCall?: boolean
   onToolOpenChange?: (open: boolean) => void
-  onRespondInteraction: (noticeId: string, actionId: string) => void
+  onRespondInteraction: (noticeId: string, actionId: string, input?: Record<string, unknown>) => void
 }) {
   let entry: React.ReactNode
   if (item.type === "message") {
@@ -54,17 +56,19 @@ export function TimelineEntry({
   }
   if (item.type === "tool" || isFileChangeArtifact(item)) {
     entry = (
-      <ToolCard
-        item={item}
-        token={token}
-        session={session}
-        interaction={interaction}
-        resolvingNoticeId={resolvingNoticeId}
-        resolvingActionId={resolvingActionId}
-        open={toolOpen}
-        onOpenChange={onToolOpenChange}
-        onRespondInteraction={onRespondInteraction}
-      />
+      <div className={cn(nestedAgentCall && isNestedAgentCall(item) && "ml-5 border-l border-border/60 pl-3")}>
+        <ToolCard
+          item={item}
+          token={token}
+          session={session}
+          interaction={interaction}
+          resolvingNoticeId={resolvingNoticeId}
+          resolvingActionId={resolvingActionId}
+          open={toolOpen}
+          onOpenChange={onToolOpenChange}
+          onRespondInteraction={onRespondInteraction}
+        />
+      </div>
     )
     return <TimelineEntryContextMenu item={item}>{entry}</TimelineEntryContextMenu>
   }
@@ -77,6 +81,10 @@ export function TimelineEntry({
 
 function isFileChangeArtifact(item: TimelineItem): boolean {
   return item.type === "artifact" && textOf(item.content.kind) === "file_change"
+}
+
+function isNestedAgentCall(item: TimelineItem): boolean {
+  return textOf(item.content.kind) === "agent_call" && Boolean(textOf(item.content.parentItemId))
 }
 
 function TimelineEntryContextMenu({ item, children }: { item: TimelineItem; children: React.ReactNode }) {

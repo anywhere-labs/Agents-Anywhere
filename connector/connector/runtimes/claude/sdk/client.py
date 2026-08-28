@@ -14,6 +14,10 @@ from connector.runtimes.model_gateway import model_gateway_from_config
 SdkLoader = Callable[[], Any]
 ClaudeClientFactory = Callable[[Any, Any], Any]
 
+# Claude CLI repeats image Read result base64 in both message and toolUseResult.
+# 80 MiB covers a 25 MiB attachment appearing twice plus JSON overhead.
+CLAUDE_SDK_MAX_BUFFER_SIZE = 80 * 1024 * 1024
+
 
 def load_sdk(sdk_loader: SdkLoader | None) -> Any:
     if sdk_loader is None:
@@ -61,6 +65,7 @@ def build_sdk_options(
     kwargs: dict[str, Any] = {
         "include_partial_messages": True,
         "extra_args": {"replay-user-messages": None},
+        "max_buffer_size": CLAUDE_SDK_MAX_BUFFER_SIZE,
     }
     if session.cwd:
         kwargs["cwd"] = session.cwd

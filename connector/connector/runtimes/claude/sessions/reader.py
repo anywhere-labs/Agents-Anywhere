@@ -40,9 +40,13 @@ from connector.runtimes.claude.sessions.cache import ClaudeSessionStore
 from connector.runtimes.claude.sessions.sync_state import ClaudeSessionSyncStateStore
 from connector.runtimes.claude.timeline.messages import (
     ClaudeMessageProjector,
+    ClaudePendingToolCall,
+    is_synthetic_control_message,
+    is_task_event_tool_name,
     message_id,
     message_role,
     message_text,
+    message_tool_blocks,
 )
 
 UNRESOLVED_LIVE_HISTORY_IMPORT_TTL_SECONDS = 120.0
@@ -309,8 +313,13 @@ def _history_items_from_messages(
     session: ClaudeSession,
     messages: tuple[Any, ...],
     client_message_matches: Mapping[str, ClaudeClientMessageBinding] | None = None,
+    tool_call_lookup: Mapping[str, ClaudePendingToolCall] | None = None,
+    ignored_task_tool_use_ids: frozenset[str] | None = None,
 ) -> tuple[RuntimeTimelineItem, ...]:
-    projector = ClaudeMessageProjector()
+    projector = ClaudeMessageProjector(
+        tool_call_lookup=tool_call_lookup,
+        ignored_task_tool_use_ids=ignored_task_tool_use_ids,
+    )
     items: list[RuntimeTimelineItem] = []
     matches = client_message_matches or {}
     turn_seed: str | None = None
@@ -319,7 +328,8 @@ def _history_items_from_messages(
         role = message_role(message)
         text = message_text(message)
         native_id = message_id(message)
-        if role == "user" and text:
+        synthetic_control = is_synthetic_control_message(message)
+        if role == "user" and text and not synthetic_control:
             turn_index += 1
             turn_seed = native_id or f"{session.external_session_id}:{turn_index}"
         if turn_seed is None:
@@ -340,7 +350,7 @@ def _history_items_from_messages(
                 event="claude.history.system",
             )
         )
-        if role not in {"user", "assistant", "system"} or not text:
+        if synthetic_control or role not in {"user", "assistant", "system"} or not text:
             continue
         client_message = matches.get(native_id or "")
         items.append(
@@ -370,6 +380,37 @@ def _history_items_from_messages(
     return _resequence_history_items(_dedupe_history_items(items))
 
 
+def _history_tool_call_context(
+    session: ClaudeSession,
+    messages: tuple[Any, ...],
+) -> tuple[dict[str, ClaudePendingToolCall], frozenset[str]]:
+    calls: dict[str, ClaudePendingToolCall] = {}
+    ignored_task_tool_use_ids: set[str] = set()
+    turn_seed: str | None = None
+    turn_index = 0
+    for message in messages:
+        role = message_role(message)
+        text = message_text(message)
+        native_id = message_id(message)
+        if role == "user" and text and not is_synthetic_control_message(message):
+            turn_index += 1
+            turn_seed = native_id or f"{session.external_session_id}:{turn_index}"
+        if turn_seed is None:
+            turn_seed = native_id or f"{session.external_session_id}:initial"
+        turn_id = _history_turn_id(session.external_session_id, turn_seed)
+        for block in message_tool_blocks(message):
+            if block.block_type != "tool_use":
+                continue
+            if is_task_event_tool_name(block.tool_name):
+                ignored_task_tool_use_ids.add(block.tool_use_id)
+                continue
+            calls[block.tool_use_id] = ClaudePendingToolCall(
+                block=block,
+                turn_id=turn_id,
+            )
+    return calls, frozenset(ignored_task_tool_use_ids)
+
+
 async def _match_history_client_messages(
     *,
     session: ClaudeSession,
@@ -397,7 +438,12 @@ def _history_user_messages(
         for role in (message_role(message),)
         for native_id in (message_id(message),)
         for text in (message_text(message),)
-        if role == "user" and native_id is not None and text is not None
+        if (
+            role == "user"
+            and native_id is not None
+            and text is not None
+            and not is_synthetic_control_message(message)
+        )
     )
 
 

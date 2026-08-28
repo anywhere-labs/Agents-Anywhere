@@ -448,6 +448,16 @@ async def _test_claude_runtime_projects_result_only_reply() -> None:
     client = _FakeClaudeClient(
         messages=[
             SimpleNamespace(
+                type="user",
+                uuid="live_task_notification",
+                session_id="claude_live_controls",
+                origin={"kind": "task-notification"},
+                message={
+                    "role": "user",
+                    "content": "<task-notification><status>stopped</status></task-notification>",
+                },
+            ),
+            SimpleNamespace(
                 type="result",
                 uuid="result_1",
                 session_id="claude_result_only",
@@ -527,6 +537,73 @@ async def _test_claude_runtime_projects_live_system_messages() -> None:
     assert system_items[0].source["event"] == "claude.turn.system"
     assert system_items[1].content["text"] == "live system note"
     assert assistant_items[0].content["text"] == "answer"
+
+
+def test_claude_runtime_drops_live_synthetic_control_messages() -> None:
+    asyncio.run(_test_claude_runtime_drops_live_synthetic_control_messages())
+
+
+async def _test_claude_runtime_drops_live_synthetic_control_messages() -> None:
+    host = _RecordingHost()
+    client = _FakeClaudeClient(
+        messages=[
+            SimpleNamespace(
+                type="user",
+                uuid="live_interrupted_user",
+                session_id="claude_live_controls",
+                message={
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "[Request interrupted by user for tool use]",
+                        }
+                    ],
+                },
+            ),
+            SimpleNamespace(
+                type="assistant",
+                uuid="live_synthetic_assistant",
+                session_id="claude_live_controls",
+                message={
+                    "id": "msg_live_synthetic",
+                    "model": "<synthetic>",
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "No response requested."}],
+                },
+            ),
+            SimpleNamespace(
+                type="assistant",
+                uuid="live_real_assistant",
+                session_id="claude_live_controls",
+                message={
+                    "id": "msg_live_real",
+                    "model": "claude-sonnet-5",
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "actual answer"}],
+                },
+            ),
+            SimpleNamespace(type="result", session_id="claude_live_controls"),
+        ]
+    )
+    runtime = _runtime(host=host, client=client)
+
+    result = await runtime.start_turn("sess_live_controls", None, "hello")
+    task = runtime._sessions["sess_live_controls"].active_task
+
+    assert result.ok is True
+    assert task is not None
+    await task
+
+    texts = [
+        item.content.get("text")
+        for item in host.timeline_item_upserts
+        if item.type == "message"
+    ]
+    assert "[Request interrupted by user for tool use]" not in texts
+    assert not any("task-notification" in str(text) for text in texts)
+    assert "No response requested." not in texts
+    assert "actual answer" in texts
 
 
 def test_claude_runtime_lists_sessions_and_returns_local_snapshot() -> None:
@@ -826,7 +903,7 @@ async def _test_claude_runtime_projects_sdk_history_snapshot() -> None:
     assert snapshot.items[0].content["text"] == "hello"
     assert snapshot.items[1].content["text"] == "hi"
     assert snapshot.items[2].status == "done"
-    assert snapshot.items[2].content["kind"] == "tool_result"
+    assert snapshot.items[2].content["kind"] == "command"
     assert snapshot.items[2].content["command"] == "pwd"
     assert snapshot.items[2].content["output"] == "/repo"
     assert snapshot.items[2].content["outputText"] == "/repo"
@@ -1365,6 +1442,116 @@ async def _test_claude_runtime_scanner_syncs_delta_after_cursor() -> None:
     assert sync["items"][0].content["text"] == "second"
 
 
+def test_claude_runtime_history_drops_synthetic_control_messages() -> None:
+    asyncio.run(_test_claude_runtime_history_drops_synthetic_control_messages())
+
+
+async def _test_claude_runtime_history_drops_synthetic_control_messages() -> None:
+    host = _RecordingHost()
+    external_session_id = "claude_history_controls"
+    sdk = _HistorySdk(
+        messages={
+            external_session_id: [
+                SimpleNamespace(
+                    type="user",
+                    uuid="history_real_user",
+                    session_id=external_session_id,
+                    message={"role": "user", "content": "hello"},
+                ),
+                SimpleNamespace(
+                    type="user",
+                    uuid="history_task_notification",
+                    session_id=external_session_id,
+                    origin={"kind": "task-notification"},
+                    message={
+                        "role": "user",
+                        "content": "<task-notification><status>stopped</status></task-notification>",
+                    },
+                ),
+                SimpleNamespace(
+                    type="user",
+                    uuid="history_interrupted_user",
+                    session_id=external_session_id,
+                    message={
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": "[Request interrupted by user]",
+                            }
+                        ],
+                    },
+                ),
+                SimpleNamespace(
+                    type="user",
+                    uuid="history_interrupted_tool_user",
+                    session_id=external_session_id,
+                    message={
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": "[Request interrupted by user for tool use]",
+                            }
+                        ],
+                    },
+                ),
+                SimpleNamespace(
+                    type="assistant",
+                    uuid="history_synthetic_assistant",
+                    session_id=external_session_id,
+                    message={
+                        "id": "msg_history_synthetic",
+                        "model": "<synthetic>",
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": "No response requested."}],
+                    },
+                ),
+                SimpleNamespace(
+                    type="assistant",
+                    uuid="history_real_same_text",
+                    session_id=external_session_id,
+                    message={
+                        "id": "msg_history_real_same_text",
+                        "model": "claude-sonnet-5",
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": "No response requested."}],
+                    },
+                ),
+                SimpleNamespace(
+                    type="assistant",
+                    uuid="history_real_assistant",
+                    session_id=external_session_id,
+                    message={
+                        "id": "msg_history_real",
+                        "model": "claude-sonnet-5",
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": "actual answer"}],
+                    },
+                ),
+            ]
+        }
+    )
+    runtime = _runtime(host=host, sdk=sdk)
+
+    handled = await runtime.sync_session_timeline(
+        "sess_history_controls",
+        external_session_id,
+    )
+
+    assert handled is True
+    texts = [
+        item.content.get("text")
+        for item in host.timeline_syncs[-1]["items"]
+        if item.type == "message"
+    ]
+    assert "[Request interrupted by user]" not in texts
+    assert "[Request interrupted by user for tool use]" not in texts
+    assert not any("task-notification" in str(text) for text in texts)
+    assert texts.count("No response requested.") == 1
+    assert "actual answer" in texts
+
+
 def test_claude_runtime_scanner_skips_active_session_without_storing_cursor() -> None:
     asyncio.run(
         _test_claude_runtime_scanner_skips_active_session_without_storing_cursor()
@@ -1820,7 +2007,7 @@ async def _test_claude_runtime_projects_tool_blocks_to_timeline() -> None:
     assert tool_call.content["command"] == "pytest"
     assert tool_call.source["itemType"] == "tool_use"
     assert tool_result.status == "done"
-    assert tool_result.content["kind"] == "tool_result"
+    assert tool_result.content["kind"] == "command"
     assert tool_result.content["output"] == "ok"
     assert tool_result.content["toolName"] == "Bash"
     assert tool_result.source["itemType"] == "tool_result"
@@ -1879,13 +2066,126 @@ async def _test_claude_runtime_closes_history_tool_calls_without_results() -> No
         "claude_orphan_tool_session",
     )
 
-    tool = next(item for item in host.timeline_syncs[-1]["items"] if item.type == "tool")
+    tool = next(
+        item for item in host.timeline_syncs[-1]["items"] if item.type == "tool"
+    )
     assert handled is True
     assert tool.status == "done"
-    assert tool.content["kind"] == "tool_result"
+    assert tool.content["kind"] == "command"
     assert tool.content["command"] == "pwd"
     assert tool.content["missingResult"] is True
     assert tool.content["synthetic"] is True
+
+
+def test_claude_runtime_uses_tool_result_only_for_orphans() -> None:
+    asyncio.run(_test_claude_runtime_uses_tool_result_only_for_orphans())
+
+
+async def _test_claude_runtime_uses_tool_result_only_for_orphans() -> None:
+    host = _RecordingHost()
+    client = _FakeClaudeClient(
+        messages=[
+            SimpleNamespace(
+                type="user",
+                session_id="claude_orphan_result",
+                message={
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "unknown_tool",
+                            "content": "orphan output",
+                        }
+                    ],
+                },
+            ),
+            SimpleNamespace(type="result", session_id="claude_orphan_result"),
+        ]
+    )
+    runtime = _runtime(host=host, client=client)
+
+    await runtime.start_turn("sess_orphan_result", None, "run")
+    task = runtime._sessions["sess_orphan_result"].active_task
+    assert task is not None
+    await task
+
+    tool = next(item for item in host.timeline_item_upserts if item.type == "tool")
+    assert tool.content["kind"] == "tool_result"
+    assert tool.content["orphan"] is True
+    assert tool.content["output"] == "orphan output"
+
+
+def test_claude_runtime_history_increment_recovers_tool_call_context() -> None:
+    asyncio.run(_test_claude_runtime_history_increment_recovers_tool_call_context())
+
+
+async def _test_claude_runtime_history_increment_recovers_tool_call_context() -> None:
+    external_session_id = "claude_incremental_tool_result"
+    sdk = _HistorySdk(
+        messages={
+            external_session_id: [
+                SimpleNamespace(
+                    type="user",
+                    uuid="incremental_tool_user",
+                    session_id=external_session_id,
+                    message={"role": "user", "content": "where am I"},
+                ),
+                SimpleNamespace(
+                    type="assistant",
+                    uuid="incremental_tool_call",
+                    session_id=external_session_id,
+                    message={
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": "incremental_tool_1",
+                                "name": "Bash",
+                                "input": {"command": "pwd"},
+                            }
+                        ],
+                    },
+                ),
+            ]
+        }
+    )
+    host = _RecordingHost()
+    runtime = _runtime(host=host, sdk=sdk)
+
+    assert await runtime.sync_session_timeline(
+        "sess_incremental_tool",
+        external_session_id,
+    )
+    sdk.messages[external_session_id].append(
+        SimpleNamespace(
+            type="user",
+            uuid="incremental_tool_result",
+            session_id=external_session_id,
+            message={
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "incremental_tool_1",
+                        "content": "/repo",
+                    }
+                ],
+            },
+        )
+    )
+
+    assert await runtime.sync_session_timeline(
+        "sess_incremental_tool",
+        external_session_id,
+    )
+
+    incremental_sync = host.timeline_syncs[-1]
+    tool = next(item for item in incremental_sync["items"] if item.type == "tool")
+    assert incremental_sync["metadata"]["syncedMessageCount"] == 1
+    assert tool.content["kind"] == "command"
+    assert tool.content["command"] == "pwd"
+    assert tool.content["output"] == "/repo"
+    assert "orphan" not in tool.content
 
 
 def test_claude_runtime_binds_identical_live_user_messages_by_history_order() -> None:
@@ -2227,6 +2527,264 @@ async def _test_claude_runtime_projects_special_tool_content() -> None:
     edit_change = tool_items[2].content["changes"][0]
     assert edit_change["path"] == "app.py"
     assert edit_change["diff"] == "--- app.py\n+++ app.py\n@@\n-old\n+new"
+
+
+def test_claude_runtime_preserves_special_tool_kinds_after_results() -> None:
+    asyncio.run(_test_claude_runtime_preserves_special_tool_kinds_after_results())
+
+
+async def _test_claude_runtime_preserves_special_tool_kinds_after_results() -> None:
+    calls = [
+        ("bash_1", "Bash", {"command": "pwd"}, "command"),
+        (
+            "edit_1",
+            "Edit",
+            {"file_path": "app.py", "old_string": "old", "new_string": "new"},
+            "file_change",
+        ),
+        ("mcp_1", "mcp__github__search", {"query": "repo"}, "mcp"),
+        ("web_1", "WebSearch", {"query": "Claude SDK"}, "web_search"),
+        ("ask_1", "AskUserQuestion", {"questions": []}, "input_request"),
+        ("read_1", "Read", {"file_path": "README.md"}, "tool_call"),
+    ]
+    messages: list[Any] = []
+    for tool_use_id, tool_name, tool_input, _kind in calls:
+        messages.extend(
+            [
+                SimpleNamespace(
+                    type="assistant",
+                    session_id="claude_completed_tools",
+                    message={
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": tool_use_id,
+                                "name": tool_name,
+                                "input": tool_input,
+                            }
+                        ],
+                    },
+                ),
+                SimpleNamespace(
+                    type="user",
+                    session_id="claude_completed_tools",
+                    message={
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": tool_use_id,
+                                "content": f"{tool_name} done",
+                            }
+                        ],
+                    },
+                ),
+            ]
+        )
+    messages.append(SimpleNamespace(type="result", session_id="claude_completed_tools"))
+    host = _RecordingHost()
+    runtime = _runtime(host=host, client=_FakeClaudeClient(messages=messages))
+
+    await runtime.start_turn("sess_completed_tools", None, "use tools")
+    task = runtime._sessions["sess_completed_tools"].active_task
+    assert task is not None
+    await task
+
+    tool_items = [item for item in host.timeline_item_upserts if item.type == "tool"]
+    running_items = tool_items[::2]
+    completed_items = tool_items[1::2]
+    assert [item.id for item in running_items] == [item.id for item in completed_items]
+    assert [item.content["kind"] for item in completed_items] == [
+        call[3] for call in calls
+    ]
+    assert all(item.status == "done" for item in completed_items)
+    assert completed_items[1].content["changes"][0]["path"] == "app.py"
+    assert completed_items[2].content["server"] == "github"
+    assert completed_items[2].content["tool"] == "search"
+    assert completed_items[3].content["query"] == "Claude SDK"
+
+
+def test_claude_runtime_failed_tool_result_preserves_kind() -> None:
+    asyncio.run(_test_claude_runtime_failed_tool_result_preserves_kind())
+
+
+async def _test_claude_runtime_failed_tool_result_preserves_kind() -> None:
+    host = _RecordingHost()
+    runtime = _runtime(
+        host=host,
+        client=_FakeClaudeClient(
+            messages=[
+                SimpleNamespace(
+                    type="assistant",
+                    session_id="claude_failed_tool",
+                    message={
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": "failed_bash",
+                                "name": "Bash",
+                                "input": {"command": "false"},
+                            }
+                        ],
+                    },
+                ),
+                SimpleNamespace(
+                    type="user",
+                    session_id="claude_failed_tool",
+                    message={
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": "failed_bash",
+                                "content": "exit 1",
+                                "is_error": True,
+                            }
+                        ],
+                    },
+                ),
+                SimpleNamespace(type="result", session_id="claude_failed_tool"),
+            ]
+        ),
+    )
+
+    await runtime.start_turn("sess_failed_tool", None, "fail")
+    task = runtime._sessions["sess_failed_tool"].active_task
+    assert task is not None
+    await task
+
+    tool = [item for item in host.timeline_item_upserts if item.type == "tool"][-1]
+    assert tool.status == "failed"
+    assert tool.content["kind"] == "command"
+    assert tool.content["error"] == "exit 1"
+
+
+def test_claude_runtime_projects_agent_calls_with_parent_and_usage() -> None:
+    asyncio.run(_test_claude_runtime_projects_agent_calls_with_parent_and_usage())
+
+
+async def _test_claude_runtime_projects_agent_calls_with_parent_and_usage() -> None:
+    host = _RecordingHost()
+    runtime = _runtime(
+        host=host,
+        client=_FakeClaudeClient(
+            messages=[
+                SimpleNamespace(
+                    type="assistant",
+                    session_id="claude_agent_call",
+                    parent_tool_use_id="parent_agent_call",
+                    message={
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": "agent_call_1",
+                                "name": "Agent",
+                                "input": {
+                                    "description": "Inspect repository",
+                                    "subagent_type": "explorer",
+                                    "prompt": "Inspect the repository",
+                                    "run_in_background": False,
+                                },
+                            }
+                        ],
+                    },
+                ),
+                SimpleNamespace(
+                    type="user",
+                    session_id="claude_agent_call",
+                    tool_use_result={
+                        "status": "completed",
+                        "agentId": "agent_42",
+                        "agentType": "explorer",
+                        "resolvedModel": "claude-test",
+                        "totalDurationMs": 1500,
+                        "totalTokens": 321,
+                        "totalToolUseCount": 4,
+                    },
+                    message={
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": "agent_call_1",
+                                "content": "inspection complete",
+                            }
+                        ],
+                    },
+                ),
+                SimpleNamespace(type="result", session_id="claude_agent_call"),
+            ]
+        ),
+    )
+
+    await runtime.start_turn("sess_agent_call", None, "inspect")
+    task = runtime._sessions["sess_agent_call"].active_task
+    assert task is not None
+    await task
+
+    running, completed = [
+        item for item in host.timeline_item_upserts if item.type == "tool"
+    ]
+    assert running.id == completed.id
+    assert running.status == "running"
+    assert running.content["kind"] == "agent_call"
+    assert running.content["action"] == "invoke"
+    assert running.content["description"] == "Inspect repository"
+    assert running.content["agentType"] == "explorer"
+    assert running.content["prompt"] == "Inspect the repository"
+    assert running.content["runInBackground"] is False
+    assert running.content["parentItemId"].startswith("claude_tool_")
+    assert completed.status == "done"
+    assert completed.content["kind"] == "agent_call"
+    assert completed.content["agentId"] == "agent_42"
+    assert completed.content["targetIds"] == ["agent_42"]
+    assert completed.content["model"] == "claude-test"
+    assert completed.content["agents"] == {"agent_42": {"status": "completed"}}
+    assert completed.content["usage"] == {
+        "durationMs": 1500,
+        "tokens": 321,
+        "toolCalls": 4,
+    }
+    assert completed.content["output"] == "inspection complete"
+
+
+def test_claude_runtime_projects_error_blocks_as_failed_system_items() -> None:
+    asyncio.run(_test_claude_runtime_projects_error_blocks_as_failed_system_items())
+
+
+async def _test_claude_runtime_projects_error_blocks_as_failed_system_items() -> None:
+    host = _RecordingHost()
+    runtime = _runtime(
+        host=host,
+        client=_FakeClaudeClient(
+            messages=[
+                SimpleNamespace(
+                    type="assistant",
+                    session_id="claude_error_block",
+                    message={
+                        "role": "assistant",
+                        "content": [{"type": "error", "message": "tool failed"}],
+                    },
+                ),
+                SimpleNamespace(type="result", session_id="claude_error_block"),
+            ]
+        ),
+    )
+
+    await runtime.start_turn("sess_error_block", None, "fail")
+    task = runtime._sessions["sess_error_block"].active_task
+    assert task is not None
+    await task
+
+    error_item = next(
+        item for item in host.timeline_item_upserts if item.type == "system"
+    )
+    assert error_item.status == "failed"
+    assert error_item.content["kind"] == "error"
+    assert error_item.content["text"] == "tool failed"
 
 
 def test_claude_runtime_interrupts_active_turn() -> None:
@@ -2602,6 +3160,90 @@ async def _test_claude_runtime_tool_approval_round_trips_to_sdk() -> None:
     assert host.session_state_updates[-1]["status"] == "idle"
 
 
+def test_claude_runtime_ask_user_question_round_trips_answers_to_sdk() -> None:
+    asyncio.run(_test_claude_runtime_ask_user_question_round_trips_answers_to_sdk())
+
+
+async def _test_claude_runtime_ask_user_question_round_trips_answers_to_sdk() -> None:
+    host = _RecordingHost()
+    client = _AskUserQuestionClaudeClient()
+    runtime = _runtime(host=host, client=client)
+
+    result = await runtime.start_turn(
+        "sess_questions",
+        "claude_session_questions",
+        "ask me",
+    )
+    task = runtime._sessions["sess_questions"].active_task
+
+    assert result.ok is True
+    assert task is not None
+    await _wait_until(lambda: bool(host.notice_upserts))
+
+    notice = host.notice_upserts[0]
+    assert notice.interaction_type == "input_request"
+    assert notice.source["timelineItemId"].startswith("claude_tool_")
+    assert notice.context["toolUseId"] == "ask_tool_1"
+    assert [action["actionId"] for action in notice.actions] == ["submit", "cancel"]
+    form = notice.actions[0]["input"]
+    assert form["uiSchema"]["component"] == "inputRequest"
+    assert [question["multiple"] for question in form["uiSchema"]["questions"]] == [
+        False,
+        True,
+    ]
+    assert form["uiSchema"]["questions"][0]["options"][0] == {
+        "id": "o_0",
+        "label": "Summary",
+        "description": "Brief overview",
+    }
+    assert host.session_state_updates[-1]["status"] == "waiting"
+
+    invalid = await runtime.respond_interaction(
+        "sess_questions",
+        notice.notice_id,
+        "submit",
+        input_data={"answers": {"q_0": {"optionIds": []}}},
+    )
+    assert invalid.ok is False
+    assert invalid.code == "claude_input_invalid"
+
+    response = await runtime.respond_interaction(
+        "sess_questions",
+        notice.notice_id,
+        "submit",
+        input_data={
+            "answers": {
+                "q_0": {"optionIds": ["o_0"]},
+                "q_1": {
+                    "optionIds": ["o_0"],
+                    "customText": "Appendix",
+                },
+            }
+        },
+    )
+    assert response.ok is True
+    assert response.result["decision"] == "submitted"
+
+    await task
+
+    assert [notice.status for notice in host.notice_upserts] == [
+        "open",
+        "responding",
+        "resolved",
+    ]
+    permission_result = client.permission_results[0]
+    assert isinstance(permission_result, _PermissionResultAllow)
+    assert permission_result.updated_input == {
+        "questions": client.questions,
+        "answers": {
+            "How should I format the output?": "Summary",
+            "Which sections should I include?": ["Introduction", "Appendix"],
+        },
+    }
+    assert await runtime.get_session_notices("sess_questions") == ()
+    assert host.session_state_updates[-1]["status"] == "idle"
+
+
 def _runtime(
     host: _RecordingHost | None = None,
     client: _FakeClaudeClient | None = None,
@@ -2744,6 +3386,42 @@ class _ApprovalClaudeClient(_FakeClaudeClient):
         )
         self.permission_results.append(result)
         return [SimpleNamespace(type="result", session_id="claude_session_approval")]
+
+
+class _AskUserQuestionClaudeClient(_FakeClaudeClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.questions = [
+            {
+                "header": "Format",
+                "question": "How should I format the output?",
+                "multiSelect": False,
+                "options": [
+                    {"label": "Summary", "description": "Brief overview"},
+                    {"label": "Detailed", "description": "Full explanation"},
+                ],
+            },
+            {
+                "header": "Sections",
+                "question": "Which sections should I include?",
+                "multiSelect": True,
+                "options": [
+                    {"label": "Introduction", "description": "Opening context"},
+                    {"label": "Conclusion", "description": "Final summary"},
+                ],
+            },
+        ]
+        self.permission_results: list[Any] = []
+
+    async def receive_response(self) -> list[Any]:
+        can_use_tool = self.options.kwargs["can_use_tool"]
+        result = await can_use_tool(
+            "AskUserQuestion",
+            {"questions": self.questions},
+            SimpleNamespace(tool_use_id="ask_tool_1"),
+        )
+        self.permission_results.append(result)
+        return [SimpleNamespace(type="result", session_id="claude_session_questions")]
 
 
 class _StderrFailingClaudeClient(_FakeClaudeClient):

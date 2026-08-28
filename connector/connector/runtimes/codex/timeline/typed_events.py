@@ -39,6 +39,7 @@ from openai_codex.generated.v2_all import (
     ReasoningTextDeltaNotification,
     ReasoningThreadItem,
     ResponseItem,
+    SubAgentActivityThreadItem,
     TextUserInput,
     Thread,
     ThreadItem,
@@ -48,6 +49,10 @@ from openai_codex.generated.v2_all import (
 )
 
 from connector.runtimes.codex.sdk.events import CodexSdkEvent
+from connector.runtimes.codex.timeline.agent_calls import (
+    subagent_activity_arguments,
+    subagent_activity_native_action,
+)
 from connector.runtimes.codex.timeline.identity import (
     next_turn_lane_position,
     turn_item_lane,
@@ -271,10 +276,22 @@ def timeline_projection_from_thread_item(
             status=enum_value(root.status) or event_status,
             role="tool",
             turn_id=turn_id,
-            server="codex.collab",
             name=enum_value(root.tool) or "agent",
             arguments=collab_agent_tool_arguments(root),
             output=collab_agent_tool_output(root.agents_states),
+        )
+    if isinstance(root, SubAgentActivityThreadItem):
+        return CodexTimelineProjection(
+            native_id=root.id,
+            raw_type="SubAgentActivityThreadItem",
+            status=event_status,
+            role="tool",
+            turn_id=turn_id,
+            name=subagent_activity_native_action(enum_value(root.kind)),
+            arguments=subagent_activity_arguments(
+                agent_path=root.agent_path,
+                agent_thread_id=root.agent_thread_id,
+            ),
         )
     if isinstance(root, WebSearchThreadItem):
         return CodexTimelineProjection(

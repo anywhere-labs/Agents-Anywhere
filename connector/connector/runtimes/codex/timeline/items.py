@@ -200,6 +200,14 @@ class CodexCollabAgentToolCallItem(CodexToolTimelineItem):
 
 
 @dataclass(frozen=True, slots=True)
+class CodexSubAgentActivityItem(CodexToolTimelineItem):
+    expected_native_item_types: ClassVar[tuple[str, ...]] = (
+        "SubAgentActivityThreadItem",
+        "subAgentActivity",
+    )
+
+
+@dataclass(frozen=True, slots=True)
 class CodexWebSearchItem(CodexToolTimelineItem):
     expected_native_item_types: ClassVar[tuple[str, ...]] = ("webSearch",)
 
@@ -264,6 +272,8 @@ CODEX_TIMELINE_ITEM_CLASS_BY_NATIVE_TYPE: Mapping[str, type[CodexTimelineItem]] 
     "mcpToolCall": CodexMcpToolCallItem,
     "dynamicToolCall": CodexDynamicToolCallItem,
     "collabAgentToolCall": CodexCollabAgentToolCallItem,
+    "SubAgentActivityThreadItem": CodexSubAgentActivityItem,
+    "subAgentActivity": CodexSubAgentActivityItem,
     "webSearch": CodexWebSearchItem,
     "function_call": CodexFunctionCallItem,
     "function_call_output": CodexFunctionCallOutputItem,

@@ -316,6 +316,7 @@ type WorkspaceState = {
   isOptimisticSession: (sessionId: string) => boolean
   markOptimisticMessageFailed: (clientMessageId: string, message: string) => void
   appendPathToComposer: (path: string) => boolean
+  consumeComposerInsertion: (id: number) => void
   refreshData: () => void
   loadMoreSessions: () => void
 }
@@ -1059,6 +1060,10 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     return true
   }, [route, sessions])
 
+  const consumeComposerInsertion = React.useCallback((id: number) => {
+    setComposerInsertion((current) => current?.id === id ? null : current)
+  }, [])
+
   // ── Derived route fields ──────────────────────────────────
 
   const validPages: AppPage[] = ["home", "session", "settings", "dashboard", "team", "service", "device", "device-workspace"]
@@ -1132,6 +1137,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     isOptimisticSession,
     markOptimisticMessageFailed,
     appendPathToComposer,
+    consumeComposerInsertion,
     refreshData: fetchData,
     loadMoreSessions,
   }
