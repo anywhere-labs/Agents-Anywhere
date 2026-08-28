@@ -64,8 +64,13 @@ internal fun RemoteSessionRuntimeState?.toSessionRuntimeState(serverTime: String
         externalSessionId = externalSessionId,
         status = when (status) {
             "idle" -> SessionRuntimeStatus.Idle
+            "waiting" -> SessionRuntimeStatus.Waiting
+            "pending" -> SessionRuntimeStatus.Pending
             "running" -> SessionRuntimeStatus.Running
+            "stopping" -> SessionRuntimeStatus.Stopping
             "waiting_approval" -> SessionRuntimeStatus.WaitingApproval
+            "blocked" -> SessionRuntimeStatus.Blocked
+            "disconnected" -> SessionRuntimeStatus.Disconnected
             "error" -> SessionRuntimeStatus.Error
             else -> SessionRuntimeStatus.Unknown
         },

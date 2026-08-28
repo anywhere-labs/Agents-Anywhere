@@ -50,6 +50,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
@@ -84,6 +85,7 @@ import com.agentsanywhere.app.feature.sessiondetail.isInternalRuntimeError
 import com.agentsanywhere.app.feature.sessiondetail.RuntimeMessageAction
 import com.agentsanywhere.app.feature.sessiondetail.RuntimeNotice
 import com.agentsanywhere.app.feature.sessiondetail.RuntimeNoticeAction
+import com.agentsanywhere.app.feature.sessiondetail.RuntimeNoticeResponseException
 import com.agentsanywhere.app.feature.sessiondetail.SESSION_ATTACHMENT_CAPABILITY
 import com.agentsanywhere.app.feature.sessiondetail.SESSION_COMMANDS_CAPABILITY
 import com.agentsanywhere.app.feature.sessiondetail.SESSION_COMMAND_EXECUTE_CAPABILITY
@@ -108,6 +110,7 @@ import com.agentsanywhere.app.feature.terminal.RemoteTerminalForegroundService
 import com.agentsanywhere.app.feature.terminal.RemoteTerminalPool
 import com.agentsanywhere.app.model.AgentDevice
 import com.agentsanywhere.app.model.AgentSession
+import com.agentsanywhere.app.model.SessionStatus
 import com.agentsanywhere.app.navigation.AppDestination
 import com.agentsanywhere.app.ui.designsystem.AAToastHost
 import com.agentsanywhere.app.ui.designsystem.AAToastVisuals
@@ -149,7 +152,7 @@ fun SessionDetailScreen(
     onSessionChanged: (AgentSession) -> Unit = {},
 ) {
     val colors = LocalAAColors.current
-    val darkMode = colors.canvas == Color(0xFF09090B)
+    val darkMode = colors.isDark
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -594,7 +597,7 @@ fun SessionDetailScreen(
         val id = sessionId ?: return
         val runtimeId = state.session?.runtimeId ?: state.runtime.runtimeId
         val runtimeType = state.session?.runtimeType ?: state.runtime.runtimeType
-        val messageAction = state.capabilities.messageAction(runtimeId, state.runtime.status, runtimeType)
+        val messageAction = state.capabilities.messageAction(runtimeId, state.effectiveRuntimeStatus(), runtimeType)
         if (messageAction == null) {
             showError(context.getString(R.string.session_steer_unavailable))
             return
@@ -939,7 +942,7 @@ fun SessionDetailScreen(
         input: Map<String, Any?>?,
     ) {
         val id = sessionId ?: return
-        if (notice.noticeId in state.respondingNoticeIds) return
+        if (state.respondingNoticeIds.isNotEmpty()) return
         state = state.copy(
             respondingNoticeIds = state.respondingNoticeIds + notice.noticeId,
             actionError = null,
@@ -948,9 +951,38 @@ fun SessionDetailScreen(
         scope.launch {
             controller.respondNotice(id, notice.noticeId, action.actionId, input)
                 .onSuccess {
-                    state = state.copy(respondingNoticeIds = state.respondingNoticeIds - notice.noticeId)
+                    state = state.copy(
+                        notices = state.notices.copy(
+                            notices = state.notices.notices.map { observed ->
+                                if (observed.noticeId == notice.noticeId) {
+                                    observed.copy(status = "response_accepted", responseRequired = false)
+                                } else {
+                                    observed
+                                }
+                            },
+                        ),
+                        respondingNoticeIds = state.respondingNoticeIds - notice.noticeId,
+                    )
                 }
                 .onFailure { error ->
+                    val responseCode = (error as? RuntimeNoticeResponseException)?.code
+                    if (responseCode != null && responseCode in setOf(
+                            "not_found",
+                            "notice_not_found",
+                            "interaction_not_found",
+                            "request_not_found",
+                            "approval_not_found",
+                        )
+                    ) {
+                        state = state.copy(
+                            notices = state.notices.copy(
+                                notices = state.notices.notices.filterNot { it.noticeId == notice.noticeId },
+                            ),
+                            respondingNoticeIds = state.respondingNoticeIds - notice.noticeId,
+                        )
+                        noticeResponseErrors = noticeResponseErrors - notice.noticeId
+                        return@onFailure
+                    }
                     val message = error.message ?: context.getString(R.string.session_notice_response_failed)
                     state = state.copy(
                         respondingNoticeIds = state.respondingNoticeIds - notice.noticeId,
@@ -1026,7 +1058,7 @@ fun SessionDetailScreen(
                 withContext(Dispatchers.Main.immediate) {
                     val before = state
                     state = controller.applyRealtimeEvents(state, events, currentDevices)
-                    if (latestTimelineItemChanged(before.messages, state.messages)) {
+                    if (latestTimelineItemChanged(before.messages, state.messages) || before.notices != state.notices) {
                         streamLatestRequest += 1
                     }
                     if (state.session != before.session) state.session?.let(currentOnSessionChanged)
@@ -1100,15 +1132,39 @@ fun SessionDetailScreen(
     val canUseCommands = state.capabilities.isUsable(SESSION_COMMANDS_CAPABILITY, runtimeId, runtimeType) ||
         state.capabilities.isUsable(SESSION_COMMAND_EXECUTE_CAPABILITY, runtimeId, runtimeType)
     val capabilityFactsFresh = state.capabilities.isLoaded && state.capabilities.errorMessage == null
-    val commandMode = takeoverEnabled && draft.trimStart().startsWith('/') && attachments.isEmpty()
-    val commandQuery = draft.trimStart().removePrefix("/").trim()
-    val inputEnabled = if (isPreparedSession) true else sessionComposerEnabled(
-        takeoverEnabled = takeoverEnabled,
-        capabilityFactsFresh = capabilityFactsFresh,
-        canSendMessage = canUseSendMessage,
-        canSteer = canUseSteer,
-        canUseCommands = canUseCommands,
+    val runtimeStatus = state.effectiveRuntimeStatus()
+    val openInteractions = remember(state.notices.notices) {
+        state.notices.notices
+            .filter(RuntimeNotice::openInteraction)
+            .sortedWith(compareBy<RuntimeNotice> { it.updatedSeq }.thenBy { it.noticeId })
+    }
+    val blockingNotices = remember(openInteractions, sessionId) {
+        val id = sessionId.orEmpty()
+        openInteractions.filter { it.blocksSession(id) }
+    }
+    val runtimeBlocksInput = runtimeStatus in setOf(
+        SessionRuntimeStatus.Waiting,
+        SessionRuntimeStatus.Pending,
+        SessionRuntimeStatus.Running,
+        SessionRuntimeStatus.Stopping,
+        SessionRuntimeStatus.WaitingApproval,
+        SessionRuntimeStatus.Blocked,
+        SessionRuntimeStatus.Disconnected,
     )
+    val commandRequested = takeoverEnabled && draft.trimStart().startsWith('/') && attachments.isEmpty()
+    val commandQuery = draft.trimStart().removePrefix("/").trim()
+    val inputEnabled = if (isPreparedSession) {
+        true
+    } else {
+        sessionComposerEnabled(
+            takeoverEnabled = takeoverEnabled,
+            capabilityFactsFresh = capabilityFactsFresh,
+            canSendMessage = canUseSendMessage,
+            canSteer = canUseSteer,
+            canUseCommands = canUseCommands,
+        ) && !runtimeBlocksInput && blockingNotices.isEmpty()
+    }
+    val commandMode = commandRequested && inputEnabled
     val attachmentsReady = attachments.all { it.uploadState == AttachmentUploadState.Uploaded }
     val canSend = inputEnabled &&
         !state.sending &&
@@ -1120,13 +1176,6 @@ fun SessionDetailScreen(
         if (isPreparedSession) {
             draft.isNotBlank() && attachments.isEmpty()
         } else if (commandMode) canUseCommands && state.commands.isLoaded else canUseSendMessage || canUseSteer
-    val pendingNotice = remember(state.notices.notices, canRespondToNotice) {
-        state.notices.notices
-            .filter { it.respondable }
-            .sortedWith(compareBy<RuntimeNotice> { it.updatedSeq }.thenBy { it.noticeId })
-            .firstOrNull()
-            ?.takeIf { canRespondToNotice }
-    }
     val modelOptions = if (isPreparedSession) preparedModelOptions else remember(state.catalogs.model) {
         state.catalogs.model?.selectionOptions().orEmpty()
     }
@@ -1236,32 +1285,67 @@ fun SessionDetailScreen(
     }
     val agentLabel = state.session?.runtimeLabel?.takeIf { it.isNotBlank() }
         ?: context.getString(R.string.session_agent_fallback)
+    val turnInProgress = state.sending ||
+        state.interrupting ||
+        runtimeStatus in setOf(
+            SessionRuntimeStatus.Waiting,
+            SessionRuntimeStatus.Pending,
+            SessionRuntimeStatus.Running,
+            SessionRuntimeStatus.Stopping,
+            SessionRuntimeStatus.WaitingApproval,
+            SessionRuntimeStatus.Blocked,
+        ) || state.messages.any { it.optimistic && it.status == "running" }
     val workingLabel = when {
         state.interrupting -> context.getString(R.string.session_agent_interrupting, agentLabel)
+        runtimeStatus in setOf(SessionRuntimeStatus.Waiting, SessionRuntimeStatus.Pending) ->
+            context.getString(R.string.session_agent_pending, agentLabel)
         state.sending ||
-            state.runtime.status == SessionRuntimeStatus.Running ||
+            runtimeStatus == SessionRuntimeStatus.Running ||
             state.messages.any { it.optimistic && it.status == "running" } -> {
             context.getString(R.string.session_agent_working, agentLabel)
         }
         else -> null
     }
-    val showInterrupt = canUseInterrupt || state.interrupting
+    val showInterrupt = state.interrupting || (
+        connectorOnline && canUseInterrupt && runtimeStatus in setOf(
+            SessionRuntimeStatus.Waiting,
+            SessionRuntimeStatus.Pending,
+            SessionRuntimeStatus.Running,
+            SessionRuntimeStatus.Stopping,
+            SessionRuntimeStatus.WaitingApproval,
+            SessionRuntimeStatus.Blocked,
+        )
+    )
     val replyTarget = state.session?.runtimeLabel?.takeIf { it.isNotBlank() }
         ?: stringResource(R.string.session_agent_fallback)
     val placeholder = when {
         isPreparedSession -> stringResource(R.string.session_reply_to, replyTarget)
         !takeoverEnabled -> stringResource(R.string.session_read_only_placeholder)
         state.session != null && !connectorOnline -> stringResource(R.string.session_device_offline_placeholder)
+        blockingNotices.isNotEmpty() -> stringResource(R.string.session_waiting_approval_placeholder)
         state.runtime.errorMessage != null -> state.runtime.errorMessage.orEmpty()
         state.runtime.error?.get("code") == "DSH_CONCURRENT_WRITER_DETECTED" ->
             stringResource(R.string.session_dsh_concurrent_writer)
-        state.runtime.status == SessionRuntimeStatus.Unknown -> stringResource(R.string.session_runtime_state_unknown)
-        state.runtime.status == SessionRuntimeStatus.Error -> stringResource(R.string.session_runtime_state_error)
-        canUseSteer && !canUseSendMessage -> stringResource(R.string.session_reply_to, replyTarget)
+        runtimeStatus == SessionRuntimeStatus.Unknown -> stringResource(R.string.session_runtime_state_unknown)
+        runtimeStatus in setOf(SessionRuntimeStatus.Waiting, SessionRuntimeStatus.Pending) ->
+            stringResource(R.string.session_pending_placeholder)
+        runtimeStatus in setOf(SessionRuntimeStatus.Running, SessionRuntimeStatus.Stopping) ->
+            stringResource(R.string.session_busy_placeholder)
+        runtimeStatus in setOf(SessionRuntimeStatus.WaitingApproval, SessionRuntimeStatus.Blocked) ->
+            stringResource(R.string.session_waiting_approval_placeholder)
+        runtimeStatus == SessionRuntimeStatus.Error -> stringResource(R.string.session_error_placeholder)
+        runtimeStatus == SessionRuntimeStatus.Disconnected -> stringResource(R.string.session_device_offline_placeholder)
         !canUseSendMessage && !canUseCommands -> stringResource(R.string.session_send_unavailable)
         inputEnabled -> stringResource(R.string.session_reply_to, replyTarget)
         else -> stringResource(R.string.session_send_unavailable)
     }
+    val density = LocalDensity.current
+    val timelineBottomPadding = if (composerHeightPx > 0) {
+        with(density) { composerHeightPx.toDp() } + 16.dp
+    } else {
+        168.dp
+    }
+    val hasOpenNotifications = state.notices.notices.any(RuntimeNotice::openNotification)
 
     ScreenScaffold {
         HorizontalPager(
@@ -1301,12 +1385,13 @@ fun SessionDetailScreen(
                         when {
                             sessionId == null && !isPreparedSession -> EmptyDetailMessage(stringResource(R.string.session_open_from_list))
                             state.timeline.isLoading && state.messages.isEmpty() -> {
-                                SessionDetailLoadingState(darkMode = darkMode)
+                                SessionDetailLoadingState()
                             }
                             state.timeline.errorMessage != null && state.messages.isEmpty() -> {
                                 EmptyDetailMessage(state.timeline.errorMessage.orEmpty())
                             }
-                            state.messages.isEmpty() -> SessionWelcomeMessage(darkMode = darkMode)
+                            state.messages.isEmpty() && openInteractions.isEmpty() && !hasOpenNotifications ->
+                                SessionWelcomeMessage()
                             else -> MessageList(
                                 messages = state.messages,
                                 darkMode = darkMode,
@@ -1315,6 +1400,12 @@ fun SessionDetailScreen(
                                 forceLatestRequest = forceLatestRequest,
                                 streamLatestRequest = streamLatestRequest,
                                 workingLabel = workingLabel,
+                                turnInProgress = turnInProgress,
+                                notices = state.notices.notices,
+                                canRespondToNotices = canRespondToNotice,
+                                respondingNoticeIds = state.respondingNoticeIds,
+                                noticeResponseErrors = noticeResponseErrors,
+                                bottomContentPadding = timelineBottomPadding,
                                 hasMore = state.hasMore,
                                 loadingOlder = state.timeline.loadingOlder,
                                 onLoadOlder = { loadOlderMessages() },
@@ -1322,10 +1413,11 @@ fun SessionDetailScreen(
                                 onOpenAttachment = ::openAttachment,
                                 onCopyMessage = ::copyMessageText,
                                 onOpenFile = ::openReferencedFile,
+                                onRespondNotice = ::respondNotice,
                             )
                         }
                         ComposerVeil(
-                            darkMode = darkMode,
+                            height = timelineBottomPadding + 16.dp,
                             modifier = Modifier.align(Alignment.BottomCenter),
                         )
                         Column(
@@ -1333,6 +1425,13 @@ fun SessionDetailScreen(
                                 .align(Alignment.BottomCenter)
                                 .onSizeChanged { composerHeightPx = it.height },
                         ) {
+                            BlockingRuntimeNoticeStack(
+                                notices = blockingNotices,
+                                respondingNoticeIds = state.respondingNoticeIds,
+                                responseErrors = noticeResponseErrors,
+                                canRespond = canRespondToNotice,
+                                onRespond = ::respondNotice,
+                            )
                             if (commandMode) {
                                 RuntimeCommandSuggestions(
                                     commands = state.commands.commands,
@@ -1492,15 +1591,6 @@ fun SessionDetailScreen(
         )
     }
 
-    pendingNotice?.let { notice ->
-        RuntimeNoticeDialog(
-            notice = notice,
-            busy = notice.noticeId in state.respondingNoticeIds,
-            errorMessage = noticeResponseErrors[notice.noticeId],
-            onRespond = { action, input -> respondNotice(notice, action, input) },
-        )
-    }
-
     previewImage?.let { preview ->
         AttachmentPreviewDialog(
             preview = preview,
@@ -1511,14 +1601,27 @@ fun SessionDetailScreen(
     }
 }
 
+private fun SessionDetailState.effectiveRuntimeStatus(): SessionRuntimeStatus {
+    if (runtime.status != SessionRuntimeStatus.Unknown) return runtime.status
+    return when (session?.status) {
+        SessionStatus.Idle -> SessionRuntimeStatus.Idle
+        SessionStatus.Waiting -> SessionRuntimeStatus.Waiting
+        SessionStatus.Pending -> SessionRuntimeStatus.Pending
+        SessionStatus.Running -> SessionRuntimeStatus.Running
+        SessionStatus.Stopping -> SessionRuntimeStatus.Stopping
+        SessionStatus.WaitingApproval -> SessionRuntimeStatus.WaitingApproval
+        SessionStatus.Blocked -> SessionRuntimeStatus.Blocked
+        SessionStatus.Error -> SessionRuntimeStatus.Error
+        SessionStatus.Unknown, null -> SessionRuntimeStatus.Unknown
+    }
+}
+
 @Composable
 private fun DeviceOfflineDialog(
     onDismiss: () -> Unit,
 ) {
     val colors = LocalAAColors.current
-    val darkMode = colors.canvas == Color(0xFF09090B)
     val shape = RoundedCornerShape(26.dp)
-    val surface = if (darkMode) Color(0xFF18181B) else Color.White
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -1528,9 +1631,9 @@ private fun DeviceOfflineDialog(
             modifier = Modifier
                 .padding(horizontal = 22.dp)
                 .widthIn(max = 380.dp)
-                .shadow(34.dp, shape, ambientColor = Color(0x33000000), spotColor = Color(0x33000000))
+                .shadow(34.dp, shape, ambientColor = colors.appShadow, spotColor = colors.appShadow)
                 .clip(shape)
-                .background(surface)
+                .background(colors.raisedSurface)
                 .border(1.dp, colors.border, shape)
                 .padding(22.dp),
             verticalArrangement = Arrangement.spacedBy(18.dp),
@@ -1572,10 +1675,8 @@ private fun TakeoverConfirmDialog(
     onConfirm: () -> Unit,
 ) {
     val colors = LocalAAColors.current
-    val darkMode = colors.canvas == Color(0xFF09090B)
     val shape = RoundedCornerShape(26.dp)
-    val surface = if (darkMode) Color(0xFF18181B) else Color.White
-    val secondaryButton = if (darkMode) Color(0xFF27272A) else Color(0xFFF3F3F3)
+    val secondaryButton = colors.subtle
     val message = if (enabled) {
         stringResource(R.string.session_enable_takeover_body, agentLabel)
     } else {
@@ -1590,9 +1691,9 @@ private fun TakeoverConfirmDialog(
             modifier = Modifier
                 .padding(horizontal = 22.dp)
                 .widthIn(max = 380.dp)
-                .shadow(34.dp, shape, ambientColor = Color(0x33000000), spotColor = Color(0x33000000))
+                .shadow(34.dp, shape, ambientColor = colors.appShadow, spotColor = colors.appShadow)
                 .clip(shape)
-                .background(surface)
+                .background(colors.raisedSurface)
                 .border(1.dp, colors.border, shape)
                 .padding(22.dp),
             verticalArrangement = Arrangement.spacedBy(18.dp),

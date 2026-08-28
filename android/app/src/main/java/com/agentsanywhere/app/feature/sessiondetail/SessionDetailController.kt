@@ -667,7 +667,10 @@ class SessionDetailController(
                     input,
                 )
                 if (!response.ok) {
-                    throw IllegalStateException(response.failureMessage("Runtime rejected the response."))
+                    throw RuntimeNoticeResponseException(
+                        code = response.errorCode,
+                        message = response.failureMessage("Runtime rejected the response."),
+                    )
                 }
                 Unit
             }
@@ -833,6 +836,11 @@ class SessionDetailController(
     )
 
 }
+
+internal class RuntimeNoticeResponseException(
+    val code: String?,
+    message: String,
+) : IllegalStateException(message)
 
 data class SendMessageResult(
     val attachments: List<TimelineAttachment>,

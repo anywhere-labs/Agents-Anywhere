@@ -69,17 +69,27 @@ private fun RemoteTimelineItem.toToolMessages(): List<TimelineMessage> {
     return when (content.text("kind")) {
         "command" -> listOf(toCommandMessage())
         "file_change" -> toFileChangeMessages()
-        "web_search" -> listOf(toToolCallMessage(title = "Searched web", subtitle = content.text("query").orEmpty()))
-        "mcp" -> listOf(
-            toToolCallMessage(
-                title = "${content.text("server") ?: "mcp"} / ${content.text("tool") ?: "tool"}",
-                subtitle = "",
+        "web_search" -> {
+            val query = content.text("query") ?: content.optJSONObject("input")?.text("query")
+            listOf(toToolCallMessage(title = query.orEmpty(), subtitle = query.orEmpty()))
+        }
+        "mcp" -> {
+            val input = content.optJSONObject("input")
+            listOf(
+                toToolCallMessage(
+                    title = "${content.text("server") ?: input?.text("server") ?: "mcp"} / ${
+                        content.text("tool") ?: input?.text("tool") ?: "tool"
+                    }",
+                    subtitle = "",
+                ),
             )
-        )
+        }
         "tool_call", "tool_result", "permission", "input_request" -> listOf(
             toToolCallMessage(title = shortToolTitle(), subtitle = content.toolTargetText().orEmpty()),
         )
-        else -> listOf(toDiagnosticMessage())
+        else -> listOf(
+            toToolCallMessage(title = shortToolTitle(), subtitle = content.toolTargetText().orEmpty()),
+        )
     }
 }
 
@@ -143,8 +153,8 @@ private fun RemoteTimelineItem.toSystemMessage(): TimelineMessage {
     if (kind == "reasoning") {
         val summaries = content.records("summaries").mapNotNull { it.text("text") }
         val rawText = content.text("rawText") ?: content.text("text")
-        val body = (if (summaries.isNotEmpty()) summaries else listOfNotNull(rawText))
-            .joinToString("\n\n")
+        val segments = if (summaries.isNotEmpty()) summaries else listOfNotNull(rawText)
+        val body = segments.joinToString("\n\n")
         return TimelineMessage(
             id = id,
             sourceItemId = id,
@@ -154,6 +164,9 @@ private fun RemoteTimelineItem.toSystemMessage(): TimelineMessage {
             type = type,
             kind = TimelineMessageKind.Reasoning,
             title = "Reasoning",
+            contentKind = kind,
+            reasoningSegments = segments,
+            rawContent = content.toString(2),
             badge = status.statusLabel(),
             orderSeq = orderSeq,
             revision = revision,
@@ -175,6 +188,8 @@ private fun RemoteTimelineItem.toSystemMessage(): TimelineMessage {
         type = type,
         kind = if (kind == "error" || status == "failed") TimelineMessageKind.Error else TimelineMessageKind.System,
         title = kind,
+        contentKind = kind,
+        rawContent = content.toString(2),
         badge = status.statusLabel(),
         orderSeq = orderSeq,
         revision = revision,
@@ -186,6 +201,7 @@ private fun RemoteTimelineItem.toSystemMessage(): TimelineMessage {
 private fun RemoteTimelineItem.toArtifactMessages(): List<TimelineMessage> {
     val kind = content.text("kind") ?: return listOf(toDiagnosticMessage())
     if (kind == "file_change") return toFileChangeMessages()
+    if (kind == "diff") return emptyList()
     if (kind !in setOf("file", "diff", "image", "document", "code")) {
         return listOf(toDiagnosticMessage())
     }
@@ -202,9 +218,11 @@ private fun RemoteTimelineItem.toArtifactMessages(): List<TimelineMessage> {
             kind = TimelineMessageKind.Artifact,
             title = kind.replaceFirstChar { it.uppercase() },
             subtitle = title,
+            contentKind = kind,
             badge = status.statusLabel(),
             detail = path.orEmpty(),
             body = content.text("description") ?: content.text("text").orEmpty(),
+            rawContent = content.toString(2),
             orderSeq = orderSeq,
             revision = revision,
             updatedSeq = updatedSeq,
@@ -263,6 +281,8 @@ private fun RemoteTimelineItem.baseInformationalMessage(
         type = type,
         kind = kind,
         title = title,
+        contentKind = content.text("kind").orEmpty(),
+        rawContent = content.toString(2),
         badge = status.statusLabel(),
         orderSeq = orderSeq,
         revision = revision,
@@ -272,7 +292,10 @@ private fun RemoteTimelineItem.baseInformationalMessage(
 }
 
 private fun RemoteTimelineItem.toCommandMessage(): TimelineMessage {
+    val input = content.optJSONObject("input")
     val command = content.opt("command").commandText()
+        .ifBlank { input?.opt("command").commandText() }
+        .ifBlank { input?.opt("cmd").commandText() }
     val description = content.text("description") ?: command
     val output = content.firstText("output", "outputPreview", "outputText", "error").orEmpty()
     val exit = content.text("exitCode")?.let { "exit code $it" }.orEmpty()
@@ -286,9 +309,14 @@ private fun RemoteTimelineItem.toCommandMessage(): TimelineMessage {
         kind = TimelineMessageKind.Command,
         title = "Ran",
         subtitle = description.ifBlank { command.ifBlank { "command" } },
+        contentKind = "command",
         badge = status.statusLabel(),
         detail = command,
         body = listOf(output, exit).filter { it.isNotBlank() }.joinToString("\n"),
+        command = command,
+        output = listOf(output, exit).filter { it.isNotBlank() }.joinToString("\n"),
+        toolError = content.opt("error").diagnosticSummary(),
+        rawContent = content.toString(2),
         orderSeq = orderSeq,
         revision = revision,
         updatedSeq = updatedSeq,
@@ -298,31 +326,37 @@ private fun RemoteTimelineItem.toCommandMessage(): TimelineMessage {
 
 private fun RemoteTimelineItem.toFileChangeMessages(): List<TimelineMessage> {
     val changes = content.records("changes")
-    if (changes.isEmpty()) return listOf(toFileChangeMessage(JSONObject(), 0))
-    return changes.mapIndexed { index, change -> toFileChangeMessage(change, index) }
-}
-
-private fun RemoteTimelineItem.toFileChangeMessage(change: JSONObject, index: Int): TimelineMessage {
-    val targetPath = change.firstText("path", "filePath", "file", "uri").orEmpty()
-    val filename = targetPath.substringAfterLast('/').ifBlank { targetPath.ifBlank { "files" } }
-    val verb = change.fileChangeVerb()
-    return TimelineMessage(
-        id = if (index == 0) id else "$id:$index",
-        sourceItemId = id,
-        author = MessageAuthor.Tool,
-        text = "$verb $filename",
-        status = status,
-        type = type,
-        kind = TimelineMessageKind.FileChange,
-        title = verb,
-        subtitle = filename,
-        badge = status.statusLabel(),
-        detail = targetPath,
-        body = change.text("diff").orEmpty(),
-        orderSeq = orderSeq,
-        revision = revision,
-        updatedSeq = updatedSeq,
-        clientMessageId = source.text("clientMessageId"),
+    val projectedChanges = (changes.ifEmpty { listOf(JSONObject()) }).map { change ->
+        TimelineFileChange(
+            action = change.fileChangeAction(),
+            path = change.firstText("path", "filePath", "file", "uri").orEmpty(),
+            diff = change.text("diff").orEmpty(),
+        )
+    }
+    val first = projectedChanges.first()
+    val filename = first.path.substringAfterLast('/').ifBlank { first.path.ifBlank { "files" } }
+    return listOf(
+        TimelineMessage(
+            id = id,
+            sourceItemId = id,
+            author = MessageAuthor.Tool,
+            text = "${first.action} $filename",
+            status = status,
+            type = type,
+            kind = TimelineMessageKind.FileChange,
+            title = first.action,
+            subtitle = filename,
+            contentKind = "file_change",
+            badge = status.statusLabel(),
+            detail = first.path,
+            body = first.diff,
+            fileChanges = projectedChanges,
+            rawContent = content.toString(2),
+            orderSeq = orderSeq,
+            revision = revision,
+            updatedSeq = updatedSeq,
+            clientMessageId = source.text("clientMessageId"),
+        ),
     )
 }
 
@@ -341,9 +375,14 @@ private fun RemoteTimelineItem.toToolCallMessage(title: String, subtitle: String
         kind = TimelineMessageKind.ToolCall,
         title = name,
         subtitle = subtitle,
+        contentKind = content.text("kind").orEmpty(),
         badge = status.statusLabel(),
         detail = inputSummary,
         body = listOf(outputSummary, errorSummary).filter(String::isNotBlank).joinToString("\n"),
+        input = inputSummary,
+        output = outputSummary,
+        toolError = errorSummary,
+        rawContent = content.toString(2),
         orderSeq = orderSeq,
         revision = revision,
         updatedSeq = updatedSeq,
@@ -412,14 +451,14 @@ private fun JSONObject.firstText(vararg names: String): String? {
     return names.firstNotNullOfOrNull { name -> text(name) }
 }
 
-private fun JSONObject.fileChangeVerb(): String {
+private fun JSONObject.fileChangeAction(): String {
     val kind = optJSONObject("kind")
     val type = kind?.text("type") ?: text("action")
     return when (type) {
-        "add" -> "Added"
-        "delete" -> "Deleted"
-        "update" -> if (kind?.text("move_path") != null) "Renamed" else "Edited"
-        else -> "Changed"
+        "add" -> "add"
+        "delete" -> "delete"
+        "update" -> if (kind?.text("move_path") != null) "rename" else "update"
+        else -> "change"
     }
 }
 

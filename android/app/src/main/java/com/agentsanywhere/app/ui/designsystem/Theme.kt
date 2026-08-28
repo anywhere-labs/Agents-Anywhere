@@ -29,6 +29,7 @@ object AAColor {
 }
 
 data class AgentsAnywhereColors(
+    val isDark: Boolean,
     val canvas: Color,
     val ink: Color,
     val inkSoft: Color,
@@ -54,9 +55,21 @@ data class AgentsAnywhereColors(
     val runtimeSwitchUncheckedTrack: Color,
     val runtimeSwitchCheckedThumb: Color,
     val runtimeSwitchUncheckedThumb: Color,
+    val sessionStatusAccent: Color,
+    val sessionStatusAccentText: Color,
+    val noticeWarning: Color,
+    val noticeSuccess: Color,
+    val sessionMessageBubble: Color,
+    val sessionMessageText: Color,
+    val sessionTimelineActivitySurface: Color,
+    val sessionCodeSurface: Color,
+    val sessionStatusNeutralSurface: Color,
+    val sessionStatusNeutralText: Color,
+    val appShadow: Color,
 )
 
 private val LightAgentsAnywhereColors = AgentsAnywhereColors(
+    isDark = false,
     canvas = Color(0xFFFDFCFB),
     ink = Color(0xFF0A0A0B),
     inkSoft = Color(0xFF2B2B2B),
@@ -82,9 +95,21 @@ private val LightAgentsAnywhereColors = AgentsAnywhereColors(
     runtimeSwitchUncheckedTrack = Color(0xFFE5E5E5),
     runtimeSwitchCheckedThumb = Color.White,
     runtimeSwitchUncheckedThumb = Color.White,
+    sessionStatusAccent = Color(0xFF22C55E),
+    sessionStatusAccentText = Color(0xFF15803D),
+    noticeWarning = Color(0xFFD97706),
+    noticeSuccess = Color(0xFF16A34A),
+    sessionMessageBubble = Color(0xFFF1F0ED),
+    sessionMessageText = Color(0xFF242522),
+    sessionTimelineActivitySurface = Color(0x14F1F0ED),
+    sessionCodeSurface = Color(0xB8FFFFFF),
+    sessionStatusNeutralSurface = Color(0xFFE4E2DD),
+    sessionStatusNeutralText = Color(0xFF6F6E69),
+    appShadow = Color(0x22000000),
 )
 
 private val DarkAgentsAnywhereColors = AgentsAnywhereColors(
+    isDark = true,
     canvas = Color(0xFF09090B),
     ink = Color(0xFFFAFAFA),
     inkSoft = Color(0xFFE4E4E7),
@@ -110,6 +135,17 @@ private val DarkAgentsAnywhereColors = AgentsAnywhereColors(
     runtimeSwitchUncheckedTrack = Color(0x26FFFFFF),
     runtimeSwitchCheckedThumb = Color(0xFF171717),
     runtimeSwitchUncheckedThumb = Color(0xFFFAFAFA),
+    sessionStatusAccent = Color(0xFF22C55E),
+    sessionStatusAccentText = Color(0xFF4ADE80),
+    noticeWarning = Color(0xFFF59E0B),
+    noticeSuccess = Color(0xFF22C55E),
+    sessionMessageBubble = Color(0xFF2A2A2D),
+    sessionMessageText = Color(0xFFF4F4F5),
+    sessionTimelineActivitySurface = Color(0x1018181B),
+    sessionCodeSurface = Color(0xFF111113),
+    sessionStatusNeutralSurface = Color(0xFF27272A),
+    sessionStatusNeutralText = Color(0xFFD4D4D8),
+    appShadow = Color(0x52000000),
 )
 
 val LocalAAColors = staticCompositionLocalOf { LightAgentsAnywhereColors }
