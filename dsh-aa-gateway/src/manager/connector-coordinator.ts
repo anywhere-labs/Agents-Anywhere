@@ -410,7 +410,11 @@ export class ConnectorCoordinator extends EventEmitter implements ConnectorHostA
     this.currentUserToken = null
     this.oauthClient.cancel()
     await this.clearCredentials()
+    await this.stop()
     this.updateSnapshot({
+      runtime: 'stopped',
+      connection: 'disconnected',
+      device: null,
       account: null,
       oauth: { ...INITIAL_OAUTH, serverUrl: this.snapshot.oauth.serverUrl },
     })
@@ -472,21 +476,29 @@ export class ConnectorCoordinator extends EventEmitter implements ConnectorHostA
         // ignore
       }
     }
+    if (existsSync(this.configPath)) {
+      try {
+        unlinkSync(this.configPath)
+      } catch {
+        // ignore
+      }
+    }
     if (this.client !== null) {
       try {
         await this.client.send('connector.clearCredentials', undefined)
-      } catch (error) {
-        return { ok: false, error: errorMessage(error) }
-      }
-    } else {
-      // No live RPC process — delete the persisted credential file directly.
-      try {
-        if (existsSync(this.configPath)) unlinkSync(this.configPath)
-      } catch (error) {
-        return { ok: false, error: errorMessage(error) }
+      } catch {
+        // ignore
       }
     }
-    this.updateSnapshot({ device: null, account: null, pairing: { ...INITIAL_PAIRING, serverUrl: this.snapshot.pairing.serverUrl } })
+    await this.stop()
+    this.updateSnapshot({
+      runtime: 'stopped',
+      connection: 'disconnected',
+      device: null,
+      account: null,
+      pairing: { ...INITIAL_PAIRING, serverUrl: this.snapshot.pairing.serverUrl },
+      oauth: { ...INITIAL_OAUTH, serverUrl: this.snapshot.oauth.serverUrl },
+    })
     return { ok: true }
   }
 
