@@ -1,5 +1,5 @@
 import type { CSSProperties } from 'react'
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 import { Button, Card, KeyValueRow, StatusPill, codeSurface } from './Card.js'
 import { OnboardingWizard } from './OnboardingWizard.js'
@@ -11,8 +11,6 @@ import type {
 } from '../stores/connector-store.js'
 
 const LOCALE_NS = 'dsh-aa-gateway'
-const ONBOARDING_COMPLETED_KEY = 'dsh-aa-gateway:onboarding-completed'
-const LEGACY_ONBOARDING_COMPLETED_KEY = 'dsh-aa-connector:onboarding-completed'
 
 type MetricTone = 'default' | 'success' | 'error'
 
@@ -29,46 +27,18 @@ interface OverviewCardProps {
  */
 export function OverviewCard({ state, actions, t }: OverviewCardProps): JSX.Element {
   const [showWizard, setShowWizard] = useState(false)
-  const [onboardingDone, setOnboardingDone] = useState(() => {
-    if (typeof window === 'undefined') return false
-    try {
-      const current = localStorage.getItem(ONBOARDING_COMPLETED_KEY)
-      if (current !== null) return current === 'true'
-      return localStorage.getItem(LEGACY_ONBOARDING_COMPLETED_KEY) === 'true'
-    } catch {
-      return false
-    }
-  })
 
-  // If user logs out, reset onboarding status so next login runs onboarding
-  useEffect(() => {
-    if (!state.account && !state.device) {
-      setOnboardingDone(false)
-      try {
-        localStorage.removeItem(ONBOARDING_COMPLETED_KEY)
-        localStorage.removeItem(LEGACY_ONBOARDING_COMPLETED_KEY)
-      } catch {
-        // ignore
-      }
-    }
-  }, [state.account, state.device])
+  const isAlreadyLoggedIn = Boolean(state.account || state.device)
 
   const handleFinishOnboarding = () => {
-    setOnboardingDone(true)
     setShowWizard(false)
-    try {
-      localStorage.setItem(ONBOARDING_COMPLETED_KEY, 'true')
-      localStorage.removeItem(LEGACY_ONBOARDING_COMPLETED_KEY)
-    } catch {
-      // ignore
-    }
   }
 
-  const isPaired = onboardingDone
   const runtimeTone = runtimeToneOf(state.runtime, state.connection)
   const credentialTone = credentialToneOf(state)
 
-  if (!isPaired || showWizard) {
+  // Show wizard only when user is NOT logged in or explicitly clicked to open the wizard
+  if (!isAlreadyLoggedIn || showWizard) {
     return (
       <OnboardingWizard
         state={state}
