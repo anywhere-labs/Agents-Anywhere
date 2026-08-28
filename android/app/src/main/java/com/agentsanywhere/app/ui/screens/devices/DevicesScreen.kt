@@ -56,7 +56,6 @@ import com.agentsanywhere.app.R
 import com.agentsanywhere.app.feature.devices.DeviceAgentPreviews
 import com.agentsanywhere.app.feature.devices.DeviceAgentPreviewState
 import com.agentsanywhere.app.feature.devices.DeviceRuntimeList
-import com.agentsanywhere.app.feature.devices.DeviceSetupCredential
 import com.agentsanywhere.app.feature.devices.onlineAgentCount
 import com.agentsanywhere.app.feature.sessions.SessionsState
 import com.agentsanywhere.app.model.AgentDevice
@@ -80,9 +79,7 @@ fun DevicesScreen(
     onOpenDevice: (AgentDevice) -> Unit,
     onBack: (() -> Unit)? = null,
     agentPreviews: DeviceAgentPreviews,
-    onCreateDeviceSetup: suspend (String) -> Result<DeviceSetupCredential>,
-    onDeviceCredentialCreated: (DeviceSetupCredential) -> Unit,
-    onClaimDevicePairCode: suspend (DeviceSetupCredential, String) -> Result<AgentDevice>,
+    onAddDevice: () -> Unit,
 ) {
     val colors = LocalAAColors.current
     val darkMode = colors.canvas == Color(0xFF09090B)
@@ -90,8 +87,6 @@ fun DevicesScreen(
     val refreshState = rememberPullToRefreshState()
     val refreshIndicatorContainer = if (darkMode) Color(0xFF27272A) else Color(0xFFF2F2F2)
     val refreshIndicatorColor = if (darkMode) Color(0xFFE4E4E7) else Color(0xFF8E8E93)
-    var setupSheetOpen by remember { mutableStateOf(false) }
-
     if (onBack != null) {
         BackHandler(onBack = onBack)
     }
@@ -140,9 +135,7 @@ fun DevicesScreen(
                         item("add-device") {
                             AddDeviceRow(
                                 darkMode = darkMode,
-                                onClick = {
-                                    setupSheetOpen = true
-                                },
+                                onClick = onAddDevice,
                             )
                         }
                         if (devices.isEmpty()) {
@@ -165,14 +158,6 @@ fun DevicesScreen(
         }
     }
 
-    PairNewDeviceSheetHost(
-        open = setupSheetOpen,
-        devices = state.devices,
-        onDismiss = { setupSheetOpen = false },
-        onCreateDeviceSetup = onCreateDeviceSetup,
-        onDeviceCredentialCreated = onDeviceCredentialCreated,
-        onClaimDevicePairCode = onClaimDevicePairCode,
-    )
 }
 
 @Composable

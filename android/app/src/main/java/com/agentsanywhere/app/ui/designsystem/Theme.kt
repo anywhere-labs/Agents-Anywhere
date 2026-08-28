@@ -46,6 +46,14 @@ data class AgentsAnywhereColors(
     val errorBorder: Color,
     val errorText: Color,
     val errorIcon: Color,
+    val runtimeRunning: Color,
+    val runtimeTransitioning: Color,
+    val runtimeActive: Color,
+    val runtimeInactive: Color,
+    val runtimeSwitchCheckedTrack: Color,
+    val runtimeSwitchUncheckedTrack: Color,
+    val runtimeSwitchCheckedThumb: Color,
+    val runtimeSwitchUncheckedThumb: Color,
 )
 
 private val LightAgentsAnywhereColors = AgentsAnywhereColors(
@@ -66,6 +74,14 @@ private val LightAgentsAnywhereColors = AgentsAnywhereColors(
     errorBorder = Color(0xFFF4C7C7),
     errorText = Color(0xFFB42318),
     errorIcon = Color(0xFFB42318),
+    runtimeRunning = Color(0xFF10B981),
+    runtimeTransitioning = Color(0xFF3B82F6),
+    runtimeActive = Color(0xFFF59E0B),
+    runtimeInactive = Color(0x66777777),
+    runtimeSwitchCheckedTrack = Color(0xFF171717),
+    runtimeSwitchUncheckedTrack = Color(0xFFE5E5E5),
+    runtimeSwitchCheckedThumb = Color.White,
+    runtimeSwitchUncheckedThumb = Color.White,
 )
 
 private val DarkAgentsAnywhereColors = AgentsAnywhereColors(
@@ -86,6 +102,14 @@ private val DarkAgentsAnywhereColors = AgentsAnywhereColors(
     errorBorder = Color(0xFF5F2429),
     errorText = Color(0xFFFCA5A5),
     errorIcon = Color(0xFFF97066),
+    runtimeRunning = Color(0xFF10B981),
+    runtimeTransitioning = Color(0xFF3B82F6),
+    runtimeActive = Color(0xFFF59E0B),
+    runtimeInactive = Color(0x66A1A1AA),
+    runtimeSwitchCheckedTrack = Color(0xFFE5E5E5),
+    runtimeSwitchUncheckedTrack = Color(0x26FFFFFF),
+    runtimeSwitchCheckedThumb = Color(0xFF171717),
+    runtimeSwitchUncheckedThumb = Color(0xFFFAFAFA),
 )
 
 val LocalAAColors = staticCompositionLocalOf { LightAgentsAnywhereColors }
