@@ -39,6 +39,10 @@ class EventRecoveryRepository(SessionCapabilityRepository, Protocol):
 
     async def get_timeline_reset_seq(self, session_id: str) -> int: ...
 
+    async def get_message_queue_updated_seq(self, session_id: str) -> int: ...
+
+    async def list_session_message_queue(self, session_id: str) -> list: ...
+
 
 class EventRecoveryService:
     def __init__(
@@ -84,6 +88,9 @@ class EventRecoveryService:
                     max(start_sequence, timeline_reset_sequence)
                 )
             session = await self._store.get_session(session_id, user_id=user_id)
+            message_queue_updated_seq = await self._store.get_message_queue_updated_seq(
+                session_id
+            )
             session, _runtime_capabilities, effective_capabilities = (
                 await project_session_capabilities(
                     self._store,
@@ -126,6 +133,20 @@ class EventRecoveryService:
                     sequence=session.updatedSeq,
                     event_type="runtime.capability.updated",
                     payload={"capabilitySet": effective_capabilities.model_dump(mode="json")},
+                )
+            )
+        if message_queue_updated_seq > after_sequence:
+            queued_messages = await self._store.list_session_message_queue(session_id)
+            events.append(
+                protocol_event(
+                    session_id,
+                    sequence=message_queue_updated_seq,
+                    event_type="session.message_queue.updated",
+                    payload={
+                        "items": [
+                            item.model_dump(mode="json") for item in queued_messages
+                        ]
+                    },
                 )
             )
         events.sort(key=lambda event: (event.sequence, event.eventId))

@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import binascii
 import hashlib
+import secrets
 from dataclasses import dataclass
 from typing import Any
 
@@ -22,6 +23,7 @@ from agent_server.core.models import (
     SessionCreateAndStartRequest,
     SessionCreateRequest,
     SessionRuntimeState,
+    SessionQueuedMessage,
     SessionSelectionPatchRequest,
     SessionStatus,
     SessionSteerRequest,
@@ -88,6 +90,8 @@ SESSION_SOURCE_ERROR_CODES = {
     "deleted": "session_deleted",
     "missing": "session_missing",
 }
+
+STARTABLE_TURN_STATUSES = {"idle", "error"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -328,17 +332,88 @@ class SessionRunService:
             raise SessionRunConflictError("session is read-only until takeover is enabled")
         if not await self._manager.is_online(session.connectorId):
             raise SessionRunConflictError("connector is offline")
-        await self._require_session_capability(
+        await self._require_session_capability_supported(
             session,
             SESSION_SEND_MESSAGE,
             user_id=user_id,
         )
         await self._ensure_session_runtime_running(session, user_id=user_id)
         runtime_status = await self._read_runtime_status(session)
-        if runtime_status not in {"idle", "error"}:
-            raise SessionRunConflictError(f"session is {runtime_status}")
+        active_run = await self._store.get_active_run(session_id)
+        pending_queue = await self._store.list_session_message_queue(session_id)
+        if payload.attachments:
+            await self._require_session_capability_supported(
+                session,
+                RUNTIME_ATTACHMENT,
+                user_id=user_id,
+            )
+            # Resolve every reference before accepting a durable queue item.
+            await self._attachment_payloads(
+                session_id=session_id,
+                user_id=user_id,
+                file_ids=[item.fileId for item in payload.attachments],
+            )
+
+        if (
+            runtime_status not in STARTABLE_TURN_STATUSES
+            or active_run is not None
+            or pending_queue
+        ):
+            queued, _created = await self._store.enqueue_session_message(
+                session_id=session_id,
+                user_id=user_id,
+                client_message_id=(
+                    payload.clientMessageId or f"msg_{secrets.token_urlsafe(16)}"
+                ),
+                content=payload.content,
+                attachments=payload.attachments,
+                selections=payload.selections,
+            )
+            if queued.status == "dispatched":
+                return RpcResponsePayload(
+                    ok=True,
+                    result={"disposition": "dispatched", "duplicate": True},
+                )
+            if runtime_status in STARTABLE_TURN_STATUSES:
+                await self.dispatch_next_queued_message(
+                    session_id,
+                    observed_status=runtime_status,
+                )
+            return RpcResponsePayload(
+                ok=True,
+                result={
+                    "disposition": "queued",
+                    "queueItem": queued.model_dump(mode="json"),
+                },
+            )
+
+        result = await self._dispatch_message(
+            session,
+            payload,
+            user_id=user_id,
+        )
+        connector_result = result if isinstance(result, dict) else {"value": result}
+        return RpcResponsePayload(
+            ok=True,
+            result={"disposition": "dispatched", **connector_result},
+        )
+
+    async def _dispatch_message(
+        self,
+        session: SessionView,
+        payload: MessageCreateRequest,
+        *,
+        user_id: str,
+        queue_message_id: str | None = None,
+    ) -> Any:
+        if payload.selections:
+            await self.update_session_selections(
+                session.id,
+                SessionSelectionPatchRequest(selections=payload.selections),
+                user_id=user_id,
+            )
         params: dict[str, Any] = {
-            "sessionId": session_id,
+            "sessionId": session.id,
             "runtime": session.runtime,
             "runtimeId": _session_runtime_id(session),
             "content": payload.content,
@@ -349,6 +424,8 @@ class SessionRunService:
             params["externalSessionId"] = session.externalSessionId
         if payload.clientMessageId:
             params["clientMessageId"] = payload.clientMessageId
+        if queue_message_id:
+            params["queueMessageId"] = queue_message_id
         if payload.attachments:
             await self._require_session_capability(
                 session,
@@ -356,7 +433,7 @@ class SessionRunService:
                 user_id=user_id,
             )
             attachment_payloads = await self._attachment_payloads(
-                session_id=session_id,
+                session_id=session.id,
                 user_id=user_id,
                 file_ids=[a.fileId for a in payload.attachments],
             )
@@ -364,7 +441,7 @@ class SessionRunService:
             params["timelineAttachments"] = [_timeline_attachment_payload(item) for item in attachment_payloads]
 
         await self._store.start_active_run(
-            session_id=session_id,
+            session_id=session.id,
             runtime=session.runtime,
             runtime_id=_session_runtime_id(session),
             external_session_id=session.externalSessionId,
@@ -377,13 +454,13 @@ class SessionRunService:
                 params,
             )
         except ConnectorOfflineError as exc:
-            await self._store.clear_active_run(session_id)
+            await self._store.clear_active_run(session.id)
             raise SessionRunConflictError(str(exc)) from exc
         except ConnectorRpcError as exc:
-            await self._store.clear_active_run(session_id)
+            await self._store.clear_active_run(session.id)
             raise SessionRunUpstreamError(exc.message or exc.code) from exc
         if isinstance(result, dict) and result.get("ok") is False:
-            await self._store.clear_active_run(session_id)
+            await self._store.clear_active_run(session.id)
             await self._persist_operation_source_state(session, result)
             code = result.get("code")
             message = result.get("message")
@@ -397,7 +474,152 @@ class SessionRunService:
                     ),
                 }
             )
-        return RpcResponsePayload(ok=True, result=result)
+        return result
+
+    async def dispatch_next_queued_message(
+        self,
+        session_id: str,
+        *,
+        observed_status: SessionStatus | None = None,
+    ) -> bool:
+        try:
+            session = await self._store.get_session(session_id)
+        except KeyError:
+            return False
+        if session.archived or not session.takeover:
+            return False
+        if not await self._manager.is_online(session.connectorId):
+            return False
+        if await self._store.get_active_run(session_id) is not None:
+            return False
+        if observed_status is None:
+            try:
+                runtime_status = await self._read_runtime_status(session)
+            except SessionRunError:
+                return False
+        else:
+            runtime_status = observed_status
+        if runtime_status not in STARTABLE_TURN_STATUSES:
+            return False
+
+        queued = await self._store.claim_next_session_queue_message(session_id)
+        if queued is None:
+            return False
+        connector = await self._store.get_connector(session.connectorId)
+        payload = MessageCreateRequest(
+            content=queued.content,
+            attachments=queued.attachments,
+            selections=queued.selections,
+            clientMessageId=queued.clientMessageId,
+        )
+        try:
+            await self._dispatch_message(
+                session,
+                payload,
+                user_id=connector.userId,
+                queue_message_id=queued.id,
+            )
+        except SessionRunConflictError as exc:
+            await self._store.fail_session_queue_message(
+                session_id,
+                queued.id,
+                _queue_error(exc),
+                retryable=True,
+            )
+        except SessionRunError as exc:
+            await self._store.fail_session_queue_message(
+                session_id,
+                queued.id,
+                _queue_error(exc),
+                retryable=False,
+            )
+        else:
+            await self._store.complete_session_queue_message(session_id, queued.id)
+        return True
+
+    async def cancel_queued_message(
+        self,
+        session_id: str,
+        message_id: str,
+        *,
+        user_id: str,
+    ) -> SessionQueuedMessage:
+        await self._owned_session(session_id, user_id=user_id)
+        try:
+            return await self._store.cancel_session_queue_message(session_id, message_id)
+        except KeyError:
+            raise SessionRunNotFoundError("queued message not found") from None
+
+    async def promote_queued_message(
+        self,
+        session_id: str,
+        message_id: str,
+        *,
+        user_id: str,
+    ) -> SessionQueuedMessage:
+        await self._owned_session(session_id, user_id=user_id)
+        try:
+            return await self._store.promote_session_queue_message(session_id, message_id)
+        except KeyError:
+            raise SessionRunNotFoundError("queued message not found") from None
+
+    async def retry_queued_message(
+        self,
+        session_id: str,
+        message_id: str,
+        *,
+        user_id: str,
+    ) -> SessionQueuedMessage:
+        await self._owned_session(session_id, user_id=user_id)
+        try:
+            queued = await self._store.retry_session_queue_message(session_id, message_id)
+        except KeyError:
+            raise SessionRunNotFoundError("queued message not found") from None
+        await self.dispatch_next_queued_message(session_id)
+        return queued
+
+    async def steer_queued_message(
+        self,
+        session_id: str,
+        message_id: str,
+        *,
+        user_id: str,
+    ) -> RpcResponsePayload:
+        session = await self._owned_session(session_id, user_id=user_id)
+        await self._validate_steer_session(session, user_id=user_id)
+        try:
+            queued = await self._store.claim_specific_session_queue_message(
+                session_id,
+                message_id,
+            )
+        except KeyError:
+            raise SessionRunConflictError("queued message is no longer available") from None
+        payload = SessionSteerRequest(
+            content=queued.content,
+            attachments=queued.attachments,
+            clientMessageId=queued.clientMessageId,
+        )
+        try:
+            result = await self._steer_message(session, payload, user_id=user_id)
+        except SessionRunError as exc:
+            await self._store.fail_session_queue_message(
+                session_id,
+                queued.id,
+                _queue_error(exc),
+                retryable=True,
+            )
+            raise
+        await self._store.complete_session_queue_message(session_id, queued.id)
+        return RpcResponsePayload(
+            ok=True,
+            result={"disposition": "steered", "connectorResult": result},
+        )
+
+    async def _owned_session(self, session_id: str, *, user_id: str) -> SessionView:
+        try:
+            return await self._store.get_session(session_id, user_id=user_id)
+        except KeyError:
+            raise SessionRunNotFoundError("session not found") from None
 
     async def _persist_operation_source_state(
         self,
@@ -546,6 +768,16 @@ class SessionRunService:
             session = await self._store.get_session(session_id, user_id=user_id)
         except KeyError:
             raise SessionRunNotFoundError("session not found") from None
+        await self._validate_steer_session(session, user_id=user_id)
+        result = await self._steer_message(session, payload, user_id=user_id)
+        return RpcResponsePayload(ok=True, result=result)
+
+    async def _validate_steer_session(
+        self,
+        session: SessionView,
+        *,
+        user_id: str,
+    ) -> None:
         if not session.takeover:
             raise SessionRunConflictError(
                 "session is read-only until takeover is enabled"
@@ -562,8 +794,15 @@ class SessionRunService:
         if runtime_status != "running":
             raise SessionRunConflictError("session is not running")
 
+    async def _steer_message(
+        self,
+        session: SessionView,
+        payload: SessionSteerRequest,
+        *,
+        user_id: str,
+    ) -> Any:
         params: dict[str, Any] = {
-            "sessionId": session_id,
+            "sessionId": session.id,
             "runtime": session.runtime,
             "runtimeId": _session_runtime_id(session),
             "content": payload.content,
@@ -582,7 +821,7 @@ class SessionRunService:
                 user_id=user_id,
             )
             attachment_payloads = await self._attachment_payloads(
-                session_id=session_id,
+                session_id=session.id,
                 user_id=user_id,
                 file_ids=[attachment.fileId for attachment in payload.attachments],
             )
@@ -601,7 +840,7 @@ class SessionRunService:
             raise SessionRunConflictError(str(exc)) from exc
         except ConnectorRpcError as exc:
             raise SessionRunUpstreamError(exc.message or exc.code) from exc
-        return RpcResponsePayload(ok=True, result=result)
+        return result
 
     async def _require_runtime_capability(
         self,
@@ -677,6 +916,37 @@ class SessionRunService:
         if capability is None or not (
             capability.supported and capability.available and capability.allowed
         ):
+            raise SessionRunConflictError(
+                f"session capability is unavailable: {capability_id}"
+            )
+
+    async def _require_session_capability_supported(
+        self,
+        session: SessionView,
+        capability_id: str,
+        *,
+        user_id: str,
+    ) -> None:
+        capability_set = ProtocolCapabilitySet.model_validate(
+            await self._store.get_protocol_capabilities(
+                session.connectorId,
+                user_id=user_id,
+            )
+        )
+        online_session = session.model_copy(update={"connectorStatus": "online"})
+        effective = derive_session_effective_capabilities(
+            session=online_session,
+            runtime_capabilities=capability_set,
+        )
+        capability = next(
+            (
+                item
+                for item in effective.capabilities
+                if item.capabilityId == capability_id
+            ),
+            None,
+        )
+        if capability is None or not (capability.supported and capability.allowed):
             raise SessionRunConflictError(
                 f"session capability is unavailable: {capability_id}"
             )
@@ -857,6 +1127,21 @@ def _session_source_error_detail(session: SessionView) -> dict[str, str]:
     else:
         message = f"session is {availability} in the local runtime"
     return {"code": code, "message": message}
+
+
+def _queue_error(exc: SessionRunError) -> dict[str, str]:
+    detail = exc.detail
+    if isinstance(detail, dict):
+        code = detail.get("code")
+        message = detail.get("message")
+        return {
+            "code": code if isinstance(code, str) else "queue_dispatch_failed",
+            "message": message if isinstance(message, str) else str(detail),
+        }
+    return {
+        "code": "queue_dispatch_failed",
+        "message": str(detail),
+    }
 
 
 def _selections_from_mapping(value: dict[str, str | None]) -> dict[str, str]:

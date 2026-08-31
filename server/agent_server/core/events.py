@@ -118,6 +118,19 @@ def events_from_invalidation(payload: dict[str, Any]) -> list[ProtocolEventEnvel
                 )
             )
 
+    message_queue = payload.get("messageQueue")
+    if isinstance(message_queue, list):
+        sequence = int(payload.get("messageQueueUpdatedSeq") or next_sequence or 0)
+        if sequence > 0:
+            events.append(
+                protocol_event(
+                    session_id,
+                    sequence=sequence,
+                    event_type="session.message_queue.updated",
+                    payload={"items": message_queue},
+                )
+            )
+
     session = payload.get("session")
     if isinstance(session, dict):
         sequence = int(session.get("updatedSeq") or next_sequence or 0)

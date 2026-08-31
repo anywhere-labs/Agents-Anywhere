@@ -7,6 +7,7 @@ from agent_server.core.device_runtime import RuntimeInventoryItem, RuntimeTypeDe
 from agent_server.core.models import (
     ConnectorView,
     SessionRuntimeState,
+    SessionQueuedMessage,
     SessionStatus,
     SessionView,
     TimelineItem,
@@ -25,6 +26,69 @@ class SessionLookupRepository(Protocol):
         *,
         user_id: str | None = None,
     ) -> SessionView: ...
+
+
+class SessionMessageQueueRepository(Protocol):
+    async def enqueue_session_message(self, **values: Any) -> tuple[SessionQueuedMessage, bool]: ...
+
+    async def list_session_message_queue(
+        self,
+        session_id: str,
+    ) -> list[SessionQueuedMessage]: ...
+
+    async def get_session_queue_message(
+        self,
+        session_id: str,
+        message_id: str,
+    ) -> SessionQueuedMessage: ...
+
+    async def get_message_queue_updated_seq(self, session_id: str) -> int: ...
+
+    async def cancel_session_queue_message(
+        self,
+        session_id: str,
+        message_id: str,
+    ) -> SessionQueuedMessage: ...
+
+    async def retry_session_queue_message(
+        self,
+        session_id: str,
+        message_id: str,
+    ) -> SessionQueuedMessage: ...
+
+    async def promote_session_queue_message(
+        self,
+        session_id: str,
+        message_id: str,
+    ) -> SessionQueuedMessage: ...
+
+    async def claim_next_session_queue_message(
+        self,
+        session_id: str,
+    ) -> SessionQueuedMessage | None: ...
+
+    async def claim_specific_session_queue_message(
+        self,
+        session_id: str,
+        message_id: str,
+    ) -> SessionQueuedMessage: ...
+
+    async def complete_session_queue_message(
+        self,
+        session_id: str,
+        message_id: str,
+    ) -> SessionQueuedMessage: ...
+
+    async def fail_session_queue_message(
+        self,
+        session_id: str,
+        message_id: str,
+        error: dict[str, Any],
+        *,
+        retryable: bool,
+    ) -> SessionQueuedMessage: ...
+
+    async def list_sessions_with_queued_messages(self) -> list[str]: ...
 
 
 class DashboardEventRepository(SessionLookupRepository, Protocol):
@@ -113,7 +177,11 @@ class InteractionResolutionRepository(
     pass
 
 
-class ConnectorIngestRepository(DashboardEventRepository, Protocol):
+class ConnectorIngestRepository(
+    DashboardEventRepository,
+    SessionMessageQueueRepository,
+    Protocol,
+):
     async def record_connector_activity(self, connector_id: str) -> None: ...
 
     async def get_protocol_capabilities(
@@ -371,6 +439,7 @@ class DeviceRuntimeRepository(
 class SessionRunRepository(
     CatalogRepository,
     DashboardEventRepository,
+    SessionMessageQueueRepository,
     SessionStateRepository,
     TimelineEffectRepository,
     Protocol,

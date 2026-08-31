@@ -4495,7 +4495,7 @@ def test_send_message_starts_new_turn_from_error_state(tmp_path):
     assert params["content"] == "try again"
 
 
-def test_send_message_rejects_running_state(tmp_path):
+def test_send_message_queues_while_session_is_running(tmp_path):
     client = make_client(tmp_path)
     connector_id, _, session_id, headers = create_connector_and_session(client)
     fake_rpc = FakeLocalRpc()
@@ -4514,12 +4514,83 @@ def test_send_message_rejects_running_state(tmp_path):
     response = client.post(
         f"/sessions/{session_id}/runtime/messages",
         headers=headers,
-        json={"content": "should be rejected"},
+        json={"content": "send this next", "clientMessageId": "opt_queued"},
     )
 
-    assert response.status_code == 409, response.text
-    assert response.json()["detail"] == "session is running"
+    assert response.status_code == 200, response.text
+    result = response.json()["result"]
+    assert result["disposition"] == "queued"
+    assert result["queueItem"]["clientMessageId"] == "opt_queued"
+    assert result["queueItem"]["content"] == "send this next"
+    assert result["queueItem"]["status"] == "queued"
     assert not any(method == "session.send_message" for _, method, _, _ in fake_rpc.requests)
+
+    duplicate = client.post(
+        f"/sessions/{session_id}/runtime/messages",
+        headers=headers,
+        json={"content": "send this next", "clientMessageId": "opt_queued"},
+    )
+    assert duplicate.status_code == 200, duplicate.text
+    assert duplicate.json()["result"]["queueItem"]["id"] == result["queueItem"]["id"]
+
+    snapshot = client.get(f"/sessions/{session_id}/snapshot", headers=headers)
+    assert snapshot.status_code == 200, snapshot.text
+    assert [item["content"] for item in snapshot.json()["messageQueue"]] == [
+        "send this next"
+    ]
+
+
+def test_queued_message_dispatches_after_session_becomes_idle(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, access_token, session_id, headers = create_connector_and_session(client)
+    fake_rpc = FakeLocalRpc()
+    fake_rpc.runtime_states[session_id] = {
+        "sessionId": session_id,
+        "runtime": "codex",
+        "externalSessionId": f"thr_{connector_id}_demo",
+        "status": "running",
+        "selections": {},
+        "metadata": {"source": "test.turn.running"},
+    }
+    client.app.state.rpc = fake_rpc
+    asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
+    client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
+
+    queued = client.post(
+        f"/sessions/{session_id}/runtime/messages",
+        headers=headers,
+        json={"content": "run after idle", "clientMessageId": "opt_after_idle"},
+    )
+    assert queued.status_code == 200, queued.text
+    assert queued.json()["result"]["disposition"] == "queued"
+
+    idle = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={
+            "notifications": [
+                {
+                    "method": "session.state.updated",
+                    "params": {
+                        "sessionId": session_id,
+                        "runtime": "codex",
+                        "runtimeId": "codex",
+                        "externalSessionId": f"thr_{connector_id}_demo",
+                        "status": "idle",
+                    },
+                }
+            ]
+        },
+    )
+    assert idle.status_code == 200, idle.text
+
+    params = wait_for_rpc_method(fake_rpc, "session.send_message")[2]
+    assert params["content"] == "run after idle"
+    assert params["clientMessageId"] == "opt_after_idle"
+    assert params["queueMessageId"].startswith("qmsg_")
+    snapshot = client.get(f"/sessions/{session_id}/snapshot", headers=headers)
+    assert snapshot.status_code == 200, snapshot.text
+    assert snapshot.json()["messageQueue"] == []
 
 
 @pytest.mark.skip(reason="legacy persisted notice behavior was removed; notices are runtime-owned live facts")

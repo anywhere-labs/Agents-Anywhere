@@ -12,6 +12,7 @@ from agent_server.core.models import (
     ConnectorStatus,
     NoticeIn,
     RuntimeName,
+    SessionQueuedMessage,
     SessionStatus,
     TimelineItem,
 )
@@ -205,6 +206,7 @@ class ProtocolSessionSnapshotResponse(ProtocolWireModel):
     session: SessionView
     state: SessionRuntimeState | None = None
     timeline: ProtocolTimelineSnapshot
+    messageQueue: list[SessionQueuedMessage] = Field(default_factory=list)
     approvals: list[Approval] = Field(default_factory=list)
     notices: list[NoticeIn] = Field(default_factory=list)
     effectiveCapabilities: ProtocolCapabilitySet

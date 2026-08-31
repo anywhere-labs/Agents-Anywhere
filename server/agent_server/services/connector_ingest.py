@@ -34,6 +34,7 @@ from agent_server.services.repository_ports import ConnectorIngestRepository
 from agent_server.services.session_runtime_state_cache import (
     SessionRuntimeStateCache,
 )
+from agent_server.services.session_run import SessionRunService
 
 INGEST_REJECTION_MESSAGE_MAX_LENGTH = 500
 
@@ -192,11 +193,17 @@ class ConnectorIngestService:
         if notification.method == "runtime.statusChanged":
             await self._apply_runtime_status(connector_id, notification.params)
             return IngestEffect()
-        return await self._notifications.apply(
+        effect = await self._notifications.apply(
             connector_id=connector_id,
             method=notification.method,
             params=notification.params,
         )
+        await self._dispatch_queued_message_after_lifecycle(
+            effect,
+            method=notification.method,
+            params=notification.params,
+        )
+        return effect
 
     async def handle_notification_message(
         self,
@@ -217,6 +224,11 @@ class ConnectorIngestService:
 
         effect = await self._notifications.apply(
             connector_id=connector_id,
+            method=method,
+            params=params,
+        )
+        await self._dispatch_queued_message_after_lifecycle(
+            effect,
             method=method,
             params=params,
         )
@@ -261,6 +273,50 @@ class ConnectorIngestService:
                 reason="runtime.capabilities",
             )
 
+    async def _dispatch_queued_message_after_lifecycle(
+        self,
+        effect: IngestEffect,
+        *,
+        method: str,
+        params: dict[str, Any],
+    ) -> None:
+        if effect.session_id is None or method not in {
+            "session.state.updated",
+            "session.turnEnded",
+        }:
+            return
+        observed_status = params.get("status")
+        if observed_status not in {"idle", "error"}:
+            observed_status = None
+        run_service = SessionRunService(
+            self._store,
+            self._presence,
+            self._device_runtimes,
+        )
+        effect.message_queue_changed = await run_service.dispatch_next_queued_message(
+            effect.session_id,
+            observed_status=observed_status,
+        )
+        if (
+            effect.message_queue_changed
+            and effect.runtime_state is not None
+            and await self._store.get_active_run(effect.session_id) is not None
+        ):
+            effect.runtime_state = {
+                **effect.runtime_state,
+                "status": "waiting",
+                "statusReason": "queued_message_dispatched",
+                "error": None,
+                "metadata": {
+                    **(
+                        effect.runtime_state.get("metadata")
+                        if isinstance(effect.runtime_state.get("metadata"), dict)
+                        else {}
+                    ),
+                    "source": "server.message-queue.dispatch",
+                },
+            }
+
     async def _publish_effects(self, effects: list[IngestEffect]) -> None:
         by_session: dict[str, dict[str, Any]] = {}
         for effect in effects:
@@ -281,6 +337,7 @@ class ConnectorIngestService:
                         "session": False,
                         "notices": [],
                         "catalogs": {},
+                        "message_queue": False,
                         "refetch": False,
                     },
                 )
@@ -308,6 +365,9 @@ class ConnectorIngestService:
                     bucket["session"] = bucket["session"] or effect.session_changed
                     if effect.notices:
                         bucket["notices"].extend(effect.notices)
+                    bucket["message_queue"] = (
+                        bucket["message_queue"] or effect.message_queue_changed
+                    )
                 if effect.catalogs:
                     bucket["catalogs"].update(effect.catalogs)
 
@@ -411,6 +471,14 @@ class ConnectorIngestService:
                 ]
             if bucket["catalogs"]:
                 envelope["catalogs"] = bucket["catalogs"]
+            if bucket["message_queue"]:
+                envelope["messageQueue"] = [
+                    item.model_dump(mode="json")
+                    for item in await self._store.list_session_message_queue(session_id)
+                ]
+                envelope["messageQueueUpdatedSeq"] = (
+                    await self._store.get_message_queue_updated_seq(session_id)
+                )
             if not any(
                 key in envelope
                 for key in (
@@ -422,6 +490,7 @@ class ConnectorIngestService:
                     "capabilitySet",
                     "notices",
                     "catalogs",
+                    "messageQueue",
                 )
             ):
                 continue
