@@ -207,14 +207,20 @@ http://127.0.0.1:5174
 ./local-up.sh
 ```
 
-脚本会用 Docker Compose 启动 PostgreSQL/Redis、执行数据库迁移，并从源码
-启动 FastAPI Server 与 `web-next`。日志位于 `.local-dev/`，PostgreSQL 数据
-保存在 Docker volume 中。需要同时调试 Codex/Claude Connector 时，显式传入
-`--with-connector`；用 `./local-up.sh --help` 查看环境文件、跳过安装和
-Connector 配置选项。Server 和 Web 默认监听 `0.0.0.0`；需要限制监听地址时
-使用 `--listen HOST`，仅传 `--listen` 等价于 `--listen 0.0.0.0`。旧的
-`./dev.sh` 会转发到同一入口。监听全部网络接口时，启动摘要会同时打印局域网
-访问地址；自动探测不适合当前网络环境时可设置 `AGENTS_ANYWHERE_LAN_HOST`。
+脚本会先确认 Docker daemon 正在运行，再清理固定开发端口并用 Docker Compose
+启动 PostgreSQL/Redis、执行数据库迁移，最后从源码启动 FastAPI Server、
+`web-next` 和本机开发控制台。固定地址为 Web `http://127.0.0.1:5174`、Server
+`http://127.0.0.1:8000`、开发控制台 `http://127.0.0.1:8765`；PostgreSQL 和
+Redis 分别使用 `55432`、`56379`。日志位于 `.local-dev/logs/`，PostgreSQL 数据
+保存在 Docker volume 中。
+
+开发控制台可以一键重启后端，也可以粘贴 Web 配对流程复制的凭据来启动或重启
+Connector，并提供可直接打开本地 Web 的地址。启动完成后脚本会自动用系统浏览器
+打开开发控制台；无图形界面的环境会安全跳过，也可设置
+`AGENTS_ANYWHERE_NO_BROWSER=1` 主动关闭自动打开。Connector 默认不随主栈启动；
+需要启动时可在控制台操作，也可传入 `--with-connector`。用 `./local-up.sh --help`
+查看环境文件、跳过安装和 Connector 配置选项；用 `./dev-control.sh down` 停止整套
+本地服务。
 
 ## 首次使用流程
 

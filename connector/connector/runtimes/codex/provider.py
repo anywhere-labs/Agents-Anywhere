@@ -34,7 +34,7 @@ from connector.runtimes.model_gateway import model_gateway_from_config
 
 SdkChecker = Callable[[], dict[str, Any]]
 SdkClientFactory = Callable[[RuntimeConfig], Any]
-CODEX_CONFIG_SCHEMA_REVISION = 5
+CODEX_CONFIG_SCHEMA_REVISION = 6
 
 
 class CodexProvider(RuntimeProvider):
@@ -132,6 +132,7 @@ class CodexProvider(RuntimeProvider):
                 "modelGateway": {"component": "modelGateway"},
                 "environment": {"component": "keyValue"},
                 "customModels": {"component": "customModels"},
+                "requiredForNamedInstance": ["codexHome", "modelGateway"],
             },
             defaults={
                 "useSystemCodex": True,
@@ -233,6 +234,7 @@ class CodexProvider(RuntimeProvider):
         sdk = config.metadata.get("sdk") if isinstance(config.metadata, dict) else None
         if isinstance(sdk, dict) and not sdk.get("available", True):
             raise RuntimeInvalidRequestError("Codex SDK is not available")
+        provider_config.ensure_codex_home(str(config.values["codexHome"]))
         client = self._sdk_client_factory(config)
         return CodexRuntime(
             config=config,

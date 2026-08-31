@@ -1500,7 +1500,7 @@ export function SessionDetail({
                   interactionByTarget={interactionByTarget}
                   resolvingNoticeId={resolvingNoticeId}
                   resolvingActionId={resolvingActionId}
-                  open={timelineGroupOpenByKey[group.key] ?? true}
+                  open={timelineGroupOpenByKey[group.key] ?? false}
                   itemOpenById={timelineItemOpenById}
                   onOpenChange={(open) => handleTimelineGroupOpenChange(group.key, open)}
                   onItemOpenChange={handleTimelineItemOpenChange}

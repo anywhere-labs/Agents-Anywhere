@@ -6,42 +6,37 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SERVER_DIR="${ROOT_DIR}/server"
 WEB_DIR="${ROOT_DIR}/web-next"
 CONNECTOR_DIR="${ROOT_DIR}/connector"
+COMPOSE_FILE="${ROOT_DIR}/docker/docker-compose.local.yml"
+LOCAL_DIR="${ROOT_DIR}/.local-dev"
+CONNECTOR_CONFIG="${LOCAL_DIR}/connector-source.json"
 
 ENV_FILE="${AGENTS_ANYWHERE_ENV_FILE:-${ROOT_DIR}/.env.local}"
 ENV_FILE_EXPLICIT=false
-CONNECTOR_CONFIG_EXPLICIT=false
-LISTEN_HOST_CLI=""
 SKIP_INSTALL=false
 WITH_CONNECTOR=false
-SERVER_RELOAD=false
-SHUTTING_DOWN=false
-DEPENDENCIES_STARTED=false
-
-SERVICE_PIDS=()
-SERVICE_NAMES=()
-OUTPUT_PIDS=()
+CONNECTOR_CONFIG_SOURCE=""
 
 usage() {
   cat <<'EOF'
-Start the local Agents Anywhere source stack.
+Start the complete local Agents Anywhere development stack.
 
 Usage:
   ./local-up.sh [options]
 
 Options:
-  --env-file PATH       Load environment overrides from PATH
-  --listen [HOST]       Bind Server and Web (HOST defaults to 0.0.0.0)
-  --skip-install        Skip uv sync and yarn install
-  --with-connector      Also start the local Connector
-  --connector-config P  Connector config used with --with-connector
-  --reload              Enable uvicorn source reload
-  --no-reload           Disable uvicorn source reload (default)
+  --env-file PATH       Load application environment variables from PATH
+  --skip-install        Reuse the existing Python and Web dependencies
+  --with-connector      Start Connector from the saved local credential
+  --connector-config P  Import a Connector JSON config, then start Connector
   -h, --help            Show this help
 
-The stack starts PostgreSQL and Redis with Docker Compose, then runs the Server
-and Web from source. PostgreSQL data persists in a named volume. An existing
-.env.local is loaded automatically. Connector startup is opt-in because its
-saved config may point at another Server.
+Fixed local ports:
+  Web 5174, Server 8000, PostgreSQL 55432, Redis 56379, Dev Control 8765.
+
+The launcher requires a running Docker daemon. It stops anything listening on
+the fixed ports, starts PostgreSQL and Redis, then starts Server, Web and the
+localhost-only Dev Control page as background services. Connector stays off
+unless --with-connector is supplied or it is started from Dev Control.
 EOF
 }
 
@@ -50,7 +45,9 @@ fail() {
   exit 1
 }
 
-CONNECTOR_CONFIG="${AGENT_CONNECTOR_CONFIG:-${AGENT_CONNECTOR_DATA_DIR:-${HOME}/.agents-anywhere}/connector.json}"
+require_command() {
+  command -v "$1" >/dev/null 2>&1 || fail "missing command: $1"
+}
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -59,15 +56,6 @@ while [[ $# -gt 0 ]]; do
       ENV_FILE="$2"
       ENV_FILE_EXPLICIT=true
       shift 2
-      ;;
-    --listen)
-      LISTEN_HOST_CLI="0.0.0.0"
-      if [[ $# -ge 2 && "$2" != -* ]]; then
-        LISTEN_HOST_CLI="$2"
-        shift 2
-      else
-        shift
-      fi
       ;;
     --skip-install)
       SKIP_INSTALL=true
@@ -79,17 +67,9 @@ while [[ $# -gt 0 ]]; do
       ;;
     --connector-config)
       [[ $# -ge 2 ]] || fail "--connector-config requires a path"
-      CONNECTOR_CONFIG="$2"
-      CONNECTOR_CONFIG_EXPLICIT=true
+      CONNECTOR_CONFIG_SOURCE="$2"
+      WITH_CONNECTOR=true
       shift 2
-      ;;
-    --reload)
-      SERVER_RELOAD=true
-      shift
-      ;;
-    --no-reload)
-      SERVER_RELOAD=false
-      shift
       ;;
     -h|--help)
       usage
@@ -110,326 +90,163 @@ elif [[ "${ENV_FILE_EXPLICIT}" == true ]]; then
   fail "environment file not found: ${ENV_FILE}"
 fi
 
-if [[ "${CONNECTOR_CONFIG_EXPLICIT}" != true ]]; then
-  CONNECTOR_CONFIG="${AGENT_CONNECTOR_CONFIG:-${AGENT_CONNECTOR_DATA_DIR:-${HOME}/.agents-anywhere}/connector.json}"
-fi
+# Local development uses one predictable set of ports. Define these after the
+# env file is loaded so stale overrides are replaced instead of causing a
+# readonly-variable error while sourcing.
+readonly SERVER_PORT=8000
+readonly WEB_PORT=5174
+readonly POSTGRES_PORT=55432
+readonly REDIS_PORT=56379
+readonly CONTROL_PORT=8765
+export AGENTS_ANYWHERE_ENV_FILE="${ENV_FILE}"
 
-LISTEN_HOST="${AGENTS_ANYWHERE_LISTEN_HOST:-0.0.0.0}"
-if [[ -n "${LISTEN_HOST_CLI}" ]]; then
-  LISTEN_HOST="${LISTEN_HOST_CLI}"
-  SERVER_HOST="${LISTEN_HOST}"
-  WEB_HOST="${LISTEN_HOST}"
-fi
-
-SERVER_HOST="${SERVER_HOST:-${LISTEN_HOST}}"
-SERVER_PORT="${SERVER_PORT:-8000}"
-WEB_HOST="${WEB_HOST:-${LISTEN_HOST}}"
-WEB_PORT="${WEB_PORT:-5174}"
-LOCAL_ACCESS_HOST="127.0.0.1"
-LOCAL_DIR="${AGENTS_ANYWHERE_LOCAL_DIR:-${ROOT_DIR}/.local-dev}"
-LOG_DIR="${LOCAL_DIR}/logs"
-AGENT_SERVER_FILES_LOCAL_ROOT="${AGENT_SERVER_FILES_LOCAL_ROOT:-${LOCAL_DIR}/files}"
-POSTGRES_PORT="${AGENTS_ANYWHERE_POSTGRES_PORT:-55432}"
-REDIS_PORT="${AGENTS_ANYWHERE_REDIS_PORT:-56379}"
-COMPOSE_FILE="${ROOT_DIR}/docker/docker-compose.local.yml"
-AGENT_SERVER_DB_URL="postgresql+asyncpg://agents_anywhere:agents_anywhere_dev_password@127.0.0.1:${POSTGRES_PORT}/agents_anywhere"
-AGENT_SERVER_REDIS_URL="redis://127.0.0.1:${REDIS_PORT}/0"
-LOCAL_SERVER_URL="http://${LOCAL_ACCESS_HOST}:${SERVER_PORT}"
-LOCAL_WEB_URL="http://${LOCAL_ACCESS_HOST}:${WEB_PORT}"
-AGENTS_ANYWHERE_API="${AGENTS_ANYWHERE_API:-${LOCAL_SERVER_URL}}"
-SERVER_PUBLIC_ORIGIN="${AGENT_SERVER_PUBLIC_ORIGIN:-${LOCAL_WEB_URL}}"
-SERVER_CORS_ORIGINS="${AGENT_SERVER_CORS_ORIGINS:-${LOCAL_WEB_URL},http://localhost:${WEB_PORT}}"
-
-if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then
-  RESET=$'\033[0m'
-  RED=$'\033[31m'
-  GREEN=$'\033[32m'
-  YELLOW=$'\033[33m'
-  CYAN=$'\033[36m'
-else
-  RESET=""
-  RED=""
-  GREEN=""
-  YELLOW=""
-  CYAN=""
-fi
-
-require_command() {
-  command -v "$1" >/dev/null 2>&1 || fail "missing command: $1"
-}
-
-discover_lan_ipv4() {
-  local platform
-  platform="$(uname -s)"
-
-  if [[ "${platform}" == "Darwin" ]] && command -v route >/dev/null 2>&1 && command -v ipconfig >/dev/null 2>&1; then
-    local interface
-    interface="$(route -n get default 2>/dev/null | sed -n '/^[[:space:]]*interface: /{s/^[[:space:]]*interface: //;p;q;}')"
-    if [[ -n "${interface}" ]]; then
-      ipconfig getifaddr "${interface}" 2>/dev/null || true
-      return
-    fi
-  fi
-
-  if command -v ip >/dev/null 2>&1; then
-    local previous=""
-    local token
-    for token in $(ip -4 route get 1.1.1.1 2>/dev/null); do
-      if [[ "${previous}" == "src" ]]; then
-        printf '%s\n' "${token}"
-        return
-      fi
-      previous="${token}"
-    done
-  fi
-
-  if command -v hostname >/dev/null 2>&1; then
-    local address
-    for address in $(hostname -I 2>/dev/null || true); do
-      if [[ "${address}" != 127.* && "${address}" != *:* ]]; then
-        printf '%s\n' "${address}"
-        return
-      fi
-    done
-  fi
-
-  return 0
-}
-
-assert_port_available() {
-  local port="$1"
-  local name="$2"
-  if nc -z 127.0.0.1 "${port}" >/dev/null 2>&1; then
-    fail "port ${port} is already in use (${name})"
-  fi
-}
-
-strip_ansi() {
-  perl -pe \
-    'BEGIN { $| = 1 } s/\e\[[0-?]*[ -\/]*[@-~]//g; s/\e\][^\a]*(?:\a|\e\\)//g'
-}
-
-prefix_stream() {
-  local label="$1"
-  local color="$2"
-  local line
-  while IFS= read -r line || [[ -n "${line}" ]]; do
-    printf '%s[%s]%s %s\n' "${color}" "${label}" "${RESET}" "${line}"
-  done
-}
-
-start_service() {
-  local name="$1"
-  local color="$2"
-  local directory="$3"
-  shift 3
-
-  local fifo="${RUNTIME_DIR}/${name}.fifo"
-  local log_file="${LOG_DIR}/${name}.log"
-  mkfifo "${fifo}"
-  : >"${log_file}"
-
-  (
-    tee >(strip_ansi >"${log_file}") <"${fifo}" |
-      prefix_stream "${name}" "${color}"
-  ) &
-  OUTPUT_PIDS+=("$!")
-
-  (
-    cd "${directory}"
-    exec "$@"
-  ) >"${fifo}" 2>&1 &
-  SERVICE_PIDS+=("$!")
-  SERVICE_NAMES+=("${name}")
-}
-
-stop_process_tree() {
-  local pid="$1"
-  local child
-  for child in $(pgrep -P "${pid}" 2>/dev/null || true); do
-    stop_process_tree "${child}"
-  done
-  kill -TERM "${pid}" >/dev/null 2>&1 || true
-}
-
-cleanup() {
-  local status=$?
-  if [[ "${SHUTTING_DOWN}" == true ]]; then
-    return
-  fi
-  SHUTTING_DOWN=true
-  trap - EXIT INT TERM
-
-  printf '\n%s[local]%s Stopping services...\n' "${YELLOW}" "${RESET}"
-  local pid
-  for pid in "${SERVICE_PIDS[@]-}"; do
-    [[ -n "${pid}" ]] && stop_process_tree "${pid}"
-  done
-  for pid in "${SERVICE_PIDS[@]-}"; do
-    [[ -n "${pid}" ]] && wait "${pid}" >/dev/null 2>&1 || true
-  done
-  for pid in "${OUTPUT_PIDS[@]-}"; do
-    [[ -z "${pid}" ]] && continue
-    kill -TERM "${pid}" >/dev/null 2>&1 || true
-    wait "${pid}" >/dev/null 2>&1 || true
-  done
-  if [[ "${DEPENDENCIES_STARTED}" == true ]]; then
-    docker compose -f "${COMPOSE_FILE}" down >/dev/null 2>&1 || true
-  fi
-  if [[ -n "${RUNTIME_DIR:-}" && -d "${RUNTIME_DIR}" ]]; then
-    find "${RUNTIME_DIR}" -type p -delete
-    rmdir "${RUNTIME_DIR}" >/dev/null 2>&1 || true
-  fi
-  exit "${status}"
-}
-
-check_services() {
-  local index
-  for ((index = 0; index < ${#SERVICE_PIDS[@]}; index++)); do
-    if ! kill -0 "${SERVICE_PIDS[$index]}" >/dev/null 2>&1; then
-      local name="${SERVICE_NAMES[$index]}"
-      printf '%s[local]%s %s stopped unexpectedly. Last log lines:\n' \
-        "${RED}" "${RESET}" "${name}" >&2
-      tail -n 40 "${LOG_DIR}/${name}.log" >&2 || true
-      return 1
-    fi
-  done
-}
-
-wait_for_url() {
-  local name="$1"
-  local url="$2"
-  local attempt=0
-  while ((attempt < 60)); do
-    check_services || fail "${name} stopped during startup"
-    if curl --fail --silent --output /dev/null "${url}"; then
-      printf '%s[ready]%s %-9s %s\n' "${GREEN}" "${RESET}" "${name}" "${url}"
-      return
-    fi
-    attempt=$((attempt + 1))
-    sleep 1
-  done
-  fail "${name} did not become ready: ${url}"
-}
-
-for command in corepack curl docker mkfifo nc perl pgrep tee uv; do
+for command in corepack curl docker grep install lsof ps screen sort uv; do
   require_command "${command}"
 done
 docker compose version >/dev/null 2>&1 || fail "Docker Compose v2 is required"
 
-assert_port_available "${SERVER_PORT}" "server"
-assert_port_available "${WEB_PORT}" "web"
-docker compose -f "${COMPOSE_FILE}" down >/dev/null 2>&1 || true
-assert_port_available "${POSTGRES_PORT}" "postgres"
-assert_port_available "${REDIS_PORT}" "redis"
-
-if [[ "${WITH_CONNECTOR}" == true ]]; then
-  if [[ -z "${AGENT_CONNECTOR_ID:-}" || -z "${AGENT_CONNECTOR_TOKEN:-}" ]]; then
-    [[ -f "${CONNECTOR_CONFIG}" ]] || fail \
-      "--with-connector requires AGENT_CONNECTOR_ID and AGENT_CONNECTOR_TOKEN, or config ${CONNECTOR_CONFIG}"
-  fi
+# Do this before stopping anything. A missing Docker daemon must never leave a
+# previously working local stack half-stopped.
+if ! docker info >/dev/null 2>&1; then
+  fail "Docker is not running. Start Docker, then run ./local-up.sh again"
 fi
 
-mkdir -p "${LOG_DIR}" "${AGENT_SERVER_FILES_LOCAL_ROOT}"
-chmod 700 "${LOCAL_DIR}"
-RUNTIME_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agents-anywhere-local.XXXXXX")"
-trap cleanup EXIT
-trap 'exit 130' INT
-trap 'exit 143' TERM
+listener_pids() {
+  local port="$1"
+  lsof -nP -t -iTCP:"${port}" -sTCP:LISTEN 2>/dev/null | sort -u || true
+}
 
-printf '%s[setup]%s Starting PostgreSQL and Redis...\n' "${CYAN}" "${RESET}"
-DEPENDENCIES_STARTED=true
-AGENTS_ANYWHERE_POSTGRES_PORT="${POSTGRES_PORT}" \
-  AGENTS_ANYWHERE_REDIS_PORT="${REDIS_PORT}" \
-  docker compose -f "${COMPOSE_FILE}" up -d --wait
+port_is_free() {
+  [[ -z "$(listener_pids "$1")" ]]
+}
+
+stop_screen_session() {
+  local session="$1"
+  if screen -ls 2>/dev/null | grep -q "[.]${session}[[:space:]]"; then
+    printf '[ports] stopping old session %s\n' "${session}"
+    screen -S "${session}" -X quit >/dev/null 2>&1 || true
+  fi
+}
+
+stop_docker_publishers() {
+  local port="$1"
+  local container_id
+  while IFS= read -r container_id; do
+    [[ -n "${container_id}" ]] || continue
+    printf '[ports] stopping Docker container %s on port %s\n' \
+      "${container_id}" "${port}"
+    docker stop "${container_id}" >/dev/null
+  done < <(docker ps --filter "publish=${port}" --format '{{.ID}}')
+}
+
+kill_port() {
+  local port="$1"
+  local label="$2"
+  local attempt=0
+
+  while ((attempt < 3)); do
+    local pids=()
+    local pid
+    while IFS= read -r pid; do
+      [[ -n "${pid}" ]] && pids+=("${pid}")
+    done < <(listener_pids "${port}")
+    ((${#pids[@]} > 0)) || return 0
+
+    printf '[ports] releasing %s port %s (PID %s)\n' \
+      "${label}" "${port}" "${pids[*]}"
+    for pid in "${pids[@]}"; do
+      local command
+      command="$(ps -p "${pid}" -o command= 2>/dev/null || true)"
+      case "${command}" in
+        *com.docker.backend*|*Docker.app*)
+          fail "${label} port ${port} is still held by Docker itself; refusing to stop the Docker daemon"
+          ;;
+      esac
+      kill -TERM "${pid}" >/dev/null 2>&1 || true
+    done
+
+    local tick=0
+    while ((tick < 50)); do
+      port_is_free "${port}" && return 0
+      tick=$((tick + 1))
+      sleep 0.1
+    done
+
+    while IFS= read -r pid; do
+      [[ -n "${pid}" ]] && kill -KILL "${pid}" >/dev/null 2>&1 || true
+    done < <(listener_pids "${port}")
+    attempt=$((attempt + 1))
+  done
+
+  port_is_free "${port}" || fail "could not release ${label} port ${port}"
+}
+
+mkdir -p "${LOCAL_DIR}/logs" "${LOCAL_DIR}/files"
+chmod 700 "${LOCAL_DIR}"
+
+# Stop both the current split layout and older one-process launch layouts.
+for session in \
+  aa-dev-control aa-dev-server aa-dev-web aa-dev-connector \
+  aa-local-stack aa-agents-anywhere-local aa-source-connector; do
+  stop_screen_session "${session}"
+done
+
+# Project-owned database containers are stopped first. If a different
+# container publishes one of our fixed infrastructure ports, stop that exact
+# container instead of killing Docker Desktop.
+docker compose -f "${COMPOSE_FILE}" down --remove-orphans >/dev/null 2>&1 || true
+stop_docker_publishers "${POSTGRES_PORT}"
+stop_docker_publishers "${REDIS_PORT}"
+
+kill_port "${CONTROL_PORT}" "Dev Control"
+kill_port "${SERVER_PORT}" "Server"
+kill_port "${WEB_PORT}" "Web"
+kill_port "${POSTGRES_PORT}" "PostgreSQL"
+kill_port "${REDIS_PORT}" "Redis"
 
 if [[ "${SKIP_INSTALL}" != true ]]; then
-  printf '%s[setup]%s Syncing Server dependencies...\n' "${CYAN}" "${RESET}"
+  printf '[setup] syncing Server dependencies\n'
   (cd "${SERVER_DIR}" && UV_NO_PROGRESS=1 uv sync)
 
-  printf '%s[setup]%s Syncing Web dependencies...\n' "${CYAN}" "${RESET}"
-  (cd "${WEB_DIR}" && corepack yarn install)
+  printf '[setup] syncing Connector dependencies\n'
+  (cd "${CONNECTOR_DIR}" && UV_NO_PROGRESS=1 uv sync)
 
-  if [[ "${WITH_CONNECTOR}" == true ]]; then
-    printf '%s[setup]%s Syncing Connector dependencies...\n' "${CYAN}" "${RESET}"
-    (cd "${CONNECTOR_DIR}" && UV_NO_PROGRESS=1 uv sync)
+  printf '[setup] syncing Web dependencies\n'
+  (cd "${WEB_DIR}" && corepack yarn install)
+fi
+
+[[ -x "${SERVER_DIR}/.venv/bin/python" ]] || \
+  fail "Server environment is missing; rerun without --skip-install"
+[[ -x "${CONNECTOR_DIR}/.venv/bin/python" ]] || \
+  fail "Connector environment is missing; rerun without --skip-install"
+
+if [[ -n "${CONNECTOR_CONFIG_SOURCE}" ]]; then
+  [[ -f "${CONNECTOR_CONFIG_SOURCE}" ]] || \
+    fail "Connector config not found: ${CONNECTOR_CONFIG_SOURCE}"
+  if [[ "$(cd "$(dirname "${CONNECTOR_CONFIG_SOURCE}")" && pwd)/$(basename "${CONNECTOR_CONFIG_SOURCE}")" != "${CONNECTOR_CONFIG}" ]]; then
+    install -m 600 "${CONNECTOR_CONFIG_SOURCE}" "${CONNECTOR_CONFIG}"
   fi
 fi
 
-printf '%s[setup]%s Applying local database migrations...\n' "${CYAN}" "${RESET}"
-(
-  cd "${SERVER_DIR}"
-  env \
-    AGENT_SERVER_DB_BACKEND=postgres \
-    AGENT_SERVER_DB_URL="${AGENT_SERVER_DB_URL}" \
-    uv run python -m agent_server.infra.db.migrations upgrade
-)
+# devtools.control owns the detached Server/Web processes so the control page
+# can replace either process without bringing down the rest of the stack.
+printf '[setup] starting PostgreSQL, Redis, Server and Web\n'
+"${ROOT_DIR}/dev-control.sh" bootstrap
 
-SERVER_COMMAND=(
-  env
-  "AGENT_SERVER_DB_BACKEND=postgres"
-  "AGENT_SERVER_DB_URL=${AGENT_SERVER_DB_URL}"
-  "AGENT_SERVER_REDIS_URL=${AGENT_SERVER_REDIS_URL}"
-  "AGENT_SERVER_FILES_LOCAL_ROOT=${AGENT_SERVER_FILES_LOCAL_ROOT}"
-  "AGENT_SERVER_PUBLIC_ORIGIN=${SERVER_PUBLIC_ORIGIN}"
-  "AGENT_SERVER_CORS_ORIGINS=${SERVER_CORS_ORIGINS}"
-  uv run uvicorn agent_server.app:create_app
-  --factory
-  --host "${SERVER_HOST}"
-  --port "${SERVER_PORT}"
-)
-if [[ "${SERVER_RELOAD}" == true ]]; then
-  SERVER_COMMAND+=(--reload)
-fi
-
-start_service server "${CYAN}" "${SERVER_DIR}" "${SERVER_COMMAND[@]}"
-start_service web "${GREEN}" "${WEB_DIR}" \
-  env "AGENTS_ANYWHERE_API=${AGENTS_ANYWHERE_API}" \
-  corepack yarn exec next dev --hostname "${WEB_HOST}" --port "${WEB_PORT}"
+printf '[setup] starting Dev Control\n'
+"${ROOT_DIR}/dev-control.sh" start
 
 if [[ "${WITH_CONNECTOR}" == true ]]; then
-  CONNECTOR_COMMAND=(uv run anywhere-cli start --config "${CONNECTOR_CONFIG}")
-  if [[ -n "${AGENT_CONNECTOR_ID:-}" && -n "${AGENT_CONNECTOR_TOKEN:-}" ]]; then
-    CONNECTOR_COMMAND+=(
-      --server-url "${LOCAL_SERVER_URL}"
-      --connector-id "${AGENT_CONNECTOR_ID}"
-      --connector-token "${AGENT_CONNECTOR_TOKEN}"
-    )
-  fi
-  start_service connector "${YELLOW}" "${CONNECTOR_DIR}" \
-    "${CONNECTOR_COMMAND[@]}"
+  [[ -f "${CONNECTOR_CONFIG}" ]] || \
+    fail "Connector credential is missing; paste it at http://127.0.0.1:${CONTROL_PORT}"
+  "${ROOT_DIR}/dev-control.sh" restart connector
 fi
 
-wait_for_url server "${LOCAL_SERVER_URL}/api/v2/health"
-wait_for_url web "${LOCAL_WEB_URL}/"
-
-printf '\n%s[local]%s Stack is ready.\n' "${GREEN}" "${RESET}"
-printf '  Web:       %s\n' "${LOCAL_WEB_URL}"
-printf '  Server:    %s\n' "${AGENTS_ANYWHERE_API}"
-printf '  Listen:    server=%s:%s web=%s:%s\n' \
-  "${SERVER_HOST}" "${SERVER_PORT}" "${WEB_HOST}" "${WEB_PORT}"
-if [[ "${SERVER_HOST}" == "0.0.0.0" || "${WEB_HOST}" == "0.0.0.0" ]]; then
-  LAN_HOST="${AGENTS_ANYWHERE_LAN_HOST:-$(discover_lan_ipv4)}"
-  if [[ -n "${LAN_HOST}" ]]; then
-    if [[ "${WEB_HOST}" == "0.0.0.0" ]]; then
-      printf '  LAN Web:   http://%s:%s\n' "${LAN_HOST}" "${WEB_PORT}"
-    fi
-    if [[ "${SERVER_HOST}" == "0.0.0.0" ]]; then
-      printf '  LAN Server: http://%s:%s\n' "${LAN_HOST}" "${SERVER_PORT}"
-    fi
-  else
-    printf '  LAN:       address unavailable (set AGENTS_ANYWHERE_LAN_HOST)\n'
-  fi
-fi
+printf '\nAgents Anywhere is running on fixed local ports.\n'
+printf '  Web:        http://127.0.0.1:%s\n' "${WEB_PORT}"
+printf '  Server:     http://127.0.0.1:%s\n' "${SERVER_PORT}"
+printf '  Dev Control:http://127.0.0.1:%s\n' "${CONTROL_PORT}"
 printf '  PostgreSQL: 127.0.0.1:%s/agents_anywhere\n' "${POSTGRES_PORT}"
 printf '  Redis:      127.0.0.1:%s\n' "${REDIS_PORT}"
-printf '  Logs:      %s\n' "${LOG_DIR}"
-if [[ "${WITH_CONNECTOR}" == true ]]; then
-  printf '  Connector: enabled\n'
-fi
-printf '  Stop:      Ctrl-C\n\n'
-
-while true; do
-  check_services || fail "a service stopped unexpectedly"
-  sleep 1
-done
+printf '  Logs:       %s/logs\n' "${LOCAL_DIR}"
+printf '  Stop all:   ./dev-control.sh down\n'

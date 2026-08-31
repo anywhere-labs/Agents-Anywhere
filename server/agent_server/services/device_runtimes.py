@@ -76,6 +76,40 @@ class DeviceRuntimeInstancesUnsupportedError(DeviceRuntimeError):
 
 SUPPORTED_RUNTIME_CONTROL_VERSIONS = ["2.0", "1.0"]
 PAIRING_DEFAULT_RUNTIME_TYPES = ("codex", "claude")
+NAMED_INSTANCE_REQUIRED_FIELDS_KEY = "requiredForNamedInstance"
+
+
+def _config_schema_for_instance(
+    schema: dict[str, Any],
+    ui_schema: dict[str, Any],
+    *,
+    named: bool,
+    runtime_type: str,
+) -> dict[str, Any]:
+    if not named:
+        return schema
+    properties = schema.get("properties")
+    if not isinstance(properties, dict):
+        return schema
+    configured_fields = ui_schema.get(NAMED_INSTANCE_REQUIRED_FIELDS_KEY)
+    if not isinstance(configured_fields, list):
+        configured_fields = []
+    fallback_fields = (
+        ["codexHome", "modelGateway"] if runtime_type == "codex" else []
+    )
+    required_for_instance = [
+        field
+        for field in [*configured_fields, *fallback_fields]
+        if isinstance(field, str) and field in properties
+    ]
+    if not required_for_instance:
+        return schema
+    existing_required = schema.get("required")
+    required = list(existing_required) if isinstance(existing_required, list) else []
+    return {
+        **schema,
+        "required": list(dict.fromkeys([*required, *required_for_instance])),
+    }
 
 
 class DeviceRuntimeService:
@@ -452,7 +486,15 @@ class DeviceRuntimeService:
                 raise DeviceRuntimeConflictError(
                     "runtime config schema is unavailable"
                 )
-            self._validate(config, runtime_type_row.schema_)
+            self._validate(
+                config,
+                _config_schema_for_instance(
+                    runtime_type_row.schema_,
+                    runtime_type_row.uiSchema,
+                    named=True,
+                    runtime_type=runtime_type_row.runtimeType,
+                ),
+            )
             if not await self._manager.is_online(connector_id):
                 raise DeviceRuntimeOfflineError("connector is offline")
 
@@ -534,7 +576,12 @@ class DeviceRuntimeService:
         async with self._runtime_lock(connector_id, runtime_id):
             runtime = await self._get_owned(connector_id, runtime_id, user_id=user_id)
             await self._ensure_lifecycle_supported(runtime)
-            schema = self._schema(runtime)
+            schema = _config_schema_for_instance(
+                self._schema(runtime),
+                runtime.uiSchema,
+                named=runtime.runtimeId != runtime.runtimeType,
+                runtime_type=runtime.runtimeType,
+            )
             self._validate(config, schema)
             if not await self._manager.is_online(connector_id):
                 raise DeviceRuntimeOfflineError("connector is offline")

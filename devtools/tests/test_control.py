@@ -48,7 +48,7 @@ def _credential(**overrides: object) -> str:
     payload = {
         "type": "agents-anywhere.connector-credentials",
         "version": 1,
-        "serverUrl": "http://127.0.0.1:8001",
+        "serverUrl": "http://127.0.0.1:8000",
         "connectorId": "conn_test",
         "connectorToken": "token_test",
         **overrides,
@@ -58,7 +58,7 @@ def _credential(**overrides: object) -> str:
 
 def test_decode_connector_credential() -> None:
     assert decode_connector_credential(_credential()) == {
-        "serverUrl": "http://127.0.0.1:8001",
+        "serverUrl": "http://127.0.0.1:8000",
         "connectorId": "conn_test",
         "connectorToken": "token_test",
     }
@@ -84,7 +84,7 @@ def test_save_connector_credential_with_private_permissions(tmp_path: Path) -> N
     save_connector_credential(_credential(), config_path)
 
     assert json.loads(config_path.read_text()) == {
-        "serverUrl": "http://127.0.0.1:8001",
+        "serverUrl": "http://127.0.0.1:8000",
         "connectorId": "conn_test",
         "connectorToken": "token_test",
     }

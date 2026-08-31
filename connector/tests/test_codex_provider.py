@@ -98,6 +98,10 @@ async def _test_codex_provider_schema_exposes_no_ipc_or_app_server_switches() ->
     ]
     assert schema.ui_schema["customModels"]["component"] == "customModels"
     assert schema.ui_schema["modelGateway"]["component"] == "modelGateway"
+    assert schema.ui_schema["requiredForNamedInstance"] == [
+        "codexHome",
+        "modelGateway",
+    ]
     assert set(schema.schema["properties"]) == {
         "codexExecutablePath",
         "codexHome",
@@ -125,6 +129,14 @@ async def _test_codex_provider_schema_exposes_no_ipc_or_app_server_switches() ->
             }
         },
         "default": True,
+    }
+    assert schema.schema["properties"]["codexHome"]["metadata"] == {
+        "i18n": {
+            "labelKey": "dashboard.device.runtimeConfigFields.codexHome.label",
+            "descriptionKey": (
+                "dashboard.device.runtimeConfigFields.codexHome.description"
+            ),
+        }
     }
     assert "sdkMode" not in schema.schema["properties"]
     assert "ipcEnabled" not in schema.schema["properties"]
@@ -378,11 +390,11 @@ async def _test_codex_provider_rejects_protected_environment() -> None:
         await provider.validate_config({"environment": {"CODEX_HOME": "/tmp/bypass"}})
 
 
-def test_codex_provider_creates_sdk_runtime() -> None:
-    asyncio.run(_test_codex_provider_creates_sdk_runtime())
+def test_codex_provider_creates_sdk_runtime(tmp_path: Path) -> None:
+    asyncio.run(_test_codex_provider_creates_sdk_runtime(tmp_path))
 
 
-async def _test_codex_provider_creates_sdk_runtime() -> None:
+async def _test_codex_provider_creates_sdk_runtime(tmp_path: Path) -> None:
     created: list[RuntimeConfig] = []
 
     def factory(config: RuntimeConfig) -> _FakeSdkClient:
@@ -393,11 +405,13 @@ async def _test_codex_provider_creates_sdk_runtime() -> None:
         sdk_checker=_available_sdk,
         sdk_client_factory=factory,
     )
-    config = await provider.validate_config({})
+    codex_home = tmp_path / "generated-codex-home"
+    config = await provider.validate_config({"codexHome": str(codex_home)})
 
     runtime = await provider.create_runtime(config, _NoHost())
 
     assert isinstance(runtime, CodexRuntime)
+    assert codex_home.is_dir()
     assert created == [config]
     assert runtime._pending_messages._connector_id == _NoHost().session_namespace
 

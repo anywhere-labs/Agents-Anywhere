@@ -429,7 +429,7 @@ export function SessionComposer({
                 if (event.nativeEvent.isComposing) return
                 if (event.key === "Enter" && !event.shiftKey) {
                   event.preventDefault()
-                  primaryAction()
+                  if (!showInterrupt) void submit()
                 }
               }}
               placeholder={placeholder}

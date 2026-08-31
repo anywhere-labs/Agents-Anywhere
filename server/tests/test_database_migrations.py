@@ -73,9 +73,12 @@ def test_empty_database_upgrades_to_current_schema(tmp_path) -> None:
     engine = create_engine(f"sqlite:///{path}")
     try:
         tables = set(inspect(engine).get_table_names())
-        assert {"alembic_version", "app_releases", "device_runtimes", "sessions"}.issubset(
-            tables
-        )
+        assert {
+            "alembic_version",
+            "app_releases",
+            "device_runtimes",
+            "sessions",
+        }.issubset(tables)
         assert "approvals" not in tables
         assert "notices" not in tables
     finally:
@@ -235,9 +238,12 @@ def test_unversioned_v2_2_database_is_stamped_then_upgraded(tmp_path) -> None:
         inspector = inspect(engine)
         assert "approvals" not in inspector.get_table_names()
         with engine.connect() as connection:
-            assert connection.execute(
-                text("SELECT version_num FROM alembic_version")
-            ).scalar_one() == CURRENT_SCHEMA_REVISION
+            assert (
+                connection.execute(
+                    text("SELECT version_num FROM alembic_version")
+                ).scalar_one()
+                == CURRENT_SCHEMA_REVISION
+            )
     finally:
         engine.dispose()
 
@@ -265,16 +271,18 @@ def test_unversioned_recent_v2_database_runs_remaining_migrations(
             column["name"] for column in inspector.get_columns("sessions")
         }
         assert "turn_id" not in {
-            column["name"]
-            for column in inspector.get_columns("session_active_runs")
+            column["name"] for column in inspector.get_columns("session_active_runs")
         }
         assert "turn_id" not in {
             column["name"] for column in inspector.get_columns("timeline_items")
         }
         with engine.connect() as connection:
-            assert connection.execute(
-                text("SELECT version_num FROM alembic_version")
-            ).scalar_one() == CURRENT_SCHEMA_REVISION
+            assert (
+                connection.execute(
+                    text("SELECT version_num FROM alembic_version")
+                ).scalar_one()
+                == CURRENT_SCHEMA_REVISION
+            )
     finally:
         engine.dispose()
 
@@ -336,6 +344,8 @@ def test_v2_0_database_upgrades_through_current_revision(tmp_path) -> None:
         ("v2_17", "v2_18"),
         ("v2_18", "v2_19"),
         ("v2_19", "v2_20"),
+        ("v2_20", "v2_21"),
+        ("v2_21", "v2_22"),
     ],
 )
 def test_every_adjacent_schema_upgrade(
@@ -351,9 +361,12 @@ def test_every_adjacent_schema_upgrade(
     engine = create_engine(f"sqlite:///{path}")
     try:
         with engine.connect() as connection:
-            assert connection.execute(
-                text("SELECT version_num FROM alembic_version")
-            ).scalar_one() == target_revision
+            assert (
+                connection.execute(
+                    text("SELECT version_num FROM alembic_version")
+                ).scalar_one()
+                == target_revision
+            )
     finally:
         engine.dispose()
 
@@ -395,7 +408,11 @@ def test_v2_9_removes_turn_data_from_timelines(tmp_path) -> None:
                 {
                     "value": json.dumps(
                         {
-                            "intensity": {"basis": "turns", "lightMax": 1, "mediumMax": 2},
+                            "intensity": {
+                                "basis": "turns",
+                                "lightMax": 1,
+                                "mediumMax": 2,
+                            },
                             "histogramBins": {"turns": [0, 1], "sessions": [0, 1]},
                         }
                     )
@@ -444,15 +461,21 @@ def test_v2_9_removes_turn_data_from_timelines(tmp_path) -> None:
         assert "messages" in fact_columns
         assert "turns" not in fact_columns
         with engine.connect() as connection:
-            rows = connection.execute(
-                text("SELECT id, payload_json FROM timeline_items ORDER BY id")
-            ).mappings().all()
+            rows = (
+                connection.execute(
+                    text("SELECT id, payload_json FROM timeline_items ORDER BY id")
+                )
+                .mappings()
+                .all()
+            )
             metric_key = connection.execute(
                 text("SELECT metric_key FROM dashboard_daily_metrics")
             ).scalar_one()
             settings = json.loads(
                 connection.execute(
-                    text("SELECT value_json FROM dashboard_settings WHERE key = 'settings'")
+                    text(
+                        "SELECT value_json FROM dashboard_settings WHERE key = 'settings'"
+                    )
                 ).scalar_one()
             )
         assert [row["id"] for row in rows] == ["message_1"]
@@ -499,14 +522,16 @@ def test_v2_10_adds_timeline_reset_watermark(tmp_path) -> None:
     engine = create_engine(f"sqlite:///{path}")
     try:
         columns = {
-            column["name"]: column
-            for column in inspect(engine).get_columns("sessions")
+            column["name"]: column for column in inspect(engine).get_columns("sessions")
         }
         assert columns["timeline_reset_seq"]["nullable"] is False
         with engine.connect() as connection:
-            assert connection.execute(
-                text("SELECT version_num FROM alembic_version")
-            ).scalar_one() == "v2_10"
+            assert (
+                connection.execute(
+                    text("SELECT version_num FROM alembic_version")
+                ).scalar_one()
+                == "v2_10"
+            )
     finally:
         engine.dispose()
 
@@ -530,9 +555,12 @@ def test_v2_11_adds_dsh_facts_and_runtime_metadata(tmp_path) -> None:
         assert "dsh_agents" in fact_columns
         assert "inventory_metadata_json" in runtime_columns
         with engine.connect() as connection:
-            assert connection.execute(
-                text("SELECT version_num FROM alembic_version")
-            ).scalar_one() == "v2_11"
+            assert (
+                connection.execute(
+                    text("SELECT version_num FROM alembic_version")
+                ).scalar_one()
+                == "v2_11"
+            )
     finally:
         engine.dispose()
 
@@ -570,7 +598,9 @@ def test_v2_12_adds_dsh_source_state_without_rewriting_archives(tmp_path) -> Non
     engine = create_engine(f"sqlite:///{path}")
     try:
         columns = {column["name"] for column in inspect(engine).get_columns("sessions")}
-        assert {"source_state", "source_state_at", "source_scan_token"}.issubset(columns)
+        assert {"source_state", "source_state_at", "source_scan_token"}.issubset(
+            columns
+        )
         with engine.connect() as connection:
             row = connection.execute(
                 text(
@@ -579,9 +609,12 @@ def test_v2_12_adds_dsh_source_state_without_rewriting_archives(tmp_path) -> Non
                 )
             ).one()
             assert tuple(row) == (1, "visible", None, None)
-            assert connection.execute(
-                text("SELECT version_num FROM alembic_version")
-            ).scalar_one() == "v2_12"
+            assert (
+                connection.execute(
+                    text("SELECT version_num FROM alembic_version")
+                ).scalar_one()
+                == "v2_12"
+            )
     finally:
         engine.dispose()
 
@@ -633,8 +666,7 @@ def test_v2_13_marks_only_existing_dsh_archives_as_legacy(tmp_path) -> None:
         with engine.connect() as connection:
             rows = connection.execute(
                 text(
-                    "SELECT id, archived, dsh_archive_legacy FROM sessions "
-                    "ORDER BY id"
+                    "SELECT id, archived, dsh_archive_legacy FROM sessions ORDER BY id"
                 )
             ).all()
             assert [tuple(row) for row in rows] == [
@@ -642,9 +674,12 @@ def test_v2_13_marks_only_existing_dsh_archives_as_legacy(tmp_path) -> None:
                 ("sess_dsh_active", 0, 0),
                 ("sess_dsh_archived", 1, 1),
             ]
-            assert connection.execute(
-                text("SELECT version_num FROM alembic_version")
-            ).scalar_one() == "v2_13"
+            assert (
+                connection.execute(
+                    text("SELECT version_num FROM alembic_version")
+                ).scalar_one()
+                == "v2_13"
+            )
     finally:
         engine.dispose()
 
@@ -666,20 +701,22 @@ def test_v2_14_splits_runtime_storage_without_losing_dsh_state(tmp_path) -> None
             column["name"] for column in inspector.get_columns("sessions")
         )
         assert {"runtime_id"}.issubset(
-            column["name"]
-            for column in inspector.get_columns("session_active_runs")
+            column["name"] for column in inspector.get_columns("session_active_runs")
         )
         assert inspector.get_pk_constraint("connector_runtime_catalogs")[
             "constrained_columns"
         ] == ["connector_id", "runtime_id", "catalog_type"]
 
         with engine.connect() as connection:
-            assert connection.execute(
-                text(
-                    "SELECT runtime_control_version FROM connectors "
-                    "WHERE id = 'conn_runtime_storage'"
-                )
-            ).scalar_one() == "1.0"
+            assert (
+                connection.execute(
+                    text(
+                        "SELECT runtime_control_version FROM connectors "
+                        "WHERE id = 'conn_runtime_storage'"
+                    )
+                ).scalar_one()
+                == "1.0"
+            )
             type_rows = (
                 connection.execute(
                     text(
@@ -747,9 +784,7 @@ def test_v2_14_splits_runtime_storage_without_losing_dsh_state(tmp_path) -> None
         assert dsh_type["implementation_type"] == "local-service"
         assert dsh_type["display_name"] == "Shared Runtime"
         assert (dsh_type["present"], dsh_type["available"]) == (1, 1)
-        assert json.loads(dsh_type["discovery_json"]) == {
-            "endpoint": "/tmp/dsh.sock"
-        }
+        assert json.loads(dsh_type["discovery_json"]) == {"endpoint": "/tmp/dsh.sock"}
         assert json.loads(dsh_type["metadata_json"]) == {
             "bridgeVersion": "0.1.0",
             "storageMode": "local",
@@ -768,9 +803,7 @@ def test_v2_14_splits_runtime_storage_without_losing_dsh_state(tmp_path) -> None
         assert dsh_instance["config_json"] is None
         assert dsh_instance["active"] == 0
         assert dsh_instance["status"] == "error"
-        assert json.loads(dsh_instance["error_json"]) == {
-            "code": "bridge_unavailable"
-        }
+        assert json.loads(dsh_instance["error_json"]) == {"code": "bridge_unavailable"}
         assert dsh_instance["created_at"] == "2026-08-24T13:38:00Z"
         assert dsh_instance["updated_at"] == "2026-08-24T13:38:00Z"
 
@@ -823,8 +856,7 @@ def test_v2_14_compatible_data_downgrades_to_v2_13(tmp_path) -> None:
             column["name"] for column in inspector.get_columns("sessions")
         }
         assert "runtime_id" not in {
-            column["name"]
-            for column in inspector.get_columns("session_active_runs")
+            column["name"] for column in inspector.get_columns("session_active_runs")
         }
         assert inspector.get_pk_constraint("connector_runtime_catalogs")[
             "constrained_columns"
@@ -927,16 +959,32 @@ def test_v2_14_downgrade_rejects_instance_specific_data(
     engine = create_engine(f"sqlite:///{path}")
     try:
         with engine.connect() as connection:
-            assert connection.execute(
-                text("SELECT version_num FROM alembic_version")
-            ).scalar_one() == "v2_14"
+            assert (
+                connection.execute(
+                    text("SELECT version_num FROM alembic_version")
+                ).scalar_one()
+                == "v2_14"
+            )
     finally:
         engine.dispose()
 
 
 @pytest.mark.parametrize(
     "revision",
-    ["v2_10", "v2_11", "v2_12", "v2_13", "v2_14", "v2_15", "v2_16", "v2_17", "v2_18", "v2_19", "v2_20"],
+    [
+        "v2_10",
+        "v2_11",
+        "v2_12",
+        "v2_13",
+        "v2_14",
+        "v2_15",
+        "v2_16",
+        "v2_17",
+        "v2_18",
+        "v2_19",
+        "v2_20",
+        "v2_21",
+    ],
 )
 def test_unversioned_runtime_schema_is_classified_by_actual_columns(
     tmp_path,
@@ -960,8 +1008,7 @@ def test_unversioned_runtime_schema_is_classified_by_actual_columns(
                 )
                 connection.execute(
                     text(
-                        "ALTER TABLE dashboard_user_daily_facts "
-                        "DROP COLUMN dsh_agents"
+                        "ALTER TABLE dashboard_user_daily_facts DROP COLUMN dsh_agents"
                     )
                 )
             connection.execute(text("DROP TABLE alembic_version"))
@@ -974,9 +1021,9 @@ def test_unversioned_runtime_schema_is_classified_by_actual_columns(
     )
 
 
-def test_current_schema_version_is_v2_20() -> None:
-    assert CURRENT_SCHEMA_REVISION == "v2_20"
-    assert CURRENT_SCHEMA_VERSION == "2.20"
+def test_current_schema_version_is_v2_22() -> None:
+    assert CURRENT_SCHEMA_REVISION == "v2_22"
+    assert CURRENT_SCHEMA_VERSION == "2.22"
 
 
 def test_v2_20_adds_session_source_observation_details(tmp_path) -> None:
@@ -987,13 +1034,46 @@ def test_v2_20_adds_session_source_observation_details(tmp_path) -> None:
 
     engine = create_engine(f"sqlite:///{path}")
     try:
-        columns = {
-            column["name"] for column in inspect(engine).get_columns("sessions")
-        }
+        columns = {column["name"] for column in inspect(engine).get_columns("sessions")}
     finally:
         engine.dispose()
 
     assert {"source_state_reason", "source_observation_origin"}.issubset(columns)
+
+
+def test_v2_22_retires_session_message_queue_schema(tmp_path) -> None:
+    path = tmp_path / "retired-session-message-queue.sqlite3"
+    url = _sqlite_url(path)
+    upgrade_database(db_url=url, revision="v2_21")
+
+    engine = create_engine(f"sqlite:///{path}")
+    try:
+        inspector = inspect(engine)
+        assert inspector.has_table("session_message_queue")
+        assert "message_queue_updated_seq" in {
+            column["name"] for column in inspector.get_columns("sessions")
+        }
+    finally:
+        engine.dispose()
+
+    upgrade_database(db_url=url, revision="v2_22")
+
+    engine = create_engine(f"sqlite:///{path}")
+    try:
+        inspector = inspect(engine)
+        assert not inspector.has_table("session_message_queue")
+        assert "message_queue_updated_seq" not in {
+            column["name"] for column in inspector.get_columns("sessions")
+        }
+        with engine.connect() as connection:
+            assert (
+                connection.execute(
+                    text("SELECT version_num FROM alembic_version")
+                ).scalar_one()
+                == "v2_22"
+            )
+    finally:
+        engine.dispose()
 
 
 def test_current_schema_drops_legacy_approval_notice_storage(tmp_path) -> None:
@@ -1002,14 +1082,17 @@ def test_current_schema_drops_legacy_approval_notice_storage(tmp_path) -> None:
     engine = create_engine(f"sqlite:///{path}")
     try:
         with engine.begin() as connection:
-            notice_id = "notice_approval_" + hashlib.sha256(
-                json.dumps(
-                    ("appr_migrate",),
-                    ensure_ascii=False,
-                    sort_keys=True,
-                    default=str,
-                ).encode("utf-8")
-            ).hexdigest()[:24]
+            notice_id = (
+                "notice_approval_"
+                + hashlib.sha256(
+                    json.dumps(
+                        ("appr_migrate",),
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        default=str,
+                    ).encode("utf-8")
+                ).hexdigest()[:24]
+            )
             connection.execute(
                 text(
                     "INSERT INTO connectors "
@@ -1234,7 +1317,7 @@ def _seed_v2_13_runtime_storage(path) -> None:
                     "(session_id, runtime, external_session_id, status, params_json, "
                     "started_at, updated_at) VALUES "
                     "('sess_runtime_storage', 'dsh', 'dsh_external', 'running', "
-                    "'{\"model\":\"deepseek\"}', :now, :now)"
+                    '\'{"model":"deepseek"}\', :now, :now)'
                 ),
                 {"now": "2026-08-24T13:38:00Z"},
             )
@@ -1244,7 +1327,7 @@ def _seed_v2_13_runtime_storage(path) -> None:
                     "(connector_id, runtime, catalog_type, revision, catalog_json, "
                     "updated_at) VALUES "
                     "('conn_runtime_storage', 'dsh', 'model', 17, "
-                    "'{\"models\":[\"deepseek\"]}', :now)"
+                    '\'{"models":["deepseek"]}\', :now)'
                 ),
                 {"now": "2026-08-24T13:38:00Z"},
             )
