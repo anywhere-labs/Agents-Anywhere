@@ -1,5 +1,7 @@
 node_modules
 lib
+bundled-connector
+*.tgz
 .DS_Store
 *.log
 src/**/*.d.ts

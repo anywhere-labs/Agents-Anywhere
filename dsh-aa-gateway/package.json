@@ -41,9 +41,10 @@
     }
   },
   "scripts": {
-    "bundle:connector": "node --input-type=module -e \"import { cpSync, rmSync, existsSync } from 'node:fs'; import { resolve } from 'node:path'; const src = resolve('../connector'); const dest = resolve('bundled-connector'); if (existsSync(dest)) rmSync(dest, { recursive: true, force: true }); cpSync(src, dest, { recursive: true, filter: (p) => !p.includes('.venv') && !p.includes('__pycache__') && !p.includes('.pytest_cache') && !p.includes('/tests/') });\"",
     "clean": "node --input-type=module -e \"import { rmSync } from 'node:fs'; rmSync('lib', { recursive: true, force: true }); rmSync('bundled-connector', { recursive: true, force: true })\"",
-    "build": "pnpm clean && tsc -p tsconfig.build.json && tsc -p tsconfig.client.json && tsdown && pnpm bundle:connector",
+    "build": "pnpm clean && tsc -p tsconfig.build.json && tsc -p tsconfig.client.json && tsdown",
+    "prepack": "pnpm build && node --input-type=module -e \"import { cpSync, rmSync, existsSync } from 'node:fs'; import { resolve } from 'node:path'; const src = resolve('../connector'); const dest = resolve('bundled-connector'); if (existsSync(dest)) rmSync(dest, { recursive: true, force: true }); cpSync(src, dest, { recursive: true, filter: (p) => !p.includes('.venv') && !p.includes('__pycache__') && !p.includes('.pytest_cache') && !p.includes('/tests/') });\"",
+    "postpack": "node --input-type=module -e \"import { rmSync } from 'node:fs'; rmSync('bundled-connector', { recursive: true, force: true });\"",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.client.json --noEmit",
     "test": "vitest run",
     "verify": "pnpm typecheck && pnpm test && pnpm build"
