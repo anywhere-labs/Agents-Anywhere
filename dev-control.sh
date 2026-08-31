@@ -24,6 +24,7 @@ readonly WEB_PORT=5174
 readonly POSTGRES_PORT=55432
 readonly REDIS_PORT=56379
 readonly CONTROL_PORT=8765
+readonly CONTROL_URL="http://127.0.0.1:${CONTROL_PORT}"
 
 # Keep every entry point on the same port contract even if .env.local contains
 # values from an older checkout.
@@ -44,8 +45,9 @@ Usage:
   ./dev-control.sh down
   ./dev-control.sh serve
 
-start/stop manage the localhost Dev Control page on port 8765. bootstrap starts
-PostgreSQL, Redis, Server and Web. down stops all local services and containers.
+start/stop manage the localhost Dev Control page on port 8765; start also opens
+it in the system browser. bootstrap starts PostgreSQL, Redis, Server and Web.
+down stops all local services and containers.
 EOF
 }
 
@@ -65,6 +67,33 @@ session_exists() {
 
 listener_pids() {
   lsof -nP -t -iTCP:"$1" -sTCP:LISTEN 2>/dev/null | sort -u || true
+}
+
+open_control_page() {
+  case "${AGENTS_ANYWHERE_NO_BROWSER:-}" in
+    1|true|TRUE|yes|YES)
+      return
+      ;;
+  esac
+
+  case "$(uname -s)" in
+    Darwin)
+      if command -v open >/dev/null 2>&1; then
+        open "${CONTROL_URL}" >/dev/null 2>&1 || true
+      fi
+      ;;
+    Linux)
+      if [[ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]] && \
+        command -v xdg-open >/dev/null 2>&1; then
+        xdg-open "${CONTROL_URL}" >/dev/null 2>&1 || true
+      fi
+      ;;
+  esac
+}
+
+control_ready() {
+  printf 'Dev Control: %s\n' "${CONTROL_URL}"
+  open_control_page
 }
 
 stop_control() {
@@ -91,8 +120,8 @@ stop_control() {
 start_control() {
   require_python
   if curl --fail --silent --output /dev/null \
-    "http://127.0.0.1:${CONTROL_PORT}/api/status"; then
-    printf 'Dev Control: http://127.0.0.1:%s\n' "${CONTROL_PORT}"
+    "${CONTROL_URL}/api/status"; then
+    control_ready
     return
   fi
 
@@ -109,8 +138,8 @@ start_control() {
   local tick=0
   while ((tick < 100)); do
     if curl --fail --silent --output /dev/null \
-      "http://127.0.0.1:${CONTROL_PORT}/api/status"; then
-      printf 'Dev Control: http://127.0.0.1:%s\n' "${CONTROL_PORT}"
+      "${CONTROL_URL}/api/status"; then
+      control_ready
       return
     fi
     tick=$((tick + 1))

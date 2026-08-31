@@ -215,9 +215,12 @@ Redis 分别使用 `55432`、`56379`。日志位于 `.local-dev/logs/`，Postgre
 保存在 Docker volume 中。
 
 开发控制台可以一键重启后端，也可以粘贴 Web 配对流程复制的凭据来启动或重启
-Connector。Connector 默认不随主栈启动；需要启动时可在控制台操作，也可传入
-`--with-connector`。用 `./local-up.sh --help` 查看环境文件、跳过安装和 Connector
-配置选项；用 `./dev-control.sh down` 停止整套本地服务。
+Connector，并提供可直接打开本地 Web 的地址。启动完成后脚本会自动用系统浏览器
+打开开发控制台；无图形界面的环境会安全跳过，也可设置
+`AGENTS_ANYWHERE_NO_BROWSER=1` 主动关闭自动打开。Connector 默认不随主栈启动；
+需要启动时可在控制台操作，也可传入 `--with-connector`。用 `./local-up.sh --help`
+查看环境文件、跳过安装和 Connector 配置选项；用 `./dev-control.sh down` 停止整套
+本地服务。
 
 ## 首次使用流程
 

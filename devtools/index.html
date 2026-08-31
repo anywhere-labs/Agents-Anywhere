@@ -17,6 +17,10 @@
       header { display: flex; align-items: end; justify-content: space-between; gap: 16px; margin-bottom: 24px; }
       h1 { margin: 0; font-size: 24px; font-weight: 650; letter-spacing: 0; }
       .endpoint { color: #8f949d; font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; }
+      .web-entry { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 64px; margin-bottom: 24px; border: 1px solid #343840; border-radius: 9px; background: #111317; color: #f4f4f5; padding: 0 18px; text-decoration: none; }
+      .web-entry:hover { border-color: #656b75; background: #181a1f; }
+      .web-entry-label { font-weight: 600; }
+      .web-entry-url { color: #aeb3bc; font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; }
       section { border-top: 1px solid #292c31; }
       .service { display: grid; grid-template-columns: 1fr auto; align-items: center; min-height: 72px; border-bottom: 1px solid #292c31; }
       .service-name { display: flex; align-items: center; gap: 10px; font-weight: 600; }
@@ -40,6 +44,7 @@
       @media (max-width: 560px) {
         main { margin: 32px auto; }
         header { align-items: start; flex-direction: column; }
+        .web-entry { align-items: start; flex-direction: column; padding: 15px 18px; }
         .actions button { flex: 1 1 100%; }
       }
     </style>
@@ -50,6 +55,11 @@
         <h1>Agents Anywhere Dev Control</h1>
         <div class="endpoint">127.0.0.1:8765</div>
       </header>
+
+      <a class="web-entry" id="web-entry" href="http://127.0.0.1:5174" target="_blank" rel="noopener noreferrer">
+        <span class="web-entry-label">进入本地 Web</span>
+        <span class="web-entry-url" id="web-entry-url">http://127.0.0.1:5174 ↗</span>
+      </a>
 
       <section aria-label="服务状态">
         <div class="service">
@@ -89,8 +99,14 @@
       const buttons = [...document.querySelectorAll("button[data-target]")];
       const credential = document.querySelector("#credential");
       const message = document.querySelector("#message");
+      const webEntry = document.querySelector("#web-entry");
+      const webEntryUrl = document.querySelector("#web-entry-url");
 
       function renderStatus(status) {
+        if (status.webUrl) {
+          webEntry.href = status.webUrl;
+          webEntryUrl.textContent = `${status.webUrl} ↗`;
+        }
         for (const name of ["server", "web", "connector", "postgres", "redis"]) {
           const online = Boolean(status[name]);
           const dot = document.querySelector(`[data-dot="${name}"]`);
