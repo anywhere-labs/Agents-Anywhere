@@ -17,6 +17,7 @@ import {
   mergeRuntimeTypes,
   namedInstanceRequiredConfigFields,
   reconfigurableRuntimeInstance,
+  runtimeConfigDraft,
   runtimeCreationDefaults,
   runtimeInstanceName,
   runtimeTypeCanCreateInstance,
@@ -154,6 +155,38 @@ test("a new Codex instance gets an isolated Home and required gateway defaults",
     "codexHome",
     "modelGateway",
   ])
+})
+
+test("an unconfigured named Codex instance gets creation defaults when resumed", () => {
+  const [baseType] = mergeRuntimeTypes([], [legacyRuntime])
+  const codexType = {
+    ...baseType,
+    runtimeType: "codex",
+    displayName: "Codex",
+    defaults: { useSystemCodex: true },
+  }
+  const pendingCodex = {
+    ...legacyRuntime,
+    runtimeId: "rti_codex_2",
+    runtimeType: "codex",
+    name: "Codex 2",
+    displayName: "Codex 2",
+    configured: false,
+    config: null,
+  }
+
+  assert.deepEqual(
+    runtimeConfigDraft(
+      codexType,
+      pendingCodex,
+      "123e4567-e89b-12d3-a456-426614174000",
+    ),
+    {
+      useSystemCodex: true,
+      codexHome: "~/.agents-anywhere/codex-homes/codex-2-123e4567e89b",
+      modelGateway: { baseUrl: "", apiKey: "" },
+    },
+  )
 })
 
 test("a runtime type without a configuration schema is not addable", () => {

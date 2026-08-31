@@ -70,6 +70,7 @@ import {
   isAdditionalCodexRuntimeType,
   namedInstanceRequiredConfigFields,
   reconfigurableRuntimeInstance,
+  runtimeConfigDraft,
   runtimeCreationDefaults,
   runtimeInstanceName,
   runtimeIsAvailable,
@@ -560,7 +561,10 @@ export function DevicePage() {
   const addRuntime = (runtimeType: RuntimeTypeView) => {
     const existing = reconfigurableRuntimeInstance(runtimeType, runtimes)
     if (existing) {
-      setConfigRuntime(existing)
+      setConfigRuntime({
+        ...existing,
+        config: runtimeConfigDraft(runtimeType, existing),
+      })
       return
     }
     setCreateRuntimeType(runtimeType)

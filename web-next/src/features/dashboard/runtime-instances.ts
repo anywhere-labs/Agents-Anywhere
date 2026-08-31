@@ -164,6 +164,20 @@ export function runtimeCreationDefaults(
   }
 }
 
+export function runtimeConfigDraft(
+  runtimeType: RuntimeTypeView,
+  runtime: DeviceRuntimeView,
+  randomId?: string,
+): Record<string, unknown> {
+  if (runtime.config !== null) return { ...runtime.config }
+  if (runtime.runtimeId === runtime.runtimeType) return { ...runtimeType.defaults }
+  return runtimeCreationDefaults(
+    runtimeType,
+    runtimeInstanceName(runtime),
+    randomId ?? globalThis.crypto.randomUUID(),
+  )
+}
+
 export function namedInstanceRequiredConfigFields(
   runtime: Pick<RuntimeTypeView, "runtimeType" | "schema" | "uiSchema">
     | Pick<DeviceRuntimeView, "runtimeType" | "schema" | "uiSchema">,
