@@ -46,7 +46,6 @@ from agent_server.infra.db import (
     pairing_codes as pairing_codes_t,
     platform_user_activity as platform_user_activity_t,
     sessions as sessions_t,
-    session_message_queue as session_message_queue_t,
     timeline_items as timeline_items_t,
     users as users_t,
 )

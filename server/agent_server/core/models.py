@@ -52,13 +52,6 @@ SessionStatus = Literal[
     "error",
     "blocked",
 ]
-SessionMessageQueueStatus = Literal[
-    "queued",
-    "dispatching",
-    "failed",
-    "dispatched",
-    "cancelled",
-]
 TimelineType = Literal[
     "message",
     "tool",
@@ -911,26 +904,10 @@ class MessageCreateRequest(BaseModel):
 
     content: str
     attachments: list[AttachmentRef] = Field(default_factory=list, max_length=10)
-    selections: dict[str, str | None] = Field(default_factory=dict)
     # Client-generated id (e.g. optimistic temp id). Forwarded to the connector;
     # the connector tags the resulting timeline item so the frontend can
     # dedupe its optimistic placeholder against the real server item.
     clientMessageId: str | None = None
-
-
-class SessionQueuedMessage(BaseModel):
-    id: str
-    sessionId: str
-    clientMessageId: str
-    content: str
-    attachments: list[AttachmentRef] = Field(default_factory=list)
-    selections: dict[str, str | None] = Field(default_factory=dict)
-    status: SessionMessageQueueStatus
-    position: int
-    attemptCount: int = 0
-    lastError: dict[str, Any] | None = None
-    createdAt: str
-    updatedAt: str
 
 
 class SessionCommandRequest(BaseModel):

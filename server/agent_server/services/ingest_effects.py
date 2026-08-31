@@ -19,5 +19,4 @@ class IngestEffect:
     session_changed: bool = False
     protocol_changed: bool = False
     notices_changed: bool = False
-    message_queue_changed: bool = False
     needs_refetch: bool = False

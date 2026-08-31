@@ -352,7 +352,6 @@ sessions = Table(
     Column("source_scan_token", Text),
     Column("last_read_seq", Integer, nullable=False, server_default="0"),
     Column("latest_turn_end_seq", Integer, nullable=False, server_default="0"),
-    Column("message_queue_updated_seq", Integer, nullable=False, server_default="0"),
     Column("timeline_reset_seq", Integer, nullable=False, server_default="0"),
     Column("last_synced_at", Text),
     Column("source_observed_at", Text),
@@ -392,44 +391,6 @@ session_active_runs = Table(
     Column("params_json", Text),
     Column("started_at", Text, nullable=False),
     Column("updated_at", Text, nullable=False),
-)
-
-
-session_message_queue = Table(
-    "session_message_queue",
-    metadata,
-    Column("id", Text, primary_key=True),
-    Column(
-        "session_id",
-        Text,
-        ForeignKey("sessions.id", ondelete="CASCADE"),
-        nullable=False,
-    ),
-    Column("user_id", Text, ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
-    Column("client_message_id", Text, nullable=False),
-    Column("content", Text, nullable=False),
-    Column("attachments_json", Text, nullable=False, server_default="[]"),
-    Column("selections_json", Text, nullable=False, server_default="{}"),
-    Column("status", Text, nullable=False),
-    Column("position", BigInteger, nullable=False),
-    Column("attempt_count", Integer, nullable=False, server_default="0"),
-    Column("last_error_json", Text),
-    Column("claimed_at", Text),
-    Column("dispatched_at", Text),
-    Column("updated_seq", BigInteger, nullable=False),
-    Column("created_at", Text, nullable=False),
-    Column("updated_at", Text, nullable=False),
-    UniqueConstraint(
-        "session_id",
-        "client_message_id",
-        name="uq_session_message_queue_client_message",
-    ),
-    Index(
-        "idx_session_message_queue_session_status_position",
-        "session_id",
-        "status",
-        "position",
-    ),
 )
 
 

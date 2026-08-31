@@ -207,11 +207,6 @@ async def _publish_session_protocol_update(
         "session": session.model_dump(mode="json"),
         "runtimeState": runtime_state.model_dump(mode="json"),
         "capabilitySet": effective_capabilities.model_dump(mode="json"),
-        "messageQueue": [
-            item.model_dump(mode="json")
-            for item in await db.list_session_message_queue(session_id)
-        ],
-        "messageQueueUpdatedSeq": await db.get_message_queue_updated_seq(session_id),
     }
     await broker.publish(session_id, envelope)
 
@@ -747,7 +742,6 @@ async def session_snapshot(
         session = await db.get_session(session_id, user_id=user_id)
         await _require_session_runtime_control(db, session, user_id=user_id)
         items, has_more = await db.list_timeline_latest(session_id=session_id, limit=limit)
-        message_queue = await db.list_session_message_queue(session_id)
         log_snapshot_stage("database", stage_started_at)
 
         stage_started_at = time.monotonic()
@@ -805,7 +799,6 @@ async def session_snapshot(
             else None
         ),
         timeline=ProtocolTimelineSnapshot(items=items, nextSeq=next_seq, hasMore=has_more),
-        messageQueue=message_queue,
         approvals=[],
         notices=notices,
         effectiveCapabilities=effective_capabilities,
@@ -1127,156 +1120,6 @@ async def send_message(
 ) -> RpcResponsePayload:
     try:
         result = await run_service.send_message(session_id, payload, user_id=user_id)
-        await _publish_session_protocol_update(
-            db,
-            broker,
-            manager,
-            runtime_state_cache,
-            session_id,
-        )
-        return result
-    except SessionRunError as exc:
-        await _best_effort_publish_session_protocol_update(
-            db,
-            broker,
-            manager,
-            runtime_state_cache,
-            session_id,
-            user_id=user_id,
-        )
-        _raise_session_run_error(exc)
-
-
-@router.delete(
-    "/{session_id}/runtime/message-queue/{message_id}",
-    response_model=RpcResponsePayload,
-)
-async def cancel_queued_message(
-    session_id: str,
-    message_id: str,
-    user_id: str = Depends(current_user_id),
-    run_service: SessionRunService = Depends(get_session_run_service),
-    db: Store = Depends(get_store),
-    broker: TimelineBroker = Depends(get_timeline_broker),
-    manager: ConnectorRpcManager = Depends(get_rpc),
-    runtime_state_cache: SessionRuntimeStateCache = Depends(
-        get_session_runtime_state_cache
-    ),
-) -> RpcResponsePayload:
-    try:
-        item = await run_service.cancel_queued_message(
-            session_id,
-            message_id,
-            user_id=user_id,
-        )
-        await _publish_session_protocol_update(
-            db,
-            broker,
-            manager,
-            runtime_state_cache,
-            session_id,
-        )
-        return RpcResponsePayload(
-            ok=True,
-            result={"queueItem": item.model_dump(mode="json")},
-        )
-    except SessionRunError as exc:
-        _raise_session_run_error(exc)
-
-
-@router.post(
-    "/{session_id}/runtime/message-queue/{message_id}/promote",
-    response_model=RpcResponsePayload,
-)
-async def promote_queued_message(
-    session_id: str,
-    message_id: str,
-    user_id: str = Depends(current_user_id),
-    run_service: SessionRunService = Depends(get_session_run_service),
-    db: Store = Depends(get_store),
-    broker: TimelineBroker = Depends(get_timeline_broker),
-    manager: ConnectorRpcManager = Depends(get_rpc),
-    runtime_state_cache: SessionRuntimeStateCache = Depends(
-        get_session_runtime_state_cache
-    ),
-) -> RpcResponsePayload:
-    try:
-        item = await run_service.promote_queued_message(
-            session_id,
-            message_id,
-            user_id=user_id,
-        )
-        await _publish_session_protocol_update(
-            db,
-            broker,
-            manager,
-            runtime_state_cache,
-            session_id,
-        )
-        return RpcResponsePayload(
-            ok=True,
-            result={"queueItem": item.model_dump(mode="json")},
-        )
-    except SessionRunError as exc:
-        _raise_session_run_error(exc)
-
-
-@router.post(
-    "/{session_id}/runtime/message-queue/{message_id}/retry",
-    response_model=RpcResponsePayload,
-)
-async def retry_queued_message(
-    session_id: str,
-    message_id: str,
-    user_id: str = Depends(current_user_id),
-    run_service: SessionRunService = Depends(get_session_run_service),
-    db: Store = Depends(get_store),
-    broker: TimelineBroker = Depends(get_timeline_broker),
-    manager: ConnectorRpcManager = Depends(get_rpc),
-    runtime_state_cache: SessionRuntimeStateCache = Depends(
-        get_session_runtime_state_cache
-    ),
-) -> RpcResponsePayload:
-    try:
-        await run_service.retry_queued_message(
-            session_id,
-            message_id,
-            user_id=user_id,
-        )
-        await _publish_session_protocol_update(
-            db,
-            broker,
-            manager,
-            runtime_state_cache,
-            session_id,
-        )
-        return RpcResponsePayload(ok=True, result={"retried": True})
-    except SessionRunError as exc:
-        _raise_session_run_error(exc)
-
-
-@router.post(
-    "/{session_id}/runtime/message-queue/{message_id}/steer",
-    response_model=RpcResponsePayload,
-)
-async def steer_queued_message(
-    session_id: str,
-    message_id: str,
-    user_id: str = Depends(current_user_id),
-    run_service: SessionRunService = Depends(get_session_run_service),
-    db: Store = Depends(get_store),
-    broker: TimelineBroker = Depends(get_timeline_broker),
-    manager: ConnectorRpcManager = Depends(get_rpc),
-    runtime_state_cache: SessionRuntimeStateCache = Depends(
-        get_session_runtime_state_cache
-    ),
-) -> RpcResponsePayload:
-    try:
-        result = await run_service.steer_queued_message(
-            session_id,
-            message_id,
-            user_id=user_id,
-        )
         await _publish_session_protocol_update(
             db,
             broker,

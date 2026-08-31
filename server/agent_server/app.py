@@ -60,12 +60,10 @@ from agent_server.services.effective_capabilities import (
     publish_connector_session_capabilities,
 )
 from agent_server.services.session_runtime_state_cache import SessionRuntimeStateCache
-from agent_server.services.session_run import SessionRunService
 from agent_server.services.shell_tasks import ShellTaskManager
 from agent_server.services.workspace import WorkspaceServiceError
 
 CONNECTOR_PRESENCE_SWEEP_SECONDS = 5
-MESSAGE_QUEUE_SWEEP_SECONDS = 3
 
 
 async def _connector_presence_watchdog(app: FastAPI) -> None:
@@ -99,51 +97,6 @@ async def _connector_presence_watchdog(app: FastAPI) -> None:
             )
 
 
-async def _message_queue_watchdog(app: FastAPI) -> None:
-    run_service = SessionRunService(
-        app.state.store,
-        app.state.rpc,
-        app.state.device_runtime_service,
-    )
-    while True:
-        await asyncio.sleep(MESSAGE_QUEUE_SWEEP_SECONDS)
-        session_ids = await app.state.store.list_sessions_with_queued_messages()
-        for session_id in session_ids:
-            try:
-                changed = await run_service.dispatch_next_queued_message(session_id)
-                if not changed:
-                    continue
-                await app.state.timeline_broker.publish(
-                    session_id,
-                    {
-                        "sessionId": session_id,
-                        "nextSeq": await app.state.store.get_session_seq(session_id),
-                        "messageQueue": [
-                            item.model_dump(mode="json")
-                            for item in await app.state.store.list_session_message_queue(
-                                session_id
-                            )
-                        ],
-                        "messageQueueUpdatedSeq": (
-                            await app.state.store.get_message_queue_updated_seq(
-                                session_id
-                            )
-                        ),
-                    },
-                )
-                await publish_dashboard_changed(
-                    app.state.store,
-                    app.state.timeline_broker,
-                    session_id=session_id,
-                    reason="session.message_queue",
-                )
-            except Exception:  # noqa: BLE001 - keep recovery alive for other sessions
-                logger.exception(
-                    "failed to resume queued session message session_id={}",
-                    session_id,
-                )
-
-
 def create_app(
     db_path: str | Path | None = None,
     *,
@@ -153,7 +106,6 @@ def create_app(
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         presence_task: asyncio.Task[None] | None = None
-        message_queue_task: asyncio.Task[None] | None = None
         try:
             await require_current_database(app.state.store.engine)
             app.state.database_schema_version = await database_schema_version(
@@ -165,18 +117,11 @@ def create_app(
             await app.state.terminal_broker.start()
             await app.state.rpc.start()
             presence_task = asyncio.create_task(_connector_presence_watchdog(app))
-            message_queue_task = asyncio.create_task(_message_queue_watchdog(app))
             # Generate the bootstrap token early so operators see it in logs.
             if await app.state.store.count_users() == 0:
                 app.state.setup_token.snapshot()
             yield
         finally:
-            if message_queue_task is not None:
-                message_queue_task.cancel()
-                try:
-                    await message_queue_task
-                except asyncio.CancelledError:
-                    pass
             if presence_task is not None:
                 presence_task.cancel()
                 try:

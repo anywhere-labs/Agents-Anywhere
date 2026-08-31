@@ -184,21 +184,6 @@
       "title": "ApprovalSource",
       "type": "object"
     },
-    "AttachmentRef": {
-      "properties": {
-        "fileId": {
-          "maxLength": 64,
-          "minLength": 1,
-          "title": "Fileid",
-          "type": "string"
-        }
-      },
-      "required": [
-        "fileId"
-      ],
-      "title": "AttachmentRef",
-      "type": "object"
-    },
     "NoticeAction": {
       "properties": {
         "actionId": {
@@ -679,100 +664,6 @@
       "title": "ProtocolTimelineSnapshot",
       "type": "object"
     },
-    "SessionQueuedMessage": {
-      "properties": {
-        "attachments": {
-          "items": {
-            "$ref": "#/$defs/AttachmentRef"
-          },
-          "title": "Attachments",
-          "type": "array"
-        },
-        "attemptCount": {
-          "default": 0,
-          "title": "Attemptcount",
-          "type": "integer"
-        },
-        "clientMessageId": {
-          "title": "Clientmessageid",
-          "type": "string"
-        },
-        "content": {
-          "title": "Content",
-          "type": "string"
-        },
-        "createdAt": {
-          "title": "Createdat",
-          "type": "string"
-        },
-        "id": {
-          "title": "Id",
-          "type": "string"
-        },
-        "lastError": {
-          "anyOf": [
-            {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Lasterror"
-        },
-        "position": {
-          "title": "Position",
-          "type": "integer"
-        },
-        "selections": {
-          "additionalProperties": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "title": "Selections",
-          "type": "object"
-        },
-        "sessionId": {
-          "title": "Sessionid",
-          "type": "string"
-        },
-        "status": {
-          "enum": [
-            "queued",
-            "dispatching",
-            "failed",
-            "dispatched",
-            "cancelled"
-          ],
-          "title": "Status",
-          "type": "string"
-        },
-        "updatedAt": {
-          "title": "Updatedat",
-          "type": "string"
-        }
-      },
-      "required": [
-        "id",
-        "sessionId",
-        "clientMessageId",
-        "content",
-        "status",
-        "position",
-        "createdAt",
-        "updatedAt"
-      ],
-      "title": "SessionQueuedMessage",
-      "type": "object"
-    },
     "SessionRuntimeState": {
       "properties": {
         "createdAt": {
@@ -886,23 +777,6 @@
     },
     "SessionView": {
       "properties": {
-        "archiveSource": {
-          "anyOf": [
-            {
-              "enum": [
-                "user",
-                "runtime",
-                "both"
-              ],
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Archivesource"
-        },
         "archived": {
           "default": false,
           "title": "Archived",
@@ -1058,60 +932,6 @@
           "default": null,
           "title": "Sortat"
         },
-        "sourceAvailability": {
-          "default": "available",
-          "enum": [
-            "available",
-            "archived",
-            "unavailable",
-            "deleted",
-            "missing",
-            "unknown"
-          ],
-          "title": "Sourceavailability",
-          "type": "string"
-        },
-        "sourceAvailabilityReason": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Sourceavailabilityreason"
-        },
-        "sourceAvailabilityUpdatedAt": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Sourceavailabilityupdatedat"
-        },
-        "sourceObservationOrigin": {
-          "anyOf": [
-            {
-              "enum": [
-                "event",
-                "inventory",
-                "operation"
-              ],
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Sourceobservationorigin"
-        },
         "sourceObservedAt": {
           "anyOf": [
             {
@@ -1162,11 +982,6 @@
         "updatedSeq": {
           "title": "Updatedseq",
           "type": "integer"
-        },
-        "userArchived": {
-          "default": false,
-          "title": "Userarchived",
-          "type": "boolean"
         }
       },
       "required": [
@@ -1416,13 +1231,6 @@
       "title": "Eventcursor",
       "type": "string"
     },
-    "messageQueue": {
-      "items": {
-        "$ref": "#/$defs/SessionQueuedMessage"
-      },
-      "title": "Messagequeue",
-      "type": "array"
-    },
     "notices": {
       "items": {
         "$ref": "#/$defs/NoticeIn"
@@ -1459,7 +1267,6 @@
     "session",
     "state",
     "timeline",
-    "messageQueue",
     "approvals",
     "notices",
     "effectiveCapabilities",
