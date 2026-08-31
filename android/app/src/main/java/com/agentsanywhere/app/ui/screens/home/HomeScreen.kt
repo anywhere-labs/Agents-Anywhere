@@ -1433,20 +1433,18 @@ private fun SessionRowTrailing(
 @Composable
 internal fun SessionStatusIndicator(indicator: SessionListIndicator) {
     val colors = LocalAAColors.current
-    val green = Color(0xFF22C55E)
 
     when (indicator) {
         SessionListIndicator.WaitingApproval -> {
             val label = stringResource(R.string.home_session_status_waiting_approval)
-            val darkMode = colors.canvas == Color(0xFF09090B)
             Text(
                 text = label,
                 modifier = Modifier
                     .clip(CircleShape)
-                    .background(green.copy(alpha = if (darkMode) 0.18f else 0.12f))
-                    .border(1.dp, green.copy(alpha = 0.22f), CircleShape)
+                    .background(colors.sessionStatusAccent.copy(alpha = 0.16f))
+                    .border(1.dp, colors.sessionStatusAccent.copy(alpha = 0.22f), CircleShape)
                     .padding(horizontal = 8.dp, vertical = 2.dp),
-                color = if (darkMode) Color(0xFF4ADE80) else Color(0xFF15803D),
+                color = colors.sessionStatusAccentText,
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Medium,
                 lineHeight = 16.sp,
@@ -1454,17 +1452,12 @@ internal fun SessionStatusIndicator(indicator: SessionListIndicator) {
             )
         }
 
-        SessionListIndicator.Error -> SessionStatusDot(
-            color = colors.errorIcon,
-            description = stringResource(R.string.home_session_status_error),
-        )
-
         SessionListIndicator.Busy -> SessionBusyIndicator(
             description = stringResource(R.string.home_session_status_running),
         )
 
         SessionListIndicator.Unread -> SessionStatusDot(
-            color = green,
+            color = colors.sessionStatusAccent,
             description = stringResource(R.string.home_session_status_unread),
         )
 

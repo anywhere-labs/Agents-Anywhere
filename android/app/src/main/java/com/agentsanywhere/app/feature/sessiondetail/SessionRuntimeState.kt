@@ -38,8 +38,13 @@ data class SessionRuntimeState(
 
 enum class SessionRuntimeStatus {
     Idle,
+    Waiting,
+    Pending,
     Running,
+    Stopping,
     WaitingApproval,
+    Blocked,
+    Disconnected,
     Error,
     Unknown,
 }
@@ -93,11 +98,22 @@ data class EffectiveCapabilities(
         val canSend = isUsable(SESSION_SEND_MESSAGE_CAPABILITY, runtime, runtimeType)
         val canSteer = isUsable(SESSION_STEER_CAPABILITY, runtime, runtimeType)
         return when {
-            canSteer && (!canSend || runtimeStatus == SessionRuntimeStatus.Running) -> RuntimeMessageAction.Steer
+            canSteer && (!canSend || runtimeStatus in ACTIVE_RUNTIME_STATUSES) -> RuntimeMessageAction.Steer
             canSend -> RuntimeMessageAction.Send
             canSteer -> RuntimeMessageAction.Steer
             else -> null
         }
+    }
+
+    private companion object {
+        val ACTIVE_RUNTIME_STATUSES = setOf(
+            SessionRuntimeStatus.Waiting,
+            SessionRuntimeStatus.Pending,
+            SessionRuntimeStatus.Running,
+            SessionRuntimeStatus.Stopping,
+            SessionRuntimeStatus.WaitingApproval,
+            SessionRuntimeStatus.Blocked,
+        )
     }
 }
 
@@ -165,8 +181,29 @@ data class RuntimeNotice(
         get() = type == "interaction" && responseRequired && status in RESPONDABLE_NOTICE_STATUSES &&
             actions.any { it.actionId.isNotBlank() }
 
+    val openInteraction: Boolean
+        get() = type == "interaction" && status in OPEN_INTERACTION_STATUSES
+
+    val openNotification: Boolean
+        get() = type == "notification" && status == "open"
+
+    fun timelineTargetId(): String? {
+        return (source["timelineItemId"] as? String)?.takeIf(String::isNotBlank)
+            ?: (context["timelineItemId"] as? String)?.takeIf(String::isNotBlank)
+    }
+
+    fun blocksSession(sessionId: String): Boolean =
+        blocking?.scope == "session" && blocking.targetId == sessionId
+
     private companion object {
         val RESPONDABLE_NOTICE_STATUSES = setOf("open", "failed")
+        val OPEN_INTERACTION_STATUSES = setOf(
+            "open",
+            "responding",
+            "response_accepted",
+            "resolving",
+            "failed",
+        )
     }
 }
 

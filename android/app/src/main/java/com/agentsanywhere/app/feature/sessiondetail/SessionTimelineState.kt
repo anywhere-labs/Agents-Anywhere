@@ -37,6 +37,14 @@ data class TimelineMessage(
     val badge: String = "",
     val detail: String = "",
     val body: String = "",
+    val contentKind: String = "",
+    val reasoningSegments: List<String> = emptyList(),
+    val command: String = "",
+    val output: String = "",
+    val input: String = "",
+    val toolError: String = "",
+    val fileChanges: List<TimelineFileChange> = emptyList(),
+    val rawContent: String = "",
     val orderSeq: Int = 0,
     val revision: Int = 1,
     val updatedSeq: Int = 0,
@@ -48,6 +56,12 @@ data class TimelineMessage(
     val optimistic: Boolean = false,
     val retryAction: RuntimeMessageAction? = null,
     val errorMessage: String? = null,
+)
+
+data class TimelineFileChange(
+    val action: String,
+    val path: String,
+    val diff: String,
 )
 
 data class TimelineAttachment(

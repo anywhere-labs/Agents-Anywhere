@@ -54,24 +54,26 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Popup
 import com.agentsanywhere.app.R
+import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 import com.agentsanywhere.app.ui.designsystem.noRippleClickable
 import kotlinx.coroutines.delay
 
 @Composable
 internal fun ComposerVeil(
-    darkMode: Boolean,
     modifier: Modifier = Modifier,
+    height: Dp = 184.dp,
 ) {
-    val base = if (darkMode) Color(0xFF09090B) else Color(0xFFFDFCFB)
+    val base = LocalAAColors.current.canvas
     Box(
         modifier = modifier
             .fillMaxWidth()
             .imePadding()
-            .height(184.dp)
+            .height(height)
             .background(
                 Brush.verticalGradient(
                     0f to base.copy(alpha = 0f),

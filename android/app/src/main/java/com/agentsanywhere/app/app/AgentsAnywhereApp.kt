@@ -46,7 +46,6 @@ import com.agentsanywhere.app.feature.auth.WebLoginViewModel
 import com.agentsanywhere.app.feature.update.AppUpdateViewModel
 import com.agentsanywhere.app.feature.devices.DeviceRuntime
 import com.agentsanywhere.app.feature.devices.DeviceRuntimeList
-import com.agentsanywhere.app.feature.devices.DeviceRuntimeSetupResult
 import com.agentsanywhere.app.feature.devices.DeviceSetupCredential
 import com.agentsanywhere.app.feature.devices.DevicesController
 import com.agentsanywhere.app.feature.files.FilesController
@@ -87,9 +86,9 @@ import com.agentsanywhere.app.ui.screens.auth.LoginMethodsScreen
 import com.agentsanywhere.app.ui.screens.auth.QrLoginScreen
 import com.agentsanywhere.app.ui.screens.auth.QrWaitingScreen
 import com.agentsanywhere.app.ui.screens.auth.WebLoginHostScreen
+import com.agentsanywhere.app.ui.screens.devices.AddDeviceScreen
 import com.agentsanywhere.app.ui.screens.devices.DeviceDetailScreen
 import com.agentsanywhere.app.ui.screens.devices.DevicesScreen
-import com.agentsanywhere.app.ui.screens.devices.PairNewDeviceSheetHost
 import com.agentsanywhere.app.ui.screens.devices.rememberDeviceAgentPreviews
 import com.agentsanywhere.app.ui.screens.files.FilesScreen
 import com.agentsanywhere.app.ui.screens.sessiondetail.SessionComposerDraftStore
@@ -135,6 +134,7 @@ fun AgentsAnywhereApp(
     }
     var selectedDeviceId by rememberSaveable { mutableStateOf<String?>(null) }
     var deviceDetailReturnDestinationName by rememberSaveable { mutableStateOf(AppDestination.Devices.name) }
+    var deviceSetupReturnDestinationName by rememberSaveable { mutableStateOf(AppDestination.Devices.name) }
     var selectedHomeTabName by rememberSaveable { mutableStateOf(HomeTab.Active.name) }
     val unauthorizedTokens = remember { Channel<String>(capacity = Channel.UNLIMITED) }
     val apiClient = remember(unauthorizedTokens) {
@@ -360,6 +360,12 @@ fun AgentsAnywhereApp(
         if (destination != AppDestination.SessionDetail) {
             preparedSessionDraft = null
         }
+        if (
+            destination == AppDestination.DeviceSetup &&
+            destinationName != AppDestination.DeviceSetup.name
+        ) {
+            deviceSetupReturnDestinationName = destinationName
+        }
         destinationName = destination.name
     }
 
@@ -420,6 +426,7 @@ fun AgentsAnywhereApp(
         preparedSessionDraft = preparedSessionDraft,
         selectedDeviceId = selectedDeviceId,
         deviceDetailReturnDestination = AppDestination.valueOf(deviceDetailReturnDestinationName),
+        deviceSetupReturnDestination = AppDestination.valueOf(deviceSetupReturnDestinationName),
         selectedHomeTab = HomeTab.valueOf(selectedHomeTabName),
         userId = authController.savedUserId(),
         role = authController.savedRole(),
@@ -540,22 +547,6 @@ fun AgentsAnywhereApp(
                 Result.failure(IllegalStateException("Sign in again to load runtimes."))
             } else {
                 devicesController.listDeviceRuntimes(connectorId)
-            }
-        },
-        onDiscoverDeviceRuntimes = { connectorId ->
-            if (!hasAuthSession) {
-                Result.failure(IllegalStateException("Sign in again to discover runtimes."))
-            } else {
-                devicesController.discoverDeviceRuntimes(connectorId)
-            }
-        },
-        onConfigureAndStartDeviceRuntime = { connectorId, runtime, config ->
-            if (!hasAuthSession) {
-                DeviceRuntimeSetupResult.SaveFailed(
-                    IllegalStateException("Sign in again to configure this runtime."),
-                )
-            } else {
-                devicesController.configureAndStartDeviceRuntime(connectorId, runtime, config)
             }
         },
         onSetDeviceRuntimeActive = { connectorId, runtime, active ->
@@ -727,6 +718,7 @@ private fun AgentsAnywhereNavHost(
     preparedSessionDraft: NewSessionDraft?,
     selectedDeviceId: String?,
     deviceDetailReturnDestination: AppDestination,
+    deviceSetupReturnDestination: AppDestination,
     selectedHomeTab: HomeTab,
     userId: String,
     role: String,
@@ -759,8 +751,6 @@ private fun AgentsAnywhereNavHost(
     onCreateDeviceSetup: suspend (String) -> Result<DeviceSetupCredential>,
     onClaimDevicePairCode: suspend (DeviceSetupCredential, String) -> Result<AgentDevice>,
     onListDeviceRuntimes: suspend (String) -> Result<DeviceRuntimeList>,
-    onDiscoverDeviceRuntimes: suspend (String) -> Result<DeviceRuntimeList>,
-    onConfigureAndStartDeviceRuntime: suspend (String, String, Map<String, Any?>) -> DeviceRuntimeSetupResult,
     onSetDeviceRuntimeActive: suspend (String, String, Boolean) -> Result<DeviceRuntime>,
     onDeleteDeviceRuntimeConfig: suspend (String, String) -> Result<DeviceRuntime>,
     onBulkSetSessionsArchived: suspend (List<String>, Boolean) -> Result<SessionBatchUpdate>,
@@ -781,7 +771,6 @@ private fun AgentsAnywhereNavHost(
 ) {
     val context = LocalContext.current
     val colors = LocalAAColors.current
-    var pairDeviceSheetOpen by remember { mutableStateOf(false) }
     var deviceAgentPreviewRefreshKey by remember { mutableLongStateOf(0L) }
     val deviceAgentPreviews = rememberDeviceAgentPreviews(
         devices = sessionsState.devices,
@@ -856,7 +845,7 @@ private fun AgentsAnywhereNavHost(
                     onOpenSession = onOpenSession,
                     onOpenDevice = onOpenDevice,
                     deviceAgentPreviews = deviceAgentPreviews,
-                    onPairDevice = { pairDeviceSheetOpen = true },
+                    onPairDevice = { navigate(AppDestination.DeviceSetup) },
                 )
                 AppDestination.NewSession -> NewSessionScreen(
                     navigate = navigate,
@@ -899,18 +888,6 @@ private fun AgentsAnywhereNavHost(
                     onPrepareDeviceSetup = onPrepareDeviceSetup,
                     onClaimDevicePairCode = onClaimDevicePairCode,
                     onListDeviceRuntimes = onListDeviceRuntimes,
-                    onDiscoverDeviceRuntimes = { connectorId ->
-                        onDiscoverDeviceRuntimes(connectorId).onSuccess {
-                            deviceAgentPreviewRefreshKey += 1L
-                        }
-                    },
-                    onConfigureAndStartDeviceRuntime = { connectorId, runtime, config ->
-                        onConfigureAndStartDeviceRuntime(connectorId, runtime, config).also { result ->
-                            if (result !is DeviceRuntimeSetupResult.SaveFailed) {
-                                deviceAgentPreviewRefreshKey += 1L
-                            }
-                        }
-                    },
                     onSetDeviceRuntimeActive = { connectorId, runtime, active ->
                         onSetDeviceRuntimeActive(connectorId, runtime, active).onSuccess {
                             deviceAgentPreviewRefreshKey += 1L
@@ -931,34 +908,28 @@ private fun AgentsAnywhereNavHost(
                     onOpenDevice = onOpenDevice,
                     onBack = { navigate(AppDestination.Sessions) },
                     agentPreviews = deviceAgentPreviews,
-                    onCreateDeviceSetup = onCreateDeviceSetup,
-                    onDeviceCredentialCreated = { credential ->
-                        // The create callback already patches state; this keeps the screen API explicit.
-                    },
-                    onClaimDevicePairCode = onClaimDevicePairCode,
+                    onAddDevice = { navigate(AppDestination.DeviceSetup) },
                 )
                 AppDestination.Terminal -> TerminalScreen(
                     navigate = navigate,
                     state = sessionsState,
                     terminalPool = remoteTerminalPool,
-                    onPairDevice = { pairDeviceSheetOpen = true },
+                    onPairDevice = { navigate(AppDestination.DeviceSetup) },
                 )
                 AppDestination.Files -> FilesScreen(
                     navigate = navigate,
                     state = sessionsState,
                     controller = filesController,
-                    onPairDevice = { pairDeviceSheetOpen = true },
+                    onPairDevice = { navigate(AppDestination.DeviceSetup) },
+                )
+                AppDestination.DeviceSetup -> AddDeviceScreen(
+                    devices = sessionsState.devices,
+                    onBack = { navigate(deviceSetupReturnDestination) },
+                    onCreateCredential = onCreateDeviceSetup,
+                    onRenameDevice = onRenameDevice,
                 )
             }
         }
-        PairNewDeviceSheetHost(
-            open = pairDeviceSheetOpen,
-            devices = sessionsState.devices,
-            onDismiss = { pairDeviceSheetOpen = false },
-            onCreateDeviceSetup = onCreateDeviceSetup,
-            onDeviceCredentialCreated = {},
-            onClaimDevicePairCode = onClaimDevicePairCode,
-        )
     }
 }
 
