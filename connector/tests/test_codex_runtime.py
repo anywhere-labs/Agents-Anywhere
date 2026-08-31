@@ -94,6 +94,7 @@ from connector.runtimes.codex.sdk.runtime_client import (
 )
 from connector.runtimes.codex.sdk.shapes import notification_dict, thread_ref
 from connector.runtimes.codex.timeline.accumulator import CodexTimelineAccumulator
+from connector.runtimes.codex.timeline.agent_calls import codex_agent_call_content
 from connector.runtimes.codex.timeline.identity import (
     client_message_item_id,
     turn_position_item_id,
@@ -112,6 +113,7 @@ from connector.runtimes.codex.timeline.items import (
     CodexMessageTimelineItem,
     CodexReasoningItem,
     CodexRuntimeMessageItem,
+    CodexSubAgentActivityItem,
     CodexSystemTimelineItem,
     CodexTimelineItem,
     CodexToolTimelineItem,
@@ -270,6 +272,10 @@ def test_codex_timeline_native_item_classes_are_explicitly_mapped() -> None:
     assert codex_timeline_item_class("commandExecution") is CodexCommandExecutionItem
     assert (
         codex_timeline_item_class("collabAgentToolCall") is CodexCollabAgentToolCallItem
+    )
+    assert (
+        codex_timeline_item_class("SubAgentActivityThreadItem")
+        is CodexSubAgentActivityItem
     )
     assert codex_timeline_item_class("mcpToolCall") is CodexMcpToolCallItem
     assert codex_timeline_item_class("dynamicToolCall") is CodexDynamicToolCallItem
@@ -1919,7 +1925,9 @@ async def _test_codex_runtime_lists_sessions_from_thread_list() -> None:
 
 
 def test_codex_runtime_complete_inventory_reads_active_and_archived_threads() -> None:
-    asyncio.run(_test_codex_runtime_complete_inventory_reads_active_and_archived_threads())
+    asyncio.run(
+        _test_codex_runtime_complete_inventory_reads_active_and_archived_threads()
+    )
 
 
 async def _test_codex_runtime_complete_inventory_reads_active_and_archived_threads() -> (
@@ -1941,10 +1949,13 @@ async def _test_codex_runtime_complete_inventory_reads_active_and_archived_threa
     assert by_external_id["thread_active"].source_state.availability == "available"
     assert by_external_id["thread_archived"].source_state is not None
     assert by_external_id["thread_archived"].source_state.availability == "archived"
-    assert by_external_id["thread_archived"].metadata["sync"][
-        "requires_timeline_sync"
-    ] is False
-    assert [request for request in client.requests if request[0].startswith("thread/list")] == [
+    assert (
+        by_external_id["thread_archived"].metadata["sync"]["requires_timeline_sync"]
+        is False
+    )
+    assert [
+        request for request in client.requests if request[0].startswith("thread/list")
+    ] == [
         ("thread/list", {"limit": 25, "sortKey": "updated_at", "archived": False}),
         (
             "thread/list/archived",
@@ -2004,14 +2015,19 @@ async def _test_codex_runtime_start_turn_returns_archived_source_error() -> None
     assert result.source_observation is not None
     assert result.source_observation.state.observation_origin == "operation"
     assert host.source_updates[-1].state.availability == "archived"
-    assert runtime._pending_messages.pending_message_by_client_id(
-        "thread_1",
-        "cm_1",
-    ) is None
+    assert (
+        runtime._pending_messages.pending_message_by_client_id(
+            "thread_1",
+            "cm_1",
+        )
+        is None
+    )
 
 
 def test_codex_runtime_does_not_misclassify_ambiguous_active_thread_error() -> None:
-    asyncio.run(_test_codex_runtime_does_not_misclassify_ambiguous_active_thread_error())
+    asyncio.run(
+        _test_codex_runtime_does_not_misclassify_ambiguous_active_thread_error()
+    )
 
 
 async def _test_codex_runtime_does_not_misclassify_ambiguous_active_thread_error() -> (
@@ -2184,7 +2200,9 @@ async def _test_codex_runtime_session_state_defaults_to_idle_for_known_external_
 
 
 def test_codex_runtime_resolves_live_session_state_by_external_session_id() -> None:
-    asyncio.run(_test_codex_runtime_resolves_live_session_state_by_external_session_id())
+    asyncio.run(
+        _test_codex_runtime_resolves_live_session_state_by_external_session_id()
+    )
 
 
 async def _test_codex_runtime_resolves_live_session_state_by_external_session_id() -> (
@@ -2765,10 +2783,9 @@ async def _test_codex_runtime_reads_typed_collab_agent_item_from_snapshot() -> N
     assert item.source["itemId"] == "collab_1"
     assert item.source["rawType"] == "collabAgentToolCall"
     assert item.content == {
-        "kind": "mcp",
-        "server": "codex.collab",
-        "tool": "spawnAgent",
-        "arguments": {
+        "kind": "agent_call",
+        "title": "spawnAgent",
+        "input": {
             "senderThreadId": "thread_1",
             "receiverThreadIds": ["thread_2"],
             "prompt": "inspect this",
@@ -2781,8 +2798,154 @@ async def _test_codex_runtime_reads_typed_collab_agent_item_from_snapshot() -> N
                 "message": "done",
             }
         },
-        "error": None,
+        "nativeAction": "spawnAgent",
+        "action": "spawn",
+        "prompt": "inspect this",
+        "agentId": "thread_2",
+        "callerId": "thread_1",
+        "targetIds": ["thread_2"],
+        "model": "gpt-example",
+        "agents": {
+            "agent_1": {
+                "status": "completed",
+                "message": "done",
+            }
+        },
     }
+
+
+def test_codex_runtime_reads_typed_subagent_activity_from_snapshot() -> None:
+    asyncio.run(_test_codex_runtime_reads_typed_subagent_activity_from_snapshot())
+
+
+async def _test_codex_runtime_reads_typed_subagent_activity_from_snapshot() -> None:
+    client = FakeCodexClient()
+    client.results["thread/read"] = {
+        "thread": Thread.model_validate(
+            {
+                "id": "thread_1",
+                "cliVersion": "0.1.0",
+                "createdAt": 1,
+                "cwd": "/repo",
+                "ephemeral": False,
+                "modelProvider": "openai",
+                "preview": "hello",
+                "sessionId": "codex_session_1",
+                "source": "appServer",
+                "status": {"type": "notLoaded"},
+                "turns": [
+                    {
+                        "id": "turn_subagent",
+                        "status": "completed",
+                        "items": [
+                            {
+                                "id": "subagent_1",
+                                "type": "subAgentActivity",
+                                "agentPath": "/root/research_jingtian_sun",
+                                "agentThreadId": "thread_2",
+                                "kind": "started",
+                            }
+                        ],
+                    }
+                ],
+                "updatedAt": 2,
+            }
+        )
+    }
+    runtime = CodexRuntime(config=_config(), host=FakeHost(), client=client)
+
+    snapshot = await runtime.get_session_snapshot(
+        "sess_1",
+        external_session_id="thread_1",
+    )
+
+    assert len(snapshot.items) == 1
+    item = snapshot.items[0]
+    assert item.type == "tool"
+    assert item.role == "tool"
+    assert item.source["rawType"] == "SubAgentActivityThreadItem"
+    assert item.content == {
+        "kind": "agent_call",
+        "title": "research_jingtian_sun",
+        "input": {
+            "receiverThreadIds": ["thread_2"],
+            "description": "research_jingtian_sun",
+            "agentPath": "/root/research_jingtian_sun",
+        },
+        "nativeAction": "spawnAgent",
+        "action": "spawn",
+        "description": "research_jingtian_sun",
+        "agentId": "thread_2",
+        "targetIds": ["thread_2"],
+    }
+
+
+@pytest.mark.parametrize(
+    ("kind", "action"),
+    [
+        ("started", "spawn"),
+        ("interacted", "send_input"),
+        ("interrupted", "close"),
+    ],
+)
+def test_codex_runtime_maps_subagent_activity_kinds(kind: str, action: str) -> None:
+    projection = timeline_projection_from_raw(
+        {
+            "id": f"subagent_{kind}",
+            "type": "subAgentActivity",
+            "agentPath": "/root/research_agent",
+            "agentThreadId": "thread_2",
+            "kind": kind,
+            "status": "completed",
+        }
+    )
+
+    item = timeline_item_from_projection(
+        projection,
+        external_session_id="thread_1",
+        fallback_index=0,
+        event="thread/read",
+    )
+    platform_item = item.to_platform_item(session_id="sess_1", order_seq=1)
+
+    assert platform_item.type == "tool"
+    assert platform_item.content["kind"] == "agent_call"
+    assert platform_item.content["action"] == action
+    assert platform_item.content["description"] == "research_agent"
+
+
+@pytest.mark.parametrize(
+    ("native_action", "action"),
+    [
+        ("spawnAgent", "spawn"),
+        ("sendInput", "send_input"),
+        ("resumeAgent", "resume"),
+        ("wait", "wait"),
+        ("closeAgent", "close"),
+    ],
+)
+def test_codex_runtime_maps_all_collab_agent_actions(
+    native_action: str,
+    action: str,
+) -> None:
+    content = codex_agent_call_content(
+        native_action=native_action,
+        arguments={
+            "senderThreadId": "thread_1",
+            "receiverThreadIds": ["thread_2"],
+            "prompt": "continue",
+            "model": "gpt-test",
+            "reasoningEffort": "high",
+        },
+        output={"thread_2": {"status": "completed", "message": "done"}},
+    ).to_mapping()
+
+    assert content["kind"] == "agent_call"
+    assert content["action"] == action
+    assert content["nativeAction"] == native_action
+    assert content["callerId"] == "thread_1"
+    assert content["targetIds"] == ["thread_2"]
+    assert content["agents"] == {"thread_2": {"status": "completed", "message": "done"}}
 
 
 def test_codex_snapshot_keeps_assistant_native_identity_without_turn_id() -> None:

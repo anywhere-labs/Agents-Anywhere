@@ -218,7 +218,11 @@ class CodexSdkClient:
             raise RuntimeInvalidRequestError(
                 "Codex SDK client does not expose thread_list()"
             )
-        params: dict[str, Any] = {"cursor": cursor, "limit": limit}
+        params: dict[str, Any] = {
+            "cursor": cursor,
+            "limit": limit,
+            "model_providers": [],
+        }
         if archived is not None:
             params["archived"] = archived
         result = await thread_list(**params)

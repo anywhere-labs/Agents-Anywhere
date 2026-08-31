@@ -4,7 +4,7 @@ import hashlib
 import json
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, ClassVar, Literal
 
 from connector.runtime_protocol.models import RuntimeTimelineItem
@@ -34,6 +34,7 @@ TimelineRole = Literal["user", "assistant", "system", "tool"]
 MessageContentKind = Literal["text", "markdown", "multimodal"]
 ToolContentKind = Literal[
     "command",
+    "agent_call",
     "mcp",
     "tool_call",
     "tool_result",
@@ -196,6 +197,54 @@ class CommandToolContent(ToolTimelineContent):
 
 
 @dataclass(frozen=True, slots=True)
+class AgentCallToolContent(ToolTimelineContent):
+    expected_kind: ClassVar[str | None] = "agent_call"
+    kind: ToolContentKind = "agent_call"
+    action: str = "invoke"
+    description: str | None = None
+    agent_type: str | None = None
+    prompt: str | None = None
+    run_in_background: bool | None = None
+    parent_item_id: str | None = None
+    agent_id: str | None = None
+    caller_id: str | None = None
+    target_ids: tuple[str, ...] = ()
+    model: str | None = None
+    reasoning_effort: str | None = None
+    agents: Mapping[str, Any] = field(default_factory=dict)
+    usage: Mapping[str, Any] = field(default_factory=dict)
+
+    def to_mapping(self) -> Mapping[str, Any]:
+        payload = dict(ToolTimelineContent.to_mapping(self))
+        payload["action"] = self.action
+        if self.description is not None:
+            payload["description"] = self.description
+        if self.agent_type is not None:
+            payload["agentType"] = self.agent_type
+        if self.prompt is not None:
+            payload["prompt"] = self.prompt
+        if self.run_in_background is not None:
+            payload["runInBackground"] = self.run_in_background
+        if self.parent_item_id is not None:
+            payload["parentItemId"] = self.parent_item_id
+        if self.agent_id is not None:
+            payload["agentId"] = self.agent_id
+        if self.caller_id is not None:
+            payload["callerId"] = self.caller_id
+        if self.target_ids:
+            payload["targetIds"] = list(self.target_ids)
+        if self.model is not None:
+            payload["model"] = self.model
+        if self.reasoning_effort is not None:
+            payload["reasoningEffort"] = self.reasoning_effort
+        if self.agents:
+            payload["agents"] = dict(self.agents)
+        if self.usage:
+            payload["usage"] = dict(self.usage)
+        return payload
+
+
+@dataclass(frozen=True, slots=True)
 class McpToolContent(ToolTimelineContent):
     expected_kind: ClassVar[str | None] = "mcp"
     kind: ToolContentKind = "mcp"
@@ -241,6 +290,33 @@ class WebSearchToolContent(ToolTimelineContent):
 class UnknownToolContent(ToolTimelineContent):
     expected_kind: ClassVar[str | None] = "unknown"
     kind: ToolContentKind = "unknown"
+
+
+def complete_tool_content(
+    call: ToolTimelineContent,
+    *,
+    output: Any,
+    result: Any,
+    is_error: bool,
+    exit_code: int | None = None,
+    metadata: Mapping[str, Any] | None = None,
+) -> ToolTimelineContent:
+    """Complete a tool call without changing its semantic content kind."""
+
+    completed_metadata = {
+        **dict(call.metadata),
+        "result": result,
+        "isError": is_error,
+        **dict(metadata or {}),
+    }
+    if is_error and "error" not in completed_metadata:
+        completed_metadata["error"] = output
+    return replace(
+        call,
+        output=output,
+        exit_code=call.exit_code if exit_code is None else exit_code,
+        metadata=completed_metadata,
+    )
 
 
 @dataclass(frozen=True, slots=True)

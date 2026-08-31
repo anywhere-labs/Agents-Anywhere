@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { Copy, Check, Loader2, CheckCircle2, ArrowLeft, ExternalLink, MonitorUp, Terminal, KeyRound, Plus, RefreshCw, CircleHelp } from "lucide-react"
+import { Copy, Check, Loader2, ArrowLeft, ExternalLink, MonitorUp, Terminal, KeyRound } from "lucide-react"
 import { toast } from "sonner"
 import {
   Dialog,
@@ -22,12 +22,6 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp"
@@ -38,22 +32,8 @@ import { dashboardApi } from "@/features/dashboard/api"
 import type {
   ConnectorCreateResponse,
   ConnectorRevokeResponse,
-  DeviceRuntimeView,
-  RuntimeTypeView,
 } from "@/features/dashboard/types"
 import { useTranslations } from "next-intl"
-import { RuntimeConfigDialog } from "@/components/runtime-config-dialog"
-import { RuntimeInstanceNameDialog } from "@/components/runtime-instance-name-dialog"
-import { discoverConnectorRuntimeOverview } from "@/features/dashboard/runtime-discovery"
-import {
-  addableRuntimeTypes,
-  configuredRuntimeInstances,
-  isAdditionalCodexRuntimeType,
-  reconfigurableRuntimeInstance,
-  runtimeInstanceName,
-  runtimeTypeName,
-  suggestedRuntimeInstanceName,
-} from "@/features/dashboard/runtime-instances"
 
 // ── Readable name generator ────────────────────────────────
 const ADJECTIVES = [
@@ -79,8 +59,6 @@ const NOUNS = [
 const GITHUB_RELEASES_URL = "https://github.com/anywhere-labs/Agents-Anywhere/releases"
 const COMMAND_WARNING_ACCEPTED_KEY = "agents-anywhere.pairDevice.commandWarningAccepted.v1"
 const COMMAND_WARNING_WAIT_SECONDS = 5
-const PAIRED_RUNTIME_DISCOVERY_DELAY_MS = 750
-const NEW_RUNTIME_SAVING_ID = "@new-runtime"
 
 function randomName(): string {
   const adj = ADJECTIVES[Math.floor(Math.random() * ADJECTIVES.length)]
@@ -160,7 +138,7 @@ function writeCommandWarningAccepted() {
 }
 
 // ── Types ──────────────────────────────────────────────────
-type Step = "name" | "method" | "desktop-method" | "desktop-local" | "desktop-paircode" | "desktop-credentials" | "command-warning" | "command" | "agents"
+type Step = "name" | "method" | "desktop-method" | "desktop-local" | "desktop-paircode" | "desktop-credentials" | "command-warning" | "command"
 
 interface Props {
   open: boolean
@@ -216,7 +194,6 @@ function PollingIndicator({ label }: { label: string }) {
 export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setupCredential = null, title }: Props) {
   const { session } = useAuth()
   const t = useTranslations("dashboard.pairDevice")
-  const tDevice = useTranslations("dashboard.device")
   const tCommon = useTranslations("common")
   const [step, setStep] = React.useState<Step>(() => (setupCredential ? "method" : "name"))
   const [name, setName] = React.useState(() => setupCredential?.connector.name ?? randomName())
@@ -230,18 +207,7 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
   const [credentialsBackStep, setCredentialsBackStep] = React.useState<"method" | "desktop-method">("desktop-method")
   const [commandWarningAccepted, setCommandWarningAccepted] = React.useState(readCommandWarningAccepted)
   const [commandCountdown, setCommandCountdown] = React.useState(COMMAND_WARNING_WAIT_SECONDS)
-  const [runtimes, setRuntimes] = React.useState<DeviceRuntimeView[]>([])
-  const [runtimeTypes, setRuntimeTypes] = React.useState<RuntimeTypeView[]>([])
-  const [runtimesLoading, setRuntimesLoading] = React.useState(false)
-  const [configRuntime, setConfigRuntime] = React.useState<DeviceRuntimeView | null>(null)
-  const [createRuntimeType, setCreateRuntimeType] = React.useState<RuntimeTypeView | null>(null)
-  const [pendingRuntimeCreation, setPendingRuntimeCreation] = React.useState<{
-    runtimeType: RuntimeTypeView
-    name: string
-  } | null>(null)
-  const [savingRuntimeId, setSavingRuntimeId] = React.useState<string | null>(null)
   const pollingRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
-  const runtimeLoadIdRef = React.useRef(0)
   const commandCountdownRef = React.useRef<number | null>(null)
   const suppressCloseGuardRef = React.useRef(false)
   const serverUrl = React.useMemo(resolvePairingServerUrl, [])
@@ -267,33 +233,25 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
     setPolling(false)
   }, [])
 
-  const loadRuntimes = React.useCallback(async (cid: string, waitForConnector = false) => {
-    if (!session?.accessToken) return
-    const loadId = ++runtimeLoadIdRef.current
-    setRuntimesLoading(true)
-    try {
-      const overview = await discoverConnectorRuntimeOverview(session.accessToken, cid, {
-        initialDelayMs: waitForConnector ? PAIRED_RUNTIME_DISCOVERY_DELAY_MS : 0,
-      })
-      if (loadId !== runtimeLoadIdRef.current) return
-      setRuntimes(overview.runtimes)
-      setRuntimeTypes(overview.runtimeTypes)
-    } catch (error) {
-      if (loadId === runtimeLoadIdRef.current) {
-        toast.error(error instanceof Error ? error.message : t("errors.discoverRuntimesFailed"))
-      }
-    } finally {
-      if (loadId === runtimeLoadIdRef.current) setRuntimesLoading(false)
-    }
-  }, [session?.accessToken, t])
-
-  const enterAgentsStep = React.useCallback((cid: string) => {
+  const reset = React.useCallback(() => {
     stopPolling()
-    setRuntimes([])
-    setStep("agents")
+    setStep("name")
+    setName(setupCredential?.connector.name ?? randomName())
+    setConnectorId(setupCredential?.connector.id ?? null)
+    setToken(setupCredential?.connectorToken ?? null)
+    setPairCode("")
+    setCreating(false)
+    setClaiming(false)
+    setPolling(false)
+    setCredentialsBackStep("desktop-method")
+    setCommandCountdown(COMMAND_WARNING_WAIT_SECONDS)
+  }, [setupCredential, stopPolling])
+
+  const completePairing = React.useCallback(() => {
+    reset()
     onConnectorCreated?.()
-    void loadRuntimes(cid, true)
-  }, [loadRuntimes, onConnectorCreated, stopPolling])
+    onOpenChange(false)
+  }, [onConnectorCreated, onOpenChange, reset])
 
   const startConnectorPolling = React.useCallback((cid: string) => {
     if (!session?.accessToken) return
@@ -302,7 +260,7 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
       try {
         const { connector } = await dashboardApi.getConnector(session.accessToken, cid)
         if (connector.status === "online") {
-          enterAgentsStep(cid)
+          completePairing()
         } else {
           pollingRef.current = setTimeout(tick, 2000)
         }
@@ -311,11 +269,10 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
       }
     }
     pollingRef.current = setTimeout(tick, 1500)
-  }, [enterAgentsStep, session?.accessToken])
+  }, [completePairing, session?.accessToken])
 
   React.useEffect(() => {
     return () => {
-      runtimeLoadIdRef.current += 1
       stopPolling()
     }
   }, [stopPolling])
@@ -346,28 +303,6 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
       commandCountdownRef.current = null
     }
   }, [commandWarningAccepted, step])
-
-  const reset = () => {
-    stopPolling()
-    setStep("name")
-    setName(setupCredential?.connector.name ?? randomName())
-    setConnectorId(setupCredential?.connector.id ?? null)
-    setToken(setupCredential?.connectorToken ?? null)
-    setPairCode("")
-    setCreating(false)
-    setClaiming(false)
-    setPolling(false)
-    setCredentialsBackStep("desktop-method")
-    setCommandCountdown(COMMAND_WARNING_WAIT_SECONDS)
-    setRuntimes([])
-    setRuntimeTypes([])
-    setRuntimesLoading(false)
-    setConfigRuntime(null)
-    setCreateRuntimeType(null)
-    setPendingRuntimeCreation(null)
-    setSavingRuntimeId(null)
-    runtimeLoadIdRef.current += 1
-  }
 
   const handleOpenChange = (next: boolean) => {
     if (!next && suppressCloseGuardRef.current) return
@@ -462,9 +397,8 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
         connectorId,
         connectorToken: token,
       })
-      const claimedConnectorId = result.connector?.id ?? connectorId
       if (result.connector?.id) setConnectorId(result.connector.id)
-      enterAgentsStep(claimedConnectorId)
+      completePairing()
     } catch (err) {
       toast.error(err instanceof Error ? err.message : t("errors.claimFailed"))
     } finally {
@@ -480,80 +414,6 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
     onOpenChange(false)
   }
 
-  const handleSuccessClose = () => {
-    reset()
-    onOpenChange(false)
-  }
-
-  const configureAndStartRuntime = async (runtime: DeviceRuntimeView, config: Record<string, unknown>) => {
-    if (!session?.accessToken || !connectorId) return
-    setSavingRuntimeId(runtime.runtimeId)
-    try {
-      const saved = await dashboardApi.putConnectorRuntimeConfig(
-        session.accessToken,
-        connectorId,
-        runtime.runtimeId,
-        config,
-      )
-      setRuntimes((current) => current.map((item) => item.runtimeId === saved.runtimeId ? saved : item))
-      const started = await dashboardApi.setConnectorRuntimeActive(
-        session.accessToken,
-        connectorId,
-        runtime.runtimeId,
-        true,
-      )
-      setRuntimes((current) => current.map((item) => item.runtimeId === started.runtimeId ? started : item))
-      toast.success(t("agentConfiguredAndStarted", { name: runtimeInstanceName(runtime) }))
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : t("errors.configureAndStartFailed"))
-      throw error
-    } finally {
-      setSavingRuntimeId(null)
-    }
-  }
-
-  const stageRuntimeCreation = async (runtimeName: string) => {
-    if (!createRuntimeType) return
-    setPendingRuntimeCreation({ runtimeType: createRuntimeType, name: runtimeName })
-    setCreateRuntimeType(null)
-  }
-
-  const createAndStartRuntime = async (
-    pending: NonNullable<typeof pendingRuntimeCreation>,
-    config: Record<string, unknown>,
-  ) => {
-    if (!session?.accessToken || !connectorId) return
-    setSavingRuntimeId(NEW_RUNTIME_SAVING_ID)
-    try {
-      const created = await dashboardApi.createConnectorRuntime(
-        session.accessToken,
-        connectorId,
-        {
-          runtimeType: pending.runtimeType.runtimeType,
-          name: pending.name,
-          config,
-          active: true,
-        },
-      )
-      setRuntimes((current) => [...current, created])
-      toast.success(t("agentConfiguredAndStarted", { name: pending.name }))
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : tDevice("createRuntimeFailed"))
-      throw error
-    } finally {
-      setSavingRuntimeId(null)
-    }
-  }
-
-  const addRuntime = (runtimeType: RuntimeTypeView) => {
-    const existing = reconfigurableRuntimeInstance(runtimeType, runtimes)
-    if (existing) {
-      setConfigRuntime(existing)
-      return
-    }
-    setCreateRuntimeType(runtimeType)
-  }
-
   const pairServer = pairServerAddress(serverUrl)
   const tokenCommand = connectorId && token
     ? [
@@ -565,8 +425,6 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
     : ""
   const desktopLaunchUrl = connectorId && token ? desktopConnectorUrl(serverUrl, connectorId, token) : ""
   const desktopCredentials = connectorId && token ? connectorCredentialsPayload(serverUrl, connectorId, token) : ""
-  const visibleRuntimes = configuredRuntimeInstances(runtimes)
-  const visibleRuntimeTypes = addableRuntimeTypes(runtimeTypes, runtimes)
 
   const openDesktopConnector = () => {
     if (!desktopLaunchUrl || !connectorId) return
@@ -890,162 +748,9 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
             </>
           )}
 
-          {/* ── Step: Configure agents ── */}
-          {step === "agents" && (
-            <>
-              <DialogHeader>
-                <DialogTitle className="flex items-center gap-2">
-                  <CheckCircle2 className="size-5 text-emerald-500" />
-                  {t("agentsTitle")}
-                </DialogTitle>
-                <DialogDescription>
-                  {t("agentsDescription", { name })}
-                </DialogDescription>
-              </DialogHeader>
-              <div className="flex min-h-32 flex-col gap-2 py-1">
-                {runtimesLoading ? (
-                  <div className="flex min-h-32 items-center justify-center gap-2 text-sm text-muted-foreground">
-                    <Loader2 className="size-4 animate-spin" />
-                    {t("discoveringAgents")}
-                  </div>
-                ) : visibleRuntimes.length === 0 && visibleRuntimeTypes.length === 0 ? (
-                  <div className="flex min-h-32 flex-col items-center justify-center gap-3 text-center">
-                    <p className="text-sm text-muted-foreground">{t("noAgentsFound")}</p>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => connectorId && void loadRuntimes(connectorId)}
-                    >
-                      <RefreshCw />
-                      {t("refreshAgents")}
-                    </Button>
-                  </div>
-                ) : (
-                  <>
-                    {visibleRuntimes.map((runtime) => (
-                      <div key={runtime.runtimeId} className="flex min-w-0 items-center gap-3 rounded-lg border px-4 py-3">
-                        <div className="min-w-0 flex-1">
-                          <p className="truncate text-sm font-medium">{runtimeInstanceName(runtime)}</p>
-                          <p className="truncate text-xs text-muted-foreground">
-                            {runtimeTypeName(runtime)} · {runtime.active && runtime.status === "running"
-                              ? t("agentRunning")
-                              : t("agentConfigured")}
-                          </p>
-                        </div>
-                        <CheckCircle2 className="size-4 shrink-0 text-emerald-500" aria-label={t("agentConfigured")} />
-                      </div>
-                    ))}
-                    <TooltipProvider>
-                      {visibleRuntimeTypes.map((runtimeType) => (
-                        <div key={runtimeType.runtimeType} className="flex min-w-0 items-center gap-3 rounded-lg border border-dashed px-4 py-3">
-                          <div className="min-w-0 flex-1">
-                            <div className="flex min-w-0 items-center gap-1">
-                              <p className="truncate text-sm font-medium">
-                                {isAdditionalCodexRuntimeType(runtimeType, runtimes)
-                                  ? tDevice("codexMultiInstanceName")
-                                  : runtimeType.displayName}
-                              </p>
-                              {isAdditionalCodexRuntimeType(runtimeType, runtimes) ? (
-                                <Tooltip>
-                                  <TooltipTrigger asChild>
-                                    <Button
-                                      type="button"
-                                      variant="ghost"
-                                      size="icon-sm"
-                                      className="size-6 shrink-0"
-                                      aria-label={tDevice("codexMultiInstanceHelpLabel")}
-                                    >
-                                      <CircleHelp />
-                                    </Button>
-                                  </TooltipTrigger>
-                                  <TooltipContent side="top" className="max-w-xs">
-                                    {tDevice("codexMultiInstanceHelp")}
-                                  </TooltipContent>
-                                </Tooltip>
-                              ) : null}
-                            </div>
-                            <p className="truncate text-xs text-muted-foreground">
-                              {runtimeType.description || runtimeType.reason || runtimeType.implementationType}
-                            </p>
-                          </div>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            onClick={() => addRuntime(runtimeType)}
-                          >
-                            <Plus data-icon="inline-start" />
-                            {tDevice("addRuntime")}
-                          </Button>
-                        </div>
-                      ))}
-                    </TooltipProvider>
-                  </>
-                )}
-              </div>
-              <DialogFooter className="sm:justify-between">
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => connectorId && void loadRuntimes(connectorId)}
-                  disabled={runtimesLoading}
-                >
-                  <RefreshCw className={cn(runtimesLoading && "animate-spin")} />
-                  {t("refreshAgents")}
-                </Button>
-                <Button onClick={handleSuccessClose} className="sm:min-w-28">{tCommon("done")}</Button>
-              </DialogFooter>
-            </>
-          )}
           </div>
         </DialogContent>
       </Dialog>
-
-      {configRuntime ? (
-        <RuntimeConfigDialog
-          runtimeName={runtimeInstanceName(configRuntime)}
-          schema={configRuntime.schema}
-          uiSchema={configRuntime.uiSchema}
-          config={configRuntime.config}
-          saving={savingRuntimeId === configRuntime.runtimeId}
-          submitLabel={t("configureAndStart")}
-          open
-          onOpenChange={(nextOpen) => { if (!nextOpen) setConfigRuntime(null) }}
-          onSave={(config) => configureAndStartRuntime(configRuntime, config)}
-        />
-      ) : null}
-
-      {createRuntimeType ? (
-        <RuntimeInstanceNameDialog
-          open
-          title={tDevice("createRuntimeTitle", { type: createRuntimeType.displayName })}
-          description={tDevice("createRuntimeDescription", { type: createRuntimeType.displayName })}
-          label={tDevice("runtimeName")}
-          requiredMessage={tDevice("runtimeNameRequired")}
-          placeholder={tDevice("runtimeNamePlaceholder")}
-          submitLabel={tDevice("createRuntime")}
-          cancelLabel={tCommon("cancel")}
-          initialName={suggestedRuntimeInstanceName(createRuntimeType, runtimes)}
-          saving={false}
-          onOpenChange={(nextOpen) => { if (!nextOpen) setCreateRuntimeType(null) }}
-          onSubmit={stageRuntimeCreation}
-        />
-      ) : null}
-
-      {pendingRuntimeCreation ? (
-        <RuntimeConfigDialog
-          runtimeName={pendingRuntimeCreation.name}
-          schema={pendingRuntimeCreation.runtimeType.schema}
-          uiSchema={pendingRuntimeCreation.runtimeType.uiSchema}
-          config={null}
-          saving={savingRuntimeId === NEW_RUNTIME_SAVING_ID}
-          submitLabel={t("configureAndStart")}
-          open
-          onOpenChange={(nextOpen) => { if (!nextOpen) setPendingRuntimeCreation(null) }}
-          onSave={(config) => createAndStartRuntime(pendingRuntimeCreation, config)}
-        />
-      ) : null}
 
       {/* Exit guard */}
       <AlertDialog open={exitGuardOpen} onOpenChange={setExitGuardOpen}>
