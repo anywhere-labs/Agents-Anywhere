@@ -1060,6 +1060,11 @@ function defaultConnectorCwd(): string {
   const here = new URL(import.meta.url)
   const herePath = fileURLToPath(here)
   const candidates: string[] = [
+    // 1. Packaged/bundled connector inside the plugin package
+    resolve(dirname(herePath), 'bundled-connector'),
+    resolve(dirname(herePath), '..', 'bundled-connector'),
+    resolve(dirname(herePath), 'connector'),
+    // 2. Sibling repository / monorepo structure
     resolve(dirname(herePath), '..', 'connector'),
     resolve(dirname(herePath), '..', '..', 'connector'),
   ]
