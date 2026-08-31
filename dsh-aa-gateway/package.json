@@ -21,6 +21,7 @@
     "lib/**/*.js",
     "lib/**/*.js.map",
     "lib/types/**/*.d.ts",
+    "bundled-connector/**/*",
     "cordis.patch.yml",
     "README.md",
     "LICENSE"
@@ -40,8 +41,9 @@
     }
   },
   "scripts": {
-    "clean": "node --input-type=module -e \"import { rmSync } from 'node:fs'; rmSync('lib', { recursive: true, force: true })\"",
-    "build": "pnpm clean && tsc -p tsconfig.build.json && tsc -p tsconfig.client.json && tsdown",
+    "bundle:connector": "node --input-type=module -e \"import { cpSync, rmSync, existsSync } from 'node:fs'; import { resolve } from 'node:path'; const src = resolve('../connector'); const dest = resolve('bundled-connector'); if (existsSync(dest)) rmSync(dest, { recursive: true, force: true }); cpSync(src, dest, { recursive: true, filter: (p) => !p.includes('.venv') && !p.includes('__pycache__') && !p.includes('.pytest_cache') && !p.includes('/tests/') });\"",
+    "clean": "node --input-type=module -e \"import { rmSync } from 'node:fs'; rmSync('lib', { recursive: true, force: true }); rmSync('bundled-connector', { recursive: true, force: true })\"",
+    "build": "pnpm clean && tsc -p tsconfig.build.json && tsc -p tsconfig.client.json && tsdown && pnpm bundle:connector",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.client.json --noEmit",
     "test": "vitest run",
     "verify": "pnpm typecheck && pnpm test && pnpm build"
