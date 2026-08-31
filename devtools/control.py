@@ -32,10 +32,12 @@ SERVER_SESSION = "aa-dev-server"
 WEB_SESSION = "aa-dev-web"
 CONNECTOR_SESSION = "aa-dev-connector"
 
-SERVER_PORT = int(os.environ.get("SERVER_PORT", "8001"))
-WEB_PORT = int(os.environ.get("WEB_PORT", "5175"))
-POSTGRES_PORT = int(os.environ.get("AGENTS_ANYWHERE_POSTGRES_PORT", "55432"))
-REDIS_PORT = int(os.environ.get("AGENTS_ANYWHERE_REDIS_PORT", "56379"))
+SERVER_PORT = 8000
+WEB_PORT = 5174
+POSTGRES_PORT = 55432
+REDIS_PORT = 56379
+CONTROL_PORT = 8765
+LISTEN_HOST = os.environ.get("AGENTS_ANYWHERE_LISTEN_HOST", "0.0.0.0")
 
 SERVER_URL = f"http://127.0.0.1:{SERVER_PORT}"
 WEB_URL = f"http://127.0.0.1:{WEB_PORT}"
@@ -391,10 +393,15 @@ def start_screen(
     log_path = LOG_DIR / log_name
     log_path.write_text("", encoding="utf-8")
     shell_command = _screen_command(cwd, command, log_path)
-    _run(["screen", "-dmS", name, "zsh", "-lc", shell_command])
+    _run(["screen", "-dmS", name, "bash", "-c", shell_command])
 
 
 def ensure_infrastructure() -> None:
+    docker_status = _run(["docker", "info"], check=False)
+    if docker_status.returncode != 0:
+        raise DevControlError(
+            "Docker is not running. Start Docker before starting local services"
+        )
     environment = os.environ.copy()
     environment.update(
         {
@@ -445,7 +452,7 @@ def start_server() -> None:
             "agent_server.app:create_app",
             "--factory",
             "--host",
-            "0.0.0.0",
+            LISTEN_HOST,
             "--port",
             str(SERVER_PORT),
         ]
@@ -474,7 +481,7 @@ def start_web() -> None:
             "next",
             "dev",
             "--hostname",
-            "0.0.0.0",
+            LISTEN_HOST,
             "--port",
             str(WEB_PORT),
         ],
@@ -547,17 +554,20 @@ def ensure_split_layout() -> bool:
 
 
 def restart_server() -> None:
-    migrated = ensure_split_layout()
-    if migrated:
-        return
     stop_server()
     ensure_infrastructure()
     run_migrations()
     start_server()
+    if not port_open(WEB_PORT):
+        start_web()
+
+
+def restart_web() -> None:
+    stop_web()
+    start_web()
 
 
 def restart_connector(credential: str | None = None) -> None:
-    ensure_split_layout()
     if credential:
         save_connector_credential(credential)
     stop_connector()
@@ -565,15 +575,25 @@ def restart_connector(credential: str | None = None) -> None:
 
 
 def restart_all(credential: str | None = None) -> None:
-    migrated = ensure_split_layout()
-    if not migrated:
-        stop_server()
-        run_migrations()
-        start_server()
-    if credential:
-        save_connector_credential(credential)
+    restart_server()
+    if credential or CONNECTOR_CONFIG.is_file():
+        restart_connector(credential)
+
+
+def bootstrap() -> None:
+    stop_screen(LEGACY_STACK_SESSION)
+    stop_server()
+    stop_web()
+    ensure_infrastructure()
+    run_migrations()
+    start_server()
+    start_web()
+
+
+def stop_all() -> None:
     stop_connector()
-    start_connector()
+    stop_web()
+    stop_server()
 
 
 def status_payload() -> dict[str, Any]:
@@ -582,9 +602,12 @@ def status_payload() -> dict[str, Any]:
         "server": _health_ok(),
         "web": port_open(WEB_PORT),
         "connector": connector_process_running(),
+        "postgres": port_open(POSTGRES_PORT),
+        "redis": port_open(REDIS_PORT),
         "legacy": LEGACY_STACK_SESSION in sessions,
         "serverUrl": SERVER_URL,
         "webUrl": WEB_URL,
+        "controlUrl": f"http://127.0.0.1:{CONTROL_PORT}",
     }
 
 
@@ -592,6 +615,8 @@ def perform_restart(target: str, credential: str | None = None) -> None:
     with _RESTART_LOCK:
         if target == "server":
             restart_server()
+        elif target == "web":
+            restart_web()
         elif target == "connector":
             restart_connector(credential)
         elif target == "all":
@@ -704,9 +729,14 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command")
     serve_parser = subparsers.add_parser("serve")
     serve_parser.add_argument("--host", default="127.0.0.1")
-    serve_parser.add_argument("--port", type=int, default=8765)
+    serve_parser.add_argument("--port", type=int, default=CONTROL_PORT)
+    subparsers.add_parser("bootstrap")
     restart_parser = subparsers.add_parser("restart")
-    restart_parser.add_argument("target", choices=("server", "connector", "all"))
+    restart_parser.add_argument(
+        "target", choices=("server", "web", "connector", "all")
+    )
+    stop_parser = subparsers.add_parser("stop")
+    stop_parser.add_argument("target", choices=("server", "web", "connector", "all"))
     subparsers.add_parser("status")
     return parser
 
@@ -714,10 +744,24 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     args = build_parser().parse_args()
     if args.command in {None, "serve"}:
-        serve(getattr(args, "host", "127.0.0.1"), getattr(args, "port", 8765))
+        serve(
+            getattr(args, "host", "127.0.0.1"),
+            getattr(args, "port", CONTROL_PORT),
+        )
+    elif args.command == "bootstrap":
+        bootstrap()
     elif args.command == "restart":
         perform_restart(args.target)
         print(json.dumps(status_payload(), ensure_ascii=False))
+    elif args.command == "stop":
+        if args.target == "server":
+            stop_server()
+        elif args.target == "web":
+            stop_web()
+        elif args.target == "connector":
+            stop_connector()
+        else:
+            stop_all()
     elif args.command == "status":
         print(json.dumps(status_payload(), ensure_ascii=False))
 
