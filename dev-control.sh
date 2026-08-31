@@ -113,8 +113,6 @@ start_control() {
       printf 'Dev Control: http://127.0.0.1:%s\n' "${CONTROL_PORT}"
       return
     fi
-    session_exists "${CONTROL_SESSION}" || \
-      fail "Dev Control exited; check ${CONTROL_LOG}"
     tick=$((tick + 1))
     sleep 0.1
   done
