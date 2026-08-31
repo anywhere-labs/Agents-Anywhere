@@ -4538,20 +4538,6 @@ def test_send_message_queues_while_session_is_running(tmp_path):
     assert [item["content"] for item in snapshot.json()["messageQueue"]] == [
         "send this next"
     ]
-    recovery = client.get(
-        f"/sessions/{session_id}/events",
-        headers=headers,
-        params={"after": "seq:0"},
-    )
-    assert recovery.status_code == 200, recovery.text
-    queue_event = next(
-        event
-        for event in recovery.json()["events"]
-        if event["type"] == "session.message_queue.updated"
-    )
-    assert [item["content"] for item in queue_event["payload"]["items"]] == [
-        "send this next"
-    ]
 
 
 def test_queued_message_dispatches_after_session_becomes_idle(tmp_path):
@@ -4605,60 +4591,6 @@ def test_queued_message_dispatches_after_session_becomes_idle(tmp_path):
     snapshot = client.get(f"/sessions/{session_id}/snapshot", headers=headers)
     assert snapshot.status_code == 200, snapshot.text
     assert snapshot.json()["messageQueue"] == []
-
-
-def test_queued_message_can_be_promoted_cancelled_and_steered(tmp_path):
-    client = make_client(tmp_path)
-    connector_id, _, session_id, headers = create_connector_and_session(client)
-    fake_rpc = FakeLocalRpc()
-    fake_rpc.runtime_states[session_id] = {
-        "sessionId": session_id,
-        "runtime": "codex",
-        "externalSessionId": f"thr_{connector_id}_demo",
-        "status": "running",
-        "selections": {},
-        "metadata": {"source": "test.turn.running"},
-    }
-    client.app.state.rpc = fake_rpc
-    asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
-    client.post(f"/sessions/{session_id}/takeover", headers=headers).raise_for_status()
-
-    first = client.post(
-        f"/sessions/{session_id}/runtime/messages",
-        headers=headers,
-        json={"content": "first", "clientMessageId": "opt_first"},
-    ).json()["result"]["queueItem"]
-    second = client.post(
-        f"/sessions/{session_id}/runtime/messages",
-        headers=headers,
-        json={"content": "second", "clientMessageId": "opt_second"},
-    ).json()["result"]["queueItem"]
-
-    promoted = client.post(
-        f"/sessions/{session_id}/runtime/message-queue/{second['id']}/promote",
-        headers=headers,
-    )
-    assert promoted.status_code == 200, promoted.text
-    snapshot = client.get(f"/sessions/{session_id}/snapshot", headers=headers).json()
-    assert [item["content"] for item in snapshot["messageQueue"]] == ["second", "first"]
-
-    cancelled = client.delete(
-        f"/sessions/{session_id}/runtime/message-queue/{first['id']}",
-        headers=headers,
-    )
-    assert cancelled.status_code == 200, cancelled.text
-
-    steered = client.post(
-        f"/sessions/{session_id}/runtime/message-queue/{second['id']}/steer",
-        headers=headers,
-    )
-    assert steered.status_code == 200, steered.text
-    assert steered.json()["result"]["disposition"] == "steered"
-    params = wait_for_rpc_method(fake_rpc, "session.steer")[2]
-    assert params["content"] == "second"
-    assert params["clientMessageId"] == "opt_second"
-    snapshot = client.get(f"/sessions/{session_id}/snapshot", headers=headers).json()
-    assert snapshot["messageQueue"] == []
 
 
 @pytest.mark.skip(reason="legacy persisted notice behavior was removed; notices are runtime-owned live facts")

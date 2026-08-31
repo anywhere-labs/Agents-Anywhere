@@ -27,7 +27,6 @@ import type {
   ProtocolEventEnvelope,
   ProtocolModelCatalog,
   ProtocolPermissionCatalog,
-  QueuedSessionMessage,
   RuntimeCommand,
   RuntimeStatusValue,
   SessionLocalTimelineState,
@@ -48,10 +47,6 @@ import {
 import { timelineRunCounts } from "@/components/session/timeline-summary"
 import { CAPABILITY, capabilityIsUsable } from "@/components/session/capabilities"
 import { SessionComposer, type AttachedFile } from "@/components/session/session-composer"
-import {
-  SessionMessageQueue,
-  type SessionQueueAction,
-} from "@/components/session/session-message-queue"
 import {
   buildOptimisticUserMessage,
   isOptimisticTimelineItem,
@@ -89,7 +84,6 @@ type SessionRemoteState = {
   state?: SessionRuntimeState | null
   items: TimelineItem[]
   notices: Notice[]
-  messageQueue: QueuedSessionMessage[]
   nextSeq: number
   hasMore: boolean
   serverTime: string
@@ -106,7 +100,6 @@ function remoteStateFromOptimisticState(optimisticState: SessionLocalTimelineSta
   return {
     ...optimisticState,
     notices: optimisticState.notices ?? [],
-    messageQueue: [],
     eventCursor: `seq:${optimisticState.nextSeq}`,
     effectiveCapabilities: null,
     catalogs: {},
@@ -164,7 +157,6 @@ function sessionStateFromSnapshot(snapshot: SessionSnapshotResponse): SessionRem
     state: snapshot.state ?? null,
     items: mergeTimelineItems([], snapshot.timeline.items),
     notices: snapshot.notices,
-    messageQueue: snapshot.messageQueue ?? [],
     nextSeq: snapshot.timeline.nextSeq,
     hasMore: snapshot.timeline.hasMore,
     serverTime: snapshot.serverTime,
@@ -296,7 +288,6 @@ export function SessionDetail({
     getOptimisticSessionState,
     isOptimisticSession,
     markOptimisticMessageFailed,
-    removeOptimisticMessage,
     replaceHome,
   } = useWorkspace()
   const initialOptimisticState = getOptimisticSessionState(sessionId)
@@ -317,10 +308,6 @@ export function SessionDetail({
   const [commandQuery, setCommandQuery] = React.useState<string | null>(null)
   const [runtimeCommands, setRuntimeCommands] = React.useState<RuntimeCommand[]>([])
   const [commandsLoading, setCommandsLoading] = React.useState(false)
-  const [queueBusyAction, setQueueBusyAction] = React.useState<{
-    messageId: string
-    action: SessionQueueAction
-  } | null>(null)
   const [blockingInteractionStackHeight, setBlockingInteractionStackHeight] = React.useState(0)
   const [composerHeight, setComposerHeight] = React.useState(144)
   const [timelineGroupOpenByKey, setTimelineGroupOpenByKey] = React.useState<Record<string, boolean>>({})
@@ -374,15 +361,6 @@ export function SessionDetail({
       capabilityIsUsable(effectiveCapabilities, CAPABILITY.permissionCatalog, sessionRuntimeScope),
   )
   const commandSessionId = session?.id ?? null
-  const canSteerQueuedMessage = Boolean(
-    session &&
-    runtimeStatusHasActiveTurn(runtimeStatus) &&
-    capabilityIsUsable(
-      effectiveCapabilities,
-      CAPABILITY.steer,
-      sessionRuntimeScope,
-    ),
-  )
 
   React.useEffect(() => {
     if (!session) return
@@ -819,7 +797,6 @@ export function SessionDetail({
     processedEventIdsRef.current = new Set()
     setSending(false)
     setInterrupting(false)
-    setQueueBusyAction(null)
     setError(null)
     const optimisticState = getOptimisticSessionStateRef.current(sessionId)
     if (optimisticState) {
@@ -1018,7 +995,7 @@ export function SessionDetail({
     if (uploadedAttachments.length !== attachments.length) return false
     const clientMessageId = createClientId("msg")
     const messageText = content.trim() || tNew("attachmentOnlyPrompt")
-    const activeAtSubmit = runtimeStatusHasActiveTurn(runtimeStatus)
+    forceScrollOnNextUpdateRef.current = true
     const optimisticMessage = buildOptimisticUserMessage({
       sessionId: session.id,
       clientMessageId,
@@ -1027,64 +1004,43 @@ export function SessionDetail({
       items: state?.items ?? [],
       nextSeq: state?.nextSeq ?? nextSeqRef.current,
     })
-    let optimisticMessageAdded = false
-    const addOptimisticMessageToTimeline = () => {
-      if (optimisticMessageAdded) return
-      optimisticMessageAdded = true
-      forceScrollOnNextUpdateRef.current = true
-      addOptimisticMessage({
-        clientMessageId,
-        sessionId: session.id,
-        item: optimisticMessage,
-      })
-      setState((current) => {
-        if (!current) return current
-        return {
-          ...current,
-          state: nextOptimisticRuntimeState(current.state, current.session, "waiting"),
-          items: mergeTimelineItems(current.items, [optimisticMessage]),
-        }
-      })
-    }
-    if (!activeAtSubmit) addOptimisticMessageToTimeline()
+    addOptimisticMessage({
+      clientMessageId,
+      sessionId: session.id,
+      item: optimisticMessage,
+    })
     const previousRuntimeState = state?.state ?? null
+    setState((current) => {
+      if (!current) return current
+      return {
+        ...current,
+        state: nextOptimisticRuntimeState(current.state, current.session, "waiting"),
+        items: mergeTimelineItems(current.items, [optimisticMessage]),
+      }
+    })
     setSending(true)
     try {
-      const submittedSelections: Record<string, string | null> = {
-        ...(selections.model ? { model: selections.model } : {}),
-        ...(selections.permission ? { permission: selections.permission } : {}),
+      const selectionPatch = selectionPatchFromComposerSelections(runtimeState?.selections ?? {}, selections)
+      if (Object.keys(selectionPatch).length > 0) {
+        const selectionResult = await dashboardApi.updateSessionSelections(token, session.id, selectionPatch)
+        setState((current) =>
+          current
+            ? {
+                ...current,
+                state: runtimeStateWithSelectionResult(
+                  current.state,
+                  current.session,
+                  selectionPatch,
+                  selectionResult.state,
+                ),
+              }
+            : current,
+        )
       }
-      const response = await dashboardApi.sendSessionMessage(token, session.id, messageText, {
+      await dashboardApi.sendSessionMessage(token, session.id, messageText, {
         attachments: uploadedAttachments.map((attachment) => ({ fileId: attachment.fileId })),
         clientMessageId,
-        selections: submittedSelections,
       })
-      if (response.result.disposition === "queued") {
-        if (optimisticMessageAdded) removeOptimisticMessage(clientMessageId)
-        setState((current) => {
-          if (!current) return current
-          const queueItem = response.result.queueItem
-          return {
-            ...current,
-            state:
-              optimisticMessageAdded && current.state?.status === "waiting"
-                ? previousRuntimeState
-                : current.state,
-            items: current.items.filter(
-              (item) =>
-                !(
-                  isOptimisticTimelineItem(item) &&
-                  timelineClientMessageId(item) === clientMessageId
-                ),
-            ),
-            messageQueue: queueItem
-              ? mergeQueuedSessionMessages(current.messageQueue, queueItem)
-              : current.messageQueue,
-          }
-        })
-        return true
-      }
-      if (!optimisticMessageAdded) addOptimisticMessageToTimeline()
       scrollToBottomThrottled()
       return true
     } catch (err) {
@@ -1094,19 +1050,17 @@ export function SessionDetail({
         : err instanceof Error
           ? err.message
           : tSession("sendFailed")
-      if (optimisticMessageAdded) markOptimisticMessageFailed(clientMessageId, message)
+      markOptimisticMessageFailed(clientMessageId, message)
       setState((current) => {
         if (!current) return current
         return {
           ...current,
           state:
-            optimisticMessageAdded && current.state?.status === "waiting"
+            current.state?.status === "waiting"
               ? previousRuntimeState
               : current.state,
           items: current.items.map((item) =>
-            optimisticMessageAdded &&
-            timelineClientMessageId(item) === clientMessageId &&
-            isOptimisticTimelineItem(item)
+            timelineClientMessageId(item) === clientMessageId && isOptimisticTimelineItem(item)
               ? markOptimisticItemFailed(item, message)
               : item,
           ),
@@ -1163,68 +1117,6 @@ export function SessionDetail({
       toast.error(err instanceof Error ? err.message : tSession("interruptFailed"))
     } finally {
       setInterrupting(false)
-    }
-  }
-
-  const runQueueAction = async (
-    messageId: string,
-    action: SessionQueueAction,
-  ) => {
-    if (!session || queueBusyAction) return
-    setQueueBusyAction({ messageId, action })
-    try {
-      if (action === "cancel") {
-        await dashboardApi.cancelQueuedSessionMessage(token, session.id, messageId)
-        setState((current) => current
-          ? {
-              ...current,
-              messageQueue: current.messageQueue.filter((item) => item.id !== messageId),
-            }
-          : current)
-        return
-      }
-      if (action === "promote") {
-        const response = await dashboardApi.promoteQueuedSessionMessage(
-          token,
-          session.id,
-          messageId,
-        )
-        setState((current) => current
-          ? {
-              ...current,
-              messageQueue: mergeQueuedSessionMessages(
-                current.messageQueue,
-                response.result.queueItem,
-              ),
-            }
-          : current)
-        return
-      }
-      if (action === "retry") {
-        await dashboardApi.retryQueuedSessionMessage(token, session.id, messageId)
-        setState((current) => current
-          ? {
-              ...current,
-              messageQueue: current.messageQueue.map((item) =>
-                item.id === messageId
-                  ? { ...item, status: "queued", lastError: null }
-                  : item,
-              ),
-            }
-          : current)
-        return
-      }
-      await dashboardApi.steerQueuedSessionMessage(token, session.id, messageId)
-      setState((current) => current
-        ? {
-            ...current,
-            messageQueue: current.messageQueue.filter((item) => item.id !== messageId),
-          }
-        : current)
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : tSession("queueActionFailed"))
-    } finally {
-      setQueueBusyAction(null)
     }
   }
 
@@ -1677,15 +1569,6 @@ export function SessionDetail({
           onRespondInteraction={handleRespondInteraction}
         />
         <div ref={composerContainerRef} className="pointer-events-auto relative">
-          <SessionMessageQueue
-            items={state?.messageQueue ?? []}
-            canSteer={canSteerQueuedMessage}
-            busyAction={queueBusyAction}
-            onCancel={(messageId) => void runQueueAction(messageId, "cancel")}
-            onPromote={(messageId) => void runQueueAction(messageId, "promote")}
-            onRetry={(messageId) => void runQueueAction(messageId, "retry")}
-            onSteer={(messageId) => void runQueueAction(messageId, "steer")}
-          />
           <SessionComposer
             token={token}
             session={session}
@@ -2258,9 +2141,6 @@ function mergeSessionEvent(
   const catalogUpdate = event.type === "runtime.catalog.updated"
     ? catalogUpdateFromEvent(event)
     : null
-  const messageQueue = event.type === "session.message_queue.updated" && Array.isArray(event.payload.items)
-    ? event.payload.items.filter(isQueuedSessionMessage)
-    : null
 
   const nextNotices = noticeSnapshot
     ? noticeSnapshot
@@ -2317,9 +2197,6 @@ function mergeSessionEvent(
         [catalogUpdate.catalogType]: catalogUpdate.catalog,
       }
     : current.catalogs
-  const nextMessageQueue = messageQueue && !queuedMessagesSemanticallyEqual(current.messageQueue, messageQueue)
-    ? messageQueue
-    : current.messageQueue
   const nextSeq = Math.max(current.nextSeq, event.sequence)
   const nextEventCursor = event.sequence >= current.nextSeq ? event.cursor : current.eventCursor
 
@@ -2330,7 +2207,6 @@ function mergeSessionEvent(
     nextNotices === current.notices &&
     nextEffectiveCapabilities === current.effectiveCapabilities &&
     nextCatalogs === current.catalogs &&
-    nextMessageQueue === current.messageQueue &&
     nextSeq === current.nextSeq &&
     nextEventCursor === current.eventCursor
   ) {
@@ -2347,7 +2223,6 @@ function mergeSessionEvent(
     eventCursor: nextEventCursor,
     effectiveCapabilities: nextEffectiveCapabilities,
     catalogs: nextCatalogs,
-    messageQueue: nextMessageQueue,
     serverTime: event.emittedAt ?? current.serverTime,
   }
 }
@@ -2358,44 +2233,11 @@ function sessionEventCanUpdateState(event: ProtocolEventEnvelope): boolean {
     event.type === "runtime.state.updated" ||
     event.type === "runtime.capability.updated" ||
     event.type === "runtime.catalog.updated" ||
-    event.type === "session.message_queue.updated" ||
     event.type === "runtime.notice.updated" ||
     event.type === "runtime.notice.snapshot" ||
     event.type === "timeline.item_created" ||
     event.type === "timeline.item_updated" ||
     event.type === "timeline.snapshot"
-  )
-}
-
-function isQueuedSessionMessage(value: unknown): value is QueuedSessionMessage {
-  if (!value || typeof value !== "object") return false
-  const item = value as Partial<QueuedSessionMessage>
-  return (
-    typeof item.id === "string" &&
-    typeof item.sessionId === "string" &&
-    typeof item.clientMessageId === "string" &&
-    typeof item.content === "string" &&
-    typeof item.position === "number" &&
-    typeof item.status === "string"
-  )
-}
-
-function queuedMessagesSemanticallyEqual(
-  left: QueuedSessionMessage[],
-  right: QueuedSessionMessage[],
-): boolean {
-  return stableStringify(left) === stableStringify(right)
-}
-
-function mergeQueuedSessionMessages(
-  current: QueuedSessionMessage[],
-  incoming: QueuedSessionMessage,
-): QueuedSessionMessage[] {
-  const next = current.filter((item) => item.id !== incoming.id)
-  next.push(incoming)
-  return next.sort(
-    (left, right) =>
-      left.position - right.position || left.createdAt.localeCompare(right.createdAt),
   )
 }
 
@@ -2545,17 +2387,6 @@ function effectiveRuntimeStatus(
   if (runtimeState) return runtimeState.status
   if (session?.connectorStatus === "offline") return "disconnected"
   return session?.status ?? "idle"
-}
-
-function runtimeStatusHasActiveTurn(status: RuntimeStatusValue): boolean {
-  return (
-    status === "waiting" ||
-    status === "pending" ||
-    status === "running" ||
-    status === "stopping" ||
-    status === "waiting_approval" ||
-    status === "blocked"
-  )
 }
 
 function mergeNotices(current: Notice[], incoming: Notice[]): Notice[] {

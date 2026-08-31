@@ -26,7 +26,6 @@ import {
   isOptimisticTimelineItem,
   markOptimisticItemFailed,
   mergeTimelineItems,
-  revokeOptimisticItemResources,
   timelineClientMessageId,
   withServerAttachments,
 } from "@/components/session/optimistic-timeline"
@@ -310,7 +309,6 @@ type WorkspaceState = {
   upsertSession: (session: RealSessionView) => void
   reportSessionStreamProgress: (sessionId: string, nextSeq: number | null) => void
   addOptimisticMessage: (message: OptimisticSessionMessage) => void
-  removeOptimisticMessage: (clientMessageId: string) => void
   bindOptimisticSession: (localSessionId: string, session: RealSessionView, attachments?: AttachmentRef[]) => void
   clearResolvedOptimisticMessages: (sessionId: string, items: TimelineItem[]) => void
   getOptimisticItems: (sessionId: string) => TimelineItem[]
@@ -993,17 +991,6 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     })
   }, [])
 
-  const removeOptimisticMessage = React.useCallback((clientMessageId: string) => {
-    setOptimisticMessages((prev) => {
-      const removed = prev.find((entry) => entry.clientMessageId === clientMessageId)
-      if (!removed) return prev
-      revokeOptimisticItemResources(removed.item)
-      const next = prev.filter((entry) => entry.clientMessageId !== clientMessageId)
-      optimisticMessagesRef.current = next
-      return next
-    })
-  }, [])
-
   const clearResolvedOptimisticMessages = React.useCallback((sessionId: string, items: TimelineItem[]) => {
     const resolvedClientMessageIds = new Set(
       items
@@ -1143,7 +1130,6 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     upsertSession,
     reportSessionStreamProgress,
     addOptimisticMessage,
-    removeOptimisticMessage,
     bindOptimisticSession,
     clearResolvedOptimisticMessages,
     getOptimisticItems,
