@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import time
 from dataclasses import dataclass
 
 from connector.logging import logger
@@ -91,10 +90,6 @@ class ClaudeTurnRunner:
         replayed_user_message: tuple[str, str] | None = None
         response_external_session_confirmed = False
         user_message_published = False
-        message_count = 0
-        last_message_class: str | None = None
-        last_message_type: object | None = None
-        last_message_subtype: object | None = None
         try:
             sdk = load_sdk(self.sdk_loader)
             settings_path = create_gateway_settings_file(self.config.values)
@@ -145,10 +140,6 @@ class ClaudeTurnRunner:
             stream_accumulator = ClaudeStreamAccumulator()
             assert reserved_user_item is not None
             async for message in receive_response_messages(client):
-                message_count += 1
-                last_message_class = message.__class__.__name__
-                last_message_type = getattr(message, "type", None)
-                last_message_subtype = getattr(message, "subtype", None)
                 external_session_id = message_session_id(message)
                 if external_session_id is not None:
                     await self._update_external_session_id(session, external_session_id)
@@ -234,20 +225,6 @@ class ClaudeTurnRunner:
                     continue
                 if terminal_message is not None:
                     terminal = terminal_message
-                    logger.info(
-                        "claude_turn_terminal_received session_id={} turn_id={} external_session_id={} status={} reason={} error_code={} elapsed_ms={:.1f} message_count={} message_class={} message_type={} message_subtype={}",
-                        session.session_id,
-                        turn_id,
-                        session.external_session_id,
-                        terminal.status,
-                        terminal.reason,
-                        terminal.error_code,
-                        (time.monotonic() - execution.started_at_monotonic) * 1000,
-                        message_count,
-                        last_message_class,
-                        last_message_type,
-                        last_message_subtype,
-                    )
                     if not emitted_final_assistant_content:
                         text = message_text(message)
                         if text:
@@ -304,58 +281,19 @@ class ClaudeTurnRunner:
                     stream_accumulator.reset()
 
             if terminal is None:
-                logger.error(
-                    "claude_turn_stream_exhausted session_id={} turn_id={} external_session_id={} elapsed_ms={:.1f} message_count={} message_class={} message_type={} message_subtype={} interrupt_source={} interrupt_reason={}",
-                    session.session_id,
-                    turn_id,
-                    session.external_session_id,
-                    (time.monotonic() - execution.started_at_monotonic) * 1000,
-                    message_count,
-                    last_message_class,
-                    last_message_type,
-                    last_message_subtype,
-                    execution.interrupt_source,
-                    execution.interrupt_reason,
-                )
                 terminal = failed_terminal_event(
                     code="claude_stream_ended_without_result",
                     message="Claude response stream ended without a terminal result",
                     reason="stream_exhausted",
                 )
         except asyncio.CancelledError:
-            current_task = asyncio.current_task()
-            logger.warning(
-                "claude_turn_task_cancelled session_id={} turn_id={} external_session_id={} elapsed_ms={:.1f} message_count={} task_name={} cancelling={} interrupt_source={} interrupt_reason={}",
-                session.session_id,
-                turn_id,
-                session.external_session_id,
-                (time.monotonic() - execution.started_at_monotonic) * 1000,
-                message_count,
-                current_task.get_name() if current_task is not None else None,
-                current_task.cancelling() if current_task is not None else None,
-                execution.interrupt_source,
-                execution.interrupt_reason,
-            )
             terminal = interrupted_terminal_event(
                 execution.interrupt_reason or "cancelled"
             )
         except Exception as exc:  # noqa: BLE001
-            failure_message = stderr.failure_message(exc)
-            logger.exception(
-                "claude_turn_exception session_id={} turn_id={} external_session_id={} elapsed_ms={:.1f} message_count={} error_type={} error_message={} interrupt_source={} interrupt_reason={}",
-                session.session_id,
-                turn_id,
-                session.external_session_id,
-                (time.monotonic() - execution.started_at_monotonic) * 1000,
-                message_count,
-                exc.__class__.__name__,
-                failure_message,
-                execution.interrupt_source,
-                execution.interrupt_reason,
-            )
             terminal = failed_terminal_event(
                 code=exc.__class__.__name__,
-                message=failure_message,
+                message=stderr.failure_message(exc),
             )
         finally:
             if reserved_user_item is not None and not user_message_published:
@@ -385,19 +323,6 @@ class ClaudeTurnRunner:
                         session.session_id,
                     )
             try:
-                if terminal is None or terminal.status != "completed":
-                    logger.warning(
-                        "claude_turn_disconnect_start session_id={} turn_id={} external_session_id={} terminal_status={} terminal_reason={} elapsed_ms={:.1f} client_type={} interrupt_source={} interrupt_reason={}",
-                        session.session_id,
-                        turn_id,
-                        session.external_session_id,
-                        terminal.status if terminal is not None else None,
-                        terminal.reason if terminal is not None else None,
-                        (time.monotonic() - execution.started_at_monotonic) * 1000,
-                        client.__class__.__name__ if client is not None else None,
-                        execution.interrupt_source,
-                        execution.interrupt_reason,
-                    )
                 await disconnect_client(client)
             except Exception:  # noqa: BLE001
                 logger.exception(
