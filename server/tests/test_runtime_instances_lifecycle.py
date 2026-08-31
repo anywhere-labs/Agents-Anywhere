@@ -526,6 +526,100 @@ def test_v2_create_active_requires_valid_config(tmp_path: Any) -> None:
     assert listed.json()["runtimes"] == []
 
 
+def test_v2_named_instance_enforces_discovered_required_fields(
+    tmp_path: Any,
+) -> None:
+    discovery = _v2_discovery()
+    config_schema = discovery["runtimeTypes"][0]["configSchema"]
+    config_schema["schema"] = {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+            "codexHome": {"type": "string", "minLength": 1},
+            "modelGateway": {
+                "type": "object",
+                "required": ["baseUrl", "apiKey"],
+                "properties": {
+                    "baseUrl": {"type": "string", "minLength": 1},
+                    "apiKey": {"type": "string", "minLength": 1},
+                },
+                "additionalProperties": False,
+            },
+        },
+        "additionalProperties": False,
+    }
+    config_schema["uiSchema"] = {
+        "codexHome": {"component": "path"},
+        "modelGateway": {"component": "modelGateway"},
+        "requiredForNamedInstance": ["codexHome", "modelGateway"],
+    }
+    config_schema["defaults"] = {}
+    client, rpc, connector_id, headers = _make_client(tmp_path, discovery)
+    _discover_types(client, connector_id, headers)
+    rpc.requests.clear()
+
+    missing_gateway = client.post(
+        f"/connectors/{connector_id}/runtimes",
+        headers=headers,
+        json={
+            "runtimeType": "codex",
+            "name": "Missing Gateway",
+            "config": {"codexHome": "/tmp/codex-missing-gateway"},
+        },
+    )
+    missing_home = client.post(
+        f"/connectors/{connector_id}/runtimes",
+        headers=headers,
+        json={
+            "runtimeType": "codex",
+            "name": "Missing Home",
+            "config": {
+                "modelGateway": {
+                    "baseUrl": "https://gateway.example/v1",
+                    "apiKey": "gateway-secret",
+                }
+            },
+        },
+    )
+
+    assert missing_gateway.status_code == 422, missing_gateway.text
+    assert missing_home.status_code == 422, missing_home.text
+    assert rpc.requests == []
+    assert client.get(
+        f"/connectors/{connector_id}/runtimes",
+        headers=headers,
+    ).json()["runtimes"] == []
+
+    complete_config = {
+        "codexHome": "/tmp/codex-complete",
+        "modelGateway": {
+            "baseUrl": "https://gateway.example/v1",
+            "apiKey": "gateway-secret",
+        },
+    }
+    created = client.post(
+        f"/connectors/{connector_id}/runtimes",
+        headers=headers,
+        json={
+            "runtimeType": "codex",
+            "name": "Complete Codex",
+            "config": complete_config,
+        },
+    )
+
+    assert created.status_code == 201, created.text
+    assert rpc.requests[-1][1] == "runtime.validateConfig"
+    runtime_id = created.json()["runtimeId"]
+    rpc.requests.clear()
+    rejected_update = client.put(
+        f"/connectors/{connector_id}/runtimes/{runtime_id}/config",
+        headers=headers,
+        json={"config": {"codexHome": "/tmp/codex-complete"}},
+    )
+    assert rejected_update.status_code == 422, rejected_update.text
+    assert rpc.requests == []
+
+
 def test_v2_create_enforces_runtime_type_instance_limit(tmp_path: Any) -> None:
     client, _, connector_id, headers = _make_client(
         tmp_path,

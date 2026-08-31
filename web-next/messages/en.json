@@ -474,6 +474,7 @@
       "codexMultiInstanceName": "Codex (multi-instance)",
       "codexMultiInstanceHelpLabel": "About Codex multi-instance support",
       "codexMultiInstanceHelp": "Codex supports multiple instances. Create separate instances for different accounts, workspaces, or environments.",
+      "beta": "Beta",
       "discoveredRuntimes": "Discovered, not configured",
       "noConfiguredRuntimes": "No runtimes have been configured.",
       "noUnconfiguredRuntimes": "No runtime instances are waiting for configuration.",
@@ -524,6 +525,12 @@
       "runtimeConfigDescription": "Runtime configuration.",
       "runtimeSchemaUnavailable": "This runtime did not provide a configuration schema.",
       "runtimeConfigInvalid": "The configuration is invalid.",
+      "runtimeConfigValidation": {
+        "required": "Enter {field}.",
+        "invalidFormat": "{field} has an invalid format.",
+        "invalidType": "{field} has an invalid value type.",
+        "unsupportedField": "The configuration contains an unsupported field."
+      },
       "runtimeConfigFields": {
         "claudeExecutablePath": {
           "label": "Claude executable path (optional)",
@@ -532,6 +539,10 @@
         "codexExecutablePath": {
           "label": "Codex executable path (optional)",
           "description": "Optional. When set, this executable is always used and Use System Codex is ignored. Leave it empty to use automatic binary selection."
+        },
+        "codexHome": {
+          "label": "Codex data directory",
+          "description": "Stores configuration, sign-in data, and session history for this Codex instance. Running Codex instances cannot use the same directory."
         },
         "useSystemCodex": {
           "label": "Use System Codex",
@@ -557,7 +568,9 @@
         },
         "modelGateway": {
           "label": "Model gateway (optional)",
-          "description": "Route this runtime's model requests through a compatible custom gateway. Leave both fields empty to use the runtime's default endpoint and authentication."
+          "description": "Route this runtime's model requests through a compatible custom gateway. Leave both fields empty to use the runtime's default endpoint and authentication.",
+          "requiredLabel": "Model gateway",
+          "requiredDescription": "A new Codex instance must use a model gateway. Enter its URL and API key."
         }
       },
       "modelGatewayBaseUrl": "Gateway URL",

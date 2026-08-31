@@ -474,6 +474,7 @@
       "codexMultiInstanceName": "Codex（多实例）",
       "codexMultiInstanceHelpLabel": "了解 Codex 多实例",
       "codexMultiInstanceHelp": "Codex 支持多实例。你可以为不同账号、工作目录或环境分别创建实例。",
+      "beta": "Beta",
       "discoveredRuntimes": "已发现但未配置",
       "noConfiguredRuntimes": "还没有配置 Runtime。",
       "noUnconfiguredRuntimes": "没有等待配置的 Runtime 实例。",
@@ -524,6 +525,12 @@
       "runtimeConfigDescription": "Runtime 配置。",
       "runtimeSchemaUnavailable": "这个 Runtime 没有提供配置 Schema。",
       "runtimeConfigInvalid": "配置内容不合法。",
+      "runtimeConfigValidation": {
+        "required": "请填写{field}。",
+        "invalidFormat": "{field}格式不正确。",
+        "invalidType": "{field}的内容类型不正确。",
+        "unsupportedField": "配置中包含不支持的字段。"
+      },
       "runtimeConfigFields": {
         "claudeExecutablePath": {
           "label": "Claude 可执行文件路径（可选）",
@@ -532,6 +539,10 @@
         "codexExecutablePath": {
           "label": "Codex 可执行文件路径（可选）",
           "description": "可选。填写后将始终使用该程序，并忽略“使用系统 Codex”设置。留空则使用自动选择策略。"
+        },
+        "codexHome": {
+          "label": "Codex 数据目录",
+          "description": "保存此 Codex 实例的配置、登录信息和会话历史。正在运行的 Codex 实例不能使用同一个目录。"
         },
         "useSystemCodex": {
           "label": "使用系统 Codex",
@@ -557,7 +568,9 @@
         },
         "modelGateway": {
           "label": "模型 Gateway（可选）",
-          "description": "让这个 Runtime 通过兼容的自定义 Gateway 发送模型请求。两个字段都留空时，继续使用 Runtime 默认的模型地址和认证。"
+          "description": "让这个 Runtime 通过兼容的自定义 Gateway 发送模型请求。两个字段都留空时，继续使用 Runtime 默认的模型地址和认证。",
+          "requiredLabel": "模型 Gateway",
+          "requiredDescription": "新 Codex 实例必须使用模型 Gateway，请填写 Gateway 地址和 API Key。"
         }
       },
       "modelGatewayBaseUrl": "Gateway 地址",

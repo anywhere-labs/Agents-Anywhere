@@ -15,7 +15,9 @@ import {
   configuredRuntimeInstances,
   isAdditionalCodexRuntimeType,
   mergeRuntimeTypes,
+  namedInstanceRequiredConfigFields,
   reconfigurableRuntimeInstance,
+  runtimeCreationDefaults,
   runtimeInstanceName,
   runtimeTypeCanCreateInstance,
   sessionRuntimeId,
@@ -115,6 +117,43 @@ test("only an additional configured Codex instance gets the multi-instance label
     isAdditionalCodexRuntimeType({ ...codexType, runtimeType: "claude" }, [configuredCodex]),
     false,
   )
+})
+
+test("a new Codex instance gets an isolated Home and required gateway defaults", () => {
+  const [baseType] = mergeRuntimeTypes([], [legacyRuntime])
+  const codexType = {
+    ...baseType,
+    runtimeType: "codex",
+    displayName: "Codex",
+    defaults: { useSystemCodex: true },
+    schema: {
+      type: "object",
+      properties: {
+        codexHome: { type: "string" },
+        modelGateway: { type: "object" },
+      },
+    },
+    uiSchema: {
+      requiredForNamedInstance: ["codexHome", "modelGateway", "codexHome"],
+    },
+  }
+
+  assert.deepEqual(
+    runtimeCreationDefaults(
+      codexType,
+      "Codex 2",
+      "123e4567-e89b-12d3-a456-426614174000",
+    ),
+    {
+      useSystemCodex: true,
+      codexHome: "~/.agents-anywhere/codex-homes/codex-2-123e4567e89b",
+      modelGateway: { baseUrl: "", apiKey: "" },
+    },
+  )
+  assert.deepEqual(namedInstanceRequiredConfigFields(codexType), [
+    "codexHome",
+    "modelGateway",
+  ])
 })
 
 test("a runtime type without a configuration schema is not addable", () => {

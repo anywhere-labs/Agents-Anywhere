@@ -68,7 +68,9 @@ import {
   addableRuntimeTypes,
   configuredRuntimeInstances,
   isAdditionalCodexRuntimeType,
+  namedInstanceRequiredConfigFields,
   reconfigurableRuntimeInstance,
+  runtimeCreationDefaults,
   runtimeInstanceName,
   runtimeIsAvailable,
   suggestedRuntimeInstanceName,
@@ -354,6 +356,7 @@ export function DevicePage() {
   const [pendingRuntimeCreation, setPendingRuntimeCreation] = React.useState<{
     runtimeType: RuntimeTypeView
     name: string
+    initialConfig: Record<string, unknown>
   } | null>(null)
   const [renameRuntime, setRenameRuntime] = React.useState<DeviceRuntimeView | null>(null)
   const [savingRuntimeName, setSavingRuntimeName] = React.useState(false)
@@ -519,7 +522,11 @@ export function DevicePage() {
 
   const stageRuntimeCreation = async (name: string) => {
     if (!createRuntimeType) return
-    setPendingRuntimeCreation({ runtimeType: createRuntimeType, name })
+    setPendingRuntimeCreation({
+      runtimeType: createRuntimeType,
+      name,
+      initialConfig: runtimeCreationDefaults(createRuntimeType, name),
+    })
     setCreateRuntimeType(null)
   }
 
@@ -919,7 +926,9 @@ export function DevicePage() {
                     <p className="px-2 py-3 text-sm text-muted-foreground">{t("noRuntimeTypes")}</p>
                   ) : (
                     <div className="flex flex-col gap-1">
-                      {availableRuntimeTypes.map((runtimeType) => (
+                      {availableRuntimeTypes.map((runtimeType) => {
+                        const isBeta = isAdditionalCodexRuntimeType(runtimeType, runtimes)
+                        return (
                         <div key={runtimeType.runtimeType} className="flex min-h-12 items-center gap-3 rounded-lg px-2 py-2 hover:bg-accent/30">
                           <span className={cn(
                             "size-2 shrink-0 rounded-full",
@@ -928,11 +937,12 @@ export function DevicePage() {
                           <div className="min-w-0 flex-1">
                             <div className="flex min-w-0 items-center gap-1">
                               <p className="truncate text-sm font-medium">
-                                {isAdditionalCodexRuntimeType(runtimeType, runtimes)
+                                {isBeta
                                   ? t("codexMultiInstanceName")
                                   : runtimeType.displayName}
                               </p>
-                              {isAdditionalCodexRuntimeType(runtimeType, runtimes) ? (
+                              {isBeta ? <Badge variant="secondary">{t("beta")}</Badge> : null}
+                              {isBeta ? (
                                 <Tooltip>
                                   <TooltipTrigger asChild>
                                     <Button
@@ -965,7 +975,8 @@ export function DevicePage() {
                             {t("addRuntime")}
                           </Button>
                         </div>
-                      ))}
+                        )
+                      })}
                     </div>
                   )}
                 </div>
@@ -1125,6 +1136,10 @@ export function DevicePage() {
           schema={configRuntime.schema}
           uiSchema={configRuntime.uiSchema}
           config={configRuntime.config}
+          defaults={configRuntime.defaults}
+          requiredFields={configRuntime.runtimeId === configRuntime.runtimeType
+            ? []
+            : namedInstanceRequiredConfigFields(configRuntime)}
           saving={savingRuntimeId === configRuntime.runtimeId}
           submitLabel={!configRuntime.configured ? t("configureAndStart") : undefined}
           open
@@ -1157,7 +1172,10 @@ export function DevicePage() {
           runtimeName={pendingRuntimeCreation.name}
           schema={pendingRuntimeCreation.runtimeType.schema}
           uiSchema={pendingRuntimeCreation.runtimeType.uiSchema}
-          config={null}
+          config={pendingRuntimeCreation.initialConfig}
+          defaults={pendingRuntimeCreation.runtimeType.defaults}
+          requiredFields={namedInstanceRequiredConfigFields(pendingRuntimeCreation.runtimeType)}
+          badgeLabel={pendingRuntimeCreation.runtimeType.runtimeType === "codex" ? t("beta") : undefined}
           saving={savingRuntimeId === NEW_RUNTIME_SAVING_ID}
           submitLabel={t("configureAndStart")}
           open

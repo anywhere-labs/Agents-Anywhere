@@ -147,6 +147,51 @@ export function suggestedRuntimeInstanceName(
   return `${runtimeType.displayName} ${suffix}`
 }
 
+export function runtimeCreationDefaults(
+  runtimeType: RuntimeTypeView,
+  instanceName: string,
+  randomId: string = globalThis.crypto.randomUUID(),
+): Record<string, unknown> {
+  const defaults = { ...runtimeType.defaults }
+  if (runtimeType.runtimeType !== "codex") return defaults
+
+  const suffix = randomId.replace(/[^a-zA-Z0-9]/g, "").toLocaleLowerCase().slice(0, 12)
+  if (!suffix) throw new Error("A random identifier is required for the Codex Home")
+  return {
+    ...defaults,
+    codexHome: `~/.agents-anywhere/codex-homes/${runtimeInstancePathSlug(instanceName)}-${suffix}`,
+    modelGateway: { baseUrl: "", apiKey: "" },
+  }
+}
+
+export function namedInstanceRequiredConfigFields(
+  runtime: Pick<RuntimeTypeView, "runtimeType" | "schema" | "uiSchema">
+    | Pick<DeviceRuntimeView, "runtimeType" | "schema" | "uiSchema">,
+): string[] {
+  const properties = isRecord(runtime.schema?.properties)
+    ? runtime.schema.properties
+    : {}
+  const configuredFields = Array.isArray(runtime.uiSchema.requiredForNamedInstance)
+    ? runtime.uiSchema.requiredForNamedInstance
+    : []
+  const fallbackFields = runtime.runtimeType === "codex"
+    ? ["codexHome", "modelGateway"]
+    : []
+  return [...new Set([...configuredFields, ...fallbackFields].filter((field): field is string => (
+    typeof field === "string" && field.length > 0 && field in properties
+  )))]
+}
+
+function runtimeInstancePathSlug(value: string): string {
+  return value
+    .normalize("NFKD")
+    .toLocaleLowerCase()
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 40) || "codex"
+}
+
 function compareRuntimeTypes(left: RuntimeTypeView, right: RuntimeTypeView): number {
   if (left.recommended !== right.recommended) return left.recommended ? -1 : 1
   const leftRank = left.recommendationRank ?? Number.MAX_SAFE_INTEGER
@@ -159,4 +204,8 @@ function compareRuntimeTypes(left: RuntimeTypeView, right: RuntimeTypeView): num
 function nonEmpty(value: string | null | undefined): string | null {
   const normalized = value?.trim()
   return normalized ? normalized : null
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
 }

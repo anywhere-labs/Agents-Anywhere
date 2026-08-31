@@ -11,6 +11,7 @@ from connector.runtimes.custom_models import custom_models_schema
 from connector.runtimes.model_gateway import model_gateway_schema
 
 PROTECTED_ENV_PREFIXES = ("AGENT_CONNECTOR_", "AGENT_SERVER_")
+MAX_CODEX_HOME_LENGTH = 4096
 PROTECTED_ENV_NAMES = {
     "AGENT_CONNECTOR_ID",
     "AGENT_CONNECTOR_TOKEN",
@@ -87,6 +88,19 @@ def codex_config_schema() -> dict[str, Any]:
                     "credentials, and session history. Two running instances "
                     "cannot use the same directory."
                 ),
+                "metadata": {
+                    "i18n": {
+                        "labelKey": (
+                            "dashboard.device.runtimeConfigFields.codexHome.label"
+                        ),
+                        "descriptionKey": (
+                            "dashboard.device.runtimeConfigFields."
+                            "codexHome.description"
+                        ),
+                    }
+                },
+                "minLength": 1,
+                "maxLength": MAX_CODEX_HOME_LENGTH,
             },
             "modelGateway": model_gateway_schema(),
             "customModels": custom_models_schema(),
@@ -209,3 +223,18 @@ def validate_codex_home(path: str) -> None:
         raise RuntimeInvalidRequestError(
             "codexHome must point to a directory or a path that can be created"
         )
+
+
+def ensure_codex_home(path: str) -> None:
+    candidate = Path(path)
+    existed = candidate.exists()
+    try:
+        candidate.mkdir(parents=True, mode=0o700, exist_ok=True)
+        if not existed and os.name != "nt":
+            candidate.chmod(0o700)
+    except OSError as exc:
+        raise RuntimeInvalidRequestError(
+            "codexHome could not be created"
+        ) from exc
+    if not candidate.is_dir():
+        raise RuntimeInvalidRequestError("codexHome must point to a directory")
