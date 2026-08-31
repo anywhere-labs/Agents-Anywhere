@@ -477,6 +477,7 @@ export type SessionSnapshotResponse = Pick<
   session: SessionView;
   state?: SessionRuntimeState | null;
   timeline: SessionTimelineSnapshot;
+  messageQueue: QueuedSessionMessage[];
   notices: Notice[];
   effectiveCapabilities: ProtocolCapabilitySet;
   runtimeCapabilities: ProtocolCapabilitySet;
@@ -640,6 +641,36 @@ export type InlineAttachmentRef = AttachmentRef & {
 export type MessageSendOptions = {
   attachments?: AttachmentRef[];
   clientMessageId?: string;
+  selections?: Record<string, string | null>;
+};
+
+export type QueuedSessionMessageStatus =
+  | "queued"
+  | "dispatching"
+  | "failed"
+  | "dispatched"
+  | "cancelled";
+
+export type QueuedSessionMessage = {
+  id: string;
+  sessionId: string;
+  clientMessageId: string;
+  content: string;
+  attachments: AttachmentRef[];
+  selections: Record<string, string | null>;
+  status: QueuedSessionMessageStatus;
+  position: number;
+  attemptCount: number;
+  lastError?: Record<string, unknown> | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type MessageSubmitResult = {
+  disposition: "queued" | "dispatched" | "steered";
+  queueItem?: QueuedSessionMessage;
+  duplicate?: boolean;
+  [key: string]: unknown;
 };
 
 export type SessionRuntimeState = {

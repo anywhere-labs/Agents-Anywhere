@@ -47,6 +47,7 @@ import { SelectionSettingsDrawer } from "@/components/session/selection-settings
 import { CAPABILITY, capabilityIsUsable, findCapability } from "@/components/session/capabilities"
 import { useElementWidth } from "@/hooks/use-element-width"
 import { sessionRuntimeId, sessionRuntimeType } from "@/features/dashboard/runtime-instances"
+import { resolveComposerActions } from "@/components/session/composer-actions"
 
 export type { AttachedFile }
 
@@ -143,6 +144,9 @@ export function SessionComposer({
     !isStopping &&
     !isWaitingApproval &&
     !isBlocked
+  const hasActiveTurn =
+    isWaiting || isRunning || isStopping || isWaitingApproval || isBlocked
+  const sendCapability = findCapability(effectiveCapabilities, CAPABILITY.sendMessage, runtimeScope)
   const canUseSendMessage = capabilityIsUsable(effectiveCapabilities, CAPABILITY.sendMessage, runtimeScope)
   const canUseInterrupt = capabilityIsUsable(effectiveCapabilities, CAPABILITY.interrupt, runtimeScope)
   const interruptCapability = findCapability(effectiveCapabilities, CAPABILITY.interrupt, runtimeScope)
@@ -154,6 +158,13 @@ export function SessionComposer({
   )
   const canUseEffortCatalog = capabilityIsUsable(effectiveCapabilities, CAPABILITY.effortCatalog, runtimeScope)
   const canUseAttachments = capabilityIsUsable(effectiveCapabilities, CAPABILITY.attachment, runtimeScope)
+  const attachmentCapability = findCapability(effectiveCapabilities, CAPABILITY.attachment, runtimeScope)
+  const canQueueAttachments = Boolean(
+    connectorOnline &&
+    hasActiveTurn &&
+    attachmentCapability?.supported &&
+    attachmentCapability.allowed,
+  )
   const canSend =
     canUseSendMessage &&
     !creatingSession &&
@@ -162,6 +173,17 @@ export function SessionComposer({
     acceptsUserInput
   const canRunCommand = !creatingSession && !sending && !interrupting && acceptsUserInput
   const hasInput = value.trim().length > 0 || attachments.length > 0
+  const canQueueMessage = Boolean(
+    connectorOnline &&
+    !sourceUnavailable &&
+    session.takeover &&
+    hasActiveTurn &&
+    sendCapability?.supported &&
+    sendCapability.allowed &&
+    !creatingSession &&
+    !sending &&
+    !interrupting,
+  )
   const attachmentsReady = attachments.length === 0 || (allUploaded && !uploadsPending && !uploadFailed)
   const activeSessionCanInterrupt = Boolean(
     connectorOnline &&
@@ -169,7 +191,12 @@ export function SessionComposer({
     interruptCapability.allowed &&
     (isWaiting || isRunning || isStopping || isWaitingApproval || isBlocked),
   )
-  const showInterrupt = !creatingSession && canUseInterrupt && activeSessionCanInterrupt
+  const composerActions = resolveComposerActions({
+    hasInput,
+    canInterruptActiveTurn:
+      !creatingSession && canUseInterrupt && activeSessionCanInterrupt,
+  })
+  const showInterrupt = composerActions.button === "interrupt"
   const [selectedPermissionMode, setSelectedPermissionMode] = React.useState("")
   const [selectedModel, setSelectedModel] = React.useState("")
   const [selectedReasoning, setSelectedReasoning] = React.useState("")
@@ -305,7 +332,7 @@ export function SessionComposer({
                 ? tSession("errorPlaceholder")
                 : tSession("replyPlaceholder")
   const commandQuery = commandQueryFromValue(value)
-  const showCommandMenu = commandQuery !== null && attachments.length === 0
+  const showCommandMenu = !hasActiveTurn && commandQuery !== null && attachments.length === 0
   const commandSuggestions = React.useMemo(
     () => runtimeCommands.filter((command) => commandMatchesQuery(command, commandQuery)),
     [commandQuery, runtimeCommands],
@@ -313,13 +340,13 @@ export function SessionComposer({
   React.useEffect(() => {
     onCommandQueryChange(showCommandMenu ? commandQuery : null)
   }, [commandQuery, onCommandQueryChange, showCommandMenu])
-  const canSubmitCommand = commandQuery !== null && attachments.length === 0 && canRunCommand
+  const canSubmitCommand = !hasActiveTurn && commandQuery !== null && attachments.length === 0 && canRunCommand
   const canSubmitMessage =
-    canSend &&
+    (canSend || canQueueMessage) &&
     session.takeover &&
     hasInput &&
     attachmentsReady &&
-    (attachments.length === 0 || canUseAttachments)
+    (attachments.length === 0 || canUseAttachments || canQueueAttachments)
   const concurrentWriter = runtimeState?.error?.code === "DSH_CONCURRENT_WRITER_DETECTED"
   const updateValue = React.useCallback((nextValue: string) => {
     valueRef.current = nextValue
@@ -329,7 +356,7 @@ export function SessionComposer({
   const submit = async () => {
     if (!hasInput) return
     const command = commandFromValue(value, commandSuggestions)
-    if (commandQuery !== null && attachments.length === 0) {
+    if (!hasActiveTurn && commandQuery !== null && attachments.length === 0) {
       if (command && canRunCommand) {
         const parsed = parseCommandValue(value)
         updateValue("")
@@ -351,7 +378,7 @@ export function SessionComposer({
     }
   }
 
-  const primaryAction = () => {
+  const handlePrimaryAction = () => {
     if (showInterrupt) {
       onInterrupt()
       return
@@ -361,7 +388,7 @@ export function SessionComposer({
 
   return (
     <div
-      className="shrink-0 px-4 pb-4 pt-2"
+      className="relative z-10 shrink-0 px-4 pb-4 pt-2"
       onDragEnter={onDragEnter}
       onDragLeave={onDragLeave}
       onDragOver={onDragOver}
@@ -429,7 +456,7 @@ export function SessionComposer({
                 if (event.nativeEvent.isComposing) return
                 if (event.key === "Enter" && !event.shiftKey) {
                   event.preventDefault()
-                  primaryAction()
+                  if (composerActions.enter === "submit") void submit()
                 }
               }}
               placeholder={placeholder}
@@ -443,9 +470,9 @@ export function SessionComposer({
               onAttach={add}
               isDragging={isDragging}
               className="size-8"
-              disabled={!canUseAttachments || sourceUnavailable || creatingSession}
+              disabled={!(canUseAttachments || canQueueAttachments) || sourceUnavailable || creatingSession}
             />
-            {attachments.length > 0 && !canUseAttachments ? (
+            {attachments.length > 0 && !(canUseAttachments || canQueueAttachments) ? (
               <span className="px-2 text-xs text-amber-600 dark:text-amber-400">
                 {tNew("attachmentsUnsupported")}
               </span>
@@ -639,8 +666,8 @@ export function SessionComposer({
               size="icon"
               aria-label={showInterrupt ? tSession("interrupt") : tSession("send")}
               className={cn("size-8 rounded-full", showInterrupt && "bg-destructive text-destructive-foreground hover:bg-destructive/90")}
-              disabled={showInterrupt ? interrupting : !(canSubmitCommand || canSubmitMessage)}
-              onClick={primaryAction}
+              disabled={showInterrupt ? sending || interrupting : !(canSubmitCommand || canSubmitMessage)}
+              onClick={handlePrimaryAction}
             >
               {sending || interrupting ? (
                 <Loader2 className="size-4 animate-spin" />

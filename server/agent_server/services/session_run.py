@@ -379,6 +379,15 @@ class SessionRunService:
                     session_id,
                     observed_status=runtime_status,
                 )
+                queued = await self._store.get_session_queue_message(
+                    session_id,
+                    queued.id,
+                )
+                if queued.status == "dispatched":
+                    return RpcResponsePayload(
+                        ok=True,
+                        result={"disposition": "dispatched"},
+                    )
             return RpcResponsePayload(
                 ok=True,
                 result={

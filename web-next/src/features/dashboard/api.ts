@@ -24,6 +24,8 @@ import type {
   FsReadTextResult,
   FsWriteResult,
   MessageSendOptions,
+  MessageSubmitResult,
+  QueuedSessionMessage,
   PairingClaimResponse,
   PairingPollResponse,
   PairingStartResponse,
@@ -673,15 +675,63 @@ export class DashboardApi {
     sessionId: string,
     content: string,
     options: MessageSendOptions = {},
-  ): Promise<RpcResponse<unknown>> {
-    const { attachments, clientMessageId } = options;
-    return this.client.post<RpcResponse<unknown>>(
+  ): Promise<RpcResponse<MessageSubmitResult>> {
+    const { attachments, clientMessageId, selections } = options;
+    return this.client.post<RpcResponse<MessageSubmitResult>>(
       `/sessions/${encodeURIComponent(sessionId)}/runtime/messages`,
       {
         content,
         ...(attachments && attachments.length > 0 ? { attachments } : {}),
         ...(clientMessageId ? { clientMessageId } : {}),
+        ...(selections && Object.keys(selections).length > 0 ? { selections } : {}),
       },
+      { token },
+    );
+  }
+
+  cancelQueuedSessionMessage(
+    token: string,
+    sessionId: string,
+    messageId: string,
+  ): Promise<RpcResponse<{ queueItem: QueuedSessionMessage }>> {
+    return this.client.delete<RpcResponse<{ queueItem: QueuedSessionMessage }>>(
+      `/sessions/${encodeURIComponent(sessionId)}/runtime/message-queue/${encodeURIComponent(messageId)}`,
+      { token },
+    );
+  }
+
+  promoteQueuedSessionMessage(
+    token: string,
+    sessionId: string,
+    messageId: string,
+  ): Promise<RpcResponse<{ queueItem: QueuedSessionMessage }>> {
+    return this.client.post<RpcResponse<{ queueItem: QueuedSessionMessage }>>(
+      `/sessions/${encodeURIComponent(sessionId)}/runtime/message-queue/${encodeURIComponent(messageId)}/promote`,
+      {},
+      { token },
+    );
+  }
+
+  retryQueuedSessionMessage(
+    token: string,
+    sessionId: string,
+    messageId: string,
+  ): Promise<RpcResponse<{ retried: boolean }>> {
+    return this.client.post<RpcResponse<{ retried: boolean }>>(
+      `/sessions/${encodeURIComponent(sessionId)}/runtime/message-queue/${encodeURIComponent(messageId)}/retry`,
+      {},
+      { token },
+    );
+  }
+
+  steerQueuedSessionMessage(
+    token: string,
+    sessionId: string,
+    messageId: string,
+  ): Promise<RpcResponse<MessageSubmitResult>> {
+    return this.client.post<RpcResponse<MessageSubmitResult>>(
+      `/sessions/${encodeURIComponent(sessionId)}/runtime/message-queue/${encodeURIComponent(messageId)}/steer`,
+      {},
       { token },
     );
   }
