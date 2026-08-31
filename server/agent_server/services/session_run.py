@@ -6,6 +6,8 @@ import hashlib
 from dataclasses import dataclass
 from typing import Any
 
+from loguru import logger
+
 from agent_server.core.api_namespace import api_v2_path
 from agent_server.core.capabilities import (
     CATALOG_MODEL,
@@ -835,6 +837,15 @@ class SessionRunService:
             "runtime": session.runtime,
             "runtimeId": _session_runtime_id(session),
         }
+        logger.warning(
+            "session_interrupt_forwarding session_id={} connector_id={} runtime={} runtime_id={} user_id={} require_takeover={}",
+            session_id,
+            session.connectorId,
+            session.runtime,
+            _session_runtime_id(session),
+            user_id,
+            require_takeover,
+        )
         try:
             result = await self._manager.request(
                 session.connectorId,

@@ -94,7 +94,15 @@ class ClaudeTurnActionHandler:
                         content=content,
                         attachments=attachments,
                         client_message_id=client_message_id,
-                    )
+                    ),
+                    name=f"claude-turn:{session.session_id}:{execution.turn_id}",
+                )
+                logger.info(
+                    "claude_turn_task_started session_id={} turn_id={} external_session_id={} task_name={}",
+                    session.session_id,
+                    execution.turn_id,
+                    session.external_session_id,
+                    execution.task.get_name(),
                 )
             except BaseException:
                 session.execution = None
@@ -126,6 +134,15 @@ class ClaudeTurnActionHandler:
                     ok=True,
                     result={"interrupted": False, "alreadyStopped": True},
                 )
+            logger.warning(
+                "claude_interrupt_requested session_id={} turn_id={} external_session_id={} reason={} task_name={} task_done={}",
+                session.session_id,
+                execution.turn_id,
+                session.external_session_id,
+                reason,
+                execution.task.get_name() if execution.task is not None else None,
+                execution.task.done() if execution.task is not None else None,
+            )
             execution.interrupt_source = "claude.session.interrupt"
             execution.interrupt_reason = reason
         await self.interrupt_execution(
@@ -150,16 +167,46 @@ class ClaudeTurnActionHandler:
 
         execution.interrupt_source = source
         execution.interrupt_reason = reason
-        try:
-            await interrupt_client(execution.client)
-        except Exception:  # noqa: BLE001
-            logger.debug(
-                "Claude SDK interrupt raced with shutdown session_id={}",
-                session.session_id,
-            )
         task = execution.task
+        logger.warning(
+            "claude_interrupt_execution_start session_id={} turn_id={} external_session_id={} source={} reason={} client_type={} task_name={} task_done={} task_cancelling={}",
+            session.session_id,
+            execution.turn_id,
+            session.external_session_id,
+            source,
+            reason,
+            execution.client.__class__.__name__ if execution.client is not None else None,
+            task.get_name() if task is not None else None,
+            task.done() if task is not None else None,
+            task.cancelling() if task is not None else None,
+        )
+        try:
+            sdk_interrupted = await interrupt_client(execution.client)
+            logger.warning(
+                "claude_sdk_interrupt_completed session_id={} turn_id={} source={} invoked={}",
+                session.session_id,
+                execution.turn_id,
+                source,
+                sdk_interrupted,
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "claude_sdk_interrupt_failed session_id={} turn_id={} source={}",
+                session.session_id,
+                execution.turn_id,
+                source,
+            )
         if task is not None and not task.done():
-            task.cancel()
+            cancelled = task.cancel()
+            logger.warning(
+                "claude_turn_task_cancel_requested session_id={} turn_id={} source={} task_name={} cancel_returned={} task_cancelling={}",
+                session.session_id,
+                execution.turn_id,
+                source,
+                task.get_name(),
+                cancelled,
+                task.cancelling(),
+            )
         if task is not None:
             await asyncio.gather(task, return_exceptions=True)
         await self.runner.finish_execution(
