@@ -1443,7 +1443,9 @@ private fun SessionRowTrailing(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (indicator == SessionListIndicator.None) {
+        if (indicator == SessionListIndicator.WaitingApproval) {
+            SessionStatusIndicator(indicator = indicator)
+        } else {
             Text(
                 text = session.updatedAtLabel.ifBlank { "now" },
                 color = timeColor,
@@ -1452,8 +1454,6 @@ private fun SessionRowTrailing(
                 fontWeight = FontWeight.SemiBold,
                 maxLines = 1,
             )
-        } else if (indicator == SessionListIndicator.WaitingApproval) {
-            SessionStatusIndicator(indicator = indicator)
         }
     }
 }
@@ -1469,9 +1469,9 @@ internal fun SessionStatusIndicator(indicator: SessionListIndicator) {
                 text = label,
                 modifier = Modifier
                     .clip(CircleShape)
-                    .background(colors.sessionStatusAccent.copy(alpha = 0.18f))
+                    .background(colors.raisedSurface)
                     .padding(horizontal = 10.dp, vertical = 4.dp),
-                color = colors.sessionStatusAccentText,
+                color = colors.inkSoft,
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Medium,
                 lineHeight = 17.sp,
