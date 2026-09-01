@@ -374,6 +374,8 @@
     <string name="session_approval_approve_session">本会话内批准</string>
     <string name="session_approval_always_allow">始终允许</string>
     <string name="session_approval_allow">允许</string>
+    <string name="session_input_request_other">其他</string>
+    <string name="session_input_request_submit">提交</string>
     <string name="session_upload_file_read_failed">无法读取 %1$s。</string>
     <string name="session_upload_file_empty">%1$s 是空文件。</string>
     <string name="session_welcome_1">接下来要做什么？</string>

@@ -375,6 +375,8 @@
     <string name="session_approval_approve_session">Approve session</string>
     <string name="session_approval_always_allow">Always allow</string>
     <string name="session_approval_allow">Allow</string>
+    <string name="session_input_request_other">Other</string>
+    <string name="session_input_request_submit">Submit</string>
     <string name="session_upload_file_read_failed">Could not read %1$s.</string>
     <string name="session_upload_file_empty">%1$s is empty.</string>
     <string name="session_welcome_1">What should we build next?</string>

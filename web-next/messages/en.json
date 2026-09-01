@@ -827,6 +827,7 @@
       "interactions": "Interactions",
       "interactionsPending": "{count} pending",
       "inputRequestOther": "Other",
+      "inputRequestSubmit": "Submit",
       "toolRan": "Ran {command}",
       "toolCommandFallback": "command",
       "toolChangedFile": "Changed {path}",

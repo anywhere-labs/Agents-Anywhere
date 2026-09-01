@@ -3,6 +3,7 @@ package com.agentsanywhere.app.ui.screens.sessiondetail
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -16,6 +17,8 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -32,19 +35,29 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.agentsanywhere.app.R
 import com.agentsanywhere.app.feature.sessiondetail.RuntimeCommand
+import com.agentsanywhere.app.feature.sessiondetail.RuntimeInputRequestDraft
+import com.agentsanywhere.app.feature.sessiondetail.RuntimeInputRequestForm
+import com.agentsanywhere.app.feature.sessiondetail.RuntimeInputRequestQuestion
 import com.agentsanywhere.app.feature.sessiondetail.RuntimeNotice
 import com.agentsanywhere.app.feature.sessiondetail.RuntimeNoticeAction
+import com.agentsanywhere.app.feature.sessiondetail.buildPayload
 import com.agentsanywhere.app.feature.sessiondetail.coerceInput
+import com.agentsanywhere.app.feature.sessiondetail.initialDrafts
+import com.agentsanywhere.app.feature.sessiondetail.inputRequestForm
 import com.agentsanywhere.app.feature.sessiondetail.inputFields
+import com.agentsanywhere.app.feature.sessiondetail.isComplete
 import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 import com.agentsanywhere.app.ui.designsystem.noRippleClickable
 import com.composables.icons.lucide.CircleAlert
@@ -140,8 +153,15 @@ internal fun RuntimeNoticeCard(
     var selectedActionId by remember(notice.noticeId) { mutableStateOf<String?>(null) }
     var rawValues by remember(notice.noticeId, selectedActionId) { mutableStateOf(emptyMap<String, String>()) }
     var validationError by remember(notice.noticeId, selectedActionId) { mutableStateOf<String?>(null) }
+    val inputRequestForm = remember(notice.noticeId, notice.revision) { notice.inputRequestForm() }
+    var inputRequestDrafts by remember(notice.noticeId, notice.revision) {
+        mutableStateOf(inputRequestForm?.initialDrafts().orEmpty())
+    }
     val selectedAction = notice.actions.firstOrNull { it.actionId == selectedActionId }
-    val fields = selectedAction?.inputFields().orEmpty()
+    val fields = selectedAction
+        ?.takeUnless { it.actionId == inputRequestForm?.action?.actionId }
+        ?.inputFields()
+        .orEmpty()
     val disabled = actionsDisabled || busy || notice.status in setOf("response_accepted", "resolving")
 
     fun submit(action: RuntimeNoticeAction) {
@@ -151,6 +171,19 @@ internal fun RuntimeNoticeCard(
                 onRespond(action, input)
             }
             .onFailure { validationError = it.message }
+    }
+
+    fun triggerAction(action: RuntimeNoticeAction) {
+        val form = inputRequestForm
+        selectedActionId = action.actionId
+        validationError = null
+        when {
+            form != null && action.actionId == form.action.actionId -> {
+                onRespond(action, form.buildPayload(inputRequestDrafts))
+            }
+            action.inputFields().isNotEmpty() -> Unit
+            else -> submit(action)
+        }
     }
 
     Column(
@@ -186,34 +219,45 @@ internal fun RuntimeNoticeCard(
             ),
         verticalArrangement = Arrangement.spacedBy(if (composerAdjacent) 14.dp else 11.dp),
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(9.dp),
-            verticalAlignment = Alignment.Top,
-        ) {
-            Icon(
-                imageVector = when {
-                    destructive -> Lucide.CircleAlert
-                    notificationOnly && warning -> Lucide.TriangleAlert
-                    notificationOnly && success -> Lucide.CircleCheck
-                    notificationOnly -> Lucide.Info
-                    else -> Lucide.ShieldCheck
-                },
-                contentDescription = null,
-                tint = accent,
-                modifier = Modifier.size(17.dp),
-            )
-            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                Text(
-                    text = notice.title,
-                    color = colors.ink,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.SemiBold,
+        if (inputRequestForm == null) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(9.dp),
+                verticalAlignment = Alignment.Top,
+            ) {
+                Icon(
+                    imageVector = when {
+                        destructive -> Lucide.CircleAlert
+                        notificationOnly && warning -> Lucide.TriangleAlert
+                        notificationOnly && success -> Lucide.CircleCheck
+                        notificationOnly -> Lucide.Info
+                        else -> Lucide.ShieldCheck
+                    },
+                    contentDescription = null,
+                    tint = accent,
+                    modifier = Modifier.size(17.dp),
                 )
-                notice.message?.takeIf(String::isNotBlank)?.let { message ->
-                    Text(text = message, color = colors.muted, fontSize = 13.sp, lineHeight = 18.sp)
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Text(
+                        text = notice.title,
+                        color = colors.ink,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    notice.message?.takeIf(String::isNotBlank)?.let { message ->
+                        Text(text = message, color = colors.muted, fontSize = 13.sp, lineHeight = 18.sp)
+                    }
                 }
             }
+        } else {
+            RuntimeInputRequestFields(
+                form = inputRequestForm,
+                drafts = inputRequestDrafts,
+                disabled = disabled,
+                onDraftChange = { questionId, draft ->
+                    inputRequestDrafts = inputRequestDrafts + (questionId to draft)
+                },
+            )
         }
 
         if (!notificationOnly && notice.actions.isNotEmpty()) {
@@ -225,58 +269,27 @@ internal fun RuntimeNoticeCard(
                     else -> if (action.style == "primary") 2 else 1
                 }
             }
-            if (composerAdjacent && orderedActions.size <= 3) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    orderedActions.forEach { action ->
-                        RuntimeNoticeActionButton(
-                            action = action,
-                            busy = busy && selectedActionId == action.actionId,
-                            enabled = !disabled,
-                            composerAdjacent = true,
-                            onClick = {
-                                if (action.inputFields().isNotEmpty()) {
-                                    selectedActionId = action.actionId
-                                    validationError = null
-                                } else {
-                                    selectedActionId = action.actionId
-                                    submit(action)
-                                }
-                            },
-                            modifier = Modifier.weight(1f),
-                        )
-                    }
-                }
-            } else {
-                FlowRow(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    orderedActions.forEach { action ->
-                        RuntimeNoticeActionButton(
-                            action = action,
-                            busy = busy && selectedActionId == action.actionId,
-                            enabled = !disabled,
-                            composerAdjacent = false,
-                            onClick = {
-                                if (action.inputFields().isNotEmpty()) {
-                                    selectedActionId = action.actionId
-                                    validationError = null
-                                } else {
-                                    selectedActionId = action.actionId
-                                    submit(action)
-                                }
-                            },
-                        )
-                    }
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                orderedActions.forEach { action ->
+                    val inputActionIncomplete = inputRequestForm?.let { form ->
+                        action.actionId == form.action.actionId && !form.isComplete(inputRequestDrafts)
+                    } ?: false
+                    RuntimeNoticeActionButton(
+                        action = action,
+                        busy = busy && selectedActionId == action.actionId,
+                        enabled = !disabled && !inputActionIncomplete,
+                        composerAdjacent = composerAdjacent,
+                        onClick = { triggerAction(action) },
+                    )
                 }
             }
         }
 
-        if (selectedAction != null && !disabled) {
+        if (selectedAction != null && fields.isNotEmpty() && !disabled) {
             fields.forEach { field ->
                 OutlinedTextField(
                     value = rawValues[field.key].orEmpty(),
@@ -324,7 +337,8 @@ private fun RuntimeNoticeActionButton(
         onClick = onClick,
         enabled = enabled,
         modifier = modifier
-            .heightIn(min = if (composerAdjacent) 44.dp else 34.dp)
+            .heightIn(min = if (composerAdjacent) 38.dp else 34.dp)
+            .then(if (composerAdjacent) Modifier.widthIn(min = 86.dp) else Modifier)
             .clip(shape)
             .background(background)
             .then(
@@ -365,7 +379,208 @@ private fun localizedNoticeActionLabel(action: RuntimeNoticeAction): String = wh
     "approve_for_session" -> stringResource(R.string.session_approval_approve_session)
     "reject" -> stringResource(R.string.session_approval_deny)
     "cancel", "dismiss" -> stringResource(R.string.common_cancel)
+    "submit" -> stringResource(R.string.session_input_request_submit)
     else -> action.label.ifBlank { action.actionId }
+}
+
+@Composable
+private fun RuntimeInputRequestFields(
+    form: RuntimeInputRequestForm,
+    drafts: Map<String, RuntimeInputRequestDraft>,
+    disabled: Boolean,
+    onDraftChange: (String, RuntimeInputRequestDraft) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        form.questions.forEach { question ->
+            RuntimeInputRequestQuestionFields(
+                question = question,
+                draft = drafts[question.id] ?: RuntimeInputRequestDraft(),
+                disabled = disabled,
+                onChange = { onDraftChange(question.id, it) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun RuntimeInputRequestQuestionFields(
+    question: RuntimeInputRequestQuestion,
+    draft: RuntimeInputRequestDraft,
+    disabled: Boolean,
+    onChange: (RuntimeInputRequestDraft) -> Unit,
+) {
+    val colors = LocalAAColors.current
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        question.header?.let { header ->
+            Text(
+                text = header,
+                color = colors.muted,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Medium,
+            )
+        }
+        Text(
+            text = question.prompt,
+            color = colors.ink,
+            fontSize = 14.sp,
+            lineHeight = 19.sp,
+            fontWeight = FontWeight.Medium,
+        )
+        question.options.forEach { option ->
+            val selected = option.id in draft.optionIds
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(colors.subtle.copy(alpha = if (selected) 1f else 0.68f))
+                    .then(
+                        if (disabled) Modifier else Modifier.noRippleClickable {
+                            val optionIds = if (question.multiple) {
+                                if (selected) draft.optionIds - option.id else draft.optionIds + option.id
+                            } else {
+                                listOf(option.id)
+                            }
+                            onChange(
+                                draft.copy(
+                                    optionIds = optionIds,
+                                    customText = if (question.multiple) draft.customText else "",
+                                    useCustom = if (question.multiple) draft.useCustom else false,
+                                ),
+                            )
+                        },
+                    )
+                    .padding(horizontal = 11.dp, vertical = 10.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.Top,
+            ) {
+                RuntimeInputRequestSelectionIndicator(
+                    selected = selected,
+                    multiple = question.multiple,
+                )
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                    Text(
+                        text = option.label,
+                        color = colors.ink.copy(alpha = if (disabled) 0.5f else 1f),
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
+                    )
+                    option.description?.let { description ->
+                        Text(
+                            text = description,
+                            color = colors.muted.copy(alpha = if (disabled) 0.5f else 1f),
+                            fontSize = 12.sp,
+                            lineHeight = 16.sp,
+                        )
+                    }
+                }
+            }
+        }
+        if (question.allowCustom) {
+            RuntimeInputRequestCustomAnswer(
+                multiple = question.multiple,
+                draft = draft,
+                disabled = disabled,
+                onChange = onChange,
+            )
+        }
+    }
+}
+
+@Composable
+private fun RuntimeInputRequestCustomAnswer(
+    multiple: Boolean,
+    draft: RuntimeInputRequestDraft,
+    disabled: Boolean,
+    onChange: (RuntimeInputRequestDraft) -> Unit,
+) {
+    val colors = LocalAAColors.current
+    fun selectCustom() {
+        if (disabled) return
+        onChange(
+            draft.copy(
+                optionIds = if (multiple) draft.optionIds else emptyList(),
+                useCustom = true,
+            ),
+        )
+    }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(colors.subtle.copy(alpha = if (draft.useCustom) 1f else 0.68f))
+            .then(if (disabled) Modifier else Modifier.noRippleClickable { selectCustom() })
+            .padding(horizontal = 11.dp, vertical = 9.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        RuntimeInputRequestSelectionIndicator(
+            selected = draft.useCustom,
+            multiple = multiple,
+        )
+        BasicTextField(
+            value = draft.customText,
+            onValueChange = { value ->
+                onChange(
+                    draft.copy(
+                        optionIds = if (multiple) draft.optionIds else emptyList(),
+                        customText = value,
+                        useCustom = true,
+                    ),
+                )
+            },
+            enabled = !disabled,
+            singleLine = true,
+            textStyle = TextStyle(
+                color = colors.ink,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Medium,
+            ),
+            cursorBrush = SolidColor(colors.ink),
+            modifier = Modifier
+                .weight(1f)
+                .onFocusChanged { if (it.isFocused) selectCustom() },
+            decorationBox = { innerTextField ->
+                Box(contentAlignment = Alignment.CenterStart) {
+                    if (draft.customText.isEmpty()) {
+                        Text(
+                            text = stringResource(R.string.session_input_request_other),
+                            color = colors.muted,
+                            fontSize = 13.sp,
+                        )
+                    }
+                    innerTextField()
+                }
+            },
+        )
+    }
+}
+
+@Composable
+private fun RuntimeInputRequestSelectionIndicator(
+    selected: Boolean,
+    multiple: Boolean,
+) {
+    val colors = LocalAAColors.current
+    val shape = if (multiple) RoundedCornerShape(6.dp) else CircleShape
+    Box(
+        modifier = Modifier
+            .size(20.dp)
+            .clip(shape)
+            .background(if (selected) colors.primaryAction else colors.secondaryActionSurface),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (selected) {
+            Icon(
+                imageVector = Lucide.Check,
+                contentDescription = null,
+                tint = colors.onPrimaryAction,
+                modifier = Modifier.size(13.dp),
+            )
+        }
+    }
 }
 
 private fun noticeActionIcon(actionId: String): ImageVector = when (actionId) {

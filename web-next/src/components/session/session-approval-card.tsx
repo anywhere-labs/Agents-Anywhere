@@ -62,6 +62,7 @@ export function InteractionCard({
     if (action.actionId === "approve_for_session") return tSession("approveSession")
     if (action.actionId === "reject") return tSession("reject")
     if (action.actionId === "cancel" || action.actionId === "dismiss") return tCommon("cancel")
+    if (action.actionId === "submit") return tSession("inputRequestSubmit")
     return action.label
   }
 
