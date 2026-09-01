@@ -390,7 +390,6 @@ fun NewSessionScreen(
                         NewSessionConfigurationOption(
                             id = model.id,
                             label = model.displayName,
-                            description = if (enabled) model.description else model.disabledReason,
                             enabled = enabled,
                         )
                     },

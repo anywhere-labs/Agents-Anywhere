@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -39,6 +40,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.TextStyle
@@ -133,6 +135,7 @@ internal fun RuntimeNoticeCard(
     composerAdjacent: Boolean = false,
 ) {
     val colors = LocalAAColors.current
+    val focusManager = LocalFocusManager.current
     val destructive = notice.severity == "error" || notice.status == "failed"
     val warning = notice.severity == "warning"
     val success = notice.severity == "success"
@@ -175,6 +178,7 @@ internal fun RuntimeNoticeCard(
 
     fun triggerAction(action: RuntimeNoticeAction) {
         val form = inputRequestForm
+        focusManager.clearFocus()
         selectedActionId = action.actionId
         validationError = null
         when {
@@ -208,6 +212,13 @@ internal fun RuntimeNoticeCard(
                         if (notice.severity == "info") colors.border else semanticAccent.copy(alpha = 0.32f),
                         cardShape,
                     )
+                },
+            )
+            .then(
+                if (inputRequestForm != null) {
+                    Modifier.noRippleClickable { focusManager.clearFocus() }
+                } else {
+                    Modifier
                 },
             )
             .padding(
@@ -257,6 +268,9 @@ internal fun RuntimeNoticeCard(
                 onDraftChange = { questionId, draft ->
                     inputRequestDrafts = inputRequestDrafts + (questionId to draft)
                 },
+                modifier = Modifier
+                    .weight(1f, fill = false)
+                    .verticalScroll(rememberScrollState()),
             )
         }
 
@@ -271,7 +285,10 @@ internal fun RuntimeNoticeCard(
             }
             FlowRow(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+                horizontalArrangement = Arrangement.spacedBy(
+                    8.dp,
+                    if (inputRequestForm != null) Alignment.End else Alignment.CenterHorizontally,
+                ),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 orderedActions.forEach { action ->
@@ -333,12 +350,47 @@ private fun RuntimeNoticeActionButton(
         else -> colors.ink
     }
 
+    if (composerAdjacent) {
+        Box(
+            modifier = modifier
+                .widthIn(min = 68.dp)
+                .height(32.dp)
+                .clip(shape)
+                .background(background)
+                .graphicsLayer { alpha = if (enabled) 1f else 0.42f }
+                .then(if (enabled) Modifier.noRippleClickable(onClick = onClick) else Modifier)
+                .padding(horizontal = 14.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                if (busy) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(13.dp),
+                        strokeWidth = 2.dp,
+                        color = contentColor,
+                    )
+                }
+                Text(
+                    text = localizedNoticeActionLabel(action),
+                    color = contentColor,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+        return
+    }
+
     TextButton(
         onClick = onClick,
         enabled = enabled,
         modifier = modifier
-            .heightIn(min = if (composerAdjacent) 38.dp else 34.dp)
-            .then(if (composerAdjacent) Modifier.widthIn(min = 86.dp) else Modifier)
+            .heightIn(min = 34.dp)
             .clip(shape)
             .background(background)
             .then(
@@ -353,7 +405,7 @@ private fun RuntimeNoticeActionButton(
                 color = contentColor,
             )
             Spacer(Modifier.size(6.dp))
-        } else if (!composerAdjacent) {
+        } else {
             Icon(
                 imageVector = noticeActionIcon(action.actionId),
                 contentDescription = null,
@@ -365,7 +417,7 @@ private fun RuntimeNoticeActionButton(
         Text(
             text = localizedNoticeActionLabel(action),
             color = contentColor,
-            fontSize = if (composerAdjacent) 13.sp else 12.sp,
+            fontSize = 12.sp,
             fontWeight = FontWeight.SemiBold,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
@@ -389,8 +441,13 @@ private fun RuntimeInputRequestFields(
     drafts: Map<String, RuntimeInputRequestDraft>,
     disabled: Boolean,
     onDraftChange: (String, RuntimeInputRequestDraft) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+    val focusManager = LocalFocusManager.current
+    Column(
+        modifier = modifier.noRippleClickable { focusManager.clearFocus() },
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
         form.questions.forEach { question ->
             RuntimeInputRequestQuestionFields(
                 question = question,
@@ -602,7 +659,9 @@ internal fun BlockingRuntimeNoticeStack(
     val colors = LocalAAColors.current
     val active = notices.first()
     val backing = notices.drop(1).take(3).asReversed()
-    val maxCardHeight = LocalConfiguration.current.screenHeightDp.dp * 0.38f
+    val inputRequest = active.inputRequestForm()
+    val maxCardHeight = LocalConfiguration.current.screenHeightDp.dp *
+        if (inputRequest != null) 0.58f else 0.38f
     Box(
         modifier = modifier
             .fillMaxWidth()
@@ -632,7 +691,10 @@ internal fun BlockingRuntimeNoticeStack(
             composerAdjacent = true,
             modifier = Modifier
                 .heightIn(max = maxCardHeight)
-                .verticalScroll(rememberScrollState()),
+                .then(
+                    if (inputRequest == null) Modifier.verticalScroll(rememberScrollState())
+                    else Modifier,
+                ),
         )
     }
 }
