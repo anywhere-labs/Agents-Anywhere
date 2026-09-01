@@ -1309,7 +1309,7 @@ private fun ReasoningSection(
                 modifier = Modifier.weight(1f),
                 color = colors.ink,
                 fontSize = 13.sp,
-                fontWeight = FontWeight.Medium,
+                fontWeight = TimelineActivityLabelWeight,
                 fontFamily = FontFamily.Monospace,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -1339,6 +1339,8 @@ private fun inlineReasoningSummary(text: String): String? {
         .trim()
     return plain.takeIf { it.isNotEmpty() && it.length <= 80 }
 }
+
+private val TimelineActivityLabelWeight = FontWeight.Normal
 
 @Composable
 private fun ToolActivityCard(
@@ -1425,7 +1427,7 @@ private fun ToolActivityCard(
                 modifier = Modifier.weight(1f),
                 color = if (failed) LocalAAColors.current.errorIcon else primary,
                 fontSize = 13.sp,
-                fontWeight = FontWeight.Medium,
+                fontWeight = TimelineActivityLabelWeight,
                 fontFamily = FontFamily.Monospace,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
