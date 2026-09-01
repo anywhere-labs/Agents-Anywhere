@@ -1414,19 +1414,23 @@ private fun SessionRowTrailing(
     session: AgentSession,
     timeColor: Color,
 ) {
+    val indicator = session.listIndicator()
     Row(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        SessionStatusIndicator(indicator = session.listIndicator())
-        Text(
-            text = session.updatedAtLabel.ifBlank { "now" },
-            color = timeColor,
-            fontSize = 10.8.sp,
-            fontFamily = FontFamily.Monospace,
-            fontWeight = FontWeight.SemiBold,
-            maxLines = 1,
-        )
+        if (indicator == SessionListIndicator.None) {
+            Text(
+                text = session.updatedAtLabel.ifBlank { "now" },
+                color = timeColor,
+                fontSize = 10.8.sp,
+                fontFamily = FontFamily.Monospace,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+            )
+        } else {
+            SessionStatusIndicator(indicator = indicator)
+        }
     }
 }
 
@@ -1441,9 +1445,8 @@ internal fun SessionStatusIndicator(indicator: SessionListIndicator) {
                 text = label,
                 modifier = Modifier
                     .clip(CircleShape)
-                    .background(colors.sessionStatusAccent.copy(alpha = 0.16f))
-                    .border(1.dp, colors.sessionStatusAccent.copy(alpha = 0.22f), CircleShape)
-                    .padding(horizontal = 8.dp, vertical = 2.dp),
+                    .background(colors.sessionStatusAccent.copy(alpha = 0.18f))
+                    .padding(horizontal = 8.dp, vertical = 3.dp),
                 color = colors.sessionStatusAccentText,
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Medium,
@@ -1456,7 +1459,7 @@ internal fun SessionStatusIndicator(indicator: SessionListIndicator) {
             description = stringResource(R.string.home_session_status_running),
         )
 
-        SessionListIndicator.Unread -> SessionStatusDot(
+        SessionListIndicator.Unread -> SessionUnreadIndicator(
             color = colors.sessionStatusAccent,
             description = stringResource(R.string.home_session_status_unread),
         )
@@ -1473,26 +1476,26 @@ private fun SessionBusyIndicator(description: String) {
         initialValue = 0f,
         targetValue = 360f,
         animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 850, easing = LinearEasing),
+            animation = tween(durationMillis = 1_200, easing = LinearEasing),
         ),
         label = "session-status-rotation",
     )
 
     Canvas(
         modifier = Modifier
-            .size(14.dp)
+            .size(16.dp)
             .semantics { contentDescription = description }
             .graphicsLayer { rotationZ = rotation },
     ) {
         val strokeWidth = 2.dp.toPx()
         drawCircle(
-            color = colors.faint.copy(alpha = 0.32f),
+            color = colors.ink.copy(alpha = 0.16f),
             style = Stroke(width = strokeWidth),
         )
         drawArc(
-            color = colors.muted,
+            color = colors.inkSoft.copy(alpha = 0.78f),
             startAngle = -90f,
-            sweepAngle = 105f,
+            sweepAngle = 100f,
             useCenter = false,
             style = Stroke(width = strokeWidth, cap = StrokeCap.Round),
         )
@@ -1500,17 +1503,25 @@ private fun SessionBusyIndicator(description: String) {
 }
 
 @Composable
-private fun SessionStatusDot(
+private fun SessionUnreadIndicator(
     color: Color,
     description: String,
 ) {
     Box(
         modifier = Modifier
-            .size(8.dp)
+            .size(14.dp)
             .clip(CircleShape)
-            .background(color)
+            .background(color.copy(alpha = 0.14f))
             .semantics { contentDescription = description },
-    )
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(7.dp)
+                .clip(CircleShape)
+                .background(color),
+        )
+    }
 }
 
 @Composable
