@@ -375,6 +375,7 @@ private fun HomeSessionActionOverlay(
 
 @Composable
 internal fun HomeSessionHighlightRow(session: AgentSession, darkMode: Boolean) {
+    val indicator = session.listIndicator()
     val subtitle = listOf(session.runtimeContextLabel, session.workspaceLabel)
         .filter { it.isNotBlank() }
         .joinToString("  ·  ")
@@ -388,7 +389,7 @@ internal fun HomeSessionHighlightRow(session: AgentSession, darkMode: Boolean) {
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(Lucide.ListIcon, contentDescription = null, tint = meta, modifier = Modifier.size(14.dp))
+        SessionRowLeading(indicator = indicator)
         if (session.pinned) {
             Column(
                 modifier = Modifier.weight(1f),
@@ -424,7 +425,7 @@ internal fun HomeSessionHighlightRow(session: AgentSession, darkMode: Boolean) {
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        SessionRowTrailing(session = session, timeColor = meta)
+        SessionRowTrailing(session = session, indicator = indicator, timeColor = meta)
     }
 }
 
@@ -1350,6 +1351,7 @@ internal fun HomePinnedSessionRow(
     onClick: () -> Unit,
     onLongPress: (Rect) -> Unit,
 ) {
+    val indicator = session.listIndicator()
     val subtitle = listOf(session.runtimeContextLabel, session.workspaceLabel)
         .filter { it.isNotBlank() }
         .joinToString("  ·  ")
@@ -1360,7 +1362,7 @@ internal fun HomePinnedSessionRow(
         onClick = onClick,
         onLongPress = onLongPress,
     ) {
-        Icon(Lucide.ListIcon, contentDescription = null, tint = LocalAAColors.current.faint, modifier = Modifier.size(14.dp))
+        SessionRowLeading(indicator = indicator)
         Column(
             modifier = Modifier.weight(1f),
             verticalArrangement = Arrangement.Center,
@@ -1383,7 +1385,7 @@ internal fun HomePinnedSessionRow(
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        SessionRowTrailing(session = session, timeColor = LocalAAColors.current.faint)
+        SessionRowTrailing(session = session, indicator = indicator, timeColor = LocalAAColors.current.faint)
     }
 }
 
@@ -1393,8 +1395,9 @@ internal fun HomeRecentSessionRow(
     onClick: () -> Unit,
     onLongPress: (Rect) -> Unit,
 ) {
+    val indicator = session.listIndicator()
     HomeSessionRowShell(height = 52.dp, onClick = onClick, onLongPress = onLongPress) {
-        Icon(Lucide.ListIcon, contentDescription = null, tint = LocalAAColors.current.faint, modifier = Modifier.size(14.dp))
+        SessionRowLeading(indicator = indicator)
         Text(
             text = session.title.sessionDisplayTitle(),
             modifier = Modifier.weight(1f),
@@ -1405,16 +1408,37 @@ internal fun HomeRecentSessionRow(
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
-        SessionRowTrailing(session = session, timeColor = LocalAAColors.current.faint)
+        SessionRowTrailing(session = session, indicator = indicator, timeColor = LocalAAColors.current.faint)
+    }
+}
+
+@Composable
+private fun SessionRowLeading(indicator: SessionListIndicator) {
+    Box(
+        modifier = Modifier.size(20.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        when (indicator) {
+            SessionListIndicator.Busy,
+            SessionListIndicator.Unread -> SessionStatusIndicator(indicator = indicator)
+
+            SessionListIndicator.WaitingApproval,
+            SessionListIndicator.None -> Icon(
+                imageVector = Lucide.ListIcon,
+                contentDescription = null,
+                tint = LocalAAColors.current.faint,
+                modifier = Modifier.size(14.dp),
+            )
+        }
     }
 }
 
 @Composable
 private fun SessionRowTrailing(
     session: AgentSession,
+    indicator: SessionListIndicator,
     timeColor: Color,
 ) {
-    val indicator = session.listIndicator()
     Row(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -1428,7 +1452,7 @@ private fun SessionRowTrailing(
                 fontWeight = FontWeight.SemiBold,
                 maxLines = 1,
             )
-        } else {
+        } else if (indicator == SessionListIndicator.WaitingApproval) {
             SessionStatusIndicator(indicator = indicator)
         }
     }
