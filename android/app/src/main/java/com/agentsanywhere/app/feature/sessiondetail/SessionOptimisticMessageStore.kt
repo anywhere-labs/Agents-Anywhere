@@ -24,6 +24,19 @@ internal class SessionOptimisticMessageStore {
         }
     }
 
+    fun move(fromSessionId: String, toSessionId: String) {
+        if (fromSessionId == toSessionId) return
+        synchronized(lock) {
+            val source = messagesBySession.remove(fromSessionId).orEmpty()
+            if (source.isEmpty()) return
+            val merged = (messagesBySession[toSessionId].orEmpty() + source)
+                .associateBy(TimelineMessage::id)
+                .values
+                .toList()
+            messagesBySession[toSessionId] = sortTimelineMessages(merged)
+        }
+    }
+
     fun clear(sessionId: String) {
         synchronized(lock) { messagesBySession.remove(sessionId) }
     }

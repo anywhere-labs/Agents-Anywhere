@@ -801,6 +801,12 @@ class SessionDetailController(
         }
     }
 
+    fun optimisticMessages(sessionId: String): List<TimelineMessage> = optimisticStore.read(sessionId)
+
+    fun bindOptimisticSession(localSessionId: String, sessionId: String) {
+        optimisticStore.move(localSessionId, sessionId)
+    }
+
     private fun authSession(): ApiAuth {
         val serverUrl = sessionStore.readServerUrl()
         val accessToken = sessionStore.readAccessToken()

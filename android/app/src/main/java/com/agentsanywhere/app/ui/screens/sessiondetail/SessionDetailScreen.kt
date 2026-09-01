@@ -82,6 +82,7 @@ import com.agentsanywhere.app.feature.sessiondetail.completeSnapshotLoad
 import com.agentsanywhere.app.feature.sessiondetail.failSnapshotLoad
 import com.agentsanywhere.app.feature.sessiondetail.isValidAttachmentMediaType
 import com.agentsanywhere.app.feature.sessiondetail.isInternalRuntimeError
+import com.agentsanywhere.app.feature.sessiondetail.hasPendingOptimisticSend
 import com.agentsanywhere.app.feature.sessiondetail.RuntimeMessageAction
 import com.agentsanywhere.app.feature.sessiondetail.RuntimeNotice
 import com.agentsanywhere.app.feature.sessiondetail.RuntimeNoticeAction
@@ -203,14 +204,22 @@ fun SessionDetailScreen(
     var appVisible by remember(lifecycleOwner) {
         mutableStateOf(lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED))
     }
-    var state by remember(sessionId) {
+    val optimisticSessionId = sessionId ?: preparedSession?.localSessionId
+    var state by remember(sessionId, preparedSession?.localSessionId) {
+        val optimisticMessages = optimisticSessionId
+            ?.let(controller::optimisticMessages)
+            .orEmpty()
         mutableStateOf(
             SessionDetailState(
                 meta = SessionMeta(
                     session = initialSession?.takeIf { preparedSession != null || it.id == sessionId },
                     isLoading = sessionId != null,
                 ),
-                timeline = SessionTimelineState(isLoading = sessionId != null),
+                timeline = SessionTimelineState(
+                    messages = optimisticMessages,
+                    isLoading = sessionId != null,
+                ),
+                sending = optimisticMessages.hasPendingOptimisticSend(),
             ),
         )
     }
@@ -564,8 +573,19 @@ fun SessionDetailScreen(
             val message = text.trim()
             if (message.isBlank()) return
             val clientMessageId = retryClientMessageId ?: "opt_${UUID.randomUUID()}"
+            val localSessionId = pending.localSessionId
+            state = controller.addOptimisticMessage(
+                sessionId = localSessionId,
+                state = state,
+                text = message,
+                clientMessageId = clientMessageId,
+                retryAction = RuntimeMessageAction.Send,
+            )
+            clearComposerDraft()
             preparedSessionCreating = true
             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+            unfocusComposer()
+            forceLatestRequest += 1
             scope.launch {
                 when (
                     val outcome = onCreatePreparedSession(
@@ -577,17 +597,33 @@ fun SessionDetailScreen(
                     )
                 ) {
                     is NewSessionCreateOutcome.Created -> {
+                        state = controller.markOptimisticMessage(
+                            sessionId = localSessionId,
+                            state = state,
+                            clientMessageId = clientMessageId,
+                            status = "running",
+                        )
+                        controller.bindOptimisticSession(localSessionId, outcome.session.id)
                         clearComposerDraft()
                         onPreparedSessionCreated(outcome.session)
                     }
                     is NewSessionCreateOutcome.Failed -> {
                         preparedSessionCreating = false
+                        draft = message
                         retryClientMessageId = clientMessageId
+                        retryMessageAction = RuntimeMessageAction.Send
                         saveComposerDraft(message, emptyList(), clientMessageId, RuntimeMessageAction.Send)
                         val rawMessage = outcome.error.message
                         val errorMessage = rawMessage
                             ?.takeUnless(::isInternalRuntimeError)
                             ?: context.getString(R.string.new_session_create_failed)
+                        state = controller.markOptimisticMessage(
+                            sessionId = localSessionId,
+                            state = state,
+                            clientMessageId = clientMessageId,
+                            status = "failed",
+                            errorMessage = errorMessage,
+                        ).copy(actionError = errorMessage)
                         showError(errorMessage)
                     }
                 }

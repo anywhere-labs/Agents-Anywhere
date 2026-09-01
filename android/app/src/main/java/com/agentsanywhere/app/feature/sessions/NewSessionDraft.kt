@@ -1,6 +1,7 @@
 package com.agentsanywhere.app.feature.sessions
 
 import com.agentsanywhere.app.model.AgentSession
+import java.util.UUID
 
 /**
  * A locally prepared session. The Server session and runtime thread are created only when the
@@ -18,10 +19,11 @@ data class NewSessionDraft(
     val runtimeId: String = runtime,
     val runtimeType: String = runtime,
     val runtimeName: String = runtimeLabel,
+    val localSessionId: String = newLocalSessionId(),
 ) {
     fun previewSession(): AgentSession {
         return AgentSession(
-            id = LOCAL_NEW_SESSION_ID,
+            id = localSessionId,
             connectorId = connectorId,
             deviceName = deviceName,
             title = title.orEmpty(),
@@ -51,6 +53,8 @@ data class NewSessionDraft(
 
     companion object {
         const val LOCAL_NEW_SESSION_ID = "local:new-session"
+
+        fun newLocalSessionId(): String = "$LOCAL_NEW_SESSION_ID:${UUID.randomUUID()}"
     }
 }
 
