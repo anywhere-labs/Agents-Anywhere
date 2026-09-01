@@ -135,7 +135,6 @@ internal fun MessageComposer(
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .imePadding()
             .padding(start = 14.dp, end = 14.dp, bottom = 24.dp),
     ) {
         Column(

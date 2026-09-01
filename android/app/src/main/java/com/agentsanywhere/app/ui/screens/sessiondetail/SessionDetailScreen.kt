@@ -17,9 +17,12 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.pager.HorizontalPager
@@ -1376,6 +1379,7 @@ fun SessionDetailScreen(
         else -> stringResource(R.string.session_send_unavailable)
     }
     val density = LocalDensity.current
+    val imeBottomPx = WindowInsets.ime.getBottom(density)
     val timelineBottomPadding = if (composerHeightPx > 0) {
         with(density) { composerHeightPx.toDp() } + 16.dp
     } else {
@@ -1398,14 +1402,17 @@ fun SessionDetailScreen(
                     modifier = Modifier
                         .fillMaxSize()
                         .background(colors.canvas)
-                        .pointerInput(composerHeightPx) {
+                        .pointerInput(composerHeightPx, imeBottomPx) {
                             awaitPointerEventScope {
                                 while (true) {
                                     val down = awaitPointerEvent(PointerEventPass.Initial)
                                         .changes
                                         .firstOrNull { it.pressed && !it.previousPressed }
                                         ?: continue
-                                    if (composerHeightPx > 0 && down.position.y < size.height - composerHeightPx) {
+                                    if (
+                                        composerHeightPx > 0 &&
+                                        down.position.y < size.height - composerHeightPx - imeBottomPx
+                                    ) {
                                         unfocusComposer()
                                     }
                                 }
@@ -1459,64 +1466,68 @@ fun SessionDetailScreen(
                         Column(
                             modifier = Modifier
                                 .align(Alignment.BottomCenter)
-                                .onSizeChanged { composerHeightPx = it.height },
+                                .imePadding(),
                         ) {
-                            BlockingRuntimeNoticeStack(
-                                notices = blockingNotices,
-                                respondingNoticeIds = state.respondingNoticeIds,
-                                responseErrors = noticeResponseErrors,
-                                canRespond = canRespondToNotice,
-                                onRespond = ::respondNotice,
-                            )
-                            if (commandMode) {
-                                RuntimeCommandSuggestions(
-                                    commands = state.commands.commands,
-                                    query = commandQuery,
-                                    loading = state.commands.isLoading,
-                                    errorMessage = state.commands.errorMessage
-                                        ?: commandCapability?.takeUnless { it.usable }?.unavailableReason,
-                                    onRetry = { loadCommands(force = true) },
-                                    onSelect = { command ->
-                                        if (command.enabled) {
-                                            setComposerDraft("/${command.id}${if (command.acceptsArgs) " " else ""}")
-                                        } else {
-                                            showError(
-                                                command.disabledReason
-                                                    ?: context.getString(R.string.session_command_failed),
-                                            )
-                                        }
+                            Column(
+                                modifier = Modifier.onSizeChanged { composerHeightPx = it.height },
+                            ) {
+                                BlockingRuntimeNoticeStack(
+                                    notices = blockingNotices,
+                                    respondingNoticeIds = state.respondingNoticeIds,
+                                    responseErrors = noticeResponseErrors,
+                                    canRespond = canRespondToNotice,
+                                    onRespond = ::respondNotice,
+                                )
+                                if (commandMode) {
+                                    RuntimeCommandSuggestions(
+                                        commands = state.commands.commands,
+                                        query = commandQuery,
+                                        loading = state.commands.isLoading,
+                                        errorMessage = state.commands.errorMessage
+                                            ?: commandCapability?.takeUnless { it.usable }?.unavailableReason,
+                                        onRetry = { loadCommands(force = true) },
+                                        onSelect = { command ->
+                                            if (command.enabled) {
+                                                setComposerDraft("/${command.id}${if (command.acceptsArgs) " " else ""}")
+                                            } else {
+                                                showError(
+                                                    command.disabledReason
+                                                        ?: context.getString(R.string.session_command_failed),
+                                                )
+                                            }
+                                        },
+                                    )
+                                }
+                                MessageComposer(
+                                    darkMode = darkMode,
+                                    draft = if (takeoverEnabled) draft else "",
+                                    onDraftChange = ::setComposerDraft,
+                                    takeoverEnabled = takeoverEnabled,
+                                    takeoverBusy = isPreparedSession || state.takeoverInFlight || !connectorOnline,
+                                    inputEnabled = inputEnabled,
+                                    attachmentsEnabled = !isPreparedSession && inputEnabled && canUseAttachments && !commandMode,
+                                    canSend = canSend,
+                                    sending = state.sending,
+                                    showInterrupt = showInterrupt,
+                                    interrupting = state.interrupting,
+                                    placeholder = placeholder,
+                                    attachments = if (takeoverEnabled) attachments else emptyList(),
+                                    onToggleTakeover = {
+                                        if (!isPreparedSession) takeoverConfirm = !takeoverEnabled
                                     },
+                                    onPickPhoto = ::openPhotoPicker,
+                                    onPickFile = ::openFilePicker,
+                                    onOpenCamera = ::openCamera,
+                                    onRemoveAttachment = { remove ->
+                                        setComposerAttachments(attachments.filterNot { it.id == remove.id })
+                                    },
+                                    onRetryAttachment = ::retryPendingAttachment,
+                                    onPreviewAttachment = { previewImage = AttachmentPreview.Local(it) },
+                                    onReadOnlyClick = ::handleReadOnlyComposerClick,
+                                    onSend = ::sendDraft,
+                                    onInterrupt = ::interrupt,
                                 )
                             }
-                            MessageComposer(
-                                darkMode = darkMode,
-                                draft = if (takeoverEnabled) draft else "",
-                                onDraftChange = ::setComposerDraft,
-                                takeoverEnabled = takeoverEnabled,
-                                takeoverBusy = isPreparedSession || state.takeoverInFlight || !connectorOnline,
-                                inputEnabled = inputEnabled,
-                                attachmentsEnabled = !isPreparedSession && inputEnabled && canUseAttachments && !commandMode,
-                                canSend = canSend,
-                                sending = state.sending,
-                                showInterrupt = showInterrupt,
-                                interrupting = state.interrupting,
-                                placeholder = placeholder,
-                                attachments = if (takeoverEnabled) attachments else emptyList(),
-                                onToggleTakeover = {
-                                    if (!isPreparedSession) takeoverConfirm = !takeoverEnabled
-                                },
-                                onPickPhoto = ::openPhotoPicker,
-                                onPickFile = ::openFilePicker,
-                                onOpenCamera = ::openCamera,
-                                onRemoveAttachment = { remove ->
-                                    setComposerAttachments(attachments.filterNot { it.id == remove.id })
-                                },
-                                onRetryAttachment = ::retryPendingAttachment,
-                                onPreviewAttachment = { previewImage = AttachmentPreview.Local(it) },
-                                onReadOnlyClick = ::handleReadOnlyComposerClick,
-                                onSend = ::sendDraft,
-                                onInterrupt = ::interrupt,
-                            )
                         }
                         HeaderVeil(
                             darkMode = darkMode,
