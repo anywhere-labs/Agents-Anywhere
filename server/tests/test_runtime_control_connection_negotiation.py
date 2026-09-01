@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 import time
 from typing import Any
 
@@ -27,6 +28,24 @@ class FakeWebSocket:
         self.messages.append(message)
 
 
+class WebSocketCompletionProbe:
+    def __init__(self, app: Any, completed: threading.Event) -> None:
+        self._app = app
+        self._completed = completed
+        self.state = app.state
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        await self._app(scope, receive, send)
+        if (
+            scope.get("type") == "websocket"
+            and scope.get("path") == "/api/v2/connector/ws"
+        ):
+            # WebSocketTestSession cancels its ASGI task immediately on context
+            # exit. Signal on the next loop turn, after its whole app call has
+            # returned and the session runner has reached its idle wait.
+            asyncio.get_running_loop().call_soon(self._completed.set)
+
+
 async def _wait_for_request(websocket: FakeWebSocket) -> dict[str, Any]:
     for _ in range(1000):
         if websocket.messages:
@@ -35,8 +54,15 @@ async def _wait_for_request(websocket: FakeWebSocket) -> dict[str, Any]:
     raise AssertionError("runtime discovery request was not sent")
 
 
-def _make_connector(tmp_path: Any) -> tuple[TestClient, str, str]:
-    client = TestClient(create_app(tmp_path / "runtime-control-connection.sqlite3"))
+def _make_connector(
+    tmp_path: Any,
+    *,
+    websocket_completed: threading.Event | None = None,
+) -> tuple[TestClient, str, str]:
+    app: Any = create_app(tmp_path / "runtime-control-connection.sqlite3")
+    if websocket_completed is not None:
+        app = WebSocketCompletionProbe(app, websocket_completed)
+    client = TestClient(app)
     config = client.get("/auth/config").json()
     registration: dict[str, Any] = {
         "userId": ADMIN_USER,
@@ -187,8 +213,14 @@ def _receive_and_resolve_runtime_start(ws: Any) -> dict[str, Any]:
     return request
 
 
-def test_first_connector_connection_configures_default_codex(tmp_path: Any) -> None:
-    client, connector_id, access_token = _make_connector(tmp_path)
+def test_first_connector_connection_configures_default_codex(
+    tmp_path: Any,
+) -> None:
+    websocket_completed = threading.Event()
+    client, connector_id, access_token = _make_connector(
+        tmp_path,
+        websocket_completed=websocket_completed,
+    )
 
     with client.websocket_connect(
         "/connector/ws",
@@ -216,6 +248,11 @@ def test_first_connector_connection_configures_default_codex(tmp_path: Any) -> N
         assert runtimes[0]["configured"] is True
         assert runtimes[0]["active"] is True
         assert runtimes[0]["status"] == "running"
+        ws.close()
+        assert websocket_completed.wait(timeout=5), (
+            "connector websocket did not complete"
+        )
+        assert not asyncio.run(client.app.state.rpc.is_online(connector_id))
 
 
 def test_new_connector_reconnect_negotiates_v2_without_manual_discovery(
