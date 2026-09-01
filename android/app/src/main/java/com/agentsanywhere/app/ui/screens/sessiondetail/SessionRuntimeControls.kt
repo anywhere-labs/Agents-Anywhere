@@ -166,6 +166,19 @@ internal fun RuntimeNoticeCard(
         ?.inputFields()
         .orEmpty()
     val disabled = actionsDisabled || busy || notice.status in setOf("response_accepted", "resolving")
+    val orderedActions = notice.actions.sortedBy { action ->
+        when (action.actionId) {
+            "reject", "cancel", "dismiss" -> 0
+            "approve_for_session" -> 1
+            "approve" -> 2
+            else -> if (action.style == "primary") 2 else 1
+        }
+    }
+    val useHeaderIconActions = composerAdjacent &&
+        inputRequestForm == null &&
+        orderedActions.isNotEmpty() &&
+        orderedActions.size <= 3 &&
+        orderedActions.all { it.inputFields().isEmpty() }
 
     fun submit(action: RuntimeNoticeAction) {
         action.coerceInput(rawValues)
@@ -259,6 +272,21 @@ internal fun RuntimeNoticeCard(
                         Text(text = message, color = colors.muted, fontSize = 13.sp, lineHeight = 18.sp)
                     }
                 }
+                if (useHeaderIconActions) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        orderedActions.forEach { action ->
+                            RuntimeNoticeIconActionButton(
+                                action = action,
+                                busy = busy && selectedActionId == action.actionId,
+                                enabled = !disabled,
+                                onClick = { triggerAction(action) },
+                            )
+                        }
+                    }
+                }
             }
         } else {
             RuntimeInputRequestFields(
@@ -274,15 +302,7 @@ internal fun RuntimeNoticeCard(
             )
         }
 
-        if (!notificationOnly && notice.actions.isNotEmpty()) {
-            val orderedActions = notice.actions.sortedBy { action ->
-                when (action.actionId) {
-                    "reject", "cancel", "dismiss" -> 0
-                    "approve_for_session" -> 1
-                    "approve" -> 2
-                    else -> if (action.style == "primary") 2 else 1
-                }
-            }
+        if (!notificationOnly && notice.actions.isNotEmpty() && !useHeaderIconActions) {
             FlowRow(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(
@@ -323,6 +343,42 @@ internal fun RuntimeNoticeCard(
         }
 
         errorMessage?.let { Text(it, color = colors.errorIcon, fontSize = 12.sp) }
+    }
+}
+
+@Composable
+private fun RuntimeNoticeIconActionButton(
+    action: RuntimeNoticeAction,
+    busy: Boolean,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    val colors = LocalAAColors.current
+    val primary = action.style == "primary"
+    val contentColor = if (primary) colors.onPrimaryAction else colors.ink
+    Box(
+        modifier = Modifier
+            .size(32.dp)
+            .clip(CircleShape)
+            .background(if (primary) colors.primaryAction else colors.secondaryActionSurface)
+            .graphicsLayer { alpha = if (enabled) 1f else 0.42f }
+            .then(if (enabled) Modifier.noRippleClickable(onClick = onClick) else Modifier),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (busy) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(13.dp),
+                strokeWidth = 2.dp,
+                color = contentColor,
+            )
+        } else {
+            Icon(
+                imageVector = noticeActionIcon(action.actionId),
+                contentDescription = localizedNoticeActionLabel(action),
+                tint = contentColor,
+                modifier = Modifier.size(15.dp),
+            )
+        }
     }
 }
 
