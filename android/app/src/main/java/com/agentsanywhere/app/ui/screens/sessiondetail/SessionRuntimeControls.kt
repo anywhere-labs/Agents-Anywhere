@@ -1,5 +1,7 @@
 package com.agentsanywhere.app.ui.screens.sessiondetail
 
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.rememberScrollState
@@ -356,28 +358,39 @@ private fun RuntimeNoticeIconActionButton(
     val colors = LocalAAColors.current
     val primary = action.style == "primary"
     val contentColor = if (primary) colors.onPrimaryAction else colors.ink
+    val buttonAlpha = when {
+        busy -> 1f
+        enabled -> 1f
+        else -> 0.28f
+    }
     Box(
         modifier = Modifier
             .size(32.dp)
             .clip(CircleShape)
             .background(if (primary) colors.primaryAction else colors.secondaryActionSurface)
-            .graphicsLayer { alpha = if (enabled) 1f else 0.42f }
+            .graphicsLayer { alpha = buttonAlpha }
             .then(if (enabled) Modifier.noRippleClickable(onClick = onClick) else Modifier),
         contentAlignment = Alignment.Center,
     ) {
-        if (busy) {
-            CircularProgressIndicator(
-                modifier = Modifier.size(13.dp),
-                strokeWidth = 2.dp,
-                color = contentColor,
-            )
-        } else {
-            Icon(
-                imageVector = noticeActionIcon(action.actionId),
-                contentDescription = localizedNoticeActionLabel(action),
-                tint = contentColor,
-                modifier = Modifier.size(15.dp),
-            )
+        Crossfade(
+            targetState = busy,
+            animationSpec = tween(durationMillis = 140),
+            label = "approval icon loading",
+        ) { loading ->
+            if (loading) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(16.dp),
+                    strokeWidth = 1.8.dp,
+                    color = contentColor,
+                )
+            } else {
+                Icon(
+                    imageVector = noticeActionIcon(action.actionId),
+                    contentDescription = localizedNoticeActionLabel(action),
+                    tint = contentColor,
+                    modifier = Modifier.size(15.dp),
+                )
+            }
         }
     }
 }
@@ -405,6 +418,11 @@ private fun RuntimeNoticeActionButton(
         danger -> colors.errorText
         else -> colors.ink
     }
+    val buttonAlpha = when {
+        busy -> 1f
+        enabled -> 1f
+        else -> 0.28f
+    }
 
     if (composerAdjacent) {
         Box(
@@ -413,30 +431,32 @@ private fun RuntimeNoticeActionButton(
                 .height(32.dp)
                 .clip(shape)
                 .background(background)
-                .graphicsLayer { alpha = if (enabled) 1f else 0.42f }
+                .graphicsLayer { alpha = buttonAlpha }
                 .then(if (enabled) Modifier.noRippleClickable(onClick = onClick) else Modifier)
                 .padding(horizontal = 14.dp),
             contentAlignment = Alignment.Center,
         ) {
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalAlignment = Alignment.CenterVertically,
+            Crossfade(
+                targetState = busy,
+                animationSpec = tween(durationMillis = 140),
+                label = "approval action loading",
             ) {
-                if (busy) {
+                if (it) {
                     CircularProgressIndicator(
-                        modifier = Modifier.size(13.dp),
-                        strokeWidth = 2.dp,
+                        modifier = Modifier.size(15.dp),
+                        strokeWidth = 1.8.dp,
                         color = contentColor,
                     )
+                } else {
+                    Text(
+                        text = localizedNoticeActionLabel(action),
+                        color = contentColor,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
                 }
-                Text(
-                    text = localizedNoticeActionLabel(action),
-                    color = contentColor,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
             }
         }
         return
