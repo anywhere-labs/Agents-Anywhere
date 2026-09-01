@@ -966,7 +966,7 @@ private fun SessionBulkBar(
             .fillMaxWidth()
             .height(44.dp)
             .clip(RoundedCornerShape(8.dp))
-            .background(if (darkMode) Color(0xFF18181B) else Color(0xFFF6F6F4))
+            .background(if (darkMode) colors.subtle else Color(0xFFF6F6F4))
             .border(1.dp, colors.border, RoundedCornerShape(8.dp))
             .padding(horizontal = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -1193,7 +1193,7 @@ private fun MiniTextAction(
     val surface = when {
         primary && darkMode -> Color(0xFFE4E4E7)
         primary -> Color(0xFF181816)
-        darkMode -> Color(0xFF18181B)
+        darkMode -> colors.subtle
         else -> Color(0xFFECECE9)
     }
     val content = when {
@@ -1275,7 +1275,7 @@ private fun SmallActionButton(
     val surface = when {
         danger && darkMode -> Color(0xFF2A1418)
         danger -> Color(0xFFFFF3F3)
-        darkMode -> Color(0xFF18181B)
+        darkMode -> colors.subtle
         else -> Color(0xFFF4F4F2)
     }
     val tint = when {

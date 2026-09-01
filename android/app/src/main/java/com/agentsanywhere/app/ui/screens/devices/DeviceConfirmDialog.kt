@@ -51,8 +51,8 @@ internal fun DeviceConfirmDialog(
     val colors = LocalAAColors.current
     val darkMode = colors.canvas == Color(0xFF09090B)
     val shape = RoundedCornerShape(26.dp)
-    val surface = if (darkMode) Color(0xFF242424) else Color.White
-    val secondaryButton = if (darkMode) Color(0xFF424242) else Color(0xFFF3F3F3)
+    val surface = colors.dialogSurface
+    val secondaryButton = colors.secondaryActionSurface
     val titleColor = if (darkMode) Color(0xFFF5F5F5) else colors.ink
     val bodyColor = if (darkMode) Color(0xFF858585) else colors.muted
     val dangerButton = Color(0xFFEF4444)

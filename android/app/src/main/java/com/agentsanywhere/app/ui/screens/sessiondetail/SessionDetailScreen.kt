@@ -1633,7 +1633,7 @@ private fun DeviceOfflineDialog(
                 .widthIn(max = 380.dp)
                 .shadow(34.dp, shape, ambientColor = colors.appShadow, spotColor = colors.appShadow)
                 .clip(shape)
-                .background(colors.raisedSurface)
+                .background(colors.dialogSurface)
                 .border(1.dp, colors.border, shape)
                 .padding(22.dp),
             verticalArrangement = Arrangement.spacedBy(18.dp),
@@ -1693,7 +1693,7 @@ private fun TakeoverConfirmDialog(
                 .widthIn(max = 380.dp)
                 .shadow(34.dp, shape, ambientColor = colors.appShadow, spotColor = colors.appShadow)
                 .clip(shape)
-                .background(colors.raisedSurface)
+                .background(colors.dialogSurface)
                 .border(1.dp, colors.border, shape)
                 .padding(22.dp),
             verticalArrangement = Arrangement.spacedBy(18.dp),

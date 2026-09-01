@@ -312,7 +312,7 @@ private fun PendingImageAttachmentCard(
             .width(116.dp)
             .height(92.dp)
             .clip(RoundedCornerShape(20.dp))
-            .background(Color(0xFF18181B))
+            .background(LocalAAColors.current.raisedSurface)
             .noRippleClickable(onClick = onPreview),
     ) {
         PendingAttachmentImage(
@@ -358,7 +358,7 @@ private fun PendingFileAttachmentCard(
                 modifier = Modifier
                     .size(44.dp)
                     .clip(RoundedCornerShape(14.dp))
-                .background(if (darkMode) Color(0xFF18181B) else Color.White.copy(alpha = 0.86f)),
+                .background(if (darkMode) LocalAAColors.current.subtle else Color.White.copy(alpha = 0.86f)),
                 contentAlignment = Alignment.Center,
             ) {
                 Image(
@@ -473,7 +473,7 @@ private fun ComposerActions(
     onSend: () -> Unit,
     onInterrupt: () -> Unit,
 ) {
-    val surface = if (darkMode) Color(0xFF18181B) else Color.White
+    val surface = if (darkMode) LocalAAColors.current.raisedSurface else Color.White
     val border = if (darkMode) Color(0xFF27272A) else Color.Transparent
     val icon = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF2D2E2B)
     val label = when {

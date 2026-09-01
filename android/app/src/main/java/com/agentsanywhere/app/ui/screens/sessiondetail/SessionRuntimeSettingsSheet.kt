@@ -81,7 +81,7 @@ internal fun SessionRuntimeSettingsSheet(
     ModalBottomSheet(
         onDismissRequest = { if (!busy) onDismiss() },
         sheetState = sheetState,
-        containerColor = if (darkMode) Color(0xFF18181B) else Color(0xFFFFFEFC),
+        containerColor = if (darkMode) colors.raisedSurface else Color(0xFFFFFEFC),
         contentColor = colors.ink,
         scrimColor = if (darkMode) Color(0x99000000) else Color(0x1F000000),
         shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),

@@ -628,7 +628,7 @@ private fun HeaderCircleButton(
         modifier = Modifier
             .size(40.dp)
             .clip(CircleShape)
-            .background(if (darkMode) Color(0xFF18181B) else Color.White)
+            .background(if (darkMode) LocalAAColors.current.subtle else Color.White)
             .border(1.dp, if (darkMode) Color(0xFF27272A) else Color(0xFFE8E8E8), CircleShape)
             .noRippleClickable(onClick = onClick),
         contentAlignment = Alignment.Center,
@@ -648,7 +648,7 @@ private fun RuntimeSelectPill(
     onClick: () -> Unit,
 ) {
     val border = if (darkMode) Color(0xFF27272A) else Color(0xFFECECEC)
-    val surface = if (darkMode) Color(0xFF18181B) else Color(0xFFFBFBFB)
+    val surface = if (darkMode) LocalAAColors.current.raisedSurface else Color(0xFFFBFBFB)
     val titleColor = if (darkMode) Color(0xFFFAFAFA) else Color(0xFF2B2B2B)
     val labelColor = if (darkMode) Color(0xFF71717A) else Color(0xFFAAAAAA)
     val iconColor = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF777777)
@@ -782,7 +782,7 @@ private fun WorkspaceTrigger(
             .fillMaxWidth()
             .height(56.dp)
             .clip(RoundedCornerShape(18.dp))
-            .background(if (darkMode) Color(0xFF18181B) else Color(0xFFF7F7F7))
+            .background(if (darkMode) LocalAAColors.current.raisedSurface else Color(0xFFF7F7F7))
             .border(1.dp, if (darkMode) Color(0xFF27272A) else Color(0xFFE8E8E8), RoundedCornerShape(18.dp))
             .padding(horizontal = 13.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -852,7 +852,7 @@ private fun WorkspaceRow(
     var flash by remember { mutableStateOf(false) }
     val active = pressed || flash
     val rowShape = RoundedCornerShape(16.dp)
-    val pressedSurface = if (darkMode) Color(0xFF18181B) else Color(0xFFEDEBE6)
+    val pressedSurface = if (darkMode) LocalAAColors.current.subtle else Color(0xFFEDEBE6)
     val shadowColor = if (darkMode) Color(0x77000000) else Color(0x30000000)
     val elevation by animateDpAsState(
         targetValue = if (active) 14.dp else 0.dp,
@@ -1026,7 +1026,7 @@ private fun CurrentDirectoryBar(
             .fillMaxWidth()
             .height(56.dp)
             .clip(RoundedCornerShape(18.dp))
-            .background(if (darkMode) Color(0xFF18181B) else Color(0xFFF7F7F7))
+            .background(if (darkMode) LocalAAColors.current.raisedSurface else Color(0xFFF7F7F7))
             .border(1.dp, if (darkMode) Color(0xFF27272A) else Color(0xFFE8E8E8), RoundedCornerShape(18.dp))
             .padding(start = 13.dp, end = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -1133,7 +1133,7 @@ private fun SmallPill(
         modifier = Modifier
             .height(30.dp)
             .clip(CircleShape)
-            .background(if (darkMode) Color(0xFF18181B) else Color(0xFFFBFBFB))
+            .background(if (darkMode) LocalAAColors.current.subtle else Color(0xFFFBFBFB))
             .border(1.dp, if (darkMode) Color(0xFF27272A) else Color(0xFFECECEC), CircleShape)
             .noRippleClickable(onClick = onClick)
             .padding(horizontal = 10.dp),
@@ -1153,7 +1153,7 @@ private fun CircleMiniButton(
 ) {
     val background = when {
         selected -> Color(0xFFEFFBF4)
-        darkMode -> Color(0xFF18181B)
+        darkMode -> LocalAAColors.current.subtle
         else -> Color.White
     }
     val border = when {
@@ -1298,7 +1298,7 @@ private fun PickerSheet(
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
-        containerColor = if (darkMode) Color(0xFF18181B) else Color.White,
+        containerColor = if (darkMode) LocalAAColors.current.raisedSurface else Color.White,
         contentColor = LocalAAColors.current.ink,
         scrimColor = if (darkMode) Color(0x66000000) else Color(0x30000000),
         dragHandle = {

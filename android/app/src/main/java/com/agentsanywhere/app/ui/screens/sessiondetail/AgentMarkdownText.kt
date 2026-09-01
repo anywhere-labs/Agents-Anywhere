@@ -67,6 +67,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import com.agentsanywhere.app.R
+import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 import com.agentsanywhere.app.ui.designsystem.noRippleClickable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -603,7 +604,7 @@ private fun MarkdownCodePanelContent(label: String, code: String, darkMode: Bool
     val scope = rememberCoroutineScope()
     var copied by remember(code) { mutableStateOf(false) }
     val panelShape = RoundedCornerShape(20.dp)
-    val panelBackground = if (darkMode) Color(0xFF18181B) else Color(0xFFECECEA)
+    val panelBackground = if (darkMode) LocalAAColors.current.raisedSurface else Color(0xFFECECEA)
     val labelColor = if (darkMode) Color(0xFFFAFAFA) else Color(0xFF191A18)
     val copyIcon = if (darkMode) R.drawable.ic_copy_bash_command_light else R.drawable.ic_copy_bash_command_dark
     val shadow = if (darkMode) Color(0x66000000) else Color(0x0A000000)
@@ -673,7 +674,7 @@ private fun BashCommandCard(label: String, code: String, darkMode: Boolean, styl
     val scope = rememberCoroutineScope()
     var copied by remember(code) { mutableStateOf(false) }
     val shape = RoundedCornerShape(20.dp)
-    val cardBackground = if (darkMode) Color(0xFF18181B) else Color(0xFFECECEA)
+    val cardBackground = if (darkMode) LocalAAColors.current.raisedSurface else Color(0xFFECECEA)
     val labelColor = if (darkMode) Color(0xFFFAFAFA) else Color(0xFF191A18)
     val copyIcon = if (darkMode) R.drawable.ic_copy_bash_command_light else R.drawable.ic_copy_bash_command_dark
     val shadow = if (darkMode) Color(0x66000000) else Color(0x0A000000)
@@ -809,7 +810,7 @@ private fun markdownStyles(darkMode: Boolean): MarkdownStyles {
         bodyColor = body,
         muted = muted,
         border = border,
-        codeBackground = if (darkMode) Color(0xFF18181B) else Color(0xFFF1F0ED),
+        codeBackground = if (darkMode) LocalAAColors.current.subtle else Color(0xFFF1F0ED),
         codeBorder = if (darkMode) Color(0xFF27272A) else Color(0xFFE4E1DB),
         linkColor = Color(0xFFEBB353),
         body = TextStyle(

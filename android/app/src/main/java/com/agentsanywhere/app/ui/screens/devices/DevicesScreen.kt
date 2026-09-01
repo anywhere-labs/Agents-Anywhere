@@ -230,7 +230,7 @@ private fun DevicesHeader(
 ) {
     val colors = LocalAAColors.current
     val iconColor = if (darkMode) Color(0xFFE4E4E7) else Color(0xFF1C1C1E)
-    val iconSurface = if (darkMode) Color(0xFF18181B) else Color.White
+    val iconSurface = colors.raisedSurface
     val iconBorder = if (darkMode) Color(0xFF27272A) else Color(0xFFE7E6E2)
 
     Row(
@@ -476,7 +476,7 @@ private fun DevicesLoadingList(darkMode: Boolean) {
 
 @Composable
 private fun LoadingRow(darkMode: Boolean) {
-    val surface = if (darkMode) Color(0xFF18181B) else Color.White
+    val surface = LocalAAColors.current.raisedSurface
     val border = if (darkMode) Color(0xFF27272A) else Color(0xFFECECEC)
     val line = if (darkMode) Color(0xFF27272A) else Color(0xFFF0F0F0)
     val shape = RoundedCornerShape(15.dp)

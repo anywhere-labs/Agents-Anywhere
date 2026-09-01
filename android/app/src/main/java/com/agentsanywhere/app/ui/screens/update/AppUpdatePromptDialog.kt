@@ -48,7 +48,7 @@ fun AppUpdatePromptDialog(
                 .padding(horizontal = 22.dp)
                 .fillMaxWidth()
                 .clip(shape)
-                .background(colors.raisedSurface)
+                .background(colors.dialogSurface)
                 .border(1.dp, colors.border, shape)
                 .padding(20.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),

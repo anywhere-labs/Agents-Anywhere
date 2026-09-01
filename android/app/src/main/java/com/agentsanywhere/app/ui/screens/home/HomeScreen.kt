@@ -520,9 +520,9 @@ private fun HomeRenameSessionDialog(
     val colors = LocalAAColors.current
     val darkMode = colors.canvas == Color(0xFF09090B)
     val shape = RoundedCornerShape(26.dp)
-    val surface = if (darkMode) Color(0xFF18181B) else Color.White
+    val surface = colors.dialogSurface
     val fieldColor = if (darkMode) Color(0xFF09090B) else Color(0xFFF7F7F7)
-    val secondaryButton = if (darkMode) Color(0xFF27272A) else Color(0xFFF3F3F3)
+    val secondaryButton = colors.secondaryActionSurface
     var name by remember(session.id) { mutableStateOf(session.title) }
     var fieldError by remember(session.id, errorMessage) { mutableStateOf(errorMessage) }
     val titleRequired = stringResource(R.string.home_title_required)
@@ -813,7 +813,7 @@ private fun HomeHeader(onProfile: () -> Unit, onSearch: () -> Unit) {
         RoundLucideButton(
             icon = Lucide.UserRound,
             iconColor = icon,
-            surface = if (darkMode) Color(0xFF18181B) else Color.White,
+            surface = colors.raisedSurface,
             border = if (darkMode) Color(0xFF27272A) else Color(0xFFE7E6E2),
             onClick = onProfile,
         )
@@ -886,8 +886,8 @@ private fun QuickEntryCard(
     val pressed by interactionSource.collectIsPressedAsState()
     val scale by animateFloatAsState(if (pressed) 0.975f else 1f, label = "quick-entry-scale")
     val shape = RoundedCornerShape(18.dp)
-    val surface = if (darkMode) Color(0xFF18181B) else Color.White
-    val border = if (darkMode) Color.White.copy(alpha = 0.12f) else Color(0xFFE7E6E2)
+    val surface = colors.raisedSurface
+    val border = if (darkMode) Color.Transparent else Color(0xFFE7E6E2)
 
     Column(
         modifier = modifier

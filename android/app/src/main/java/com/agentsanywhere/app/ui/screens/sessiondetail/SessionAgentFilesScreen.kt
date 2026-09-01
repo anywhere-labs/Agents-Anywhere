@@ -1037,7 +1037,7 @@ private fun PreviewBreadcrumb(
     darkMode: Boolean,
     onBackToFiles: () -> Unit,
 ) {
-    val chipBackground = if (darkMode) Color(0xFF18181B) else Color(0xFFF1F0ED)
+    val chipBackground = if (darkMode) LocalAAColors.current.subtle else Color(0xFFF1F0ED)
     val chipText = if (darkMode) Color(0xFFE4E4E7) else Color(0xFF444540)
     val pathText = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF686862)
     Row(
@@ -1166,7 +1166,7 @@ private fun PreviewCardHeader(
     onToggleSearch: () -> Unit,
     onCopy: () -> Unit,
 ) {
-    val background = if (darkMode) Color(0xFF18181B) else Color.White
+    val background = if (darkMode) LocalAAColors.current.raisedSurface else Color.White
     val text = if (darkMode) Color(0xFFFAFAFA) else Color(0xFF111111)
     val buttonBackground = if (darkMode) Color(0xFF27272A) else Color(0xFFF5F4F0)
     val buttonBorder = if (darkMode) Color(0xFF3F3F46) else Color(0xFFE5E2DC)
@@ -1225,7 +1225,7 @@ private fun InlineFileSearchControls(
     val focusRequester = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
     val background = if (darkMode) Color(0xFF111113) else Color(0xFFF8F7F4)
-    val inputBackground = if (darkMode) Color(0xFF18181B) else Color.White
+    val inputBackground = if (darkMode) LocalAAColors.current.subtle else Color.White
     val border = if (darkMode) Color(0xFF27272A) else Color(0xFFE1DED7)
     val text = if (darkMode) Color(0xFFFAFAFA) else Color(0xFF111111)
     val muted = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF686862)
@@ -1303,7 +1303,7 @@ private fun SearchStepButton(
     darkMode: Boolean,
     onClick: () -> Unit,
 ) {
-    val background = if (darkMode) Color(0xFF18181B) else Color.White
+    val background = if (darkMode) LocalAAColors.current.subtle else Color.White
     val border = if (darkMode) Color(0xFF27272A) else Color(0xFFE1DED7)
     val content = if (darkMode) Color(0xFFE4E4E7) else Color(0xFF444540)
     Box(
@@ -1388,7 +1388,7 @@ private fun BackChip(
     darkMode: Boolean,
     onClick: () -> Unit,
 ) {
-    val background = if (darkMode) Color(0xFF18181B) else Color.White
+    val background = if (darkMode) LocalAAColors.current.subtle else Color.White
     val border = if (darkMode) Color(0xFF27272A) else Color(0xFFE7E5E0)
     val content = if (darkMode) Color(0xFFFAFAFA) else Color(0xFF111111)
     Row(
@@ -1413,7 +1413,7 @@ private fun PushSwitcher(
     view: PushView,
     onSelectView: (PushView) -> Unit,
 ) {
-    val background = if (darkMode) Color(0xFF18181B) else Color(0xFFF1F0ED)
+    val background = if (darkMode) LocalAAColors.current.raisedSurface else Color(0xFFF1F0ED)
     val selected = if (darkMode) Color(0xFF27272A) else Color.White
     val selectedText = if (darkMode) Color(0xFFFAFAFA) else Color(0xFF242521)
     val muted = if (darkMode) Color(0xFF71717A) else Color(0xFF8B8983)
@@ -1510,10 +1510,10 @@ private fun PathBar(
     val scope = rememberCoroutineScope()
     var copied by remember { mutableStateOf(false) }
     val shape = RoundedCornerShape(13.dp)
-    val background = if (darkMode) Color(0xFF18181B) else Color(0xFFF1F0ED)
+    val background = if (darkMode) LocalAAColors.current.raisedSurface else Color(0xFFF1F0ED)
     val border = if (darkMode) Color(0xFF27272A) else Color(0xFFE0DED8)
     val textColor = if (darkMode) Color(0xFFFAFAFA) else Color(0xFF242521)
-    val iconBackground = if (darkMode) Color(0xFF18181B) else Color(0xFFF1F0ED)
+    val iconBackground = if (darkMode) LocalAAColors.current.subtle else Color(0xFFF1F0ED)
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1657,7 +1657,7 @@ private fun FileListRow(
         targetValue = if (active) 1f else 0f,
         label = "session-files-row-surface-alpha",
     )
-    val pressedSurface = if (darkMode) Color(0xFF18181B) else Color(0xFFEDEBE6)
+    val pressedSurface = if (darkMode) LocalAAColors.current.subtle else Color(0xFFEDEBE6)
     val iconColor = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF2F302D)
     val textColor = if (darkMode) Color(0xFFFAFAFA) else Color(0xFF242521)
     val shadowColor = if (darkMode) Color(0x77000000) else Color(0x30000000)
