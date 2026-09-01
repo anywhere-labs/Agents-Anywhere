@@ -7,6 +7,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import pytest
+
 from connector.runtime_protocol import (
     RuntimeAttachment,
     RuntimeAttachmentContent,
@@ -15,12 +17,66 @@ from connector.runtime_protocol import (
     RuntimeStatus,
     RuntimeTimelineItem,
 )
+from connector.runtimes.claude.domain.input_requests import claude_input_request
 from connector.runtimes.claude.domain.pending_messages import (
     ClaudeHistoryUserMessage,
     ClaudePendingClientMessageRegistry,
 )
 from connector.runtimes.claude.domain.session import ClaudeExecution, stable_session_id
 from connector.runtimes.claude.runtime import ClaudeRuntime
+
+
+@pytest.mark.parametrize(
+    ("tool_input", "message"),
+    (
+        (
+            {"questions": ["not an object"]},
+            "AskUserQuestion question must be an object",
+        ),
+        (
+            {
+                "questions": [
+                    {
+                        "question": "Choose a format",
+                        "multiSelect": "no",
+                        "options": [],
+                    }
+                ]
+            },
+            "AskUserQuestion multiSelect must be a boolean",
+        ),
+        (
+            {
+                "questions": [
+                    {
+                        "question": "Choose a format",
+                        "options": "not an array",
+                    }
+                ]
+            },
+            "AskUserQuestion options must be an array",
+        ),
+        (
+            {
+                "questions": [
+                    {
+                        "question": "Choose a format",
+                        "options": ["not an object"],
+                    }
+                ]
+            },
+            "AskUserQuestion option must be an object",
+        ),
+    ),
+)
+def test_claude_input_request_rejects_invalid_types(
+    tool_input: dict[str, Any],
+    message: str,
+) -> None:
+    with pytest.raises(TypeError) as exc_info:
+        claude_input_request(tool_input)
+
+    assert str(exc_info.value) == message
 
 
 def test_claude_runtime_lifecycle_and_config() -> None:

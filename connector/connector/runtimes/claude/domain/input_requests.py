@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass
-from collections.abc import Mapping
 from typing import Any
 
 from connector.runtime_protocol import (
@@ -49,7 +49,7 @@ def claude_input_request(tool_input: Mapping[str, Any]) -> ClaudeInputRequest:
     seen_question_texts: set[str] = set()
     for question_index, raw_question in enumerate(raw_questions):
         if not isinstance(raw_question, Mapping):
-            raise ValueError("AskUserQuestion question must be an object")
+            raise TypeError("AskUserQuestion question must be an object")
         question_text = _required_text(raw_question.get("question"), "question")
         if question_text in seen_question_texts:
             raise ValueError("AskUserQuestion question text must be unique")
@@ -57,17 +57,17 @@ def claude_input_request(tool_input: Mapping[str, Any]) -> ClaudeInputRequest:
         header = _optional_text(raw_question.get("header"))
         multi_select = raw_question.get("multiSelect", False)
         if not isinstance(multi_select, bool):
-            raise ValueError("AskUserQuestion multiSelect must be a boolean")
+            raise TypeError("AskUserQuestion multiSelect must be a boolean")
         raw_options = raw_question.get("options")
         if not isinstance(raw_options, list):
-            raise ValueError("AskUserQuestion options must be an array")
+            raise TypeError("AskUserQuestion options must be an array")
 
         question_id = f"q_{question_index}"
         options: list[InputRequestOption] = []
         option_labels: dict[str, str] = {}
         for option_index, raw_option in enumerate(raw_options):
             if not isinstance(raw_option, Mapping):
-                raise ValueError("AskUserQuestion option must be an object")
+                raise TypeError("AskUserQuestion option must be an object")
             option_id = f"o_{option_index}"
             label = _required_text(raw_option.get("label"), "option label")
             options.append(

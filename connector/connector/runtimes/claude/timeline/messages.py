@@ -34,7 +34,6 @@ from connector.runtimes.claude.timeline.agent_calls import (
     complete_claude_agent_call_content,
 )
 
-
 CLAUDE_INTERRUPTED_REQUEST_MARKERS = frozenset(
     {
         "[Request interrupted by user]",

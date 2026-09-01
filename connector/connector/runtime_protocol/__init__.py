@@ -1,12 +1,12 @@
-from connector.runtime_protocol.attachments import (
-    attachment_target,
-    attachments_root,
-    session_attachments_dir,
-)
 from connector.runtime_protocol.agent_calls import (
     AgentCallAction,
     RuntimeAgentCall,
     complete_agent_call_content,
+)
+from connector.runtime_protocol.attachments import (
+    attachment_target,
+    attachments_root,
+    session_attachments_dir,
 )
 from connector.runtime_protocol.errors import (
     RuntimeConflictError,
@@ -18,13 +18,6 @@ from connector.runtime_protocol.errors import (
     RuntimeUpstreamError,
 )
 from connector.runtime_protocol.host import RuntimeHostClient
-from connector.runtime_protocol.interactions import (
-    InputRequestAnswer,
-    InputRequestForm,
-    InputRequestOption,
-    InputRequestQuestion,
-    InputRequestValidationError,
-)
 from connector.runtime_protocol.instance_binding import (
     RuntimeInstance,
     RuntimeInstanceHost,
@@ -41,6 +34,13 @@ from connector.runtime_protocol.instance_models import (
     RuntimeSourceKey,
     RuntimeTypeDescriptor,
     legacy_runtime_scope,
+)
+from connector.runtime_protocol.interactions import (
+    InputRequestAnswer,
+    InputRequestForm,
+    InputRequestOption,
+    InputRequestQuestion,
+    InputRequestValidationError,
 )
 from connector.runtime_protocol.models import (
     CAPABILITY_CATALOG_EFFORT,
@@ -171,9 +171,9 @@ __all__ = [
     "CAPABILITY_SESSION_SEND_MESSAGE",
     "CAPABILITY_SESSION_STEER",
     "MAX_CONFIG_REVISION",
-    "AgentRuntime",
     "AgentCallAction",
     "AgentCallToolContent",
+    "AgentRuntime",
     "ArtifactContentKind",
     "ArtifactTimelineContent",
     "ArtifactTimelineItem",
@@ -210,6 +210,7 @@ __all__ = [
     "PermissionToolContent",
     "PlatformTimelineItem",
     "ReasoningSystemContent",
+    "RuntimeAgentCall",
     "RuntimeAttachment",
     "RuntimeAttachmentContent",
     "RuntimeCapability",
@@ -222,7 +223,6 @@ __all__ = [
     "RuntimeConflictError",
     "RuntimeHostClient",
     "RuntimeIdentity",
-    "RuntimeAgentCall",
     "RuntimeInstance",
     "RuntimeInstanceHost",
     "RuntimeInstanceLifecycleStatus",
@@ -244,8 +244,8 @@ __all__ = [
     "RuntimeResourceClaim",
     "RuntimeResourceMode",
     "RuntimeScope",
-    "RuntimeSessionStateCache",
     "RuntimeSessionSourceStateCache",
+    "RuntimeSessionStateCache",
     "RuntimeSourceKey",
     "RuntimeStatus",
     "RuntimeStatusSink",
@@ -290,8 +290,8 @@ __all__ = [
     "WebSearchToolContent",
     "attachment_target",
     "attachments_root",
-    "complete_tool_content",
     "complete_agent_call_content",
+    "complete_tool_content",
     "legacy_runtime_scope",
     "session_attachments_dir",
     "timeline_content_hash",

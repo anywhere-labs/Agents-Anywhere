@@ -34,11 +34,11 @@ from connector.runtimes.claude.sdk.events import (
     interrupted_terminal_event,
     terminal_event_from_message,
 )
-from connector.runtimes.claude.sdk.stderr import ClaudeStderrBuffer
 from connector.runtimes.claude.sdk.settings import (
     create_gateway_settings_file,
     remove_gateway_settings_file,
 )
+from connector.runtimes.claude.sdk.stderr import ClaudeStderrBuffer
 from connector.runtimes.claude.sessions.cache import ClaudeSessionStore
 from connector.runtimes.claude.timeline.messages import (
     ClaudeMessageProjector,

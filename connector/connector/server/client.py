@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Callable, Mapping
+from contextlib import suppress
 from typing import Any
 
 import httpx
@@ -189,10 +190,8 @@ class BackendRpcClient:
                 await ingest_flush_task
             except (asyncio.CancelledError, Exception):
                 pass
-            try:
+            with suppress(asyncio.CancelledError):
                 await sync_state_flush_task
-            except (asyncio.CancelledError, Exception):
-                pass
             if self._runtime_sync_task is not None:
                 try:
                     await self._runtime_sync_task

@@ -11,14 +11,14 @@ from connector.runtimes.codex.domain.sessions import (
     first_string_from_mapping,
 )
 from connector.runtimes.codex.sdk.events import CodexSdkEvent
-from connector.runtimes.codex.timeline.content import (
-    codex_timeline_content_from_mapping,
-)
 from connector.runtimes.codex.timeline.agent_calls import (
     codex_agent_call_content,
     collab_agent_arguments_from_raw,
     subagent_activity_arguments_from_raw,
     subagent_activity_native_action,
+)
+from connector.runtimes.codex.timeline.content import (
+    codex_timeline_content_from_mapping,
 )
 from connector.runtimes.codex.timeline.events import raw_item_from_notification
 from connector.runtimes.codex.timeline.identity import (
