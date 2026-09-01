@@ -231,7 +231,7 @@ private fun DevicesHeader(
     val colors = LocalAAColors.current
     val iconColor = if (darkMode) Color(0xFFE4E4E7) else Color(0xFF1C1C1E)
     val iconSurface = colors.raisedSurface
-    val iconBorder = if (darkMode) Color(0xFF27272A) else Color(0xFFE7E6E2)
+    val iconBorder = if (darkMode) colors.border else Color(0xFFE7E6E2)
 
     Row(
         modifier = Modifier

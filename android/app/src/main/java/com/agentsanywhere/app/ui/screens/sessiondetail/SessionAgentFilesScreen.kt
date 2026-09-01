@@ -1505,15 +1505,16 @@ private fun PathBar(
     path: String,
     darkMode: Boolean,
 ) {
+    val colors = LocalAAColors.current
     val clipboard = LocalClipboardManager.current
     val haptic = LocalHapticFeedback.current
     val scope = rememberCoroutineScope()
     var copied by remember { mutableStateOf(false) }
     val shape = RoundedCornerShape(13.dp)
-    val background = if (darkMode) LocalAAColors.current.raisedSurface else Color(0xFFF1F0ED)
-    val border = if (darkMode) Color(0xFF27272A) else Color(0xFFE0DED8)
+    val background = if (darkMode) colors.raisedSurface else Color(0xFFF1F0ED)
+    val border = if (darkMode) colors.border else Color(0xFFE0DED8)
     val textColor = if (darkMode) Color(0xFFFAFAFA) else Color(0xFF242521)
-    val iconBackground = if (darkMode) LocalAAColors.current.subtle else Color(0xFFF1F0ED)
+    val iconBackground = if (darkMode) colors.raisedSurface else Color(0xFFF1F0ED)
     Row(
         modifier = Modifier
             .fillMaxWidth()
