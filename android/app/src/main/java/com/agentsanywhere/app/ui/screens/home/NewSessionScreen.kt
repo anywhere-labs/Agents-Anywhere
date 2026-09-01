@@ -12,7 +12,6 @@ import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
@@ -20,7 +19,6 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -33,11 +31,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -78,15 +73,12 @@ import com.agentsanywhere.app.feature.files.remoteFileRequest
 import com.agentsanywhere.app.feature.files.remoteParentPath
 import com.agentsanywhere.app.feature.devices.DeviceRuntime
 import com.agentsanywhere.app.feature.devices.DeviceRuntimeList
-import com.agentsanywhere.app.feature.devices.DeviceRuntimeStatus
 import com.agentsanywhere.app.feature.sessions.NewSessionDirectory
 import com.agentsanywhere.app.feature.sessions.NewSessionDraft
-import com.agentsanywhere.app.feature.sessions.NewSessionModel
 import com.agentsanywhere.app.feature.sessions.NewSessionModelCatalog
 import com.agentsanywhere.app.feature.sessions.NewSessionPathEntry
 import com.agentsanywhere.app.feature.sessions.NewSessionPermissionCatalog
 import com.agentsanywhere.app.feature.sessions.NewSessionPreferenceStore
-import com.agentsanywhere.app.feature.sessions.NewSessionReasoning
 import com.agentsanywhere.app.feature.sessions.NewSessionRuntimeCapabilities
 import com.agentsanywhere.app.feature.sessions.NewSessionRuntimeSelectionState
 import com.agentsanywhere.app.feature.sessions.SessionsState
@@ -102,15 +94,12 @@ import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 import com.agentsanywhere.app.ui.designsystem.ScreenScaffold
 import com.agentsanywhere.app.ui.designsystem.SearchGlyph
 import com.agentsanywhere.app.ui.designsystem.noRippleClickable
-import com.composables.icons.lucide.Bot
 import com.composables.icons.lucide.ChevronDown
 import com.composables.icons.lucide.ChevronRight
 import com.composables.icons.lucide.ChevronUp
 import com.composables.icons.lucide.Folder
 import com.composables.icons.lucide.Lucide
-import com.composables.icons.lucide.Monitor
 import com.composables.icons.lucide.Pencil
-import com.composables.icons.lucide.Sparkles
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -158,7 +147,7 @@ fun NewSessionScreen(
     var pathEntries by remember { mutableStateOf<List<NewSessionPathEntry>>(emptyList()) }
     var pathLoading by remember { mutableStateOf(false) }
     var pathError by remember { mutableStateOf<String?>(null) }
-    var sheet by remember { mutableStateOf<NewSessionSheet?>(null) }
+    var expandedConfiguration by remember { mutableStateOf<NewSessionConfigurationKey?>(null) }
     var workspaceListExpanded by rememberSaveable { mutableStateOf(true) }
     BackHandler { navigate(AppDestination.Sessions) }
 
@@ -324,6 +313,120 @@ fun NewSessionScreen(
     val selectedWorkspaceDetail = selectedWorkspace?.detail ?: selectedWorkspacePath
     val canUseCurrentPath = isSelectableRemoteDirectory(currentPath, selectedDeviceOs)
     val effectiveWorkspacePath = if (choosePath) currentPath else selectedWorkspacePath
+    val catalogsLoading = selectedRuntime != null && (
+        !runtimeSelection.capabilities.loaded ||
+            runtimeSelection.capabilities.loading ||
+            runtimeSelection.modelCatalog.loading ||
+            runtimeSelection.permissionCatalog.loading
+        )
+    val loadingLabel = stringResource(R.string.new_session_catalog_loading)
+    val unavailableLabel = stringResource(R.string.new_session_catalog_unavailable)
+    val selectedModel = runtimeSelection.selectedModel
+    val selectedReasoning = runtimeSelection.selectedReasoning
+    val selectedPermission = runtimeSelection.selectedPermission
+    val modelOptions = runtimeSelection.modelCatalog.data?.models.orEmpty()
+    val reasoningOptions = selectedModel?.reasoningItems.orEmpty()
+    val permissionOptions = runtimeSelection.permissionCatalog.data?.permissions.orEmpty()
+    val showModelConfiguration = selectedRuntime != null && (
+        catalogsLoading || runtimeSelection.canUseModelCatalog || runtimeSelection.modelCatalog.data != null
+        )
+    val showPermissionConfiguration = selectedRuntime != null && (
+        catalogsLoading || runtimeSelection.canUsePermissionCatalog || runtimeSelection.permissionCatalog.data != null
+        )
+    val configurationFields = buildList {
+        add(
+            NewSessionConfigurationField(
+                key = NewSessionConfigurationKey.Device,
+                label = stringResource(R.string.new_session_device),
+                value = selectedDevice?.name ?: stringResource(R.string.new_session_no_device),
+                selectedId = selectedDevice?.id,
+                options = devices.map { device ->
+                    NewSessionConfigurationOption(id = device.id, label = device.name)
+                },
+                enabled = devices.isNotEmpty(),
+            ),
+        )
+        add(
+            NewSessionConfigurationField(
+                key = NewSessionConfigurationKey.Agent,
+                label = stringResource(R.string.new_session_agent),
+                value = selectedRuntime?.labels?.primary ?: stringResource(R.string.new_session_no_agent),
+                selectedId = selectedRuntime?.id,
+                options = runtimeSelection.runtimes.map { runtime ->
+                    NewSessionConfigurationOption(
+                        id = runtime.id,
+                        label = runtime.labels.primary,
+                        description = runtime.labels.secondary,
+                    )
+                },
+                enabled = selectedDevice != null && runtimeSelection.runtimes.isNotEmpty(),
+            ),
+        )
+        if (showModelConfiguration) {
+            add(
+                NewSessionConfigurationField(
+                    key = NewSessionConfigurationKey.Model,
+                    label = stringResource(R.string.new_session_model),
+                    value = if (catalogsLoading) loadingLabel else selectedModel?.displayName ?: unavailableLabel,
+                    selectedId = selectedModel?.id,
+                    options = modelOptions.map { model ->
+                        val enabled = model.enabled && (
+                            model.selectionId?.isNotBlank() == true ||
+                                model.reasoningItems.any { it.enabled && it.selectionId.isNotBlank() }
+                            )
+                        NewSessionConfigurationOption(
+                            id = model.id,
+                            label = model.displayName,
+                            description = if (enabled) model.description else model.disabledReason,
+                            enabled = enabled,
+                        )
+                    },
+                    enabled = runtimeSelection.modelCatalog.fresh,
+                ),
+            )
+            add(
+                NewSessionConfigurationField(
+                    key = NewSessionConfigurationKey.Effort,
+                    label = stringResource(R.string.new_session_reasoning),
+                    value = when {
+                        catalogsLoading -> loadingLabel
+                        selectedReasoning != null -> selectedReasoning.displayName
+                        reasoningOptions.isEmpty() -> stringResource(R.string.session_runtime_effort_default)
+                        else -> unavailableLabel
+                    },
+                    selectedId = selectedReasoning?.id,
+                    options = reasoningOptions.map { effort ->
+                        NewSessionConfigurationOption(
+                            id = effort.id,
+                            label = effort.displayName,
+                            description = if (effort.enabled) effort.description else effort.disabledReason,
+                            enabled = effort.enabled && effort.id.isNotBlank() && effort.selectionId.isNotBlank(),
+                        )
+                    },
+                    enabled = runtimeSelection.modelCatalog.fresh && reasoningOptions.isNotEmpty(),
+                ),
+            )
+        }
+        if (showPermissionConfiguration) {
+            add(
+                NewSessionConfigurationField(
+                    key = NewSessionConfigurationKey.Permission,
+                    label = stringResource(R.string.session_runtime_permission_mode),
+                    value = if (catalogsLoading) loadingLabel else selectedPermission?.displayName ?: unavailableLabel,
+                    selectedId = selectedPermission?.id,
+                    options = permissionOptions.map { permission ->
+                        NewSessionConfigurationOption(
+                            id = permission.id,
+                            label = permission.displayName,
+                            description = if (permission.enabled) permission.description else permission.disabledReason,
+                            enabled = permission.enabled && permission.id.isNotBlank() && permission.selectionId.isNotBlank(),
+                        )
+                    },
+                    enabled = runtimeSelection.permissionCatalog.fresh,
+                ),
+            )
+        }
+    }
     val canStart = selectedDevice != null &&
         selectedRuntime != null &&
         runtimeSelection.readyForCreate &&
@@ -386,92 +489,36 @@ fun NewSessionScreen(
                     .padding(start = 18.dp, top = 12.dp, end = 18.dp),
                 verticalArrangement = Arrangement.spacedBy(18.dp),
             ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(58.dp),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    RuntimeSelectPill(
-                        label = stringResource(R.string.new_session_device),
-                        value = selectedDevice?.name ?: stringResource(R.string.new_session_no_device),
-                        icon = Lucide.Monitor,
-                        darkMode = darkMode,
-                        modifier = Modifier.weight(1f),
-                        enabled = true,
-                        onClick = { sheet = NewSessionSheet.Device },
-                    )
-                    RuntimeSelectPill(
-                        label = stringResource(R.string.new_session_agent),
-                        value = selectedRuntime?.labels?.primary ?: stringResource(R.string.new_session_no_agent),
-                        icon = Lucide.Bot,
-                        darkMode = darkMode,
-                        modifier = Modifier.weight(1f),
-                        enabled = selectedDevice != null,
-                        onClick = {
-                            sheet = NewSessionSheet.Agent
+                NewSessionConfigurationCard(
+                    fields = configurationFields,
+                    expanded = expandedConfiguration,
+                    onToggle = { key ->
+                        expandedConfiguration = if (expandedConfiguration == key) null else key
+                        if (key == NewSessionConfigurationKey.Agent) {
                             selectedDevice?.id?.let { connectorId ->
                                 scope.launch { loadRuntimeInventory(connectorId) }
                             }
-                        },
-                    )
-                }
-
-                val showModelSelectors = selectedRuntime != null && (
-                    !runtimeSelection.capabilities.fresh ||
-                        runtimeSelection.canUseModelCatalog ||
-                        runtimeSelection.modelCatalog.data != null
-                    )
-                if (showModelSelectors) {
-                    val modelLoading = !runtimeSelection.capabilities.loaded ||
-                        runtimeSelection.capabilities.loading ||
-                        runtimeSelection.modelCatalog.loading
-                    val modelOptions = runtimeSelection.modelCatalog.data?.models.orEmpty()
-                    val modelEnabled = runtimeSelection.modelCatalog.fresh && modelOptions.any { it.enabled }
-                    val selectedModel = runtimeSelection.selectedModel
-                    val selectedReasoning = runtimeSelection.selectedReasoning
-                    val reasoningOptions = selectedModel?.reasoningItems
-                        ?.filter { it.enabled && it.id.isNotBlank() && it.selectionId.isNotBlank() }
-                        .orEmpty()
-                    val modelValue = when {
-                        modelLoading -> stringResource(R.string.new_session_catalog_loading)
-                        selectedModel != null -> selectedModel.displayName
-                        runtimeSelection.modelCatalog.errorMessage != null ->
-                            stringResource(R.string.new_session_catalog_unavailable)
-                        else -> stringResource(R.string.new_session_catalog_unavailable)
-                    }
-                    val effortValue = when {
-                        modelLoading -> stringResource(R.string.new_session_catalog_loading)
-                        selectedReasoning != null -> selectedReasoning.displayName
-                        reasoningOptions.isEmpty() -> stringResource(R.string.session_runtime_effort_default)
-                        else -> stringResource(R.string.new_session_catalog_unavailable)
-                    }
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(58.dp),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    ) {
-                        RuntimeSelectPill(
-                            label = stringResource(R.string.new_session_model),
-                            value = modelValue,
-                            icon = Lucide.Bot,
-                            darkMode = darkMode,
-                            modifier = Modifier.weight(1f),
-                            enabled = modelEnabled,
-                            onClick = { sheet = NewSessionSheet.Model },
-                        )
-                        RuntimeSelectPill(
-                            label = stringResource(R.string.new_session_reasoning),
-                            value = effortValue,
-                            icon = Lucide.Sparkles,
-                            darkMode = darkMode,
-                            modifier = Modifier.weight(1f),
-                            enabled = runtimeSelection.modelCatalog.fresh && reasoningOptions.isNotEmpty(),
-                            onClick = { sheet = NewSessionSheet.Reasoning },
-                        )
-                    }
-                }
+                        }
+                    },
+                    onDismiss = { expandedConfiguration = null },
+                    onSelect = { key, id ->
+                        when (key) {
+                            NewSessionConfigurationKey.Device -> selectedDeviceId = id
+                            NewSessionConfigurationKey.Agent -> {
+                                runtimeSelection = runtimeSelection.selectRuntime(id)
+                            }
+                            NewSessionConfigurationKey.Model -> {
+                                runtimeSelection = runtimeSelection.selectModel(id)
+                            }
+                            NewSessionConfigurationKey.Effort -> {
+                                runtimeSelection = runtimeSelection.selectReasoning(id)
+                            }
+                            NewSessionConfigurationKey.Permission -> {
+                                runtimeSelection = runtimeSelection.selectPermission(id)
+                            }
+                        }
+                    },
+                )
 
                 if (choosePath) {
                     val parent = remoteParentPath(
@@ -626,56 +673,6 @@ fun NewSessionScreen(
         }
     }
 
-    when (sheet) {
-        NewSessionSheet.Device -> DevicePickerSheet(
-            devices = devices,
-            selectedDeviceId = selectedDevice?.id,
-            darkMode = darkMode,
-            onDismiss = { sheet = null },
-            onSelect = {
-                selectedDeviceId = it.id
-                sheet = null
-            },
-        )
-        NewSessionSheet.Agent -> RuntimePickerSheet(
-            runtimes = runtimeSelection.runtimes,
-            loading = runtimeSelection.runtimesLoading,
-            errorMessage = runtimeSelection.runtimesErrorMessage,
-            selectedRuntimeId = selectedRuntime?.id,
-            darkMode = darkMode,
-            onDismiss = { sheet = null },
-            onRetry = {
-                selectedDevice?.id?.let { connectorId ->
-                    scope.launch { loadRuntimeInventory(connectorId) }
-                }
-            },
-            onSelect = { runtime ->
-                runtimeSelection = runtimeSelection.selectRuntime(runtime.id)
-                sheet = null
-            },
-        )
-        NewSessionSheet.Model -> ModelPickerSheet(
-            models = runtimeSelection.modelCatalog.data?.models.orEmpty(),
-            selectedModelId = runtimeSelection.selectedModelId,
-            darkMode = darkMode,
-            onDismiss = { sheet = null },
-            onSelect = { model ->
-                runtimeSelection = runtimeSelection.selectModel(model.id)
-                sheet = null
-            },
-        )
-        NewSessionSheet.Reasoning -> ReasoningPickerSheet(
-            reasoning = runtimeSelection.selectedModel?.reasoningItems.orEmpty(),
-            selectedReasoningId = runtimeSelection.selectedReasoningId,
-            darkMode = darkMode,
-            onDismiss = { sheet = null },
-            onSelect = { effort ->
-                runtimeSelection = runtimeSelection.selectReasoning(effort.id)
-                sheet = null
-            },
-        )
-        null -> Unit
-    }
 }
 
 @Composable
@@ -802,71 +799,6 @@ private fun HeaderCircleButton(
         contentAlignment = Alignment.Center,
     ) {
         content()
-    }
-}
-
-@Composable
-private fun RuntimeSelectPill(
-    label: String,
-    value: String,
-    icon: ImageVector,
-    darkMode: Boolean,
-    modifier: Modifier = Modifier,
-    enabled: Boolean = true,
-    onClick: () -> Unit,
-) {
-    val border = if (darkMode) Color(0xFF27272A) else Color(0xFFECECEC)
-    val surface = if (darkMode) LocalAAColors.current.raisedSurface else Color(0xFFFBFBFB)
-    val titleColor = if (darkMode) Color(0xFFFAFAFA) else Color(0xFF2B2B2B)
-    val labelColor = if (darkMode) Color(0xFF71717A) else Color(0xFFAAAAAA)
-    val iconColor = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF777777)
-
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .height(58.dp)
-            .clip(RoundedCornerShape(18.dp))
-            .background(surface)
-            .border(1.dp, border, RoundedCornerShape(18.dp))
-            .noRippleClickable {
-                if (enabled) onClick()
-            }
-            .padding(horizontal = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(9.dp),
-    ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            tint = iconColor,
-            modifier = Modifier.size(18.dp),
-        )
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = label,
-                color = labelColor,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold,
-                lineHeight = 14.sp,
-                maxLines = 1,
-            )
-            Text(
-                text = value,
-                color = titleColor,
-                fontSize = 16.sp,
-                fontWeight = FontWeight.Bold,
-                lineHeight = 20.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-        DownGlyph(
-            color = if (enabled) {
-                if (darkMode) Color(0xFF71717A) else Color(0xFFAAAAAA)
-            } else {
-                if (darkMode) Color(0xFF3F3F46) else Color(0xFFD4D4D4)
-            },
-        )
     }
 }
 
@@ -1374,292 +1306,6 @@ private fun StartChatButton(
         Spacer(Modifier.width(8.dp))
         ForwardGlyph(color = colors.onPrimaryAction)
     }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun DevicePickerSheet(
-    devices: List<AgentDevice>,
-    selectedDeviceId: String?,
-    darkMode: Boolean,
-    onDismiss: () -> Unit,
-    onSelect: (AgentDevice) -> Unit,
-) {
-    PickerSheet(title = stringResource(R.string.new_session_choose_device), darkMode = darkMode, onDismiss = onDismiss) {
-        if (devices.isEmpty()) {
-            SheetEmptyText(stringResource(R.string.new_session_no_online_agents), darkMode)
-        } else {
-            LazyColumn(modifier = Modifier.heightIn(max = 420.dp)) {
-                items(devices, key = { it.id }) { device ->
-                    SheetChoiceRow(
-                        title = device.name,
-                        subtitle = stringResource(
-                            if (device.online) R.string.devices_online else R.string.devices_offline,
-                        ),
-                        selected = device.id == selectedDeviceId,
-                        darkMode = darkMode,
-                        icon = Lucide.Monitor,
-                        onClick = { onSelect(device) },
-                    )
-                }
-            }
-        }
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun RuntimePickerSheet(
-    runtimes: List<DeviceRuntime>,
-    loading: Boolean,
-    errorMessage: String?,
-    selectedRuntimeId: String?,
-    darkMode: Boolean,
-    onDismiss: () -> Unit,
-    onRetry: () -> Unit,
-    onSelect: (DeviceRuntime) -> Unit,
-) {
-    PickerSheet(title = stringResource(R.string.new_session_choose_agent), darkMode = darkMode, onDismiss = onDismiss) {
-        if (loading && runtimes.isEmpty()) {
-            SheetEmptyText(stringResource(R.string.device_runtime_loading), darkMode)
-        } else if (runtimes.isEmpty()) {
-            SheetEmptyText(
-                errorMessage ?: stringResource(R.string.new_session_no_attached_agents),
-                darkMode,
-            )
-            Text(
-                text = stringResource(R.string.common_retry),
-                color = LocalAAColors.current.primaryAction,
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(horizontal = 4.dp).noRippleClickable(onClick = onRetry),
-            )
-        } else {
-            LazyColumn(modifier = Modifier.heightIn(max = 420.dp)) {
-                items(runtimes, key = { it.id }) { runtime ->
-                    SheetChoiceRow(
-                        title = runtime.labels.primary,
-                        subtitle = runtime.pickerSubtitle(),
-                        selected = runtime.id == selectedRuntimeId,
-                        darkMode = darkMode,
-                        icon = Lucide.Bot,
-                        onClick = { onSelect(runtime) },
-                    )
-                }
-            }
-            if (loading) {
-                SheetEmptyText(stringResource(R.string.device_runtime_loading), darkMode)
-            }
-        }
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun ModelPickerSheet(
-    models: List<NewSessionModel>,
-    selectedModelId: String?,
-    darkMode: Boolean,
-    onDismiss: () -> Unit,
-    onSelect: (NewSessionModel) -> Unit,
-) {
-    PickerSheet(title = stringResource(R.string.new_session_choose_model), darkMode = darkMode, onDismiss = onDismiss) {
-        if (models.isEmpty()) {
-            SheetEmptyText(stringResource(R.string.new_session_model_catalog_unavailable), darkMode)
-        } else {
-            LazyColumn(modifier = Modifier.heightIn(max = 420.dp)) {
-                items(models, key = { it.id }) { model ->
-                    val enabled = model.enabled && (
-                        model.selectionId?.isNotBlank() == true ||
-                            model.reasoningItems.any { it.enabled && it.selectionId.isNotBlank() }
-                        )
-                    SheetChoiceRow(
-                        title = model.displayName,
-                        subtitle = if (enabled) model.description.orEmpty() else model.disabledReason.orEmpty(),
-                        selected = model.id == selectedModelId,
-                        darkMode = darkMode,
-                        icon = Lucide.Bot,
-                        enabled = enabled,
-                        onClick = { onSelect(model) },
-                    )
-                }
-            }
-        }
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun ReasoningPickerSheet(
-    reasoning: List<NewSessionReasoning>,
-    selectedReasoningId: String?,
-    darkMode: Boolean,
-    onDismiss: () -> Unit,
-    onSelect: (NewSessionReasoning) -> Unit,
-) {
-    PickerSheet(
-        title = stringResource(R.string.new_session_choose_reasoning),
-        darkMode = darkMode,
-        onDismiss = onDismiss,
-    ) {
-        if (reasoning.isEmpty()) {
-            SheetEmptyText(stringResource(R.string.new_session_catalog_unavailable), darkMode)
-        } else {
-            LazyColumn(modifier = Modifier.heightIn(max = 420.dp)) {
-                items(reasoning, key = { it.id }) { effort ->
-                    val enabled = effort.enabled && effort.id.isNotBlank() && effort.selectionId.isNotBlank()
-                    SheetChoiceRow(
-                        title = effort.displayName,
-                        subtitle = if (enabled) effort.description.orEmpty() else effort.disabledReason.orEmpty(),
-                        selected = effort.id == selectedReasoningId,
-                        darkMode = darkMode,
-                        icon = Lucide.Sparkles,
-                        enabled = enabled,
-                        onClick = { onSelect(effort) },
-                    )
-                }
-            }
-        }
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun PickerSheet(
-    title: String,
-    darkMode: Boolean,
-    onDismiss: () -> Unit,
-    content: @Composable ColumnScope.() -> Unit,
-) {
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
-        containerColor = if (darkMode) LocalAAColors.current.raisedSurface else Color.White,
-        contentColor = LocalAAColors.current.ink,
-        scrimColor = if (darkMode) Color(0x66000000) else Color(0x30000000),
-        dragHandle = {
-            Box(
-                modifier = Modifier
-                    .padding(top = 11.dp, bottom = 10.dp)
-                    .width(42.dp)
-                    .height(4.dp)
-                    .clip(CircleShape)
-                    .background(if (darkMode) Color(0xFF3F3F46) else Color(0xFFD8D8D8)),
-            )
-        },
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .windowInsetsPadding(WindowInsets.navigationBars)
-                .padding(start = 22.dp, end = 22.dp, bottom = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Text(
-                text = title,
-                color = LocalAAColors.current.ink,
-                fontSize = 20.sp,
-                fontWeight = FontWeight.ExtraBold,
-                lineHeight = 24.sp,
-                modifier = Modifier.padding(horizontal = 4.dp),
-            )
-            content()
-        }
-    }
-}
-
-@Composable
-private fun SheetChoiceRow(
-    title: String,
-    subtitle: String,
-    selected: Boolean,
-    darkMode: Boolean,
-    icon: ImageVector,
-    enabled: Boolean = true,
-    onClick: () -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(56.dp)
-            .clip(RoundedCornerShape(14.dp))
-            .then(if (enabled) Modifier.noRippleClickable(onClick = onClick) else Modifier)
-            .padding(horizontal = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(14.dp),
-    ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            tint = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF777777),
-            modifier = Modifier.size(20.dp),
-        )
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = title,
-                color = LocalAAColors.current.ink.copy(alpha = if (enabled) 1f else 0.42f),
-                fontSize = 16.sp,
-                fontWeight = FontWeight.Bold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            if (subtitle.isNotBlank()) {
-                Text(
-                    text = subtitle,
-                    color = (if (darkMode) Color(0xFFA1A1AA) else Color(0xFF777777))
-                        .copy(alpha = if (enabled) 1f else 0.58f),
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-        }
-        if (selected) {
-            CheckGlyph(color = Color(0xFF22C55E))
-        }
-    }
-}
-
-@Composable
-private fun SheetEmptyText(message: String, darkMode: Boolean) {
-    Text(
-        text = message,
-        color = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF777777),
-        fontSize = 14.sp,
-        fontWeight = FontWeight.SemiBold,
-        modifier = Modifier.padding(horizontal = 4.dp, vertical = 16.dp),
-    )
-}
-
-private enum class NewSessionSheet {
-    Device,
-    Agent,
-    Model,
-    Reasoning,
-}
-
-@Composable
-private fun DeviceRuntime.pickerSubtitle(): String {
-    val readiness = when {
-        !present -> stringResource(R.string.device_runtime_not_present)
-        !configured -> stringResource(R.string.device_runtime_not_configured)
-        !active -> stringResource(R.string.new_session_runtime_inactive)
-        else -> when (status) {
-            DeviceRuntimeStatus.Stopped -> stringResource(R.string.device_runtime_stopped)
-            DeviceRuntimeStatus.Discovering -> stringResource(R.string.device_runtime_discovering)
-            DeviceRuntimeStatus.Available -> stringResource(R.string.device_runtime_available)
-            DeviceRuntimeStatus.Unavailable -> stringResource(R.string.device_runtime_unavailable)
-            DeviceRuntimeStatus.Validating -> stringResource(R.string.device_runtime_validating)
-            DeviceRuntimeStatus.Starting -> stringResource(R.string.device_runtime_starting)
-            DeviceRuntimeStatus.Running -> stringResource(R.string.device_runtime_running)
-            DeviceRuntimeStatus.Stopping -> stringResource(R.string.device_runtime_stopping)
-            DeviceRuntimeStatus.Error -> stringResource(R.string.device_runtime_error)
-            DeviceRuntimeStatus.Unknown -> stringResource(R.string.device_runtime_unknown)
-        }
-    }
-    return listOfNotNull(labels.secondary, readiness, detailMessage).joinToString(" · ")
 }
 
 private fun pathTitle(path: String, homeDirectory: String): String {
