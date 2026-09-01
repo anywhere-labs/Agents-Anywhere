@@ -818,7 +818,7 @@ private fun markdownStyles(darkMode: Boolean, compact: Boolean): MarkdownStyles 
             color = body,
             fontSize = if (compact) 14.sp else 17.sp,
             lineHeight = if (compact) 21.sp else 27.sp,
-            fontWeight = FontWeight.Normal,
+            fontWeight = if (compact) FontWeight.Light else FontWeight.Normal,
         ),
         compact = compact,
     )
@@ -845,7 +845,7 @@ private data class MarkdownStyles(
             2 -> if (compact) 23.sp else 28.sp
             else -> if (compact) 22.sp else 26.sp
         },
-        fontWeight = FontWeight.Bold,
+        fontWeight = if (compact) FontWeight.SemiBold else FontWeight.Bold,
     )
 
     fun tableCell(header: Boolean, alignment: TableCell.Alignment?): TextStyle = body.copy(
