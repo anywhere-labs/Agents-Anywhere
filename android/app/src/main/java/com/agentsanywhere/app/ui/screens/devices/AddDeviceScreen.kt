@@ -438,21 +438,43 @@ private fun DesktopPairingInstructions(
 private fun LinuxPairingInstructions(
     credential: DeviceSetupCredential,
 ) {
-    val colors = LocalAAColors.current
     StepTitle(
         title = stringResource(R.string.device_setup_command_title),
         description = stringResource(R.string.device_setup_command_description, credential.device.name),
     )
-    Text(
-        text = stringResource(R.string.device_setup_linux_persistence_hint),
-        color = colors.muted,
-        fontSize = 13.5.sp,
-        fontWeight = FontWeight.Medium,
-        lineHeight = 20.sp,
-        modifier = Modifier.padding(top = 22.dp, bottom = 12.dp),
-    )
     CopyableValueBox(
         value = startCommandLines(credential).joinToString(" "),
+        modifier = Modifier.padding(top = 22.dp),
+    )
+    LinuxInstructionText(
+        text = stringResource(R.string.device_setup_linux_session_warning),
+        modifier = Modifier.padding(top = 24.dp, bottom = 12.dp),
+    )
+    CopyableValueBox(
+        value = "screen -S anywhere",
+        supportingText = stringResource(R.string.device_setup_linux_screen_start_comment),
+    )
+    LinuxInstructionText(
+        text = stringResource(R.string.device_setup_linux_detach_hint),
+        modifier = Modifier.padding(top = 24.dp, bottom = 12.dp),
+    )
+    CopyableValueBox(
+        value = "screen -r anywhere",
+    )
+}
+
+@Composable
+private fun LinuxInstructionText(
+    text: String,
+    modifier: Modifier = Modifier,
+) {
+    Text(
+        text = text,
+        color = LocalAAColors.current.muted,
+        fontSize = 13.5.sp,
+        fontWeight = FontWeight.Medium,
+        lineHeight = 21.sp,
+        modifier = modifier,
     )
 }
 
@@ -544,7 +566,9 @@ private fun OperatingSystemOption(
 @Composable
 private fun CopyableValueBox(
     value: String,
+    modifier: Modifier = Modifier,
     onOpen: (() -> Unit)? = null,
+    supportingText: String? = null,
 ) {
     val colors = LocalAAColors.current
     val clipboard = LocalClipboardManager.current
@@ -561,23 +585,23 @@ private fun CopyableValueBox(
     }
 
     Row(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
-            .height(60.dp)
+            .height(if (supportingText == null) 60.dp else 84.dp)
             .clip(RoundedCornerShape(16.dp))
             .background(colors.raisedSurface)
             .border(1.dp, colors.border, RoundedCornerShape(16.dp))
             .padding(start = 2.dp, end = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(
+        Column(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxSize()
                 .then(if (onOpen == null) Modifier else Modifier.noRippleClickable(onClick = onOpen))
                 .horizontalScroll(rememberScrollState())
-                .padding(horizontal = 14.dp),
-            contentAlignment = Alignment.CenterStart,
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.Center,
         ) {
             Text(
                 text = value,
@@ -587,6 +611,17 @@ private fun CopyableValueBox(
                 fontFamily = FontFamily.Monospace,
                 maxLines = 1,
             )
+            supportingText?.let { supportingValue ->
+                Text(
+                    text = supportingValue,
+                    color = colors.muted,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium,
+                    fontFamily = FontFamily.Monospace,
+                    maxLines = 1,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+            }
         }
         Box(
             modifier = Modifier
