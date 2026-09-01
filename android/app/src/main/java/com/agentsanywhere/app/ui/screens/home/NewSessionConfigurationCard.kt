@@ -1,5 +1,3 @@
-/* Hallmark · pre-emit critique: P5 H5 E4 S5 R5 V4 */
-/* Hallmark · macrostructure: anchored configuration stack · modern-minimal · neutral palette */
 package com.agentsanywhere.app.ui.screens.home
 
 import androidx.compose.foundation.background
@@ -137,13 +135,20 @@ private fun NewSessionConfigurationRow(
                 color = colors.muted.copy(alpha = if (active) 1f else 0.38f),
             )
         }
-        NewSessionConfigurationMenu(
-            expanded = expanded && active,
-            options = field.options,
-            selectedId = field.selectedId,
-            onDismiss = onDismiss,
-            onSelect = onSelect,
-        )
+        Box(
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .width(1.dp)
+                .height(48.dp),
+        ) {
+            NewSessionConfigurationMenu(
+                expanded = expanded && active,
+                options = field.options,
+                selectedId = field.selectedId,
+                onDismiss = onDismiss,
+                onSelect = onSelect,
+            )
+        }
     }
 }
 
@@ -156,12 +161,12 @@ private fun NewSessionConfigurationMenu(
     onSelect: (String) -> Unit,
 ) {
     val colors = LocalAAColors.current
-    val surface = colors.dialogSurface
+    val surface = colors.subtle
     val shadow = colors.appShadow
     DropdownMenu(
         expanded = expanded,
         onDismissRequest = onDismiss,
-        offset = DpOffset(x = 10.dp, y = 4.dp),
+        offset = DpOffset(x = 0.dp, y = 4.dp),
         shape = RoundedCornerShape(18.dp),
         containerColor = surface,
         tonalElevation = 0.dp,
