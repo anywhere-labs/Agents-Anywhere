@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -31,6 +32,7 @@ import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 import com.agentsanywhere.app.ui.designsystem.noRippleClickable
 import com.composables.icons.lucide.Check
 import com.composables.icons.lucide.Lucide
+import com.valentinilk.shimmer.shimmer
 
 internal enum class NewSessionConfigurationKey {
     Device,
@@ -54,6 +56,7 @@ internal data class NewSessionConfigurationField(
     val selectedId: String?,
     val options: List<NewSessionConfigurationOption>,
     val enabled: Boolean,
+    val loading: Boolean = false,
 )
 
 @Composable
@@ -103,7 +106,7 @@ private fun NewSessionConfigurationRow(
     onSelect: (String) -> Unit,
 ) {
     val colors = LocalAAColors.current
-    val active = field.enabled && field.options.any(NewSessionConfigurationOption::enabled)
+    val active = !field.loading && field.enabled && field.options.any(NewSessionConfigurationOption::enabled)
     Box(modifier = Modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier
@@ -121,19 +124,36 @@ private fun NewSessionConfigurationRow(
                 fontWeight = FontWeight.Medium,
                 maxLines = 1,
             )
-            Text(
-                text = field.value,
-                color = colors.ink.copy(alpha = if (active) 1f else 0.5f),
-                fontSize = 14.sp,
-                fontWeight = FontWeight.SemiBold,
-                textAlign = TextAlign.End,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f),
-            )
-            DownGlyph(
-                color = colors.muted.copy(alpha = if (active) 1f else 0.38f),
-            )
+            if (field.loading) {
+                Box(
+                    modifier = Modifier.weight(1f),
+                    contentAlignment = Alignment.CenterEnd,
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .width(96.dp)
+                            .height(16.dp)
+                            .shimmer()
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(colors.ink.copy(alpha = if (colors.isDark) 0.12f else 0.08f)),
+                    )
+                }
+                Spacer(Modifier.width(12.dp))
+            } else {
+                Text(
+                    text = field.value,
+                    color = colors.ink.copy(alpha = if (active) 1f else 0.5f),
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    textAlign = TextAlign.End,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                DownGlyph(
+                    color = colors.muted.copy(alpha = if (active) 1f else 0.38f),
+                )
+            }
         }
         Box(
             modifier = Modifier

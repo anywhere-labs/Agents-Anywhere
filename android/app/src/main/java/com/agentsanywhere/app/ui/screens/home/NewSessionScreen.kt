@@ -372,6 +372,7 @@ fun NewSessionScreen(
                     )
                 },
                 enabled = selectedDevice != null && runtimeSelection.runtimes.isNotEmpty(),
+                loading = selectedDevice != null && runtimeSelection.runtimesLoading,
             ),
         )
         if (showModelConfiguration) {
@@ -394,6 +395,7 @@ fun NewSessionScreen(
                         )
                     },
                     enabled = runtimeSelection.modelCatalog.fresh,
+                    loading = catalogsLoading,
                 ),
             )
             add(
@@ -416,6 +418,7 @@ fun NewSessionScreen(
                         )
                     },
                     enabled = runtimeSelection.modelCatalog.fresh && reasoningOptions.isNotEmpty(),
+                    loading = catalogsLoading,
                 ),
             )
         }
@@ -446,6 +449,7 @@ fun NewSessionScreen(
                         )
                     },
                     enabled = runtimeSelection.permissionCatalog.fresh,
+                    loading = catalogsLoading,
                 ),
             )
         }
