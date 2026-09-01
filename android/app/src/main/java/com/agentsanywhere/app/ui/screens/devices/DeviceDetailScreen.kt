@@ -71,7 +71,9 @@ import com.agentsanywhere.app.ui.designsystem.ScreenScaffold
 import com.agentsanywhere.app.ui.designsystem.noRippleClickable
 import com.composables.icons.lucide.ChevronLeft
 import com.composables.icons.lucide.Check
+import com.composables.icons.lucide.Circle
 import com.composables.icons.lucide.CircleAlert
+import com.composables.icons.lucide.CircleCheck
 import com.composables.icons.lucide.List as ListIcon
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Ellipsis
@@ -512,7 +514,6 @@ private fun DeviceDetailHeader(
     modifier: Modifier = Modifier,
 ) {
     val colors = LocalAAColors.current
-    val darkMode = colors.canvas == Color(0xFF09090B)
 
     Row(
         modifier = modifier
@@ -542,7 +543,7 @@ private fun DeviceDetailHeader(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            DeviceStatusTag(online = device.online, darkMode = darkMode)
+            DeviceStatusLabel(online = device.online)
         }
         RoundIconAction(
             icon = Lucide.Ellipsis,
@@ -554,34 +555,26 @@ private fun DeviceDetailHeader(
 }
 
 @Composable
-private fun DeviceStatusTag(online: Boolean, darkMode: Boolean) {
-    val background = when {
-        online && darkMode -> Color(0xFF102419)
-        online -> Color(0xFFEAF7EF)
-        darkMode -> Color(0xFF27272A)
-        else -> Color(0xFFF1F0ED)
-    }
-    val content = when {
-        online && darkMode -> Color(0xFF7DD3A8)
-        online -> Color(0xFF2F8F5B)
-        darkMode -> Color(0xFFA1A1AA)
-        else -> Color(0xFF777777)
-    }
+private fun DeviceStatusLabel(online: Boolean) {
+    val colors = LocalAAColors.current
+    val statusColor = if (online) Color(0xFF10B981) else colors.muted
 
-    Box(
-        modifier = Modifier
-            .height(22.dp)
-            .clip(CircleShape)
-            .background(background)
-            .padding(horizontal = 9.dp),
-        contentAlignment = Alignment.Center,
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
+        Icon(
+            imageVector = if (online) Lucide.CircleCheck else Lucide.Circle,
+            contentDescription = null,
+            tint = if (online) statusColor else statusColor.copy(alpha = 0.4f),
+            modifier = Modifier.size(16.dp),
+        )
         Text(
             text = if (online) stringResource(R.string.devices_online) else stringResource(R.string.devices_offline),
-            color = content,
-            fontSize = 11.sp,
-            lineHeight = 11.sp,
-            fontWeight = FontWeight.Bold,
+            color = statusColor,
+            fontSize = 13.sp,
+            lineHeight = 16.sp,
+            fontWeight = FontWeight.Medium,
             maxLines = 1,
         )
     }
