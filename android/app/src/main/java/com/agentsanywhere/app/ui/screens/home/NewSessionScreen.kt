@@ -94,6 +94,7 @@ import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 import com.agentsanywhere.app.ui.designsystem.ScreenScaffold
 import com.agentsanywhere.app.ui.designsystem.SearchGlyph
 import com.agentsanywhere.app.ui.designsystem.noRippleClickable
+import com.agentsanywhere.app.ui.designsystem.runtimePermissionLocalizer
 import com.composables.icons.lucide.ChevronDown
 import com.composables.icons.lucide.ChevronRight
 import com.composables.icons.lucide.ChevronUp
@@ -327,6 +328,17 @@ fun NewSessionScreen(
     val modelOptions = runtimeSelection.modelCatalog.data?.models.orEmpty()
     val reasoningOptions = selectedModel?.reasoningItems.orEmpty()
     val permissionOptions = runtimeSelection.permissionCatalog.data?.permissions.orEmpty()
+    val permissionLocalizer = runtimePermissionLocalizer()
+    val permissionRuntime = runtimeSelection.permissionCatalog.data?.runtime ?: selectedRuntime?.type
+    val localizedPermissions = permissionOptions.associate { permission ->
+        permission.id to permissionLocalizer.localize(
+            runtime = permissionRuntime,
+            permissionId = permission.id,
+            label = permission.displayName,
+            description = permission.description,
+            metadata = permission.metadata,
+        )
+    }
     val showModelConfiguration = selectedRuntime != null && (
         catalogsLoading || runtimeSelection.canUseModelCatalog || runtimeSelection.modelCatalog.data != null
         )
@@ -412,13 +424,24 @@ fun NewSessionScreen(
                 NewSessionConfigurationField(
                     key = NewSessionConfigurationKey.Permission,
                     label = stringResource(R.string.session_runtime_permission_mode),
-                    value = if (catalogsLoading) loadingLabel else selectedPermission?.displayName ?: unavailableLabel,
+                    value = if (catalogsLoading) {
+                        loadingLabel
+                    } else {
+                        selectedPermission?.let { permission ->
+                            localizedPermissions[permission.id]?.label ?: permission.displayName
+                        } ?: unavailableLabel
+                    },
                     selectedId = selectedPermission?.id,
                     options = permissionOptions.map { permission ->
+                        val localized = localizedPermissions[permission.id]
                         NewSessionConfigurationOption(
                             id = permission.id,
-                            label = permission.displayName,
-                            description = if (permission.enabled) permission.description else permission.disabledReason,
+                            label = localized?.label ?: permission.displayName,
+                            description = if (permission.enabled) {
+                                localized?.description ?: permission.description
+                            } else {
+                                permission.disabledReason
+                            },
                             enabled = permission.enabled && permission.id.isNotBlank() && permission.selectionId.isNotBlank(),
                         )
                     },
