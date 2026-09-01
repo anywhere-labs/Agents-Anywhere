@@ -143,7 +143,6 @@
     <string name="device_runtime_update_failed">Could not update runtime state.</string>
     <string name="device_runtime_delete_failed">Could not delete runtime configuration.</string>
     <string name="device_runtime_loading">Loading runtimes...</string>
-    <string name="device_runtime_configured_section">Configured</string>
     <string name="device_runtime_no_configured">No configured agents</string>
     <string name="device_runtime_desktop_configuration_hint">To configure or add other agents, use the desktop app.</string>
     <string name="device_runtime_not_present">Not present on this connector</string>

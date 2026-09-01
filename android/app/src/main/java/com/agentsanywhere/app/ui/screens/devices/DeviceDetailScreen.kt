@@ -621,7 +621,6 @@ internal fun AgentsSection(
                         modifier = Modifier.padding(bottom = 8.dp),
                     )
                 }
-                RuntimeSubsectionTitle(stringResource(R.string.device_runtime_configured_section))
                 if (state.configuredRuntimes.isEmpty()) {
                     EmptyText(stringResource(R.string.device_runtime_no_configured))
                 } else {
@@ -678,17 +677,6 @@ private fun DesktopAgentConfigurationHint() {
             modifier = Modifier.weight(1f),
         )
     }
-}
-
-@Composable
-private fun RuntimeSubsectionTitle(title: String) {
-    Text(
-        text = title,
-        color = LocalAAColors.current.muted,
-        fontSize = 13.sp,
-        fontWeight = FontWeight.Bold,
-        modifier = Modifier.padding(bottom = 4.dp),
-    )
 }
 
 @Composable

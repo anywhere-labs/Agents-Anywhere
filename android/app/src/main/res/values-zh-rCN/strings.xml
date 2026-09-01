@@ -142,7 +142,6 @@
     <string name="device_runtime_update_failed">无法更新运行时状态。</string>
     <string name="device_runtime_delete_failed">无法删除运行时配置。</string>
     <string name="device_runtime_loading">正在加载运行时...</string>
-    <string name="device_runtime_configured_section">已配置</string>
     <string name="device_runtime_no_configured">没有已配置的 Agent</string>
     <string name="device_runtime_desktop_configuration_hint">如需配置或添加其他 Agent，请前往桌面端操作。</string>
     <string name="device_runtime_not_present">连接器上不存在此运行时</string>
