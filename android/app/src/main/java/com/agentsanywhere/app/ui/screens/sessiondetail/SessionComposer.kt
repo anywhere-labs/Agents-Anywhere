@@ -110,8 +110,9 @@ internal fun MessageComposer(
     onInterrupt: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val surface = if (darkMode) Color(0xF218181B) else Color(0xF2FFFFFF)
-    val border = if (darkMode) Color(0xFF27272A) else Color(0xFFEFEDE9)
+    val colors = LocalAAColors.current
+    val surface = if (darkMode) colors.raisedSurface else Color(0xF2FFFFFF)
+    val border = if (darkMode) colors.border else Color(0xFFEFEDE9)
     val muted = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF8A8984)
     val input = if (inputEnabled) {
         if (darkMode) Color(0xFFEDEDEF) else Color(0xFF252622)
