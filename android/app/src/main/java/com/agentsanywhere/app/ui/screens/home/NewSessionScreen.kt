@@ -81,9 +81,12 @@ import com.agentsanywhere.app.feature.devices.DeviceRuntimeList
 import com.agentsanywhere.app.feature.devices.DeviceRuntimeStatus
 import com.agentsanywhere.app.feature.sessions.NewSessionDirectory
 import com.agentsanywhere.app.feature.sessions.NewSessionDraft
+import com.agentsanywhere.app.feature.sessions.NewSessionModel
 import com.agentsanywhere.app.feature.sessions.NewSessionModelCatalog
 import com.agentsanywhere.app.feature.sessions.NewSessionPathEntry
 import com.agentsanywhere.app.feature.sessions.NewSessionPermissionCatalog
+import com.agentsanywhere.app.feature.sessions.NewSessionPreferenceStore
+import com.agentsanywhere.app.feature.sessions.NewSessionReasoning
 import com.agentsanywhere.app.feature.sessions.NewSessionRuntimeCapabilities
 import com.agentsanywhere.app.feature.sessions.NewSessionRuntimeSelectionState
 import com.agentsanywhere.app.feature.sessions.SessionsState
@@ -107,6 +110,9 @@ import com.composables.icons.lucide.Folder
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Monitor
 import com.composables.icons.lucide.Pencil
+import com.composables.icons.lucide.Sparkles
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -116,17 +122,16 @@ fun NewSessionScreen(
     sessionsState: SessionsState,
     onListDirectory: suspend (String, String, String) -> Result<NewSessionDirectory>,
     onListRuntimes: suspend (String) -> Result<DeviceRuntimeList>,
-    @Suppress("UNUSED_PARAMETER")
     onLoadRuntimeCapabilities: suspend (String, String) -> Result<NewSessionRuntimeCapabilities>,
-    @Suppress("UNUSED_PARAMETER")
     onLoadModelCatalog: suspend (String, String) -> Result<NewSessionModelCatalog>,
-    @Suppress("UNUSED_PARAMETER")
     onLoadPermissionCatalog: suspend (String, String) -> Result<NewSessionPermissionCatalog>,
     onPrepareSession: (NewSessionDraft) -> Unit,
 ) {
     val colors = LocalAAColors.current
     val darkMode = colors.canvas == Color(0xFF09090B)
     val context = LocalContext.current
+    val preferenceStore = remember(context) { NewSessionPreferenceStore(context) }
+    val initialPreference = remember(preferenceStore) { preferenceStore.read() }
     val defaultTitle = stringResource(R.string.new_session_title)
     val scope = rememberCoroutineScope()
     val keyboard = LocalSoftwareKeyboardController.current
@@ -136,8 +141,16 @@ fun NewSessionScreen(
     }
     var title by rememberSaveable { mutableStateOf(defaultTitle) }
     var editingTitle by rememberSaveable { mutableStateOf(false) }
-    var selectedDeviceId by rememberSaveable { mutableStateOf<String?>(null) }
-    var runtimeSelection by remember { mutableStateOf(NewSessionRuntimeSelectionState()) }
+    var selectedDeviceId by rememberSaveable { mutableStateOf(initialPreference?.connectorId) }
+    var runtimeSelection by remember {
+        mutableStateOf(
+            NewSessionRuntimeSelectionState(
+                connectorId = initialPreference?.connectorId,
+                selectedRuntimeId = initialPreference?.runtimeId,
+                selectionHints = initialPreference?.selections.orEmpty(),
+            ),
+        )
+    }
     var selectedWorkspacePath by rememberSaveable { mutableStateOf("~") }
     var homePath by rememberSaveable { mutableStateOf<String?>(null) }
     var choosePath by rememberSaveable { mutableStateOf(false) }
@@ -149,9 +162,11 @@ fun NewSessionScreen(
     var workspaceListExpanded by rememberSaveable { mutableStateOf(true) }
     BackHandler { navigate(AppDestination.Sessions) }
 
-    LaunchedEffect(devices) {
-        if (devices.none { it.id == selectedDeviceId }) {
+    LaunchedEffect(devices, sessionsState.hasLoaded) {
+        if (devices.isNotEmpty() && devices.none { it.id == selectedDeviceId }) {
             selectedDeviceId = devices.firstOrNull()?.id
+        } else if (devices.isEmpty() && sessionsState.hasLoaded) {
+            selectedDeviceId = null
         }
     }
 
@@ -174,12 +189,69 @@ fun NewSessionScreen(
             }
     }
 
-    LaunchedEffect(selectedDevice?.id) {
+    suspend fun loadRuntimeDetails() {
+        val connectorId = runtimeSelection.connectorId ?: return
+        val runtimeId = runtimeSelection.selectedRuntimeId ?: return
+        runtimeSelection = runtimeSelection.beginRuntimeDetails()
+        val requestKey = runtimeSelection.requestKey ?: return
+        val capabilities = onLoadRuntimeCapabilities(connectorId, runtimeId).getOrElse {
+            runtimeSelection = runtimeSelection.failCapabilities(
+                requestKey,
+                context.getString(R.string.new_session_capabilities_failed),
+            )
+            return
+        }
+        runtimeSelection = runtimeSelection.applyCapabilities(requestKey, capabilities)
+        if (runtimeSelection.requestKey != requestKey) return
+
+        coroutineScope {
+            val modelRequest = if (runtimeSelection.canUseModelCatalog) {
+                async { onLoadModelCatalog(connectorId, runtimeId) }
+            } else {
+                null
+            }
+            val permissionRequest = if (runtimeSelection.canUsePermissionCatalog) {
+                async { onLoadPermissionCatalog(connectorId, runtimeId) }
+            } else {
+                null
+            }
+            modelRequest?.await()
+                ?.onSuccess { catalog ->
+                    runtimeSelection = runtimeSelection.applyModelCatalog(requestKey, catalog)
+                }
+                ?.onFailure {
+                    runtimeSelection = runtimeSelection.failModelCatalog(
+                        requestKey,
+                        context.getString(R.string.new_session_model_catalog_failed),
+                    )
+                }
+            permissionRequest?.await()
+                ?.onSuccess { catalog ->
+                    runtimeSelection = runtimeSelection.applyPermissionCatalog(requestKey, catalog)
+                }
+                ?.onFailure {
+                    runtimeSelection = runtimeSelection.failPermissionCatalog(
+                        requestKey,
+                        context.getString(R.string.new_session_permission_catalog_failed),
+                    )
+                }
+        }
+    }
+
+    LaunchedEffect(selectedDevice?.id, sessionsState.hasLoaded) {
         val connectorId = selectedDevice?.id
         if (connectorId == null) {
-            runtimeSelection = NewSessionRuntimeSelectionState()
+            if (sessionsState.hasLoaded) {
+                runtimeSelection = NewSessionRuntimeSelectionState()
+            }
         } else {
             loadRuntimeInventory(connectorId)
+        }
+    }
+
+    LaunchedEffect(selectedDevice?.id, selectedRuntime?.id) {
+        if (selectedDevice != null && selectedRuntime != null) {
+            loadRuntimeDetails()
         }
     }
 
@@ -254,10 +326,7 @@ fun NewSessionScreen(
     val effectiveWorkspacePath = if (choosePath) currentPath else selectedWorkspacePath
     val canStart = selectedDevice != null &&
         selectedRuntime != null &&
-        selectedRuntime.present &&
-        selectedRuntime.configured &&
-        selectedRuntime.active &&
-        selectedRuntime.status == DeviceRuntimeStatus.Running &&
+        runtimeSelection.readyForCreate &&
         effectiveWorkspacePath.isNotBlank() &&
         (!choosePath || (!pathLoading && canUseCurrentPath))
 
@@ -271,6 +340,11 @@ fun NewSessionScreen(
         val device = selectedDevice ?: return
         val runtime = selectedRuntime ?: return
         if (!canStart) return
+        preferenceStore.save(
+            connectorId = device.id,
+            runtimeId = runtime.id,
+            selections = runtimeSelection.selections,
+        )
         onPrepareSession(
             NewSessionDraft(
                 connectorId = device.id,
@@ -284,6 +358,7 @@ fun NewSessionScreen(
                 runtimeId = runtime.id,
                 runtimeType = runtime.type,
                 runtimeName = runtime.name,
+                selections = runtimeSelection.selections,
             ),
         )
     }
@@ -340,6 +415,62 @@ fun NewSessionScreen(
                             }
                         },
                     )
+                }
+
+                val showModelSelectors = selectedRuntime != null && (
+                    !runtimeSelection.capabilities.fresh ||
+                        runtimeSelection.canUseModelCatalog ||
+                        runtimeSelection.modelCatalog.data != null
+                    )
+                if (showModelSelectors) {
+                    val modelLoading = !runtimeSelection.capabilities.loaded ||
+                        runtimeSelection.capabilities.loading ||
+                        runtimeSelection.modelCatalog.loading
+                    val modelOptions = runtimeSelection.modelCatalog.data?.models.orEmpty()
+                    val modelEnabled = runtimeSelection.modelCatalog.fresh && modelOptions.any { it.enabled }
+                    val selectedModel = runtimeSelection.selectedModel
+                    val selectedReasoning = runtimeSelection.selectedReasoning
+                    val reasoningOptions = selectedModel?.reasoningItems
+                        ?.filter { it.enabled && it.id.isNotBlank() && it.selectionId.isNotBlank() }
+                        .orEmpty()
+                    val modelValue = when {
+                        modelLoading -> stringResource(R.string.new_session_catalog_loading)
+                        selectedModel != null -> selectedModel.displayName
+                        runtimeSelection.modelCatalog.errorMessage != null ->
+                            stringResource(R.string.new_session_catalog_unavailable)
+                        else -> stringResource(R.string.new_session_catalog_unavailable)
+                    }
+                    val effortValue = when {
+                        modelLoading -> stringResource(R.string.new_session_catalog_loading)
+                        selectedReasoning != null -> selectedReasoning.displayName
+                        reasoningOptions.isEmpty() -> stringResource(R.string.session_runtime_effort_default)
+                        else -> stringResource(R.string.new_session_catalog_unavailable)
+                    }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(58.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        RuntimeSelectPill(
+                            label = stringResource(R.string.new_session_model),
+                            value = modelValue,
+                            icon = Lucide.Bot,
+                            darkMode = darkMode,
+                            modifier = Modifier.weight(1f),
+                            enabled = modelEnabled,
+                            onClick = { sheet = NewSessionSheet.Model },
+                        )
+                        RuntimeSelectPill(
+                            label = stringResource(R.string.new_session_reasoning),
+                            value = effortValue,
+                            icon = Lucide.Sparkles,
+                            darkMode = darkMode,
+                            modifier = Modifier.weight(1f),
+                            enabled = runtimeSelection.modelCatalog.fresh && reasoningOptions.isNotEmpty(),
+                            onClick = { sheet = NewSessionSheet.Reasoning },
+                        )
+                    }
                 }
 
                 if (choosePath) {
@@ -434,6 +565,14 @@ fun NewSessionScreen(
                     selectedRuntime?.configured == false -> stringResource(R.string.device_runtime_not_configured)
                     selectedRuntime?.active == false -> stringResource(R.string.new_session_runtime_inactive)
                     selectedRuntime?.detailMessage != null -> selectedRuntime.detailMessage
+                    runtimeSelection.capabilities.errorMessage != null ->
+                        stringResource(R.string.new_session_capabilities_failed)
+                    runtimeSelection.modelCatalog.errorMessage != null ->
+                        stringResource(R.string.new_session_model_catalog_failed)
+                    runtimeSelection.permissionCatalog.errorMessage != null ->
+                        stringResource(R.string.new_session_permission_catalog_failed)
+                    runtimeSelection.modelCatalog.stale || runtimeSelection.permissionCatalog.stale ->
+                        stringResource(R.string.new_session_catalog_stale)
                     else -> null
                 }
                 val error = runtimeError
@@ -463,6 +602,14 @@ fun NewSessionScreen(
                                             runtimeSelection.runtimes.isEmpty()
                                         ) {
                                             loadRuntimeInventory(selectedDevice.id)
+                                        } else if (
+                                            runtimeSelection.capabilities.errorMessage != null ||
+                                            runtimeSelection.modelCatalog.errorMessage != null ||
+                                            runtimeSelection.permissionCatalog.errorMessage != null ||
+                                            runtimeSelection.modelCatalog.stale ||
+                                            runtimeSelection.permissionCatalog.stale
+                                        ) {
+                                            loadRuntimeDetails()
                                         }
                                     }
                                 },
@@ -504,6 +651,26 @@ fun NewSessionScreen(
             },
             onSelect = { runtime ->
                 runtimeSelection = runtimeSelection.selectRuntime(runtime.id)
+                sheet = null
+            },
+        )
+        NewSessionSheet.Model -> ModelPickerSheet(
+            models = runtimeSelection.modelCatalog.data?.models.orEmpty(),
+            selectedModelId = runtimeSelection.selectedModelId,
+            darkMode = darkMode,
+            onDismiss = { sheet = null },
+            onSelect = { model ->
+                runtimeSelection = runtimeSelection.selectModel(model.id)
+                sheet = null
+            },
+        )
+        NewSessionSheet.Reasoning -> ReasoningPickerSheet(
+            reasoning = runtimeSelection.selectedModel?.reasoningItems.orEmpty(),
+            selectedReasoningId = runtimeSelection.selectedReasoningId,
+            darkMode = darkMode,
+            onDismiss = { sheet = null },
+            onSelect = { effort ->
+                runtimeSelection = runtimeSelection.selectReasoning(effort.id)
                 sheet = null
             },
         )
@@ -1289,6 +1456,75 @@ private fun RuntimePickerSheet(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
+private fun ModelPickerSheet(
+    models: List<NewSessionModel>,
+    selectedModelId: String?,
+    darkMode: Boolean,
+    onDismiss: () -> Unit,
+    onSelect: (NewSessionModel) -> Unit,
+) {
+    PickerSheet(title = stringResource(R.string.new_session_choose_model), darkMode = darkMode, onDismiss = onDismiss) {
+        if (models.isEmpty()) {
+            SheetEmptyText(stringResource(R.string.new_session_model_catalog_unavailable), darkMode)
+        } else {
+            LazyColumn(modifier = Modifier.heightIn(max = 420.dp)) {
+                items(models, key = { it.id }) { model ->
+                    val enabled = model.enabled && (
+                        model.selectionId?.isNotBlank() == true ||
+                            model.reasoningItems.any { it.enabled && it.selectionId.isNotBlank() }
+                        )
+                    SheetChoiceRow(
+                        title = model.displayName,
+                        subtitle = if (enabled) model.description.orEmpty() else model.disabledReason.orEmpty(),
+                        selected = model.id == selectedModelId,
+                        darkMode = darkMode,
+                        icon = Lucide.Bot,
+                        enabled = enabled,
+                        onClick = { onSelect(model) },
+                    )
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ReasoningPickerSheet(
+    reasoning: List<NewSessionReasoning>,
+    selectedReasoningId: String?,
+    darkMode: Boolean,
+    onDismiss: () -> Unit,
+    onSelect: (NewSessionReasoning) -> Unit,
+) {
+    PickerSheet(
+        title = stringResource(R.string.new_session_choose_reasoning),
+        darkMode = darkMode,
+        onDismiss = onDismiss,
+    ) {
+        if (reasoning.isEmpty()) {
+            SheetEmptyText(stringResource(R.string.new_session_catalog_unavailable), darkMode)
+        } else {
+            LazyColumn(modifier = Modifier.heightIn(max = 420.dp)) {
+                items(reasoning, key = { it.id }) { effort ->
+                    val enabled = effort.enabled && effort.id.isNotBlank() && effort.selectionId.isNotBlank()
+                    SheetChoiceRow(
+                        title = effort.displayName,
+                        subtitle = if (enabled) effort.description.orEmpty() else effort.disabledReason.orEmpty(),
+                        selected = effort.id == selectedReasoningId,
+                        darkMode = darkMode,
+                        icon = Lucide.Sparkles,
+                        enabled = enabled,
+                        onClick = { onSelect(effort) },
+                    )
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
 private fun PickerSheet(
     title: String,
     darkMode: Boolean,
@@ -1340,6 +1576,7 @@ private fun SheetChoiceRow(
     selected: Boolean,
     darkMode: Boolean,
     icon: ImageVector,
+    enabled: Boolean = true,
     onClick: () -> Unit,
 ) {
     Row(
@@ -1347,7 +1584,7 @@ private fun SheetChoiceRow(
             .fillMaxWidth()
             .height(56.dp)
             .clip(RoundedCornerShape(14.dp))
-            .noRippleClickable(onClick = onClick)
+            .then(if (enabled) Modifier.noRippleClickable(onClick = onClick) else Modifier)
             .padding(horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(14.dp),
@@ -1361,7 +1598,7 @@ private fun SheetChoiceRow(
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = title,
-                color = LocalAAColors.current.ink,
+                color = LocalAAColors.current.ink.copy(alpha = if (enabled) 1f else 0.42f),
                 fontSize = 16.sp,
                 fontWeight = FontWeight.Bold,
                 maxLines = 1,
@@ -1370,7 +1607,8 @@ private fun SheetChoiceRow(
             if (subtitle.isNotBlank()) {
                 Text(
                     text = subtitle,
-                    color = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF777777),
+                    color = (if (darkMode) Color(0xFFA1A1AA) else Color(0xFF777777))
+                        .copy(alpha = if (enabled) 1f else 0.58f),
                     fontSize = 12.sp,
                     fontWeight = FontWeight.SemiBold,
                     maxLines = 1,
@@ -1398,6 +1636,8 @@ private fun SheetEmptyText(message: String, darkMode: Boolean) {
 private enum class NewSessionSheet {
     Device,
     Agent,
+    Model,
+    Reasoning,
 }
 
 @Composable
