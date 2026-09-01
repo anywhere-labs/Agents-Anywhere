@@ -15,7 +15,7 @@ internal fun RemoteSession.toAgentSession(devicesById: Map<String, AgentDevice>)
     val displayTitle = title?.takeIf { it.isNotBlank() }
         ?: externalSessionId?.takeIf { it.isNotBlank() }
         ?: "Untitled session"
-    val activityAt = lastActivityAt ?: lastItemAt ?: sortAt ?: sourceObservedAt ?: lastSyncedAt
+    val activityAt = sortAt ?: lastActivityAt ?: lastItemAt ?: lastSyncedAt ?: sourceObservedAt
     val runtimeLabels = runtimeInstanceLabels(runtimeName, runtimeType)
     val deviceName = devicesById[connectorId]?.name ?: connectorId.take(8).ifBlank { "Device" }
     val metaParts = listOfNotNull(
