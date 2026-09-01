@@ -1182,7 +1182,7 @@ fun SessionDetailScreen(
         val id = sessionId.orEmpty()
         openInteractions.filter { it.blocksSession(id) }
     }
-    val runtimeBlocksInput = runtimeStatus in setOf(
+    val runtimeBlocksSubmission = runtimeStatus in setOf(
         SessionRuntimeStatus.Waiting,
         SessionRuntimeStatus.Pending,
         SessionRuntimeStatus.Running,
@@ -1202,11 +1202,13 @@ fun SessionDetailScreen(
             canSendMessage = canUseSendMessage,
             canSteer = canUseSteer,
             canUseCommands = canUseCommands,
-        ) && !runtimeBlocksInput && blockingNotices.isEmpty()
+        )
     }
     val commandMode = commandRequested && inputEnabled
     val attachmentsReady = attachments.all { it.uploadState == AttachmentUploadState.Uploaded }
     val canSend = inputEnabled &&
+        !runtimeBlocksSubmission &&
+        blockingNotices.isEmpty() &&
         !state.sending &&
         !preparedSessionCreating &&
         !state.commandExecuting &&
