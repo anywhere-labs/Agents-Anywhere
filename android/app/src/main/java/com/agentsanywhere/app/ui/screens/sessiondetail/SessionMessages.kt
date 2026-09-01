@@ -1,7 +1,12 @@
 package com.agentsanywhere.app.ui.screens.sessiondetail
 
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.border
 import androidx.compose.foundation.background
 import androidx.compose.foundation.Image
@@ -44,6 +49,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
@@ -845,16 +853,44 @@ private fun WorkingIndicator(label: String) {
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        CircularProgressIndicator(
-            color = muted,
-            strokeWidth = 2.dp,
-            modifier = Modifier.size(16.dp),
-        )
+        WorkingSpinner(color = muted)
         Text(
             text = label,
             color = muted,
             fontSize = 13.sp,
             fontWeight = FontWeight.Bold,
+        )
+    }
+}
+
+@Composable
+private fun WorkingSpinner(color: Color) {
+    val transition = rememberInfiniteTransition(label = "agent-working")
+    val rotation by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 1_600, easing = LinearEasing),
+        ),
+        label = "agent-working-rotation",
+    )
+
+    Canvas(
+        modifier = Modifier
+            .size(16.dp)
+            .graphicsLayer { rotationZ = rotation },
+    ) {
+        val strokeWidth = 2.dp.toPx()
+        drawCircle(
+            color = color.copy(alpha = 0.24f),
+            style = Stroke(width = strokeWidth),
+        )
+        drawArc(
+            color = color,
+            startAngle = -90f,
+            sweepAngle = 100f,
+            useCenter = false,
+            style = Stroke(width = strokeWidth, cap = StrokeCap.Round),
         )
     }
 }

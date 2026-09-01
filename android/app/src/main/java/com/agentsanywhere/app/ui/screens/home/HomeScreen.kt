@@ -1470,11 +1470,11 @@ internal fun SessionStatusIndicator(indicator: SessionListIndicator) {
                 modifier = Modifier
                     .clip(CircleShape)
                     .background(colors.raisedSurface)
-                    .padding(horizontal = 10.dp, vertical = 4.dp),
+                    .padding(horizontal = 12.dp, vertical = 5.dp),
                 color = colors.inkSoft,
-                fontSize = 12.sp,
+                fontSize = 12.5.sp,
                 fontWeight = FontWeight.Medium,
-                lineHeight = 17.sp,
+                lineHeight = 18.sp,
                 maxLines = 1,
             )
         }
