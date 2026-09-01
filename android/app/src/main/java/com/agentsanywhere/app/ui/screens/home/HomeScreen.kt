@@ -1446,11 +1446,11 @@ internal fun SessionStatusIndicator(indicator: SessionListIndicator) {
                 modifier = Modifier
                     .clip(CircleShape)
                     .background(colors.sessionStatusAccent.copy(alpha = 0.18f))
-                    .padding(horizontal = 8.dp, vertical = 3.dp),
+                    .padding(horizontal = 10.dp, vertical = 4.dp),
                 color = colors.sessionStatusAccentText,
-                fontSize = 11.sp,
+                fontSize = 12.sp,
                 fontWeight = FontWeight.Medium,
-                lineHeight = 16.sp,
+                lineHeight = 17.sp,
                 maxLines = 1,
             )
         }
@@ -1483,11 +1483,11 @@ private fun SessionBusyIndicator(description: String) {
 
     Canvas(
         modifier = Modifier
-            .size(16.dp)
+            .size(20.dp)
             .semantics { contentDescription = description }
             .graphicsLayer { rotationZ = rotation },
     ) {
-        val strokeWidth = 2.dp.toPx()
+        val strokeWidth = 2.2.dp.toPx()
         drawCircle(
             color = colors.ink.copy(alpha = 0.16f),
             style = Stroke(width = strokeWidth),
@@ -1509,7 +1509,7 @@ private fun SessionUnreadIndicator(
 ) {
     Box(
         modifier = Modifier
-            .size(14.dp)
+            .size(18.dp)
             .clip(CircleShape)
             .background(color.copy(alpha = 0.14f))
             .semantics { contentDescription = description },
@@ -1517,7 +1517,7 @@ private fun SessionUnreadIndicator(
     ) {
         Box(
             modifier = Modifier
-                .size(7.dp)
+                .size(9.dp)
                 .clip(CircleShape)
                 .background(color),
         )
