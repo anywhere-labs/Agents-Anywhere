@@ -1254,7 +1254,8 @@ private fun ReasoningSection(
     listState: LazyListState,
     embedded: Boolean = false,
 ) {
-    val muted = LocalAAColors.current.muted
+    val colors = LocalAAColors.current
+    val muted = colors.muted
     val segments = message.reasoningSegments.ifEmpty { listOfNotNull(message.text.takeIf(String::isNotBlank)) }
     val inlineSummary = segments.singleOrNull()?.let(::inlineReasoningSummary)
     val title = when {
@@ -1306,7 +1307,7 @@ private fun ReasoningSection(
             Text(
                 text = title,
                 modifier = Modifier.weight(1f),
-                color = muted,
+                color = colors.ink,
                 fontSize = 13.sp,
                 fontWeight = FontWeight.Medium,
                 fontFamily = FontFamily.Monospace,
