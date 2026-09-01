@@ -45,7 +45,14 @@ internal fun mergeRemoteTimelineItems(
         item.toTimelineMessages().map { it.copy(orderSeq = orderSeq) }
     }
     val messages = if (replace) {
-        reconcileDshAssistantActivity(sortTimelineMessages(incomingMessages, orderingItems))
+        val previewAwareIncoming = incomingMessages.map { incomingMessage ->
+            val previousVersions = currentMessages.filter { previousMessage ->
+                previousMessage.sourceItemId == incomingMessage.sourceItemId ||
+                    incomingMessage.clientMessageId?.let { it == previousMessage.clientMessageId } == true
+            }
+            incomingMessage.inheritLocalAttachmentPreviews(previousVersions)
+        }
+        reconcileDshAssistantActivity(sortTimelineMessages(previewAwareIncoming, orderingItems))
     } else {
         mergeTimelineMessages(currentMessages, incomingMessages, orderingItems)
     }
@@ -583,7 +590,9 @@ internal fun mergeTimelineMessages(
         val currentUpdatedSeq = currentGroup.maxOf { it.updatedSeq }
         val incomingUpdatedSeq = incomingGroup.maxOf { it.updatedSeq }
         if (incomingRevision > currentRevision || incomingUpdatedSeq >= currentUpdatedSeq) {
-            incomingGroup
+            incomingGroup.map { incomingMessage ->
+                incomingMessage.inheritLocalAttachmentPreviews(currentGroup)
+            }
         } else {
             currentGroup
         }
@@ -649,12 +658,42 @@ internal fun mergeOptimisticTimelineMessages(
         .associateBy { it.id }
         .values
         .toList()
+    val reconciledReal = real.map { realMessage ->
+        val optimisticMessage = optimistic.firstOrNull { candidate ->
+            realMessage.matchesClientMessage(candidate.id)
+        }
+        if (optimisticMessage == null) {
+            realMessage
+        } else {
+            realMessage.inheritLocalAttachmentPreviews(listOf(optimisticMessage))
+        }
+    }
     val pending = optimistic.filter { optimisticMessage ->
         real.none { realMessage -> realMessage.matchesClientMessage(optimisticMessage.id) }
     }
     return OptimisticTimelineMerge(
-        messages = sortTimelineMessages(real + pending, orderingItems),
+        messages = sortTimelineMessages(reconciledReal + pending, orderingItems),
         pending = pending,
+    )
+}
+
+private fun TimelineMessage.inheritLocalAttachmentPreviews(
+    previousMessages: List<TimelineMessage>,
+): TimelineMessage {
+    if (attachments.isEmpty()) return this
+    val previousByFileId = previousMessages
+        .flatMap(TimelineMessage::attachments)
+        .associateBy(TimelineAttachment::fileId)
+    if (previousByFileId.isEmpty()) return this
+    return copy(
+        attachments = attachments.map { attachment ->
+            val previousPreview = previousByFileId[attachment.fileId]?.localPreviewUri
+            if (attachment.localPreviewUri != null || previousPreview == null) {
+                attachment
+            } else {
+                attachment.copy(localPreviewUri = previousPreview)
+            }
+        },
     )
 }
 

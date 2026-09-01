@@ -667,12 +667,17 @@ fun SessionDetailScreen(
                 return@launch
             }
             val uploadedAttachments = pendingAttachments.mapNotNull { it.remote }
+            val optimisticAttachments = pendingAttachments.mapNotNull { attachment ->
+                attachment.remote?.copy(
+                    localPreviewUri = attachment.uri.toString().takeIf { attachment.isImage },
+                )
+            }
             state = controller.addOptimisticMessage(
                 sessionId = id,
                 state = state,
                 text = text,
                 clientMessageId = clientMessageId,
-                attachments = uploadedAttachments,
+                attachments = optimisticAttachments,
                 retryAction = requestAction,
             )
             unfocusComposer()
@@ -700,7 +705,7 @@ fun SessionDetailScreen(
                         state = state,
                         clientMessageId = clientMessageId,
                         status = "running",
-                        attachments = result.attachments,
+                        attachments = optimisticAttachments.ifEmpty { result.attachments },
                     )
                 }
                 .onFailure { error ->

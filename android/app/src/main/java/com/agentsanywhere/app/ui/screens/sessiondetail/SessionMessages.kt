@@ -116,7 +116,10 @@ internal sealed interface TimelineRenderItem {
     val messages: List<TimelineMessage>
 
     data class Single(val message: TimelineMessage) : TimelineRenderItem {
-        override val key: String = message.id
+        override val key: String = message.clientMessageId
+            ?.takeIf(String::isNotBlank)
+            ?.let { "message:$it" }
+            ?: message.id
         override val messages: List<TimelineMessage> = listOf(message)
     }
 

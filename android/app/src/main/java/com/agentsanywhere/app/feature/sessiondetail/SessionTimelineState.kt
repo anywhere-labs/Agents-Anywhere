@@ -70,6 +70,7 @@ data class TimelineAttachment(
     val mediaType: String,
     val size: Long,
     val sha256: String? = null,
+    val localPreviewUri: String? = null,
 ) {
     val isImage: Boolean
         get() = mediaType.startsWith("image/")

@@ -103,6 +103,7 @@ internal fun RemoteAttachmentImage(
 ) {
     AttachmentImage(
         model = rememberAttachmentImageRequest(sessionId, controller, attachment),
+        previewModel = attachment.localPreviewUri?.let(Uri::parse),
         name = attachment.name,
         modifier = modifier,
         contentScale = contentScale,
@@ -175,19 +176,65 @@ internal fun formatBytes(size: Long): String {
 @Composable
 private fun AttachmentImage(
     model: Any?,
+    previewModel: Any? = null,
     name: String,
     modifier: Modifier,
     contentScale: ContentScale,
     fallbackColor: Color = Color(0xFFA1A1AA),
 ) {
-    if (model == null) {
+    val displayModel = model ?: previewModel
+    if (displayModel == null) {
         ImageFallback(name = name, fallbackColor = fallbackColor, modifier = modifier)
         return
     }
     SubcomposeAsyncImage(
-        model = model,
+        model = displayModel,
         contentDescription = name,
         modifier = modifier,
+        contentScale = contentScale,
+        loading = {
+            if (previewModel == null || displayModel == previewModel) {
+                ImageLoadingPlaceholder(Modifier.fillMaxSize())
+            } else {
+                LocalAttachmentPreview(
+                    model = previewModel,
+                    name = name,
+                    contentScale = contentScale,
+                    fallbackColor = fallbackColor,
+                )
+            }
+        },
+        error = {
+            if (previewModel == null || displayModel == previewModel) {
+                ImageFallback(
+                    name = name,
+                    fallbackColor = fallbackColor,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            } else {
+                LocalAttachmentPreview(
+                    model = previewModel,
+                    name = name,
+                    contentScale = contentScale,
+                    fallbackColor = fallbackColor,
+                )
+            }
+        },
+        success = { SubcomposeAsyncImageContent() },
+    )
+}
+
+@Composable
+private fun LocalAttachmentPreview(
+    model: Any,
+    name: String,
+    contentScale: ContentScale,
+    fallbackColor: Color,
+) {
+    SubcomposeAsyncImage(
+        model = model,
+        contentDescription = name,
+        modifier = Modifier.fillMaxSize(),
         contentScale = contentScale,
         loading = { ImageLoadingPlaceholder(Modifier.fillMaxSize()) },
         error = {
