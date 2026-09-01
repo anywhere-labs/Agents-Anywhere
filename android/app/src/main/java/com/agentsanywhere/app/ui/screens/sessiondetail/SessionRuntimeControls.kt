@@ -36,6 +36,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.agentsanywhere.app.R
@@ -116,18 +117,26 @@ internal fun RuntimeNoticeCard(
     modifier: Modifier = Modifier,
     compact: Boolean = false,
     notificationOnly: Boolean = false,
+    composerAdjacent: Boolean = false,
 ) {
     val colors = LocalAAColors.current
     val destructive = notice.severity == "error" || notice.status == "failed"
     val warning = notice.severity == "warning"
     val success = notice.severity == "success"
-    val accent = when {
+    val semanticAccent = when {
         destructive -> colors.errorIcon
         warning -> colors.noticeWarning
         success -> colors.noticeSuccess
         else -> colors.muted
     }
-    val cardShape = RoundedCornerShape(if (compact) 12.dp else 16.dp)
+    val accent = if (composerAdjacent && !destructive) colors.muted else semanticAccent
+    val cardShape = RoundedCornerShape(
+        when {
+            composerAdjacent -> 22.dp
+            compact -> 12.dp
+            else -> 16.dp
+        },
+    )
     var selectedActionId by remember(notice.noticeId) { mutableStateOf<String?>(null) }
     var rawValues by remember(notice.noticeId, selectedActionId) { mutableStateOf(emptyMap<String, String>()) }
     var validationError by remember(notice.noticeId, selectedActionId) { mutableStateOf<String?>(null) }
@@ -150,15 +159,32 @@ internal fun RuntimeNoticeCard(
             .clip(cardShape)
             .background(
                 when {
+                    composerAdjacent -> colors.raisedSurface
                     destructive -> colors.errorIcon.copy(alpha = 0.06f)
-                    warning -> accent.copy(alpha = 0.05f)
-                    success -> accent.copy(alpha = 0.05f)
+                    warning -> semanticAccent.copy(alpha = 0.05f)
+                    success -> semanticAccent.copy(alpha = 0.05f)
                     else -> colors.canvas
                 },
             )
-            .border(1.dp, if (notice.severity == "info") colors.border else accent.copy(alpha = 0.32f), cardShape)
-            .padding(if (compact) 12.dp else 14.dp),
-        verticalArrangement = Arrangement.spacedBy(11.dp),
+            .then(
+                if (composerAdjacent) {
+                    Modifier
+                } else {
+                    Modifier.border(
+                        1.dp,
+                        if (notice.severity == "info") colors.border else semanticAccent.copy(alpha = 0.32f),
+                        cardShape,
+                    )
+                },
+            )
+            .padding(
+                when {
+                    composerAdjacent -> 16.dp
+                    compact -> 12.dp
+                    else -> 14.dp
+                },
+            ),
+        verticalArrangement = Arrangement.spacedBy(if (composerAdjacent) 14.dp else 11.dp),
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -191,60 +217,59 @@ internal fun RuntimeNoticeCard(
         }
 
         if (!notificationOnly && notice.actions.isNotEmpty()) {
-            FlowRow(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                notice.actions.forEach { action ->
-                    val primary = action.style == "primary"
-                    val danger = action.style == "danger"
-                    TextButton(
-                        onClick = {
-                            if (action.inputFields().isNotEmpty()) {
-                                selectedActionId = action.actionId
-                                validationError = null
-                            } else {
-                                selectedActionId = action.actionId
-                                submit(action)
-                            }
-                        },
-                        enabled = !disabled,
-                        modifier = Modifier
-                            .heightIn(min = 34.dp)
-                            .clip(RoundedCornerShape(9.dp))
-                            .background(if (primary) colors.ink else Color.Transparent)
-                            .border(1.dp, if (primary) colors.ink else colors.border, RoundedCornerShape(9.dp)),
-                    ) {
-                        if (busy && selectedActionId == action.actionId) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(14.dp),
-                                strokeWidth = 2.dp,
-                                color = if (primary) colors.canvas else colors.ink,
-                            )
-                            Spacer(Modifier.size(6.dp))
-                        } else {
-                            Icon(
-                                imageVector = noticeActionIcon(action.actionId),
-                                contentDescription = null,
-                                tint = when {
-                                    primary -> colors.canvas
-                                    danger -> colors.errorIcon
-                                    else -> colors.ink
-                                },
-                                modifier = Modifier.size(14.dp),
-                            )
-                            Spacer(Modifier.size(6.dp))
-                        }
-                        Text(
-                            text = action.label.ifBlank { action.actionId },
-                            color = when {
-                                primary -> colors.canvas
-                                danger -> colors.errorIcon
-                                else -> colors.ink
+            val orderedActions = notice.actions.sortedBy { action ->
+                when (action.actionId) {
+                    "reject", "cancel", "dismiss" -> 0
+                    "approve_for_session" -> 1
+                    "approve" -> 2
+                    else -> if (action.style == "primary") 2 else 1
+                }
+            }
+            if (composerAdjacent && orderedActions.size <= 3) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    orderedActions.forEach { action ->
+                        RuntimeNoticeActionButton(
+                            action = action,
+                            busy = busy && selectedActionId == action.actionId,
+                            enabled = !disabled,
+                            composerAdjacent = true,
+                            onClick = {
+                                if (action.inputFields().isNotEmpty()) {
+                                    selectedActionId = action.actionId
+                                    validationError = null
+                                } else {
+                                    selectedActionId = action.actionId
+                                    submit(action)
+                                }
                             },
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                }
+            } else {
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    orderedActions.forEach { action ->
+                        RuntimeNoticeActionButton(
+                            action = action,
+                            busy = busy && selectedActionId == action.actionId,
+                            enabled = !disabled,
+                            composerAdjacent = false,
+                            onClick = {
+                                if (action.inputFields().isNotEmpty()) {
+                                    selectedActionId = action.actionId
+                                    validationError = null
+                                } else {
+                                    selectedActionId = action.actionId
+                                    submit(action)
+                                }
+                            },
                         )
                     }
                 }
@@ -269,6 +294,78 @@ internal fun RuntimeNoticeCard(
 
         errorMessage?.let { Text(it, color = colors.errorIcon, fontSize = 12.sp) }
     }
+}
+
+@Composable
+private fun RuntimeNoticeActionButton(
+    action: RuntimeNoticeAction,
+    busy: Boolean,
+    enabled: Boolean,
+    composerAdjacent: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val colors = LocalAAColors.current
+    val primary = action.style == "primary"
+    val danger = action.style == "danger"
+    val shape = RoundedCornerShape(if (composerAdjacent) 13.dp else 9.dp)
+    val background = when {
+        primary -> colors.primaryAction
+        composerAdjacent -> colors.secondaryActionSurface
+        else -> Color.Transparent
+    }
+    val contentColor = when {
+        primary -> colors.onPrimaryAction
+        danger -> colors.errorText
+        else -> colors.ink
+    }
+
+    TextButton(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = modifier
+            .heightIn(min = if (composerAdjacent) 44.dp else 34.dp)
+            .clip(shape)
+            .background(background)
+            .then(
+                if (composerAdjacent || primary) Modifier
+                else Modifier.border(1.dp, colors.border, shape),
+            ),
+    ) {
+        if (busy) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(14.dp),
+                strokeWidth = 2.dp,
+                color = contentColor,
+            )
+            Spacer(Modifier.size(6.dp))
+        } else if (!composerAdjacent) {
+            Icon(
+                imageVector = noticeActionIcon(action.actionId),
+                contentDescription = null,
+                tint = contentColor,
+                modifier = Modifier.size(14.dp),
+            )
+            Spacer(Modifier.size(6.dp))
+        }
+        Text(
+            text = localizedNoticeActionLabel(action),
+            color = contentColor,
+            fontSize = if (composerAdjacent) 13.sp else 12.sp,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+@Composable
+private fun localizedNoticeActionLabel(action: RuntimeNoticeAction): String = when (action.actionId) {
+    "approve" -> stringResource(R.string.session_approval_approve)
+    "approve_for_session" -> stringResource(R.string.session_approval_approve_session)
+    "reject" -> stringResource(R.string.session_approval_deny)
+    "cancel", "dismiss" -> stringResource(R.string.common_cancel)
+    else -> action.label.ifBlank { action.actionId }
 }
 
 private fun noticeActionIcon(actionId: String): ImageVector = when (actionId) {
@@ -296,7 +393,7 @@ internal fun BlockingRuntimeNoticeStack(
             .fillMaxWidth()
             .padding(start = 14.dp, end = 14.dp, top = (backing.size * 7).dp, bottom = 4.dp),
     ) {
-        backing.forEachIndexed { index, notice ->
+        backing.forEachIndexed { index, _ ->
             val depth = backing.size - index
             Box(
                 modifier = Modifier
@@ -308,12 +405,7 @@ internal fun BlockingRuntimeNoticeStack(
                         alpha = 1f - depth * 0.16f
                     }
                     .clip(RoundedCornerShape(16.dp))
-                    .background(colors.canvas)
-                    .border(
-                        1.dp,
-                        if (notice.severity == "error") colors.errorIcon.copy(alpha = 0.25f) else colors.border,
-                        RoundedCornerShape(16.dp),
-                    ),
+                    .background(colors.raisedSurface),
             )
         }
         RuntimeNoticeCard(
@@ -322,6 +414,7 @@ internal fun BlockingRuntimeNoticeStack(
             actionsDisabled = !canRespond || respondingNoticeIds.isNotEmpty(),
             errorMessage = responseErrors[active.noticeId],
             onRespond = { action, input -> onRespond(active, action, input) },
+            composerAdjacent = true,
             modifier = Modifier
                 .heightIn(max = maxCardHeight)
                 .verticalScroll(rememberScrollState()),
