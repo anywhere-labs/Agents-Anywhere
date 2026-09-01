@@ -281,7 +281,7 @@
     <string name="new_session_choose_device">选择设备</string>
     <string name="new_session_choose_agent">选择 agent</string>
     <string name="new_session_no_online_agents">没有具备可用运行时的在线设备。</string>
-    <string name="new_session_no_attached_agents">这台设备没有可用的运行时。</string>
+    <string name="new_session_no_attached_agents">这台设备没有已配置且正在运行的 Agent。</string>
     <string name="new_session_home_directory">主目录</string>
     <string name="new_session_model">模型</string>
     <string name="new_session_reasoning">推理强度</string>

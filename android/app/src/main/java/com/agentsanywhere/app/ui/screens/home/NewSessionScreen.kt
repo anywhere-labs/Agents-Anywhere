@@ -257,6 +257,7 @@ fun NewSessionScreen(
         selectedRuntime.present &&
         selectedRuntime.configured &&
         selectedRuntime.active &&
+        selectedRuntime.status == DeviceRuntimeStatus.Running &&
         effectiveWorkspacePath.isNotBlank() &&
         (!choosePath || (!pathLoading && canUseCurrentPath))
 

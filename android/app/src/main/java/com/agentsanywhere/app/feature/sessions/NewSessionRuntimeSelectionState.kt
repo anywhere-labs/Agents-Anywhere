@@ -5,6 +5,7 @@ import com.agentsanywhere.app.api.RemoteRuntimeModelCatalogResponse
 import com.agentsanywhere.app.api.RemoteRuntimePermissionCatalogResponse
 import com.agentsanywhere.app.feature.devices.DeviceRuntime
 import com.agentsanywhere.app.feature.devices.DeviceRuntimeList
+import com.agentsanywhere.app.feature.devices.DeviceRuntimeStatus
 
 const val MODEL_CATALOG_CAPABILITY = "catalog.model"
 const val PERMISSION_CATALOG_CAPABILITY = "catalog.permission"
@@ -234,7 +235,9 @@ data class NewSessionRuntimeSelectionState(
     val readyForCreate: Boolean
         get() {
             val runtime = selectedRuntime ?: return false
-            if (!runtime.present || !runtime.configured || !runtime.active) return false
+            if (!runtime.present || !runtime.configured || !runtime.active || runtime.status != DeviceRuntimeStatus.Running) {
+                return false
+            }
             if (!capabilities.fresh) return false
             if (canUseModelCatalog) {
                 if (!modelCatalog.fresh) return false
@@ -265,11 +268,14 @@ data class NewSessionRuntimeSelectionState(
 
     fun replaceRuntimeInventory(result: DeviceRuntimeList): NewSessionRuntimeSelectionState {
         if (result.connectorId != connectorId) return this
+        val selectableRuntimes = result.runtimes.filter {
+            it.configured && it.status == DeviceRuntimeStatus.Running
+        }
         val nextRuntimeId = selectedRuntimeId
-            ?.takeIf { selected -> result.runtimes.any { it.id == selected } }
-            ?: result.runtimes.firstOrNull()?.id
+            ?.takeIf { selected -> selectableRuntimes.any { it.id == selected } }
+            ?: selectableRuntimes.firstOrNull()?.id
         val base = copy(
-            runtimes = result.runtimes,
+            runtimes = selectableRuntimes,
             runtimesLoading = false,
             runtimesErrorMessage = null,
         )

@@ -282,7 +282,7 @@
     <string name="new_session_choose_device">Choose device</string>
     <string name="new_session_choose_agent">Choose agent</string>
     <string name="new_session_no_online_agents">No online devices with available runtimes.</string>
-    <string name="new_session_no_attached_agents">No available runtime on this device.</string>
+    <string name="new_session_no_attached_agents">No configured and running agent on this device.</string>
     <string name="new_session_home_directory">Home directory</string>
     <string name="new_session_model">Model</string>
     <string name="new_session_reasoning">Reasoning</string>
