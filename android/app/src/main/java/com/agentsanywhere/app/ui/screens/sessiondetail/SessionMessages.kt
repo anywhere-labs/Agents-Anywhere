@@ -1320,6 +1320,7 @@ private fun ReasoningSection(
                     text = segments.joinToString("\n\n"),
                     darkMode = darkMode,
                     onOpenFile = {},
+                    compact = true,
                 )
             }
         }
