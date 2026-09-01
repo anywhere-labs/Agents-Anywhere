@@ -1145,8 +1145,13 @@ private fun ProfileDialogButton(
         modifier = modifier
             .height(46.dp)
             .clip(shape)
-            .background(if (primary) colors.primaryAction.copy(alpha = if (enabled) 1f else 0.42f) else Color.Transparent)
-            .then(if (primary) Modifier else Modifier.border(1.dp, colors.border, shape))
+            .background(
+                if (primary) {
+                    colors.primaryAction.copy(alpha = if (enabled) 1f else 0.42f)
+                } else {
+                    colors.secondaryActionSurface.copy(alpha = if (enabled) 1f else 0.42f)
+                },
+            )
             .noRippleClickable(enabled = enabled, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
