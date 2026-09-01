@@ -270,7 +270,7 @@ internal fun MessageList(
     var showScrollToBottom by remember { mutableStateOf(false) }
     var autoFollowLatest by remember(sessionId) { mutableStateOf(true) }
     var userPausedAutoFollow by remember(sessionId) { mutableStateOf(false) }
-    val scrollButtonBottomPadding = if (bottomContentPadding > 60.dp) bottomContentPadding - 28.dp else 24.dp
+    val scrollButtonBottomPadding = bottomContentPadding.coerceAtLeast(24.dp)
 
     fun releaseReadLock() {
         userPausedAutoFollow = false
