@@ -1497,6 +1497,7 @@ fun SessionDetailScreen(
                                 inputEnabled = inputEnabled,
                                 attachmentsEnabled = !isPreparedSession && inputEnabled && canUseAttachments && !commandMode,
                                 canSend = canSend,
+                                sending = state.sending,
                                 showInterrupt = showInterrupt,
                                 interrupting = state.interrupting,
                                 placeholder = placeholder,

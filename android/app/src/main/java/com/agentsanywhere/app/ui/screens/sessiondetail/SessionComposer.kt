@@ -94,6 +94,7 @@ internal fun MessageComposer(
     inputEnabled: Boolean,
     attachmentsEnabled: Boolean,
     canSend: Boolean,
+    sending: Boolean,
     showInterrupt: Boolean,
     interrupting: Boolean,
     placeholder: String,
@@ -199,6 +200,7 @@ internal fun MessageComposer(
                 takeoverBusy = takeoverBusy,
                 attachmentsEnabled = attachmentsEnabled,
                 canSend = canSend,
+                sending = sending,
                 showInterrupt = showInterrupt,
                 interrupting = interrupting,
                 onToggleTakeover = onToggleTakeover,
@@ -467,6 +469,7 @@ private fun ComposerActions(
     takeoverBusy: Boolean,
     attachmentsEnabled: Boolean,
     canSend: Boolean,
+    sending: Boolean,
     showInterrupt: Boolean,
     interrupting: Boolean,
     onToggleTakeover: () -> Unit,
@@ -483,14 +486,17 @@ private fun ComposerActions(
         darkMode -> Color(0xFFA1A1AA)
         else -> Color(0xFF3A3935)
     }
-    val canPressSend = canSend
-    val sendSurface = when {
+    val primaryActionEnabled = if (showInterrupt) !interrupting else canSend
+    val primaryActionBusy = sending || interrupting
+    val primaryActionSurface = when {
+        showInterrupt -> Color(0xFFEF4444)
         canSend && darkMode -> Color(0xFFFAFAFA)
         canSend -> Color(0xFF2B2B2B)
         darkMode -> Color(0xFF3F3F46)
         else -> Color(0xFFE2E0DC)
     }
-    val sendIcon = when {
+    val primaryActionIcon = when {
+        showInterrupt -> Color.White
         canSend && darkMode -> Color(0xFF09090B)
         canSend -> Color.White
         darkMode -> Color(0xFF71717A)
@@ -553,48 +559,35 @@ private fun ComposerActions(
                 )
             }
         }
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            if (showInterrupt) {
-                Box(
-                    modifier = Modifier
-                        .size(34.dp)
-                        .clip(CircleShape)
-                        .background(if (darkMode) Color.White else Color(0xFF09090B))
-                        .then(
-                            if (!interrupting) Modifier.noRippleClickable(onClick = onInterrupt) else Modifier,
-                        ),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    if (interrupting) {
-                        CircularProgressIndicator(
-                            color = if (darkMode) Color(0xFF09090B) else Color.White,
-                            strokeWidth = 2.dp,
-                            modifier = Modifier.size(17.dp),
+        Box(
+            modifier = Modifier
+                .size(34.dp)
+                .clip(CircleShape)
+                .background(primaryActionSurface)
+                .then(
+                    if (primaryActionEnabled) {
+                        Modifier.noRippleClickable(
+                            onClick = if (showInterrupt) onInterrupt else onSend,
                         )
                     } else {
-                        Box(
-                            modifier = Modifier
-                                .size(10.dp)
-                                .clip(RoundedCornerShape(2.dp))
-                                .background(if (darkMode) Color(0xFF09090B) else Color.White),
-                        )
-                    }
-                }
-            }
-            Box(
-                modifier = Modifier
-                    .size(34.dp)
-                    .clip(CircleShape)
-                    .background(sendSurface)
-                    .then(
-                        if (canPressSend) Modifier.noRippleClickable(onClick = onSend) else Modifier,
-                    ),
-                contentAlignment = Alignment.Center,
-            ) {
-                ArrowUpGlyph(sendIcon)
+                        Modifier
+                    },
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
+            when {
+                primaryActionBusy -> CircularProgressIndicator(
+                    color = primaryActionIcon,
+                    strokeWidth = 2.dp,
+                    modifier = Modifier.size(17.dp),
+                )
+                showInterrupt -> Box(
+                    modifier = Modifier
+                        .size(10.dp)
+                        .clip(RoundedCornerShape(2.dp))
+                        .background(primaryActionIcon),
+                )
+                else -> ArrowUpGlyph(primaryActionIcon)
             }
         }
     }
