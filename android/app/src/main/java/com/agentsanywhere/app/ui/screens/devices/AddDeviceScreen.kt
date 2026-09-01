@@ -1,9 +1,8 @@
-// Hallmark · pre-emit critique: P5 H5 E4 S5 R5 V5
+// Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V5
 // Hallmark · genre: modern-minimal · macrostructure: Workbench · tone: technical-austere
 package com.agentsanywhere.app.ui.screens.devices
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
@@ -46,11 +45,10 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
@@ -70,8 +68,9 @@ import com.composables.icons.lucide.Check
 import com.composables.icons.lucide.ChevronLeft
 import com.composables.icons.lucide.ChevronRight
 import com.composables.icons.lucide.Copy
+import com.composables.icons.lucide.LaptopMinimal
 import com.composables.icons.lucide.Lucide
-import com.composables.icons.lucide.Monitor
+import com.composables.icons.lucide.Terminal
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -211,7 +210,7 @@ fun AddDeviceScreen(
                             PairingInstructionsSection(
                                 credential = setupCredential,
                                 platform = selectedPlatform,
-                                onDesktopLinkCopied = { showStep(4) },
+                                onContinue = { showStep(4) },
                             )
                         }
                         4 -> {
@@ -331,7 +330,6 @@ private fun OperatingSystemStep(
     enabled: Boolean,
     onSelect: (PairingPlatform) -> Unit,
 ) {
-    val darkMode = LocalAAColors.current.canvas.luminance() < 0.5f
     StepTitle(
         title = stringResource(R.string.device_setup_os_title),
         description = stringResource(R.string.device_setup_os_description, deviceName),
@@ -341,42 +339,14 @@ private fun OperatingSystemStep(
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         OperatingSystemOption(
-            icon = { optionEnabled ->
-                val colors = LocalAAColors.current
-                Box(
-                    modifier = Modifier
-                        .size(38.dp)
-                        .clip(CircleShape)
-                        .background(colors.subtle),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        imageVector = Lucide.Monitor,
-                        contentDescription = null,
-                        tint = if (optionEnabled) colors.inkSoft else colors.faint,
-                        modifier = Modifier.size(18.dp),
-                    )
-                }
-            },
+            icon = Lucide.LaptopMinimal,
             title = stringResource(R.string.device_setup_os_desktop),
             description = stringResource(R.string.device_setup_os_desktop_description),
             enabled = enabled,
             onClick = { onSelect(PairingPlatform.Desktop) },
         )
         OperatingSystemOption(
-            icon = {
-                Image(
-                    painter = painterResource(
-                        if (darkMode) {
-                            R.drawable.device_icon_dark_linux_offline_3x
-                        } else {
-                            R.drawable.device_icon_light_linux_offline_3x
-                        },
-                    ),
-                    contentDescription = null,
-                    modifier = Modifier.size(38.dp),
-                )
-            },
+            icon = Lucide.Terminal,
             title = stringResource(R.string.device_setup_os_linux),
             description = stringResource(R.string.device_setup_os_linux_description),
             enabled = enabled,
@@ -389,7 +359,7 @@ private fun OperatingSystemStep(
 private fun PairingInstructionsSection(
     credential: DeviceSetupCredential?,
     platform: PairingPlatform?,
-    onDesktopLinkCopied: () -> Unit,
+    onContinue: () -> Unit,
 ) {
     if (credential == null || platform == null) {
         StepTitle(
@@ -401,7 +371,7 @@ private fun PairingInstructionsSection(
 
     when (platform) {
         PairingPlatform.Desktop -> DesktopPairingInstructions(
-            onDownloadLinkCopied = onDesktopLinkCopied,
+            onContinue = onContinue,
         )
         PairingPlatform.Linux -> LinuxPairingInstructions(
             credential = credential,
@@ -432,16 +402,13 @@ private fun CompletePairingSection(
 
     StepTitle(
         title = stringResource(R.string.device_setup_desktop_login_title),
-        description = stringResource(
-            R.string.device_setup_desktop_login_description,
-            credential.device.name,
-        ),
+        description = stringResource(R.string.device_setup_desktop_login_description),
     )
 }
 
 @Composable
 private fun DesktopPairingInstructions(
-    onDownloadLinkCopied: () -> Unit,
+    onContinue: () -> Unit,
 ) {
     val uriHandler = LocalUriHandler.current
     StepTitle(
@@ -458,7 +425,12 @@ private fun DesktopPairingInstructions(
     CopyableValueBox(
         value = DESKTOP_CONNECTOR_DOWNLOAD_URL,
         onOpen = { runCatching { uriHandler.openUri(DESKTOP_CONNECTOR_DOWNLOAD_URL) } },
-        onCopied = onDownloadLinkCopied,
+    )
+    PrimarySetupButton(
+        label = stringResource(R.string.common_continue),
+        enabled = true,
+        modifier = Modifier.padding(top = 24.dp),
+        onClick = onContinue,
     )
 }
 
@@ -509,7 +481,7 @@ private fun StepTitle(
 
 @Composable
 private fun OperatingSystemOption(
-    icon: @Composable (enabled: Boolean) -> Unit,
+    icon: ImageVector,
     title: String,
     description: String,
     enabled: Boolean,
@@ -528,7 +500,20 @@ private fun OperatingSystemOption(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        icon(enabled)
+        Box(
+            modifier = Modifier
+                .size(40.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(colors.subtle),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = if (enabled) colors.inkSoft else colors.faint,
+                modifier = Modifier.size(20.dp),
+            )
+        }
         Column(
             modifier = Modifier.weight(1f),
             verticalArrangement = Arrangement.spacedBy(4.dp),
@@ -560,7 +545,6 @@ private fun OperatingSystemOption(
 private fun CopyableValueBox(
     value: String,
     onOpen: (() -> Unit)? = null,
-    onCopied: (() -> Unit)? = null,
 ) {
     val colors = LocalAAColors.current
     val clipboard = LocalClipboardManager.current
@@ -570,7 +554,6 @@ private fun CopyableValueBox(
     fun copyValue() {
         clipboard.setText(AnnotatedString(value))
         copied = true
-        onCopied?.invoke()
         scope.launch {
             delay(2_000)
             copied = false

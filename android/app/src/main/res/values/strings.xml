@@ -195,8 +195,8 @@
     <string name="device_setup_os_desktop_description">Download and use the desktop connector app to pair this device.</string>
     <string name="device_setup_os_linux">Linux</string>
     <string name="device_setup_os_linux_description">Copy a command into the target device terminal. Requires uv/uvx command-line usage.</string>
-    <string name="device_setup_desktop_title">Download desktop connector</string>
-    <string name="device_setup_desktop_description">Download the Windows or macOS desktop connector.</string>
+    <string name="device_setup_desktop_title">Download Desktop App</string>
+    <string name="device_setup_desktop_description">Download the Desktop App to the target device from the address below.</string>
     <string name="device_setup_download_label">Download link</string>
     <string name="device_setup_command_title">Start with command</string>
     <string name="device_setup_command_description">Run this command in the terminal on %1$s. The device will come online automatically.</string>
@@ -206,8 +206,8 @@
     <string name="device_setup_pair_description">Choose an operating system to see its connection instructions.</string>
     <string name="device_setup_finish_title">Finish pairing</string>
     <string name="device_setup_finish_description">Complete the previous steps to finish pairing this device.</string>
-    <string name="device_setup_desktop_login_title">Sign in and finish pairing</string>
-    <string name="device_setup_desktop_login_description">Open the installed desktop connector, sign in, then follow its prompts to connect %1$s.</string>
+    <string name="device_setup_desktop_login_title">Sign in with the Desktop App</string>
+    <string name="device_setup_desktop_login_description">Sign in with the Desktop App. The device will come online automatically.</string>
     <string name="device_setup_linux_finish_description">Keep the command running. When the device comes online, you can return to the device list and start using it.</string>
     <string name="device_setup_success_title">Device paired</string>
     <string name="device_setup_success_description">%1$s is now online and ready to run sessions.</string>

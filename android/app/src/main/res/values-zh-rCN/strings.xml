@@ -194,8 +194,8 @@
     <string name="device_setup_os_desktop_description">下载并使用桌面连接器完成设备配对。</string>
     <string name="device_setup_os_linux">Linux</string>
     <string name="device_setup_os_linux_description">复制命令到目标设备的终端运行，需要会使用 uv/uvx。</string>
-    <string name="device_setup_desktop_title">下载桌面连接器</string>
-    <string name="device_setup_desktop_description">下载 Windows 或 macOS 桌面连接器。</string>
+    <string name="device_setup_desktop_title">下载Desktop APP</string>
+    <string name="device_setup_desktop_description">从下面地址下载Desktop APP到目标设备上</string>
     <string name="device_setup_download_label">下载地址</string>
     <string name="device_setup_command_title">使用命令启动</string>
     <string name="device_setup_command_description">在 %1$s 的终端中运行这条命令。设备会自动上线。</string>
@@ -205,8 +205,8 @@
     <string name="device_setup_pair_description">选择操作系统后，这里会显示对应的连接说明。</string>
     <string name="device_setup_finish_title">完成配对</string>
     <string name="device_setup_finish_description">完成前面的操作后，即可完成设备配对。</string>
-    <string name="device_setup_desktop_login_title">登录并完成配对</string>
-    <string name="device_setup_desktop_login_description">打开已安装的桌面连接器并登录，然后按照应用内提示连接 %1$s。</string>
+    <string name="device_setup_desktop_login_title">在Desktop APP上完成登录</string>
+    <string name="device_setup_desktop_login_description">在Desktop APP上完成登录，设备会自动上线</string>
     <string name="device_setup_linux_finish_description">保持命令运行；设备上线后即可返回设备列表开始使用。</string>
     <string name="device_setup_success_title">设备已配对</string>
     <string name="device_setup_success_description">%1$s 已上线，可以运行会话。</string>
