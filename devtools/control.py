@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import ipaddress
 import json
 import os
 import re
@@ -598,6 +599,7 @@ def stop_all() -> None:
 
 def status_payload() -> dict[str, Any]:
     sessions = screen_sessions()
+    lan_ipv4 = discover_lan_ipv4()
     return {
         "server": _health_ok(),
         "web": port_open(WEB_PORT),
@@ -607,8 +609,65 @@ def status_payload() -> dict[str, Any]:
         "legacy": LEGACY_STACK_SESSION in sessions,
         "serverUrl": SERVER_URL,
         "webUrl": WEB_URL,
+        "androidOauthLoginUrl": (
+            f"http://{lan_ipv4}:{WEB_PORT}" if lan_ipv4 is not None else None
+        ),
         "controlUrl": f"http://127.0.0.1:{CONTROL_PORT}",
     }
+
+
+def discover_lan_ipv4() -> str | None:
+    candidates: list[str] = []
+    if os.uname().sysname == "Darwin":
+        route_result = _run(["route", "-n", "get", "default"], check=False)
+        default_interface = next(
+            (
+                line.split(":", 1)[1].strip()
+                for line in route_result.stdout.splitlines()
+                if line.strip().startswith("interface:")
+            ),
+            None,
+        )
+        if default_interface:
+            address_result = _run(
+                ["ipconfig", "getifaddr", default_interface],
+                check=False,
+            )
+            if address_result.returncode == 0:
+                candidates.append(address_result.stdout.strip())
+
+    route_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        route_socket.connect(("192.0.2.1", 9))
+        candidates.append(route_socket.getsockname()[0])
+    except OSError:
+        pass
+    finally:
+        route_socket.close()
+
+    try:
+        candidates.extend(
+            address[4][0]
+            for address in socket.getaddrinfo(
+                socket.gethostname(),
+                None,
+                family=socket.AF_INET,
+                type=socket.SOCK_DGRAM,
+            )
+        )
+    except OSError:
+        pass
+
+    for candidate in candidates:
+        try:
+            address = ipaddress.ip_address(candidate)
+        except ValueError:
+            continue
+        if isinstance(address, ipaddress.IPv4Address) and not (
+            address.is_loopback or address.is_unspecified or address.is_link_local
+        ):
+            return str(address)
+    return None
 
 
 def perform_restart(target: str, credential: str | None = None) -> None:

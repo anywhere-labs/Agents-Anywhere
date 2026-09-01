@@ -21,6 +21,10 @@
       .web-entry:hover { border-color: #656b75; background: #181a1f; }
       .web-entry-label { font-weight: 600; }
       .web-entry-url { color: #aeb3bc; font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; }
+      .oauth-entry { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 16px; min-height: 76px; margin-bottom: 24px; border-radius: 9px; background: #181a1f; padding: 12px 14px 12px 18px; }
+      .oauth-entry-copy { min-width: 72px; }
+      .oauth-entry-url { display: block; margin-top: 6px; color: #f4f4f5; font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
+      .oauth-entry-help { display: block; margin-top: 5px; color: #8f949d; font-size: 12px; }
       section { border-top: 1px solid #292c31; }
       .service { display: grid; grid-template-columns: 1fr auto; align-items: center; min-height: 72px; border-bottom: 1px solid #292c31; }
       .service-name { display: flex; align-items: center; gap: 10px; font-weight: 600; }
@@ -45,6 +49,8 @@
         main { margin: 32px auto; }
         header { align-items: start; flex-direction: column; }
         .web-entry { align-items: start; flex-direction: column; padding: 15px 18px; }
+        .oauth-entry { grid-template-columns: 1fr; }
+        .oauth-entry-copy { width: 100%; }
         .actions button { flex: 1 1 100%; }
       }
     </style>
@@ -60,6 +66,15 @@
         <span class="web-entry-label">进入本地 Web</span>
         <span class="web-entry-url" id="web-entry-url">http://127.0.0.1:5174 ↗</span>
       </a>
+
+      <div class="oauth-entry">
+        <div>
+          <span class="web-entry-label">Android OAuth 登录地址</span>
+          <code class="oauth-entry-url" id="android-oauth-url">正在检测局域网地址…</code>
+          <span class="oauth-entry-help">填写到 Android 的 self-host 登录页面；这不是后端 API 地址。</span>
+        </div>
+        <button type="button" class="oauth-entry-copy" id="copy-android-oauth" disabled>复制</button>
+      </div>
 
       <section aria-label="服务状态">
         <div class="service">
@@ -101,11 +116,22 @@
       const message = document.querySelector("#message");
       const webEntry = document.querySelector("#web-entry");
       const webEntryUrl = document.querySelector("#web-entry-url");
+      const androidOauthUrl = document.querySelector("#android-oauth-url");
+      const copyAndroidOauth = document.querySelector("#copy-android-oauth");
 
       function renderStatus(status) {
         if (status.webUrl) {
           webEntry.href = status.webUrl;
           webEntryUrl.textContent = `${status.webUrl} ↗`;
+        }
+        if (status.androidOauthLoginUrl) {
+          androidOauthUrl.textContent = status.androidOauthLoginUrl;
+          copyAndroidOauth.disabled = false;
+          copyAndroidOauth.dataset.url = status.androidOauthLoginUrl;
+        } else {
+          androidOauthUrl.textContent = "未检测到局域网 IPv4 地址";
+          copyAndroidOauth.disabled = true;
+          delete copyAndroidOauth.dataset.url;
         }
         for (const name of ["server", "web", "connector", "postgres", "redis"]) {
           const online = Boolean(status[name]);
@@ -157,6 +183,18 @@
 
       buttons.forEach((button) => {
         button.addEventListener("click", () => restart(button.dataset.target));
+      });
+      copyAndroidOauth.addEventListener("click", async () => {
+        const url = copyAndroidOauth.dataset.url;
+        if (!url) return;
+        try {
+          await navigator.clipboard.writeText(url);
+          copyAndroidOauth.textContent = "已复制";
+          setTimeout(() => { copyAndroidOauth.textContent = "复制"; }, 1200);
+        } catch {
+          message.className = "message error";
+          message.textContent = "复制失败，请手动选择地址";
+        }
       });
       refreshStatus();
       setInterval(refreshStatus, 3000);

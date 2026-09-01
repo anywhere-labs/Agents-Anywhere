@@ -129,6 +129,47 @@ def test_control_api_rejects_non_local_host(
     assert calls == []
 
 
+def test_status_payload_exposes_android_oauth_login_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(control, "discover_lan_ipv4", lambda: "192.168.1.42")
+    monkeypatch.setattr(control, "screen_sessions", set)
+    monkeypatch.setattr(control, "_health_ok", lambda: True)
+    monkeypatch.setattr(control, "port_open", lambda _port: True)
+    monkeypatch.setattr(control, "connector_process_running", lambda: False)
+
+    payload = control.status_payload()
+
+    assert payload["androidOauthLoginUrl"] == "http://192.168.1.42:5174"
+    assert payload["serverUrl"] == "http://127.0.0.1:8000"
+
+
+def test_discover_lan_ipv4_uses_macos_default_interface(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Darwin:
+        sysname = "Darwin"
+
+    def fake_run(command: list[str], **_kwargs: object) -> object:
+        if command[:3] == ["route", "-n", "get"]:
+            return type("Result", (), {"returncode": 0, "stdout": "interface: en1\n"})()
+        if command[:2] == ["ipconfig", "getifaddr"]:
+            return type("Result", (), {"returncode": 0, "stdout": "172.16.200.98\n"})()
+        raise AssertionError(command)
+
+    monkeypatch.setattr(control.os, "uname", lambda: Darwin())
+    monkeypatch.setattr(control, "_run", fake_run)
+
+    assert control.discover_lan_ipv4() == "172.16.200.98"
+
+
+def test_control_page_explains_android_oauth_login_address() -> None:
+    page = control.HTML_FILE.read_text(encoding="utf-8")
+
+    assert "Android OAuth 登录地址" in page
+    assert "这不是后端 API 地址" in page
+
+
 def test_ensure_split_layout_recovers_orphaned_legacy_processes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
