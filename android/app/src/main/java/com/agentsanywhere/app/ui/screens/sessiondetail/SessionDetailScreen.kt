@@ -992,12 +992,8 @@ fun SessionDetailScreen(
                 .onSuccess {
                     state = state.copy(
                         notices = state.notices.copy(
-                            notices = state.notices.notices.map { observed ->
-                                if (observed.noticeId == notice.noticeId) {
-                                    observed.copy(status = "response_accepted", responseRequired = false)
-                                } else {
-                                    observed
-                                }
+                            notices = state.notices.notices.filterNot { observed ->
+                                observed.noticeId == notice.noticeId
                             },
                         ),
                         respondingNoticeIds = state.respondingNoticeIds - notice.noticeId,
