@@ -814,7 +814,7 @@ private fun HomeHeader(onProfile: () -> Unit, onSearch: () -> Unit) {
             icon = Lucide.UserRound,
             iconColor = icon,
             surface = colors.raisedSurface,
-            border = if (darkMode) Color(0xFF27272A) else Color(0xFFE7E6E2),
+            border = if (darkMode) colors.border else Color(0xFFE7E6E2),
             onClick = onProfile,
         )
         Box(
