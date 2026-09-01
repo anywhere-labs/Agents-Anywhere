@@ -438,12 +438,13 @@ private fun DesktopPairingInstructions(
 private fun LinuxPairingInstructions(
     credential: DeviceSetupCredential,
 ) {
+    val pairingCommand = startCommandLines(credential).joinToString(" ")
     StepTitle(
         title = stringResource(R.string.device_setup_command_title),
         description = stringResource(R.string.device_setup_command_description, credential.device.name),
     )
     CopyableValueBox(
-        value = startCommandLines(credential).joinToString(" "),
+        value = pairingCommand,
         modifier = Modifier.padding(top = 22.dp),
     )
     LinuxInstructionText(
@@ -452,7 +453,8 @@ private fun LinuxPairingInstructions(
     )
     CopyableValueBox(
         value = "screen -S anywhere",
-        supportingText = stringResource(R.string.device_setup_linux_screen_start_comment),
+        supportingText = pairingCommand,
+        clipboardValue = "screen -S anywhere\n$pairingCommand",
     )
     LinuxInstructionText(
         text = stringResource(R.string.device_setup_linux_detach_hint),
@@ -569,14 +571,15 @@ private fun CopyableValueBox(
     modifier: Modifier = Modifier,
     onOpen: (() -> Unit)? = null,
     supportingText: String? = null,
+    clipboardValue: String = value,
 ) {
     val colors = LocalAAColors.current
     val clipboard = LocalClipboardManager.current
     val scope = rememberCoroutineScope()
-    var copied by remember(value) { mutableStateOf(false) }
+    var copied by remember(value, clipboardValue) { mutableStateOf(false) }
 
     fun copyValue() {
-        clipboard.setText(AnnotatedString(value))
+        clipboard.setText(AnnotatedString(clipboardValue))
         copied = true
         scope.launch {
             delay(2_000)

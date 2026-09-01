@@ -198,10 +198,9 @@
     <string name="device_setup_desktop_description">从下面地址下载Desktop APP到目标设备上</string>
     <string name="device_setup_download_label">下载地址</string>
     <string name="device_setup_command_title">使用命令启动</string>
-    <string name="device_setup_command_description">先复制下面的配对命令，再按照后续说明在 %1$s 的终端中运行。</string>
-    <string name="device_setup_linux_session_warning">为了让设备持续在线，建议先进入 screen 会话，再在会话中运行上方复制的配对命令：</string>
-    <string name="device_setup_linux_screen_start_comment"># 进入 screen 后，粘贴并运行上方复制的配对命令</string>
-    <string name="device_setup_linux_detach_hint">Connector 上线后，按 Ctrl-A，再按 D 分离会话；Connector 会继续在后台运行。之后需要返回这个会话时，运行：</string>
+    <string name="device_setup_command_description">在 %1$s 的终端中运行这条命令。设备会自动上线。</string>
+    <string name="device_setup_linux_session_warning">注意保持这个终端会话存活。如果关闭终端，anywhere-cli 进程也会退出，Linux 设备就会下线。最简单的持久化方式是把配对命令放到 screen 里运行：</string>
+    <string name="device_setup_linux_detach_hint">Connector 在线后，可以按 Ctrl-A，再按 D 退出但不关闭会话。之后需要回到这个会话时运行：</string>
     <string name="device_setup_copy_value">复制</string>
     <string name="device_setup_pair_title">准备配对</string>
     <string name="device_setup_pair_description">选择操作系统后，这里会显示对应的连接说明。</string>
