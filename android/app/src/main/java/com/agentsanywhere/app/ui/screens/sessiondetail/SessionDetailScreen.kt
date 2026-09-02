@@ -1552,6 +1552,7 @@ fun SessionDetailScreen(
                                 messages = state.messages,
                                 darkMode = darkMode,
                                 sessionId = sessionId.orEmpty(),
+                                workspaceRoot = state.session?.cwd,
                                 controller = controller,
                                 forceLatestRequest = forceLatestRequest,
                                 streamLatestRequest = streamLatestRequest,

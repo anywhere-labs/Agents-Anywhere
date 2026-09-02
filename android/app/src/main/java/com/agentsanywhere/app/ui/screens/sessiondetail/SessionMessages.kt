@@ -233,6 +233,7 @@ internal fun MessageList(
     messages: List<TimelineMessage>,
     darkMode: Boolean,
     sessionId: String,
+    workspaceRoot: String?,
     controller: SessionDetailController,
     forceLatestRequest: Int,
     streamLatestRequest: Int,
@@ -422,6 +423,7 @@ internal fun MessageList(
                                 darkMode = darkMode,
                                 listState = listState,
                                 sessionId = sessionId,
+                                workspaceRoot = workspaceRoot,
                                 controller = controller,
                                 onPreviewAttachment = onPreviewAttachment,
                                 onOpenAttachment = onOpenAttachment,
@@ -437,6 +439,7 @@ internal fun MessageList(
                                 messages = item.messages,
                                 darkMode = darkMode,
                                 listState = listState,
+                                workspaceRoot = workspaceRoot,
                                 onOpenFile = onOpenFile,
                             )
                             is TimelineRenderItem.Reconnect -> ReconnectGroup(
@@ -672,6 +675,7 @@ private fun ToolRunGroup(
     messages: List<TimelineMessage>,
     darkMode: Boolean,
     listState: LazyListState,
+    workspaceRoot: String?,
     onOpenFile: (String) -> Unit = {},
 ) {
     val colors = LocalAAColors.current
@@ -780,6 +784,7 @@ private fun ToolRunGroup(
                     darkMode = darkMode,
                     listState = listState,
                     embedded = true,
+                    workspaceRoot = workspaceRoot,
                     onOpenFile = onOpenFile,
                 )
             }
@@ -927,6 +932,7 @@ private fun TimelineMessageRow(
     darkMode: Boolean,
     listState: LazyListState,
     sessionId: String,
+    workspaceRoot: String?,
     controller: SessionDetailController,
     onPreviewAttachment: (TimelineAttachment) -> Unit,
     onOpenAttachment: (TimelineAttachment) -> Unit,
@@ -951,6 +957,7 @@ private fun TimelineMessageRow(
             message = message,
             darkMode = darkMode,
             listState = listState,
+            workspaceRoot = workspaceRoot,
             onOpenFile = onOpenFile,
             interaction = interaction,
             interactionBusy = interaction?.noticeId?.let { it in respondingNoticeIds } == true,
@@ -1384,6 +1391,7 @@ private fun ToolActivityCard(
     darkMode: Boolean,
     listState: LazyListState,
     embedded: Boolean = false,
+    workspaceRoot: String? = null,
     onOpenFile: (String) -> Unit = {},
     interaction: RuntimeNotice? = null,
     interactionBusy: Boolean = false,
@@ -1478,6 +1486,7 @@ private fun ToolActivityCard(
                     ToolActivityDetailCard(
                         message = message,
                         darkMode = darkMode,
+                        workspaceRoot = workspaceRoot,
                         onOpenFile = onOpenFile,
                         modifier = Modifier
                             .fillMaxWidth()
@@ -1539,6 +1548,7 @@ private fun toolActivitySummary(message: TimelineMessage): String {
 private fun ToolActivityDetailCard(
     message: TimelineMessage,
     darkMode: Boolean,
+    workspaceRoot: String?,
     onOpenFile: (String) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
@@ -1567,6 +1577,7 @@ private fun ToolActivityDetailCard(
                 }.forEach { change ->
                     Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
                         Row(
+                            modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
@@ -1577,12 +1588,15 @@ private fun ToolActivityDetailCard(
                                 modifier = Modifier.size(16.dp),
                             )
                             Text(
-                                text = change.path,
+                                text = workspaceDisplayPath(change.path, workspaceRoot),
                                 color = muted,
                                 fontSize = 12.sp,
                                 lineHeight = 17.sp,
                                 fontWeight = FontWeight.Medium,
                                 fontFamily = FontFamily.Monospace,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f),
                             )
                         }
                         if (change.diff.isNotBlank()) {
@@ -1610,6 +1624,23 @@ private fun ToolActivityDetailCard(
             }
             else -> Unit
         }
+    }
+}
+
+internal fun workspaceDisplayPath(path: String, workspaceRoot: String?): String {
+    val normalizedPath = path.trim().replace('\\', '/').trimEnd('/')
+    val normalizedRoot = workspaceRoot
+        ?.trim()
+        ?.replace('\\', '/')
+        ?.trimEnd('/')
+        ?.takeIf(String::isNotBlank)
+        ?: return path
+    val workspaceName = normalizedRoot.substringAfterLast('/').ifBlank { return path }
+    return when {
+        normalizedPath == normalizedRoot -> workspaceName
+        normalizedPath.startsWith("$normalizedRoot/") ->
+            "$workspaceName/${normalizedPath.removePrefix("$normalizedRoot/")}"
+        else -> path
     }
 }
 
