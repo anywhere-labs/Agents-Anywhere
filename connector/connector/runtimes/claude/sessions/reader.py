@@ -680,7 +680,10 @@ def _cursor_offset(cursor: str | None) -> int:
 
 
 def _session_title(session: Any) -> str | None:
-    return _string_attr(session, "custom_title", "summary", "first_prompt", "title")
+    # Claude SDK-created sessions may update `summary` to the latest user
+    # prompt after every turn. `first_prompt` is the stable fallback title;
+    # `custom_title` also contains persisted Claude Code AI titles when present.
+    return _string_attr(session, "custom_title", "first_prompt", "summary", "title")
 
 
 def _sync_marker(session: Any) -> str:

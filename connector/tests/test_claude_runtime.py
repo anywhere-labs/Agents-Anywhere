@@ -732,7 +732,9 @@ async def _test_claude_runtime_lists_sessions_from_sdk_history() -> None:
     session = sessions[0]
     assert session.session_id == stable_session_id("conn_test", "claude_history_1")
     assert session.external_session_id == "claude_history_1"
-    assert session.title == "History session"
+    # Claude SDK `summary` may drift to the latest user prompt. The stable
+    # fallback title must remain the first prompt until a custom/AI title exists.
+    assert session.title == "first prompt"
     assert session.cwd == "/repo"
     assert session.ordering_time == "2026-09-10T00:26:40Z"
     assert session.metadata["source"] == "claude.session/list"
