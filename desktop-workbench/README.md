@@ -47,5 +47,7 @@ WORKBENCH_API_ORIGIN=http://127.0.0.1:8000 WORKBENCH_API_NAMESPACE=/api/v2 yarn 
 
 - This package embeds a copied Next renderer under `renderer`.
 - The original repo-level `../web-next` app is not started or modified by the desktop dev script.
-- Connector lifecycle, native sidebar treatment, tray, packaging, and local runtime bridges are intentionally out of scope for this first shell.
+- Treat `../web-next` as the upstream source for shared renderer code. Sync source, messages, public assets, scripts, tests, and shared configuration into `renderer`, then reapply the small Desktop-owned integration layer.
+- Desktop-owned behavior includes the Electron window and protocol bridge, renderer package identity and port, nested-workspace Next configuration, native title-bar spacing, window drag regions, the shell header, and Desktop sidebar behavior.
+- Do not copy generated or installed content such as `.next`, `node_modules`, `.yarn`, or `out` from `../web-next`.
 - Production/static mode expects `renderer/out`, or a custom `WORKBENCH_WEB_OUT_DIR`.
