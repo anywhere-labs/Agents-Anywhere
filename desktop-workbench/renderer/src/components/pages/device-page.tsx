@@ -845,7 +845,10 @@ export function DevicePage() {
             </button>
           )}
           {isLocalDesktop ? (
-            <Badge variant="secondary" className="shrink-0 px-2 text-xs font-medium">
+            <Badge
+              variant="outline"
+              className="h-5 shrink-0 border-emerald-500/25 bg-emerald-500/10 px-2 text-sm font-medium leading-none text-emerald-500"
+            >
               {tCommon("localDevice")}
             </Badge>
           ) : null}

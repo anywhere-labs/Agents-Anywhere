@@ -665,7 +665,10 @@ function DeviceSidebarItem({
                 {connector.name}
               </span>
               {isLocal ? (
-                <Badge variant="secondary" className="ml-auto h-4 px-1.5 text-[10px] leading-none">
+                <Badge
+                  variant="outline"
+                  className="ml-auto h-5 border-emerald-500/25 bg-emerald-500/10 px-2 text-sm font-medium leading-none text-emerald-500"
+                >
                   {tCommon("localDevice")}
                 </Badge>
               ) : null}
