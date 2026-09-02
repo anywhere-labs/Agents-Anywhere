@@ -531,12 +531,9 @@ export function DevicePage() {
   }
 
   const desktopActionLabel = (() => {
-    if (!isDesktopConnector) return connector.status === "offline" ? t("setup") : t("revoke")
-    if (!isLocalDesktop) return connector.status === "offline" ? t("reconnect") : t("disconnect")
-    if (localDesktopNeedsReconnect) return t("reconnect")
-    if (connector.status === "online") return t("disconnect")
     if (localDesktopIsConnecting) return t("desktopConnecting")
-    return t("desktopStart")
+    if (connector.status === "offline") return t("connect")
+    return isDesktopConnector ? t("disconnect") : t("revoke")
   })()
 
   const submitName = async () => {

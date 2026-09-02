@@ -464,6 +464,7 @@
       "online": "online",
       "offline": "offline",
       "preparing": "Preparing...",
+      "connect": "Connect",
       "setup": "Setup",
       "revoke": "Revoke",
       "disconnect": "Disconnect",

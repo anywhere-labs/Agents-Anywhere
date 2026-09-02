@@ -464,6 +464,7 @@
       "online": "在线",
       "offline": "离线",
       "preparing": "准备中...",
+      "connect": "连接",
       "setup": "设置",
       "revoke": "吊销",
       "disconnect": "断开连接",
