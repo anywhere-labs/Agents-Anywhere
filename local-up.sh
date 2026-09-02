@@ -148,7 +148,9 @@ assert_port_available() {
 }
 
 reset_local_data() {
-  [[ "${RESET_DATA}" == true ]] || return
+  if [[ "${RESET_DATA}" != true ]]; then
+    return 0
+  fi
 
   if [[ -f "${LOCAL_UP_PID_FILE}" ]]; then
     local pid command
