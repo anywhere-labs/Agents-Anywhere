@@ -344,6 +344,7 @@ export function PairDeviceDialog({
   }
 
   const pairServer = pairServerAddress(serverUrl)
+  const pairCommand = `uvx anywhere-cli pair ${shellQuote(pairServer)}`
   const tokenCommand = connectorId && connectorToken
     ? [
       "uvx anywhere-cli start",
@@ -509,13 +510,14 @@ export function PairDeviceDialog({
               <>
                 <DialogHeader>
                   <DialogTitle>{t("codeStepTitle")}</DialogTitle>
-                  <DialogDescription>{t("codeStepDescription", { name })}</DialogDescription>
                 </DialogHeader>
                 <div className="flex flex-col gap-4 py-2">
                   <div className="rounded-xl border bg-muted/25 p-4 text-sm">
-                    <div className="font-medium">{t("serverAddress")}</div>
-                    <div className="mt-2 break-all font-mono text-xs text-muted-foreground">{pairServer}</div>
-                    <p className="mt-2 text-muted-foreground">{t("serverAddressHint")}</p>
+                    <div className="font-medium">{t("pairCommand")}</div>
+                    <div className="mt-3">
+                      <CodeBlock code={pairCommand} copyLabel={t("copyCommand")} />
+                    </div>
+                    <p className="mt-3 text-muted-foreground">{t("pairCommandHint")}</p>
                   </div>
                   <div className="flex flex-col gap-2">
                     <Label>{t("codeLabel")}</Label>
