@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { Copy, Check, Loader2, CheckCircle2, ArrowLeft, ExternalLink, MonitorUp, Terminal, KeyRound, RefreshCw } from "lucide-react"
+import { Copy, Check, Loader2, ArrowLeft, ExternalLink, MonitorUp, Terminal, KeyRound } from "lucide-react"
 import { toast } from "sonner"
 import {
   Dialog,
@@ -29,9 +29,11 @@ import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area"
 import { cn } from "@/lib/utils"
 import { useAuth } from "@/components/auth/auth-context"
 import { dashboardApi } from "@/features/dashboard/api"
-import type { ConnectorCreateResponse, ConnectorRevokeResponse, DeviceRuntimeView } from "@/features/dashboard/types"
+import type {
+  ConnectorCreateResponse,
+  ConnectorRevokeResponse,
+} from "@/features/dashboard/types"
 import { useTranslations } from "next-intl"
-import { RuntimeConfigDialog } from "@/components/runtime-config-dialog"
 
 // ── Readable name generator ────────────────────────────────
 const ADJECTIVES = [
@@ -136,7 +138,7 @@ function writeCommandWarningAccepted() {
 }
 
 // ── Types ──────────────────────────────────────────────────
-type Step = "name" | "method" | "desktop-method" | "desktop-local" | "desktop-paircode" | "desktop-credentials" | "command-warning" | "command" | "agents"
+type Step = "name" | "method" | "desktop-method" | "desktop-local" | "desktop-paircode" | "desktop-credentials" | "command-warning" | "command"
 
 interface Props {
   open: boolean
@@ -205,10 +207,6 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
   const [credentialsBackStep, setCredentialsBackStep] = React.useState<"method" | "desktop-method">("desktop-method")
   const [commandWarningAccepted, setCommandWarningAccepted] = React.useState(readCommandWarningAccepted)
   const [commandCountdown, setCommandCountdown] = React.useState(COMMAND_WARNING_WAIT_SECONDS)
-  const [runtimes, setRuntimes] = React.useState<DeviceRuntimeView[]>([])
-  const [runtimesLoading, setRuntimesLoading] = React.useState(false)
-  const [configRuntime, setConfigRuntime] = React.useState<DeviceRuntimeView | null>(null)
-  const [savingRuntimeId, setSavingRuntimeId] = React.useState<string | null>(null)
   const pollingRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
   const commandCountdownRef = React.useRef<number | null>(null)
   const suppressCloseGuardRef = React.useRef(false)
@@ -235,26 +233,25 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
     setPolling(false)
   }, [])
 
-  const loadRuntimes = React.useCallback(async (cid: string) => {
-    if (!session?.accessToken) return
-    setRuntimesLoading(true)
-    try {
-      const response = await dashboardApi.discoverConnectorRuntimes(session.accessToken, cid)
-      setRuntimes(response.runtimes)
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : t("errors.discoverRuntimesFailed"))
-    } finally {
-      setRuntimesLoading(false)
-    }
-  }, [session?.accessToken, t])
-
-  const enterAgentsStep = React.useCallback((cid: string) => {
+  const reset = React.useCallback(() => {
     stopPolling()
-    setRuntimes([])
-    setStep("agents")
+    setStep("name")
+    setName(setupCredential?.connector.name ?? randomName())
+    setConnectorId(setupCredential?.connector.id ?? null)
+    setToken(setupCredential?.connectorToken ?? null)
+    setPairCode("")
+    setCreating(false)
+    setClaiming(false)
+    setPolling(false)
+    setCredentialsBackStep("desktop-method")
+    setCommandCountdown(COMMAND_WARNING_WAIT_SECONDS)
+  }, [setupCredential, stopPolling])
+
+  const completePairing = React.useCallback(() => {
+    reset()
     onConnectorCreated?.()
-    void loadRuntimes(cid)
-  }, [loadRuntimes, onConnectorCreated, stopPolling])
+    onOpenChange(false)
+  }, [onConnectorCreated, onOpenChange, reset])
 
   const startConnectorPolling = React.useCallback((cid: string) => {
     if (!session?.accessToken) return
@@ -263,7 +260,7 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
       try {
         const { connector } = await dashboardApi.getConnector(session.accessToken, cid)
         if (connector.status === "online") {
-          enterAgentsStep(cid)
+          completePairing()
         } else {
           pollingRef.current = setTimeout(tick, 2000)
         }
@@ -272,10 +269,12 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
       }
     }
     pollingRef.current = setTimeout(tick, 1500)
-  }, [enterAgentsStep, session?.accessToken])
+  }, [completePairing, session?.accessToken])
 
   React.useEffect(() => {
-    return () => stopPolling()
+    return () => {
+      stopPolling()
+    }
   }, [stopPolling])
 
   React.useEffect(() => {
@@ -304,24 +303,6 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
       commandCountdownRef.current = null
     }
   }, [commandWarningAccepted, step])
-
-  const reset = () => {
-    stopPolling()
-    setStep("name")
-    setName(setupCredential?.connector.name ?? randomName())
-    setConnectorId(setupCredential?.connector.id ?? null)
-    setToken(setupCredential?.connectorToken ?? null)
-    setPairCode("")
-    setCreating(false)
-    setClaiming(false)
-    setPolling(false)
-    setCredentialsBackStep("desktop-method")
-    setCommandCountdown(COMMAND_WARNING_WAIT_SECONDS)
-    setRuntimes([])
-    setRuntimesLoading(false)
-    setConfigRuntime(null)
-    setSavingRuntimeId(null)
-  }
 
   const handleOpenChange = (next: boolean) => {
     if (!next && suppressCloseGuardRef.current) return
@@ -416,9 +397,8 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
         connectorId,
         connectorToken: token,
       })
-      const claimedConnectorId = result.connector?.id ?? connectorId
       if (result.connector?.id) setConnectorId(result.connector.id)
-      enterAgentsStep(claimedConnectorId)
+      completePairing()
     } catch (err) {
       toast.error(err instanceof Error ? err.message : t("errors.claimFailed"))
     } finally {
@@ -432,38 +412,6 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
     // Don't auto-delete; user must do it manually (as instructed)
     reset()
     onOpenChange(false)
-  }
-
-  const handleSuccessClose = () => {
-    reset()
-    onOpenChange(false)
-  }
-
-  const configureAndStartRuntime = async (runtime: DeviceRuntimeView, config: Record<string, unknown>) => {
-    if (!session?.accessToken || !connectorId) return
-    setSavingRuntimeId(runtime.runtimeId)
-    try {
-      const saved = await dashboardApi.putConnectorRuntimeConfig(
-        session.accessToken,
-        connectorId,
-        runtime.runtimeId,
-        config,
-      )
-      setRuntimes((current) => current.map((item) => item.runtimeId === saved.runtimeId ? saved : item))
-      const started = await dashboardApi.setConnectorRuntimeActive(
-        session.accessToken,
-        connectorId,
-        runtime.runtimeId,
-        true,
-      )
-      setRuntimes((current) => current.map((item) => item.runtimeId === started.runtimeId ? started : item))
-      toast.success(t("agentConfiguredAndStarted", { name: runtime.displayName }))
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : t("errors.configureAndStartFailed"))
-      throw error
-    } finally {
-      setSavingRuntimeId(null)
-    }
   }
 
   const pairServer = pairServerAddress(serverUrl)
@@ -800,92 +748,9 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
             </>
           )}
 
-          {/* ── Step: Configure agents ── */}
-          {step === "agents" && (
-            <>
-              <DialogHeader>
-                <DialogTitle className="flex items-center gap-2">
-                  <CheckCircle2 className="size-5 text-emerald-500" />
-                  {t("agentsTitle")}
-                </DialogTitle>
-                <DialogDescription>
-                  {t("agentsDescription", { name })}
-                </DialogDescription>
-              </DialogHeader>
-              <div className="flex min-h-32 flex-col gap-2 py-1">
-                {runtimesLoading ? (
-                  <div className="flex min-h-32 items-center justify-center gap-2 text-sm text-muted-foreground">
-                    <Loader2 className="size-4 animate-spin" />
-                    {t("discoveringAgents")}
-                  </div>
-                ) : runtimes.filter((runtime) => runtime.present).length === 0 ? (
-                  <div className="flex min-h-32 flex-col items-center justify-center gap-3 text-center">
-                    <p className="text-sm text-muted-foreground">{t("noAgentsFound")}</p>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => connectorId && void loadRuntimes(connectorId)}
-                    >
-                      <RefreshCw />
-                      {t("refreshAgents")}
-                    </Button>
-                  </div>
-                ) : (
-                  runtimes.filter((runtime) => runtime.present).map((runtime) => (
-                    <div key={runtime.runtimeId} className="flex min-w-0 items-center gap-3 rounded-lg border px-4 py-3">
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-medium">{runtime.displayName}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {runtime.active && runtime.status === "running"
-                            ? t("agentRunning")
-                            : runtime.configured
-                              ? t("agentConfigured")
-                              : t("agentReadyToConfigure")}
-                        </p>
-                      </div>
-                      {runtime.configured ? (
-                        <CheckCircle2 className="size-4 shrink-0 text-emerald-500" aria-label={t("agentConfigured")} />
-                      ) : (
-                        <Button type="button" size="sm" onClick={() => setConfigRuntime(runtime)}>
-                          {t("configureAgent")}
-                        </Button>
-                      )}
-                    </div>
-                  ))
-                )}
-              </div>
-              <DialogFooter className="sm:justify-between">
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => connectorId && void loadRuntimes(connectorId)}
-                  disabled={runtimesLoading}
-                >
-                  <RefreshCw className={cn(runtimesLoading && "animate-spin")} />
-                  {t("refreshAgents")}
-                </Button>
-                <Button onClick={handleSuccessClose} className="sm:min-w-28">{tCommon("done")}</Button>
-              </DialogFooter>
-            </>
-          )}
           </div>
         </DialogContent>
       </Dialog>
-
-      {configRuntime ? (
-        <RuntimeConfigDialog
-          runtimeName={configRuntime.displayName}
-          schema={configRuntime.schema}
-          uiSchema={configRuntime.uiSchema}
-          config={configRuntime.config}
-          saving={savingRuntimeId === configRuntime.runtimeId}
-          submitLabel={t("configureAndStart")}
-          open
-          onOpenChange={(nextOpen) => { if (!nextOpen) setConfigRuntime(null) }}
-          onSave={(config) => configureAndStartRuntime(configRuntime, config)}
-        />
-      ) : null}
 
       {/* Exit guard */}
       <AlertDialog open={exitGuardOpen} onOpenChange={setExitGuardOpen}>

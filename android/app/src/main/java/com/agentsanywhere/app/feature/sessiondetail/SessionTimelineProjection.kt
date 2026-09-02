@@ -45,7 +45,14 @@ internal fun mergeRemoteTimelineItems(
         item.toTimelineMessages().map { it.copy(orderSeq = orderSeq) }
     }
     val messages = if (replace) {
-        reconcileDshAssistantActivity(sortTimelineMessages(incomingMessages, orderingItems))
+        val previewAwareIncoming = incomingMessages.map { incomingMessage ->
+            val previousVersions = currentMessages.filter { previousMessage ->
+                previousMessage.sourceItemId == incomingMessage.sourceItemId ||
+                    incomingMessage.clientMessageId?.let { it == previousMessage.clientMessageId } == true
+            }
+            incomingMessage.inheritLocalAttachmentPreviews(previousVersions)
+        }
+        reconcileDshAssistantActivity(sortTimelineMessages(previewAwareIncoming, orderingItems))
     } else {
         mergeTimelineMessages(currentMessages, incomingMessages, orderingItems)
     }
@@ -69,6 +76,7 @@ private fun RemoteTimelineItem.toToolMessages(): List<TimelineMessage> {
     return when (content.text("kind")) {
         "command" -> listOf(toCommandMessage())
         "file_change" -> toFileChangeMessages()
+        "agent_call" -> listOf(toAgentCallMessage())
         "web_search" -> {
             val query = content.text("query") ?: content.optJSONObject("input")?.text("query")
             listOf(toToolCallMessage(title = query.orEmpty(), subtitle = query.orEmpty()))
@@ -175,10 +183,7 @@ private fun RemoteTimelineItem.toSystemMessage(): TimelineMessage {
         )
     }
     if (kind == "compact") return toCompactMessage()
-    if (kind !in setOf("runtime", "system", "error", "notice")) {
-        return toDiagnosticMessage()
-    }
-    val message = content.text("message") ?: content.text("text") ?: kind
+    val message = content.firstText("message", "text", "rawText") ?: kind
     return TimelineMessage(
         id = id,
         sourceItemId = id,
@@ -199,12 +204,9 @@ private fun RemoteTimelineItem.toSystemMessage(): TimelineMessage {
 }
 
 private fun RemoteTimelineItem.toArtifactMessages(): List<TimelineMessage> {
-    val kind = content.text("kind") ?: return listOf(toDiagnosticMessage())
+    val kind = content.text("kind") ?: "artifact"
     if (kind == "file_change") return toFileChangeMessages()
     if (kind == "diff") return emptyList()
-    if (kind !in setOf("file", "diff", "image", "document", "code")) {
-        return listOf(toDiagnosticMessage())
-    }
     val path = content.firstText("path", "filePath", "file", "uri")
     val title = path?.substringAfterLast('/')?.ifBlank { null } ?: kind
     return listOf(
@@ -232,9 +234,8 @@ private fun RemoteTimelineItem.toArtifactMessages(): List<TimelineMessage> {
 }
 
 private fun RemoteTimelineItem.toMarkerMessage(): TimelineMessage {
-    val kind = content.text("kind") ?: return toDiagnosticMessage()
+    val kind = content.text("kind") ?: "system"
     if (kind == "compact") return toCompactMessage()
-    if (kind !in setOf("system", "runtime", "notice", "error")) return toDiagnosticMessage()
     val label = content.firstText("label", "title", "text", "message") ?: kind
     return baseInformationalMessage(
         kind = if (kind == "error" || status == "failed") TimelineMessageKind.Error else TimelineMessageKind.Marker,
@@ -316,6 +317,39 @@ private fun RemoteTimelineItem.toCommandMessage(): TimelineMessage {
         command = command,
         output = listOf(output, exit).filter { it.isNotBlank() }.joinToString("\n"),
         toolError = content.opt("error").diagnosticSummary(),
+        rawContent = content.toString(2),
+        orderSeq = orderSeq,
+        revision = revision,
+        updatedSeq = updatedSeq,
+        clientMessageId = source.text("clientMessageId"),
+    )
+}
+
+private fun RemoteTimelineItem.toAgentCallMessage(): TimelineMessage {
+    val action = content.text("action").toAgentCallAction()
+    val description = content.firstText("description", "title").orEmpty()
+    val inputSummary = content.opt("input").diagnosticSummary()
+    val outputSummary = content.opt("output").diagnosticSummary()
+    val errorSummary = content.opt("error").diagnosticSummary()
+    return TimelineMessage(
+        id = id,
+        sourceItemId = id,
+        author = MessageAuthor.Tool,
+        text = description.ifBlank { action.wireValue() },
+        status = status,
+        type = type,
+        kind = TimelineMessageKind.AgentCall,
+        title = description,
+        contentKind = "agent_call",
+        badge = status.statusLabel(),
+        input = inputSummary,
+        output = outputSummary,
+        toolError = errorSummary,
+        agentCall = TimelineAgentCall(
+            action = action,
+            description = description,
+            parentItemId = content.text("parentItemId"),
+        ),
         rawContent = content.toString(2),
         orderSeq = orderSeq,
         revision = revision,
@@ -453,12 +487,39 @@ private fun JSONObject.firstText(vararg names: String): String? {
 
 private fun JSONObject.fileChangeAction(): String {
     val kind = optJSONObject("kind")
-    val type = kind?.text("type") ?: text("action")
+    val nestedKind = kind?.text("type") ?: text("kind")
+    val type = (nestedKind ?: firstText("action", "type", "status")).orEmpty().lowercase()
     return when (type) {
-        "add" -> "add"
-        "delete" -> "delete"
-        "update" -> if (kind?.text("move_path") != null) "rename" else "update"
+        "add", "added", "create", "created" -> "add"
+        "delete", "deleted", "remove", "removed" -> "delete"
+        "rename", "renamed", "move", "moved" -> "rename"
+        "update" -> if (kind?.firstText("move_path", "movePath") != null) "rename" else "modify"
+        "modify", "modified", "change", "changed", "edit", "edited" -> "modify"
         else -> "change"
+    }
+}
+
+private fun String?.toAgentCallAction(): TimelineAgentCallAction {
+    return when (this) {
+        "invoke" -> TimelineAgentCallAction.Invoke
+        "spawn" -> TimelineAgentCallAction.Spawn
+        "send_input" -> TimelineAgentCallAction.SendInput
+        "resume" -> TimelineAgentCallAction.Resume
+        "wait" -> TimelineAgentCallAction.Wait
+        "close" -> TimelineAgentCallAction.Close
+        else -> TimelineAgentCallAction.Unknown
+    }
+}
+
+private fun TimelineAgentCallAction.wireValue(): String {
+    return when (this) {
+        TimelineAgentCallAction.Invoke -> "invoke"
+        TimelineAgentCallAction.Spawn -> "spawn"
+        TimelineAgentCallAction.SendInput -> "send_input"
+        TimelineAgentCallAction.Resume -> "resume"
+        TimelineAgentCallAction.Wait -> "wait"
+        TimelineAgentCallAction.Close -> "close"
+        TimelineAgentCallAction.Unknown -> "agent_call"
     }
 }
 
@@ -583,7 +644,9 @@ internal fun mergeTimelineMessages(
         val currentUpdatedSeq = currentGroup.maxOf { it.updatedSeq }
         val incomingUpdatedSeq = incomingGroup.maxOf { it.updatedSeq }
         if (incomingRevision > currentRevision || incomingUpdatedSeq >= currentUpdatedSeq) {
-            incomingGroup
+            incomingGroup.map { incomingMessage ->
+                incomingMessage.inheritLocalAttachmentPreviews(currentGroup)
+            }
         } else {
             currentGroup
         }
@@ -649,12 +712,42 @@ internal fun mergeOptimisticTimelineMessages(
         .associateBy { it.id }
         .values
         .toList()
+    val reconciledReal = real.map { realMessage ->
+        val optimisticMessage = optimistic.firstOrNull { candidate ->
+            realMessage.matchesClientMessage(candidate.id)
+        }
+        if (optimisticMessage == null) {
+            realMessage
+        } else {
+            realMessage.inheritLocalAttachmentPreviews(listOf(optimisticMessage))
+        }
+    }
     val pending = optimistic.filter { optimisticMessage ->
         real.none { realMessage -> realMessage.matchesClientMessage(optimisticMessage.id) }
     }
     return OptimisticTimelineMerge(
-        messages = sortTimelineMessages(real + pending, orderingItems),
+        messages = sortTimelineMessages(reconciledReal + pending, orderingItems),
         pending = pending,
+    )
+}
+
+private fun TimelineMessage.inheritLocalAttachmentPreviews(
+    previousMessages: List<TimelineMessage>,
+): TimelineMessage {
+    if (attachments.isEmpty()) return this
+    val previousByFileId = previousMessages
+        .flatMap(TimelineMessage::attachments)
+        .associateBy(TimelineAttachment::fileId)
+    if (previousByFileId.isEmpty()) return this
+    return copy(
+        attachments = attachments.map { attachment ->
+            val previousPreview = previousByFileId[attachment.fileId]?.localPreviewUri
+            if (attachment.localPreviewUri != null || previousPreview == null) {
+                attachment
+            } else {
+                attachment.copy(localPreviewUri = previousPreview)
+            }
+        },
     )
 }
 

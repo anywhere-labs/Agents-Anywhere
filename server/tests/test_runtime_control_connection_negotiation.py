@@ -258,7 +258,11 @@ def test_first_connector_connection_configures_default_codex(
 def test_new_connector_reconnect_negotiates_v2_without_manual_discovery(
     tmp_path: Any,
 ) -> None:
-    client, connector_id, access_token = _make_connector(tmp_path)
+    websocket_completed = threading.Event()
+    client, connector_id, access_token = _make_connector(
+        tmp_path,
+        websocket_completed=websocket_completed,
+    )
     _seed_v2(client, connector_id)
 
     with client.websocket_connect(
@@ -295,6 +299,11 @@ def test_new_connector_reconnect_negotiates_v2_without_manual_discovery(
                 break
             time.sleep(0.01)
         assert runtime["status"] == "stopped"
+        ws.close()
+        assert websocket_completed.wait(timeout=5), (
+            "connector websocket did not complete"
+        )
+        assert not asyncio.run(client.app.state.rpc.is_online(connector_id))
 
     assert _control_version(client, connector_id) == "2.0"
     runtime_types = asyncio.run(

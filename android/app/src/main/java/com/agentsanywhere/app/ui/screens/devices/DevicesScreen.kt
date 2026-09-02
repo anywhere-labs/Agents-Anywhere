@@ -63,6 +63,8 @@ import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 import com.agentsanywhere.app.ui.screens.common.AppEmptyState
 import com.composables.icons.lucide.ChevronLeft
 import com.composables.icons.lucide.ChevronRight
+import com.composables.icons.lucide.Circle
+import com.composables.icons.lucide.CircleCheck
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Plus
 import com.valentinilk.shimmer.shimmer
@@ -228,8 +230,8 @@ private fun DevicesHeader(
 ) {
     val colors = LocalAAColors.current
     val iconColor = if (darkMode) Color(0xFFE4E4E7) else Color(0xFF1C1C1E)
-    val iconSurface = if (darkMode) Color(0xFF18181B) else Color.White
-    val iconBorder = if (darkMode) Color(0xFF27272A) else Color(0xFFE7E6E2)
+    val iconSurface = colors.raisedSurface
+    val iconBorder = if (darkMode) colors.border else Color(0xFFE7E6E2)
 
     Row(
         modifier = Modifier
@@ -403,7 +405,7 @@ internal fun DeviceRow(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                StatusPill(online = device.online, darkMode = darkMode)
+                DeviceStatusLabel(online = device.online)
             }
             Text(
                 text = deviceAgentPreviewLabel(device, agentPreview),
@@ -426,41 +428,26 @@ internal fun DeviceRow(
 }
 
 @Composable
-private fun StatusPill(online: Boolean, darkMode: Boolean) {
-    val textColor = when {
-        online && darkMode -> Color(0xFF74F2B2)
-        online -> Color(0xFF159A61)
-        darkMode -> Color(0xFFA1A1AA)
-        else -> Color(0xFF999999)
-    }
-    val surface = when {
-        online && darkMode -> Color(0xFF0E2A1F)
-        online -> Color(0xFFEAF7EF)
-        darkMode -> Color(0xFF27272A)
-        else -> Color(0xFFF0F0F0)
-    }
-    val border = when {
-        online && darkMode -> Color(0xFF164A35)
-        online -> Color.Transparent
-        darkMode -> Color(0xFF3F3F46)
-        else -> Color.Transparent
-    }
+private fun DeviceStatusLabel(online: Boolean) {
+    val colors = LocalAAColors.current
+    val statusColor = if (online) Color(0xFF10B981) else colors.muted
 
-    Box(
-        modifier = Modifier
-            .height(23.dp)
-            .width(62.dp)
-            .clip(CircleShape)
-            .background(surface)
-            .border(1.dp, border, CircleShape),
-        contentAlignment = Alignment.Center,
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
+        Icon(
+            imageVector = if (online) Lucide.CircleCheck else Lucide.Circle,
+            contentDescription = null,
+            tint = if (online) statusColor else statusColor.copy(alpha = 0.4f),
+            modifier = Modifier.size(16.dp),
+        )
         Text(
             text = stringResource(if (online) R.string.devices_online else R.string.devices_offline),
-            color = textColor,
-            fontSize = 12.sp,
-            fontWeight = FontWeight.Bold,
-            lineHeight = 14.sp,
+            color = statusColor,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Medium,
+            lineHeight = 16.sp,
             maxLines = 1,
         )
     }
@@ -489,7 +476,7 @@ private fun DevicesLoadingList(darkMode: Boolean) {
 
 @Composable
 private fun LoadingRow(darkMode: Boolean) {
-    val surface = if (darkMode) Color(0xFF18181B) else Color.White
+    val surface = LocalAAColors.current.raisedSurface
     val border = if (darkMode) Color(0xFF27272A) else Color(0xFFECECEC)
     val line = if (darkMode) Color(0xFF27272A) else Color(0xFFF0F0F0)
     val shape = RoundedCornerShape(15.dp)

@@ -752,6 +752,42 @@ class SessionResponse(BaseModel):
     serverTime: str
 
 
+SessionShareScope = Literal["message", "session"]
+
+
+class SessionShareCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    scope: SessionShareScope
+    itemIds: list[str] = Field(default_factory=list, max_length=100)
+
+    @model_validator(mode="after")
+    def _validate_item_ids(self) -> SessionShareCreateRequest:
+        if self.scope == "message" and not self.itemIds:
+            raise ValueError("itemIds is required when sharing a reply")
+        if self.scope == "session" and self.itemIds:
+            raise ValueError("itemIds must be empty when sharing a session")
+        if len(set(self.itemIds)) != len(self.itemIds):
+            raise ValueError("itemIds must not contain duplicates")
+        return self
+
+
+class SessionShareCreateResponse(BaseModel):
+    shareId: str
+    sharePath: str
+    shareUrl: str
+    scope: SessionShareScope
+    createdAt: str
+
+
+class PublicSharedSession(BaseModel):
+    id: str
+    title: str | None = None
+    runtime: RuntimeName
+    runtimeName: str | None = None
+    cwd: str | None = None
+
+
 class TimelineSource(BaseModel):
     runtime: RuntimeName | Literal["platform"]
     sessionId: str | None = None
@@ -782,6 +818,15 @@ class TimelineItem(TimelineItemIn):
     updatedSeq: int
     createdAt: str
     updatedAt: str
+
+
+class PublicSessionShareResponse(BaseModel):
+    shareId: str
+    scope: SessionShareScope
+    session: PublicSharedSession
+    items: list[TimelineItem]
+    createdAt: str
+    serverTime: str
 
 
 class ApprovalSource(BaseModel):

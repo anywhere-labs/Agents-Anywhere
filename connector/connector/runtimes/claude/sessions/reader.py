@@ -24,6 +24,7 @@ from connector.runtimes.claude.domain.pending_messages import (
     ClaudeClientMessageBinding,
     ClaudeHistoryUserMessage,
     ClaudePendingClientMessageRegistry,
+    attachment_echo_base_text,
 )
 from connector.runtimes.claude.domain.session import (
     ClaudeSession,
@@ -350,15 +351,27 @@ def _history_items_from_messages(
                 event="claude.history.system",
             )
         )
-        if synthetic_control or role not in {"user", "assistant", "system"} or not text:
-            continue
         client_message = matches.get(native_id or "")
+        visible_text = client_message.text if client_message is not None else text
+        if role == "user" and client_message is None and visible_text:
+            attachment_base = attachment_echo_base_text(visible_text)
+            if attachment_base is not None:
+                visible_text = attachment_base
+        if (
+            synthetic_control
+            or role not in {"user", "assistant", "system"}
+            or (
+                not visible_text
+                and not (client_message is not None and client_message.attachments)
+            )
+        ):
+            continue
         items.append(
             projector.message_item(
                 session=session,
                 turn_id=turn_id,
                 role=role,
-                text=client_message.text if client_message is not None else text,
+                text=visible_text,
                 event=f"claude.history.{role}",
                 native_item_id=native_id or f"history_{index}",
                 item_id=(
@@ -667,7 +680,10 @@ def _cursor_offset(cursor: str | None) -> int:
 
 
 def _session_title(session: Any) -> str | None:
-    return _string_attr(session, "custom_title", "summary", "first_prompt", "title")
+    # Claude SDK-created sessions may update `summary` to the latest user
+    # prompt after every turn. `first_prompt` is the stable fallback title;
+    # `custom_title` also contains persisted Claude Code AI titles when present.
+    return _string_attr(session, "custom_title", "first_prompt", "summary", "title")
 
 
 def _sync_marker(session: Any) -> str:

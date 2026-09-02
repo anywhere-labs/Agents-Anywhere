@@ -45,7 +45,7 @@ migration tests.
 The Server requires the database to be at its exact Alembic schema revision and
 does not mutate a production database during startup. `upgrade` fingerprints an
 unversioned v1 database, archives required legacy data, and applies every revision
-through the current schema (`v2_23`). Inspect the installed revision with:
+through the current schema (`v2_24`). Inspect the installed revision with:
 
 ```bash
 uv run python -m agent_server.infra.db.migrations current --verbose
@@ -67,11 +67,11 @@ Legacy-only rows and legacy JSON columns are retained in
 `legacy_import_archive`; their superseded source tables and columns are removed
 by `v2_3`.
 
-### v2.23 rollout and downgrade boundary
+### v2.24 rollout and downgrade boundary
 
-Do not mix `v2.22` and `v2.23` writers against one database. Stop every old
+Do not mix `v2.23` (or older) and `v2.24` writers against one database. Stop every old
 Server and other process that can write sessions or Timeline data, migrate the
-database to `v2_23`, and only then start the new writers. The PostgreSQL advisory
+database to `v2_24`, and only then start the new writers. The PostgreSQL advisory
 lock serializes migration processes; it does not fence application writers that
 are already running.
 
@@ -84,7 +84,7 @@ backup, and schedule an appropriate maintenance window.
 Stop all writers before attempting a downgrade. Downgrade normally refuses once
 a session has an active, not-yet-consumed lease (`seq_allocated_high <> seq`),
 and it also refuses sequence values outside the signed 32-bit range. Normal
-`v2.23` traffic can create that lease state immediately, so do not rely on an
+`v2.24` traffic can create that lease state immediately, so do not rely on an
 in-place schema downgrade as the rollback mechanism after writers restart.
 
 The first startup on an empty database logs a bootstrap token. Use that token in

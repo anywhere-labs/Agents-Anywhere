@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from collections import deque
 from collections.abc import Mapping
 from contextlib import AsyncExitStack
 from typing import Any
@@ -116,6 +117,8 @@ from agent_server.services.session_runtime_state_cache import SessionRuntimeStat
 from agent_server.services.timeline_write_buffer import TimelineWriteBuffer
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
+
+_SESSION_WS_EVENT_DEDUP_LIMIT = 1_024
 
 
 def validate_session_id_array(payload: list[str]) -> list[str]:
@@ -929,6 +932,11 @@ async def session_ws(
     queue = await broker.register(session_id)
 
     async def send_session_updates() -> None:
+        # Durable-writer and aggregate invalidations can overlap. Their
+        # deterministic event IDs make duplicate delivery unnecessary on one
+        # live socket; keep the cache bounded for long-running sessions.
+        sent_event_ids: set[str] = set()
+        sent_event_order: deque[str] = deque()
         async with timeline_write_buffer.session_fence(session_id):
             next_seq = await db.get_session_seq(session_id)
         await websocket.send_json(
@@ -957,7 +965,13 @@ async def session_ws(
             if not isinstance(invalidation, dict):
                 continue
             for event in events_from_invalidation(invalidation):
+                if event.eventId in sent_event_ids:
+                    continue
                 await websocket.send_json(event.model_dump(mode="json"))
+                sent_event_ids.add(event.eventId)
+                sent_event_order.append(event.eventId)
+                if len(sent_event_order) > _SESSION_WS_EVENT_DEDUP_LIMIT:
+                    sent_event_ids.discard(sent_event_order.popleft())
 
     try:
         await run_server_push_until_disconnect(

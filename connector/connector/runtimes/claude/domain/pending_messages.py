@@ -444,11 +444,14 @@ def client_message_text_matches(actual: str, expected: str) -> bool:
 
 
 def attachment_echo_base_text(value: str) -> str | None:
-    marker = "\n\nAttached files:\n"
-    marker_index = value.rfind(marker)
+    normalized = normalize_text(value)
+    marker = "Attached files:\n"
+    if normalized.startswith(marker):
+        return ""
+    marker_index = normalized.rfind(f"\n\n{marker}")
     if marker_index < 0:
         return None
-    return value[:marker_index]
+    return normalized[:marker_index]
 
 
 def normalize_text(value: str) -> str:

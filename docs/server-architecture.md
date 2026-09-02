@@ -84,11 +84,11 @@ revision. Only the explicit migration command mutates schema. Revision `v2_3`
 removes the archived v1 columns and the transitional Approval table after
 Interaction notices become authoritative.
 
-### v2.23 writer compatibility
+### v2.24 writer compatibility
 
-The `v2.23` revision-clock model is not writer-compatible with `v2.22`. A rollout
+The `v2.24` revision-clock model is not writer-compatible with `v2.23` or older. A rollout
 must stop all old Server and external writer processes, migrate the database,
-and then start only `v2.23` writers. The migration advisory lock coordinates
+and then start only `v2.24` writers. The migration advisory lock coordinates
 concurrent migrators; it is not an application-write fence and does not make a
 rolling mixed-version deployment safe.
 
@@ -102,6 +102,6 @@ Downgrade is an offline operation: all writers must remain stopped while its
 preconditions are evaluated and the schema changes run. It refuses if any
 session has an allocated range ahead of its durable sequence
 (`seq_allocated_high <> seq`) or if a value cannot fit signed 32-bit storage.
-Because an ordinary `v2.23` allocation lease can make the first condition true
+Because an ordinary `v2.24` allocation lease can make the first condition true
 before the whole range is consumed, downgrade will commonly be unavailable once
 new writers have handled Timeline traffic.

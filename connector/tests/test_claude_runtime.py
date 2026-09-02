@@ -153,6 +153,44 @@ def test_claude_pending_messages_match_incremental_history_in_send_order() -> No
     )
 
 
+def test_claude_pending_messages_match_attachment_only_echo() -> None:
+    registry = ClaudePendingClientMessageRegistry("conn_test")
+    attachment = {
+        "fileId": "file_image",
+        "name": "image.jpg",
+        "path": "/tmp/image.jpg",
+        "mediaType": "image/jpeg",
+        "byteSize": 12,
+    }
+    registry.register_live_message(
+        session_id="sess_attachment_only",
+        external_session_id="claude_attachment_only",
+        client_message_id="client_attachment_only",
+        platform_item_id="platform_attachment_only",
+        text="",
+        attachments=(attachment,),
+    )
+
+    matches = registry.match_history_messages(
+        session_id="sess_attachment_only",
+        external_session_id="claude_attachment_only",
+        messages=(
+            ClaudeHistoryUserMessage(
+                native_message_id="native_attachment_only",
+                text=(
+                    "\n\nAttached files:\n"
+                    "- image.jpg: /tmp/image.jpg (image/jpeg, 12 bytes)"
+                ),
+            ),
+        ),
+    )
+
+    matched = matches["native_attachment_only"]
+    assert matched.platform_item_id == "platform_attachment_only"
+    assert matched.text == ""
+    assert matched.attachments == (attachment,)
+
+
 def test_claude_pending_messages_keep_a_bounded_recent_window() -> None:
     registry = ClaudePendingClientMessageRegistry("conn_test")
     for index in range(130):
@@ -750,7 +788,9 @@ async def _test_claude_runtime_lists_sessions_from_sdk_history() -> None:
     session = sessions[0]
     assert session.session_id == stable_session_id("conn_test", "claude_history_1")
     assert session.external_session_id == "claude_history_1"
-    assert session.title == "History session"
+    # Claude SDK `summary` may drift to the latest user prompt. The stable
+    # fallback title must remain the first prompt until a custom/AI title exists.
+    assert session.title == "first prompt"
     assert session.cwd == "/repo"
     assert session.ordering_time == "2026-09-10T00:26:40Z"
     assert session.metadata["source"] == "claude.session/list"
@@ -968,6 +1008,72 @@ async def _test_claude_runtime_projects_sdk_history_snapshot() -> None:
 
 def test_claude_runtime_projects_sdk_history_system_blocks() -> None:
     asyncio.run(_test_claude_runtime_projects_sdk_history_system_blocks())
+
+
+def test_claude_runtime_filters_injected_attachment_notes_from_history() -> None:
+    asyncio.run(_test_claude_runtime_filters_injected_attachment_notes_from_history())
+
+
+async def _test_claude_runtime_filters_injected_attachment_notes_from_history() -> (
+    None
+):
+    sdk = _HistorySdk(
+        messages={
+            "claude_history_attachments": [
+                SimpleNamespace(
+                    type="user",
+                    uuid="history_attachment_only",
+                    session_id="claude_history_attachments",
+                    message={
+                        "role": "user",
+                        "content": (
+                            "\n\nAttached files:\n"
+                            "- image.jpg: /tmp/image.jpg (image/jpeg, 12 bytes)"
+                        ),
+                    },
+                ),
+                SimpleNamespace(
+                    type="assistant",
+                    uuid="history_attachment_answer",
+                    session_id="claude_history_attachments",
+                    message={"role": "assistant", "content": "first answer"},
+                ),
+                SimpleNamespace(
+                    type="user",
+                    uuid="history_captioned_attachment",
+                    session_id="claude_history_attachments",
+                    message={
+                        "role": "user",
+                        "content": (
+                            "describe this\n\nAttached files:\n"
+                            "- image.jpg: /tmp/image.jpg (image/jpeg, 12 bytes)"
+                        ),
+                    },
+                ),
+                SimpleNamespace(
+                    type="assistant",
+                    uuid="history_captioned_answer",
+                    session_id="claude_history_attachments",
+                    message={"role": "assistant", "content": "second answer"},
+                ),
+            ]
+        }
+    )
+    runtime = _runtime(sdk=sdk)
+
+    snapshot = await runtime.get_session_snapshot(
+        "sess_history_attachments",
+        "claude_history_attachments",
+    )
+
+    assert [item.content["text"] for item in snapshot.items] == [
+        "first answer",
+        "describe this",
+        "second answer",
+    ]
+    assert all(
+        "Attached files:" not in item.content["text"] for item in snapshot.items
+    )
 
 
 async def _test_claude_runtime_projects_sdk_history_system_blocks() -> None:

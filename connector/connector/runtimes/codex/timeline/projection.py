@@ -224,7 +224,9 @@ class CodexTimelineProjection:
             return self.context_compaction_content()
         if self.raw_type == "ImageViewThreadItem":
             return self.image_view_content()
-        if self.text:
+        if self.text or (
+            self.attachments and self.raw_type in {"userMessage", "steeringUserMessage"}
+        ):
             return {
                 "text": self.text,
                 "format": "markdown",

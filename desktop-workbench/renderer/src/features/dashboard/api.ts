@@ -4,6 +4,9 @@ import type {
   AdminDashboardSettings,
   AdminDashboardSettingsUpdate,
   AdminDashboardSnapshotResponse,
+  AppReleaseCreateRequest,
+  AppReleaseListResponse,
+  AppReleaseView,
   ArchiveAllResponse,
   BulkArchiveResponse,
   ArchiveAllScope,
@@ -28,7 +31,9 @@ import type {
   ProtocolCapabilitiesResponse,
   ProtocolModelCatalogResponse,
   ProtocolPermissionCatalogResponse,
+  PublicSessionShareResponse,
   RpcResponse,
+  RuntimeTypeListResponse,
   SessionCommandListResponse,
   SessionCreateAndStartRequest,
   SessionCreateRequest,
@@ -38,6 +43,8 @@ import type {
   SessionPatchRequest,
   SessionResponse,
   SessionRuntimeStateResponse,
+  SessionShareCreateRequest,
+  SessionShareCreateResponse,
   SessionSelectionPatchResponse,
   SessionSnapshotResponse,
   SessionTimelineResponse,
@@ -98,6 +105,17 @@ export class DashboardApi {
       {},
       { token, query: { tz } },
     );
+  }
+
+  listAdminClientReleases(token: string): Promise<AppReleaseListResponse> {
+    return this.client.get<AppReleaseListResponse>("/admin/client-releases", { token });
+  }
+
+  createAdminClientRelease(
+    token: string,
+    body: AppReleaseCreateRequest,
+  ): Promise<AppReleaseView> {
+    return this.client.post<AppReleaseView>("/admin/client-releases", body, { token });
   }
 
   listConnectors(token: string): Promise<ConnectorListResponse> {
@@ -163,8 +181,11 @@ export class DashboardApi {
     return this.client.post<PairingPollResponse>("/pairing/poll", { pairingId }, { auth: false });
   }
 
-  listSessions(token: string): Promise<SessionListResponse> {
-    return this.client.get<SessionListResponse>("/sessions", { token });
+  listSessions(
+    token: string,
+    query: { archived: boolean; limit?: number; cursor?: string | null },
+  ): Promise<SessionListResponse> {
+    return this.client.get<SessionListResponse>("/sessions", { token, query });
   }
 
   archiveConnectorSessions(
@@ -286,6 +307,25 @@ export class DashboardApi {
     return this.client.get<SessionSnapshotResponse>(
       `/sessions/${encodeURIComponent(sessionId)}/snapshot`,
       { token, query: { limit } },
+    );
+  }
+
+  createSessionShare(
+    token: string,
+    sessionId: string,
+    body: SessionShareCreateRequest,
+  ): Promise<SessionShareCreateResponse> {
+    return this.client.post<SessionShareCreateResponse>(
+      `/sessions/${encodeURIComponent(sessionId)}/shares`,
+      body,
+      { token },
+    );
+  }
+
+  getPublicSessionShare(shareId: string): Promise<PublicSessionShareResponse> {
+    return this.client.get<PublicSessionShareResponse>(
+      `/public/shares/${encodeURIComponent(shareId)}`,
+      { auth: false },
     );
   }
 
@@ -777,6 +817,27 @@ export class DashboardApi {
     );
   }
 
+  getConnectorRuntimeTypes(
+    token: string,
+    connectorId: string,
+  ): Promise<RuntimeTypeListResponse> {
+    return this.client.get<RuntimeTypeListResponse>(
+      `/connectors/${encodeURIComponent(connectorId)}/runtime-types`,
+      { token },
+    );
+  }
+
+  discoverConnectorRuntimeTypes(
+    token: string,
+    connectorId: string,
+  ): Promise<RuntimeTypeListResponse> {
+    return this.client.post<RuntimeTypeListResponse>(
+      `/connectors/${encodeURIComponent(connectorId)}/runtime-types/discover`,
+      {},
+      { token },
+    );
+  }
+
   discoverConnectorRuntimes(
     token: string,
     connectorId: string,
@@ -784,6 +845,36 @@ export class DashboardApi {
     return this.client.post<DeviceRuntimeListResponse>(
       `/connectors/${encodeURIComponent(connectorId)}/runtimes/discover`,
       {},
+      { token },
+    );
+  }
+
+  createConnectorRuntime(
+    token: string,
+    connectorId: string,
+    payload: {
+      runtimeType: string;
+      name: string;
+      config: Record<string, unknown>;
+      active?: boolean;
+    },
+  ): Promise<DeviceRuntimeView> {
+    return this.client.post<DeviceRuntimeView>(
+      `/connectors/${encodeURIComponent(connectorId)}/runtimes`,
+      payload,
+      { token },
+    );
+  }
+
+  renameConnectorRuntime(
+    token: string,
+    connectorId: string,
+    runtimeId: string,
+    name: string,
+  ): Promise<DeviceRuntimeView> {
+    return this.client.patch<DeviceRuntimeView>(
+      `/connectors/${encodeURIComponent(connectorId)}/runtimes/${encodeURIComponent(runtimeId)}`,
+      { name },
       { token },
     );
   }

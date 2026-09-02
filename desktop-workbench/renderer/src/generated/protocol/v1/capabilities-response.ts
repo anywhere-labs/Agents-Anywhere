@@ -7,7 +7,7 @@
 export type Allowed = boolean
 export type Available = boolean
 export type Capabilityid = string
-export type Runtime = ("codex" | "claude" | "opencode" | "acp") | null
+export type Runtime = ("codex" | "claude" | "opencode" | "acp" | "dsh") | null
 export type Scope = "runtime" | "session"
 export type Sessionid = string | null
 export type Supported = boolean

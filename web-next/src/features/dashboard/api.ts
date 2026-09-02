@@ -31,6 +31,7 @@ import type {
   ProtocolCapabilitiesResponse,
   ProtocolModelCatalogResponse,
   ProtocolPermissionCatalogResponse,
+  PublicSessionShareResponse,
   RpcResponse,
   RuntimeTypeListResponse,
   SessionCommandListResponse,
@@ -42,6 +43,8 @@ import type {
   SessionPatchRequest,
   SessionResponse,
   SessionRuntimeStateResponse,
+  SessionShareCreateRequest,
+  SessionShareCreateResponse,
   SessionSelectionPatchResponse,
   SessionSnapshotResponse,
   SessionTimelineResponse,
@@ -304,6 +307,25 @@ export class DashboardApi {
     return this.client.get<SessionSnapshotResponse>(
       `/sessions/${encodeURIComponent(sessionId)}/snapshot`,
       { token, query: { limit } },
+    );
+  }
+
+  createSessionShare(
+    token: string,
+    sessionId: string,
+    body: SessionShareCreateRequest,
+  ): Promise<SessionShareCreateResponse> {
+    return this.client.post<SessionShareCreateResponse>(
+      `/sessions/${encodeURIComponent(sessionId)}/shares`,
+      body,
+      { token },
+    );
+  }
+
+  getPublicSessionShare(shareId: string): Promise<PublicSessionShareResponse> {
+    return this.client.get<PublicSessionShareResponse>(
+      `/public/shares/${encodeURIComponent(shareId)}`,
+      { auth: false },
     );
   }
 

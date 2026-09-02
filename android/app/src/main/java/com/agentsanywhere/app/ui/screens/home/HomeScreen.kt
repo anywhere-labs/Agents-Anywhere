@@ -375,6 +375,7 @@ private fun HomeSessionActionOverlay(
 
 @Composable
 internal fun HomeSessionHighlightRow(session: AgentSession, darkMode: Boolean) {
+    val indicator = session.listIndicator()
     val subtitle = listOf(session.runtimeContextLabel, session.workspaceLabel)
         .filter { it.isNotBlank() }
         .joinToString("  ·  ")
@@ -388,7 +389,7 @@ internal fun HomeSessionHighlightRow(session: AgentSession, darkMode: Boolean) {
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(Lucide.ListIcon, contentDescription = null, tint = meta, modifier = Modifier.size(14.dp))
+        SessionRowLeading(indicator = indicator)
         if (session.pinned) {
             Column(
                 modifier = Modifier.weight(1f),
@@ -424,7 +425,7 @@ internal fun HomeSessionHighlightRow(session: AgentSession, darkMode: Boolean) {
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        SessionRowTrailing(session = session, timeColor = meta)
+        SessionRowTrailing(session = session, indicator = indicator, timeColor = meta)
     }
 }
 
@@ -520,9 +521,9 @@ private fun HomeRenameSessionDialog(
     val colors = LocalAAColors.current
     val darkMode = colors.canvas == Color(0xFF09090B)
     val shape = RoundedCornerShape(26.dp)
-    val surface = if (darkMode) Color(0xFF18181B) else Color.White
+    val surface = colors.dialogSurface
     val fieldColor = if (darkMode) Color(0xFF09090B) else Color(0xFFF7F7F7)
-    val secondaryButton = if (darkMode) Color(0xFF27272A) else Color(0xFFF3F3F3)
+    val secondaryButton = colors.secondaryActionSurface
     var name by remember(session.id) { mutableStateOf(session.title) }
     var fieldError by remember(session.id, errorMessage) { mutableStateOf(errorMessage) }
     val titleRequired = stringResource(R.string.home_title_required)
@@ -813,8 +814,8 @@ private fun HomeHeader(onProfile: () -> Unit, onSearch: () -> Unit) {
         RoundLucideButton(
             icon = Lucide.UserRound,
             iconColor = icon,
-            surface = if (darkMode) Color(0xFF18181B) else Color.White,
-            border = if (darkMode) Color(0xFF27272A) else Color(0xFFE7E6E2),
+            surface = colors.raisedSurface,
+            border = if (darkMode) colors.border else Color(0xFFE7E6E2),
             onClick = onProfile,
         )
         Box(
@@ -886,8 +887,8 @@ private fun QuickEntryCard(
     val pressed by interactionSource.collectIsPressedAsState()
     val scale by animateFloatAsState(if (pressed) 0.975f else 1f, label = "quick-entry-scale")
     val shape = RoundedCornerShape(18.dp)
-    val surface = if (darkMode) Color(0xFF18181B) else Color.White
-    val border = if (darkMode) Color.White.copy(alpha = 0.12f) else Color(0xFFE7E6E2)
+    val surface = colors.raisedSurface
+    val border = if (darkMode) Color.Transparent else Color(0xFFE7E6E2)
 
     Column(
         modifier = modifier
@@ -1350,6 +1351,7 @@ internal fun HomePinnedSessionRow(
     onClick: () -> Unit,
     onLongPress: (Rect) -> Unit,
 ) {
+    val indicator = session.listIndicator()
     val subtitle = listOf(session.runtimeContextLabel, session.workspaceLabel)
         .filter { it.isNotBlank() }
         .joinToString("  ·  ")
@@ -1360,7 +1362,7 @@ internal fun HomePinnedSessionRow(
         onClick = onClick,
         onLongPress = onLongPress,
     ) {
-        Icon(Lucide.ListIcon, contentDescription = null, tint = LocalAAColors.current.faint, modifier = Modifier.size(14.dp))
+        SessionRowLeading(indicator = indicator)
         Column(
             modifier = Modifier.weight(1f),
             verticalArrangement = Arrangement.Center,
@@ -1383,7 +1385,7 @@ internal fun HomePinnedSessionRow(
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        SessionRowTrailing(session = session, timeColor = LocalAAColors.current.faint)
+        SessionRowTrailing(session = session, indicator = indicator, timeColor = LocalAAColors.current.faint)
     }
 }
 
@@ -1393,8 +1395,9 @@ internal fun HomeRecentSessionRow(
     onClick: () -> Unit,
     onLongPress: (Rect) -> Unit,
 ) {
+    val indicator = session.listIndicator()
     HomeSessionRowShell(height = 52.dp, onClick = onClick, onLongPress = onLongPress) {
-        Icon(Lucide.ListIcon, contentDescription = null, tint = LocalAAColors.current.faint, modifier = Modifier.size(14.dp))
+        SessionRowLeading(indicator = indicator)
         Text(
             text = session.title.sessionDisplayTitle(),
             modifier = Modifier.weight(1f),
@@ -1405,28 +1408,53 @@ internal fun HomeRecentSessionRow(
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
-        SessionRowTrailing(session = session, timeColor = LocalAAColors.current.faint)
+        SessionRowTrailing(session = session, indicator = indicator, timeColor = LocalAAColors.current.faint)
+    }
+}
+
+@Composable
+private fun SessionRowLeading(indicator: SessionListIndicator) {
+    Box(
+        modifier = Modifier.size(20.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        when (indicator) {
+            SessionListIndicator.Busy,
+            SessionListIndicator.Unread -> SessionStatusIndicator(indicator = indicator)
+
+            SessionListIndicator.WaitingApproval,
+            SessionListIndicator.None -> Icon(
+                imageVector = Lucide.ListIcon,
+                contentDescription = null,
+                tint = LocalAAColors.current.faint,
+                modifier = Modifier.size(14.dp),
+            )
+        }
     }
 }
 
 @Composable
 private fun SessionRowTrailing(
     session: AgentSession,
+    indicator: SessionListIndicator,
     timeColor: Color,
 ) {
     Row(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        SessionStatusIndicator(indicator = session.listIndicator())
-        Text(
-            text = session.updatedAtLabel.ifBlank { "now" },
-            color = timeColor,
-            fontSize = 10.8.sp,
-            fontFamily = FontFamily.Monospace,
-            fontWeight = FontWeight.SemiBold,
-            maxLines = 1,
-        )
+        if (indicator == SessionListIndicator.WaitingApproval) {
+            SessionStatusIndicator(indicator = indicator)
+        } else {
+            Text(
+                text = session.updatedAtLabel.ifBlank { "now" },
+                color = timeColor,
+                fontSize = 10.8.sp,
+                fontFamily = FontFamily.Monospace,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+            )
+        }
     }
 }
 
@@ -1441,13 +1469,12 @@ internal fun SessionStatusIndicator(indicator: SessionListIndicator) {
                 text = label,
                 modifier = Modifier
                     .clip(CircleShape)
-                    .background(colors.sessionStatusAccent.copy(alpha = 0.16f))
-                    .border(1.dp, colors.sessionStatusAccent.copy(alpha = 0.22f), CircleShape)
-                    .padding(horizontal = 8.dp, vertical = 2.dp),
-                color = colors.sessionStatusAccentText,
-                fontSize = 11.sp,
+                    .background(colors.raisedSurface)
+                    .padding(horizontal = 12.dp, vertical = 5.dp),
+                color = colors.inkSoft,
+                fontSize = 12.5.sp,
                 fontWeight = FontWeight.Medium,
-                lineHeight = 16.sp,
+                lineHeight = 18.sp,
                 maxLines = 1,
             )
         }
@@ -1456,7 +1483,7 @@ internal fun SessionStatusIndicator(indicator: SessionListIndicator) {
             description = stringResource(R.string.home_session_status_running),
         )
 
-        SessionListIndicator.Unread -> SessionStatusDot(
+        SessionListIndicator.Unread -> SessionUnreadIndicator(
             color = colors.sessionStatusAccent,
             description = stringResource(R.string.home_session_status_unread),
         )
@@ -1473,26 +1500,26 @@ private fun SessionBusyIndicator(description: String) {
         initialValue = 0f,
         targetValue = 360f,
         animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 850, easing = LinearEasing),
+            animation = tween(durationMillis = 1_200, easing = LinearEasing),
         ),
         label = "session-status-rotation",
     )
 
     Canvas(
         modifier = Modifier
-            .size(14.dp)
+            .size(20.dp)
             .semantics { contentDescription = description }
             .graphicsLayer { rotationZ = rotation },
     ) {
-        val strokeWidth = 2.dp.toPx()
+        val strokeWidth = 2.2.dp.toPx()
         drawCircle(
-            color = colors.faint.copy(alpha = 0.32f),
+            color = colors.ink.copy(alpha = 0.16f),
             style = Stroke(width = strokeWidth),
         )
         drawArc(
-            color = colors.muted,
+            color = colors.inkSoft.copy(alpha = 0.78f),
             startAngle = -90f,
-            sweepAngle = 105f,
+            sweepAngle = 100f,
             useCenter = false,
             style = Stroke(width = strokeWidth, cap = StrokeCap.Round),
         )
@@ -1500,17 +1527,25 @@ private fun SessionBusyIndicator(description: String) {
 }
 
 @Composable
-private fun SessionStatusDot(
+private fun SessionUnreadIndicator(
     color: Color,
     description: String,
 ) {
     Box(
         modifier = Modifier
-            .size(8.dp)
+            .size(18.dp)
             .clip(CircleShape)
-            .background(color)
+            .background(color.copy(alpha = 0.14f))
             .semantics { contentDescription = description },
-    )
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(9.dp)
+                .clip(CircleShape)
+                .background(color),
+        )
+    }
 }
 
 @Composable

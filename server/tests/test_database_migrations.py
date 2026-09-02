@@ -92,6 +92,7 @@ def test_empty_database_upgrades_to_current_schema(tmp_path) -> None:
             "alembic_version",
             "app_releases",
             "device_runtimes",
+            "session_shares",
             "sessions",
         }.issubset(tables)
         assert "approvals" not in tables
@@ -362,6 +363,7 @@ def test_v2_0_database_upgrades_through_current_revision(tmp_path) -> None:
         ("v2_20", "v2_21"),
         ("v2_21", "v2_22"),
         ("v2_22", "v2_23"),
+        ("v2_23", "v2_24"),
     ],
 )
 def test_every_adjacent_schema_upgrade(
@@ -1001,6 +1003,7 @@ def test_v2_14_downgrade_rejects_instance_specific_data(
         "v2_20",
         "v2_21",
         "v2_23",
+        "v2_24",
     ],
 )
 def test_unversioned_runtime_schema_is_classified_by_actual_columns(
@@ -1038,9 +1041,9 @@ def test_unversioned_runtime_schema_is_classified_by_actual_columns(
     )
 
 
-def test_current_schema_version_is_v2_23() -> None:
-    assert CURRENT_SCHEMA_REVISION == "v2_23"
-    assert CURRENT_SCHEMA_VERSION == "2.23"
+def test_current_schema_version_is_v2_24() -> None:
+    assert CURRENT_SCHEMA_REVISION == "v2_24"
+    assert CURRENT_SCHEMA_VERSION == "2.24"
 
 
 def test_v2_20_adds_session_source_observation_details(tmp_path) -> None:
@@ -1093,10 +1096,47 @@ def test_v2_22_retires_session_message_queue_schema(tmp_path) -> None:
         engine.dispose()
 
 
-def test_v2_23_adds_sequence_allocation_high_watermark(tmp_path) -> None:
-    path = tmp_path / "session-sequence-high-watermark.sqlite3"
+def test_v2_23_adds_immutable_session_shares(tmp_path) -> None:
+    path = tmp_path / "session-shares.sqlite3"
     url = _sqlite_url(path)
     upgrade_database(db_url=url, revision="v2_22")
+
+    engine = create_engine(f"sqlite:///{path}")
+    try:
+        assert "session_shares" not in inspect(engine).get_table_names()
+    finally:
+        engine.dispose()
+
+    upgrade_database(db_url=url, revision="v2_23")
+
+    engine = create_engine(f"sqlite:///{path}")
+    try:
+        inspector = inspect(engine)
+        assert inspector.has_table("session_shares")
+        assert {
+            "id",
+            "user_id",
+            "session_id",
+            "scope",
+            "snapshot_json",
+            "allowed_file_ids_json",
+            "created_at",
+        } == {column["name"] for column in inspector.get_columns("session_shares")}
+        with engine.connect() as connection:
+            assert (
+                connection.execute(
+                    text("SELECT version_num FROM alembic_version")
+                ).scalar_one()
+                == "v2_23"
+            )
+    finally:
+        engine.dispose()
+
+
+def test_v2_24_adds_sequence_allocation_high_watermark(tmp_path) -> None:
+    path = tmp_path / "session-sequence-high-watermark.sqlite3"
+    url = _sqlite_url(path)
+    upgrade_database(db_url=url, revision="v2_23")
 
     engine = create_engine(f"sqlite:///{path}")
     try:
@@ -1135,7 +1175,7 @@ def test_v2_23_adds_sequence_allocation_high_watermark(tmp_path) -> None:
     finally:
         engine.dispose()
 
-    upgrade_database(db_url=url, revision="v2_23")
+    upgrade_database(db_url=url, revision="v2_24")
 
     engine = create_engine(f"sqlite:///{path}")
     try:
@@ -1172,13 +1212,13 @@ def test_v2_23_adds_sequence_allocation_high_watermark(tmp_path) -> None:
                 connection.execute(
                     text("SELECT version_num FROM alembic_version")
                 ).scalar_one()
-                == "v2_23"
+                == "v2_24"
             )
     finally:
         engine.dispose()
 
     with pytest.raises(RuntimeError, match="signed 32-bit range"):
-        command.downgrade(_alembic_config(url), "v2_22")
+        command.downgrade(_alembic_config(url), "v2_23")
 
     engine = create_engine(f"sqlite:///{path}")
     try:
@@ -1201,7 +1241,7 @@ def test_v2_23_adds_sequence_allocation_high_watermark(tmp_path) -> None:
         engine.dispose()
 
     with pytest.raises(RuntimeError, match="allocated sequence ranges are ahead"):
-        command.downgrade(_alembic_config(url), "v2_22")
+        command.downgrade(_alembic_config(url), "v2_23")
 
     engine = create_engine(f"sqlite:///{path}")
     try:
@@ -1214,21 +1254,83 @@ def test_v2_23_adds_sequence_allocation_high_watermark(tmp_path) -> None:
     finally:
         engine.dispose()
 
-    command.downgrade(_alembic_config(url), "v2_22")
+    command.downgrade(_alembic_config(url), "v2_23")
     engine = create_engine(f"sqlite:///{path}")
     try:
         assert "seq_allocated_high" not in {
             column["name"] for column in inspect(engine).get_columns("sessions")
         }
+        assert inspect(engine).has_table("session_shares")
         with engine.connect() as connection:
             assert (
                 connection.execute(
                     text("SELECT version_num FROM alembic_version")
                 ).scalar_one()
-                == "v2_22"
+                == "v2_23"
             )
     finally:
         engine.dispose()
+
+
+@pytest.mark.parametrize(
+    "negative_target",
+    ["last_read_seq", "timeline_items.updated_seq"],
+)
+def test_v2_24_rejects_negative_sequence_clocks(
+    tmp_path,
+    negative_target: str,
+) -> None:
+    path = tmp_path / f"session-negative-sequence-{negative_target.replace('.', '-')}.sqlite3"
+    url = _sqlite_url(path)
+    upgrade_database(db_url=url, revision="v2_23")
+
+    engine = create_engine(f"sqlite:///{path}")
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO connectors "
+                    "(id, user_id, name, status, token_hash, token_prefix, revoked, "
+                    "created_at, updated_at) VALUES "
+                    "('conn_negative_seq', 'user_negative_seq', 'Sequence', "
+                    "'online', 'hash', 'cxt_', 0, :now, :now)"
+                ),
+                {"now": "2026-09-02T00:00:00Z"},
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO sessions "
+                    "(id, connector_id, runtime, runtime_id, origin, status, takeover, "
+                    "pinned, archived, last_read_seq, latest_turn_end_seq, "
+                    "timeline_reset_seq, seq, updated_seq, created_at, updated_at) "
+                    "VALUES ('sess_negative_seq', 'conn_negative_seq', 'codex', "
+                    "'codex', 'connector_import', 'idle', 0, 0, 0, 10, 10, 10, "
+                    "10, 10, :now, :now)"
+                ),
+                {"now": "2026-09-02T00:00:00Z"},
+            )
+            if negative_target == "last_read_seq":
+                connection.execute(
+                    text(
+                        "UPDATE sessions SET last_read_seq = -1 "
+                        "WHERE id = 'sess_negative_seq'"
+                    )
+                )
+            else:
+                connection.execute(
+                    text(
+                        "INSERT INTO timeline_items "
+                        "(session_id, id, type, status, order_seq, updated_seq, "
+                        "payload_json) VALUES "
+                        "('sess_negative_seq', 'item_negative_seq', 'message', "
+                        "'completed', 1, -1, '{}')"
+                    )
+                )
+    finally:
+        engine.dispose()
+
+    with pytest.raises(RuntimeError, match="outside the protocol range"):
+        upgrade_database(db_url=url, revision="v2_24")
 
 
 def test_current_schema_drops_legacy_approval_notice_storage(tmp_path) -> None:
@@ -1494,6 +1596,11 @@ def _create_legacy_v1_database(path) -> None:
     engine = create_engine(f"sqlite:///{path}")
     metadata.create_all(engine)
     with engine.begin() as connection:
+        # Current metadata contains tables and columns introduced after v1.
+        # Remove them before constructing the historical legacy fixture so
+        # their real Alembic revisions can create them during the upgrade.
+        connection.execute(text("DROP TABLE session_shares"))
+        connection.execute(text("ALTER TABLE sessions DROP COLUMN seq_allocated_high"))
         connection.execute(
             text(
                 "CREATE TABLE approvals ("

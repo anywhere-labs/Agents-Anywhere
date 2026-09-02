@@ -67,6 +67,7 @@ export type Title1 = string
 export type Type = "notification" | "interaction"
 export type Notices = NoticeIn[]
 export type Servertime = string
+export type Archivesource = ("user" | "runtime" | "both") | null
 export type Archived = boolean
 export type Archivedat = string | null
 export type Connectorid = string
@@ -84,12 +85,17 @@ export type Pinned = boolean
 export type Pinnedat = string | null
 export type Runtime3 = "codex" | "claude" | "opencode" | "acp" | "dsh"
 export type Sortat = string | null
+export type Sourceavailability = "available" | "archived" | "unavailable" | "deleted" | "missing" | "unknown"
+export type Sourceavailabilityreason = string | null
+export type Sourceavailabilityupdatedat = string | null
+export type Sourceobservationorigin = ("event" | "inventory" | "operation") | null
 export type Sourceobservedat = string | null
 export type Status2 = "idle" | "waiting" | "pending" | "running" | "stopping" | "waiting_approval" | "error" | "blocked"
 export type Takeover = boolean
 export type Title2 = string | null
 export type Unread = boolean
 export type Updatedseq1 = number
+export type Userarchived = boolean
 export type Createdat2 = string
 export type Error = {
   [k: string]: unknown
@@ -242,6 +248,7 @@ export interface NoticeSource {
   [k: string]: unknown
 }
 export interface SessionView {
+  archiveSource?: Archivesource
   archived?: Archived
   archivedAt?: Archivedat
   connectorId: Connectorid
@@ -259,12 +266,17 @@ export interface SessionView {
   pinnedAt?: Pinnedat
   runtime: Runtime3
   sortAt?: Sortat
+  sourceAvailability?: Sourceavailability
+  sourceAvailabilityReason?: Sourceavailabilityreason
+  sourceAvailabilityUpdatedAt?: Sourceavailabilityupdatedat
+  sourceObservationOrigin?: Sourceobservationorigin
   sourceObservedAt?: Sourceobservedat
   status: Status2
   takeover: Takeover
   title?: Title2
   unread?: Unread
   updatedSeq: Updatedseq1
+  userArchived?: Userarchived
   [k: string]: unknown
 }
 export interface SessionRuntimeState {

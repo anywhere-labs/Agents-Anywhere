@@ -12,6 +12,7 @@ from agent_server.infra.repositories.instance_settings_facade import InstanceSet
 from agent_server.infra.repositories.oauth import OAuthRepositoryMixin
 from agent_server.infra.repositories.protocol_catalogs import ProtocolCatalogRepositoryMixin
 from agent_server.infra.repositories.sessions import SessionRepositoryMixin
+from agent_server.infra.repositories.shares import SessionShareRepositoryMixin
 from agent_server.infra.repositories.timeline import TimelineRepositoryMixin
 from agent_server.infra.repositories.users import UserRepositoryMixin
 from agent_server.infra.repositories.store_support import *
@@ -26,6 +27,7 @@ class Store(
     InstanceSettingsRepositoryMixin,
     ConnectorRepositoryMixin,
     SessionRepositoryMixin,
+    SessionShareRepositoryMixin,
     AttachmentRepositoryMixin,
     ActiveRunRepositoryMixin,
     TimelineRepositoryMixin,

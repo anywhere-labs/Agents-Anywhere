@@ -162,16 +162,16 @@ PostgreSQL allocation watermark prevents revision reuse but cannot recover a
 lost payload, so the local fallback is for development rather than a durable or
 multi-instance deployment.
 
-### v2.23 rollout and rollback
+### v2.24 rollout and rollback
 
-`v2.22` and `v2.23` Server writers must never run against the same database at
+`v2.23` (or older) and `v2.24` Server writers must never run against the same database at
 the same time. Use a stop-migrate-start deployment: stop every old Server and
-external writer, take a backup and run the migration, then start only `v2.23`
+external writer, take a backup and run the migration, then start only `v2.24`
 writers. The `migrate-next` dependency orders the new Compose services, but it
 does not fence an old container, another Compose project, or an external Server
 that is still running.
 
-On PostgreSQL, `v2.23` widens the session and Timeline sequence columns from
+On PostgreSQL, `v2.24` widens the session and Timeline sequence columns from
 `int4` to `int8`. Depending on PostgreSQL version, table size, indexes, and
 available resources, these `ALTER TABLE` operations can take strong locks and
 may rewrite table or index storage. Rehearse the migration on a production-sized
@@ -180,7 +180,7 @@ running it in production.
 
 A downgrade must also run with all writers stopped. It refuses when any session
 has an unconsumed revision lease (`seq_allocated_high <> seq`) or when a sequence
-value no longer fits signed 32-bit storage. Because normal `v2.23` traffic can
+value no longer fits signed 32-bit storage. Because normal `v2.24` traffic can
 leave an active lease ahead of the durable sequence immediately, treat the
 schema migration as forward-only unless the downgrade checks have been verified
 before restarting writers.
