@@ -348,6 +348,7 @@ def test_v2_0_database_upgrades_through_current_revision(tmp_path) -> None:
         ("v2_20", "v2_21"),
         ("v2_21", "v2_22"),
         ("v2_22", "v2_23"),
+        ("v2_23", "v2_24"),
     ],
 )
 def test_every_adjacent_schema_upgrade(
@@ -986,6 +987,8 @@ def test_v2_14_downgrade_rejects_instance_specific_data(
         "v2_19",
         "v2_20",
         "v2_21",
+        "v2_23",
+        "v2_24",
     ],
 )
 def test_unversioned_runtime_schema_is_classified_by_actual_columns(
@@ -1023,9 +1026,9 @@ def test_unversioned_runtime_schema_is_classified_by_actual_columns(
     )
 
 
-def test_current_schema_version_is_v2_23() -> None:
-    assert CURRENT_SCHEMA_REVISION == "v2_23"
-    assert CURRENT_SCHEMA_VERSION == "2.23"
+def test_current_schema_version_is_v2_24() -> None:
+    assert CURRENT_SCHEMA_REVISION == "v2_24"
+    assert CURRENT_SCHEMA_VERSION == "2.24"
 
 
 def test_v2_20_adds_session_source_observation_details(tmp_path) -> None:
@@ -1112,6 +1115,59 @@ def test_v2_23_adds_immutable_session_shares(tmp_path) -> None:
                     text("SELECT version_num FROM alembic_version")
                 ).scalar_one()
                 == "v2_23"
+            )
+    finally:
+        engine.dispose()
+
+
+def test_v2_24_adds_connector_kind_and_backfills_cli(tmp_path) -> None:
+    path = tmp_path / "connector-kind.sqlite3"
+    url = _sqlite_url(path)
+    upgrade_database(db_url=url, revision="v2_23")
+
+    engine = create_engine(f"sqlite:///{path}")
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO connectors "
+                    "(id, user_id, name, status, token_hash, token_prefix, revoked, "
+                    "created_at, updated_at) "
+                    "VALUES ('conn_existing', 'user_existing', 'Existing CLI', "
+                    "'offline', 'hash', 'prefix', 0, :now, :now)"
+                ),
+                {"now": "2026-09-02T00:00:00Z"},
+            )
+        assert "connector_kind" not in {
+            column["name"] for column in inspect(engine).get_columns("connectors")
+        }
+    finally:
+        engine.dispose()
+
+    upgrade_database(db_url=url, revision="v2_24")
+
+    engine = create_engine(f"sqlite:///{path}")
+    try:
+        columns = {
+            column["name"]: column
+            for column in inspect(engine).get_columns("connectors")
+        }
+        assert columns["connector_kind"]["nullable"] is False
+        with engine.connect() as connection:
+            assert (
+                connection.execute(
+                    text(
+                        "SELECT connector_kind FROM connectors "
+                        "WHERE id = 'conn_existing'"
+                    )
+                ).scalar_one()
+                == "cli"
+            )
+            assert (
+                connection.execute(
+                    text("SELECT version_num FROM alembic_version")
+                ).scalar_one()
+                == "v2_24"
             )
     finally:
         engine.dispose()
@@ -1380,6 +1436,7 @@ def _create_legacy_v1_database(path) -> None:
     engine = create_engine(f"sqlite:///{path}")
     metadata.create_all(engine)
     with engine.begin() as connection:
+        connection.execute(text("DROP TABLE session_shares"))
         connection.execute(
             text(
                 "CREATE TABLE approvals ("
@@ -1418,6 +1475,7 @@ def _create_legacy_v1_database(path) -> None:
         connection.execute(
             text("ALTER TABLE connectors DROP COLUMN runtime_control_version")
         )
+        connection.execute(text("ALTER TABLE connectors DROP COLUMN connector_kind"))
         connection.execute(
             text(
                 "CREATE TABLE device_agent_settings ("

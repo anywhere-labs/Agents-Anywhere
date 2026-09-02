@@ -54,6 +54,7 @@ from agent_server.infra.db.engine import SQLITE_BACKEND
 from agent_server.infra.files import FileStorage, build_file_storage
 from agent_server.core.models import (
     ConnectorConfigBundle,
+    ConnectorKind,
     ConnectorView,
     OAuthClientView,
     PairingPollResponse,

@@ -1709,12 +1709,42 @@ def test_connectors_can_be_listed_without_sessions(tmp_path):
     response = client.post("/connectors", headers=headers, json={"name": "dev"})
     assert response.status_code == 200
     connector = response.json()["connector"]
+    assert connector["connectorKind"] == "cli"
 
     listed = client.get("/connectors", headers=headers)
     assert listed.status_code == 200
     body = listed.json()
     assert body["connectors"] == [connector]
     assert body["serverTime"]
+
+
+def test_connector_create_accepts_desktop_kind_and_rejects_unknown_kind(tmp_path):
+    client = make_client(tmp_path)
+    headers = auth_headers(client)
+
+    created = client.post(
+        "/connectors",
+        headers=headers,
+        json={"name": "This Mac", "connectorKind": "desktop"},
+    )
+    assert created.status_code == 200
+    connector = created.json()["connector"]
+    assert connector["connectorKind"] == "desktop"
+
+    fetched = client.get(f"/connectors/{connector['id']}", headers=headers)
+    assert fetched.status_code == 200
+    assert fetched.json()["connector"]["connectorKind"] == "desktop"
+
+    revoked = client.post(f"/connectors/{connector['id']}/revoke", headers=headers)
+    assert revoked.status_code == 200
+    assert revoked.json()["connector"]["connectorKind"] == "desktop"
+
+    invalid = client.post(
+        "/connectors",
+        headers=headers,
+        json={"name": "Unknown", "connectorKind": "browser"},
+    )
+    assert invalid.status_code == 422
 
 
 def test_dashboard_ws_returns_connector_and_session_snapshot(tmp_path):
@@ -6212,6 +6242,25 @@ def test_pairing_flow_returns_one_time_connector_credentials(tmp_path):
     assert consumed.status_code == 200
     assert consumed.json()["status"] == "consumed"
     assert consumed.json()["config"] is None
+
+
+def test_pairing_created_connector_defaults_to_cli_kind(tmp_path):
+    client = make_client(tmp_path)
+    headers = auth_headers(client)
+
+    started = client.post(
+        "/pairing/start",
+        json={"serverUrl": "http://127.0.0.1:8000", "ttlSeconds": 600},
+    )
+    pairing = started.json()
+    claimed = client.post(
+        "/pairing/claim",
+        headers=headers,
+        json={"code": pairing["code"], "name": "CLI paired"},
+    )
+
+    assert claimed.status_code == 200
+    assert claimed.json()["connector"]["connectorKind"] == "cli"
 
 
 def test_connector_can_upsert_discovered_codex_session(tmp_path):

@@ -47,6 +47,7 @@ connectors = Table(
     Column("id", Text, primary_key=True),
     Column("user_id", Text, nullable=False),
     Column("name", Text, nullable=False),
+    Column("connector_kind", Text, nullable=False, server_default="cli"),
     Column("device_os", Text),
     Column("status", Text, nullable=False),
     Column("presence_instance_id", Text),

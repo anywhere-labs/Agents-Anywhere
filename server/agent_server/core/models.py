@@ -42,6 +42,7 @@ RuntimeName = Annotated[
 ]
 ConnectorStatus = Literal["offline", "online"]
 ConnectorDeviceOs = Literal["macos", "windows", "linux"]
+ConnectorKind = Literal["desktop", "cli"]
 SessionStatus = Literal[
     "idle",
     "waiting",
@@ -91,6 +92,7 @@ class ConnectorView(BaseModel):
     id: str
     userId: str
     name: str
+    connectorKind: ConnectorKind
     deviceOs: ConnectorDeviceOs | None = None
     status: ConnectorStatus
     lastSeenAt: str | None = None
@@ -100,6 +102,7 @@ class ConnectorView(BaseModel):
 
 class ConnectorCreateRequest(BaseModel):
     name: str = "Codex Connector"
+    connectorKind: ConnectorKind = "cli"
 
 
 class ConnectorUpdateRequest(BaseModel):
