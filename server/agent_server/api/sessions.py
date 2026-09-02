@@ -120,6 +120,11 @@ from agent_server.services.timeline_write_buffer import TimelineWriteBuffer
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 
 _SESSION_WS_EVENT_DEDUP_LIMIT = 1_024
+_SESSION_WS_LIVE_PROJECTION_EVENT_TYPES = {
+    "runtime.catalog.updated",
+    "runtime.state.updated",
+    "session.meta.updated",
+}
 
 
 def validate_session_id_array(payload: list[str]) -> list[str]:
@@ -938,6 +943,7 @@ async def session_ws(
         # live socket; keep the cache bounded for long-running sessions.
         sent_event_ids: set[str] = set()
         sent_event_order: deque[str] = deque()
+        last_live_projection_event_ids: dict[str, str] = {}
         last_capability_fingerprint: str | None = None
         async with timeline_write_buffer.session_fence(session_id):
             next_seq = await db.get_session_seq(session_id)
@@ -979,6 +985,23 @@ async def session_ws(
                     # A -> B -> A transition remains observable even if all
                     # three projections share one durable session sequence.
                     last_capability_fingerprint = capability_fingerprint
+                    continue
+                if event.type in _SESSION_WS_LIVE_PROJECTION_EVENT_TYPES:
+                    projection_key = event.type
+                    if event.type == "runtime.catalog.updated":
+                        projection_key = (
+                            f"{event.type}:{event.payload.get('catalogType')}"
+                        )
+                    if (
+                        last_live_projection_event_ids.get(projection_key)
+                        == event.eventId
+                    ):
+                        continue
+                    await websocket.send_json(event.model_dump(mode="json"))
+                    # These are current-state projections rather than durable
+                    # changes.  Adjacent duplicates are redundant, while an
+                    # A -> B -> A transition at one session sequence is real.
+                    last_live_projection_event_ids[projection_key] = event.eventId
                     continue
                 if event.eventId in sent_event_ids:
                     continue

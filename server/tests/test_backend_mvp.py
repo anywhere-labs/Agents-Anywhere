@@ -26,6 +26,9 @@ from agent_server.infra.connector_rpc import (
 )
 from agent_server.infra.fs_downloads import FsDownloadRelayManager
 from agent_server.services.device_runtimes import DeviceRuntimeService
+from agent_server.services.effective_capabilities import (
+    publish_connector_session_capabilities,
+)
 
 
 def make_client(tmp_path):
@@ -8235,60 +8238,256 @@ def test_session_ws_does_not_piggyback_capabilities_on_turn_end(tmp_path):
             ws.portal.call(_receive_ws_test_message, ws, 0.1)
 
 
-def test_session_ws_preserves_same_sequence_capability_a_b_a_transition(tmp_path):
+def test_session_ws_only_pushes_real_capability_change_across_session_updates(
+    tmp_path,
+):
     client = make_client(tmp_path)
-    _, _, session_id, headers = create_connector_and_session(client)
+    connector_id, access_token, session_id, headers = create_connector_and_session(
+        client
+    )
+    connector_headers = {"Authorization": f"Bearer {access_token}"}
+
+    takeover = client.post(f"/sessions/{session_id}/takeover", headers=headers)
+    assert takeover.status_code == 200, takeover.text
+    initial_capability = client.post(
+        "/connector/ingest",
+        headers=connector_headers,
+        json={
+            "notifications": [
+                {
+                    "method": "runtime.capability.updated",
+                    "params": {
+                        "connectorId": connector_id,
+                        "runtime": "codex",
+                        "sessionId": session_id,
+                        "revision": 1,
+                        "capabilities": [
+                            {
+                                "capabilityId": "session.send_message",
+                                "scope": "session",
+                                "runtime": "codex",
+                                "sessionId": session_id,
+                                "supported": True,
+                                "available": False,
+                                "allowed": True,
+                                "unavailableReason": "session_running",
+                                "parameters": {"phase": "running"},
+                            }
+                        ],
+                    },
+                }
+            ]
+        },
+    )
+    assert initial_capability.status_code == 200, initial_capability.text
+    running = client.post(
+        "/connector/ingest",
+        headers=connector_headers,
+        json={
+            "notifications": [
+                {
+                    "method": "session.state.updated",
+                    "params": {
+                        "sessionId": session_id,
+                        "runtime": "codex",
+                        "runtimeId": "codex",
+                        "status": "running",
+                    },
+                }
+            ]
+        },
+    )
+    assert running.status_code == 200, running.text
     ticket = ws_ticket(client, session_id, headers)
 
-    def invalidation(allowed: bool) -> dict[str, Any]:
-        return {
-            "sessionId": session_id,
-            "nextSeq": 10,
-            "session": {"id": session_id, "updatedSeq": 10},
-            "capabilitySet": {
-                "revision": 10,
+    notifications = [
+        {
+            "method": "session.turnEnded",
+            "params": {
+                "sessionId": session_id,
+                "runtime": "codex",
+                "runtimeId": "codex",
+                "turnId": "turn-capability-source-split",
+                "outcome": "completed",
+            },
+        },
+        {
+            "method": "session.state.updated",
+            "params": {
+                "sessionId": session_id,
+                "runtime": "codex",
+                "runtimeId": "codex",
+                "status": "idle",
+            },
+        },
+        {
+            "method": "runtime.capability.updated",
+            "params": {
+                "connectorId": connector_id,
+                "runtime": "codex",
+                "sessionId": session_id,
+                "revision": 2,
                 "capabilities": [
                     {
                         "capabilityId": "session.send_message",
                         "scope": "session",
                         "runtime": "codex",
-                        "runtimeId": "codex",
                         "sessionId": session_id,
                         "supported": True,
                         "available": True,
-                        "allowed": allowed,
-                        "unavailableReason": (
-                            None if allowed else "session_not_taken_over"
-                        ),
-                        "parameters": {},
+                        "allowed": True,
+                        "parameters": {"phase": "idle"},
                     }
                 ],
             },
-        }
+        },
+        {
+            "method": "session.source.updated",
+            "params": {
+                "sessionId": session_id,
+                "runtime": "codex",
+                "runtimeId": "codex",
+                "availability": "available",
+                "reason": "session-start-scan",
+                "observedAt": "2026-09-02T00:00:01Z",
+                "observationOrigin": "event",
+            },
+        },
+        {
+            "method": "session.updated",
+            "params": {
+                "sessionId": session_id,
+                "runtime": "codex",
+                "runtimeId": "codex",
+                "title": "Capability source split",
+            },
+        },
+    ]
 
     with client.websocket_connect(f"/sessions/{session_id}/ws?ticket={ticket}") as ws:
         assert ws.receive_json()["type"] == "session.subscribed"
-        observed_allowed: list[bool] = []
-        for index, allowed in enumerate((True, False, True)):
-            ws.portal.call(
-                client.app.state.timeline_broker.publish,
-                session_id,
-                invalidation(allowed),
+        for notification in notifications:
+            response = client.post(
+                "/connector/ingest",
+                headers=connector_headers,
+                json={"notifications": [notification]},
             )
-            event_count = 2 if index == 0 else 1
-            events = [ws.receive_json() for _ in range(event_count)]
+            assert response.status_code == 200, response.text
+
+        received: list[dict[str, Any]] = []
+        while True:
+            try:
+                message = ws.portal.call(_receive_ws_test_message, ws, 0.1)
+            except TimeoutError:
+                break
+            ws._raise_on_close(message)
+            received.append(json.loads(message["text"]))
+
+    capability_events = [
+        event
+        for event in received
+        if event["type"] == "runtime.capability.updated"
+    ]
+    assert len(capability_events) == 1, [
+        (event["type"], event["sequence"], event["eventId"])
+        for event in received
+    ]
+    send_capability = next(
+        capability
+        for capability in capability_events[0]["payload"]["capabilitySet"][
+            "capabilities"
+        ]
+        if capability["capabilityId"] == "session.send_message"
+    )
+    assert send_capability["parameters"] == {"phase": "idle"}
+
+
+def test_session_ws_preserves_same_sequence_presence_a_b_a_transition(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, access_token, session_id, headers = create_connector_and_session(
+        client
+    )
+    seeded = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={
+            "notifications": [
+                {
+                    "method": "protocol.capabilitiesUpdated",
+                    "params": {
+                        "revision": 1,
+                        "capabilities": [
+                            {
+                                "capabilityId": "session.send_message",
+                                "scope": "runtime",
+                                "runtime": "codex",
+                                "supported": True,
+                                "available": True,
+                                "allowed": True,
+                            }
+                        ],
+                    },
+                }
+            ]
+        },
+    )
+    assert seeded.status_code == 200, seeded.text
+    takeover = client.post(f"/sessions/{session_id}/takeover", headers=headers)
+    assert takeover.status_code == 200, takeover.text
+    ticket = ws_ticket(client, session_id, headers)
+
+    class Presence:
+        online = True
+
+        async def is_online(self, requested_connector_id: str) -> bool:
+            assert requested_connector_id == connector_id
+            return self.online
+
+    presence = Presence()
+
+    with client.websocket_connect(f"/sessions/{session_id}/ws?ticket={ticket}") as ws:
+        assert ws.receive_json()["type"] == "session.subscribed"
+        observed_statuses: list[str] = []
+        observed_available: list[bool] = []
+        observed_sequences: list[int] = []
+        for online in (True, False, True):
+            presence.online = online
+            ws.portal.call(
+                publish_connector_session_capabilities,
+                client.app.state.store,
+                presence,
+                client.app.state.timeline_broker,
+                connector_id,
+            )
+            events = [ws.receive_json() for _ in range(2)]
+            assert {event["type"] for event in events} == {
+                "session.meta.updated",
+                "runtime.capability.updated",
+            }, events
+            observed_sequences.extend(event["sequence"] for event in events)
+            session_event = next(
+                event for event in events if event["type"] == "session.meta.updated"
+            )
             capability_event = next(
                 event
                 for event in events
                 if event["type"] == "runtime.capability.updated"
             )
-            observed_allowed.append(
-                capability_event["payload"]["capabilitySet"]["capabilities"][0][
-                    "allowed"
-                ]
+            observed_statuses.append(
+                session_event["payload"]["session"]["connectorStatus"]
             )
+            send_capability = next(
+                capability
+                for capability in capability_event["payload"]["capabilitySet"][
+                    "capabilities"
+                ]
+                if capability["capabilityId"] == "session.send_message"
+            )
+            observed_available.append(send_capability["available"])
 
-        assert observed_allowed == [True, False, True]
+        assert observed_statuses == ["online", "offline", "online"]
+        assert observed_available == [True, False, True]
+        assert len(set(observed_sequences)) == 1
 
 
 def test_session_ws_projects_codex_timeline_sync_as_incremental_update_without_refetch(tmp_path):
@@ -8638,20 +8837,135 @@ def test_session_events_recovery_requires_snapshot_for_future_cursor(tmp_path):
     assert response.json()["events"] == []
 
 
-def test_session_events_recovery_is_noop_at_current_cursor(tmp_path):
+def test_session_events_recovery_returns_live_projection_at_current_cursor(tmp_path):
     client = make_client(tmp_path)
-    _, _, session_id, headers = create_connector_and_session(client)
+    _, access_token, session_id, headers = create_connector_and_session(client)
     snapshot = client.get(f"/sessions/{session_id}/snapshot", headers=headers).json()
+    assert snapshot["session"]["connectorStatus"] == "offline"
+
+    with client.websocket_connect(
+        "/connector/ws",
+        headers={"Authorization": f"Bearer {access_token}"},
+    ) as connector_ws:
+        connector_ws.send_json(
+            {"type": "notification", "method": "connector.heartbeat", "params": {}}
+        )
+
+        def read_online_meta():
+            response = client.get(f"/sessions/{session_id}/meta", headers=headers)
+            if response.status_code != 200:
+                return None
+            return (
+                response.json()
+                if response.json()["session"]["connectorStatus"] == "online"
+                else None
+            )
+
+        wait_for(read_online_meta)
+        response = client.get(
+            f"/sessions/{session_id}/events",
+            headers=headers,
+            params={"after": snapshot["eventCursor"]},
+        )
+
+    assert response.status_code == 200
+    recovery = response.json()
+    assert recovery["snapshotRequired"] is False
+    assert recovery["nextCursor"] == snapshot["eventCursor"]
+    assert {event["type"] for event in recovery["events"]} == {
+        "session.meta.updated",
+        "runtime.capability.updated",
+    }
+    session_event = next(
+        event for event in recovery["events"] if event["type"] == "session.meta.updated"
+    )
+    assert session_event["cursor"] == snapshot["eventCursor"]
+    assert session_event["payload"]["session"]["connectorStatus"] == "online"
+    capability_event = next(
+        event
+        for event in recovery["events"]
+        if event["type"] == "runtime.capability.updated"
+    )
+    send_capability = next(
+        capability
+        for capability in capability_event["payload"]["capabilitySet"]["capabilities"]
+        if capability["capabilityId"] == "session.send_message"
+    )
+    assert send_capability["available"] is True
+
+
+def test_session_events_recovery_returns_same_sequence_capability_change(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, access_token, session_id, headers = create_connector_and_session(
+        client
+    )
+    snapshot = client.get(f"/sessions/{session_id}/snapshot", headers=headers).json()
+    before_capabilities = {
+        capability["capabilityId"]: capability
+        for capability in snapshot["effectiveCapabilities"]["capabilities"]
+    }
+    assert before_capabilities["runtime.config"]["supported"] is False
+
+    changed = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={
+            "notifications": [
+                {
+                    "method": "runtime.capability.updated",
+                    "params": {
+                        "connectorId": connector_id,
+                        "runtime": "codex",
+                        "sessionId": session_id,
+                        "revision": 1,
+                        "capabilities": [
+                            {
+                                "capabilityId": "runtime.config",
+                                "scope": "session",
+                                "runtime": "codex",
+                                "sessionId": session_id,
+                                "supported": True,
+                                "available": True,
+                                "allowed": True,
+                            }
+                        ],
+                    },
+                }
+            ]
+        },
+    )
+    assert changed.status_code == 200, changed.text
+    current = client.get(f"/sessions/{session_id}/snapshot", headers=headers).json()
+    assert current["eventCursor"] == snapshot["eventCursor"]
+    current_capabilities = {
+        capability["capabilityId"]: capability
+        for capability in current["effectiveCapabilities"]["capabilities"]
+    }
+    assert current_capabilities["runtime.config"]["supported"] is True
 
     response = client.get(
         f"/sessions/{session_id}/events",
         headers=headers,
         params={"after": snapshot["eventCursor"]},
     )
-
-    assert response.status_code == 200
-    assert response.json()["snapshotRequired"] is False
-    assert response.json()["events"] == []
+    assert response.status_code == 200, response.text
+    assert response.json()["nextCursor"] == snapshot["eventCursor"]
+    assert {
+        event["cursor"] for event in response.json()["events"]
+    } == {snapshot["eventCursor"]}
+    capability_event = next(
+        event
+        for event in response.json()["events"]
+        if event["type"] == "runtime.capability.updated"
+    )
+    runtime_config = next(
+        capability
+        for capability in capability_event["payload"]["capabilitySet"][
+            "capabilities"
+        ]
+        if capability["capabilityId"] == "runtime.config"
+    )
+    assert runtime_config["supported"] is True
 
 
 def test_session_events_recovery_returns_latest_upsert_for_sparse_watermark(tmp_path):

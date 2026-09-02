@@ -90,8 +90,34 @@ class EventRecoveryService:
         if after_sequence > current_sequence:
             return self._snapshot_required(current_sequence)
         if after_sequence == current_sequence:
+            session = await self._store.get_session(session_id, user_id=user_id)
+            session, _runtime_capabilities, effective_capabilities = (
+                await project_session_capabilities(
+                    self._store,
+                    self._presence,
+                    session,
+                    user_id=user_id,
+                )
+            )
             return ProtocolEventRecoveryResponse(
-                events=[],
+                events=[
+                    protocol_event(
+                        session_id,
+                        sequence=current_sequence,
+                        event_type="session.meta.updated",
+                        payload={"session": session.model_dump(mode="json")},
+                    ),
+                    protocol_event(
+                        session_id,
+                        sequence=current_sequence,
+                        event_type="runtime.capability.updated",
+                        payload={
+                            "capabilitySet": effective_capabilities.model_dump(
+                                mode="json"
+                            )
+                        },
+                    ),
+                ],
                 nextCursor=event_cursor(current_sequence),
                 snapshotRequired=False,
                 serverTime=utc_now(),
