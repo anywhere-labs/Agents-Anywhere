@@ -1661,12 +1661,14 @@ fun SessionDetailScreen(
                             onRightClick = { scope.launch { pagerState.animateScrollToPage(1) } },
                             modifier = Modifier.align(Alignment.TopCenter),
                         )
-                        AAToastHost(
-                            hostState = snackbarHostState,
-                            modifier = Modifier
-                                .align(Alignment.TopCenter)
-                                .padding(top = 76.dp, start = 22.dp, end = 22.dp),
-                        )
+                        if (previewImage == null) {
+                            AAToastHost(
+                                hostState = snackbarHostState,
+                                modifier = Modifier
+                                    .align(Alignment.TopCenter)
+                                    .padding(top = 76.dp, start = 22.dp, end = 22.dp),
+                            )
+                        }
                         if (showCamera) {
                             SessionCameraCapture(
                                 onDismiss = { showCamera = false },
@@ -1765,6 +1767,7 @@ fun SessionDetailScreen(
             sessionImages = sessionImagePreviews,
             sessionId = sessionId.orEmpty(),
             controller = controller,
+            toastHostState = snackbarHostState,
             onDownload = ::saveAttachment,
             onDismiss = { previewImage = null },
         )

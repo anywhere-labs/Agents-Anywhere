@@ -23,6 +23,7 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -50,6 +51,7 @@ import com.agentsanywhere.app.R
 import com.agentsanywhere.app.feature.sessiondetail.AttachmentImageRequest
 import com.agentsanywhere.app.feature.sessiondetail.SessionDetailController
 import com.agentsanywhere.app.feature.sessiondetail.TimelineAttachment
+import com.agentsanywhere.app.ui.designsystem.AAToastHost
 import com.agentsanywhere.app.ui.designsystem.noRippleClickable
 import com.composables.icons.lucide.Download
 import com.composables.icons.lucide.Lucide
@@ -144,6 +146,7 @@ internal fun AttachmentPreviewDialog(
     sessionImages: List<AttachmentPreview>,
     sessionId: String,
     controller: SessionDetailController,
+    toastHostState: SnackbarHostState,
     onDownload: (TimelineAttachment) -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -240,6 +243,17 @@ internal fun AttachmentPreviewDialog(
                     )
                 }
             }
+
+            AAToastHost(
+                hostState = toastHostState,
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(
+                        top = statusTop + 70.dp,
+                        start = 22.dp,
+                        end = 22.dp,
+                    ),
+            )
         }
     }
 }
