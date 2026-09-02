@@ -1010,6 +1010,7 @@
     "factoryResetUnavailable": "Factory reset is not available right now.",
     "reconnectTitle": "This device was disconnected",
     "reconnectDescription": "This device is currently disconnected. Reconnect now?",
+    "localOffline": "This device is offline",
     "reconnect": "Reconnect",
     "reconnecting": "Reconnecting…",
     "reconnected": "This device has reconnected.",

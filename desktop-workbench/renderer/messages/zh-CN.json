@@ -1010,6 +1010,7 @@
     "factoryResetUnavailable": "当前无法恢复出厂设置。",
     "reconnectTitle": "这台设备已断开连接",
     "reconnectDescription": "这台设备当前处于断开状态。是否立即重新连接？",
+    "localOffline": "本机已下线",
     "reconnect": "重新连接",
     "reconnecting": "正在重新连接…",
     "reconnected": "这台设备已重新连接。",

@@ -1,13 +1,26 @@
 "use client"
 
 import { ArrowLeft, ArrowRight } from "lucide-react"
+import { useTranslations } from "next-intl"
 
 import { DashboardSidebarToggle } from "@/components/dashboard-sidebar-toggle"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Spinner } from "@/components/ui/spinner"
+import { useDesktopConnector } from "@/features/desktop/desktop-connector-context"
 
 export function DesktopShellHeader() {
+  const t = useTranslations("desktopConnector")
+  const { supported, busy, state, binding, reconnect } = useDesktopConnector()
+  const localConnectorId = binding?.connectorId ?? state?.connectorId
+  const needsReconnect = Boolean(
+    supported &&
+    localConnectorId &&
+    (state?.authFailed || state?.manualDisconnected),
+  )
+
   return (
-    <header className="aa-window-drag flex h-11 shrink-0 items-center border-b border-border/80 bg-background text-foreground">
+    <header className="aa-window-drag relative flex h-11 shrink-0 items-center border-b border-border/80 bg-background text-foreground">
       <div className="w-[6.5rem] shrink-0" aria-hidden="true" />
       <div className="aa-window-no-drag flex min-w-0 items-center gap-2">
         <DashboardSidebarToggle
@@ -39,6 +52,21 @@ export function DesktopShellHeader() {
           </Button>
         </div>
       </div>
+      {needsReconnect ? (
+        <div className="aa-window-no-drag absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 items-center gap-2">
+          <Badge variant="destructive" role="status" aria-live="polite">{t("localOffline")}</Badge>
+          <Button
+            type="button"
+            variant="outline"
+            size="xs"
+            onClick={() => void reconnect()}
+            disabled={busy}
+          >
+            {busy ? <Spinner data-icon="inline-start" /> : null}
+            {busy ? t("reconnecting") : t("reconnect")}
+          </Button>
+        </div>
+      ) : null}
       <div
         data-slot="desktop-shell-header-actions"
         className="ml-auto flex h-full min-w-0 flex-1 items-center justify-end px-3"
