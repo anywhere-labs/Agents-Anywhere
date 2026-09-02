@@ -106,7 +106,9 @@ class SqlTimelineStore:
                 if key not in ("session_id", "id")
             }
             stmt = stmt.on_conflict_do_update(
-                index_elements=["session_id", "id"], set_=update_cols
+                index_elements=["session_id", "id"],
+                set_=update_cols,
+                where=stmt.excluded.updated_seq >= timeline_items.c.updated_seq,
             )
         else:
             stmt = pg_insert(timeline_items)
@@ -116,7 +118,9 @@ class SqlTimelineStore:
                 if key not in ("session_id", "id")
             }
             stmt = stmt.on_conflict_do_update(
-                index_elements=["session_id", "id"], set_=update_cols
+                index_elements=["session_id", "id"],
+                set_=update_cols,
+                where=stmt.excluded.updated_seq >= timeline_items.c.updated_seq,
             )
         await conn.execute(stmt, values)
 

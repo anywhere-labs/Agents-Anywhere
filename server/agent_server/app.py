@@ -20,8 +20,8 @@ from agent_server.api import (
     admin_dashboard,
     agents,
     auth,
-    client_ws,
     client_releases,
+    client_ws,
     connector_files,
     connector_ingress,
     connector_runtimes,
@@ -61,6 +61,7 @@ from agent_server.services.effective_capabilities import (
 )
 from agent_server.services.session_runtime_state_cache import SessionRuntimeStateCache
 from agent_server.services.shell_tasks import ShellTaskManager
+from agent_server.services.timeline_write_buffer import TimelineWriteBuffer
 from agent_server.services.workspace import WorkspaceServiceError
 
 CONNECTOR_PRESENCE_SWEEP_SECONDS = 5
@@ -113,6 +114,7 @@ def create_app(
             )
             await app.state.redis.start()
             await app.state.timeline_broker.start()
+            await app.state.timeline_write_buffer.start()
             await app.state.terminal_stream_hub.start()
             await app.state.terminal_broker.start()
             await app.state.rpc.start()
@@ -132,18 +134,21 @@ def create_app(
                 await app.state.rpc.close()
             finally:
                 try:
-                    await app.state.terminal_broker.close()
+                    await app.state.timeline_write_buffer.close()
                 finally:
                     try:
-                        await app.state.terminal_stream_hub.close()
+                        await app.state.terminal_broker.close()
                     finally:
                         try:
-                            await app.state.timeline_broker.close()
+                            await app.state.terminal_stream_hub.close()
                         finally:
                             try:
-                                await app.state.redis.close()
+                                await app.state.timeline_broker.close()
                             finally:
-                                await app.state.store.close()
+                                try:
+                                    await app.state.redis.close()
+                                finally:
+                                    await app.state.store.close()
 
     app = FastAPI(title="Agent Server", version="0.1.7.2", lifespan=lifespan)
     app.add_exception_handler(
@@ -197,6 +202,17 @@ def create_app(
     )
     app.state.terminal_stream_hub = TerminalStreamHub(app.state.redis)
     app.state.timeline_broker = TimelineBroker(app.state.redis)
+    app.state.timeline_write_buffer = TimelineWriteBuffer(
+        app.state.store,
+        app.state.timeline_broker,
+        app.state.redis,
+        flush_interval_seconds=float(
+            os.environ.get("AGENT_SERVER_TIMELINE_FLUSH_INTERVAL_SECONDS", "1")
+        ),
+        pending_ttl_seconds=int(
+            os.environ.get("AGENT_SERVER_TIMELINE_PENDING_TTL_SECONDS", "86400")
+        ),
+    )
     app.state.session_runtime_state_cache = SessionRuntimeStateCache()
     app.state.device_runtime_service = DeviceRuntimeService(
         app.state.store,

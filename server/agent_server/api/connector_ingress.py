@@ -36,6 +36,7 @@ from agent_server.deps import (
     get_rpc,
     get_store,
     get_timeline_broker,
+    get_timeline_write_buffer,
 )
 from agent_server.infra.connector_rpc import (
     ConnectorConnection,
@@ -61,6 +62,7 @@ from agent_server.services.device_runtimes import (
 from agent_server.services.effective_capabilities import (
     publish_connector_session_capabilities,
 )
+from agent_server.services.timeline_write_buffer import TimelineWriteBuffer
 
 router = APIRouter(tags=["connector-ingress"])
 
@@ -254,6 +256,9 @@ async def connector_ws(
     realtime: ConnectorRealtimeService = Depends(get_connector_realtime_service),
     broker: TerminalBroker = Depends(get_terminal_broker),
     timeline_broker: TimelineBroker = Depends(get_timeline_broker),
+    timeline_write_buffer: TimelineWriteBuffer = Depends(
+        get_timeline_write_buffer
+    ),
 ) -> None:
     auth_header = websocket.headers.get("authorization")
     connector_id = _connector_id_from_bearer(auth_header)
@@ -311,7 +316,7 @@ async def connector_ws(
         )
         ingest_service = ConnectorIngestService(
             db,
-            ConnectorNotificationService(db, realtime),
+            ConnectorNotificationService(db, realtime, timeline_write_buffer),
             timeline_broker,
             runtime_service,
             manager,

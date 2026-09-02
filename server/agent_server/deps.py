@@ -22,6 +22,7 @@ from agent_server.services.event_recovery import EventRecoveryService
 from agent_server.services.session_run import SessionRunService
 from agent_server.services.session_runtime_state_cache import SessionRuntimeStateCache
 from agent_server.services.terminal import TerminalService
+from agent_server.services.timeline_write_buffer import TimelineWriteBuffer
 
 
 def get_store(conn: HTTPConnection) -> Store:
@@ -37,14 +38,22 @@ def get_catalog_service(conn: HTTPConnection) -> CatalogService:
 
 
 def get_event_recovery_service(conn: HTTPConnection) -> EventRecoveryService:
-    return EventRecoveryService(conn.app.state.store, conn.app.state.rpc)
+    return EventRecoveryService(
+        conn.app.state.store,
+        conn.app.state.rpc,
+        conn.app.state.timeline_write_buffer,
+    )
 
 
 def get_connector_ingest_service(conn: HTTPConnection) -> ConnectorIngestService:
     realtime = get_connector_realtime_service(conn)
     return ConnectorIngestService(
         conn.app.state.store,
-        ConnectorNotificationService(conn.app.state.store, realtime),
+        ConnectorNotificationService(
+            conn.app.state.store,
+            realtime,
+            conn.app.state.timeline_write_buffer,
+        ),
         conn.app.state.timeline_broker,
         conn.app.state.device_runtime_service,
         conn.app.state.rpc,
@@ -104,6 +113,10 @@ def get_fs_downloads(conn: HTTPConnection) -> FsDownloadRelayManager:
 
 def get_timeline_broker(conn: HTTPConnection) -> TimelineBroker:
     return conn.app.state.timeline_broker
+
+
+def get_timeline_write_buffer(conn: HTTPConnection) -> TimelineWriteBuffer:
+    return conn.app.state.timeline_write_buffer
 
 
 def get_session_runtime_state_cache(

@@ -282,8 +282,11 @@ class ConnectorIngestService:
                         "notices": [],
                         "catalogs": {},
                         "refetch": False,
+                        "deferred_timeline_only": True,
                     },
                 )
+                if not effect.timeline_pending:
+                    bucket["deferred_timeline_only"] = False
                 if effect.session_id == session_id:
                     if effect.timeline_reset and not effect.needs_refetch:
                         bucket["items"] = list(effect.items or [])
@@ -426,12 +429,13 @@ class ConnectorIngestService:
             ):
                 continue
             await self._timeline_broker.publish(session_id, envelope)
-            await publish_dashboard_changed(
-                self._store,
-                self._timeline_broker,
-                session_id=session_id,
-                reason="session.changed",
-            )
+            if not bucket["deferred_timeline_only"]:
+                await publish_dashboard_changed(
+                    self._store,
+                    self._timeline_broker,
+                    session_id=session_id,
+                    reason="session.changed",
+                )
     async def _apply_runtime_status(self, connector_id: str, params: dict) -> None:
         runtime_id = params.get("runtimeId")
         status = params.get("status")

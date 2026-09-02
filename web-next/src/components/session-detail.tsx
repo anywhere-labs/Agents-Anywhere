@@ -52,6 +52,7 @@ import {
   isOptimisticTimelineItem,
   markOptimisticItemFailed,
   mergeTimelineItems,
+  mergeTimelineSnapshot,
   preserveOptimisticItems,
   timelineClientMessageId,
 } from "@/components/session/optimistic-timeline"
@@ -163,6 +164,26 @@ function sessionStateFromSnapshot(snapshot: SessionSnapshotResponse): SessionRem
     eventCursor: snapshot.eventCursor,
     effectiveCapabilities: snapshot.effectiveCapabilities,
     catalogs: snapshot.catalogs ?? {},
+  }
+}
+
+function mergeSessionSnapshot(
+  current: SessionRemoteState,
+  incoming: SessionRemoteState,
+): SessionRemoteState {
+  const timeline = mergeTimelineSnapshot(
+    current.items,
+    current.nextSeq,
+    incoming.items,
+    incoming.nextSeq,
+  )
+  return {
+    ...incoming,
+    items: timeline.items,
+    nextSeq: timeline.nextSeq,
+    eventCursor: incoming.nextSeq >= current.nextSeq
+      ? incoming.eventCursor
+      : current.eventCursor,
   }
 }
 
@@ -833,7 +854,7 @@ export function SessionDetail({
           const merged = applyOptimisticItemsRef.current(next)
           clearResolvedOptimisticMessagesRef.current(sessionId, merged.items)
           nextSeqRef.current = Math.max(nextSeqRef.current, cursorSequence(next.eventCursor) || next.nextSeq)
-          setState((current) => current ? { ...merged, items: preserveOptimisticItems(merged.items, current.items) } : merged)
+          setState((current) => current ? mergeSessionSnapshot(current, merged) : merged)
           onSessionUpdatedRef.current?.(next.session)
         })
         .catch(() => undefined)
@@ -954,8 +975,11 @@ export function SessionDetail({
         setError(null)
         const merged = applyOptimisticItemsRef.current(next)
         clearResolvedOptimisticMessagesRef.current(sessionId, merged.items)
-        setState((current) => current ? { ...merged, items: preserveOptimisticItems(merged.items, current.items) } : merged)
-        nextSeqRef.current = cursorSequence(next.eventCursor) || next.nextSeq
+        setState((current) => current ? mergeSessionSnapshot(current, merged) : merged)
+        nextSeqRef.current = Math.max(
+          nextSeqRef.current,
+          cursorSequence(next.eventCursor) || next.nextSeq,
+        )
         onSessionUpdatedRef.current?.(next.session)
         snapshotReady = true
         const pending = bufferedEvents
@@ -2148,7 +2172,12 @@ function mergeSessionEvent(
       ? mergeNotices(current.notices, [notice])
       : current.notices
   const nextItems = timelineSnapshot
-    ? preserveOptimisticItems(timelineSnapshot, current.items)
+    ? mergeTimelineSnapshot(
+        current.items,
+        current.nextSeq,
+        timelineSnapshot,
+        event.sequence,
+      ).items
     : item
       ? mergeTimelineItems(current.items, [item])
       : current.items

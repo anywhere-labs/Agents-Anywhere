@@ -20,3 +20,4 @@ class IngestEffect:
     protocol_changed: bool = False
     notices_changed: bool = False
     needs_refetch: bool = False
+    timeline_pending: bool = False

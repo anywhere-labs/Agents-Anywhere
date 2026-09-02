@@ -93,6 +93,37 @@ class TimelineReader(Protocol):
     async def read(self, session_id: str) -> list[TimelineItem]: ...
 
 
+class TimelineBufferReader(Protocol):
+    async def read_one(
+        self,
+        session_id: str,
+        item_id: str,
+    ) -> TimelineItem | None: ...
+
+
+class TimelineBufferRepository(DashboardEventRepository, Protocol):
+    timeline: TimelineBufferReader
+
+    async def get_session_seq(self, session_id: str) -> int: ...
+
+    async def get_max_timeline_order_seq(self, session_id: str) -> int: ...
+
+    async def reserve_timeline_sequence(
+        self,
+        *,
+        session_id: str,
+        mark_read_on_change: bool = False,
+    ) -> int: ...
+
+    async def persist_buffered_timeline_items(
+        self,
+        *,
+        session_id: str,
+        items: list[TimelineItem],
+        source_observed_at: str | None = None,
+    ) -> TimelineBatchWriteResult: ...
+
+
 class TimelineEffectRepository(Protocol):
     timeline: TimelineReader
 

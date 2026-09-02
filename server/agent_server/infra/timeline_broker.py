@@ -1,14 +1,14 @@
-"""Fan timeline changes out to local SSE subscribers.
+"""Fan timeline changes out to local session subscribers.
 
 Lives alongside `TerminalBroker`. The connector ingress publishes a small
-envelope (`{"sessionId", "nextSeq"}`) here right after a DB commit succeeds;
-SSE subscribers wake immediately and fetch the incremental state. This
-replaces the dominant cost of the old polling loop (1.25s mean wait between
-"DB committed" and "frontend visible").
+envelope here when a timeline item is accepted, then may publish the same
+pre-sequenced item again after its coalesced database projection commits.
+Clients use the item sequence and deterministic event ID to make that durable
+echo idempotent. Dashboard invalidation remains commit-driven.
 
 When Redis is configured, Pub/Sub relays these invalidation messages between
-server instances. Messages are deliberately ephemeral: subscribers always
-re-fetch durable state from the database using their cursor.
+server instances. Messages remain deliberately ephemeral; the shared pending
+projection and explicit read barriers provide the durable recovery boundary.
 """
 
 from __future__ import annotations

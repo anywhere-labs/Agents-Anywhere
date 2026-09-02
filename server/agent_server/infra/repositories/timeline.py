@@ -27,6 +27,99 @@ from agent_server.infra.db.engine import SQLITE_BACKEND
 
 
 class TimelineRepositoryMixin:
+    async def reserve_timeline_sequence(
+        self,
+        *,
+        session_id: str,
+        mark_read_on_change: bool = False,
+    ) -> int:
+        """Reserve one session revision without writing a timeline row.
+
+        The realtime ingest path uses this small atomic update before it pushes an
+        item.  The comparatively expensive timeline row write can then be
+        coalesced without changing the sequence already observed by clients.
+        """
+
+        async with self._timeline_lock(session_id), self._engine.begin() as conn:
+            return await self._bump_session(
+                conn,
+                session_id,
+                mark_read=mark_read_on_change,
+            )
+
+    async def get_max_timeline_order_seq(self, session_id: str) -> int:
+        async with self._timeline_lock(session_id), self._engine.connect() as conn:
+            return await self._max_timeline_order_seq(conn, session_id)
+
+    async def persist_buffered_timeline_items(
+        self,
+        *,
+        session_id: str,
+        items: list[TimelineItem],
+        source_observed_at: str | None = None,
+    ) -> TimelineBatchWriteResult:
+        """Persist pre-sequenced realtime items without allocating new revisions.
+
+        A complete snapshot is a reset fence.  Buffered items accepted before
+        that fence must not be able to reintroduce rows removed by the snapshot.
+        Older delayed writes are also ignored when a newer value for the same ID
+        is already durable (for example after two server instances race to
+        flush the same shared buffer).
+        """
+
+        incoming_by_id = {
+            item.id: item
+            for item in sorted(items, key=lambda value: value.updatedSeq)
+        }
+        async with self._timeline_lock(session_id):
+            current_items = await self.timeline.read_many(
+                session_id,
+                set(incoming_by_id),
+            )
+            current_by_id = {item.id: item for item in current_items}
+            async with self._engine.begin() as conn:
+                row = (
+                    await conn.execute(
+                        select(sessions_t.c.timeline_reset_seq).where(
+                            sessions_t.c.id == session_id
+                        )
+                    )
+                ).first()
+                if row is None:
+                    raise KeyError(session_id)
+                timeline_reset_seq = int(row.timeline_reset_seq or 0)
+                persistable_items = [
+                    item
+                    for item in incoming_by_id.values()
+                    if item.updatedSeq > timeline_reset_seq
+                    and (
+                        (existing := current_by_id.get(item.id)) is None
+                        or item.updatedSeq >= existing.updatedSeq
+                    )
+                ]
+                changed_items = [
+                    item
+                    for item in persistable_items
+                    if (
+                        (existing := current_by_id.get(item.id)) is None
+                        or item.updatedSeq > existing.updatedSeq
+                        or (
+                            item.updatedSeq == existing.updatedSeq
+                            and item.model_dump() != existing.model_dump()
+                        )
+                    )
+                ]
+                await update_source_observed_at(
+                    conn,
+                    session_id=session_id,
+                    source_observed_at=source_observed_at,
+                )
+                await self.timeline.upsert_many(conn, changed_items)
+        return TimelineBatchWriteResult(
+            items=tuple(persistable_items),
+            changed=bool(changed_items),
+        )
+
     async def sync_timeline_items(
         self,
         *,

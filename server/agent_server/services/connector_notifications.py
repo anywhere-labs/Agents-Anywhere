@@ -26,6 +26,7 @@ from agent_server.core.runtime_identity import RuntimeIdentity, RuntimeIdentityE
 from agent_server.services.connector_realtime import ConnectorRealtimeService
 from agent_server.services.ingest_effects import IngestEffect
 from agent_server.services.repository_ports import ConnectorNotificationRepository
+from agent_server.services.timeline_write_buffer import TimelineWriteBuffer
 
 TIMELINE_SYNC_PUSH_LIMIT = 100
 SESSION_INVENTORY_LIMIT = 10_000
@@ -55,17 +56,18 @@ class ConnectorNotificationService:
         self,
         store: ConnectorNotificationRepository,
         realtime: ConnectorRealtimeService,
+        timeline_write_buffer: TimelineWriteBuffer | None = None,
     ) -> None:
         self._realtime = realtime
         self._handlers = (
             ConnectorProtocolNotificationHandler(store),
             RuntimeCatalogNotificationHandler(store),
             SessionStateNotificationHandler(store),
-            SessionTurnEndedNotificationHandler(store),
+            SessionTurnEndedNotificationHandler(store, timeline_write_buffer),
             SessionSourceNotificationHandler(store),
             SessionInventoryNotificationHandler(store),
             SessionNotificationHandler(store),
-            TimelineNotificationHandler(store),
+            TimelineNotificationHandler(store, timeline_write_buffer),
             InteractionNotificationHandler(store),
         )
 
@@ -599,8 +601,13 @@ class SessionStateNotificationHandler:
 
 
 class SessionTurnEndedNotificationHandler:
-    def __init__(self, store: ConnectorNotificationRepository) -> None:
+    def __init__(
+        self,
+        store: ConnectorNotificationRepository,
+        timeline_write_buffer: TimelineWriteBuffer | None = None,
+    ) -> None:
         self._store = store
+        self._timeline_write_buffer = timeline_write_buffer
 
     async def apply(
         self,
@@ -668,19 +675,34 @@ class SessionTurnEndedNotificationHandler:
             )
         if await _session_disabled(self._store, session_id):
             return IngestEffect()
-        session = await self._store.record_session_turn_end(
-            session_id=session_id,
-            source_observed_at=_string_or_none(params.get("sourceObservedAt")),
-            mark_read_on_change=False,
-        )
+        if self._timeline_write_buffer is None:
+            session = await self._store.record_session_turn_end(
+                session_id=session_id,
+                source_observed_at=_string_or_none(params.get("sourceObservedAt")),
+                mark_read_on_change=False,
+            )
+        else:
+            async with self._timeline_write_buffer.session_fence(session_id):
+                session = await self._store.record_session_turn_end(
+                    session_id=session_id,
+                    source_observed_at=_string_or_none(
+                        params.get("sourceObservedAt")
+                    ),
+                    mark_read_on_change=False,
+                )
         return IngestEffect(session_id=session.id, session_changed=True)
 
 
 class TimelineNotificationHandler:
     METHODS: ClassVar[set[str]] = {"timeline.sync", "timeline.itemUpsert"}
 
-    def __init__(self, store: ConnectorNotificationRepository) -> None:
+    def __init__(
+        self,
+        store: ConnectorNotificationRepository,
+        timeline_write_buffer: TimelineWriteBuffer | None = None,
+    ) -> None:
         self._store = store
+        self._timeline_write_buffer = timeline_write_buffer
 
     async def apply(
         self,
@@ -718,20 +740,41 @@ class TimelineNotificationHandler:
             return IngestEffect()
         items = [_timeline_item_for_session(item, session_id) for item in items]
         replace_snapshot = params.get("complete") is True
-        if replace_snapshot:
-            result = await self._store.replace_timeline_snapshot(
-                session_id=session_id,
-                source_observed_at=params.get("sourceObservedAt"),
-                items=items,
-                mark_read_on_change=True,
-            )
-        else:
-            result = await self._store.sync_timeline_items(
-                session_id=session_id,
-                source_observed_at=params.get("sourceObservedAt"),
-                items=items,
-                mark_read_on_change=True,
-            )
+        try:
+            if self._timeline_write_buffer is None:
+                if replace_snapshot:
+                    result = await self._store.replace_timeline_snapshot(
+                        session_id=session_id,
+                        source_observed_at=params.get("sourceObservedAt"),
+                        items=items,
+                        mark_read_on_change=True,
+                    )
+                else:
+                    result = await self._store.sync_timeline_items(
+                        session_id=session_id,
+                        source_observed_at=params.get("sourceObservedAt"),
+                        items=items,
+                        mark_read_on_change=True,
+                    )
+            else:
+                async with self._timeline_write_buffer.session_fence(session_id):
+                    if replace_snapshot:
+                        result = await self._store.replace_timeline_snapshot(
+                            session_id=session_id,
+                            source_observed_at=params.get("sourceObservedAt"),
+                            items=items,
+                            mark_read_on_change=True,
+                        )
+                    else:
+                        result = await self._store.sync_timeline_items(
+                            session_id=session_id,
+                            source_observed_at=params.get("sourceObservedAt"),
+                            items=items,
+                            mark_read_on_change=True,
+                        )
+        finally:
+            if self._timeline_write_buffer is not None:
+                await self._timeline_write_buffer.invalidate(session_id)
         changed_items = list(result.items) if result.changed else []
         push_items = len(changed_items) <= TIMELINE_SYNC_PUSH_LIMIT
         return IngestEffect(
@@ -769,15 +812,26 @@ class TimelineNotificationHandler:
         if await _session_disabled(self._store, session_id):
             return IngestEffect()
         item = _timeline_item_for_session(item, session_id)
-        result = await self._store.upsert_timeline_item(
-            session_id=session_id,
-            source_observed_at=params.get("sourceObservedAt"),
-            item=item,
-            mark_read_on_change=True,
-        )
+        if self._timeline_write_buffer is None:
+            result = await self._store.upsert_timeline_item(
+                session_id=session_id,
+                source_observed_at=params.get("sourceObservedAt"),
+                item=item,
+                mark_read_on_change=True,
+            )
+        else:
+            result = await self._timeline_write_buffer.accept(
+                session_id=session_id,
+                source_observed_at=params.get("sourceObservedAt"),
+                item=item,
+                mark_read_on_change=True,
+            )
         return IngestEffect(
             session_id=session_id,
             item=result.item.model_dump(mode="json") if result.changed else None,
+            timeline_pending=(
+                result.changed and self._timeline_write_buffer is not None
+            ),
         )
 
 

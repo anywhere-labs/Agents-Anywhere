@@ -16,6 +16,7 @@ from agent_server.services.effective_capabilities import (
     SessionCapabilityRepository,
     project_session_capabilities,
 )
+from agent_server.services.timeline_write_buffer import TimelineWriteBuffer
 
 DEFAULT_RECOVERY_LIMIT = 500
 DEFAULT_STABILITY_ATTEMPTS = 3
@@ -45,12 +46,14 @@ class EventRecoveryService:
         self,
         store: EventRecoveryRepository,
         presence: ConnectorPresencePort,
+        timeline_write_buffer: TimelineWriteBuffer | None = None,
         *,
         limit: int = DEFAULT_RECOVERY_LIMIT,
         stability_attempts: int = DEFAULT_STABILITY_ATTEMPTS,
     ) -> None:
         self._store = store
         self._presence = presence
+        self._timeline_write_buffer = timeline_write_buffer
         self._limit = limit
         self._stability_attempts = stability_attempts
 
@@ -63,6 +66,26 @@ class EventRecoveryService:
     ) -> ProtocolEventRecoveryResponse:
         after_sequence = parse_event_cursor(after)
         await self._store.get_session(session_id, user_id=user_id)
+        if self._timeline_write_buffer is not None:
+            async with self._timeline_write_buffer.session_fence(session_id):
+                return await self._recover_durable(
+                    session_id,
+                    after_sequence=after_sequence,
+                    user_id=user_id,
+                )
+        return await self._recover_durable(
+            session_id,
+            after_sequence=after_sequence,
+            user_id=user_id,
+        )
+
+    async def _recover_durable(
+        self,
+        session_id: str,
+        *,
+        after_sequence: int,
+        user_id: str,
+    ) -> ProtocolEventRecoveryResponse:
         current_sequence = await self._store.get_session_seq(session_id)
         if after_sequence > current_sequence:
             return self._snapshot_required(current_sequence)

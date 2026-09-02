@@ -3,6 +3,10 @@
 import type { AttachedFile } from "@/components/attachment-input"
 import type { TimelineItem } from "@/features/dashboard/types"
 import { sortTimelineItems } from "@/components/session/session-utils"
+import {
+  incomingTimelineItemCanReplace,
+  mergeSequencedTimelineSnapshot,
+} from "@/components/session/timeline-sequence"
 
 export const OPTIMISTIC_ITEM_PREFIX = "optimistic-message:"
 
@@ -18,6 +22,28 @@ export function isOptimisticTimelineItem(item: TimelineItem): boolean {
 export function preserveOptimisticItems(baseItems: TimelineItem[], previousItems: TimelineItem[]): TimelineItem[] {
   const optimisticItems = previousItems.filter(isOptimisticTimelineItem)
   return mergeTimelineItems(optimisticItems, baseItems)
+}
+
+export function mergeTimelineSnapshot(
+  currentItems: TimelineItem[],
+  currentNextSeq: number,
+  snapshotItems: TimelineItem[],
+  snapshotNextSeq: number,
+): { items: TimelineItem[]; nextSeq: number } {
+  const merged = mergeSequencedTimelineSnapshot(
+    currentItems,
+    currentNextSeq,
+    snapshotItems,
+    snapshotNextSeq,
+    isOptimisticTimelineItem,
+  )
+  return {
+    ...merged,
+    items: mergeTimelineItems(
+      merged.items.filter(isOptimisticTimelineItem),
+      merged.items.filter((item) => !isOptimisticTimelineItem(item)),
+    ),
+  }
 }
 
 export function mergeTimelineItems(
@@ -37,7 +63,9 @@ export function mergeTimelineItems(
       }
     }
     const existing = byId.get(nextItem.id)
-    if (!existing || existing.updatedSeq <= nextItem.updatedSeq) byId.set(nextItem.id, nextItem)
+    if (!existing || incomingTimelineItemCanReplace(existing, nextItem)) {
+      byId.set(nextItem.id, nextItem)
+    }
   }
   return reconcileDshAssistantActivity(sortTimelineItems(Array.from(byId.values())))
 }

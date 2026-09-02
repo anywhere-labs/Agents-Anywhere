@@ -83,6 +83,7 @@ from agent_server.deps import (
     get_session_runtime_state_cache,
     get_store,
     get_timeline_broker,
+    get_timeline_write_buffer,
 )
 from agent_server.infra.connector_rpc import (
     ConnectorOfflineError,
@@ -111,6 +112,7 @@ from agent_server.services.session_meta_projection import (
 )
 from agent_server.services.session_run import SessionRunError, SessionRunService
 from agent_server.services.session_runtime_state_cache import SessionRuntimeStateCache
+from agent_server.services.timeline_write_buffer import TimelineWriteBuffer
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 
@@ -314,7 +316,11 @@ async def list_sessions(
     runtime_state_cache: SessionRuntimeStateCache = Depends(
         get_session_runtime_state_cache
     ),
+    timeline_write_buffer: TimelineWriteBuffer = Depends(
+        get_timeline_write_buffer
+    ),
 ) -> dict[str, Any]:
+    await timeline_write_buffer.flush_all()
     try:
         sessions, has_more, next_cursor = await db.list_sessions_page(
             archived=archived,
@@ -342,9 +348,14 @@ async def get_session_meta(
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
     manager: ConnectorRpcManager = Depends(get_rpc),
+    timeline_write_buffer: TimelineWriteBuffer = Depends(
+        get_timeline_write_buffer
+    ),
 ) -> SessionResponse:
     try:
-        session = await db.get_session(session_id, user_id=user_id)
+        await db.get_session(session_id, user_id=user_id)
+        async with timeline_write_buffer.session_fence(session_id):
+            session = await db.get_session(session_id, user_id=user_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="session not found") from None
     return SessionResponse(
@@ -361,21 +372,37 @@ async def patch_session_meta(
     db: Store = Depends(get_store),
     manager: ConnectorRpcManager = Depends(get_rpc),
     broker: TimelineBroker = Depends(get_timeline_broker),
+    timeline_write_buffer: TimelineWriteBuffer = Depends(
+        get_timeline_write_buffer
+    ),
 ) -> SessionResponse:
     try:
         session = await db.get_session(session_id, user_id=user_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="session not found") from None
 
-    if payload.title is not None:
-        try:
-            session = await db.rename_session(session_id, payload.title, user_id=user_id)
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-    if payload.pinned is not None:
-        session = await db.set_session_pinned(session_id, payload.pinned, user_id=user_id)
-    if payload.archived is not None:
-        session = await db.set_session_archived(session_id, payload.archived, user_id=user_id)
+    async with timeline_write_buffer.session_fence(session_id):
+        if payload.title is not None:
+            try:
+                session = await db.rename_session(
+                    session_id,
+                    payload.title,
+                    user_id=user_id,
+                )
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+        if payload.pinned is not None:
+            session = await db.set_session_pinned(
+                session_id,
+                payload.pinned,
+                user_id=user_id,
+            )
+        if payload.archived is not None:
+            session = await db.set_session_archived(
+                session_id,
+                payload.archived,
+                user_id=user_id,
+            )
 
     await publish_dashboard_changed(
         db,
@@ -669,32 +696,36 @@ async def session_timeline(
     limit: int = Query(100, ge=1, le=500),
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
+    timeline_write_buffer: TimelineWriteBuffer = Depends(
+        get_timeline_write_buffer
+    ),
 ) -> ProtocolTimelineResponse:
     try:
         await db.get_session(session_id, user_id=user_id)
-        if mode == "latest":
-            items, has_more = await db.list_timeline_latest(
-                session_id=session_id,
-                limit=limit,
-            )
-        elif mode == "history":
-            if before_order_seq is None:
-                raise HTTPException(
-                    status_code=422,
-                    detail="beforeOrderSeq is required for history mode",
+        async with timeline_write_buffer.session_fence(session_id):
+            if mode == "latest":
+                items, has_more = await db.list_timeline_latest(
+                    session_id=session_id,
+                    limit=limit,
                 )
-            items, has_more = await db.list_timeline_before_order_seq(
-                session_id=session_id,
-                before_order_seq=before_order_seq,
-                limit=limit,
-            )
-        else:
-            items, has_more = await db.list_timeline_since(
-                session_id=session_id,
-                after_seq=after_seq,
-                limit=limit,
-            )
-        next_seq = await db.get_session_seq(session_id)
+            elif mode == "history":
+                if before_order_seq is None:
+                    raise HTTPException(
+                        status_code=422,
+                        detail="beforeOrderSeq is required for history mode",
+                    )
+                items, has_more = await db.list_timeline_before_order_seq(
+                    session_id=session_id,
+                    before_order_seq=before_order_seq,
+                    limit=limit,
+                )
+            else:
+                items, has_more = await db.list_timeline_since(
+                    session_id=session_id,
+                    after_seq=after_seq,
+                    limit=limit,
+                )
+            next_seq = await db.get_session_seq(session_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="session not found") from None
     return ProtocolTimelineResponse(
@@ -724,6 +755,9 @@ async def session_snapshot(
         get_session_runtime_state_cache
     ),
     catalogs: CatalogService = Depends(get_catalog_service),
+    timeline_write_buffer: TimelineWriteBuffer = Depends(
+        get_timeline_write_buffer
+    ),
 ) -> ProtocolSessionSnapshotResponse:
     snapshot_started_at = time.monotonic()
 
@@ -741,8 +775,7 @@ async def session_snapshot(
         stage_started_at = time.monotonic()
         session = await db.get_session(session_id, user_id=user_id)
         await _require_session_runtime_control(db, session, user_id=user_id)
-        items, has_more = await db.list_timeline_latest(session_id=session_id, limit=limit)
-        log_snapshot_stage("database", stage_started_at)
+        log_snapshot_stage("authorization", stage_started_at)
 
         stage_started_at = time.monotonic()
         notices = await read_session_notices_for_snapshot(manager, session)
@@ -787,8 +820,19 @@ async def session_snapshot(
             runtime_id=_session_runtime_id(session),
             user_id=user_id,
         )
-        next_seq = await db.get_session_seq(session_id)
-        log_snapshot_stage("catalogs_and_sequence", stage_started_at)
+        log_snapshot_stage("catalogs", stage_started_at)
+
+        stage_started_at = time.monotonic()
+        async with timeline_write_buffer.session_fence(session_id):
+            session = await db.get_session(session_id, user_id=user_id)
+            items, has_more = await db.list_timeline_latest(
+                session_id=session_id,
+                limit=limit,
+            )
+            next_seq = await db.get_session_seq(session_id)
+        session = session_with_runtime_state(session, runtime_state)
+        session = await with_effective_session_connector_status(manager, session)
+        log_snapshot_stage("database", stage_started_at)
     except KeyError:
         raise HTTPException(status_code=404, detail="session not found") from None
     return ProtocolSessionSnapshotResponse(
@@ -846,6 +890,9 @@ async def session_ws(
     session_id: str,
     db: Store = Depends(get_store),
     broker: TimelineBroker = Depends(get_timeline_broker),
+    timeline_write_buffer: TimelineWriteBuffer = Depends(
+        get_timeline_write_buffer
+    ),
     tickets: ClientWsTicketManager = Depends(_get_ws_tickets),
 ) -> None:
     ticket_value = websocket.query_params.get("ticket")
@@ -866,7 +913,8 @@ async def session_ws(
     queue = await broker.register(session_id)
 
     async def send_session_updates() -> None:
-        next_seq = await db.get_session_seq(session_id)
+        async with timeline_write_buffer.session_fence(session_id):
+            next_seq = await db.get_session_seq(session_id)
         await websocket.send_json(
             protocol_event(
                 session_id,
@@ -914,10 +962,14 @@ async def enable_takeover(
     runtime_state_cache: SessionRuntimeStateCache = Depends(
         get_session_runtime_state_cache
     ),
+    timeline_write_buffer: TimelineWriteBuffer = Depends(
+        get_timeline_write_buffer
+    ),
 ) -> TakeoverResponse:
     try:
         await db.get_session(session_id, user_id=user_id)
-        session = await db.set_takeover(session_id, True)
+        async with timeline_write_buffer.session_fence(session_id):
+            session = await db.set_takeover(session_id, True)
         await _publish_session_protocol_update(
             db,
             broker,
@@ -942,10 +994,14 @@ async def disable_takeover(
     runtime_state_cache: SessionRuntimeStateCache = Depends(
         get_session_runtime_state_cache
     ),
+    timeline_write_buffer: TimelineWriteBuffer = Depends(
+        get_timeline_write_buffer
+    ),
 ) -> TakeoverResponse:
     try:
         await db.get_session(session_id, user_id=user_id)
-        session = await db.set_takeover(session_id, False)
+        async with timeline_write_buffer.session_fence(session_id):
+            session = await db.set_takeover(session_id, False)
         await _publish_session_protocol_update(
             db,
             broker,
