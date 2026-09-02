@@ -53,7 +53,7 @@ export function DesktopShellHeader() {
       </div>
       {needsReconnect ? (
         <div className="aa-window-no-drag absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 items-center gap-2">
-          <span className="flex items-center gap-1.5 text-xs font-medium text-foreground" role="status" aria-live="polite">
+          <span className="flex items-center gap-1.5 text-xs font-medium text-white" role="status" aria-live="polite">
             <Info className="size-3.5 text-destructive" aria-hidden="true" />
             {t("localOffline")}
           </span>
