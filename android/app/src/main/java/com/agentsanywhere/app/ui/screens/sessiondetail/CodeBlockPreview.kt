@@ -75,6 +75,7 @@ internal fun SoraCodeBlock(
     modifier: Modifier = Modifier,
     editorBackground: Color? = null,
     fixedHeight: Dp? = null,
+    maxHeight: Dp = 360.dp,
     framed: Boolean = true,
     verticalScrollEnabled: Boolean = true,
     horizontalTouchOnly: Boolean = false,
@@ -84,7 +85,7 @@ internal fun SoraCodeBlock(
     val shape = RoundedCornerShape(12.dp)
     val border = if (darkMode) Color(0xFF27272A) else Color(0xFFE4E1DB)
     val viewModifier = (fixedHeight?.let { modifier.fillMaxWidth().height(it) }
-        ?: modifier.fillMaxWidth().heightIn(min = 64.dp, max = 360.dp))
+        ?: modifier.fillMaxWidth().heightIn(min = 64.dp, max = maxHeight))
         .then(if (framed) Modifier.clip(shape).border(1.dp, border, shape) else Modifier)
     AndroidView(
         modifier = viewModifier,

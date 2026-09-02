@@ -1543,9 +1543,14 @@ private fun ToolActivityDetailCard(
     modifier: Modifier = Modifier,
 ) {
     val muted = LocalAAColors.current.muted
+    val contentModifier = if (message.kind == TimelineMessageKind.Command) {
+        modifier.padding(start = 16.dp, top = 10.dp, end = 16.dp, bottom = 14.dp)
+    } else {
+        modifier.padding(16.dp)
+    }
 
     Column(
-        modifier = modifier.padding(16.dp),
+        modifier = contentModifier,
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         when (message.kind) {
@@ -1572,9 +1577,7 @@ private fun ToolActivityDetailCard(
                                 modifier = Modifier.size(16.dp),
                             )
                             Text(
-                                text = listOf(fileChangeActionLabel(change.action), change.path)
-                                    .filter(String::isNotBlank)
-                                    .joinToString(" "),
+                                text = change.path,
                                 color = muted,
                                 fontSize = 12.sp,
                                 lineHeight = 17.sp,
@@ -1608,15 +1611,6 @@ private fun ToolActivityDetailCard(
             else -> Unit
         }
     }
-}
-
-@Composable
-private fun fileChangeActionLabel(action: String): String = when (action) {
-    "add" -> stringResource(R.string.session_file_change_added)
-    "delete" -> stringResource(R.string.session_file_change_deleted)
-    "rename" -> stringResource(R.string.session_file_change_renamed)
-    "update" -> stringResource(R.string.session_file_change_modified)
-    else -> stringResource(R.string.session_file_change_changed)
 }
 
 internal fun TimelineMessage.toolSummaryTarget(): String {
@@ -1668,7 +1662,7 @@ private val TimelineMessage.hasToolCallDetail: Boolean
 
 @Composable
 private fun CommandPreview(command: String, output: String, darkMode: Boolean) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         CommandLineBar(command = command.ifBlank { stringResource(R.string.session_command_fallback) }, darkMode = darkMode)
         if (output.isNotBlank()) {
             CommandPreviewSection(
@@ -1676,6 +1670,7 @@ private fun CommandPreview(command: String, output: String, darkMode: Boolean) {
                 text = output,
                 languageHint = null,
                 darkMode = darkMode,
+                maxHeight = 300.dp,
             )
         }
     }
@@ -1739,6 +1734,7 @@ private fun CommandPreviewSection(
     text: String,
     languageHint: String?,
     darkMode: Boolean,
+    maxHeight: Dp = 360.dp,
 ) {
     val muted = LocalAAColors.current.muted
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -1756,7 +1752,12 @@ private fun CommandPreviewSection(
             )
             CopyToolValueButton(value = text, darkMode = darkMode)
         }
-        SoraCodeBlock(text = text, languageHint = languageHint, darkMode = darkMode)
+        SoraCodeBlock(
+            text = text,
+            languageHint = languageHint,
+            darkMode = darkMode,
+            maxHeight = maxHeight,
+        )
     }
 }
 
@@ -1772,28 +1773,12 @@ private fun CopyToolValueButton(value: String, darkMode: Boolean) {
 @Composable
 private fun DiffPreview(diff: String, path: String, darkMode: Boolean) {
     val preview = remember(diff) { diffPreview(diff) }
-    val muted = LocalAAColors.current.muted
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text = stringResource(R.string.session_diff),
-                color = muted,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Bold,
-            )
-            CopyToolValueButton(value = diff, darkMode = darkMode)
-        }
-        SoraCodeBlock(
-            text = preview.text.ifBlank { stringResource(R.string.session_no_preview) },
-            languageHint = path,
-            darkMode = darkMode,
-            diffHighlights = preview.highlights,
-        )
-    }
+    SoraCodeBlock(
+        text = preview.text.ifBlank { stringResource(R.string.session_no_preview) },
+        languageHint = path,
+        darkMode = darkMode,
+        diffHighlights = preview.highlights,
+    )
 }
 
 @Composable
