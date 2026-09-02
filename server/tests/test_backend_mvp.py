@@ -8137,6 +8137,160 @@ def test_session_ws_updates_effective_capabilities_after_takeover(tmp_path):
         assert capabilities["session.send_message"]["allowed"] is True
 
 
+def test_session_ws_suppresses_repeated_capability_semantics_across_sequences(tmp_path):
+    client = make_client(tmp_path)
+    _, _, session_id, headers = create_connector_and_session(client)
+    ticket = ws_ticket(client, session_id, headers)
+
+    def invalidation(sequence: int, revision: int, *, reverse: bool) -> dict[str, Any]:
+        capabilities = [
+            {
+                "capabilityId": "session.send_message",
+                "scope": "session",
+                "runtime": "codex",
+                "runtimeId": "codex",
+                "sessionId": session_id,
+                "supported": True,
+                "available": True,
+                "allowed": True,
+                "unavailableReason": None,
+                "parameters": {},
+            },
+            {
+                "capabilityId": "session.interrupt",
+                "scope": "session",
+                "runtime": "codex",
+                "runtimeId": "codex",
+                "sessionId": session_id,
+                "supported": True,
+                "available": False,
+                "allowed": True,
+                "unavailableReason": "runtime_turn_idle",
+                "parameters": {},
+            },
+        ]
+        return {
+            "sessionId": session_id,
+            "nextSeq": sequence,
+            "session": {"id": session_id, "updatedSeq": sequence},
+            "capabilitySet": {
+                "revision": revision,
+                "capabilities": (
+                    list(reversed(capabilities)) if reverse else capabilities
+                ),
+            },
+        }
+
+    with client.websocket_connect(f"/sessions/{session_id}/ws?ticket={ticket}") as ws:
+        assert ws.receive_json()["type"] == "session.subscribed"
+        ws.portal.call(
+            client.app.state.timeline_broker.publish,
+            session_id,
+            invalidation(10, 10, reverse=False),
+        )
+        first = [ws.receive_json() for _ in range(2)]
+        assert {event["type"] for event in first} == {
+            "session.meta.updated",
+            "runtime.capability.updated",
+        }
+
+        ws.portal.call(
+            client.app.state.timeline_broker.publish,
+            session_id,
+            invalidation(11, 99, reverse=True),
+        )
+        assert ws.receive_json()["type"] == "session.meta.updated"
+        with pytest.raises(TimeoutError):
+            ws.portal.call(_receive_ws_test_message, ws, 0.1)
+
+
+def test_session_ws_does_not_piggyback_capabilities_on_turn_end(tmp_path):
+    client = make_client(tmp_path)
+    _, access_token, session_id, headers = create_connector_and_session(client)
+    ticket = ws_ticket(client, session_id, headers)
+
+    with client.websocket_connect(f"/sessions/{session_id}/ws?ticket={ticket}") as ws:
+        assert ws.receive_json()["type"] == "session.subscribed"
+        response = client.post(
+            "/connector/ingest",
+            headers={"Authorization": f"Bearer {access_token}"},
+            json={
+                "notifications": [
+                    {
+                        "method": "session.turnEnded",
+                        "params": {
+                            "sessionId": session_id,
+                            "runtime": "codex",
+                            "runtimeId": "codex",
+                            "turnId": "turn-capability-dedupe",
+                            "outcome": "completed",
+                        },
+                    }
+                ]
+            },
+        )
+        assert response.status_code == 200, response.text
+        assert ws.receive_json()["type"] == "session.meta.updated"
+        with pytest.raises(TimeoutError):
+            ws.portal.call(_receive_ws_test_message, ws, 0.1)
+
+
+def test_session_ws_preserves_same_sequence_capability_a_b_a_transition(tmp_path):
+    client = make_client(tmp_path)
+    _, _, session_id, headers = create_connector_and_session(client)
+    ticket = ws_ticket(client, session_id, headers)
+
+    def invalidation(allowed: bool) -> dict[str, Any]:
+        return {
+            "sessionId": session_id,
+            "nextSeq": 10,
+            "session": {"id": session_id, "updatedSeq": 10},
+            "capabilitySet": {
+                "revision": 10,
+                "capabilities": [
+                    {
+                        "capabilityId": "session.send_message",
+                        "scope": "session",
+                        "runtime": "codex",
+                        "runtimeId": "codex",
+                        "sessionId": session_id,
+                        "supported": True,
+                        "available": True,
+                        "allowed": allowed,
+                        "unavailableReason": (
+                            None if allowed else "session_not_taken_over"
+                        ),
+                        "parameters": {},
+                    }
+                ],
+            },
+        }
+
+    with client.websocket_connect(f"/sessions/{session_id}/ws?ticket={ticket}") as ws:
+        assert ws.receive_json()["type"] == "session.subscribed"
+        observed_allowed: list[bool] = []
+        for index, allowed in enumerate((True, False, True)):
+            ws.portal.call(
+                client.app.state.timeline_broker.publish,
+                session_id,
+                invalidation(allowed),
+            )
+            event_count = 2 if index == 0 else 1
+            events = [ws.receive_json() for _ in range(event_count)]
+            capability_event = next(
+                event
+                for event in events
+                if event["type"] == "runtime.capability.updated"
+            )
+            observed_allowed.append(
+                capability_event["payload"]["capabilitySet"]["capabilities"][0][
+                    "allowed"
+                ]
+            )
+
+        assert observed_allowed == [True, False, True]
+
+
 def test_session_ws_projects_codex_timeline_sync_as_incremental_update_without_refetch(tmp_path):
     client = make_client(tmp_path)
     _, access_token, session_id, headers = create_connector_and_session(client)

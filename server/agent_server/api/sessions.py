@@ -33,6 +33,7 @@ from agent_server.core.capabilities import (
 )
 from agent_server.core.events import (
     EventCursorError,
+    capability_event_semantic_fingerprint,
     event_cursor,
     events_from_invalidation,
     protocol_event,
@@ -937,6 +938,7 @@ async def session_ws(
         # live socket; keep the cache bounded for long-running sessions.
         sent_event_ids: set[str] = set()
         sent_event_order: deque[str] = deque()
+        last_capability_fingerprint: str | None = None
         async with timeline_write_buffer.session_fence(session_id):
             next_seq = await db.get_session_seq(session_id)
         await websocket.send_json(
@@ -965,6 +967,19 @@ async def session_ws(
             if not isinstance(invalidation, dict):
                 continue
             for event in events_from_invalidation(invalidation):
+                capability_fingerprint = capability_event_semantic_fingerprint(
+                    event
+                )
+                if capability_fingerprint is not None:
+                    if capability_fingerprint == last_capability_fingerprint:
+                        continue
+                    await websocket.send_json(event.model_dump(mode="json"))
+                    # Only mark the projection after it was delivered.  Keep
+                    # capability events outside the event-id cache so an actual
+                    # A -> B -> A transition remains observable even if all
+                    # three projections share one durable session sequence.
+                    last_capability_fingerprint = capability_fingerprint
+                    continue
                 if event.eventId in sent_event_ids:
                     continue
                 await websocket.send_json(event.model_dump(mode="json"))
