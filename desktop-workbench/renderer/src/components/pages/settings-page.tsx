@@ -24,6 +24,16 @@ import { toast } from "sonner"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -191,23 +201,38 @@ function AccountTab({
 
 function DesktopTab() {
   const t = useTranslations("pages.settings")
+  const { connectors } = useWorkspace()
   const {
     supported,
     loading,
     busy,
+    connectionStatus,
+    provisionError,
     state,
     binding,
+    retryProvision,
     reconnect,
+    start,
+    stop,
     restart,
     saveSettings,
+    saveConnectorConfig: saveLocalConnectorConfig,
+    factoryReset,
     openDataFolder,
   } = useDesktopConnector()
   const [logs, setLogs] = React.useState<DesktopConnectorLog[]>([])
   const [logsLoading, setLogsLoading] = React.useState(false)
+  const [olderLogsLoading, setOlderLogsLoading] = React.useState(false)
+  const [firstLogSeq, setFirstLogSeq] = React.useState<number | null>(null)
+  const [hasMoreLogs, setHasMoreLogs] = React.useState(false)
   const [clearingLogs, setClearingLogs] = React.useState(false)
   const [exportingLogs, setExportingLogs] = React.useState(false)
   const [advancedSaving, setAdvancedSaving] = React.useState(false)
   const [connectorConfigSaving, setConnectorConfigSaving] = React.useState(false)
+  const [factoryResetOpen, setFactoryResetOpen] = React.useState(false)
+  const [forceFactoryResetOpen, setForceFactoryResetOpen] = React.useState(false)
+  const [factoryResetting, setFactoryResetting] = React.useState(false)
+  const [factoryResetError, setFactoryResetError] = React.useState<string | null>(null)
   const [connectorConfigDraft, setConnectorConfigDraft] = React.useState({
     heartbeatSeconds: 20,
     reconnectSeconds: 3,
@@ -223,18 +248,22 @@ function DesktopTab() {
   })
   const connectorId = binding?.connectorId ?? state?.connectorId ?? null
   const serverUrl = binding?.serverUrl || state?.serverUrl || null
+  const serverConnector = connectors.find((connector) => connector.id === connectorId)
+  const serverOnline = serverConnector?.status === "online" || connectionStatus === "online"
   const needsReconnect = Boolean(
     connectorId && (state?.authFailed || state?.manualDisconnected),
   )
-  const connectorIsRunning = Boolean(
-    !needsReconnect && (state?.running || state?.status === "running" || state?.status === "online"),
-  )
+  const connectorIsRunning = Boolean(!needsReconnect && (state?.running || state?.status === "running"))
   const statusKey = needsReconnect
     ? "desktopDisconnected"
-    : connectorIsRunning
+    : provisionError || connectionStatus === "error"
+      ? "desktopConnectionError"
+      : serverOnline
       ? "desktopOnline"
-      : state?.status === "starting" || state?.status === "reconnecting"
+      : connectionStatus === "connecting" || state?.status === "starting" || state?.status === "reconnecting"
         ? "desktopConnecting"
+        : connectorIsRunning
+          ? "desktopRunning"
         : connectorId
           ? "desktopStopped"
           : "desktopNotConfigured"
@@ -256,12 +285,33 @@ function DesktopTab() {
     try {
       const page = await bridge.connector.getLogs({ pageSize: 200 })
       setLogs(page.items)
+      setFirstLogSeq(typeof page.items[0]?.seq === "number" ? page.items[0].seq : null)
+      setHasMoreLogs(page.hasMoreBefore)
     } catch (error) {
       toast.error(error instanceof Error ? error.message : t("desktopLogsLoadFailed"))
     } finally {
       setLogsLoading(false)
     }
   }, [t])
+
+  const loadOlderLogs = async () => {
+    const bridge = getDesktopWorkbenchBridge()
+    if (!bridge?.connector || olderLogsLoading || firstLogSeq === null || !hasMoreLogs) return
+    setOlderLogsLoading(true)
+    try {
+      const page = await bridge.connector.getLogs({ pageSize: 200, beforeSeq: firstLogSeq })
+      setLogs((current) => {
+        const existing = new Set(current.map((entry) => entry.seq ?? entry.id))
+        return [...page.items.filter((entry) => !existing.has(entry.seq ?? entry.id)), ...current]
+      })
+      setFirstLogSeq(typeof page.items[0]?.seq === "number" ? page.items[0].seq : firstLogSeq)
+      setHasMoreLogs(page.hasMoreBefore)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t("desktopLogsLoadFailed"))
+    } finally {
+      setOlderLogsLoading(false)
+    }
+  }
 
   const loadConnectorConfig = React.useCallback(async () => {
     const bridge = getDesktopWorkbenchBridge()
@@ -302,6 +352,8 @@ function DesktopTab() {
     try {
       await bridge.connector.clearLogs()
       setLogs([])
+      setFirstLogSeq(null)
+      setHasMoreLogs(false)
     } catch (error) {
       toast.error(error instanceof Error ? error.message : t("desktopLogsClearFailed"))
     } finally {
@@ -328,23 +380,39 @@ function DesktopTab() {
     setAdvancedSaving(true)
     try {
       const saved = await saveSettings(advancedDraft)
-      if (saved) toast.success(t("desktopAdvancedSaved"))
+      if (saved) toast.success(t(connectorIsRunning ? "desktopAdvancedRestarted" : "desktopAdvancedSaved"))
     } finally {
       setAdvancedSaving(false)
     }
   }
 
   const saveConnectorConfig = async () => {
-    const bridge = getDesktopWorkbenchBridge()
-    if (!bridge?.connector || connectorConfigSaving || !connectorId) return
+    if (connectorConfigSaving || !connectorId) return
     setConnectorConfigSaving(true)
     try {
-      await bridge.connector.saveConfig(connectorConfigDraft)
-      toast.success(t("desktopConnectorConfigSaved"))
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : t("desktopConnectorConfigFailed"))
+      const saved = await saveLocalConnectorConfig(connectorConfigDraft)
+      if (saved) toast.success(t(connectorIsRunning ? "desktopConnectorConfigRestarted" : "desktopConnectorConfigSaved"))
     } finally {
       setConnectorConfigSaving(false)
+    }
+  }
+
+  const runFactoryReset = async (forceLocal: boolean) => {
+    if (factoryResetting) return
+    setFactoryResetting(true)
+    try {
+      await factoryReset(forceLocal)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : t("desktopFactoryResetFailed")
+      if (!forceLocal) {
+        setFactoryResetOpen(false)
+        setFactoryResetError(message)
+        setForceFactoryResetOpen(true)
+      } else {
+        toast.error(message)
+      }
+    } finally {
+      setFactoryResetting(false)
     }
   }
 
@@ -369,20 +437,24 @@ function DesktopTab() {
               <span
                 className={cn(
                   "inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium",
-                  connectorIsRunning
+                  serverOnline
                     ? "bg-emerald-500/10 text-emerald-600"
-                    : needsReconnect
+                    : needsReconnect || provisionError || connectionStatus === "error"
                       ? "bg-destructive/10 text-destructive"
+                      : connectorIsRunning || connectionStatus === "connecting"
+                        ? "bg-blue-500/10 text-blue-600"
                       : "bg-muted text-muted-foreground",
                 )}
               >
                 <span
                   className={cn(
                     "size-1.5 rounded-full",
-                    connectorIsRunning
+                    serverOnline
                       ? "bg-emerald-500"
-                      : needsReconnect
+                      : needsReconnect || provisionError || connectionStatus === "error"
                         ? "bg-destructive"
+                        : connectorIsRunning || connectionStatus === "connecting"
+                          ? "bg-blue-500"
                         : "bg-muted-foreground/60",
                   )}
                 />
@@ -391,12 +463,26 @@ function DesktopTab() {
             </div>
             <p className="mt-1 text-sm text-muted-foreground">{t("desktopDescription")}</p>
           </div>
-          {needsReconnect ? (
-            <Button type="button" size="sm" onClick={() => void reconnect()} disabled={busy}>
-              {busy ? <Spinner /> : <Power data-icon="inline-start" />}
-              {busy ? t("desktopReconnecting") : t("desktopReconnect")}
-            </Button>
-          ) : null}
+          <div className="flex items-center gap-2">
+            {provisionError && !needsReconnect ? (
+              <Button type="button" size="sm" onClick={retryProvision} disabled={busy}>
+                {busy ? <Spinner /> : <RotateCw data-icon="inline-start" />}
+                {t("desktopRetryConnection")}
+              </Button>
+            ) : null}
+            {needsReconnect ? (
+              <Button type="button" size="sm" onClick={() => void reconnect()} disabled={busy}>
+                {busy ? <Spinner /> : <Power data-icon="inline-start" />}
+                {busy ? t("desktopReconnecting") : t("desktopReconnect")}
+              </Button>
+            ) : null}
+            {!needsReconnect && !provisionError && !connectorIsRunning && connectorId ? (
+              <Button type="button" size="sm" onClick={() => void start()} disabled={busy}>
+                {busy ? <Spinner /> : <Power data-icon="inline-start" />}
+                {t("desktopStartNow")}
+              </Button>
+            ) : null}
+          </div>
         </div>
         <Separator />
         <div className="divide-y divide-border">
@@ -412,6 +498,12 @@ function DesktopTab() {
             <div className="flex min-w-0 items-start px-6 py-4">
               <span className="w-36 shrink-0 text-sm text-muted-foreground">{t("desktopLastError")}</span>
               <span className="min-w-0 text-sm text-destructive">{state.lastError}</span>
+            </div>
+          ) : null}
+          {provisionError && provisionError !== state?.lastError ? (
+            <div className="flex min-w-0 items-start px-6 py-4">
+              <span className="w-36 shrink-0 text-sm text-muted-foreground">{t("desktopConnectionError")}</span>
+              <span className="min-w-0 text-sm text-destructive">{provisionError}</span>
             </div>
           ) : null}
         </div>
@@ -469,7 +561,9 @@ function DesktopTab() {
         <div className="flex justify-end px-6 py-4">
           <Button type="button" size="sm" onClick={() => void saveAdvancedSettings()} disabled={advancedSaving || busy}>
             {advancedSaving ? <Spinner /> : <Settings data-icon="inline-start" />}
-            {advancedSaving ? t("saving") : t("saveChanges")}
+            {advancedSaving
+              ? t("saving")
+              : t(connectorIsRunning ? "desktopSaveAndRestart" : "saveChanges")}
           </Button>
         </div>
       </section>
@@ -515,7 +609,9 @@ function DesktopTab() {
         <div className="flex justify-end px-6 py-4">
           <Button type="button" size="sm" onClick={() => void saveConnectorConfig()} disabled={connectorConfigSaving || !connectorId}>
             {connectorConfigSaving ? <Spinner /> : <Settings data-icon="inline-start" />}
-            {connectorConfigSaving ? t("saving") : t("saveChanges")}
+            {connectorConfigSaving
+              ? t("saving")
+              : t(connectorIsRunning ? "desktopSaveAndRestart" : "saveChanges")}
           </Button>
         </div>
       </section>
@@ -545,6 +641,20 @@ function DesktopTab() {
         </div>
         <Separator />
         <div className="max-h-80 min-h-40 overflow-y-auto bg-muted/20 px-4 py-3">
+          {hasMoreLogs && logs.length > 0 ? (
+            <div className="mb-2 flex justify-center">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => void loadOlderLogs()}
+                disabled={olderLogsLoading}
+              >
+                {olderLogsLoading ? <Spinner /> : <ChevronDown className="rotate-180" data-icon="inline-start" />}
+                {olderLogsLoading ? t("desktopLoadingLogs") : t("desktopLoadOlderLogs")}
+              </Button>
+            </div>
+          ) : null}
           {logs.length === 0 ? (
             <div className="flex min-h-32 items-center justify-center text-sm text-muted-foreground">
               {logsLoading ? t("desktopLoadingLogs") : t("desktopNoLogs")}
@@ -619,13 +729,92 @@ function DesktopTab() {
                 {t("desktopOpenLogsFolder")}
               </Button>
             ) : null}
-            <Button type="button" variant="outline" size="sm" onClick={() => void restart()} disabled={busy || !connectorId || needsReconnect}>
-              {busy ? <Spinner /> : <RotateCw data-icon="inline-start" />}
-              {t("desktopRestartConnector")}
-            </Button>
+            {!needsReconnect && connectorId ? (
+              connectorIsRunning ? (
+                <>
+                  <Button type="button" variant="outline" size="sm" onClick={() => void stop()} disabled={busy}>
+                    {busy ? <Spinner /> : <Power data-icon="inline-start" />}
+                    {t("desktopStopConnector")}
+                  </Button>
+                  <Button type="button" variant="outline" size="sm" onClick={() => void restart()} disabled={busy}>
+                    {busy ? <Spinner /> : <RotateCw data-icon="inline-start" />}
+                    {t("desktopRestartConnector")}
+                  </Button>
+                </>
+              ) : (
+                <Button type="button" variant="outline" size="sm" onClick={() => void start()} disabled={busy}>
+                  {busy ? <Spinner /> : <Power data-icon="inline-start" />}
+                  {t("desktopStartConnectorNow")}
+                </Button>
+              )
+            ) : null}
+            {getDesktopWorkbenchBridge()?.connector?.factoryReset ? (
+              <Button
+                type="button"
+                variant="destructive"
+                size="sm"
+                onClick={() => {
+                  setFactoryResetError(null)
+                  setFactoryResetOpen(true)
+                }}
+                disabled={busy}
+              >
+                <Trash2 data-icon="inline-start" />
+                {t("desktopFactoryReset")}
+              </Button>
+            ) : null}
           </div>
         </div>
       </section>
+
+      <AlertDialog open={factoryResetOpen} onOpenChange={setFactoryResetOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("desktopFactoryResetTitle")}</AlertDialogTitle>
+            <AlertDialogDescription>{t("desktopFactoryResetDescription")}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("cancel")}</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={(event) => {
+                event.preventDefault()
+                void runFactoryReset(false)
+              }}
+              disabled={factoryResetting}
+            >
+              {factoryResetting ? <Spinner /> : null}
+              {t("desktopFactoryResetConfirm")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={forceFactoryResetOpen} onOpenChange={setForceFactoryResetOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("desktopForceFactoryResetTitle")}</AlertDialogTitle>
+            <AlertDialogDescription className="space-y-2">
+              <span className="block">{t("desktopForceFactoryResetDescription")}</span>
+              {factoryResetError ? <span className="block text-destructive">{factoryResetError}</span> : null}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("cancel")}</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={(event) => {
+                event.preventDefault()
+                void runFactoryReset(true)
+              }}
+              disabled={factoryResetting}
+            >
+              {factoryResetting ? <Spinner /> : null}
+              {t("desktopForceFactoryResetConfirm")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

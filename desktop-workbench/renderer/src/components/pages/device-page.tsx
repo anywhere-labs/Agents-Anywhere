@@ -339,9 +339,12 @@ export function DevicePage() {
   const { session: authSession } = useAuth()
   const {
     busy: desktopActionBusy,
+    connectionStatus: desktopConnectionStatus,
+    state: desktopConnectorState,
     isLocalConnector,
     reconnect: reconnectLocalDesktop,
     disconnect: disconnectLocalDesktop,
+    start: startLocalDesktop,
     updateLocalName,
     explainRemoteReconnect,
   } = useDesktopConnector()
@@ -459,6 +462,16 @@ export function DevicePage() {
   }
 
   const isDesktopConnector = connector.connectorKind === "desktop" || isLocalConnector(connector.id)
+  const isLocalDesktop = isDesktopConnector && isLocalConnector(connector.id)
+  const localDesktopNeedsReconnect = Boolean(
+    isLocalDesktop && (desktopConnectorState?.authFailed || desktopConnectorState?.manualDisconnected),
+  )
+  const localDesktopIsConnecting = Boolean(
+    isLocalDesktop &&
+    connector.status === "offline" &&
+    !localDesktopNeedsReconnect &&
+    (desktopActionBusy || desktopConnectorState?.running || desktopConnectionStatus === "connecting"),
+  )
   const connectorActionBusy = tokenActionBusy || desktopActionBusy
 
   const handleRevoke = async () => {
@@ -505,14 +518,26 @@ export function DevicePage() {
   }
 
   const handleDesktopReconnect = async () => {
-    if (isLocalConnector(connector.id)) {
-      if (await reconnectLocalDesktop()) {
-        setConnector((previous) => previous ? { ...previous, status: "online" } : previous)
-      }
+    if (isLocalDesktop) {
+      await reconnectLocalDesktop()
       return
     }
     explainRemoteReconnect(connector.name)
   }
+
+  const handleDesktopStart = async () => {
+    if (!isLocalDesktop) return
+    await startLocalDesktop()
+  }
+
+  const desktopActionLabel = (() => {
+    if (!isDesktopConnector) return connector.status === "offline" ? t("setup") : t("revoke")
+    if (!isLocalDesktop) return connector.status === "offline" ? t("reconnect") : t("disconnect")
+    if (localDesktopNeedsReconnect) return t("reconnect")
+    if (connector.status === "online") return t("disconnect")
+    if (localDesktopIsConnecting) return t("desktopConnecting")
+    return t("desktopStart")
+  })()
 
   const submitName = async () => {
     if (!authSession?.accessToken) return
@@ -842,8 +867,12 @@ export function DevicePage() {
               className="max-sm:size-8 max-sm:px-0"
               onClick={() => {
                 if (isDesktopConnector) {
-                  if (connector.status === "offline") {
+                  if (!isLocalDesktop && connector.status === "offline") {
                     void handleDesktopReconnect()
+                  } else if (isLocalDesktop && localDesktopNeedsReconnect) {
+                    void handleDesktopReconnect()
+                  } else if (isLocalDesktop && connector.status === "offline") {
+                    void handleDesktopStart()
                   } else {
                     setRevokeOpen(true)
                   }
@@ -855,20 +884,12 @@ export function DevicePage() {
                   setRevokeOpen(true)
                 }
               }}
-              disabled={connectorActionBusy}
-              aria-label={connectorActionBusy
-                ? t("preparing")
-                : isDesktopConnector
-                  ? connector.status === "offline" ? t("reconnect") : t("disconnect")
-                  : connector.status === "offline" ? t("setup") : t("revoke")}
+              disabled={connectorActionBusy || localDesktopIsConnecting}
+              aria-label={connectorActionBusy ? t("preparing") : desktopActionLabel}
             >
-              <KeyRound />
+              {localDesktopIsConnecting ? <Loader2 className="animate-spin" /> : <KeyRound />}
               <span className="max-sm:sr-only">
-                {connectorActionBusy
-                  ? t("preparing")
-                  : isDesktopConnector
-                    ? connector.status === "offline" ? t("reconnect") : t("disconnect")
-                    : connector.status === "offline" ? t("setup") : t("revoke")}
+                {connectorActionBusy ? t("preparing") : desktopActionLabel}
               </span>
             </Button>
             <Button

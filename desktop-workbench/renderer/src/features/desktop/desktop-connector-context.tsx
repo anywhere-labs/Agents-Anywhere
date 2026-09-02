@@ -28,24 +28,100 @@ import {
 import { Input } from "@/components/ui/input"
 import { dashboardApi } from "@/features/dashboard/api"
 import {
+  type DesktopConnectorConfigPatch,
   getDesktopWorkbenchBridge,
   type DesktopConnectorSettings,
   type DesktopConnectorState,
   type DesktopLocalBinding,
 } from "@/features/desktop/bridge"
 
+export type DesktopConnectionStatus =
+  | "idle"
+  | "connecting"
+  | "running"
+  | "online"
+  | "stopped"
+  | "disconnected"
+  | "error"
+
+type ConnectorOnlineCheckResult = "online" | "reconnect-required" | "timeout" | "cancelled"
+
+const CONNECTOR_ONLINE_TIMEOUT_MS = 45_000
+const CONNECTOR_ONLINE_POLL_MS = 1_000
+
+async function waitForPollInterval(signal: AbortSignal): Promise<boolean> {
+  if (signal.aborted) return false
+  return new Promise((resolve) => {
+    const timeout = window.setTimeout(() => {
+      signal.removeEventListener("abort", abort)
+      resolve(true)
+    }, CONNECTOR_ONLINE_POLL_MS)
+    const abort = () => {
+      window.clearTimeout(timeout)
+      resolve(false)
+    }
+    signal.addEventListener("abort", abort, { once: true })
+  })
+}
+
+async function pollConnectorOnline({
+  userToken,
+  connectorId,
+  signal,
+  onLocalState,
+}: {
+  userToken: string
+  connectorId: string
+  signal: AbortSignal
+  onLocalState: (state: DesktopConnectorState) => void
+}): Promise<ConnectorOnlineCheckResult> {
+  const connectorBridge = getDesktopWorkbenchBridge()?.connector
+  if (!connectorBridge) return "cancelled"
+  const deadline = Date.now() + CONNECTOR_ONLINE_TIMEOUT_MS
+
+  while (!signal.aborted && Date.now() < deadline) {
+    try {
+      const localState = await connectorBridge.getState()
+      if (signal.aborted) return "cancelled"
+      onLocalState(localState)
+      if (localState.authFailed || localState.manualDisconnected) return "reconnect-required"
+    } catch {
+      // The sidecar may still be starting. The server status below is authoritative for online.
+    }
+
+    try {
+      const response = await dashboardApi.getConnector(userToken, connectorId)
+      if (signal.aborted) return "cancelled"
+      if (response.connector.status === "online") return "online"
+    } catch {
+      // A transient server/read failure should not fail provisioning immediately.
+    }
+
+    if (!(await waitForPollInterval(signal))) return "cancelled"
+  }
+
+  return signal.aborted ? "cancelled" : "timeout"
+}
+
 type DesktopConnectorContextValue = {
   supported: boolean
   loading: boolean
   busy: boolean
+  connectionStatus: DesktopConnectionStatus
+  provisionError: string | null
   state: DesktopConnectorState | null
   binding: DesktopLocalBinding | null
   isLocalConnector: (connectorId: string) => boolean
   refresh: () => Promise<void>
+  retryProvision: () => void
   reconnect: () => Promise<boolean>
   disconnect: () => Promise<boolean>
+  start: () => Promise<boolean>
+  stop: () => Promise<boolean>
   restart: () => Promise<boolean>
   saveSettings: (settings: DesktopConnectorSettings) => Promise<boolean>
+  saveConnectorConfig: (config: DesktopConnectorConfigPatch) => Promise<boolean>
+  factoryReset: (forceLocal?: boolean) => Promise<void>
   openDataFolder: () => Promise<boolean>
   updateLocalName: (name: string) => Promise<boolean>
   explainRemoteReconnect: (name: string) => void
@@ -66,6 +142,10 @@ export function DesktopConnectorProvider({ children }: { children: React.ReactNo
   const [supported, setSupported] = React.useState(false)
   const [loading, setLoading] = React.useState(true)
   const [busy, setBusy] = React.useState(false)
+  const [connectionStatus, setConnectionStatus] = React.useState<DesktopConnectionStatus>("idle")
+  const [provisionError, setProvisionError] = React.useState<string | null>(null)
+  const [provisionErrorPromptOpen, setProvisionErrorPromptOpen] = React.useState(false)
+  const [provisionRetryNonce, setProvisionRetryNonce] = React.useState(0)
   const [state, setState] = React.useState<DesktopConnectorState | null>(null)
   const [binding, setBinding] = React.useState<DesktopLocalBinding | null>(null)
   const [reconnectPromptOpen, setReconnectPromptOpen] = React.useState(false)
@@ -73,7 +153,12 @@ export function DesktopConnectorProvider({ children }: { children: React.ReactNo
   const [newDevice, setNewDevice] = React.useState<DesktopLocalBinding | null>(null)
   const [newDeviceName, setNewDeviceName] = React.useState("")
   const [savingName, setSavingName] = React.useState(false)
-  const provisionAttemptRef = React.useRef<string | null>(null)
+  const provisionAttemptRef = React.useRef<{
+    key: string
+    promise: Promise<DesktopLocalBinding>
+    completed: boolean
+  } | null>(null)
+  const connectionCheckRef = React.useRef<AbortController | null>(null)
   const reconnectPromptDismissedRef = React.useRef<string | null>(null)
 
   const applyState = React.useCallback((nextState: DesktopConnectorState) => {
@@ -86,12 +171,81 @@ export function DesktopConnectorProvider({ children }: { children: React.ReactNo
     if (!needsReconnect) {
       reconnectPromptDismissedRef.current = null
       setReconnectPromptOpen(false)
+      if (!connectorId) {
+        setConnectionStatus("idle")
+      } else if (nextState.status === "starting" || nextState.status === "reconnecting") {
+        setConnectionStatus("connecting")
+      } else if (!nextState.running) {
+        setConnectionStatus("stopped")
+      } else {
+        setConnectionStatus((current) => (
+          current === "online" || current === "connecting" ? current : "running"
+        ))
+      }
       return
     }
+    setConnectionStatus("disconnected")
     if (reconnectPromptDismissedRef.current !== connectorId) {
       setReconnectPromptOpen(true)
     }
   }, [])
+
+  const beginConnectionCheck = React.useCallback(() => {
+    connectionCheckRef.current?.abort()
+    const controller = new AbortController()
+    connectionCheckRef.current = controller
+    return controller
+  }, [])
+
+  const finishConnectionCheck = React.useCallback((controller: AbortController) => {
+    if (connectionCheckRef.current === controller) connectionCheckRef.current = null
+  }, [])
+
+  const showConnectionFailure = React.useCallback((message: string) => {
+    setProvisionError(message)
+    setProvisionErrorPromptOpen(true)
+    setConnectionStatus("error")
+  }, [])
+
+  const waitUntilOnline = React.useCallback(async ({
+    userToken,
+    connectorId,
+    controller: providedController,
+  }: {
+    userToken: string
+    connectorId: string
+    controller?: AbortController
+  }): Promise<ConnectorOnlineCheckResult> => {
+    const controller = providedController ?? beginConnectionCheck()
+    try {
+      const result = await pollConnectorOnline({
+        userToken,
+        connectorId,
+        signal: controller.signal,
+        onLocalState: applyState,
+      })
+      if (result === "online") {
+        setConnectionStatus("online")
+        setProvisionError(null)
+        refreshData()
+      } else if (result === "reconnect-required") {
+        setConnectionStatus("disconnected")
+      } else if (result === "timeout") {
+        showConnectionFailure(t("onlineTimeout"))
+      }
+      return result
+    } finally {
+      if (!providedController) finishConnectionCheck(controller)
+    }
+  }, [applyState, beginConnectionCheck, finishConnectionCheck, refreshData, showConnectionFailure, t])
+
+  const retryProvision = React.useCallback(() => {
+    if (busy) return
+    provisionAttemptRef.current = null
+    setProvisionError(null)
+    setProvisionErrorPromptOpen(false)
+    setProvisionRetryNonce((current) => current + 1)
+  }, [busy])
 
   const refresh = React.useCallback(async () => {
     const bridge = getDesktopWorkbenchBridge()
@@ -132,6 +286,10 @@ export function DesktopConnectorProvider({ children }: { children: React.ReactNo
     }
   }, [applyState])
 
+  React.useEffect(() => () => {
+    connectionCheckRef.current?.abort()
+  }, [])
+
   React.useEffect(() => {
     const accessToken = session?.accessToken
     const userId = session?.userId
@@ -141,12 +299,17 @@ export function DesktopConnectorProvider({ children }: { children: React.ReactNo
     const connectorBridge = bridge.connector
     const userToken = accessToken
     const ownerUserId = userId
-    if (provisionAttemptRef.current === accessToken) return
-    provisionAttemptRef.current = accessToken
+    const attemptKey = `${ownerUserId}:${accessToken}:${provisionRetryNonce}`
+    if (provisionAttemptRef.current?.key === attemptKey && provisionAttemptRef.current.completed) return
     let cancelled = false
+    const controller = beginConnectionCheck()
 
     async function initialize() {
       setLoading(true)
+      setBusy(true)
+      setProvisionError(null)
+      setProvisionErrorPromptOpen(false)
+      setConnectionStatus("connecting")
       try {
         const [existingBinding, initialState] = await Promise.all([
           deviceBridge.getLocalBinding(),
@@ -155,34 +318,83 @@ export function DesktopConnectorProvider({ children }: { children: React.ReactNo
         if (cancelled) return
         setBinding(existingBinding)
         applyState(initialState)
-        setBusy(true)
-        const created = await deviceBridge.createAndConnect({ userToken, userId: ownerUserId })
+        setConnectionStatus("connecting")
+
+        let attempt = provisionAttemptRef.current
+        if (!attempt || attempt.key !== attemptKey) {
+          attempt = {
+            key: attemptKey,
+            promise: deviceBridge.createAndConnect({ userToken, userId: ownerUserId }),
+            completed: false,
+          }
+          provisionAttemptRef.current = attempt
+        }
+
+        const created = await attempt.promise
         if (cancelled) return
         setBinding(created)
         const isNewBinding = !existingBinding || existingBinding.connectorId !== created.connectorId
+
+        const onlineResult = await waitUntilOnline({
+          userToken,
+          connectorId: created.connectorId,
+          controller,
+        })
+        if (cancelled || onlineResult === "cancelled") return
+
+        if (onlineResult === "reconnect-required") {
+          attempt.completed = true
+          setConnectionStatus("disconnected")
+          return
+        }
+        if (onlineResult === "timeout") {
+          if (provisionAttemptRef.current?.key === attemptKey) provisionAttemptRef.current = null
+          toast.error(t("onlineTimeout"))
+          return
+        }
+
+        attempt.completed = true
         if (isNewBinding) {
           setNewDevice(created)
           setNewDeviceName(created.name ?? "")
         }
+        setProvisionError(null)
         await refresh()
         refreshData()
       } catch (error) {
         if (!cancelled) {
-          toast.error(error instanceof Error ? error.message : t("provisionFailed"))
+          if (provisionAttemptRef.current?.key === attemptKey) provisionAttemptRef.current = null
+          const message = error instanceof Error ? error.message : t("provisionFailed")
+          showConnectionFailure(message)
+          toast.error(message)
         }
       } finally {
         if (!cancelled) {
           setBusy(false)
           setLoading(false)
         }
+        finishConnectionCheck(controller)
       }
     }
 
     void initialize()
     return () => {
       cancelled = true
+      controller.abort()
     }
-  }, [applyState, refresh, refreshData, session?.accessToken, session?.userId, t])
+  }, [
+    applyState,
+    beginConnectionCheck,
+    finishConnectionCheck,
+    provisionRetryNonce,
+    refresh,
+    refreshData,
+    session?.accessToken,
+    session?.userId,
+    showConnectionFailure,
+    t,
+    waitUntilOnline,
+  ])
 
   const reconnect = React.useCallback(async () => {
     const accessToken = session?.accessToken
@@ -190,6 +402,8 @@ export function DesktopConnectorProvider({ children }: { children: React.ReactNo
     const bridge = getDesktopWorkbenchBridge()
     if (!accessToken || !userId || !bridge?.device || busy) return false
     setBusy(true)
+    setConnectionStatus("connecting")
+    setProvisionError(null)
     try {
       const reconnected = await bridge.device.reconnectAndConnect({
         userToken: accessToken,
@@ -200,7 +414,20 @@ export function DesktopConnectorProvider({ children }: { children: React.ReactNo
       setBinding(reconnected)
       setReconnectPromptOpen(false)
       await refresh()
-      refreshData()
+      const onlineResult = await waitUntilOnline({
+        userToken: accessToken,
+        connectorId: reconnected.connectorId,
+      })
+      if (onlineResult === "cancelled") return false
+      if (onlineResult === "reconnect-required") {
+        setConnectionStatus("disconnected")
+        toast.error(t("reconnectFailed"))
+        return false
+      }
+      if (onlineResult === "timeout") {
+        toast.error(t("onlineTimeout"))
+        return false
+      }
       toast.success(t("reconnected"))
       return true
     } catch (error) {
@@ -209,7 +436,16 @@ export function DesktopConnectorProvider({ children }: { children: React.ReactNo
     } finally {
       setBusy(false)
     }
-  }, [binding?.connectorId, busy, refresh, refreshData, session?.accessToken, session?.userId, state?.connectorId, t])
+  }, [
+    binding?.connectorId,
+    busy,
+    refresh,
+    session?.accessToken,
+    session?.userId,
+    state?.connectorId,
+    t,
+    waitUntilOnline,
+  ])
 
   const disconnect = React.useCallback(async () => {
     const accessToken = session?.accessToken
@@ -222,6 +458,7 @@ export function DesktopConnectorProvider({ children }: { children: React.ReactNo
       reconnectPromptDismissedRef.current = disconnected.connectorId
       setBinding(disconnected)
       setReconnectPromptOpen(false)
+      setConnectionStatus("disconnected")
       await refresh()
       refreshData()
       toast.success(t("disconnected"))
@@ -234,12 +471,64 @@ export function DesktopConnectorProvider({ children }: { children: React.ReactNo
     }
   }, [busy, refresh, refreshData, session?.accessToken, session?.userId, t])
 
-  const restart = React.useCallback(async () => {
+  const start = React.useCallback(async () => {
+    const accessToken = session?.accessToken
+    const connectorId = binding?.connectorId ?? state?.connectorId
     const bridge = getDesktopWorkbenchBridge()
-    if (!bridge?.connector || busy) return false
+    if (!accessToken || !connectorId || !bridge?.connector || busy) return false
     setBusy(true)
+    setConnectionStatus("connecting")
+    setProvisionError(null)
+    try {
+      applyState(await bridge.connector.start())
+      const onlineResult = await waitUntilOnline({
+        userToken: accessToken,
+        connectorId,
+      })
+      if (onlineResult === "cancelled") return false
+      if (onlineResult === "reconnect-required") {
+        setConnectionStatus("disconnected")
+        return false
+      }
+      if (onlineResult === "timeout") {
+        toast.error(t("onlineTimeout"))
+        return false
+      }
+      toast.success(t("started"))
+      return true
+    } catch (error) {
+      const message = error instanceof Error ? error.message : t("startFailed")
+      showConnectionFailure(message)
+      toast.error(message)
+      return false
+    } finally {
+      setBusy(false)
+    }
+  }, [
+    applyState,
+    binding?.connectorId,
+    busy,
+    session?.accessToken,
+    showConnectionFailure,
+    state?.connectorId,
+    t,
+    waitUntilOnline,
+  ])
+
+  const restart = React.useCallback(async () => {
+    const accessToken = session?.accessToken
+    const connectorId = binding?.connectorId ?? state?.connectorId
+    const bridge = getDesktopWorkbenchBridge()
+    if (!accessToken || !connectorId || !bridge?.connector || busy) return false
+    setBusy(true)
+    setConnectionStatus("connecting")
     try {
       applyState(await bridge.connector.restart())
+      const onlineResult = await waitUntilOnline({ userToken: accessToken, connectorId })
+      if (onlineResult !== "online") {
+        if (onlineResult === "timeout") toast.error(t("onlineTimeout"))
+        return false
+      }
       toast.success(t("restarted"))
       return true
     } catch (error) {
@@ -248,16 +537,48 @@ export function DesktopConnectorProvider({ children }: { children: React.ReactNo
     } finally {
       setBusy(false)
     }
-  }, [applyState, busy, t])
+  }, [applyState, binding?.connectorId, busy, session?.accessToken, state?.connectorId, t, waitUntilOnline])
+
+  const stop = React.useCallback(async () => {
+    const bridge = getDesktopWorkbenchBridge()
+    if (!bridge?.connector || busy) return false
+    connectionCheckRef.current?.abort()
+    setBusy(true)
+    try {
+      applyState(await bridge.connector.stop())
+      setConnectionStatus("stopped")
+      refreshData()
+      toast.success(t("stopped"))
+      return true
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t("stopFailed"))
+      return false
+    } finally {
+      setBusy(false)
+    }
+  }, [applyState, busy, refreshData, t])
 
   const saveSettings = React.useCallback(async (settings: DesktopConnectorSettings) => {
     const bridge = getDesktopWorkbenchBridge()
     if (!bridge?.connector || busy) return false
     setBusy(true)
+    const restartsConnector = Boolean(
+      state?.running && ("uvPath" in settings || "uvPypiIndexUrl" in settings),
+    )
+    if (restartsConnector) setConnectionStatus("connecting")
     const previous = state
     if (previous) setState({ ...previous, ...settings })
     try {
       applyState(await bridge.connector.saveSettings(settings))
+      const connectorId = binding?.connectorId ?? state?.connectorId
+      const accessToken = session?.accessToken
+      if (restartsConnector && connectorId && accessToken) {
+        const onlineResult = await waitUntilOnline({ userToken: accessToken, connectorId })
+        if (onlineResult !== "online") {
+          if (onlineResult === "timeout") toast.error(t("onlineTimeout"))
+          return false
+        }
+      }
       return true
     } catch (error) {
       if (previous) setState(previous)
@@ -266,7 +587,50 @@ export function DesktopConnectorProvider({ children }: { children: React.ReactNo
     } finally {
       setBusy(false)
     }
-  }, [applyState, busy, state, t])
+  }, [applyState, binding?.connectorId, busy, session?.accessToken, state, t, waitUntilOnline])
+
+  const saveConnectorConfig = React.useCallback(async (config: DesktopConnectorConfigPatch) => {
+    const bridge = getDesktopWorkbenchBridge()
+    if (!bridge?.connector || busy) return false
+    setBusy(true)
+    if (state?.running) setConnectionStatus("connecting")
+    try {
+      applyState(await bridge.connector.saveConfig(config))
+      const connectorId = binding?.connectorId ?? state?.connectorId
+      const accessToken = session?.accessToken
+      if (state?.running && connectorId && accessToken) {
+        const onlineResult = await waitUntilOnline({ userToken: accessToken, connectorId })
+        if (onlineResult !== "online") {
+          if (onlineResult === "timeout") toast.error(t("onlineTimeout"))
+          return false
+        }
+      }
+      return true
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t("configFailed"))
+      return false
+    } finally {
+      setBusy(false)
+    }
+  }, [applyState, binding?.connectorId, busy, session?.accessToken, state?.connectorId, state?.running, t, waitUntilOnline])
+
+  const factoryReset = React.useCallback(async (forceLocal = false) => {
+    const accessToken = session?.accessToken
+    const userId = session?.userId
+    const bridge = getDesktopWorkbenchBridge()
+    if (!bridge?.connector?.factoryReset || busy || (!forceLocal && (!accessToken || !userId))) {
+      throw new Error(t("factoryResetUnavailable"))
+    }
+    setBusy(true)
+    try {
+      const serverUrl = binding?.serverUrl || state?.serverUrl || undefined
+      await bridge.connector.factoryReset(forceLocal
+        ? { forceLocal: true, serverUrl }
+        : { userToken: accessToken!, userId: userId!, serverUrl })
+    } finally {
+      setBusy(false)
+    }
+  }, [binding?.serverUrl, busy, session?.accessToken, session?.userId, state?.serverUrl, t])
 
   const openDataFolder = React.useCallback(async () => {
     const bridge = getDesktopWorkbenchBridge()
@@ -324,29 +688,43 @@ export function DesktopConnectorProvider({ children }: { children: React.ReactNo
     supported,
     loading,
     busy,
+    connectionStatus,
+    provisionError,
     state,
     binding,
     isLocalConnector: (connectorId: string) => connectorId === binding?.connectorId,
     refresh,
+    retryProvision,
     reconnect,
     disconnect,
+    start,
+    stop,
     restart,
     saveSettings,
+    saveConnectorConfig,
+    factoryReset,
     openDataFolder,
     updateLocalName,
     explainRemoteReconnect,
   }), [
     binding,
     busy,
+    connectionStatus,
     disconnect,
     explainRemoteReconnect,
+    factoryReset,
     loading,
     openDataFolder,
+    provisionError,
     reconnect,
     refresh,
+    retryProvision,
     restart,
+    saveConnectorConfig,
     saveSettings,
+    start,
     state,
+    stop,
     supported,
     updateLocalName,
   ])
@@ -368,6 +746,24 @@ export function DesktopConnectorProvider({ children }: { children: React.ReactNo
             <AlertDialogCancel>{t("later")}</AlertDialogCancel>
             <AlertDialogAction onClick={() => void reconnect()} disabled={busy}>
               {busy ? t("reconnecting") : t("reconnect")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={provisionErrorPromptOpen} onOpenChange={setProvisionErrorPromptOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("connectionFailedTitle")}</AlertDialogTitle>
+            <AlertDialogDescription className="space-y-2">
+              <span className="block">{t("connectionFailedDescription")}</span>
+              {provisionError ? <span className="block text-destructive">{provisionError}</span> : null}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("later")}</AlertDialogCancel>
+            <AlertDialogAction onClick={retryProvision} disabled={busy}>
+              {t("retry")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

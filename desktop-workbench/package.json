@@ -15,13 +15,79 @@
     "build:main": "tsc -p tsconfig.json",
     "renderer:typecheck": "yarn workspace agents-anywhere-desktop-renderer typecheck",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test:main": "yarn build:main && node --test dist/electron/*.test.js",
     "dev": "yarn build:main && node scripts/dev.mjs",
     "start": "yarn build:main && electron .",
-    "build:web": "node scripts/build-web.mjs"
+    "build:web": "node scripts/build-web.mjs",
+    "build": "yarn build:main && yarn build:web",
+    "bundle:uv": "node scripts/prepare-uv.mjs",
+    "pack": "yarn bundle:uv && yarn build && electron-builder --dir",
+    "dist": "yarn bundle:uv && yarn build && electron-builder"
   },
   "devDependencies": {
     "@types/node": "^24.10.2",
     "electron": "^39.2.7",
+    "electron-builder": "^26.0.12",
+    "proxy-agent": "^8.0.2",
     "typescript": "^6.0.3"
+  },
+  "build": {
+    "appId": "dev.agentsanywhere.workbench",
+    "productName": "Agents Anywhere",
+    "files": [
+      "dist/electron/**",
+      "renderer/out/**",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../connector",
+        "to": "connector",
+        "filter": [
+          "**/*",
+          "!**/__pycache__/**",
+          "!**/.venv/**",
+          "!**/*.pyc"
+        ]
+      },
+      {
+        "from": "../logo",
+        "to": "logo",
+        "filter": [
+          "*.png"
+        ]
+      },
+      {
+        "from": "build/uv",
+        "to": "uv",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "win": {
+      "icon": "../desktop-next/build/icon.ico",
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "mac": {
+      "icon": "../desktop-next/build/icon.icns",
+      "hardenedRuntime": true,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "notarize": true,
+      "gatekeeperAssess": false,
+      "target": "dmg"
+    },
+    "linux": {
+      "icon": "../logo/icon-light.png",
+      "target": "AppImage"
+    }
   }
 }

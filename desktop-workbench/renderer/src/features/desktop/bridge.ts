@@ -87,6 +87,14 @@ export type DesktopConnectorSettings = Partial<Pick<
   | "uvPypiIndexUrl"
 >>
 
+export type DesktopConnectorConfigPatch = Partial<Pick<
+  DesktopConnectorConfig,
+  | "heartbeatSeconds"
+  | "reconnectSeconds"
+  | "syncExistingOnConnect"
+  | "syncIntervalSeconds"
+>>
+
 export type DesktopWorkbenchBridge = {
   platform: string
   versions: {
@@ -119,7 +127,7 @@ export type DesktopWorkbenchBridge = {
   connector?: {
     getState: () => Promise<DesktopConnectorState>
     getConfig: () => Promise<DesktopConnectorConfig | null>
-    saveConfig: (config: Record<string, unknown>) => Promise<DesktopConnectorConfig>
+    saveConfig: (config: DesktopConnectorConfigPatch) => Promise<DesktopConnectorState>
     start: () => Promise<DesktopConnectorState>
     stop: () => Promise<DesktopConnectorState>
     restart: () => Promise<DesktopConnectorState>
@@ -129,7 +137,20 @@ export type DesktopWorkbenchBridge = {
     openDataFolder: () => Promise<string>
     openLogsFolder?: () => Promise<string>
     exportLogs?: () => Promise<{ canceled: boolean; filePath: string | null; count: number }>
-    factoryReset?: () => Promise<void>
+    factoryReset?: (input:
+      | {
+          userToken: string
+          userId: string
+          serverUrl?: string
+          forceLocal?: false
+        }
+      | {
+          userToken?: string
+          userId?: string
+          serverUrl?: string
+          forceLocal: true
+        }
+    ) => Promise<void>
     onState: (listener: (state: DesktopConnectorState) => void) => void | (() => void)
     onLog: (listener: (entry: DesktopConnectorLog) => void) => void | (() => void)
     onLogsCleared: (listener: () => void) => void | (() => void)
