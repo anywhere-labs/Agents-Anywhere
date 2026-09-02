@@ -895,7 +895,7 @@ private fun AgentCallGroup(
                     .padding(start = 20.dp)
                     .drawBehind {
                         drawLine(
-                            color = colors.border,
+                            color = colors.faint.copy(alpha = 0.38f),
                             start = Offset.Zero,
                             end = Offset(0f, size.height),
                             strokeWidth = 1.dp.toPx(),
@@ -2231,7 +2231,7 @@ private fun CompactTimelineSeparator(
             modifier = Modifier
                 .weight(1f)
                 .height(1.dp)
-                .background(colors.border),
+                .background(colors.faint.copy(alpha = 0.38f)),
         )
         TimelineShimmerText(
             text = label,
@@ -2246,7 +2246,7 @@ private fun CompactTimelineSeparator(
             modifier = Modifier
                 .weight(1f)
                 .height(1.dp)
-                .background(colors.border),
+                .background(colors.faint.copy(alpha = 0.38f)),
         )
     }
 }
