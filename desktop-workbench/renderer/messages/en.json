@@ -91,7 +91,7 @@
     "goParent": "Go to parent directory",
     "home": "Home",
     "lastUpdated": "Last updated",
-    "localDevice": "Local",
+    "localDeviceSuffix": " (Local)",
     "loadFailed": "Failed to load.",
     "medium": "Medium",
     "member": "Member",

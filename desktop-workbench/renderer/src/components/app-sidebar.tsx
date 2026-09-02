@@ -40,7 +40,6 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Spinner } from "@/components/ui/spinner"
@@ -661,17 +660,17 @@ function DeviceSidebarItem({
                   connector.status === "online" ? "bg-emerald-500" : "bg-muted-foreground/40",
                 )}
               />
-              <span className={cn("min-w-0 flex-1 truncate", connector.status === "offline" && "text-muted-foreground")}>
-                {connector.name}
+              <span
+                className={cn(
+                  "flex min-w-0 flex-1",
+                  connector.status === "offline" && "text-muted-foreground",
+                )}
+              >
+                <span className="min-w-0 truncate">{connector.name}</span>
+                {isLocal ? (
+                  <span className="shrink-0">{tCommon("localDeviceSuffix")}</span>
+                ) : null}
               </span>
-              {isLocal ? (
-                <Badge
-                  variant="outline"
-                  className="ml-auto h-5 border-emerald-500/25 bg-emerald-500/10 px-2 text-sm font-medium leading-none text-emerald-500"
-                >
-                  {tCommon("localDevice")}
-                </Badge>
-              ) : null}
             </SidebarMenuButton>
           </div>
         </ContextMenuTrigger>

@@ -815,44 +815,43 @@ export function DevicePage() {
         {/* Header */}
         <div className="flex items-center gap-3">
           <DashboardSidebarToggle className="-ml-2" />
-          {editingName ? (
-            <Input
-              value={nameDraft}
-              onChange={(event) => setNameDraft(event.currentTarget.value)}
-              onBlur={() => void submitName()}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") void submitName()
-                if (event.key === "Escape") {
+          <div className="flex min-w-0 items-baseline">
+            {editingName ? (
+              <Input
+                value={nameDraft}
+                onChange={(event) => setNameDraft(event.currentTarget.value)}
+                onBlur={() => void submitName()}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") void submitName()
+                  if (event.key === "Escape") {
+                    setNameDraft(connector.name)
+                    setEditingName(false)
+                  }
+                }}
+                className="h-9 max-w-xs rounded-lg px-2 text-2xl font-semibold tracking-tight"
+                aria-label={t("deviceName")}
+                autoFocus
+              />
+            ) : (
+              <button
+                type="button"
+                onClick={() => {
                   setNameDraft(connector.name)
-                  setEditingName(false)
-                }
-              }}
-              className="h-9 max-w-xs rounded-lg px-2 text-2xl font-semibold tracking-tight"
-              aria-label={t("deviceName")}
-              autoFocus
-            />
-          ) : (
-            <button
-              type="button"
-              onClick={() => {
-                setNameDraft(connector.name)
-                setEditingName(true)
-              }}
-              className="truncate text-left text-2xl font-semibold tracking-tight underline-offset-4 hover:underline"
-              title={t("clickToRename")}
-            >
-              {connector.name}
-            </button>
-          )}
-          {isLocalDesktop ? (
-            <Badge
-              variant="outline"
-              className="h-5 shrink-0 border-emerald-500/25 bg-emerald-500/10 px-2 text-sm font-medium leading-none text-emerald-500"
-            >
-              {tCommon("localDevice")}
-            </Badge>
-          ) : null}
-          <div className="flex items-center gap-1.5 text-sm">
+                  setEditingName(true)
+                }}
+                className="min-w-0 truncate text-left text-2xl font-semibold tracking-tight underline-offset-4 hover:underline"
+                title={t("clickToRename")}
+              >
+                {connector.name}
+              </button>
+            )}
+            {isLocalDesktop ? (
+              <span className="shrink-0 text-2xl font-semibold tracking-tight">
+                {tCommon("localDeviceSuffix")}
+              </span>
+            ) : null}
+          </div>
+          <div className="flex shrink-0 items-center gap-1.5 text-sm">
             {connector.status === "online" ? (
               <CheckCircle2 className="size-4 text-emerald-500" />
             ) : (
