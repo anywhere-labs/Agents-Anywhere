@@ -77,6 +77,7 @@ def test_empty_database_upgrades_to_current_schema(tmp_path) -> None:
             "alembic_version",
             "app_releases",
             "device_runtimes",
+            "session_shares",
             "sessions",
         }.issubset(tables)
         assert "approvals" not in tables
@@ -346,6 +347,7 @@ def test_v2_0_database_upgrades_through_current_revision(tmp_path) -> None:
         ("v2_19", "v2_20"),
         ("v2_20", "v2_21"),
         ("v2_21", "v2_22"),
+        ("v2_22", "v2_23"),
     ],
 )
 def test_every_adjacent_schema_upgrade(
@@ -1021,9 +1023,9 @@ def test_unversioned_runtime_schema_is_classified_by_actual_columns(
     )
 
 
-def test_current_schema_version_is_v2_22() -> None:
-    assert CURRENT_SCHEMA_REVISION == "v2_22"
-    assert CURRENT_SCHEMA_VERSION == "2.22"
+def test_current_schema_version_is_v2_23() -> None:
+    assert CURRENT_SCHEMA_REVISION == "v2_23"
+    assert CURRENT_SCHEMA_VERSION == "2.23"
 
 
 def test_v2_20_adds_session_source_observation_details(tmp_path) -> None:
@@ -1071,6 +1073,45 @@ def test_v2_22_retires_session_message_queue_schema(tmp_path) -> None:
                     text("SELECT version_num FROM alembic_version")
                 ).scalar_one()
                 == "v2_22"
+            )
+    finally:
+        engine.dispose()
+
+
+def test_v2_23_adds_immutable_session_shares(tmp_path) -> None:
+    path = tmp_path / "session-shares.sqlite3"
+    url = _sqlite_url(path)
+    upgrade_database(db_url=url, revision="v2_22")
+
+    engine = create_engine(f"sqlite:///{path}")
+    try:
+        assert "session_shares" not in inspect(engine).get_table_names()
+    finally:
+        engine.dispose()
+
+    upgrade_database(db_url=url, revision="v2_23")
+
+    engine = create_engine(f"sqlite:///{path}")
+    try:
+        inspector = inspect(engine)
+        assert inspector.has_table("session_shares")
+        assert {
+            "id",
+            "user_id",
+            "session_id",
+            "scope",
+            "snapshot_json",
+            "allowed_file_ids_json",
+            "created_at",
+        } == {
+            column["name"] for column in inspector.get_columns("session_shares")
+        }
+        with engine.connect() as connection:
+            assert (
+                connection.execute(
+                    text("SELECT version_num FROM alembic_version")
+                ).scalar_one()
+                == "v2_23"
             )
     finally:
         engine.dispose()

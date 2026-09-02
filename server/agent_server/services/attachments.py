@@ -67,6 +67,17 @@ class AttachmentService:
         self._validate_blob_integrity(data, metadata)
         return data, metadata
 
+    async def read_shared_file(
+        self,
+        *,
+        session_id: str,
+        file_id: str,
+    ) -> tuple[bytes, dict[str, Any]]:
+        self._validate_file_id(file_id)
+        data, metadata = await self._files.read(session_id, file_id)
+        self._validate_blob_integrity(data, metadata)
+        return data, metadata
+
     async def user_file_metadata(
         self,
         *,
