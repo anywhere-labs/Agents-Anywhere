@@ -55,7 +55,7 @@ export function PublicSessionShare({ shareId }: { shareId: string }) {
   )
 
   return (
-    <main className="min-h-dvh bg-background text-foreground">
+    <main className="h-dvh overflow-x-hidden overflow-y-auto overscroll-y-contain bg-background text-foreground">
       <header className="sticky top-0 z-20 border-b border-border/70 bg-background/85 backdrop-blur-xl">
         <div className="mx-auto flex w-full max-w-[calc(48rem+2rem)] items-center justify-between gap-4 px-4 py-4">
           <div className="min-w-0">

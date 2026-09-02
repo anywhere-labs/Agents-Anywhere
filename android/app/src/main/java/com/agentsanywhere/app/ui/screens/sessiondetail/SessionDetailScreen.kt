@@ -308,10 +308,6 @@ fun SessionDetailScreen(
                     val shareIntent = Intent(Intent.ACTION_SEND).apply {
                         type = "text/plain"
                         putExtra(Intent.EXTRA_TEXT, response.shareUrl)
-                        putExtra(
-                            Intent.EXTRA_SUBJECT,
-                            state.session?.title ?: context.getString(R.string.session_title_fallback),
-                        )
                     }
                     context.startActivity(
                         Intent.createChooser(

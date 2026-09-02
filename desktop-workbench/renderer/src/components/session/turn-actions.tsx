@@ -26,12 +26,10 @@ export type TurnAction = {
 export function TurnActions({
   token,
   sessionId,
-  sessionTitle,
   action,
 }: {
   token: string
   sessionId: string
-  sessionTitle: string | null
   action: TurnAction
 }) {
   const t = useTranslations("dashboard.session")
@@ -60,14 +58,9 @@ export function TurnActions({
         scope,
         itemIds: scope === "message" ? action.itemIds : [],
       })
-      const shareData = {
-        title: sessionTitle || t("untitled"),
-        text: t(scope === "message" ? "shareReplyText" : "shareSessionText"),
-        url: result.shareUrl,
-      }
       if (typeof navigator.share === "function") {
         try {
-          await navigator.share(shareData)
+          await navigator.share({ url: result.shareUrl })
           setDialogOpen(false)
           return
         } catch (error) {
@@ -82,7 +75,7 @@ export function TurnActions({
     } finally {
       setSharing(false)
     }
-  }, [action.itemIds, scope, sessionId, sessionTitle, sharing, t, token])
+  }, [action.itemIds, scope, sessionId, sharing, t, token])
 
   return (
     <>

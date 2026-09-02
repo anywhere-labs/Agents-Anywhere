@@ -1538,7 +1538,6 @@ export function SessionDetail({
                     <TurnActions
                       token={token}
                       sessionId={session.id}
-                      sessionTitle={session.title}
                       action={turnAction}
                     />
                   ) : null}
