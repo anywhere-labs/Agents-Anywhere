@@ -97,7 +97,7 @@ import com.composables.icons.lucide.Clock
 import com.composables.icons.lucide.FilePenLine
 import com.composables.icons.lucide.Hammer
 import com.composables.icons.lucide.Lucide
-import com.composables.icons.lucide.Share2
+import com.composables.icons.lucide.Forward
 import com.composables.icons.lucide.Sparkles
 import com.composables.icons.lucide.SquareTerminal
 import com.composables.icons.lucide.WifiOff
@@ -567,7 +567,7 @@ private fun AgentReplyActions(
 @Composable
 private fun MessageShareButton(onClick: () -> Unit) {
     Icon(
-        imageVector = Lucide.Share2,
+        imageVector = Lucide.Forward,
         contentDescription = stringResource(R.string.session_share),
         tint = LocalAAColors.current.muted,
         modifier = Modifier
