@@ -2,6 +2,14 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 
+@font-face {
+  font-family: "AA Caveat";
+  src: url("/fonts/caveat-latin.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+}
+
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
@@ -9,7 +17,7 @@
 --font-heading: var(--font-geist);
 --font-mono: var(--font-geist-mono);
 --font-serif: var(--font-instrument-serif);
---font-brand: var(--font-caveat);
+--font-brand: "AA Caveat", "Snell Roundhand", cursive;
 --color-background: var(--background);
 --color-foreground: var(--foreground);
 --color-card: var(--card);
@@ -170,7 +178,7 @@ body {
 }
 
 .aa-wordmark {
-  font-family: var(--font-caveat), "Snell Roundhand", cursive;
+  font-family: "AA Caveat", "Snell Roundhand", cursive;
   font-weight: 500;
   letter-spacing: 0;
   line-height: 1;

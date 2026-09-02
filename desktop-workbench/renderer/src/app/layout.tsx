@@ -1,4 +1,4 @@
-import { Caveat, Geist, Geist_Mono, Instrument_Serif } from "next/font/google";
+import { Geist, Geist_Mono, Instrument_Serif } from "next/font/google";
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { ThemeProvider } from "@/components/theme-provider";
@@ -25,13 +25,6 @@ const serif = Instrument_Serif({
   style: ["normal", "italic"],
   display: "swap",
   variable: "--font-instrument-serif"
-});
-
-const brand = Caveat({
-  subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
-  display: "swap",
-  variable: "--font-caveat"
 });
 
 export const metadata: Metadata = {
@@ -89,7 +82,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body className={`${sans.variable} ${mono.variable} ${serif.variable} ${brand.variable} antialiased`}>
+      <body className={`${sans.variable} ${mono.variable} ${serif.variable} antialiased`}>
         <I18nProvider>
           <ThemeProvider defaultTheme="dark">
             {children}
