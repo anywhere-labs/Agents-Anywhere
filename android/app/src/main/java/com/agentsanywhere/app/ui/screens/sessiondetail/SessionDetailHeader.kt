@@ -27,6 +27,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.agentsanywhere.app.R
+import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 import com.agentsanywhere.app.ui.designsystem.noRippleClickable
 
 @Composable
@@ -37,8 +38,9 @@ internal fun SessionDetailHeader(
     onRightClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val surface = if (darkMode) Color(0xF218181B) else Color(0xF2FFFFFF)
-    val border = if (darkMode) Color(0xFF27272A) else Color(0xFFE8E5DE)
+    val colors = LocalAAColors.current
+    val surface = if (darkMode) colors.raisedSurface else Color(0xF2FFFFFF)
+    val border = if (darkMode) colors.border else Color(0xFFE8E5DE)
     val text = if (darkMode) Color(0xFFFAFAFA) else Color(0xFF2F302D)
 
     Row(
@@ -117,8 +119,9 @@ private fun HeaderImageButton(
     darkMode: Boolean,
     onClick: () -> Unit,
 ) {
-    val surface = if (darkMode) Color(0xF218181B) else Color(0xF2FFFFFF)
-    val border = if (darkMode) Color(0xFF27272A) else Color(0xFFE8E5DE)
+    val colors = LocalAAColors.current
+    val surface = if (darkMode) colors.raisedSurface else Color(0xF2FFFFFF)
+    val border = if (darkMode) colors.border else Color(0xFFE8E5DE)
     Box(
         modifier = Modifier
             .size(44.dp)

@@ -233,6 +233,32 @@ data class RuntimeNoticeInputField(
     val required: Boolean,
 )
 
+data class RuntimeInputRequestOption(
+    val id: String,
+    val label: String,
+    val description: String?,
+)
+
+data class RuntimeInputRequestQuestion(
+    val id: String,
+    val prompt: String,
+    val header: String?,
+    val multiple: Boolean,
+    val allowCustom: Boolean,
+    val options: List<RuntimeInputRequestOption>,
+)
+
+data class RuntimeInputRequestForm(
+    val action: RuntimeNoticeAction,
+    val questions: List<RuntimeInputRequestQuestion>,
+)
+
+data class RuntimeInputRequestDraft(
+    val optionIds: List<String> = emptyList(),
+    val customText: String = "",
+    val useCustom: Boolean = false,
+)
+
 data class RuntimeCatalogs(
     val model: RemoteRuntimeModelCatalog? = null,
     val permission: RemoteRuntimePermissionCatalog? = null,
@@ -560,6 +586,75 @@ internal fun RuntimeNoticeAction.inputFields(): List<RuntimeNoticeInputField> {
         emptyList()
     }
 }
+
+internal fun RuntimeNotice.inputRequestForm(): RuntimeInputRequestForm? {
+    if (interactionType != "input_request") return null
+    actions.forEach { action ->
+        val uiSchema = action.input.uiSchema ?: return@forEach
+        if (uiSchema["component"] != "inputRequest" || (uiSchema["version"] as? Number)?.toInt() != 1) {
+            return@forEach
+        }
+        val rawQuestions = uiSchema["questions"] as? List<*> ?: return null
+        if (rawQuestions.isEmpty()) return null
+        val questionIds = mutableSetOf<String>()
+        val questions = rawQuestions.map { rawQuestion ->
+            val question = rawQuestion as? Map<*, *> ?: return null
+            val id = question["id"].nonEmptyText() ?: return null
+            val prompt = question["prompt"].nonEmptyText() ?: return null
+            if (!questionIds.add(id)) return null
+            val rawOptions = question["options"] as? List<*> ?: return null
+            val optionIds = mutableSetOf<String>()
+            val options = rawOptions.map { rawOption ->
+                val option = rawOption as? Map<*, *> ?: return null
+                val optionId = option["id"].nonEmptyText() ?: return null
+                val label = option["label"].nonEmptyText() ?: return null
+                if (!optionIds.add(optionId)) return null
+                RuntimeInputRequestOption(
+                    id = optionId,
+                    label = label,
+                    description = option["description"].nonEmptyText(),
+                )
+            }
+            RuntimeInputRequestQuestion(
+                id = id,
+                prompt = prompt,
+                header = question["header"].nonEmptyText(),
+                multiple = question["multiple"] == true,
+                allowCustom = question["allowCustom"] != false,
+                options = options,
+            )
+        }
+        return RuntimeInputRequestForm(action = action, questions = questions)
+    }
+    return null
+}
+
+internal fun RuntimeInputRequestForm.initialDrafts(): Map<String, RuntimeInputRequestDraft> =
+    questions.associate { it.id to RuntimeInputRequestDraft() }
+
+internal fun RuntimeInputRequestForm.isComplete(
+    drafts: Map<String, RuntimeInputRequestDraft>,
+): Boolean = questions.all { question ->
+    val draft = drafts[question.id] ?: return@all false
+    val optionCount = draft.optionIds.size
+    (question.multiple || optionCount <= 1) &&
+        (optionCount > 0 || (draft.useCustom && draft.customText.isNotBlank()))
+}
+
+internal fun RuntimeInputRequestForm.buildPayload(
+    drafts: Map<String, RuntimeInputRequestDraft>,
+): Map<String, Any?> = mapOf(
+    "answers" to questions.associate { question ->
+        val draft = drafts[question.id] ?: RuntimeInputRequestDraft()
+        val customText = draft.customText.trim().takeIf { draft.useCustom && it.isNotEmpty() }
+        question.id to buildMap<String, Any?> {
+            put("optionIds", draft.optionIds)
+            if (customText != null) put("customText", customText)
+        }
+    },
+)
+
+private fun Any?.nonEmptyText(): String? = (this as? String)?.trim()?.takeIf(String::isNotEmpty)
 
 internal fun RuntimeNoticeAction.coerceInput(rawValues: Map<String, String>): Result<Map<String, Any?>?> = runCatching {
     val fields = inputFields()

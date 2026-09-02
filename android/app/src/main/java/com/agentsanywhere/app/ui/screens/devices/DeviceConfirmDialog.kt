@@ -1,7 +1,6 @@
 package com.agentsanywhere.app.ui.screens.devices
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -52,8 +51,11 @@ internal fun DeviceConfirmDialog(
     val colors = LocalAAColors.current
     val darkMode = colors.canvas == Color(0xFF09090B)
     val shape = RoundedCornerShape(26.dp)
-    val surface = if (darkMode) Color(0xFF18181B) else Color.White
-    val secondaryButton = if (darkMode) Color(0xFF27272A) else Color(0xFFF3F3F3)
+    val surface = colors.dialogSurface
+    val secondaryButton = colors.secondaryActionSurface
+    val titleColor = if (darkMode) Color(0xFFF5F5F5) else colors.ink
+    val bodyColor = if (darkMode) Color(0xFF858585) else colors.muted
+    val dangerButton = Color(0xFFEF4444)
     val title: String
     val body: String
     val confirmLabel: String
@@ -124,20 +126,19 @@ internal fun DeviceConfirmDialog(
                 .shadow(34.dp, shape, ambientColor = Color(0x33000000), spotColor = Color(0x33000000))
                 .clip(shape)
                 .background(surface)
-                .border(1.dp, colors.border, shape)
                 .padding(22.dp),
             verticalArrangement = Arrangement.spacedBy(18.dp),
         ) {
             Text(
                 text = title,
-                color = colors.ink,
+                color = titleColor,
                 fontSize = 24.sp,
                 fontWeight = FontWeight.ExtraBold,
                 lineHeight = 29.sp,
             )
             Text(
                 text = body,
-                color = colors.muted,
+                color = bodyColor,
                 fontSize = 15.sp,
                 fontWeight = FontWeight.Medium,
                 lineHeight = 21.sp,
@@ -160,7 +161,7 @@ internal fun DeviceConfirmDialog(
                 DeviceDialogButton(
                     label = stringResource(R.string.common_cancel),
                     background = secondaryButton,
-                    content = colors.ink,
+                    content = if (darkMode) Color(0xFFF5F5F5) else colors.ink,
                     enabled = !busy,
                     modifier = Modifier.weight(1f),
                     onClick = onDismiss,
@@ -168,7 +169,7 @@ internal fun DeviceConfirmDialog(
                 DeviceDialogButton(
                     label = confirmLabel,
                     background = if (danger) {
-                        colors.errorText.copy(alpha = if (busy) 0.38f else 1f)
+                        dangerButton.copy(alpha = if (busy) 0.38f else 1f)
                     } else if (darkMode) {
                         Color(0xFFE4E4E7)
                     } else {

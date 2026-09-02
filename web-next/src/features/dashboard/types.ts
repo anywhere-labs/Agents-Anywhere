@@ -373,6 +373,36 @@ export type TimelineItem = {
   completedAt: string | null;
 };
 
+export type SessionShareScope = "message" | "session";
+
+export type SessionShareCreateRequest = {
+  scope: SessionShareScope;
+  itemIds: string[];
+};
+
+export type SessionShareCreateResponse = {
+  shareId: string;
+  sharePath: string;
+  shareUrl: string;
+  scope: SessionShareScope;
+  createdAt: string;
+};
+
+export type PublicSessionShareResponse = {
+  shareId: string;
+  scope: SessionShareScope;
+  session: {
+    id: string;
+    title: string | null;
+    runtime: string;
+    runtimeName: string | null;
+    cwd: string | null;
+  };
+  items: TimelineItem[];
+  createdAt: string;
+  serverTime: string;
+};
+
 export type ApprovalStatus =
   | "pending"
   | "approved"

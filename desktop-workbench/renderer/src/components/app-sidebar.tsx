@@ -43,6 +43,12 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Spinner } from "@/components/ui/spinner"
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
 import { copyText } from "@/lib/clipboard"
 import { cn } from "@/lib/utils"
 import { filterSessions } from "@/lib/demo-api"
@@ -57,6 +63,8 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
     connectors,
     sessions,
     isLoading,
+    hasMoreSessions,
+    isLoadingMoreSessions,
     activeSessionId,
     activeConnectorId,
     page,
@@ -70,6 +78,7 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
     toggleArchiveSession,
     renameSession,
     refreshData,
+    loadMoreSessions,
   } = useWorkspace()
   const { signOut, me, session: authSession } = useAuth()
   const t = useTranslations("dashboard")
@@ -96,11 +105,9 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
   }, [authSession?.accessToken, refreshData, sessions])
 
 
-  const filtered = filterSessions(
-    sessions.filter((s) => !s.archived),
-    filter,
-    search,
-  ).filter((session) => !session.pinned)
+  const filtered = filterSessions(sessions, filter, search).filter(
+    (session) => session.archived || !session.pinned,
+  )
 
   return (
     <Sidebar contained={contained} className="border-sidebar-border">
@@ -220,6 +227,13 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
                   />
                 ))
               )}
+              {!isLoading && hasMoreSessions ? (
+                <SessionPageTrigger
+                  loading={isLoadingMoreSessions}
+                  label={t("status.loadingSessions")}
+                  onVisible={loadMoreSessions}
+                />
+              ) : null}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
@@ -319,6 +333,39 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
   )
 }
 
+function SessionPageTrigger({
+  loading,
+  label,
+  onVisible,
+}: {
+  loading: boolean
+  label: string
+  onVisible: () => void
+}) {
+  const ref = React.useRef<HTMLDivElement>(null)
+  const onVisibleRef = React.useRef(onVisible)
+  onVisibleRef.current = onVisible
+
+  React.useEffect(() => {
+    const element = ref.current
+    if (!element) return
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry?.isIntersecting && !loading) onVisibleRef.current()
+      },
+      { rootMargin: "160px 0px" },
+    )
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [loading])
+
+  return (
+    <div ref={ref} className="flex h-9 items-center justify-center" aria-label={label}>
+      {loading ? <Spinner className="size-4 text-muted-foreground" /> : null}
+    </div>
+  )
+}
+
 function SessionSidebarItem({
   item,
   isActive,
@@ -342,8 +389,8 @@ function SessionSidebarItem({
   const [renaming, setRenaming] = React.useState(false)
   const isBusy = item.status === "running" || item.status === "waiting" || item.status === "pending"
   const isWaitingApproval = item.status === "waiting_approval"
-  const isError = item.status === "error"
   const isUnreadIdle = item.unread && item.status === "idle"
+  const hasStatusIndicator = isBusy || isWaitingApproval || isUnreadIdle
 
   React.useEffect(() => {
     if (!renameOpen) setTitleDraft(item.title ?? "")
@@ -395,14 +442,13 @@ function SessionSidebarItem({
                 onClick={onOpen}
                 className={cn(
                   "text-muted-foreground data-[active=true]:text-foreground",
-                  "group-hover/session:pr-[4.25rem] group-focus-within/session:pr-[4.25rem]",
-                  isActive && "pr-[4.25rem]",
+                  !hasStatusIndicator && "group-hover/session:pr-[4.25rem] group-focus-within/session:pr-[4.25rem]",
+                  isActive && !hasStatusIndicator && "pr-[4.25rem]",
                 )}
               >
                 <span className="min-w-0 flex-1 truncate">{item.title}</span>
                 <SessionSidebarIndicator
                   busy={isBusy}
-                  error={isError}
                   unreadIdle={isUnreadIdle}
                   waitingApproval={isWaitingApproval}
                 />
@@ -410,39 +456,57 @@ function SessionSidebarItem({
             </div>
           </ContextMenuTrigger>
 
-          <div
-            className={cn(
-              "absolute right-1 top-1/2 hidden -translate-y-1/2 items-center gap-0.5",
-              "group-hover/session:flex group-focus-within/session:flex",
-              isActive && "flex",
-            )}
-          >
-          <button
-            type="button"
-            aria-label={item.pinned ? t("actions.unpin") : t("actions.pin")}
-            onClick={(e) => {
-              e.stopPropagation()
-              onTogglePin()
-            }}
-            className={cn(
-              "rounded p-1 transition-colors hover:bg-sidebar-accent/65 hover:text-foreground",
-              item.pinned ? "text-primary" : "text-muted-foreground",
-            )}
-          >
-            <Pin className="size-3" />
-          </button>
-          <button
-            type="button"
-            aria-label={t("actions.archive")}
-            onClick={(e) => {
-              e.stopPropagation()
-              onToggleArchive()
-            }}
-            className="rounded p-1 text-muted-foreground transition-colors hover:bg-sidebar-accent/65 hover:text-foreground"
-          >
-            <Archive className="size-3" />
-          </button>
-          </div>
+          {!hasStatusIndicator ? (
+            <TooltipProvider delayDuration={300}>
+              <div
+                className={cn(
+                  "absolute right-1 top-1/2 hidden -translate-y-1/2 items-center gap-0.5",
+                  "group-hover/session:flex group-focus-within/session:flex",
+                  isActive && "flex",
+                )}
+              >
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      aria-label={item.pinned ? t("actions.unpinChat") : t("actions.pinChat")}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        onTogglePin()
+                      }}
+                      className={cn(
+                        "rounded p-1 transition-colors hover:bg-sidebar-accent/65 hover:text-foreground",
+                        item.pinned ? "text-primary" : "text-muted-foreground",
+                      )}
+                    >
+                      <Pin className="size-3" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="top" sideOffset={4}>
+                    {item.pinned ? t("actions.unpinChat") : t("actions.pinChat")}
+                  </TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      aria-label={item.archived ? t("actions.unarchiveChat") : t("actions.archiveChat")}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        onToggleArchive()
+                      }}
+                      className="rounded p-1 text-muted-foreground transition-colors hover:bg-sidebar-accent/65 hover:text-foreground"
+                    >
+                      <Archive className="size-3" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="top" sideOffset={4}>
+                    {item.archived ? t("actions.unarchiveChat") : t("actions.archiveChat")}
+                  </TooltipContent>
+                </Tooltip>
+              </div>
+            </TooltipProvider>
+          ) : null}
         </SidebarMenuItem>
         <ContextMenuContent className="w-52">
           <ContextMenuItem onSelect={onOpen}>
@@ -519,12 +583,10 @@ function SessionSidebarItem({
 
 function SessionSidebarIndicator({
   busy,
-  error,
   unreadIdle,
   waitingApproval,
 }: {
   busy: boolean
-  error: boolean
   unreadIdle: boolean
   waitingApproval: boolean
 }) {
@@ -535,14 +597,6 @@ function SessionSidebarIndicator({
       <span className="ml-2 shrink-0 rounded-full bg-emerald-500/20 px-2 py-0.5 text-[11px] font-medium leading-4 text-emerald-400 ring-1 ring-emerald-500/20">
         {t("sessionStatus.waitingApproval")}
       </span>
-    )
-  }
-  if (error) {
-    return (
-      <span
-        aria-label={t("sessionStatus.error")}
-        className="ml-2 size-2 shrink-0 rounded-full bg-destructive"
-      />
     )
   }
   if (busy) {

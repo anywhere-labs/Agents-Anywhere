@@ -6,7 +6,10 @@ import {
   Copy,
   Download,
   Edit3,
+  File,
   FileWarning,
+  Folder,
+  FolderOpen,
   Loader2,
   RotateCw,
   Save,
@@ -22,13 +25,15 @@ import { Button } from "@/components/ui/button"
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area"
 import { Spinner } from "@/components/ui/spinner"
 import { MonacoCodeView, type MonacoCodeViewApi } from "@/components/monaco-code-view"
+import { openNativeFilePreviewWindow } from "@/components/panels/files-panel"
 import { dashboardApi } from "@/features/dashboard/api"
 import { loadStoredSession } from "@/features/auth/session"
-import type { FsPreviewSessionResponse, FsReadTextResult } from "@/features/dashboard/types"
+import type { FsEntry, FsPreviewSessionResponse, FsReadTextResult } from "@/features/dashboard/types"
 
 type PreviewState =
   | { kind: "loading" }
   | { kind: "error"; message: string }
+  | { kind: "directory"; path: string; entries: FsEntry[] }
   | { kind: "text"; file: FsReadTextResult }
   | { kind: "binary"; file: BinaryFileInfo; objectUrl: string | null }
 
@@ -48,11 +53,12 @@ export function FilePreviewPage() {
   const params = useRouteSearchParams()
   const connectorId = params.get("connectorId") ?? ""
   const root = params.get("root") ?? ""
-  const path = params.get("path") ?? ""
+  const routePath = params.get("path") ?? ""
   const previewToken = params.get("previewToken") ?? ""
   const [previewSession, setPreviewSession] = React.useState<FsPreviewSessionResponse | null>(null)
+  const [path, setPath] = React.useState(routePath)
   const effectivePath = previewSession?.path ?? path
-  const name = params.get("name") || fileNameFromPath(effectivePath)
+  const name = path === routePath ? params.get("name") || fileNameFromPath(effectivePath) : fileNameFromPath(effectivePath)
   const token = React.useMemo(() => loadStoredSession()?.accessToken ?? null, [])
   const [state, setState] = React.useState<PreviewState>({ kind: "loading" })
   const [editMode, setEditMode] = React.useState(false)
@@ -129,6 +135,17 @@ export function FilePreviewPage() {
       }
       setState({ kind: "binary", file: binary, objectUrl })
     } catch (err) {
+      if (!previewToken && token && connectorId && path) {
+        try {
+          const response = await dashboardApi.connectorFsList(token, connectorId, { root, path })
+          if (samePath(response.result.path, path)) {
+            setState({ kind: "directory", path: response.result.path, entries: response.result.entries })
+            return
+          }
+        } catch {
+          // Preserve the original file-preview error when the target is not a directory.
+        }
+      }
       setState({ kind: "error", message: err instanceof Error ? err.message : String(err) })
     }
   }, [canLoad, connectorId, name, path, previewSession, previewToken, revokeObjectUrl, root, t, token])
@@ -140,7 +157,8 @@ export function FilePreviewPage() {
 
   React.useEffect(() => {
     if (state.kind === "loading" || state.kind === "error") return
-    document.title = `${state.file.name || name} - ${t("title")}`
+    const stateName = state.kind === "directory" ? fileNameFromPath(state.path) : state.file.name
+    document.title = `${stateName || name} - ${t("title")}`
   }, [name, state, t])
 
   React.useEffect(() => {
@@ -305,7 +323,7 @@ export function FilePreviewPage() {
           size="icon-sm"
           type="button"
           aria-label={t("download")}
-          disabled={state.kind === "loading"}
+          disabled={state.kind !== "text" && state.kind !== "binary"}
           onClick={() => void handleDownload()}
         >
           <Download className="size-4" />
@@ -360,6 +378,16 @@ export function FilePreviewPage() {
             className="h-full min-h-0 overflow-hidden"
           />
         ) : null}
+        {state.kind === "directory" ? (
+          <DirectoryPreview
+            directory={state}
+            root={root}
+            token={token}
+            connectorId={connectorId}
+            onOpenDirectory={setPath}
+            emptyLabel={t("emptyDirectory")}
+          />
+        ) : null}
         {state.kind === "binary" ? (
           <BinaryPreview
             file={state.file}
@@ -370,6 +398,84 @@ export function FilePreviewPage() {
         ) : null}
       </section>
     </main>
+  )
+}
+
+function DirectoryPreview({
+  directory,
+  root,
+  token,
+  connectorId,
+  onOpenDirectory,
+  emptyLabel,
+}: {
+  directory: Extract<PreviewState, { kind: "directory" }>
+  root: string
+  token: string | null
+  connectorId: string
+  onOpenDirectory: (path: string) => void
+  emptyLabel: string
+}) {
+  const parent = parentPath(directory.path)
+  const canGoParent = Boolean(parent && isPathInsideRoot(parent, root) && !samePath(parent, directory.path))
+  const entries = directory.entries.slice().sort((left, right) => {
+    if (left.type === "directory" && right.type !== "directory") return -1
+    if (left.type !== "directory" && right.type === "directory") return 1
+    return left.name.localeCompare(right.name)
+  })
+
+  const openEntry = (entry: FsEntry) => {
+    if (entry.type === "directory") {
+      onOpenDirectory(entry.path)
+      return
+    }
+    if ((entry.type === "file" || entry.type === "symlink") && token && connectorId) {
+      openNativeFilePreviewWindow({
+        token,
+        connectorId,
+        root,
+        file: { name: entry.name, path: entry.path },
+      })
+    }
+  }
+
+  return (
+    <ScrollArea className="h-full bg-muted/10">
+      <div className="mx-auto w-full max-w-4xl p-4">
+        {canGoParent ? (
+          <button
+            type="button"
+            className="flex w-full items-center gap-3 border-b px-3 py-2 text-left text-sm hover:bg-muted"
+            onClick={() => onOpenDirectory(parent)}
+          >
+            <FolderOpen className="size-4 text-muted-foreground" />
+            <span>..</span>
+          </button>
+        ) : null}
+        {entries.map((entry) => (
+          <button
+            key={entry.path}
+            type="button"
+            className="flex w-full items-center gap-3 border-b px-3 py-2 text-left text-sm hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+            disabled={entry.type !== "directory" && entry.type !== "file" && entry.type !== "symlink"}
+            onClick={() => openEntry(entry)}
+          >
+            {entry.type === "directory" ? (
+              <Folder className="size-4 shrink-0 text-muted-foreground" />
+            ) : (
+              <File className="size-4 shrink-0 text-muted-foreground" />
+            )}
+            <span className="min-w-0 flex-1 truncate">{entry.name}</span>
+            <span className="text-xs text-muted-foreground">
+              {entry.type === "file" && typeof entry.size === "number" ? formatBytes(entry.size) : entry.type}
+            </span>
+          </button>
+        ))}
+        {entries.length === 0 ? (
+          <div className="px-3 py-10 text-center text-sm text-muted-foreground">{emptyLabel}</div>
+        ) : null}
+      </div>
+    </ScrollArea>
   )
 }
 
@@ -492,6 +598,29 @@ function mediaTypeForFile(name: string) {
 function fileNameFromPath(path: string) {
   const normalized = path.replace(/\\/g, "/").replace(/\/+$/, "")
   return normalized.split("/").pop() || path || "preview"
+}
+
+function samePath(left: string, right: string) {
+  return normalizePath(left) === normalizePath(right)
+}
+
+function parentPath(path: string) {
+  const normalized = normalizePath(path)
+  const slash = normalized.lastIndexOf("/")
+  if (slash < 0) return ""
+  if (slash === 0) return "/"
+  return normalized.slice(0, slash)
+}
+
+function isPathInsideRoot(path: string, root: string) {
+  const normalizedPath = normalizePath(path)
+  const normalizedRoot = normalizePath(root)
+  return normalizedPath === normalizedRoot || normalizedPath.startsWith(`${normalizedRoot}/`)
+}
+
+function normalizePath(path: string) {
+  const normalized = path.replace(/\\/g, "/").replace(/\/+$/, "")
+  return /^[A-Za-z]:/.test(normalized) ? normalized.toLowerCase() : normalized || "/"
 }
 
 function formatBytes(size: number) {

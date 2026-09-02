@@ -78,7 +78,7 @@ internal fun RoundIconAction(
     val surface = when {
         danger && darkMode -> Color(0xFF2A1418)
         danger -> Color(0xFFFFF5F5)
-        darkMode -> Color(0xFF18181B)
+        darkMode -> colors.subtle
         else -> Color.White
     }
     val border = when {

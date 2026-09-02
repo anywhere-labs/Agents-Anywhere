@@ -67,6 +67,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import com.agentsanywhere.app.R
+import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 import com.agentsanywhere.app.ui.designsystem.noRippleClickable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -124,12 +125,13 @@ internal fun AgentMarkdownText(
     text: String,
     darkMode: Boolean,
     onOpenFile: (String) -> Unit = {},
+    compact: Boolean = false,
 ) {
     val uriHandler = LocalUriHandler.current
     val document = remember(text) {
         markdownParser.parse(normalizeMarkdownTables(text.ifBlank { "_(no content)_" })) as Document
     }
-    val styles = markdownStyles(darkMode)
+    val styles = markdownStyles(darkMode, compact)
     val openUrl: (String) -> Unit = { url ->
         runCatching { uriHandler.openUri(url) }
     }
@@ -138,7 +140,7 @@ internal fun AgentMarkdownText(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 4.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(if (compact) 6.dp else 8.dp),
     ) {
         MarkdownBlocks(
             nodes = document.children(),
@@ -603,7 +605,7 @@ private fun MarkdownCodePanelContent(label: String, code: String, darkMode: Bool
     val scope = rememberCoroutineScope()
     var copied by remember(code) { mutableStateOf(false) }
     val panelShape = RoundedCornerShape(20.dp)
-    val panelBackground = if (darkMode) Color(0xFF18181B) else Color(0xFFECECEA)
+    val panelBackground = if (darkMode) LocalAAColors.current.raisedSurface else Color(0xFFECECEA)
     val labelColor = if (darkMode) Color(0xFFFAFAFA) else Color(0xFF191A18)
     val copyIcon = if (darkMode) R.drawable.ic_copy_bash_command_light else R.drawable.ic_copy_bash_command_dark
     val shadow = if (darkMode) Color(0x66000000) else Color(0x0A000000)
@@ -673,7 +675,7 @@ private fun BashCommandCard(label: String, code: String, darkMode: Boolean, styl
     val scope = rememberCoroutineScope()
     var copied by remember(code) { mutableStateOf(false) }
     val shape = RoundedCornerShape(20.dp)
-    val cardBackground = if (darkMode) Color(0xFF18181B) else Color(0xFFECECEA)
+    val cardBackground = if (darkMode) LocalAAColors.current.raisedSurface else Color(0xFFECECEA)
     val labelColor = if (darkMode) Color(0xFFFAFAFA) else Color(0xFF191A18)
     val copyIcon = if (darkMode) R.drawable.ic_copy_bash_command_light else R.drawable.ic_copy_bash_command_dark
     val shadow = if (darkMode) Color(0x66000000) else Color(0x0A000000)
@@ -801,7 +803,7 @@ private fun CheckMiniGlyph(color: Color) {
 }
 
 @Composable
-private fun markdownStyles(darkMode: Boolean): MarkdownStyles {
+private fun markdownStyles(darkMode: Boolean, compact: Boolean): MarkdownStyles {
     val body = if (darkMode) Color(0xFFEDEDEF) else Color(0xFF242522)
     val muted = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF7C7B76)
     val border = if (darkMode) Color(0xFF27272A) else Color(0xFFE4E1DB)
@@ -809,15 +811,16 @@ private fun markdownStyles(darkMode: Boolean): MarkdownStyles {
         bodyColor = body,
         muted = muted,
         border = border,
-        codeBackground = if (darkMode) Color(0xFF18181B) else Color(0xFFF1F0ED),
+        codeBackground = if (darkMode) LocalAAColors.current.subtle else Color(0xFFF1F0ED),
         codeBorder = if (darkMode) Color(0xFF27272A) else Color(0xFFE4E1DB),
         linkColor = Color(0xFFEBB353),
         body = TextStyle(
             color = body,
-            fontSize = 17.sp,
-            lineHeight = 27.sp,
-            fontWeight = FontWeight.Normal,
+            fontSize = if (compact) 14.sp else 17.sp,
+            lineHeight = if (compact) 21.sp else 27.sp,
+            fontWeight = if (compact) FontWeight.Light else FontWeight.Normal,
         ),
+        compact = compact,
     )
 }
 
@@ -829,24 +832,25 @@ private data class MarkdownStyles(
     val codeBorder: Color,
     val linkColor: Color,
     val body: TextStyle,
+    val compact: Boolean,
 ) {
     fun heading(level: Int): TextStyle = body.copy(
         fontSize = when (level) {
-            1 -> 22.sp
-            2 -> 20.sp
-            else -> 18.sp
+            1 -> if (compact) 17.sp else 22.sp
+            2 -> if (compact) 16.sp else 20.sp
+            else -> if (compact) 15.sp else 18.sp
         },
         lineHeight = when (level) {
-            1 -> 30.sp
-            2 -> 28.sp
-            else -> 26.sp
+            1 -> if (compact) 24.sp else 30.sp
+            2 -> if (compact) 23.sp else 28.sp
+            else -> if (compact) 22.sp else 26.sp
         },
-        fontWeight = FontWeight.Bold,
+        fontWeight = if (compact) FontWeight.SemiBold else FontWeight.Bold,
     )
 
     fun tableCell(header: Boolean, alignment: TableCell.Alignment?): TextStyle = body.copy(
-        fontSize = 14.5.sp,
-        lineHeight = 22.sp,
+        fontSize = if (compact) 13.sp else 14.5.sp,
+        lineHeight = if (compact) 19.sp else 22.sp,
         fontWeight = if (header) FontWeight.Bold else FontWeight.Normal,
         textAlign = when (alignment) {
             TableCell.Alignment.CENTER -> TextAlign.Center

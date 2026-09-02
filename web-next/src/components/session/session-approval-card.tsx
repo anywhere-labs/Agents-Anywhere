@@ -37,6 +37,7 @@ export function InteractionCard({
   compact,
 }: InteractionCardProps) {
   const tSession = useTranslations("dashboard.session")
+  const tCommon = useTranslations("common")
   const resolving = resolvingNoticeId === notice.noticeId
   const disabled = resolvingNoticeId !== null || notice.status === "response_accepted" || notice.status === "resolving"
   const Icon = notice.severity === "error" ? CircleAlert : ShieldCheck
@@ -54,6 +55,15 @@ export function InteractionCard({
       ? buildInputRequestPayload(inputRequest, inputDrafts)
       : undefined
     onRespondInteraction(notice.noticeId, action.actionId, input)
+  }
+
+  const actionLabel = (action: NoticeAction) => {
+    if (action.actionId === "approve") return tSession("approve")
+    if (action.actionId === "approve_for_session") return tSession("approveSession")
+    if (action.actionId === "reject") return tSession("reject")
+    if (action.actionId === "cancel" || action.actionId === "dismiss") return tCommon("cancel")
+    if (action.actionId === "submit") return tSession("inputRequestSubmit")
+    return action.label
   }
 
   const actionButtons = (
@@ -74,7 +84,7 @@ export function InteractionCard({
             {resolving && resolvingActionId === action.actionId
               ? <Loader2 className="size-3.5 animate-spin" />
               : actionIcon(action.actionId)}
-            {action.label}
+            {actionLabel(action)}
           </Button>
         )
       })}

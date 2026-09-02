@@ -35,6 +35,8 @@ export function TimelineEntry({
   resolvingActionId,
   toolOpen,
   nestedAgentCall = false,
+  readOnly = false,
+  attachmentUrl,
   onToolOpenChange,
   onRespondInteraction,
 }: {
@@ -46,12 +48,14 @@ export function TimelineEntry({
   resolvingActionId: string | null
   toolOpen?: boolean
   nestedAgentCall?: boolean
+  readOnly?: boolean
+  attachmentUrl?: (fileId: string) => string
   onToolOpenChange?: (open: boolean) => void
   onRespondInteraction: (noticeId: string, actionId: string, input?: Record<string, unknown>) => void
 }) {
   let entry: React.ReactNode
   if (item.type === "message") {
-    entry = <MessageCard token={token} session={session} item={item} />
+    entry = <MessageCard token={token} session={session} item={item} readOnly={readOnly} attachmentUrl={attachmentUrl} />
     return <TimelineEntryContextMenu item={item}>{entry}</TimelineEntryContextMenu>
   }
   if (item.type === "tool" || isFileChangeArtifact(item)) {
@@ -67,14 +71,15 @@ export function TimelineEntry({
           open={toolOpen}
           onOpenChange={onToolOpenChange}
           onRespondInteraction={onRespondInteraction}
+          readOnly={readOnly}
         />
       </div>
     )
     return <TimelineEntryContextMenu item={item}>{entry}</TimelineEntryContextMenu>
   }
   if (item.type === "marker") entry = <MarkerCard item={item} />
-  else if (item.type === "system") entry = <SystemCard token={token} session={session} item={item} />
-  else if (item.type === "artifact") entry = <ArtifactCard token={token} session={session} item={item} />
+  else if (item.type === "system") entry = <SystemCard token={readOnly ? "" : token} session={session} item={item} />
+  else if (item.type === "artifact") entry = <ArtifactCard token={token} session={session} item={item} readOnly={readOnly} />
   else entry = <UnknownTimelineItem item={item} />
   return <TimelineEntryContextMenu item={item}>{entry}</TimelineEntryContextMenu>
 }
@@ -131,7 +136,19 @@ function copyTimelineValue(value: string) {
   navigator.clipboard.writeText(value).catch(() => undefined)
 }
 
-function MessageCard({ token, session, item }: { token: string; session: SessionView; item: TimelineItem }) {
+function MessageCard({
+  token,
+  session,
+  item,
+  readOnly,
+  attachmentUrl,
+}: {
+  token: string
+  session: SessionView
+  item: TimelineItem
+  readOnly: boolean
+  attachmentUrl?: (fileId: string) => string
+}) {
   const tSession = useTranslations("dashboard.session")
   const tNew = useTranslations("dashboard.new")
   const attachments = extractAttachments(item.content)
@@ -151,7 +168,7 @@ function MessageCard({ token, session, item }: { token: string; session: Session
     )
   }
   const content = text ? (
-    <MarkdownText text={text} token={token} session={session} />
+    <MarkdownText text={text} token={readOnly ? "" : token} session={session} />
   ) : null
   const attachmentList = (
     <MessageAttachments
@@ -159,6 +176,7 @@ function MessageCard({ token, session, item }: { token: string; session: Session
       session={session}
       attachments={attachments}
       align={isUser ? "right" : "left"}
+      attachmentUrl={attachmentUrl}
     />
   )
 
@@ -324,7 +342,17 @@ function stripMarkdownForInlineSummary(text: string): string {
     .trim()
 }
 
-function ArtifactCard({ token, session, item }: { token: string; session: SessionView; item: TimelineItem }) {
+function ArtifactCard({
+  token,
+  session,
+  item,
+  readOnly,
+}: {
+  token: string
+  session: SessionView
+  item: TimelineItem
+  readOnly: boolean
+}) {
   const kind = textOf(item.content.kind) || "artifact"
   if (kind === "diff") return null
   const path = firstTextOf(item.content.path, item.content.filePath, item.content.file, item.content.uri)
@@ -337,10 +365,10 @@ function ArtifactCard({ token, session, item }: { token: string; session: Sessio
       <span
         className={cn(
           "code-mono min-w-0 flex-1 truncate text-sm",
-          path && "underline-offset-2 group-hover/marker:underline",
+          path && !readOnly && "underline-offset-2 group-hover/marker:underline",
         )}
         onClick={(event) => {
-          if (!path) return
+          if (!path || readOnly) return
           event.preventDefault()
           event.stopPropagation()
           openSessionFilePreview(token, session, path)

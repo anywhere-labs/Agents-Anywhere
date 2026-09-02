@@ -83,7 +83,7 @@ internal fun DeviceSetupSheet(
     val context = LocalContext.current
     val colors = LocalAAColors.current
     val darkMode = colors.canvas == Color(0xFF09090B)
-    val palette = setupSheetPalette(darkMode)
+    val palette = setupSheetPalette(darkMode, colors.raisedSurface)
     val clipboard = LocalClipboardManager.current
     val scope = rememberCoroutineScope()
     var sheetCredential by remember(credential?.device?.id, credential?.connectorToken) { mutableStateOf(credential) }
@@ -865,10 +865,10 @@ private data class DeviceSetupPalette(
     val handle: Color,
 )
 
-private fun setupSheetPalette(darkMode: Boolean): DeviceSetupPalette {
+private fun setupSheetPalette(darkMode: Boolean, raisedSurface: Color): DeviceSetupPalette {
     return if (darkMode) {
         DeviceSetupPalette(
-            sheet = Color(0xFF18181B),
+            sheet = raisedSurface,
             title = Color(0xFFFAFAFA),
             body = Color(0xFFA1A1AA),
             faint = Color(0xFF71717A),

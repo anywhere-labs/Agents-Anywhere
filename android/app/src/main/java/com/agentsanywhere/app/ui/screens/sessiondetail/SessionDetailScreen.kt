@@ -1,11 +1,16 @@
 package com.agentsanywhere.app.ui.screens.sessiondetail
 
 import android.Manifest
+import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.MediaScannerConnection
 import android.net.Uri
+import android.os.Build
+import android.os.Environment
 import android.provider.OpenableColumns
+import android.provider.MediaStore
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -17,9 +22,12 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.pager.HorizontalPager
@@ -70,11 +78,13 @@ import com.agentsanywhere.app.api.AttachmentTransferFailure
 import com.agentsanywhere.app.api.UploadFilePart
 import com.agentsanywhere.app.feature.files.FilesController
 import com.agentsanywhere.app.feature.realtime.SessionRealtimeController
+import com.agentsanywhere.app.feature.sessiondetail.DownloadedAttachment
 import com.agentsanywhere.app.feature.sessiondetail.SessionDetailController
 import com.agentsanywhere.app.feature.sessiondetail.SessionMeta
 import com.agentsanywhere.app.feature.sessiondetail.SessionDetailState
 import com.agentsanywhere.app.feature.sessiondetail.SessionRuntimeStatus
 import com.agentsanywhere.app.feature.sessiondetail.SessionTimelineState
+import com.agentsanywhere.app.feature.sessiondetail.TimelineAttachment
 import com.agentsanywhere.app.feature.sessiondetail.TimelineMessage
 import com.agentsanywhere.app.feature.sessiondetail.beginSnapshotLoad
 import com.agentsanywhere.app.feature.sessiondetail.cacheDownloadedAttachment
@@ -82,6 +92,7 @@ import com.agentsanywhere.app.feature.sessiondetail.completeSnapshotLoad
 import com.agentsanywhere.app.feature.sessiondetail.failSnapshotLoad
 import com.agentsanywhere.app.feature.sessiondetail.isValidAttachmentMediaType
 import com.agentsanywhere.app.feature.sessiondetail.isInternalRuntimeError
+import com.agentsanywhere.app.feature.sessiondetail.hasPendingOptimisticSend
 import com.agentsanywhere.app.feature.sessiondetail.RuntimeMessageAction
 import com.agentsanywhere.app.feature.sessiondetail.RuntimeNotice
 import com.agentsanywhere.app.feature.sessiondetail.RuntimeNoticeAction
@@ -101,6 +112,7 @@ import com.agentsanywhere.app.feature.sessiondetail.validatedSelection
 import com.agentsanywhere.app.feature.sessions.mergeAuthoritativeSessionMetadata
 import com.agentsanywhere.app.feature.sessions.NewSessionCreateOutcome
 import com.agentsanywhere.app.feature.sessions.NewSessionCreateDraft
+import com.agentsanywhere.app.feature.sessions.NewSessionAttachmentPart
 import com.agentsanywhere.app.feature.sessions.NewSessionDraft
 import com.agentsanywhere.app.feature.sessions.NewSessionSelections
 import com.agentsanywhere.app.feature.sessions.firstMessageRequest
@@ -124,6 +136,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.UUID
 import java.io.File
+import java.security.MessageDigest
 import java.util.concurrent.atomic.AtomicBoolean
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -164,20 +177,21 @@ fun SessionDetailScreen(
     val haptic = LocalHapticFeedback.current
     val snackbarHostState = remember { SnackbarHostState() }
     val pagerState = rememberPagerState(pageCount = { 2 })
-    val restoredComposerDraft = remember(sessionId) {
+    val composerDraftSessionId = sessionId ?: preparedSession?.localSessionId
+    val restoredComposerDraft = remember(composerDraftSessionId) {
         composerDraftStore.restore(
-            sessionId = sessionId,
+            sessionId = composerDraftSessionId,
             uploadCancelledMessage = context.getString(R.string.session_attachment_upload_failed),
         )
     }
-    var draft by remember(sessionId) { mutableStateOf(restoredComposerDraft.text) }
+    var draft by remember(composerDraftSessionId) { mutableStateOf(restoredComposerDraft.text) }
     var showRuntimeSettings by remember(sessionId) { mutableStateOf(false) }
     var noticeResponseErrors by remember(sessionId) { mutableStateOf(emptyMap<String, String>()) }
     var forceLatestRequest by remember(sessionId) { mutableStateOf(0) }
     var streamLatestRequest by remember(sessionId) { mutableStateOf(0) }
-    var attachments by remember(sessionId) { mutableStateOf(restoredComposerDraft.attachments) }
-    var retryClientMessageId by remember(sessionId) { mutableStateOf(restoredComposerDraft.clientMessageId) }
-    var retryMessageAction by remember(sessionId) { mutableStateOf(restoredComposerDraft.retryAction) }
+    var attachments by remember(composerDraftSessionId) { mutableStateOf(restoredComposerDraft.attachments) }
+    var retryClientMessageId by remember(composerDraftSessionId) { mutableStateOf(restoredComposerDraft.clientMessageId) }
+    var retryMessageAction by remember(composerDraftSessionId) { mutableStateOf(restoredComposerDraft.retryAction) }
     var preparedSessionCreating by remember(preparedSession) { mutableStateOf(false) }
     var preparedSelections by remember(preparedSession) { mutableStateOf(preparedSession?.selections ?: NewSessionSelections()) }
     var preparedModelOptions by remember(preparedSession) { mutableStateOf(emptyList<com.agentsanywhere.app.feature.sessiondetail.RuntimeSelectionOption>()) }
@@ -186,10 +200,16 @@ fun SessionDetailScreen(
     var preparedPermissionLoading by remember(preparedSession) { mutableStateOf(false) }
     var preparedModelError by remember(preparedSession) { mutableStateOf<String?>(null) }
     var preparedPermissionError by remember(preparedSession) { mutableStateOf<String?>(null) }
+    var optimisticSelections by remember(sessionId) { mutableStateOf(emptyMap<String, String>()) }
     var takeoverConfirm by remember(sessionId) { mutableStateOf<Boolean?>(null) }
     var previewImage by remember(sessionId) { mutableStateOf<AttachmentPreview?>(null) }
+    var pendingGallerySave by remember(sessionId) { mutableStateOf<DownloadedAttachment?>(null) }
+    var attachmentSaveInFlight by remember(sessionId) { mutableStateOf(false) }
     var showCamera by remember(sessionId) { mutableStateOf(false) }
     var showDeviceOffline by remember(sessionId) { mutableStateOf(false) }
+    var pendingShareItemIds by remember(sessionId) { mutableStateOf<List<String>?>(null) }
+    var shareScope by remember(sessionId) { mutableStateOf(SessionShareScope.Reply) }
+    var shareBusy by remember(sessionId) { mutableStateOf(false) }
     var pendingOpenFilePath by remember(sessionId) { mutableStateOf<String?>(null) }
     var terminalVerticalDragActive by remember(sessionId) { mutableStateOf(false) }
     var composerHeightPx by remember { mutableStateOf(0) }
@@ -203,14 +223,22 @@ fun SessionDetailScreen(
     var appVisible by remember(lifecycleOwner) {
         mutableStateOf(lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED))
     }
-    var state by remember(sessionId) {
+    val optimisticSessionId = sessionId ?: preparedSession?.localSessionId
+    var state by remember(sessionId, preparedSession?.localSessionId) {
+        val optimisticMessages = optimisticSessionId
+            ?.let(controller::optimisticMessages)
+            .orEmpty()
         mutableStateOf(
             SessionDetailState(
                 meta = SessionMeta(
                     session = initialSession?.takeIf { preparedSession != null || it.id == sessionId },
                     isLoading = sessionId != null,
                 ),
-                timeline = SessionTimelineState(isLoading = sessionId != null),
+                timeline = SessionTimelineState(
+                    messages = optimisticMessages,
+                    isLoading = sessionId != null,
+                ),
+                sending = optimisticMessages.hasPendingOptimisticSend(),
             ),
         )
     }
@@ -257,6 +285,97 @@ fun SessionDetailScreen(
         showToast(context.getString(R.string.common_copied))
     }
 
+    fun requestShare(itemIds: List<String>) {
+        if (sessionId == null || itemIds.isEmpty()) return
+        shareScope = SessionShareScope.Reply
+        pendingShareItemIds = itemIds
+    }
+
+    fun createShare() {
+        val id = sessionId ?: return
+        val replyItemIds = pendingShareItemIds ?: return
+        if (shareBusy) return
+        shareBusy = true
+        scope.launch {
+            controller.createShare(
+                sessionId = id,
+                scope = shareScope.apiValue,
+                itemIds = if (shareScope == SessionShareScope.Reply) replyItemIds else emptyList(),
+            ).onSuccess { response ->
+                pendingShareItemIds = null
+                shareBusy = false
+                runCatching {
+                    val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                        type = "text/plain"
+                        putExtra(Intent.EXTRA_TEXT, response.shareUrl)
+                    }
+                    context.startActivity(
+                        Intent.createChooser(
+                            shareIntent,
+                            context.getString(R.string.session_share_chooser_title),
+                        ),
+                    )
+                }.onFailure {
+                    showError(context.getString(R.string.session_share_open_failed))
+                }
+            }.onFailure {
+                pendingShareItemIds = null
+                shareBusy = false
+                showError(context.getString(R.string.session_share_failed))
+            }
+        }
+    }
+
+    fun saveDownloadedImage(downloaded: DownloadedAttachment) {
+        scope.launch {
+            saveImageToGallery(context, downloaded).onSuccess {
+                showToast(context.getString(R.string.session_attachment_saved))
+            }.onFailure {
+                showError(context.getString(R.string.session_attachment_save_failed))
+            }
+            attachmentSaveInFlight = false
+        }
+    }
+
+    val storagePermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        val downloaded = pendingGallerySave
+        pendingGallerySave = null
+        if (granted && downloaded != null) {
+            saveDownloadedImage(downloaded)
+        } else {
+            attachmentSaveInFlight = false
+            if (!granted) showError(context.getString(R.string.session_attachment_save_permission_required))
+        }
+    }
+
+    fun saveAttachment(attachment: TimelineAttachment) {
+        val id = sessionId ?: return
+        if (attachmentSaveInFlight) return
+        attachmentSaveInFlight = true
+        scope.launch {
+            controller.downloadAttachment(id, attachment)
+                .onSuccess { downloaded ->
+                    val needsLegacyPermission = Build.VERSION.SDK_INT <= Build.VERSION_CODES.P &&
+                        ContextCompat.checkSelfPermission(
+                            context,
+                            Manifest.permission.WRITE_EXTERNAL_STORAGE,
+                        ) != PackageManager.PERMISSION_GRANTED
+                    if (needsLegacyPermission) {
+                        pendingGallerySave = downloaded
+                        storagePermissionLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                    } else {
+                        saveDownloadedImage(downloaded)
+                    }
+                }
+                .onFailure { error ->
+                    attachmentSaveInFlight = false
+                    showError(attachmentErrorMessage(error, R.string.session_attachment_download_failed))
+                }
+        }
+    }
+
     fun openReferencedFile(path: String) {
         val trimmed = path.trim()
         if (trimmed.isBlank()) return
@@ -296,7 +415,7 @@ fun SessionDetailScreen(
         clientMessageId: String? = retryClientMessageId,
         retryAction: RuntimeMessageAction? = retryMessageAction,
     ) {
-        composerDraftStore.save(sessionId, nextDraft, nextAttachments, clientMessageId, retryAction)
+        composerDraftStore.save(composerDraftSessionId, nextDraft, nextAttachments, clientMessageId, retryAction)
     }
 
     fun setComposerDraft(nextDraft: String) {
@@ -316,7 +435,7 @@ fun SessionDetailScreen(
     fun clearComposerDraft() {
         draft = ""
         attachments = emptyList()
-        composerDraftStore.clear(sessionId)
+        composerDraftStore.clear(composerDraftSessionId)
         retryClientMessageId = null
         retryMessageAction = null
     }
@@ -327,7 +446,31 @@ fun SessionDetailScreen(
     }
 
     fun uploadPendingAttachment(attachment: PendingAttachment) {
-        val id = sessionId ?: return
+        val id = sessionId
+        if (id == null && preparedSession != null) {
+            scope.launch {
+                val uploadPart = try {
+                    withContext(Dispatchers.IO) { context.uploadPart(attachment) }
+                } catch (error: Exception) {
+                    updateAttachment(attachment.id) {
+                        it.copy(
+                            uploadState = AttachmentUploadState.Failed,
+                            errorMessage = error.message ?: context.getString(R.string.session_attachment_read_failed),
+                        )
+                    }
+                    return@launch
+                }
+                updateAttachment(attachment.id) {
+                    it.copy(
+                        uploadState = AttachmentUploadState.Uploaded,
+                        remote = uploadPart.toLocalTimelineAttachment(attachment.uri),
+                        errorMessage = null,
+                    )
+                }
+            }
+            return
+        }
+        if (id == null) return
         scope.launch {
             val uploadPart = try {
                 withContext(Dispatchers.IO) { context.uploadPart(attachment) }
@@ -562,32 +705,80 @@ fun SessionDetailScreen(
         if (pending != null) {
             if (preparedSessionCreating) return
             val message = text.trim()
-            if (message.isBlank()) return
+            val pendingAttachments = attachments
+            if (message.isBlank() && pendingAttachments.isEmpty()) return
             val clientMessageId = retryClientMessageId ?: "opt_${UUID.randomUUID()}"
+            val localSessionId = pending.localSessionId
             preparedSessionCreating = true
             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+            unfocusComposer()
+            forceLatestRequest += 1
             scope.launch {
+                val inlineAttachments = try {
+                    withContext(Dispatchers.IO) {
+                        pendingAttachments.map { attachment ->
+                            context.uploadPart(attachment).toNewSessionAttachmentPart()
+                        }
+                    }
+                } catch (error: Exception) {
+                    preparedSessionCreating = false
+                    showError(error.message ?: context.getString(R.string.session_attachment_read_failed))
+                    return@launch
+                }
+                val optimisticAttachments = pendingAttachments.mapNotNull { attachment ->
+                    attachment.remote?.copy(
+                        localPreviewUri = attachment.uri.toString().takeIf { attachment.isImage },
+                    )
+                }
+                state = controller.addOptimisticMessage(
+                    sessionId = localSessionId,
+                    state = state,
+                    text = message,
+                    clientMessageId = clientMessageId,
+                    attachments = optimisticAttachments,
+                    retryAction = RuntimeMessageAction.Send,
+                )
+                clearComposerDraft()
                 when (
                     val outcome = onCreatePreparedSession(
                         pending.firstMessageRequest(
                             content = message,
                             selections = preparedSelections,
+                            attachments = inlineAttachments,
                             clientMessageId = clientMessageId,
                         ),
                     )
                 ) {
                     is NewSessionCreateOutcome.Created -> {
+                        state = controller.markOptimisticMessage(
+                            sessionId = localSessionId,
+                            state = state,
+                            clientMessageId = clientMessageId,
+                            status = "running",
+                        )
+                        controller.bindOptimisticSession(localSessionId, outcome.session.id)
                         clearComposerDraft()
                         onPreparedSessionCreated(outcome.session)
                     }
                     is NewSessionCreateOutcome.Failed -> {
                         preparedSessionCreating = false
+                        draft = message
+                        attachments = pendingAttachments
                         retryClientMessageId = clientMessageId
-                        saveComposerDraft(message, emptyList(), clientMessageId, RuntimeMessageAction.Send)
+                        retryMessageAction = RuntimeMessageAction.Send
+                        saveComposerDraft(message, pendingAttachments, clientMessageId, RuntimeMessageAction.Send)
                         val rawMessage = outcome.error.message
                         val errorMessage = rawMessage
                             ?.takeUnless(::isInternalRuntimeError)
                             ?: context.getString(R.string.new_session_create_failed)
+                        state = controller.markOptimisticMessage(
+                            sessionId = localSessionId,
+                            state = state,
+                            clientMessageId = clientMessageId,
+                            status = "failed",
+                            attachments = optimisticAttachments,
+                            errorMessage = errorMessage,
+                        ).copy(actionError = errorMessage)
                         showError(errorMessage)
                     }
                 }
@@ -628,12 +819,17 @@ fun SessionDetailScreen(
                 return@launch
             }
             val uploadedAttachments = pendingAttachments.mapNotNull { it.remote }
+            val optimisticAttachments = pendingAttachments.mapNotNull { attachment ->
+                attachment.remote?.copy(
+                    localPreviewUri = attachment.uri.toString().takeIf { attachment.isImage },
+                )
+            }
             state = controller.addOptimisticMessage(
                 sessionId = id,
                 state = state,
                 text = text,
                 clientMessageId = clientMessageId,
-                attachments = uploadedAttachments,
+                attachments = optimisticAttachments,
                 retryAction = requestAction,
             )
             unfocusComposer()
@@ -661,7 +857,7 @@ fun SessionDetailScreen(
                         state = state,
                         clientMessageId = clientMessageId,
                         status = "running",
-                        attachments = result.attachments,
+                        attachments = optimisticAttachments.ifEmpty { result.attachments },
                     )
                 }
                 .onFailure { error ->
@@ -895,17 +1091,31 @@ fun SessionDetailScreen(
         val id = sessionId ?: return
         if (state.selectionUpdating) return
         val selections = state.runtime.selections.toMutableMap().apply { put(scopeName, selectionId) }
+        optimisticSelections = optimisticSelections + (scopeName to selectionId)
         state = state.copy(selectionUpdating = true, actionError = null)
         scope.launch {
             controller.updateSelections(id, selections)
                 .onSuccess { observed ->
-                    if (observed != null && observed.updatedSeq >= state.runtime.updatedSeq) {
-                        state = state.copy(runtime = observed)
+                    if (sessionId != id) return@onSuccess
+                    val confirmedSelections = state.runtime.selections.toMutableMap().apply {
+                        put(scopeName, selectionId)
                     }
-                    state = state.copy(selectionUpdating = false)
+                    val confirmedRuntime = if (
+                        observed != null &&
+                        observed.updatedSeq >= state.runtime.updatedSeq &&
+                        observed.selections[scopeName] == selectionId
+                    ) {
+                        observed
+                    } else {
+                        state.runtime.copy(selections = confirmedSelections)
+                    }
+                    state = state.copy(runtime = confirmedRuntime, selectionUpdating = false)
+                    optimisticSelections = optimisticSelections - scopeName
                 }
                 .onFailure { error ->
+                    if (sessionId != id) return@onFailure
                     val message = error.message ?: context.getString(R.string.session_selection_update_failed)
+                    optimisticSelections = optimisticSelections - scopeName
                     state = state.copy(selectionUpdating = false, actionError = message)
                     showError(message)
                 }
@@ -953,12 +1163,8 @@ fun SessionDetailScreen(
                 .onSuccess {
                     state = state.copy(
                         notices = state.notices.copy(
-                            notices = state.notices.notices.map { observed ->
-                                if (observed.noticeId == notice.noticeId) {
-                                    observed.copy(status = "response_accepted", responseRequired = false)
-                                } else {
-                                    observed
-                                }
+                            notices = state.notices.notices.filterNot { observed ->
+                                observed.noticeId == notice.noticeId
                             },
                         ),
                         respondingNoticeIds = state.respondingNoticeIds - notice.noticeId,
@@ -1128,7 +1334,11 @@ fun SessionDetailScreen(
         runtimeId,
         runtimeType,
     )
-    val canUseAttachments = state.capabilities.isUsable(SESSION_ATTACHMENT_CAPABILITY, runtimeId, runtimeType)
+    val canUseAttachments = if (isPreparedSession) {
+        preparedSession?.attachmentsEnabled == true
+    } else {
+        state.capabilities.isUsable(SESSION_ATTACHMENT_CAPABILITY, runtimeId, runtimeType)
+    }
     val canUseCommands = state.capabilities.isUsable(SESSION_COMMANDS_CAPABILITY, runtimeId, runtimeType) ||
         state.capabilities.isUsable(SESSION_COMMAND_EXECUTE_CAPABILITY, runtimeId, runtimeType)
     val capabilityFactsFresh = state.capabilities.isLoaded && state.capabilities.errorMessage == null
@@ -1142,7 +1352,7 @@ fun SessionDetailScreen(
         val id = sessionId.orEmpty()
         openInteractions.filter { it.blocksSession(id) }
     }
-    val runtimeBlocksInput = runtimeStatus in setOf(
+    val runtimeBlocksSubmission = runtimeStatus in setOf(
         SessionRuntimeStatus.Waiting,
         SessionRuntimeStatus.Pending,
         SessionRuntimeStatus.Running,
@@ -1162,20 +1372,21 @@ fun SessionDetailScreen(
             canSendMessage = canUseSendMessage,
             canSteer = canUseSteer,
             canUseCommands = canUseCommands,
-        ) && !runtimeBlocksInput && blockingNotices.isEmpty()
+        )
     }
     val commandMode = commandRequested && inputEnabled
     val attachmentsReady = attachments.all { it.uploadState == AttachmentUploadState.Uploaded }
     val canSend = inputEnabled &&
+        !runtimeBlocksSubmission &&
+        blockingNotices.isEmpty() &&
         !state.sending &&
         !preparedSessionCreating &&
         !state.commandExecuting &&
         attachmentsReady &&
         (attachments.isEmpty() || canUseAttachments) &&
         (draft.isNotBlank() || attachments.isNotEmpty()) &&
-        if (isPreparedSession) {
-            draft.isNotBlank() && attachments.isEmpty()
-        } else if (commandMode) canUseCommands && state.commands.isLoaded else canUseSendMessage || canUseSteer
+        if (isPreparedSession) true
+        else if (commandMode) canUseCommands && state.commands.isLoaded else canUseSendMessage || canUseSteer
     val modelOptions = if (isPreparedSession) preparedModelOptions else remember(state.catalogs.model) {
         state.catalogs.model?.selectionOptions().orEmpty()
     }
@@ -1217,10 +1428,12 @@ fun SessionDetailScreen(
         }
     }.orEmpty()
     val modelSelection = modelOptions.validatedSelection(
-        if (isPreparedSession) preparedSelections.model else state.runtime.selections["model"],
+        if (isPreparedSession) preparedSelections.model
+        else optimisticSelections["model"] ?: state.runtime.selections["model"],
     )
     val permissionSelection = permissionOptions.validatedSelection(
-        if (isPreparedSession) preparedSelections.permission else state.runtime.selections["permission"],
+        if (isPreparedSession) preparedSelections.permission
+        else optimisticSelections["permission"] ?: state.runtime.selections["permission"],
     )
     val modelCapability = state.capabilities.find(SESSION_MODEL_CATALOG_CAPABILITY, runtimeId, runtimeType)
     val permissionCapability = state.capabilities.find(SESSION_PERMISSION_CATALOG_CAPABILITY, runtimeId, runtimeType)
@@ -1340,6 +1553,7 @@ fun SessionDetailScreen(
         else -> stringResource(R.string.session_send_unavailable)
     }
     val density = LocalDensity.current
+    val imeBottomPx = WindowInsets.ime.getBottom(density)
     val timelineBottomPadding = if (composerHeightPx > 0) {
         with(density) { composerHeightPx.toDp() } + 16.dp
     } else {
@@ -1362,14 +1576,17 @@ fun SessionDetailScreen(
                     modifier = Modifier
                         .fillMaxSize()
                         .background(colors.canvas)
-                        .pointerInput(composerHeightPx) {
+                        .pointerInput(composerHeightPx, imeBottomPx) {
                             awaitPointerEventScope {
                                 while (true) {
                                     val down = awaitPointerEvent(PointerEventPass.Initial)
                                         .changes
                                         .firstOrNull { it.pressed && !it.previousPressed }
                                         ?: continue
-                                    if (composerHeightPx > 0 && down.position.y < size.height - composerHeightPx) {
+                                    if (
+                                        composerHeightPx > 0 &&
+                                        down.position.y < size.height - composerHeightPx - imeBottomPx
+                                    ) {
                                         unfocusComposer()
                                     }
                                 }
@@ -1396,6 +1613,7 @@ fun SessionDetailScreen(
                                 messages = state.messages,
                                 darkMode = darkMode,
                                 sessionId = sessionId.orEmpty(),
+                                workspaceRoot = state.session?.cwd,
                                 controller = controller,
                                 forceLatestRequest = forceLatestRequest,
                                 streamLatestRequest = streamLatestRequest,
@@ -1412,6 +1630,7 @@ fun SessionDetailScreen(
                                 onPreviewAttachment = { previewImage = AttachmentPreview.Remote(it) },
                                 onOpenAttachment = ::openAttachment,
                                 onCopyMessage = ::copyMessageText,
+                                onShareReply = ::requestShare,
                                 onOpenFile = ::openReferencedFile,
                                 onRespondNotice = ::respondNotice,
                             )
@@ -1423,63 +1642,68 @@ fun SessionDetailScreen(
                         Column(
                             modifier = Modifier
                                 .align(Alignment.BottomCenter)
-                                .onSizeChanged { composerHeightPx = it.height },
+                                .imePadding(),
                         ) {
-                            BlockingRuntimeNoticeStack(
-                                notices = blockingNotices,
-                                respondingNoticeIds = state.respondingNoticeIds,
-                                responseErrors = noticeResponseErrors,
-                                canRespond = canRespondToNotice,
-                                onRespond = ::respondNotice,
-                            )
-                            if (commandMode) {
-                                RuntimeCommandSuggestions(
-                                    commands = state.commands.commands,
-                                    query = commandQuery,
-                                    loading = state.commands.isLoading,
-                                    errorMessage = state.commands.errorMessage
-                                        ?: commandCapability?.takeUnless { it.usable }?.unavailableReason,
-                                    onRetry = { loadCommands(force = true) },
-                                    onSelect = { command ->
-                                        if (command.enabled) {
-                                            setComposerDraft("/${command.id}${if (command.acceptsArgs) " " else ""}")
-                                        } else {
-                                            showError(
-                                                command.disabledReason
-                                                    ?: context.getString(R.string.session_command_failed),
-                                            )
-                                        }
+                            Column(
+                                modifier = Modifier.onSizeChanged { composerHeightPx = it.height },
+                            ) {
+                                BlockingRuntimeNoticeStack(
+                                    notices = blockingNotices,
+                                    respondingNoticeIds = state.respondingNoticeIds,
+                                    responseErrors = noticeResponseErrors,
+                                    canRespond = canRespondToNotice,
+                                    onRespond = ::respondNotice,
+                                )
+                                if (commandMode) {
+                                    RuntimeCommandSuggestions(
+                                        commands = state.commands.commands,
+                                        query = commandQuery,
+                                        loading = state.commands.isLoading,
+                                        errorMessage = state.commands.errorMessage
+                                            ?: commandCapability?.takeUnless { it.usable }?.unavailableReason,
+                                        onRetry = { loadCommands(force = true) },
+                                        onSelect = { command ->
+                                            if (command.enabled) {
+                                                setComposerDraft("/${command.id}${if (command.acceptsArgs) " " else ""}")
+                                            } else {
+                                                showError(
+                                                    command.disabledReason
+                                                        ?: context.getString(R.string.session_command_failed),
+                                                )
+                                            }
+                                        },
+                                    )
+                                }
+                                MessageComposer(
+                                    darkMode = darkMode,
+                                    draft = if (takeoverEnabled) draft else "",
+                                    onDraftChange = ::setComposerDraft,
+                                    takeoverEnabled = takeoverEnabled,
+                                    takeoverBusy = isPreparedSession || state.takeoverInFlight || !connectorOnline,
+                                    inputEnabled = inputEnabled,
+                                    attachmentsEnabled = inputEnabled && canUseAttachments && !commandMode,
+                                    canSend = canSend,
+                                    sending = state.sending,
+                                    showInterrupt = showInterrupt,
+                                    interrupting = state.interrupting,
+                                    placeholder = placeholder,
+                                    attachments = if (takeoverEnabled) attachments else emptyList(),
+                                    onToggleTakeover = {
+                                        if (!isPreparedSession) takeoverConfirm = !takeoverEnabled
                                     },
+                                    onPickPhoto = ::openPhotoPicker,
+                                    onPickFile = ::openFilePicker,
+                                    onOpenCamera = ::openCamera,
+                                    onRemoveAttachment = { remove ->
+                                        setComposerAttachments(attachments.filterNot { it.id == remove.id })
+                                    },
+                                    onRetryAttachment = ::retryPendingAttachment,
+                                    onPreviewAttachment = { previewImage = AttachmentPreview.Local(it) },
+                                    onReadOnlyClick = ::handleReadOnlyComposerClick,
+                                    onSend = ::sendDraft,
+                                    onInterrupt = ::interrupt,
                                 )
                             }
-                            MessageComposer(
-                                darkMode = darkMode,
-                                draft = if (takeoverEnabled) draft else "",
-                                onDraftChange = ::setComposerDraft,
-                                takeoverEnabled = takeoverEnabled,
-                                takeoverBusy = isPreparedSession || state.takeoverInFlight || !connectorOnline,
-                                inputEnabled = inputEnabled,
-                                attachmentsEnabled = !isPreparedSession && inputEnabled && canUseAttachments && !commandMode,
-                                canSend = canSend,
-                                showInterrupt = showInterrupt,
-                                interrupting = state.interrupting,
-                                placeholder = placeholder,
-                                attachments = if (takeoverEnabled) attachments else emptyList(),
-                                onToggleTakeover = {
-                                    if (!isPreparedSession) takeoverConfirm = !takeoverEnabled
-                                },
-                                onPickPhoto = ::openPhotoPicker,
-                                onPickFile = ::openFilePicker,
-                                onOpenCamera = ::openCamera,
-                                onRemoveAttachment = { remove ->
-                                    setComposerAttachments(attachments.filterNot { it.id == remove.id })
-                                },
-                                onRetryAttachment = ::retryPendingAttachment,
-                                onPreviewAttachment = { previewImage = AttachmentPreview.Local(it) },
-                                onReadOnlyClick = ::handleReadOnlyComposerClick,
-                                onSend = ::sendDraft,
-                                onInterrupt = ::interrupt,
-                            )
                         }
                         HeaderVeil(
                             darkMode = darkMode,
@@ -1500,12 +1724,14 @@ fun SessionDetailScreen(
                             onRightClick = { scope.launch { pagerState.animateScrollToPage(1) } },
                             modifier = Modifier.align(Alignment.TopCenter),
                         )
-                        AAToastHost(
-                            hostState = snackbarHostState,
-                            modifier = Modifier
-                                .align(Alignment.TopCenter)
-                                .padding(top = 76.dp, start = 22.dp, end = 22.dp),
-                        )
+                        if (previewImage == null) {
+                            AAToastHost(
+                                hostState = snackbarHostState,
+                                modifier = Modifier
+                                    .align(Alignment.TopCenter)
+                                    .padding(top = 76.dp, start = 22.dp, end = 22.dp),
+                            )
+                        }
                         if (showCamera) {
                             SessionCameraCapture(
                                 onDismiss = { showCamera = false },
@@ -1554,6 +1780,16 @@ fun SessionDetailScreen(
         DeviceOfflineDialog(onDismiss = { showDeviceOffline = false })
     }
 
+    pendingShareItemIds?.let {
+        SessionShareDialog(
+            selectedScope = shareScope,
+            busy = shareBusy,
+            onSelectScope = { if (!shareBusy) shareScope = it },
+            onDismiss = { if (!shareBusy) pendingShareItemIds = null },
+            onConfirm = ::createShare,
+        )
+    }
+
     if (showRuntimeSettings) {
         SessionRuntimeSettingsSheet(
             runtimeLabel = state.session?.runtimeContextLabel.orEmpty(),
@@ -1591,11 +1827,21 @@ fun SessionDetailScreen(
         )
     }
 
+    val sessionImagePreviews = remember(state.messages) {
+        state.messages
+            .flatMap(TimelineMessage::attachments)
+            .filter(TimelineAttachment::isImage)
+            .distinctBy(TimelineAttachment::fileId)
+            .map(AttachmentPreview::Remote)
+    }
     previewImage?.let { preview ->
         AttachmentPreviewDialog(
             preview = preview,
+            sessionImages = sessionImagePreviews,
             sessionId = sessionId.orEmpty(),
             controller = controller,
+            toastHostState = snackbarHostState,
+            onDownload = ::saveAttachment,
             onDismiss = { previewImage = null },
         )
     }
@@ -1616,6 +1862,136 @@ private fun SessionDetailState.effectiveRuntimeStatus(): SessionRuntimeStatus {
     }
 }
 
+private enum class SessionShareScope(val apiValue: String) {
+    Reply("message"),
+    Session("session"),
+}
+
+@Composable
+private fun SessionShareDialog(
+    selectedScope: SessionShareScope,
+    busy: Boolean,
+    onSelectScope: (SessionShareScope) -> Unit,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit,
+) {
+    val colors = LocalAAColors.current
+    val shape = RoundedCornerShape(26.dp)
+
+    Dialog(
+        onDismissRequest = { if (!busy) onDismiss() },
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Column(
+            modifier = Modifier
+                .padding(horizontal = 22.dp)
+                .widthIn(max = 380.dp)
+                .shadow(34.dp, shape, ambientColor = colors.appShadow, spotColor = colors.appShadow)
+                .clip(shape)
+                .background(colors.dialogSurface)
+                .border(1.dp, colors.border, shape)
+                .padding(22.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            Text(
+                text = stringResource(R.string.session_share_dialog_title),
+                color = colors.ink,
+                fontSize = 24.sp,
+                fontWeight = FontWeight.ExtraBold,
+                lineHeight = 29.sp,
+            )
+            Text(
+                text = stringResource(R.string.session_share_dialog_body),
+                color = colors.muted,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Medium,
+                lineHeight = 20.sp,
+            )
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                SessionShareOption(
+                    title = stringResource(R.string.session_share_reply),
+                    description = stringResource(R.string.session_share_reply_description),
+                    selected = selectedScope == SessionShareScope.Reply,
+                    enabled = !busy,
+                    onClick = { onSelectScope(SessionShareScope.Reply) },
+                )
+                SessionShareOption(
+                    title = stringResource(R.string.session_share_entire_session),
+                    description = stringResource(R.string.session_share_entire_session_description),
+                    selected = selectedScope == SessionShareScope.Session,
+                    enabled = !busy,
+                    onClick = { onSelectScope(SessionShareScope.Session) },
+                )
+            }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                TakeoverDialogButton(
+                    label = stringResource(R.string.common_cancel),
+                    background = colors.subtle,
+                    content = colors.ink,
+                    enabled = !busy,
+                    modifier = Modifier.weight(1f),
+                    onClick = onDismiss,
+                )
+                TakeoverDialogButton(
+                    label = stringResource(
+                        if (busy) R.string.session_share_creating else R.string.session_share_create,
+                    ),
+                    background = colors.primaryAction.copy(alpha = if (busy) 0.38f else 1f),
+                    content = colors.onPrimaryAction,
+                    enabled = !busy,
+                    modifier = Modifier.weight(1f),
+                    onClick = onConfirm,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SessionShareOption(
+    title: String,
+    description: String,
+    selected: Boolean,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    val colors = LocalAAColors.current
+    val optionShape = RoundedCornerShape(16.dp)
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(optionShape)
+            .background(if (selected) colors.subtle else Color.Transparent)
+            .border(
+                width = 1.dp,
+                color = if (selected) colors.ink.copy(alpha = 0.28f) else colors.border,
+                shape = optionShape,
+            )
+            .noRippleClickable(enabled = enabled, onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Text(
+            text = title,
+            color = colors.ink.copy(alpha = if (enabled) 1f else 0.55f),
+            fontSize = 15.sp,
+            fontWeight = FontWeight.Bold,
+        )
+        Text(
+            text = description,
+            color = colors.muted.copy(alpha = if (enabled) 1f else 0.55f),
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Medium,
+            lineHeight = 17.sp,
+        )
+    }
+}
+
 @Composable
 private fun DeviceOfflineDialog(
     onDismiss: () -> Unit,
@@ -1633,7 +2009,7 @@ private fun DeviceOfflineDialog(
                 .widthIn(max = 380.dp)
                 .shadow(34.dp, shape, ambientColor = colors.appShadow, spotColor = colors.appShadow)
                 .clip(shape)
-                .background(colors.raisedSurface)
+                .background(colors.dialogSurface)
                 .border(1.dp, colors.border, shape)
                 .padding(22.dp),
             verticalArrangement = Arrangement.spacedBy(18.dp),
@@ -1693,7 +2069,7 @@ private fun TakeoverConfirmDialog(
                 .widthIn(max = 380.dp)
                 .shadow(34.dp, shape, ambientColor = colors.appShadow, spotColor = colors.appShadow)
                 .clip(shape)
-                .background(colors.raisedSurface)
+                .background(colors.dialogSurface)
                 .border(1.dp, colors.border, shape)
                 .padding(22.dp),
             verticalArrangement = Arrangement.spacedBy(18.dp),
@@ -1819,6 +2195,96 @@ private fun Context.uploadPart(attachment: PendingAttachment): UploadFilePart {
         mediaType = mediaType,
         bytes = bytes,
     )
+}
+
+private fun UploadFilePart.toNewSessionAttachmentPart(): NewSessionAttachmentPart =
+    NewSessionAttachmentPart(
+        name = name,
+        mediaType = mediaType,
+        bytes = bytes,
+    )
+
+private fun UploadFilePart.toLocalTimelineAttachment(uri: Uri): TimelineAttachment {
+    val sha256 = MessageDigest.getInstance("SHA-256")
+        .digest(bytes)
+        .joinToString(separator = "") { byte -> "%02x".format(byte) }
+    return TimelineAttachment(
+        fileId = sha256,
+        name = name,
+        mediaType = mediaType,
+        size = bytes.size.toLong(),
+        sha256 = sha256,
+        localPreviewUri = uri.toString().takeIf { mediaType.startsWith("image/") },
+    )
+}
+
+private suspend fun saveImageToGallery(
+    context: Context,
+    downloaded: DownloadedAttachment,
+): Result<Unit> = withContext(Dispatchers.IO) {
+    runCatching {
+        val displayName = downloaded.name
+            .substringAfterLast('/')
+            .substringAfterLast('\\')
+            .ifBlank { "agents-anywhere-${System.currentTimeMillis()}.jpg" }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val resolver = context.contentResolver
+            val values = ContentValues().apply {
+                put(MediaStore.Images.Media.DISPLAY_NAME, displayName)
+                put(MediaStore.Images.Media.MIME_TYPE, downloaded.mediaType.ifBlank { "image/jpeg" })
+                put(
+                    MediaStore.Images.Media.RELATIVE_PATH,
+                    "${Environment.DIRECTORY_PICTURES}/Agents Anywhere",
+                )
+                put(MediaStore.Images.Media.IS_PENDING, 1)
+            }
+            val collection = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+            val imageUri = resolver.insert(collection, values)
+                ?: error("Unable to create gallery image")
+            try {
+                resolver.openOutputStream(imageUri, "w")?.use { output ->
+                    output.write(downloaded.bytes)
+                } ?: error("Unable to open gallery image")
+                resolver.update(
+                    imageUri,
+                    ContentValues().apply { put(MediaStore.Images.Media.IS_PENDING, 0) },
+                    null,
+                    null,
+                )
+            } catch (error: Throwable) {
+                resolver.delete(imageUri, null, null)
+                throw error
+            }
+        } else {
+            @Suppress("DEPRECATION")
+            val pictures = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES)
+            val directory = File(pictures, "Agents Anywhere")
+            check(directory.exists() || directory.mkdirs()) { "Unable to create gallery directory" }
+            val imageFile = uniqueGalleryFile(directory, displayName)
+            imageFile.outputStream().use { output -> output.write(downloaded.bytes) }
+            MediaScannerConnection.scanFile(
+                context,
+                arrayOf(imageFile.absolutePath),
+                arrayOf(downloaded.mediaType.ifBlank { "image/jpeg" }),
+                null,
+            )
+        }
+        Unit
+    }
+}
+
+private fun uniqueGalleryFile(directory: File, displayName: String): File {
+    val requested = File(directory, displayName)
+    if (!requested.exists()) return requested
+    val dotIndex = displayName.lastIndexOf('.').takeIf { it > 0 } ?: displayName.length
+    val baseName = displayName.substring(0, dotIndex)
+    val extension = displayName.substring(dotIndex)
+    var suffix = 1
+    while (true) {
+        val candidate = File(directory, "$baseName ($suffix)$extension")
+        if (!candidate.exists()) return candidate
+        suffix += 1
+    }
 }
 
 private const val MAX_ATTACHMENT_FILES = 6

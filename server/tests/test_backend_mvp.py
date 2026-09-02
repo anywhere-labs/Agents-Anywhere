@@ -9822,6 +9822,181 @@ def test_client_uploads_attachment_and_connector_downloads_by_session(tmp_path):
     assert still_available.status_code == 200
 
 
+def test_reply_share_is_public_but_only_exposes_selected_items_and_files(
+    tmp_path,
+    monkeypatch,
+):
+    client = make_client(tmp_path)
+    _, _, session_id, headers = create_connector_and_session(client)
+    selected_data = b"selected image"
+    private_data = b"private image"
+    selected_upload = client.post(
+        f"/sessions/{session_id}/attachments",
+        headers=headers,
+        files={"files": ("selected.png", selected_data, "image/png")},
+    )
+    private_upload = client.post(
+        f"/sessions/{session_id}/attachments",
+        headers=headers,
+        files={"files": ("private.png", private_data, "image/png")},
+    )
+    assert selected_upload.status_code == 200, selected_upload.text
+    assert private_upload.status_code == 200, private_upload.text
+    selected_file = selected_upload.json()["attachments"][0]
+    private_file = private_upload.json()["attachments"][0]
+
+    async def seed_items() -> None:
+        from agent_server.core.models import TimelineItemIn
+
+        store = client.app.state.store
+        items = [
+            {
+                "id": "tl_user",
+                "role": "user",
+                "content": {"text": "look at both"},
+            },
+            {
+                "id": "tl_selected",
+                "role": "assistant",
+                "content": {
+                    "text": "selected reply",
+                    "attachments": [
+                        {
+                            "fileId": selected_file["fileId"],
+                            "name": "selected.png",
+                            "mediaType": "image/png",
+                        }
+                    ],
+                },
+            },
+            {
+                "id": "tl_private",
+                "role": "assistant",
+                "content": {
+                    "text": "other reply",
+                    "attachments": [
+                        {
+                            "fileId": private_file["fileId"],
+                            "name": "private.png",
+                            "mediaType": "image/png",
+                        }
+                    ],
+                },
+            },
+        ]
+        for order_seq, item in enumerate(items, start=1):
+            await store.upsert_timeline_item(
+                session_id=session_id,
+                item=TimelineItemIn.model_validate(
+                    {
+                        **item,
+                        "sessionId": session_id,
+                        "type": "message",
+                        "status": "done",
+                        "source": {
+                            "runtime": "codex",
+                            "sessionId": "thr_share",
+                            "itemId": item["id"],
+                        },
+                        "orderSeq": order_seq,
+                        "revision": 1,
+                        "contentHash": f"sha256:{item['id']}",
+                    }
+                ),
+            )
+
+    asyncio.run(seed_items())
+    monkeypatch.setenv("AGENT_SERVER_PUBLIC_ORIGIN", "https://agents.example")
+
+    create_response = client.post(
+        f"/sessions/{session_id}/shares",
+        headers=headers,
+        json={"scope": "message", "itemIds": ["tl_selected"]},
+    )
+
+    assert create_response.status_code == 201, create_response.text
+    share = create_response.json()
+    assert share["shareUrl"] == f"https://agents.example/share/{share['shareId']}"
+    public_response = client.get(f"/api/v2/public/shares/{share['shareId']}")
+    assert public_response.status_code == 200, public_response.text
+    assert [item["id"] for item in public_response.json()["items"]] == [
+        "tl_selected"
+    ]
+
+    selected_response = client.get(
+        f"/api/v2/public/shares/{share['shareId']}/attachments/{selected_file['fileId']}"
+    )
+    assert selected_response.status_code == 200
+    assert selected_response.content == selected_data
+    assert selected_response.headers["content-type"] == "image/png"
+    private_response = client.get(
+        f"/api/v2/public/shares/{share['shareId']}/attachments/{private_file['fileId']}"
+    )
+    assert private_response.status_code == 404
+
+    user_item_response = client.post(
+        f"/sessions/{session_id}/shares",
+        headers=headers,
+        json={"scope": "message", "itemIds": ["tl_user"]},
+    )
+    assert user_item_response.status_code == 422
+
+    other_user_headers = auth_headers(client, user_id="share_other")
+    forbidden_response = client.post(
+        f"/sessions/{session_id}/shares",
+        headers=other_user_headers,
+        json={"scope": "session", "itemIds": []},
+    )
+    assert forbidden_response.status_code == 404
+
+
+def test_session_share_is_an_immutable_snapshot(tmp_path):
+    client = make_client(tmp_path)
+    _, _, session_id, headers = create_connector_and_session(client)
+
+    async def seed_item(item_id: str, order_seq: int) -> None:
+        from agent_server.core.models import TimelineItemIn
+
+        await client.app.state.store.upsert_timeline_item(
+            session_id=session_id,
+            item=TimelineItemIn.model_validate(
+                {
+                    "id": item_id,
+                    "sessionId": session_id,
+                    "type": "message",
+                    "status": "done",
+                    "role": "assistant",
+                    "content": {"text": item_id},
+                    "source": {
+                        "runtime": "codex",
+                        "sessionId": "thr_snapshot",
+                        "itemId": item_id,
+                    },
+                    "orderSeq": order_seq,
+                    "revision": 1,
+                    "contentHash": f"sha256:{item_id}",
+                }
+            ),
+        )
+
+    asyncio.run(seed_item("tl_before_share", 1))
+    create_response = client.post(
+        f"/sessions/{session_id}/shares",
+        headers=headers,
+        json={"scope": "session", "itemIds": []},
+    )
+    assert create_response.status_code == 201, create_response.text
+    share_id = create_response.json()["shareId"]
+
+    asyncio.run(seed_item("tl_after_share", 2))
+    public_response = client.get(f"/api/v2/public/shares/{share_id}")
+
+    assert public_response.status_code == 200, public_response.text
+    assert [item["id"] for item in public_response.json()["items"]] == [
+        "tl_before_share"
+    ]
+
+
 async def _exercise_rpc_manager():
     manager = ConnectorRpcManager()
     websocket = FakeWebSocket()

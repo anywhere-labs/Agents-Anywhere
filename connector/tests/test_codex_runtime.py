@@ -4920,6 +4920,77 @@ async def _test_codex_runtime_preserves_pending_user_attachments_after_codex_ech
     }
 
 
+def test_codex_runtime_preserves_attachment_only_user_message_after_codex_echo() -> (
+    None
+):
+    asyncio.run(
+        _test_codex_runtime_preserves_attachment_only_user_message_after_codex_echo()
+    )
+
+
+async def _test_codex_runtime_preserves_attachment_only_user_message_after_codex_echo() -> (
+    None
+):
+    client = FakeCodexClient()
+    host = FakeHost()
+    runtime = CodexRuntime(config=_config(), host=host, client=client)
+
+    host.attachments["file_image"] = RuntimeAttachmentContent(
+        file_id="file_image",
+        name="image.jpg",
+        media_type="image/jpeg",
+        content=b"image bytes",
+    )
+    await runtime.start_turn(
+        "sess_1",
+        "thread_1",
+        "",
+        attachments=(
+            RuntimeAttachment(
+                file_id="file_image",
+                name="image.jpg",
+                media_type="image/jpeg",
+                size=11,
+            ),
+        ),
+        client_message_id="cm_image_1",
+    )
+    await runtime._handle_notification(
+        {
+            "method": "item/completed",
+            "params": {
+                "platformSessionId": "sess_1",
+                "threadId": "thread_1",
+                "turnId": "turn_new",
+                "item": {
+                    "id": "item_user_image",
+                    "type": "userMessage",
+                    "clientMessageId": "cm_image_1",
+                    "text": "",
+                    "status": "completed",
+                },
+            },
+        }
+    )
+
+    item = host.timeline_item_upserts[-1]
+    assert item.id == client_message_item_id("thread_1", "cm_image_1")
+    assert item.source["clientMessageId"] == "cm_image_1"
+    assert item.content == {
+        "kind": "markdown",
+        "text": "",
+        "format": "markdown",
+        "attachments": [
+            {
+                "fileId": "file_image",
+                "name": "image.jpg",
+                "mediaType": "image/jpeg",
+                "size": 11,
+            }
+        ],
+    }
+
+
 def test_codex_runtime_reconciles_snapshot_echo_after_restart_with_session_alias(
     tmp_path: Path,
 ) -> None:

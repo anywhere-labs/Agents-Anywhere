@@ -99,7 +99,7 @@ internal fun DeviceRuntimeConfigureSheet(
         onDismissRequest = { if (!saving) onDismiss() },
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
-        containerColor = if (darkMode) Color(0xFF18181B) else Color(0xFFFDFCFB),
+        containerColor = colors.raisedSurface,
         contentColor = colors.ink,
         dragHandle = null,
         scrimColor = if (darkMode) Color(0x99000000) else Color(0x66000000),

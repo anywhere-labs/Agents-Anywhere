@@ -3,6 +3,7 @@ package com.agentsanywhere.app.feature.sessiondetail
 import com.agentsanywhere.app.api.ApiException
 import com.agentsanywhere.app.api.RemoteRpcResponse
 import com.agentsanywhere.app.api.RemoteSessionEventEnvelope
+import com.agentsanywhere.app.api.RemoteSessionShareResponse
 import com.agentsanywhere.app.api.RemoteRuntimeModelCatalog
 import com.agentsanywhere.app.api.RemoteRuntimePermissionCatalog
 import com.agentsanywhere.app.api.SessionsApi
@@ -548,6 +549,25 @@ class SessionDetailController(
         }
     }
 
+    suspend fun createShare(
+        sessionId: String,
+        scope: String,
+        itemIds: List<String>,
+    ): Result<RemoteSessionShareResponse> {
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                val auth = authSession()
+                sessionsApi.createSessionShare(
+                    serverUrl = auth.serverUrl,
+                    authorizationToken = auth.accessToken,
+                    sessionId = sessionId,
+                    scope = scope,
+                    itemIds = itemIds,
+                )
+            }
+        }
+    }
+
     suspend fun interrupt(sessionId: String): Result<Unit> {
         return withContext(Dispatchers.IO) {
             runCatching {
@@ -799,6 +819,12 @@ class SessionDetailController(
         return state.messages.any { message ->
             !message.optimistic && message.matchesClientMessage(clientMessageId)
         }
+    }
+
+    fun optimisticMessages(sessionId: String): List<TimelineMessage> = optimisticStore.read(sessionId)
+
+    fun bindOptimisticSession(localSessionId: String, sessionId: String) {
+        optimisticStore.move(localSessionId, sessionId)
     }
 
     private fun authSession(): ApiAuth {

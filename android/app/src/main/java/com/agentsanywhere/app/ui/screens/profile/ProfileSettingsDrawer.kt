@@ -344,7 +344,7 @@ private fun ProfileHeader(
 ) {
     val colors = LocalAAColors.current
     val darkMode = colors.canvas == Color(0xFF09090B)
-    val iconSurface = if (darkMode) Color(0xFF18181B) else Color.White
+    val iconSurface = colors.raisedSurface
     val iconBorder = if (darkMode) colors.border else Color(0xFFE7E6E2)
     Row(
         modifier = Modifier
@@ -1075,7 +1075,7 @@ private fun ProfileDialog(
                 .padding(horizontal = 22.dp)
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(20.dp))
-                .background(colors.raisedSurface)
+                .background(colors.dialogSurface)
                 .border(1.dp, colors.border, RoundedCornerShape(20.dp))
                 .padding(18.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
@@ -1145,8 +1145,13 @@ private fun ProfileDialogButton(
         modifier = modifier
             .height(46.dp)
             .clip(shape)
-            .background(if (primary) colors.primaryAction.copy(alpha = if (enabled) 1f else 0.42f) else Color.Transparent)
-            .then(if (primary) Modifier else Modifier.border(1.dp, colors.border, shape))
+            .background(
+                if (primary) {
+                    colors.primaryAction.copy(alpha = if (enabled) 1f else 0.42f)
+                } else {
+                    colors.secondaryActionSurface.copy(alpha = if (enabled) 1f else 0.42f)
+                },
+            )
             .noRippleClickable(enabled = enabled, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {

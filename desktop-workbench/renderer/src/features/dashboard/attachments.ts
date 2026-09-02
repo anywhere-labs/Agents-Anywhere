@@ -3,6 +3,10 @@ export type ReconcileAttachment = {
   name?: string;
   size?: number;
   mediaType?: string;
+  path?: string;
+  root?: string;
+  openUrl?: string;
+  downloadUrl?: string;
   previewUrl?: string;
   optimistic?: boolean;
 };
@@ -22,6 +26,10 @@ export function extractAttachments(
     if (typeof obj.name === "string") att.name = obj.name;
     if (typeof obj.size === "number") att.size = obj.size;
     if (typeof obj.mediaType === "string") att.mediaType = obj.mediaType;
+    if (typeof obj.path === "string") att.path = obj.path;
+    if (typeof obj.root === "string") att.root = obj.root;
+    if (typeof obj.openUrl === "string") att.openUrl = obj.openUrl;
+    if (typeof obj.downloadUrl === "string") att.downloadUrl = obj.downloadUrl;
     if (typeof obj.previewUrl === "string") att.previewUrl = obj.previewUrl;
     if (obj.optimistic === true) att.optimistic = true;
     out.push(att);

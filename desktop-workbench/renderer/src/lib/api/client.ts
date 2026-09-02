@@ -19,7 +19,7 @@ export type ApiRequestOptions = Omit<RequestInit, "body"> & {
   query?: Record<string, string | number | boolean | null | undefined>;
 };
 
-export const API_NAMESPACE = "/api/v2";
+export const API_NAMESPACE = normalizeApiNamespace(process.env.NEXT_PUBLIC_AGENTS_ANYWHERE_API_NAMESPACE ?? "/api/v2");
 
 export function apiPath(path: string): string {
   if (path.startsWith("http")) return path;
@@ -27,6 +27,12 @@ export function apiPath(path: string): string {
   if (path === API_NAMESPACE || path.startsWith(`${API_NAMESPACE}/`)) return path;
   const normalized = path.startsWith("/") ? path : `/${path}`;
   return `${API_NAMESPACE}${normalized}`;
+}
+
+function normalizeApiNamespace(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed || trimmed === "/") return "";
+  return `/${trimmed.replace(/^\/+|\/+$/g, "")}`;
 }
 
 export class ApiClient {

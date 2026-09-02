@@ -33,6 +33,7 @@ from agent_server.api import (
     oauth,
     pairing,
     service,
+    shares,
     sessions,
     sessions_fs,
     sessions_terminal,
@@ -273,6 +274,7 @@ def create_app(
     app.include_router(admin_dashboard.router, prefix=API_V2_PREFIX)
     app.include_router(dashboard_stream.router, prefix=API_V2_PREFIX)
     app.include_router(service.router, prefix=API_V2_PREFIX)
+    app.include_router(shares.router, prefix=API_V2_PREFIX)
     app.include_router(oauth.router, prefix=API_V2_PREFIX)
     app.include_router(connectors.router, prefix=API_V2_PREFIX)
     app.include_router(connector_files.router, prefix=API_V2_PREFIX)

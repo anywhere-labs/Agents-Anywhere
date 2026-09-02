@@ -16,6 +16,7 @@ import type {
   ConnectorView as RealConnectorView,
   DashboardSnapshotMessage,
   SessionLocalTimelineState,
+  SessionPageInfo,
   SessionRuntimeState,
   SessionView as RealSessionView,
   TimelineItem,
@@ -25,7 +26,6 @@ import {
   isOptimisticTimelineItem,
   markOptimisticItemFailed,
   mergeTimelineItems,
-  revokeOptimisticItemResources,
   timelineClientMessageId,
   withServerAttachments,
 } from "@/components/session/optimistic-timeline"
@@ -138,7 +138,11 @@ function mapSession(session: RealSessionView): SessionView {
     id: session.id,
     connectorId: session.connectorId,
     connectorStatus: session.connectorStatus,
-    runtime: runtimeLabel(session.runtime),
+    runtime: session.runtime,
+    runtimeId: session.runtimeId,
+    runtimeType: session.runtimeType,
+    runtimeName: session.runtimeName,
+    runtimeTypeDisplayName: session.runtimeTypeDisplayName,
     externalSessionId: session.externalSessionId,
     title: session.title || "Untitled session",
     cwd: session.cwd,
@@ -148,6 +152,12 @@ function mapSession(session: RealSessionView): SessionView {
     pinnedAt: session.pinnedAt,
     archived: session.archived,
     archivedAt: session.archivedAt,
+    userArchived: session.userArchived,
+    sourceAvailability: session.sourceAvailability,
+    sourceAvailabilityReason: session.sourceAvailabilityReason,
+    sourceAvailabilityUpdatedAt: session.sourceAvailabilityUpdatedAt,
+    sourceObservationOrigin: session.sourceObservationOrigin,
+    archiveSource: session.archiveSource,
     unread: session.unread,
     lastReadSeq: session.lastReadSeq,
     latestTurnEndSeq: session.latestTurnEndSeq,
@@ -165,12 +175,7 @@ function mapSession(session: RealSessionView): SessionView {
 }
 
 function sessionSortMillis(session: SessionView): number {
-  const raw =
-    session.sortAt ||
-    session.lastActivityAt ||
-    session.lastItemAt ||
-    session.lastSyncedAt ||
-    session.sourceObservedAt
+  const raw = session.sortAt
   if (!raw) return 0
   const value = Date.parse(raw)
   return Number.isFinite(value) ? value : 0
@@ -178,10 +183,7 @@ function sessionSortMillis(session: SessionView): number {
 
 function sortSessionViews(sessions: SessionView[]): SessionView[] {
   return [...sessions].sort((a, b) =>
-    sessionSortMillis(b) - sessionSortMillis(a) ||
-    (b.lastItemOrderSeq ?? -1) - (a.lastItemOrderSeq ?? -1) ||
-    b.updatedSeq - a.updatedSeq ||
-    a.id.localeCompare(b.id),
+    sessionSortMillis(b) - sessionSortMillis(a) || b.id.localeCompare(a.id),
   )
 }
 
@@ -219,16 +221,19 @@ function isDashboardSnapshotMessage(value: unknown): value is DashboardSnapshotM
   return (
     message.type === "dashboard.snapshot" &&
     Array.isArray(message.connectors) &&
-    Array.isArray(message.sessions)
+    Array.isArray(message.sessions) &&
+    isSessionPageInfo(message.sessionPages?.active) &&
+    isSessionPageInfo(message.sessionPages?.archived)
   )
 }
 
-function runtimeLabel(runtime: string): string {
-  if (runtime === "codex") return "Codex"
-  if (runtime === "claude") return "Claude"
-  if (runtime === "opencode") return "OpenCode"
-  if (runtime === "cursor") return "Cursor"
-  return runtime.slice(0, 1).toUpperCase() + runtime.slice(1)
+function isSessionPageInfo(value: unknown): value is SessionPageInfo {
+  if (!value || typeof value !== "object") return false
+  const page = value as Partial<SessionPageInfo>
+  return (
+    typeof page.hasMore === "boolean" &&
+    (typeof page.nextCursor === "string" || page.nextCursor === null)
+  )
 }
 
 function relativeSessionTime(session: RealSessionView): string {
@@ -255,6 +260,8 @@ type WorkspaceState = {
   connectors: ConnectorView[]
   sessions: SessionView[]
   isLoading: boolean
+  hasMoreSessions: boolean
+  isLoadingMoreSessions: boolean
   routeReady: boolean
 
   // Navigation
@@ -283,6 +290,7 @@ type WorkspaceState = {
   // Actions
   openSession: (id: string) => void
   goHome: () => void
+  replaceHome: () => void
   navigate: (page: AppPage, sub?: string) => void
   navigateToDevice: (connectorId: string) => void
   navigateToWorkspace: (connectorId: string, workspacePath: string) => void
@@ -299,6 +307,7 @@ type WorkspaceState = {
   renameSession: (id: string, title: string) => Promise<boolean>
   markSessionRead: (id: string) => void
   upsertSession: (session: RealSessionView) => void
+  reportSessionStreamProgress: (sessionId: string, nextSeq: number | null) => void
   addOptimisticMessage: (message: OptimisticSessionMessage) => void
   bindOptimisticSession: (localSessionId: string, session: RealSessionView, attachments?: AttachmentRef[]) => void
   clearResolvedOptimisticMessages: (sessionId: string, items: TimelineItem[]) => void
@@ -307,7 +316,9 @@ type WorkspaceState = {
   isOptimisticSession: (sessionId: string) => boolean
   markOptimisticMessageFailed: (clientMessageId: string, message: string) => void
   appendPathToComposer: (path: string) => boolean
+  consumeComposerInsertion: (id: number) => void
   refreshData: () => void
+  loadMoreSessions: () => void
 }
 
 const WorkspaceContext = React.createContext<WorkspaceState | null>(null)
@@ -369,6 +380,47 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   const [connectors, setConnectors] = React.useState<ConnectorView[]>([])
   const [sessions, setSessions] = React.useState<SessionView[]>([])
   const [isLoading, setIsLoading] = React.useState(true)
+  const [sessionPages, setSessionPages] = React.useState<DashboardSnapshotMessage["sessionPages"]>({
+    active: { hasMore: false, nextCursor: null },
+    archived: { hasMore: false, nextCursor: null },
+  })
+  const [loadingSessionPages, setLoadingSessionPages] = React.useState({
+    active: false,
+    archived: false,
+  })
+  const firstPageSessionIdsRef = React.useRef({
+    active: new Set<string>(),
+    archived: new Set<string>(),
+  })
+  const loadingSessionPagesRef = React.useRef({ active: false, archived: false })
+  const loadedBeyondFirstPageRef = React.useRef({ active: false, archived: false })
+  const sessionStreamSeqRef = React.useRef(new Map<string, number>())
+  const pendingSessionIndicatorRef = React.useRef(new Map<string, SessionView>())
+  const sortSessions = React.useCallback(sortSessionViews, [])
+
+  const reconcileSessionIndicator = React.useCallback((
+    current: SessionView | undefined,
+    incoming: SessionView,
+  ): SessionView => {
+    const appliedSeq = sessionStreamSeqRef.current.get(incoming.id)
+    const shouldWaitForTimeline = Boolean(
+      current &&
+      sessionStatusIsBusy(current.status) &&
+      incoming.status === "idle" &&
+      appliedSeq !== undefined &&
+      appliedSeq < incoming.updatedSeq,
+    )
+    if (shouldWaitForTimeline && current) {
+      pendingSessionIndicatorRef.current.set(incoming.id, incoming)
+      return {
+        ...incoming,
+        status: current.status,
+        unread: current.unread,
+      }
+    }
+    pendingSessionIndicatorRef.current.delete(incoming.id)
+    return incoming
+  }, [])
 
   // Derive page state from hash — start at "home" for safe SSR, correct on mount.
   const [route, setRoute] = React.useState<ParsedRoute>({ page: "home" })
@@ -398,15 +450,54 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
 
   // ── Fetch data from mock API ──────────────────────────────
   const initialLoadDoneRef = React.useRef(false)
+  const lastDashboardSnapshotKeyRef = React.useRef<string | null>(null)
 
   const applyDashboardSnapshot = React.useCallback((message: DashboardSnapshotMessage) => {
+    const snapshotKey = stableJson({
+      connectors: message.connectors,
+      sessions: message.sessions,
+      sessionPages: message.sessionPages,
+    })
+    if (lastDashboardSnapshotKeyRef.current === snapshotKey) return
+    lastDashboardSnapshotKeyRef.current = snapshotKey
+
     const nextConnectors = message.connectors.map(mapConnector)
-    const nextSessions = sortSessionViews(message.sessions.map(mapSession))
+    const nextSessions = message.sessions.map(mapSession)
+    const previousFirstPageIds = new Set([
+      ...firstPageSessionIdsRef.current.active,
+      ...firstPageSessionIdsRef.current.archived,
+    ])
+    firstPageSessionIdsRef.current = {
+      active: new Set(nextSessions.filter((session) => !session.archived).map((session) => session.id)),
+      archived: new Set(nextSessions.filter((session) => session.archived).map((session) => session.id)),
+    }
     setConnectors((current) => sameStableValue(current, nextConnectors) ? current : nextConnectors)
-    setSessions((current) => sameStableValue(current, nextSessions) ? current : nextSessions)
+    setSessions((current) => {
+      const currentById = new Map(current.map((session) => [session.id, session]))
+      const merged = new Map(
+        current
+          .filter((session) => !previousFirstPageIds.has(session.id))
+          .map((session) => [session.id, session]),
+      )
+      nextSessions.forEach((session) => {
+        merged.set(
+          session.id,
+          reconcileSessionIndicator(currentById.get(session.id), session),
+        )
+      })
+      const sorted = sortSessions(Array.from(merged.values()))
+      return sameStableValue(current, sorted) ? current : sorted
+    })
+    setSessionPages((current) => {
+      const next = {
+        active: loadedBeyondFirstPageRef.current.active ? current.active : message.sessionPages.active,
+        archived: loadedBeyondFirstPageRef.current.archived ? current.archived : message.sessionPages.archived,
+      }
+      return sameStableValue(current, next) ? current : next
+    })
     setIsLoading(false)
     initialLoadDoneRef.current = true
-  }, [])
+  }, [reconcileSessionIndicator, sortSessions])
 
   const fetchData = React.useCallback(async () => {
     if (!initialLoadDoneRef.current) {
@@ -414,31 +505,89 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     }
     try {
       if (authSession?.accessToken) {
-        const [connRes, sessRes] = await Promise.all([
+        const [connRes, activeRes, archivedRes] = await Promise.all([
           dashboardApi.listConnectors(authSession.accessToken),
-          dashboardApi.listSessions(authSession.accessToken),
+          dashboardApi.listSessions(authSession.accessToken, { archived: false, limit: 100 }),
+          dashboardApi.listSessions(authSession.accessToken, { archived: true, limit: 100 }),
         ])
         const nextConnectors = connRes.connectors.map(mapConnector)
-        const nextSessions = sortSessionViews(sessRes.sessions.map(mapSession))
+        const nextSessions = sortSessions(
+          [...activeRes.sessions, ...archivedRes.sessions].map(mapSession),
+        )
+        firstPageSessionIdsRef.current = {
+          active: new Set(activeRes.sessions.map((session) => session.id)),
+          archived: new Set(archivedRes.sessions.map((session) => session.id)),
+        }
+        loadedBeyondFirstPageRef.current = { active: false, archived: false }
         setConnectors((current) => sameStableValue(current, nextConnectors) ? current : nextConnectors)
         setSessions((current) => sameStableValue(current, nextSessions) ? current : nextSessions)
+        setSessionPages({
+          active: { hasMore: activeRes.hasMore, nextCursor: activeRes.nextCursor },
+          archived: { hasMore: archivedRes.hasMore, nextCursor: archivedRes.nextCursor },
+        })
         return
       }
       const [connRes, sessRes] = await Promise.all([
         listMockConnectors("mock-token"),
         listMockSessions("mock-token"),
       ])
-      const nextSessions = sortSessionViews(sessRes.sessions)
+      const nextSessions = sortSessions(sessRes.sessions)
       setConnectors((current) => sameStableValue(current, connRes.connectors) ? current : connRes.connectors)
       setSessions((current) => sameStableValue(current, nextSessions) ? current : nextSessions)
+      setSessionPages({
+        active: { hasMore: false, nextCursor: null },
+        archived: { hasMore: false, nextCursor: null },
+      })
     } finally {
       setIsLoading(false)
       initialLoadDoneRef.current = true
     }
-  }, [authSession?.accessToken])
+  }, [authSession?.accessToken, sortSessions])
+
+  const loadMoreSessions = React.useCallback(async () => {
+    const token = authSession?.accessToken
+    const pageKind = filter.status === "archived" ? "archived" : "active"
+    const page = sessionPages[pageKind]
+    if (!token || !page.hasMore || !page.nextCursor || loadingSessionPagesRef.current[pageKind]) return
+    loadingSessionPagesRef.current[pageKind] = true
+    setLoadingSessionPages((current) => ({ ...current, [pageKind]: true }))
+    try {
+      const response = await dashboardApi.listSessions(token, {
+        archived: pageKind === "archived",
+        limit: 100,
+        cursor: page.nextCursor,
+      })
+      const incoming = response.sessions.map(mapSession)
+      setSessions((current) => {
+        const merged = new Map(current.map((session) => [session.id, session]))
+        incoming.forEach((session) => merged.set(session.id, session))
+        return sortSessions(Array.from(merged.values()))
+      })
+      loadedBeyondFirstPageRef.current[pageKind] = true
+      setSessionPages((current) => ({
+        ...current,
+        [pageKind]: { hasMore: response.hasMore, nextCursor: response.nextCursor },
+      }))
+    } catch {
+      // Keep the current cursor so reaching the sentinel can retry later.
+    } finally {
+      loadingSessionPagesRef.current[pageKind] = false
+      setLoadingSessionPages((current) => ({ ...current, [pageKind]: false }))
+    }
+  }, [authSession?.accessToken, filter.status, sessionPages, sortSessions])
 
   React.useEffect(() => {
     initialLoadDoneRef.current = false
+    lastDashboardSnapshotKeyRef.current = null
+    firstPageSessionIdsRef.current = { active: new Set(), archived: new Set() }
+    loadingSessionPagesRef.current = { active: false, archived: false }
+    loadedBeyondFirstPageRef.current = { active: false, archived: false }
+    sessionStreamSeqRef.current = new Map()
+    pendingSessionIndicatorRef.current = new Map()
+    setSessionPages({
+      active: { hasMore: false, nextCursor: null },
+      archived: { hasMore: false, nextCursor: null },
+    })
     setIsLoading(true)
   }, [authSession?.accessToken])
 
@@ -460,6 +609,19 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     let socket: WebSocket | null = null
     let reconnectTimer: number | null = null
     let fallbackTimer: number | null = null
+    let snapshotFrame: number | null = null
+    let pendingSnapshot: DashboardSnapshotMessage | null = null
+
+    const scheduleDashboardSnapshot = (message: DashboardSnapshotMessage) => {
+      pendingSnapshot = message
+      if (snapshotFrame !== null) return
+      snapshotFrame = window.requestAnimationFrame(() => {
+        snapshotFrame = null
+        const snapshot = pendingSnapshot
+        pendingSnapshot = null
+        if (!cancelled && snapshot) applyDashboardSnapshot(snapshot)
+      })
+    }
 
     const scheduleInitialFallback = () => {
       if (cancelled || initialLoadDoneRef.current || fallbackTimer !== null) return
@@ -486,7 +648,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
               window.clearTimeout(fallbackTimer)
               fallbackTimer = null
             }
-            applyDashboardSnapshot(message)
+            scheduleDashboardSnapshot(message)
           } catch { /* ignore malformed */ }
         }
         socket.onclose = () => {
@@ -518,6 +680,8 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       socket?.close()
       if (reconnectTimer !== null) window.clearTimeout(reconnectTimer)
       if (fallbackTimer !== null) window.clearTimeout(fallbackTimer)
+      if (snapshotFrame !== null) window.cancelAnimationFrame(snapshotFrame)
+      pendingSnapshot = null
     }
   }, [applyDashboardSnapshot, authSession?.accessToken, fetchData])
 
@@ -571,10 +735,10 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
         const mapped = mapSession(response.session)
         setSessions((prev) => {
           const index = prev.findIndex((item) => item.id === mapped.id)
-          if (index === -1) return sortSessionViews([mapped, ...prev])
+          if (index === -1) return sortSessions([mapped, ...prev])
           const next = [...prev]
           next[index] = mapped
-          return sortSessionViews(next)
+          return sortSessions(next)
         })
       })
       .catch(() => {
@@ -583,7 +747,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       .finally(() => {
         readRequestsRef.current.delete(id)
       })
-  }, [authSession?.accessToken, fetchData])
+  }, [authSession?.accessToken, fetchData, sortSessions])
 
   const openSession = React.useCallback(
     (id: string) => {
@@ -594,6 +758,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   )
 
   const goHome = React.useCallback(() => pushRoute({ page: "home" }), [pushRoute])
+  const replaceHome = React.useCallback(() => replaceRoute({ page: "home" }), [replaceRoute])
 
   const navigate = React.useCallback(
     (page: AppPage, sub?: string) => {
@@ -668,12 +833,38 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     const mapped = mapSession(session)
     setSessions((prev) => {
       const index = prev.findIndex((item) => item.id === mapped.id)
-      if (index === -1) return sortSessionViews([mapped, ...prev])
+      if (index === -1) return sortSessions([mapped, ...prev])
       const next = [...prev]
-      next[index] = mapped
-      return sortSessionViews(next)
+      next[index] = reconcileSessionIndicator(prev[index], mapped)
+      return sortSessions(next)
     })
-  }, [])
+  }, [reconcileSessionIndicator, sortSessions])
+
+  const reportSessionStreamProgress = React.useCallback((
+    sessionId: string,
+    nextSeq: number | null,
+  ) => {
+    if (nextSeq === null) {
+      sessionStreamSeqRef.current.delete(sessionId)
+      const pending = pendingSessionIndicatorRef.current.get(sessionId)
+      if (!pending) return
+      pendingSessionIndicatorRef.current.delete(sessionId)
+      setSessions((current) => sortSessions(
+        current.map((session) => session.id === sessionId ? pending : session),
+      ))
+      return
+    }
+
+    const currentSeq = sessionStreamSeqRef.current.get(sessionId) ?? 0
+    const appliedSeq = Math.max(currentSeq, nextSeq)
+    sessionStreamSeqRef.current.set(sessionId, appliedSeq)
+    const pending = pendingSessionIndicatorRef.current.get(sessionId)
+    if (!pending || appliedSeq < pending.updatedSeq) return
+    pendingSessionIndicatorRef.current.delete(sessionId)
+    setSessions((current) => sortSessions(
+      current.map((session) => session.id === sessionId ? pending : session),
+    ))
+  }, [sortSessions])
 
   // ── Session mutation helpers ──────────────────────────────
 
@@ -686,9 +877,9 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       upsertSession(response.session)
     } else {
       const response = await patchMockSession("mock-token", id, { pinned: !targetSession.pinned })
-      setSessions((prev) => sortSessionViews(prev.map((s) => (s.id === id ? response.session : s))))
+      setSessions((prev) => sortSessions(prev.map((s) => (s.id === id ? response.session : s))))
     }
-  }, [authSession?.accessToken, sessions, upsertSession])
+  }, [authSession?.accessToken, sessions, sortSessions, upsertSession])
 
   const toggleArchiveSession = React.useCallback(async (id: string) => {
     const targetSession = sessions.find((s) => s.id === id)
@@ -699,9 +890,9 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       upsertSession(response.session)
     } else {
       const response = await patchMockSession("mock-token", id, { archived: !targetSession.archived })
-      setSessions((prev) => sortSessionViews(prev.map((s) => (s.id === id ? response.session : s))))
+      setSessions((prev) => sortSessions(prev.map((s) => (s.id === id ? response.session : s))))
     }
-  }, [authSession?.accessToken, sessions, upsertSession])
+  }, [authSession?.accessToken, sessions, sortSessions, upsertSession])
 
   const renameSession = React.useCallback(async (id: string, title: string) => {
     const nextTitle = title.trim()
@@ -717,13 +908,13 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
         upsertSession(response.session)
       } else {
         const response = await patchMockSession("mock-token", id, { title: nextTitle })
-        setSessions((prev) => sortSessionViews(prev.map((s) => (s.id === id ? response.session : s))))
+        setSessions((prev) => sortSessions(prev.map((s) => (s.id === id ? response.session : s))))
       }
       return true
     } catch {
       return false
     }
-  }, [authSession?.accessToken, sessions, upsertSession])
+  }, [authSession?.accessToken, sessions, sortSessions, upsertSession])
 
   const addOptimisticMessage = React.useCallback((message: OptimisticSessionMessage) => {
     setOptimisticMessages((prev) => {
@@ -777,16 +968,16 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     setSessions((prev) => {
       const withoutLocal = prev.filter((item) => item.id !== localSessionId)
       const index = withoutLocal.findIndex((item) => item.id === mapped.id)
-      if (index === -1) return sortSessionViews([mapped, ...withoutLocal])
+      if (index === -1) return sortSessions([mapped, ...withoutLocal])
       const next = [...withoutLocal]
       next[index] = mapped
-      return sortSessionViews(next)
+      return sortSessions(next)
     })
     const currentRoute = routeRef.current
     if (currentRoute.page === "session" && currentRoute.sessionId === localSessionId) {
       replaceRoute({ page: "session", sessionId: session.id })
     }
-  }, [replaceRoute])
+  }, [replaceRoute, sortSessions])
 
   const markOptimisticMessageFailed = React.useCallback((clientMessageId: string, message: string) => {
     setOptimisticMessages((prev) => {
@@ -813,7 +1004,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       for (const message of prev) {
         const resolved = message.sessionId === sessionId && resolvedClientMessageIds.has(message.clientMessageId)
         if (resolved) {
-          revokeOptimisticItemResources(message.item)
+          // The reconciled server item owns the preview URL after replacing this optimistic item.
           continue
         }
         next.push(message)
@@ -869,6 +1060,10 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     return true
   }, [route, sessions])
 
+  const consumeComposerInsertion = React.useCallback((id: number) => {
+    setComposerInsertion((current) => current?.id === id ? null : current)
+  }, [])
+
   // ── Derived route fields ──────────────────────────────────
 
   const validPages: AppPage[] = ["home", "session", "settings", "dashboard", "team", "service", "device", "device-workspace"]
@@ -894,6 +1089,8 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     connectors,
     sessions,
     isLoading,
+    hasMoreSessions: sessionPages[filter.status === "archived" ? "archived" : "active"].hasMore,
+    isLoadingMoreSessions: loadingSessionPages[filter.status === "archived" ? "archived" : "active"],
     routeReady,
     page,
     activeSessionId,
@@ -914,6 +1111,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     optimisticMessages,
     openSession,
     goHome,
+    replaceHome,
     navigate,
     navigateToDevice,
     navigateToWorkspace,
@@ -930,6 +1128,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     renameSession,
     markSessionRead,
     upsertSession,
+    reportSessionStreamProgress,
     addOptimisticMessage,
     bindOptimisticSession,
     clearResolvedOptimisticMessages,
@@ -938,7 +1137,9 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     isOptimisticSession,
     markOptimisticMessageFailed,
     appendPathToComposer,
+    consumeComposerInsertion,
     refreshData: fetchData,
+    loadMoreSessions,
   }
 
   return <WorkspaceContext.Provider value={value}>{children}</WorkspaceContext.Provider>
@@ -946,6 +1147,10 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
 
 function sameStableValue(left: unknown, right: unknown): boolean {
   return stableJson(left) === stableJson(right)
+}
+
+function sessionStatusIsBusy(status: string): boolean {
+  return status === "running" || status === "waiting" || status === "pending"
 }
 
 function stableJson(value: unknown): string {

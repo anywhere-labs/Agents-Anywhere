@@ -418,6 +418,21 @@ timeline_items = Table(
 )
 
 
+session_shares = Table(
+    "session_shares",
+    metadata,
+    Column("id", Text, primary_key=True),
+    Column("user_id", Text, ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
+    Column("session_id", Text, ForeignKey("sessions.id", ondelete="CASCADE"), nullable=False),
+    Column("scope", Text, nullable=False),
+    Column("snapshot_json", Text, nullable=False),
+    Column("allowed_file_ids_json", Text, nullable=False, server_default="[]"),
+    Column("created_at", Text, nullable=False),
+    Index("idx_session_shares_user_created", "user_id", "created_at"),
+    Index("idx_session_shares_session_created", "session_id", "created_at"),
+)
+
+
 dashboard_daily_metrics = Table(
     "dashboard_daily_metrics",
     metadata,

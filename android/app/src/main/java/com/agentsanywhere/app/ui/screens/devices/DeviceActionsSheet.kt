@@ -69,7 +69,7 @@ internal fun DeviceActionsSheet(
     val context = LocalContext.current
     val colors = LocalAAColors.current
     val darkMode = colors.canvas == Color(0xFF09090B)
-    val sheet = if (darkMode) Color(0xFF18181B) else Color.White
+    val sheet = colors.raisedSurface
     val handle = if (darkMode) Color(0xFF3F3F46) else Color(0xFFD8D6D0)
     val focusRequester = remember { FocusRequester() }
     val scope = rememberCoroutineScope()
