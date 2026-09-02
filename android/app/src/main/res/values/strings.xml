@@ -426,6 +426,15 @@
     <string name="session_tool_created_files">Created files</string>
     <string name="session_tool_searched">Searched %1$s</string>
     <string name="session_tool_web_fallback">web</string>
+    <string name="session_tool_agent_invoke">Called agent</string>
+    <string name="session_tool_agent_spawn">Spawned agent</string>
+    <string name="session_tool_agent_send_input">Sent input to agent</string>
+    <string name="session_tool_agent_resume">Resumed agent</string>
+    <string name="session_tool_agent_wait">Waited for agent</string>
+    <string name="session_tool_agent_close">Closed agent</string>
+    <string name="session_tool_agent_unknown">Agent call</string>
+    <string name="session_tool_agent_with_description">%1$s: %2$s</string>
+    <string name="session_agent_call_group_summary">Called %1$d sub-agents</string>
     <string name="session_file_change_added">Added</string>
     <string name="session_file_change_deleted">Deleted</string>
     <string name="session_file_change_renamed">Renamed</string>

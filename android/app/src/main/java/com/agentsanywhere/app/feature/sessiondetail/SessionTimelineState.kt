@@ -44,6 +44,7 @@ data class TimelineMessage(
     val input: String = "",
     val toolError: String = "",
     val fileChanges: List<TimelineFileChange> = emptyList(),
+    val agentCall: TimelineAgentCall? = null,
     val rawContent: String = "",
     val orderSeq: Int = 0,
     val revision: Int = 1,
@@ -63,6 +64,22 @@ data class TimelineFileChange(
     val path: String,
     val diff: String,
 )
+
+data class TimelineAgentCall(
+    val action: TimelineAgentCallAction,
+    val description: String = "",
+    val parentItemId: String? = null,
+)
+
+enum class TimelineAgentCallAction {
+    Invoke,
+    Spawn,
+    SendInput,
+    Resume,
+    Wait,
+    Close,
+    Unknown,
+}
 
 data class TimelineAttachment(
     val fileId: String,
@@ -102,6 +119,7 @@ enum class TimelineMessageKind {
     Reasoning,
     Command,
     FileChange,
+    AgentCall,
     ToolCall,
     Artifact,
     Marker,

@@ -38,6 +38,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -46,8 +47,11 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -79,12 +83,14 @@ import com.agentsanywhere.app.feature.sessiondetail.SessionDetailController
 import com.agentsanywhere.app.feature.sessiondetail.RuntimeNotice
 import com.agentsanywhere.app.feature.sessiondetail.RuntimeNoticeAction
 import com.agentsanywhere.app.feature.sessiondetail.TimelineAttachment
+import com.agentsanywhere.app.feature.sessiondetail.TimelineAgentCallAction
 import com.agentsanywhere.app.feature.sessiondetail.TimelineMessage
 import com.agentsanywhere.app.feature.sessiondetail.TimelineMessageKind
 import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 import com.agentsanywhere.app.ui.designsystem.noRippleClickable
 import com.valentinilk.shimmer.shimmer
 import com.composables.icons.lucide.ArrowDown
+import com.composables.icons.lucide.Bot
 import com.composables.icons.lucide.ChevronDown
 import com.composables.icons.lucide.CircleAlert
 import com.composables.icons.lucide.Clock
@@ -126,6 +132,13 @@ internal sealed interface TimelineRenderItem {
 
     data class Reconnect(override val messages: List<TimelineMessage>) : TimelineRenderItem {
         override val key: String = "reconnect:${messages.firstOrNull()?.id ?: "unknown"}"
+    }
+
+    data class AgentCalls(
+        val parentItemId: String,
+        override val messages: List<TimelineMessage>,
+    ) : TimelineRenderItem {
+        override val key: String = "agent-calls:$parentItemId:${messages.firstOrNull()?.id ?: "unknown"}"
     }
 }
 
@@ -446,6 +459,10 @@ internal fun MessageList(
                                 messages = item.messages,
                                 darkMode = darkMode,
                             )
+                            is TimelineRenderItem.AgentCalls -> AgentCallGroup(
+                                messages = item.messages,
+                                darkMode = darkMode,
+                            )
                         }
                         agentCopyTextByTurnEnd[item.key]?.let { copyText ->
                             DisableSelection {
@@ -548,6 +565,8 @@ internal fun groupTimelineMessages(
     val result = mutableListOf<TimelineRenderItem>()
     val pendingTools = mutableListOf<TimelineMessage>()
     val pendingReconnects = mutableListOf<TimelineMessage>()
+    val pendingAgentCalls = mutableListOf<TimelineMessage>()
+    var pendingAgentParentId: String? = null
 
     fun flushTools() {
         when (pendingTools.size) {
@@ -567,19 +586,45 @@ internal fun groupTimelineMessages(
         pendingReconnects.clear()
     }
 
+    fun flushAgentCalls() {
+        val parentItemId = pendingAgentParentId
+        if (pendingAgentCalls.size >= 2 && parentItemId != null) {
+            result += TimelineRenderItem.AgentCalls(parentItemId, pendingAgentCalls.toList())
+        } else {
+            pendingAgentCalls.forEach { result += TimelineRenderItem.Single(it) }
+        }
+        pendingAgentCalls.clear()
+        pendingAgentParentId = null
+    }
+
     for (message in messages) {
-        if (message.isReconnectError() && message.sourceItemId !in interactionTargetIds) {
+        val agentParentId = message.agentCall
+            ?.parentItemId
+            ?.takeIf(String::isNotBlank)
+        if (agentParentId != null && message.sourceItemId !in interactionTargetIds) {
+            flushReconnects()
+            flushTools()
+            if (pendingAgentParentId != null && pendingAgentParentId != agentParentId) {
+                flushAgentCalls()
+            }
+            pendingAgentParentId = agentParentId
+            pendingAgentCalls += message
+        } else if (message.isReconnectError() && message.sourceItemId !in interactionTargetIds) {
+            flushAgentCalls()
             flushTools()
             pendingReconnects += message
         } else if (message.isToolRunItem() && message.sourceItemId !in interactionTargetIds) {
+            flushAgentCalls()
             flushReconnects()
             pendingTools += message
         } else {
+            flushAgentCalls()
             flushReconnects()
             flushTools()
             result += TimelineRenderItem.Single(message)
         }
     }
+    flushAgentCalls()
     flushReconnects()
     flushTools()
     return result
@@ -642,6 +687,7 @@ private fun TimelineMessage.isToolRunItem(): Boolean {
     return kind == TimelineMessageKind.Reasoning ||
         kind == TimelineMessageKind.Command ||
         kind == TimelineMessageKind.FileChange ||
+        kind == TimelineMessageKind.AgentCall ||
         kind == TimelineMessageKind.ToolCall ||
         (kind == TimelineMessageKind.Artifact && contentKind != "diff")
 }
@@ -712,7 +758,6 @@ private fun ToolRunGroup(
                 .heightIn(min = 34.dp)
                 .clip(RoundedCornerShape(8.dp))
                 .background(surface)
-                .then(if (active) Modifier.shimmer() else Modifier)
                 .noRippleClickable(onClick = ::toggleExpanded)
                 .padding(horizontal = 6.dp, vertical = 6.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -725,8 +770,10 @@ private fun ToolRunGroup(
                 tint = if (failed) colors.errorIcon else muted,
                 modifier = Modifier.size(16.dp),
             )
-            Text(
+            TimelineShimmerText(
                 text = toolRunSummary(messages),
+                active = active,
+                darkMode = darkMode,
                 modifier = Modifier.weight(1f),
                 color = if (failed) LocalAAColors.current.errorIcon else muted,
                 fontSize = 13.sp,
@@ -759,8 +806,10 @@ private fun ToolRunGroup(
                 tint = if (failed) colors.errorIcon else muted,
                 modifier = Modifier.size(16.dp),
             )
-            Text(
+            TimelineShimmerText(
                 text = toolRunSummary(messages),
+                active = active,
+                darkMode = darkMode,
                 modifier = Modifier.weight(1f),
                 color = if (failed) LocalAAColors.current.errorIcon else primary,
                 fontSize = 13.sp,
@@ -778,6 +827,8 @@ private fun ToolRunGroup(
                     listState = listState,
                     embedded = true,
                 )
+            } else if (message.kind == TimelineMessageKind.AgentCall) {
+                AgentCallMarkerRow(message = message, darkMode = darkMode)
             } else {
                 ToolActivityCard(
                     message = message,
@@ -789,6 +840,112 @@ private fun ToolRunGroup(
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun AgentCallGroup(
+    messages: List<TimelineMessage>,
+    darkMode: Boolean,
+) {
+    val colors = LocalAAColors.current
+    val muted = colors.muted
+    val active = messages.any { it.status in setOf("pending", "running", "waiting_approval") }
+    val failed = messages.any { it.status in setOf("failed", "cancelled", "interrupted") }
+    var expanded by remember(messages.joinToString(":") { it.id }) { mutableStateOf(false) }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 4.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 34.dp)
+                .noRippleClickable { expanded = !expanded }
+                .padding(horizontal = 6.dp, vertical = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            TimelineChevron(expanded = expanded, tint = muted)
+            Icon(
+                imageVector = Lucide.Bot,
+                contentDescription = null,
+                tint = if (failed) colors.errorIcon else muted,
+                modifier = Modifier.size(16.dp),
+            )
+            TimelineShimmerText(
+                text = stringResource(R.string.session_agent_call_group_summary, messages.size),
+                active = active,
+                darkMode = darkMode,
+                modifier = Modifier.weight(1f),
+                color = if (failed) colors.errorIcon else muted,
+                fontSize = 13.sp,
+                fontWeight = TimelineActivityLabelWeight,
+                fontFamily = FontFamily.Monospace,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        if (expanded) {
+            Column(
+                modifier = Modifier
+                    .padding(start = 20.dp)
+                    .drawBehind {
+                        drawLine(
+                            color = colors.border,
+                            start = Offset.Zero,
+                            end = Offset(0f, size.height),
+                            strokeWidth = 1.dp.toPx(),
+                        )
+                    }
+                    .padding(start = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                messages.forEach { message ->
+                    AgentCallMarkerRow(message = message, darkMode = darkMode)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AgentCallMarkerRow(
+    message: TimelineMessage,
+    darkMode: Boolean,
+) {
+    val colors = LocalAAColors.current
+    val active = message.status in setOf("pending", "running", "waiting_approval")
+    val failed = message.status in setOf("failed", "cancelled", "interrupted")
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 34.dp)
+            .padding(horizontal = 6.dp, vertical = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = Lucide.Bot,
+            contentDescription = null,
+            tint = if (failed) colors.errorIcon else colors.muted,
+            modifier = Modifier.size(16.dp),
+        )
+        TimelineShimmerText(
+            text = agentCallSummary(message),
+            active = active,
+            darkMode = darkMode,
+            modifier = Modifier.weight(1f),
+            color = if (failed) colors.errorIcon else colors.muted,
+            fontSize = 13.sp,
+            fontWeight = TimelineActivityLabelWeight,
+            fontFamily = FontFamily.Monospace,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 
@@ -950,6 +1107,22 @@ private fun TimelineMessageRow(
             darkMode = darkMode,
             listState = listState,
         )
+        TimelineMessageKind.AgentCall -> if (interaction == null) {
+            AgentCallMarkerRow(message = message, darkMode = darkMode)
+        } else {
+            ToolActivityCard(
+                message = message,
+                darkMode = darkMode,
+                listState = listState,
+                workspaceRoot = workspaceRoot,
+                onOpenFile = onOpenFile,
+                interaction = interaction,
+                interactionBusy = interaction.noticeId in respondingNoticeIds,
+                actionsDisabled = !canRespondToNotices || respondingNoticeIds.isNotEmpty(),
+                interactionError = noticeResponseErrors[interaction.noticeId],
+                onRespondNotice = { notice, action, input -> onRespondNotice(notice, action, input) },
+            )
+        }
         TimelineMessageKind.Command,
         TimelineMessageKind.FileChange,
         TimelineMessageKind.ToolCall,
@@ -1446,7 +1619,6 @@ private fun ToolActivityCard(
                 .heightIn(min = 34.dp)
                 .clip(RoundedCornerShape(8.dp))
                 .background(collapsedSurface)
-                .then(if (active) Modifier.shimmer() else Modifier)
                 .then(
                     when {
                         expandable -> Modifier.noRippleClickable { toggleExpanded() }
@@ -1466,8 +1638,10 @@ private fun ToolActivityCard(
                 Spacer(Modifier.width(16.dp))
             }
             ToolActivityIcon(kind = message.kind, failed = failed)
-            Text(
+            TimelineShimmerText(
                 text = target,
+                active = active,
+                darkMode = darkMode,
                 modifier = Modifier.weight(1f),
                 color = if (failed) LocalAAColors.current.errorIcon else primary,
                 fontSize = 13.sp,
@@ -1530,6 +1704,7 @@ private fun toolActivitySummary(message: TimelineMessage): String {
                 else -> stringResource(R.string.session_tool_changed_files)
             }
         }
+        TimelineMessageKind.AgentCall -> agentCallSummary(message)
         TimelineMessageKind.ToolCall -> when (message.contentKind) {
             "web_search" -> stringResource(
                 R.string.session_tool_searched,
@@ -1541,6 +1716,26 @@ private fun toolActivitySummary(message: TimelineMessage): String {
                 .joinToString(" ")
         }
         else -> message.subtitle.ifBlank { message.text }.ifBlank { message.title }
+    }
+}
+
+@Composable
+private fun agentCallSummary(message: TimelineMessage): String {
+    val call = message.agentCall
+    val action = when (call?.action ?: TimelineAgentCallAction.Unknown) {
+        TimelineAgentCallAction.Invoke -> stringResource(R.string.session_tool_agent_invoke)
+        TimelineAgentCallAction.Spawn -> stringResource(R.string.session_tool_agent_spawn)
+        TimelineAgentCallAction.SendInput -> stringResource(R.string.session_tool_agent_send_input)
+        TimelineAgentCallAction.Resume -> stringResource(R.string.session_tool_agent_resume)
+        TimelineAgentCallAction.Wait -> stringResource(R.string.session_tool_agent_wait)
+        TimelineAgentCallAction.Close -> stringResource(R.string.session_tool_agent_close)
+        TimelineAgentCallAction.Unknown -> stringResource(R.string.session_tool_agent_unknown)
+    }
+    val description = call?.description.orEmpty()
+    return if (description.isBlank()) {
+        action
+    } else {
+        stringResource(R.string.session_tool_agent_with_description, action, description)
     }
 }
 
@@ -1608,6 +1803,7 @@ private fun ToolActivityDetailCard(
             TimelineMessageKind.ToolCall -> {
                 ToolCallPreview(message = message, darkMode = darkMode)
             }
+            TimelineMessageKind.AgentCall -> Unit
             TimelineMessageKind.Artifact -> {
                 if (message.detail.isNotBlank()) {
                     Text(
@@ -1820,6 +2016,7 @@ private fun ToolActivityIcon(
     val colors = LocalAAColors.current
     val imageVector = when (kind) {
         TimelineMessageKind.Command -> Lucide.SquareTerminal
+        TimelineMessageKind.AgentCall -> Lucide.Bot
         TimelineMessageKind.FileChange,
         TimelineMessageKind.Artifact -> Lucide.FilePenLine
         else -> Lucide.Hammer
@@ -1878,6 +2075,65 @@ private fun CompactStatusPill(label: String, destructive: Boolean = false) {
 }
 
 @Composable
+private fun TimelineShimmerText(
+    text: String,
+    active: Boolean,
+    darkMode: Boolean,
+    color: Color,
+    modifier: Modifier = Modifier,
+    fontSize: androidx.compose.ui.unit.TextUnit,
+    fontWeight: FontWeight,
+    fontFamily: FontFamily? = null,
+    maxLines: Int = Int.MAX_VALUE,
+    overflow: TextOverflow = TextOverflow.Clip,
+) {
+    var textWidth by remember(text) { mutableIntStateOf(1) }
+    val progress = if (active) {
+        val transition = rememberInfiniteTransition(label = "timeline-text-shimmer")
+        val animated by transition.animateFloat(
+            initialValue = 0f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 1_400, easing = LinearEasing),
+            ),
+            label = "timeline-text-shimmer-progress",
+        )
+        animated
+    } else {
+        0f
+    }
+    val sweepWidth = (textWidth * 0.28f).coerceAtLeast(48f)
+    val center = -sweepWidth + progress * (textWidth + sweepWidth * 2f)
+    val shimmerBrush = Brush.linearGradient(
+        colors = listOf(
+            color,
+            if (darkMode) Color.White.copy(alpha = 0.95f) else Color.Black.copy(alpha = 0.76f),
+            color,
+        ),
+        start = Offset(center - sweepWidth, 0f),
+        end = Offset(center + sweepWidth, 0f),
+    )
+    Text(
+        text = text,
+        modifier = modifier,
+        color = if (active) Color.Unspecified else color,
+        fontSize = fontSize,
+        fontWeight = fontWeight,
+        fontFamily = fontFamily,
+        maxLines = maxLines,
+        overflow = overflow,
+        style = if (active) TextStyle(brush = shimmerBrush) else TextStyle.Default,
+        onTextLayout = { result ->
+            textWidth = if (result.lineCount == 0) {
+                1
+            } else {
+                (result.getLineRight(0) - result.getLineLeft(0)).toInt().coerceAtLeast(1)
+            }
+        },
+    )
+}
+
+@Composable
 private fun ToolPlaceholder(
     message: TimelineMessage,
     darkMode: Boolean,
@@ -1886,20 +2142,22 @@ private fun ToolPlaceholder(
     val destructive = message.kind == TimelineMessageKind.Error ||
         message.status in setOf("failed", "cancelled", "interrupted")
     val compact = message.contentKind == "compact" || message.title == "compact"
+    if (compact) {
+        CompactTimelineSeparator(
+            message = message,
+            darkMode = darkMode,
+            destructive = destructive,
+        )
+        return
+    }
     val displayText = when {
-        compact -> when {
-            destructive -> stringResource(R.string.session_conversation_compaction_failed)
-            message.status in setOf("pending", "running") -> stringResource(R.string.session_conversation_compacting)
-            else -> stringResource(R.string.session_conversation_compacted)
-        }
         message.kind == TimelineMessageKind.Diagnostic -> stringResource(
             R.string.session_timeline_unknown_item,
             listOf(message.type, message.contentKind).filter(String::isNotBlank).joinToString(" / "),
         )
         else -> message.text.ifBlank { message.type }
     }
-    val active = compact && message.status in setOf("pending", "running")
-    val expandable = !compact && message.rawContent.isNotBlank()
+    val expandable = message.rawContent.isNotBlank()
     var expanded by remember(message.id) { mutableStateOf(false) }
     val colors = LocalAAColors.current
     val muted = if (destructive) colors.errorIcon else colors.muted
@@ -1907,22 +2165,19 @@ private fun ToolPlaceholder(
         Row(
             modifier = Modifier
                 .padding(horizontal = 4.dp)
-                .then(if (active) Modifier.shimmer() else Modifier)
                 .then(if (expandable) Modifier.noRippleClickable { expanded = !expanded } else Modifier),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            if (!compact) {
-                if (expandable) {
-                    TimelineChevron(expanded = expanded, tint = muted)
-                }
-                Icon(
-                    imageVector = if (destructive) Lucide.CircleAlert else Lucide.Clock,
-                    contentDescription = null,
-                    tint = muted,
-                    modifier = Modifier.size(16.dp),
-                )
+            if (expandable) {
+                TimelineChevron(expanded = expanded, tint = muted)
             }
+            Icon(
+                imageVector = if (destructive) Lucide.CircleAlert else Lucide.Clock,
+                contentDescription = null,
+                tint = muted,
+                modifier = Modifier.size(16.dp),
+            )
             Text(
                 text = displayText,
                 modifier = Modifier.weight(1f, fill = false),
@@ -1936,7 +2191,7 @@ private fun ToolPlaceholder(
                     onClick = { onCopyMessage(diagnosticTimelineText(message)) },
                 )
             }
-            if (!compact && message.kind in setOf(
+            if (message.kind in setOf(
                     TimelineMessageKind.Marker,
                     TimelineMessageKind.Error,
                     TimelineMessageKind.System,
@@ -1948,6 +2203,51 @@ private fun ToolPlaceholder(
         if (expanded && expandable) {
             SoraCodeBlock(text = message.rawContent, languageHint = "json", darkMode = darkMode)
         }
+    }
+}
+
+@Composable
+private fun CompactTimelineSeparator(
+    message: TimelineMessage,
+    darkMode: Boolean,
+    destructive: Boolean,
+) {
+    val colors = LocalAAColors.current
+    val active = message.status in setOf("pending", "running")
+    val color = if (destructive) colors.errorIcon else colors.muted
+    val label = when {
+        destructive -> stringResource(R.string.session_conversation_compaction_failed)
+        active -> stringResource(R.string.session_conversation_compacting)
+        else -> stringResource(R.string.session_conversation_compacted)
+    }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 4.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .height(1.dp)
+                .background(colors.border),
+        )
+        TimelineShimmerText(
+            text = label,
+            active = active,
+            darkMode = darkMode,
+            color = color,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Normal,
+            maxLines = 1,
+        )
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .height(1.dp)
+                .background(colors.border),
+        )
     }
 }
 

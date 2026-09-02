@@ -425,6 +425,15 @@
     <string name="session_tool_created_files">创建了文件</string>
     <string name="session_tool_searched">搜索了 %1$s</string>
     <string name="session_tool_web_fallback">网页</string>
+    <string name="session_tool_agent_invoke">调用 Agent</string>
+    <string name="session_tool_agent_spawn">启动 Agent</string>
+    <string name="session_tool_agent_send_input">向 Agent 发送消息</string>
+    <string name="session_tool_agent_resume">恢复 Agent</string>
+    <string name="session_tool_agent_wait">等待 Agent</string>
+    <string name="session_tool_agent_close">关闭 Agent</string>
+    <string name="session_tool_agent_unknown">Agent 调用</string>
+    <string name="session_tool_agent_with_description">%1$s：%2$s</string>
+    <string name="session_agent_call_group_summary">调用了 %1$d 个子 Agent</string>
     <string name="session_file_change_added">新增</string>
     <string name="session_file_change_deleted">删除</string>
     <string name="session_file_change_renamed">重命名</string>
