@@ -55,7 +55,7 @@ const NOUNS = [
   "quartz", "raven", "ridge", "river", "rocket", "sequoia", "sparrow", "summit", "willow", "zephyr",
 ]
 
-const GITHUB_RELEASES_URL = "https://github.com/anywhere-labs/Agents-Anywhere/releases"
+const DESKTOP_DOWNLOAD_URL = "https://www.agents-anywhere.com/download"
 
 type Platform = "macos" | "windows" | "linux"
 type LinuxMethod = "terminal" | "pair-code"
@@ -411,7 +411,7 @@ export function PairDeviceDialog({
                   </Button>
                   <div className="flex gap-2">
                     <Button type="button" variant="outline" asChild>
-                      <a href={GITHUB_RELEASES_URL} target="_blank" rel="noreferrer">
+                      <a href={DESKTOP_DOWNLOAD_URL} target="_blank" rel="noreferrer">
                         {t("githubReleases")}
                         <ExternalLink className="size-3.5" />
                       </a>

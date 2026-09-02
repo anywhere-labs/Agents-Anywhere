@@ -64,6 +64,7 @@ let devices: DesktopDeviceService | null = null;
 let isQuitting = false;
 let shutdownComplete = false;
 let shutdownPromise: Promise<void> | null = null;
+let quitConfirmationPromise: Promise<boolean> | null = null;
 
 app.setName(APP_NAME);
 
@@ -361,7 +362,6 @@ function updateTray(): void {
     Menu.buildFromTemplate([
       { label: `Connector: ${status}`, enabled: false },
       { type: "separator" },
-      { label: "Open Agents Anywhere", click: () => showMainWindow() },
       {
         label: "Start Connector",
         enabled: Boolean(state?.hasCredential && !state.running),
@@ -378,7 +378,7 @@ function updateTray(): void {
         click: () => void connector?.restart().catch((error) => appendMainLog({ level: "ERROR", message: errorMessage(error) })),
       },
       { type: "separator" },
-      { label: "Quit", click: () => void requestQuit() },
+      { label: "Quit", click: () => void requestQuit({ confirm: true }) },
     ]),
   );
 }
@@ -606,11 +606,36 @@ async function initializeDesktopServices(): Promise<void> {
   applyLoginItemSettings();
 }
 
-async function requestQuit(): Promise<void> {
+async function confirmQuit(): Promise<boolean> {
+  if (quitConfirmationPromise) return quitConfirmationPromise;
+  quitConfirmationPromise = (async () => {
+    const options = {
+      type: "warning" as const,
+      title: "退出 Agents Anywhere？",
+      message: "退出 Agents Anywhere？",
+      detail: "退出后，本机将离线，其他设备将无法在本机发起 Agent 会话。",
+      buttons: ["取消", "退出程序"],
+      defaultId: 1,
+      cancelId: 0,
+      noLink: true,
+    };
+    const result = mainWindow
+      ? await dialog.showMessageBox(mainWindow, options)
+      : await dialog.showMessageBox(options);
+    return result.response === 1;
+  })().finally(() => {
+    quitConfirmationPromise = null;
+  });
+  return quitConfirmationPromise;
+}
+
+async function requestQuit({ confirm = false }: { confirm?: boolean } = {}): Promise<void> {
   if (shutdownComplete) {
     app.quit();
     return;
   }
+  if (shutdownPromise) return shutdownPromise;
+  if (confirm && !(await confirmQuit())) return;
   if (shutdownPromise) return shutdownPromise;
   isQuitting = true;
   shutdownPromise = (async () => {
@@ -661,6 +686,6 @@ if (hasSingleInstanceLock) {
   app.on("before-quit", (event) => {
     if (shutdownComplete) return;
     event.preventDefault();
-    void requestQuit();
+    void requestQuit({ confirm: true });
   });
 }
