@@ -316,6 +316,7 @@
     <string name="session_attachment_save">保存图片</string>
     <string name="session_attachment_saved">图片已保存。</string>
     <string name="session_attachment_save_failed">无法保存图片。</string>
+    <string name="session_attachment_save_permission_required">此 Android 版本需要存储权限才能保存图片。</string>
     <string name="session_attachment_open_failed">没有应用可以打开这个附件。</string>
     <string name="session_attachment_base64_invalid">下载的附件内容已损坏。</string>
     <string name="session_attachment_upload_incomplete">服务端返回的附件上传结果不完整。</string>

@@ -1,12 +1,16 @@
 package com.agentsanywhere.app.ui.screens.sessiondetail
 
 import android.Manifest
-import android.app.Activity
+import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.MediaScannerConnection
 import android.net.Uri
+import android.os.Build
+import android.os.Environment
 import android.provider.OpenableColumns
+import android.provider.MediaStore
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -198,7 +202,7 @@ fun SessionDetailScreen(
     var preparedPermissionError by remember(preparedSession) { mutableStateOf<String?>(null) }
     var takeoverConfirm by remember(sessionId) { mutableStateOf<Boolean?>(null) }
     var previewImage by remember(sessionId) { mutableStateOf<AttachmentPreview?>(null) }
-    var pendingAttachmentSave by remember(sessionId) { mutableStateOf<DownloadedAttachment?>(null) }
+    var pendingGallerySave by remember(sessionId) { mutableStateOf<DownloadedAttachment?>(null) }
     var attachmentSaveInFlight by remember(sessionId) { mutableStateOf(false) }
     var showCamera by remember(sessionId) { mutableStateOf(false) }
     var showDeviceOffline by remember(sessionId) { mutableStateOf(false) }
@@ -277,28 +281,27 @@ fun SessionDetailScreen(
         showToast(context.getString(R.string.common_copied))
     }
 
-    val attachmentSaveLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.StartActivityForResult(),
-    ) { result ->
-        val downloaded = pendingAttachmentSave
-        val destination = result.data?.data
-        pendingAttachmentSave = null
-        attachmentSaveInFlight = false
-        if (result.resultCode != Activity.RESULT_OK || destination == null || downloaded == null) {
-            return@rememberLauncherForActivityResult
-        }
+    fun saveDownloadedImage(downloaded: DownloadedAttachment) {
         scope.launch {
-            runCatching {
-                withContext(Dispatchers.IO) {
-                    context.contentResolver.openOutputStream(destination, "w")?.use { output ->
-                        output.write(downloaded.bytes)
-                    } ?: error("Unable to open attachment destination")
-                }
-            }.onSuccess {
+            saveImageToGallery(context, downloaded).onSuccess {
                 showToast(context.getString(R.string.session_attachment_saved))
             }.onFailure {
                 showError(context.getString(R.string.session_attachment_save_failed))
             }
+            attachmentSaveInFlight = false
+        }
+    }
+
+    val storagePermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        val downloaded = pendingGallerySave
+        pendingGallerySave = null
+        if (granted && downloaded != null) {
+            saveDownloadedImage(downloaded)
+        } else {
+            attachmentSaveInFlight = false
+            if (!granted) showError(context.getString(R.string.session_attachment_save_permission_required))
         }
     }
 
@@ -309,18 +312,17 @@ fun SessionDetailScreen(
         scope.launch {
             controller.downloadAttachment(id, attachment)
                 .onSuccess { downloaded ->
-                    pendingAttachmentSave = downloaded
-                    val saveIntent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
-                        addCategory(Intent.CATEGORY_OPENABLE)
-                        type = downloaded.mediaType.ifBlank { "image/*" }
-                        putExtra(Intent.EXTRA_TITLE, downloaded.name)
+                    val needsLegacyPermission = Build.VERSION.SDK_INT <= Build.VERSION_CODES.P &&
+                        ContextCompat.checkSelfPermission(
+                            context,
+                            Manifest.permission.WRITE_EXTERNAL_STORAGE,
+                        ) != PackageManager.PERMISSION_GRANTED
+                    if (needsLegacyPermission) {
+                        pendingGallerySave = downloaded
+                        storagePermissionLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                    } else {
+                        saveDownloadedImage(downloaded)
                     }
-                    runCatching { attachmentSaveLauncher.launch(saveIntent) }
-                        .onFailure {
-                            pendingAttachmentSave = null
-                            attachmentSaveInFlight = false
-                            showError(context.getString(R.string.session_attachment_save_failed))
-                        }
                 }
                 .onFailure { error ->
                     attachmentSaveInFlight = false
@@ -2008,6 +2010,75 @@ private fun UploadFilePart.toLocalTimelineAttachment(uri: Uri): TimelineAttachme
         sha256 = sha256,
         localPreviewUri = uri.toString().takeIf { mediaType.startsWith("image/") },
     )
+}
+
+private suspend fun saveImageToGallery(
+    context: Context,
+    downloaded: DownloadedAttachment,
+): Result<Unit> = withContext(Dispatchers.IO) {
+    runCatching {
+        val displayName = downloaded.name
+            .substringAfterLast('/')
+            .substringAfterLast('\\')
+            .ifBlank { "agents-anywhere-${System.currentTimeMillis()}.jpg" }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val resolver = context.contentResolver
+            val values = ContentValues().apply {
+                put(MediaStore.Images.Media.DISPLAY_NAME, displayName)
+                put(MediaStore.Images.Media.MIME_TYPE, downloaded.mediaType.ifBlank { "image/jpeg" })
+                put(
+                    MediaStore.Images.Media.RELATIVE_PATH,
+                    "${Environment.DIRECTORY_PICTURES}/Agents Anywhere",
+                )
+                put(MediaStore.Images.Media.IS_PENDING, 1)
+            }
+            val collection = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+            val imageUri = resolver.insert(collection, values)
+                ?: error("Unable to create gallery image")
+            try {
+                resolver.openOutputStream(imageUri, "w")?.use { output ->
+                    output.write(downloaded.bytes)
+                } ?: error("Unable to open gallery image")
+                resolver.update(
+                    imageUri,
+                    ContentValues().apply { put(MediaStore.Images.Media.IS_PENDING, 0) },
+                    null,
+                    null,
+                )
+            } catch (error: Throwable) {
+                resolver.delete(imageUri, null, null)
+                throw error
+            }
+        } else {
+            @Suppress("DEPRECATION")
+            val pictures = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES)
+            val directory = File(pictures, "Agents Anywhere")
+            check(directory.exists() || directory.mkdirs()) { "Unable to create gallery directory" }
+            val imageFile = uniqueGalleryFile(directory, displayName)
+            imageFile.outputStream().use { output -> output.write(downloaded.bytes) }
+            MediaScannerConnection.scanFile(
+                context,
+                arrayOf(imageFile.absolutePath),
+                arrayOf(downloaded.mediaType.ifBlank { "image/jpeg" }),
+                null,
+            )
+        }
+        Unit
+    }
+}
+
+private fun uniqueGalleryFile(directory: File, displayName: String): File {
+    val requested = File(directory, displayName)
+    if (!requested.exists()) return requested
+    val dotIndex = displayName.lastIndexOf('.').takeIf { it > 0 } ?: displayName.length
+    val baseName = displayName.substring(0, dotIndex)
+    val extension = displayName.substring(dotIndex)
+    var suffix = 1
+    while (true) {
+        val candidate = File(directory, "$baseName ($suffix)$extension")
+        if (!candidate.exists()) return candidate
+        suffix += 1
+    }
 }
 
 private const val MAX_ATTACHMENT_FILES = 6
