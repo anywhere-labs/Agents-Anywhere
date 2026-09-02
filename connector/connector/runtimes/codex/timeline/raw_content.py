@@ -36,7 +36,12 @@ def timeline_item_content(raw: dict[str, Any]) -> Mapping[str, Any]:
         return function_call_content(raw)
     if raw_type == "custom_tool_call":
         return custom_tool_call_content(raw)
-    if raw_type in {"function_call_output", "custom_tool_call_output", "toolResult"}:
+    if raw_type in {
+        "function_call_output",
+        "functionCallOutput",
+        "custom_tool_call_output",
+        "toolResult",
+    }:
         return tool_output_content(raw)
     if raw_type in {"fileChange", "file_change"}:
         return file_change_content(raw)

@@ -255,6 +255,7 @@ class CodexTimelineProjection:
             return self.custom_tool_call_content()
         if self.raw_type in {
             "function_call_output",
+            "functionCallOutput",
             "custom_tool_call_output",
             "toolResult",
         }:

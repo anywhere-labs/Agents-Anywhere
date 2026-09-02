@@ -59,6 +59,15 @@ def test_codex_sdk_lists_paginated_thread_turns_in_chronological_order() -> None
     asyncio.run(_test_codex_sdk_lists_paginated_thread_turns_in_chronological_order())
 
 
+@pytest.mark.parametrize("include_turns", [False, True])
+def test_codex_sdk_reads_full_thread_history_as_raw_mapping(
+    include_turns: bool,
+) -> None:
+    asyncio.run(
+        _test_codex_sdk_reads_full_thread_history_as_raw_mapping(include_turns)
+    )
+
+
 def test_codex_sdk_approval_mode_maps_platform_permission_modes() -> None:
     sdk = _FakeAsyncCodexSdkModule()
 
@@ -196,6 +205,40 @@ async def _test_codex_sdk_lists_paginated_thread_turns_in_chronological_order() 
                 "cursor": "older",
             },
         ),
+    ]
+
+
+async def _test_codex_sdk_reads_full_thread_history_as_raw_mapping(
+    include_turns: bool,
+) -> None:
+    native = _FakeLowLevelAsyncCodex()
+    client = CodexSdkClient(native)
+
+    result = await client.read_thread("thread_1", include_turns=include_turns)
+
+    assert isinstance(result.thread, Mapping)
+    assert result.thread["turns"] == (
+        [
+            {
+                "id": "turn_future",
+                "status": "completed",
+                "items": [
+                    {
+                        "id": "future_tool",
+                        "type": "futureTool",
+                        "futurePayload": {"preserved": True},
+                    }
+                ],
+            }
+        ]
+        if include_turns
+        else []
+    )
+    assert native.low_level.raw_requests == [
+        (
+            "thread/read",
+            {"threadId": "thread_1", "includeTurns": include_turns},
+        )
     ]
 
 
@@ -852,6 +895,31 @@ class _FakeLowLevelClient:
         response_model: Any,
     ) -> Any:
         self.raw_requests.append((method, dict(params)))
+        if method == "thread/read":
+            return response_model.model_validate(
+                {
+                    "thread": {
+                        "id": params["threadId"],
+                        "turns": (
+                            [
+                                {
+                                    "id": "turn_future",
+                                    "status": "completed",
+                                    "items": [
+                                        {
+                                            "id": "future_tool",
+                                            "type": "futureTool",
+                                            "futurePayload": {"preserved": True},
+                                        }
+                                    ],
+                                }
+                            ]
+                            if params["includeTurns"]
+                            else []
+                        ),
+                    }
+                }
+            )
         turn_id = "turn_2" if "cursor" not in params else "turn_1"
         return response_model.model_validate(
             {

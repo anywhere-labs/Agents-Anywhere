@@ -91,6 +91,12 @@ class CodexThreadTurnsListResponse(BaseModel):
     next_cursor: str | None = Field(default=None, alias="nextCursor")
 
 
+class CodexRawThreadReadResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    thread: dict[str, Any]
+
+
 class CodexSdkClient:
     """Adapter from the Codex SDK client shape to the runtime client protocol.
 
@@ -233,9 +239,20 @@ class CodexSdkClient:
         include_turns: bool = True,
     ) -> CodexThreadReadResult:
         started_at = time.monotonic()
-        thread = self._thread_handle(thread_id)
-        result = await thread.read(include_turns=include_turns)
-        projected = thread_read_result(result)
+        low_level_client = getattr(self._client, "_client", None)
+        request = getattr(low_level_client, "request", None)
+        if callable(request):
+            await ensure_codex_initialized(self._client)
+            result = await request(
+                "thread/read",
+                {"threadId": thread_id, "includeTurns": include_turns},
+                response_model=CodexRawThreadReadResponse,
+            )
+            projected = CodexThreadReadResult(thread=result.thread)
+        else:
+            thread = self._thread_handle(thread_id)
+            result = await thread.read(include_turns=include_turns)
+            projected = thread_read_result(result)
         elapsed_ms = (time.monotonic() - started_at) * 1000
         if include_turns or elapsed_ms >= 250:
             logger.info(
