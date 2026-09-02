@@ -1,12 +1,11 @@
 "use client"
 
 import * as React from "react"
-import { Check, Copy, Loader2 } from "lucide-react"
+import { Check, Copy, Loader2, SquareArrowOutUpRight } from "lucide-react"
 import { useTranslations } from "next-intl"
 import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
-import { ShareArrowIcon } from "@/components/icons/share-arrow-icon"
 import {
   Dialog,
   DialogContent,
@@ -103,7 +102,7 @@ export function TurnActions({
             onClick={() => setDialogOpen(true)}
             className="text-muted-foreground hover:text-foreground"
           >
-            <ShareArrowIcon />
+            <SquareArrowOutUpRight />
           </Button>
         </div>
       </div>
@@ -130,7 +129,7 @@ export function TurnActions({
           </div>
           <DialogFooter>
             <Button type="button" onClick={createShare} disabled={sharing}>
-              {sharing ? <Loader2 className="animate-spin" data-icon="inline-start" /> : <ShareArrowIcon data-icon="inline-start" />}
+              {sharing ? <Loader2 className="animate-spin" data-icon="inline-start" /> : <SquareArrowOutUpRight data-icon="inline-start" />}
               {t("createShareLink")}
             </Button>
           </DialogFooter>

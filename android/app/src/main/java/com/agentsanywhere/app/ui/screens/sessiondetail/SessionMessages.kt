@@ -53,6 +53,7 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
@@ -98,6 +99,7 @@ import com.composables.icons.lucide.FilePenLine
 import com.composables.icons.lucide.Hammer
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Sparkles
+import com.composables.icons.lucide.SquareArrowOutUpRight
 import com.composables.icons.lucide.SquareTerminal
 import com.composables.icons.lucide.WifiOff
 import kotlinx.coroutines.delay
@@ -566,7 +568,7 @@ private fun AgentReplyActions(
 @Composable
 private fun MessageShareButton(onClick: () -> Unit) {
     Icon(
-        painter = painterResource(R.drawable.ic_share_arrow),
+        imageVector = Lucide.SquareArrowOutUpRight,
         contentDescription = stringResource(R.string.session_share),
         tint = LocalAAColors.current.muted,
         modifier = Modifier
@@ -1398,6 +1400,7 @@ private fun MessageCopyButton(
         Image(
             painter = painterResource(iconRes),
             contentDescription = label ?: stringResource(R.string.common_copy),
+            colorFilter = ColorFilter.tint(contentColor),
             modifier = Modifier.size(17.dp),
         )
         if (label != null) {
