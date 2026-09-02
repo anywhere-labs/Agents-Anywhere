@@ -2,29 +2,39 @@ package com.agentsanywhere.app.ui.screens.sessiondetail
 
 import android.content.Context
 import android.net.Uri
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -36,11 +46,16 @@ import coil3.network.NetworkHeaders
 import coil3.network.httpHeaders
 import coil3.request.ImageRequest
 import coil3.request.crossfade
+import com.agentsanywhere.app.R
 import com.agentsanywhere.app.feature.sessiondetail.AttachmentImageRequest
 import com.agentsanywhere.app.feature.sessiondetail.SessionDetailController
 import com.agentsanywhere.app.feature.sessiondetail.TimelineAttachment
 import com.agentsanywhere.app.ui.designsystem.noRippleClickable
+import com.composables.icons.lucide.Download
+import com.composables.icons.lucide.Lucide
+import com.composables.icons.lucide.X
 import com.valentinilk.shimmer.shimmer
+import kotlinx.coroutines.launch
 import me.saket.telephoto.zoomable.coil3.ZoomableAsyncImage
 
 internal data class PendingAttachment(
@@ -78,6 +93,18 @@ internal sealed interface AttachmentPreview {
     data class Remote(val attachment: TimelineAttachment) : AttachmentPreview
 }
 
+private val AttachmentPreview.stableId: String
+    get() = when (this) {
+        is AttachmentPreview.Local -> "local:${attachment.id}"
+        is AttachmentPreview.Remote -> "remote:${attachment.fileId}"
+    }
+
+private val AttachmentPreview.name: String
+    get() = when (this) {
+        is AttachmentPreview.Local -> attachment.name
+        is AttachmentPreview.Remote -> attachment.name
+    }
+
 @Composable
 internal fun PendingAttachmentImage(
     attachment: PendingAttachment,
@@ -114,10 +141,26 @@ internal fun RemoteAttachmentImage(
 @Composable
 internal fun AttachmentPreviewDialog(
     preview: AttachmentPreview,
+    sessionImages: List<AttachmentPreview>,
     sessionId: String,
     controller: SessionDetailController,
+    onDownload: (TimelineAttachment) -> Unit,
     onDismiss: () -> Unit,
 ) {
+    val previewItems = remember(preview, sessionImages) {
+        (sessionImages + preview).distinctBy(AttachmentPreview::stableId)
+    }
+    val initialPage = remember(preview.stableId, previewItems) {
+        previewItems.indexOfFirst { it.stableId == preview.stableId }.coerceAtLeast(0)
+    }
+    val pagerState = rememberPagerState(initialPage = initialPage) { previewItems.size }
+    val thumbnailState = rememberLazyListState(initialFirstVisibleItemIndex = initialPage)
+    val scope = rememberCoroutineScope()
+
+    LaunchedEffect(pagerState.currentPage) {
+        thumbnailState.animateScrollToItem(pagerState.currentPage)
+    }
+
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(
@@ -133,33 +176,131 @@ internal fun AttachmentPreviewDialog(
                 .fillMaxSize()
                 .background(Color.Black),
         ) {
-            val imageModifier = Modifier
-                .fillMaxSize()
-                .padding(
-                    start = 18.dp,
-                    top = statusTop + 18.dp,
-                    end = 18.dp,
-                    bottom = navBottom + 18.dp,
-                )
-            when (preview) {
-                is AttachmentPreview.Local -> ZoomableAttachmentImage(
-                    model = preview.attachment.uri,
-                    name = preview.attachment.name,
-                    fallbackColor = Color(0xFFE4E4E7),
-                    modifier = imageModifier,
-                )
-                is AttachmentPreview.Remote -> ZoomableAttachmentImage(
-                    model = rememberAttachmentImageRequest(sessionId, controller, preview.attachment),
-                    name = preview.attachment.name,
-                    fallbackColor = Color(0xFFE4E4E7),
-                    modifier = imageModifier,
+            HorizontalPager(
+                state = pagerState,
+                key = { previewItems[it].stableId },
+                modifier = Modifier.fillMaxSize(),
+            ) { page ->
+                PreviewPage(
+                    preview = previewItems[page],
+                    sessionId = sessionId,
+                    controller = controller,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(
+                            start = 12.dp,
+                            top = statusTop + 68.dp,
+                            end = 12.dp,
+                            bottom = navBottom + 104.dp,
+                        ),
                 )
             }
-            PreviewCloseButton(
+
+            Row(
                 modifier = Modifier
                     .align(Alignment.TopEnd)
-                    .padding(top = statusTop + 22.dp, end = 26.dp),
-                onClick = onDismiss,
+                    .padding(top = statusTop + 12.dp, end = 16.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                val current = previewItems.getOrNull(pagerState.currentPage)
+                if (current is AttachmentPreview.Remote) {
+                    PreviewActionButton(
+                        icon = Lucide.Download,
+                        contentDescription = stringResource(R.string.session_attachment_save),
+                        onClick = { onDownload(current.attachment) },
+                    )
+                }
+                PreviewActionButton(
+                    icon = Lucide.X,
+                    contentDescription = stringResource(R.string.common_close),
+                    onClick = onDismiss,
+                )
+            }
+
+            LazyRow(
+                state = thumbnailState,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .padding(bottom = navBottom + 14.dp),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                itemsIndexed(
+                    items = previewItems,
+                    key = { _, item -> item.stableId },
+                ) { index, item ->
+                    PreviewThumbnail(
+                        preview = item,
+                        selected = index == pagerState.currentPage,
+                        sessionId = sessionId,
+                        controller = controller,
+                        onClick = { scope.launch { pagerState.animateScrollToPage(index) } },
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PreviewPage(
+    preview: AttachmentPreview,
+    sessionId: String,
+    controller: SessionDetailController,
+    modifier: Modifier,
+) {
+    when (preview) {
+        is AttachmentPreview.Local -> ZoomableAttachmentImage(
+            model = preview.attachment.uri,
+            name = preview.name,
+            fallbackColor = Color(0xFFE4E4E7),
+            modifier = modifier,
+        )
+        is AttachmentPreview.Remote -> ZoomableAttachmentImage(
+            model = rememberAttachmentImageRequest(sessionId, controller, preview.attachment),
+            name = preview.name,
+            fallbackColor = Color(0xFFE4E4E7),
+            modifier = modifier,
+        )
+    }
+}
+
+@Composable
+private fun PreviewThumbnail(
+    preview: AttachmentPreview,
+    selected: Boolean,
+    sessionId: String,
+    controller: SessionDetailController,
+    onClick: () -> Unit,
+) {
+    val shape = RoundedCornerShape(8.dp)
+    val selectionModifier = if (selected) {
+        Modifier.border(2.dp, Color(0xFFF4F4F5), shape)
+    } else {
+        Modifier
+    }
+    Box(
+        modifier = Modifier
+            .size(58.dp)
+            .then(selectionModifier)
+            .padding(if (selected) 3.dp else 0.dp)
+            .clip(shape)
+            .background(Color(0xFF27272A))
+            .noRippleClickable(onClick = onClick),
+    ) {
+        when (preview) {
+            is AttachmentPreview.Local -> PendingAttachmentImage(
+                attachment = preview.attachment,
+                modifier = Modifier.fillMaxSize(),
+            )
+            is AttachmentPreview.Remote -> RemoteAttachmentImage(
+                sessionId = sessionId,
+                controller = controller,
+                attachment = preview.attachment,
+                modifier = Modifier.fillMaxSize(),
+                fallbackColor = Color(0xFFA1A1AA),
             )
         }
     }
@@ -272,36 +413,25 @@ private fun ZoomableAttachmentImage(
 }
 
 @Composable
-private fun PreviewCloseButton(
-    modifier: Modifier,
+private fun PreviewActionButton(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    contentDescription: String,
     onClick: () -> Unit,
 ) {
     Box(
-        modifier = modifier
-            .size(54.dp)
+        modifier = Modifier
+            .size(46.dp)
             .clip(CircleShape)
-            .background(Color(0xF2262628))
-            .border(1.dp, Color(0x33FFFFFF), CircleShape)
+            .background(Color(0xD93F3F46))
             .noRippleClickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        Canvas(modifier = Modifier.size(22.dp)) {
-            val stroke = 2.4.dp.toPx()
-            drawLine(
-                color = Color.White,
-                start = androidx.compose.ui.geometry.Offset(2.dp.toPx(), 2.dp.toPx()),
-                end = androidx.compose.ui.geometry.Offset(size.width - 2.dp.toPx(), size.height - 2.dp.toPx()),
-                strokeWidth = stroke,
-                cap = StrokeCap.Round,
-            )
-            drawLine(
-                color = Color.White,
-                start = androidx.compose.ui.geometry.Offset(size.width - 2.dp.toPx(), 2.dp.toPx()),
-                end = androidx.compose.ui.geometry.Offset(2.dp.toPx(), size.height - 2.dp.toPx()),
-                strokeWidth = stroke,
-                cap = StrokeCap.Round,
-            )
-        }
+        Icon(
+            imageVector = icon,
+            contentDescription = contentDescription,
+            tint = Color(0xFFF4F4F5),
+            modifier = Modifier.size(22.dp),
+        )
     }
 }
 

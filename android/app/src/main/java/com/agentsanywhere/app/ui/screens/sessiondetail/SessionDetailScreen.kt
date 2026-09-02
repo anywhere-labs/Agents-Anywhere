@@ -1,6 +1,7 @@
 package com.agentsanywhere.app.ui.screens.sessiondetail
 
 import android.Manifest
+import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -73,6 +74,7 @@ import com.agentsanywhere.app.api.AttachmentTransferFailure
 import com.agentsanywhere.app.api.UploadFilePart
 import com.agentsanywhere.app.feature.files.FilesController
 import com.agentsanywhere.app.feature.realtime.SessionRealtimeController
+import com.agentsanywhere.app.feature.sessiondetail.DownloadedAttachment
 import com.agentsanywhere.app.feature.sessiondetail.SessionDetailController
 import com.agentsanywhere.app.feature.sessiondetail.SessionMeta
 import com.agentsanywhere.app.feature.sessiondetail.SessionDetailState
@@ -196,6 +198,8 @@ fun SessionDetailScreen(
     var preparedPermissionError by remember(preparedSession) { mutableStateOf<String?>(null) }
     var takeoverConfirm by remember(sessionId) { mutableStateOf<Boolean?>(null) }
     var previewImage by remember(sessionId) { mutableStateOf<AttachmentPreview?>(null) }
+    var pendingAttachmentSave by remember(sessionId) { mutableStateOf<DownloadedAttachment?>(null) }
+    var attachmentSaveInFlight by remember(sessionId) { mutableStateOf(false) }
     var showCamera by remember(sessionId) { mutableStateOf(false) }
     var showDeviceOffline by remember(sessionId) { mutableStateOf(false) }
     var pendingOpenFilePath by remember(sessionId) { mutableStateOf<String?>(null) }
@@ -271,6 +275,58 @@ fun SessionDetailScreen(
         if (copyText.isBlank()) return
         clipboard.setText(AnnotatedString(copyText))
         showToast(context.getString(R.string.common_copied))
+    }
+
+    val attachmentSaveLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult(),
+    ) { result ->
+        val downloaded = pendingAttachmentSave
+        val destination = result.data?.data
+        pendingAttachmentSave = null
+        attachmentSaveInFlight = false
+        if (result.resultCode != Activity.RESULT_OK || destination == null || downloaded == null) {
+            return@rememberLauncherForActivityResult
+        }
+        scope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    context.contentResolver.openOutputStream(destination, "w")?.use { output ->
+                        output.write(downloaded.bytes)
+                    } ?: error("Unable to open attachment destination")
+                }
+            }.onSuccess {
+                showToast(context.getString(R.string.session_attachment_saved))
+            }.onFailure {
+                showError(context.getString(R.string.session_attachment_save_failed))
+            }
+        }
+    }
+
+    fun saveAttachment(attachment: TimelineAttachment) {
+        val id = sessionId ?: return
+        if (attachmentSaveInFlight) return
+        attachmentSaveInFlight = true
+        scope.launch {
+            controller.downloadAttachment(id, attachment)
+                .onSuccess { downloaded ->
+                    pendingAttachmentSave = downloaded
+                    val saveIntent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+                        addCategory(Intent.CATEGORY_OPENABLE)
+                        type = downloaded.mediaType.ifBlank { "image/*" }
+                        putExtra(Intent.EXTRA_TITLE, downloaded.name)
+                    }
+                    runCatching { attachmentSaveLauncher.launch(saveIntent) }
+                        .onFailure {
+                            pendingAttachmentSave = null
+                            attachmentSaveInFlight = false
+                            showError(context.getString(R.string.session_attachment_save_failed))
+                        }
+                }
+                .onFailure { error ->
+                    attachmentSaveInFlight = false
+                    showError(attachmentErrorMessage(error, R.string.session_attachment_download_failed))
+                }
+        }
     }
 
     fun openReferencedFile(path: String) {
@@ -1694,11 +1750,20 @@ fun SessionDetailScreen(
         )
     }
 
+    val sessionImagePreviews = remember(state.messages) {
+        state.messages
+            .flatMap(TimelineMessage::attachments)
+            .filter(TimelineAttachment::isImage)
+            .distinctBy(TimelineAttachment::fileId)
+            .map(AttachmentPreview::Remote)
+    }
     previewImage?.let { preview ->
         AttachmentPreviewDialog(
             preview = preview,
+            sessionImages = sessionImagePreviews,
             sessionId = sessionId.orEmpty(),
             controller = controller,
+            onDownload = ::saveAttachment,
             onDismiss = { previewImage = null },
         )
     }

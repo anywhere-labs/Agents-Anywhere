@@ -314,6 +314,9 @@
     <string name="session_attachment_upload_empty">Upload returned no file.</string>
     <string name="session_attachment_upload_failed">Could not upload attachment.</string>
     <string name="session_attachment_download_failed">Could not download attachment.</string>
+    <string name="session_attachment_save">Save image</string>
+    <string name="session_attachment_saved">Image saved.</string>
+    <string name="session_attachment_save_failed">Could not save image.</string>
     <string name="session_attachment_open_failed">No app can open this attachment.</string>
     <string name="session_attachment_base64_invalid">The downloaded attachment is corrupted.</string>
     <string name="session_attachment_upload_incomplete">The server returned an incomplete attachment upload.</string>

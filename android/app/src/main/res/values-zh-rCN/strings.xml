@@ -313,6 +313,9 @@
     <string name="session_attachment_upload_empty">上传结果为空。</string>
     <string name="session_attachment_upload_failed">附件上传失败。</string>
     <string name="session_attachment_download_failed">无法下载附件。</string>
+    <string name="session_attachment_save">保存图片</string>
+    <string name="session_attachment_saved">图片已保存。</string>
+    <string name="session_attachment_save_failed">无法保存图片。</string>
     <string name="session_attachment_open_failed">没有应用可以打开这个附件。</string>
     <string name="session_attachment_base64_invalid">下载的附件内容已损坏。</string>
     <string name="session_attachment_upload_incomplete">服务端返回的附件上传结果不完整。</string>
