@@ -40,6 +40,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Spinner } from "@/components/ui/spinner"
@@ -56,6 +57,7 @@ import { useWorkspace } from "@/components/workspace-context"
 import { SessionFilterMenu } from "@/components/session-filter-menu"
 import { useAuth } from "@/components/auth/auth-context"
 import { dashboardApi } from "@/features/dashboard/api"
+import { useDesktopConnector } from "@/features/desktop/desktop-connector-context"
 import { useTranslations } from "next-intl"
 
 export function AppSidebar({ contained = false }: { contained?: boolean }) {
@@ -81,6 +83,7 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
     loadMoreSessions,
   } = useWorkspace()
   const { signOut, me, session: authSession } = useAuth()
+  const { isLocalConnector } = useDesktopConnector()
   const t = useTranslations("dashboard")
   const tCommon = useTranslations("common")
   const [signOutOpen, setSignOutOpen] = React.useState(false)
@@ -160,6 +163,7 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
                   <DeviceSidebarItem
                     key={connector.id}
                     connector={connector}
+                    isLocal={isLocalConnector(connector.id)}
                     isActive={
                       (page === "device" || page === "device-workspace") &&
                       activeConnectorId === connector.id
@@ -620,14 +624,17 @@ function SessionSidebarIndicator({
 
 function DeviceSidebarItem({
   connector,
+  isLocal,
   isActive,
   onOpen,
 }: {
   connector: { id: string; name: string; status: string }
+  isLocal: boolean
   isActive: boolean
   onOpen: () => void
 }) {
   const t = useTranslations("dashboard")
+  const tCommon = useTranslations("common")
 
   const copyDeviceId = async () => {
     try {
@@ -654,9 +661,14 @@ function DeviceSidebarItem({
                   connector.status === "online" ? "bg-emerald-500" : "bg-muted-foreground/40",
                 )}
               />
-              <span className={cn(connector.status === "offline" && "text-muted-foreground")}>
+              <span className={cn("min-w-0 flex-1 truncate", connector.status === "offline" && "text-muted-foreground")}>
                 {connector.name}
               </span>
+              {isLocal ? (
+                <Badge variant="secondary" className="ml-auto h-4 px-1.5 text-[10px] leading-none">
+                  {tCommon("localDevice")}
+                </Badge>
+              ) : null}
             </SidebarMenuButton>
           </div>
         </ContextMenuTrigger>

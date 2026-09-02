@@ -844,6 +844,11 @@ export function DevicePage() {
               {connector.name}
             </button>
           )}
+          {isLocalDesktop ? (
+            <Badge variant="secondary" className="shrink-0 px-2 text-xs font-medium">
+              {tCommon("localDevice")}
+            </Badge>
+          ) : null}
           <div className="flex items-center gap-1.5 text-sm">
             {connector.status === "online" ? (
               <CheckCircle2 className="size-4 text-emerald-500" />
