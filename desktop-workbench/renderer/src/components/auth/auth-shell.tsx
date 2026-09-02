@@ -6,7 +6,7 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex min-h-screen flex-col bg-background">
       {/* Top nav */}
-      <header className="aa-window-drag flex shrink-0 items-center justify-between pb-5 pl-24 pr-8 pt-12">
+      <header className="aa-window-drag flex shrink-0 items-center justify-between pb-5 pl-6 pr-8 pt-12">
         <span className="aa-wordmark hidden text-xl md:inline">Agents Anywhere</span>
         <nav className="aa-window-no-drag flex items-center gap-4 text-sm text-muted-foreground">
           <a
