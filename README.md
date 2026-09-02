@@ -220,6 +220,12 @@ Connector 默认不随主栈启动；需要同时调试本地 Connector 时，�
 本地 PostgreSQL/Redis 数据卷并从空数据库重新执行迁移。确认不再需要数据后再使用
 `--reset-data`。
 
+默认只监听本机回环地址。需要让同一局域网内的手机或其他设备访问时，使用
+`./local-up.sh --listen`（等价于 `--listen 0.0.0.0`）；也可以传入指定监听地址。
+启动摘要会打印检测到的 LAN Web/Server 地址，无法自动探测时可设置
+`AGENTS_ANYWHERE_LAN_HOST`。这只是局域网监听，不包含公网反向代理、TLS 或防火墙配置；
+直接暴露到公网前请自行配置访问控制和网络边界。
+
 `dev-control.sh` 是可选的、独立的后台管理器。栈启动后可以在另一个终端运行
 `./dev-control.sh start` 打开状态页面；前台 `local-up.sh` 运行期间页面只提供状态，
 不会接管或重启这些进程。要停止前台栈，请回到它的终端按 `Ctrl-C`；不要用

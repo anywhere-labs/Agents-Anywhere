@@ -222,6 +222,15 @@ Server hot reload, and `--reset-data` removes the local PostgreSQL/Redis
 volumes before applying migrations to an empty database. Use `--reset-data`
 only when the local data can be discarded.
 
+The default binding is loopback-only. To let phones or other devices on the
+same LAN connect, run `./local-up.sh --listen` (equivalent to
+`--listen 0.0.0.0`), or pass a specific listen address. The startup summary
+prints the detected LAN Web/Server addresses; set `AGENTS_ANYWHERE_LAN_HOST`
+when automatic detection is not suitable. This only enables LAN binding; it
+does not configure a public reverse proxy, TLS, or firewall. Configure access
+control and network boundaries before exposing the service to the public
+Internet.
+
 `dev-control.sh` is an optional, independent detached manager. After starting
 the stack, you can run `./dev-control.sh start` in another terminal to open
 its status page. While a foreground `local-up.sh` owns the stack, Dev Control
