@@ -36,6 +36,7 @@ import {
   ResizablePanelGroup,
 } from "@/components/ui/resizable"
 import { useTranslations } from "next-intl"
+import { DesktopConnectorProvider } from "@/features/desktop/desktop-connector-context"
 
 const SIDEBAR_LAYOUT_STORAGE_KEY = "agents-anywhere-dashboard-sidebar-layout"
 const DEFAULT_DESKTOP_LAYOUT = {
@@ -46,9 +47,11 @@ const DEFAULT_DESKTOP_LAYOUT = {
 export function Demo() {
   return (
     <WorkspaceProvider>
-      <SidebarProvider>
-        <DashboardShell />
-      </SidebarProvider>
+      <DesktopConnectorProvider>
+        <SidebarProvider>
+          <DashboardShell />
+        </SidebarProvider>
+      </DesktopConnectorProvider>
     </WorkspaceProvider>
   )
 }

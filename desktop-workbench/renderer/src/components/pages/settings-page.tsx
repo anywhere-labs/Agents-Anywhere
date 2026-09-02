@@ -6,6 +6,10 @@ import {
   Camera,
   ChevronDown,
   ChevronLeft,
+  Download,
+  FolderOpen,
+  Laptop,
+  Power,
   RotateCw,
   Settings,
   Sun,
@@ -47,6 +51,7 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { Separator } from "@/components/ui/separator"
 import { Slider } from "@/components/ui/slider"
 import { Spinner } from "@/components/ui/spinner"
+import { Switch } from "@/components/ui/switch"
 import { MobileSignInPanel } from "@/components/pages/mobile-signin-panel"
 import { DashboardSidebarToggle } from "@/components/dashboard-sidebar-toggle"
 import { useAuth } from "@/components/auth/auth-context"
@@ -55,16 +60,22 @@ import { LoadingState } from "@/components/loading-state"
 import { useWorkspace } from "@/components/workspace-context"
 import { authApi } from "@/features/auth/api"
 import type { AuthMe } from "@/features/auth/types"
+import { useDesktopConnector } from "@/features/desktop/desktop-connector-context"
+import {
+  getDesktopWorkbenchBridge,
+  type DesktopConnectorLog,
+} from "@/features/desktop/bridge"
 import { cn } from "@/lib/utils"
 
-type SettingsTab = "account" | "agent" | "appearance"
+type SettingsTab = "account" | "desktop" | "agent" | "appearance"
 type AppearanceMode = "light" | "dark" | "auto"
 
 const AVATAR_OUTPUT_SIZE = 256
 const AVATAR_MAX_FILE_SIZE = 8 * 1024 * 1024
 
-const navItems: { id: SettingsTab; labelKey: "account" | "agent" | "appearance"; icon: typeof User }[] = [
+const navItems: { id: SettingsTab; labelKey: "account" | "desktop" | "agent" | "appearance"; icon: typeof User }[] = [
   { id: "account", labelKey: "account", icon: User },
+  { id: "desktop", labelKey: "desktop", icon: Laptop },
   { id: "agent", labelKey: "agent", icon: Settings },
   { id: "appearance", labelKey: "appearance", icon: Sun },
 ]
@@ -176,6 +187,520 @@ function AccountTab({
       />
     </div>
   )
+}
+
+function DesktopTab() {
+  const t = useTranslations("pages.settings")
+  const {
+    supported,
+    loading,
+    busy,
+    state,
+    binding,
+    reconnect,
+    restart,
+    saveSettings,
+    openDataFolder,
+  } = useDesktopConnector()
+  const [logs, setLogs] = React.useState<DesktopConnectorLog[]>([])
+  const [logsLoading, setLogsLoading] = React.useState(false)
+  const [clearingLogs, setClearingLogs] = React.useState(false)
+  const [exportingLogs, setExportingLogs] = React.useState(false)
+  const [advancedSaving, setAdvancedSaving] = React.useState(false)
+  const [connectorConfigSaving, setConnectorConfigSaving] = React.useState(false)
+  const [connectorConfigDraft, setConnectorConfigDraft] = React.useState({
+    heartbeatSeconds: 20,
+    reconnectSeconds: 3,
+    syncIntervalSeconds: 30,
+    syncExistingOnConnect: true,
+  })
+  const [advancedDraft, setAdvancedDraft] = React.useState({
+    uvPath: "",
+    uvPypiIndexUrl: "",
+    logChunkSizeKb: 512,
+    logRetainChunks: 20,
+    logRetentionDays: 14,
+  })
+  const connectorId = binding?.connectorId ?? state?.connectorId ?? null
+  const serverUrl = binding?.serverUrl || state?.serverUrl || null
+  const needsReconnect = Boolean(
+    connectorId && (state?.authFailed || state?.manualDisconnected),
+  )
+  const connectorIsRunning = Boolean(
+    !needsReconnect && (state?.running || state?.status === "running" || state?.status === "online"),
+  )
+  const statusKey = needsReconnect
+    ? "desktopDisconnected"
+    : connectorIsRunning
+      ? "desktopOnline"
+      : state?.status === "starting" || state?.status === "reconnecting"
+        ? "desktopConnecting"
+        : connectorId
+          ? "desktopStopped"
+          : "desktopNotConfigured"
+
+  React.useEffect(() => {
+    setAdvancedDraft({
+      uvPath: state?.uvPath ?? "",
+      uvPypiIndexUrl: state?.uvPypiIndexUrl ?? "",
+      logChunkSizeKb: state?.logChunkSizeKb ?? 512,
+      logRetainChunks: state?.logRetainChunks ?? 20,
+      logRetentionDays: state?.logRetentionDays ?? 14,
+    })
+  }, [state?.logChunkSizeKb, state?.logRetainChunks, state?.logRetentionDays, state?.uvPath, state?.uvPypiIndexUrl])
+
+  const loadLogs = React.useCallback(async () => {
+    const bridge = getDesktopWorkbenchBridge()
+    if (!bridge?.connector) return
+    setLogsLoading(true)
+    try {
+      const page = await bridge.connector.getLogs({ pageSize: 200 })
+      setLogs(page.items)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t("desktopLogsLoadFailed"))
+    } finally {
+      setLogsLoading(false)
+    }
+  }, [t])
+
+  const loadConnectorConfig = React.useCallback(async () => {
+    const bridge = getDesktopWorkbenchBridge()
+    if (!bridge?.connector || !connectorId) return
+    try {
+      const config = await bridge.connector.getConfig()
+      if (!config) return
+      setConnectorConfigDraft({
+        heartbeatSeconds: config.heartbeatSeconds ?? 20,
+        reconnectSeconds: config.reconnectSeconds ?? 3,
+        syncIntervalSeconds: config.syncIntervalSeconds ?? 30,
+        syncExistingOnConnect: config.syncExistingOnConnect ?? true,
+      })
+    } catch {
+      // An unconfigured Desktop has no Connector config to load yet.
+    }
+  }, [connectorId])
+
+  React.useEffect(() => {
+    const bridge = getDesktopWorkbenchBridge()
+    if (!supported || !bridge?.connector) return
+    void loadLogs()
+    void loadConnectorConfig()
+    const unsubscribeLog = bridge.connector.onLog((entry) => {
+      setLogs((current) => [...current.slice(-199), entry])
+    })
+    const unsubscribeCleared = bridge.connector.onLogsCleared(() => setLogs([]))
+    return () => {
+      if (typeof unsubscribeLog === "function") unsubscribeLog()
+      if (typeof unsubscribeCleared === "function") unsubscribeCleared()
+    }
+  }, [loadConnectorConfig, loadLogs, supported])
+
+  const clearLogs = async () => {
+    const bridge = getDesktopWorkbenchBridge()
+    if (!bridge?.connector || clearingLogs) return
+    setClearingLogs(true)
+    try {
+      await bridge.connector.clearLogs()
+      setLogs([])
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t("desktopLogsClearFailed"))
+    } finally {
+      setClearingLogs(false)
+    }
+  }
+
+  const exportLogs = async () => {
+    const bridge = getDesktopWorkbenchBridge()
+    if (!bridge?.connector?.exportLogs || exportingLogs) return
+    setExportingLogs(true)
+    try {
+      const result = await bridge.connector.exportLogs()
+      if (!result.canceled) toast.success(t("desktopLogsExported", { count: result.count }))
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t("desktopLogsExportFailed"))
+    } finally {
+      setExportingLogs(false)
+    }
+  }
+
+  const saveAdvancedSettings = async () => {
+    if (advancedSaving) return
+    setAdvancedSaving(true)
+    try {
+      const saved = await saveSettings(advancedDraft)
+      if (saved) toast.success(t("desktopAdvancedSaved"))
+    } finally {
+      setAdvancedSaving(false)
+    }
+  }
+
+  const saveConnectorConfig = async () => {
+    const bridge = getDesktopWorkbenchBridge()
+    if (!bridge?.connector || connectorConfigSaving || !connectorId) return
+    setConnectorConfigSaving(true)
+    try {
+      await bridge.connector.saveConfig(connectorConfigDraft)
+      toast.success(t("desktopConnectorConfigSaved"))
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t("desktopConnectorConfigFailed"))
+    } finally {
+      setConnectorConfigSaving(false)
+    }
+  }
+
+  if (!supported) {
+    return (
+      <section className="rounded-xl border border-border bg-card px-6 py-6">
+        <h2 className="text-base font-semibold">{t("desktop")}</h2>
+        <p className="mt-1 text-sm text-muted-foreground">{t("desktopUnavailable")}</p>
+      </section>
+    )
+  }
+
+  if (loading && !state) return <LoadingState className="min-h-64" />
+
+  return (
+    <div className="flex flex-col gap-4">
+      <section className="rounded-xl border border-border bg-card">
+        <div className="flex flex-wrap items-center justify-between gap-4 px-6 py-5">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <h2 className="text-base font-semibold">{binding?.name || t("thisDesktop")}</h2>
+              <span
+                className={cn(
+                  "inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium",
+                  connectorIsRunning
+                    ? "bg-emerald-500/10 text-emerald-600"
+                    : needsReconnect
+                      ? "bg-destructive/10 text-destructive"
+                      : "bg-muted text-muted-foreground",
+                )}
+              >
+                <span
+                  className={cn(
+                    "size-1.5 rounded-full",
+                    connectorIsRunning
+                      ? "bg-emerald-500"
+                      : needsReconnect
+                        ? "bg-destructive"
+                        : "bg-muted-foreground/60",
+                  )}
+                />
+                {t(statusKey)}
+              </span>
+            </div>
+            <p className="mt-1 text-sm text-muted-foreground">{t("desktopDescription")}</p>
+          </div>
+          {needsReconnect ? (
+            <Button type="button" size="sm" onClick={() => void reconnect()} disabled={busy}>
+              {busy ? <Spinner /> : <Power data-icon="inline-start" />}
+              {busy ? t("desktopReconnecting") : t("desktopReconnect")}
+            </Button>
+          ) : null}
+        </div>
+        <Separator />
+        <div className="divide-y divide-border">
+          <div className="flex min-w-0 items-center px-6 py-4">
+            <span className="w-36 shrink-0 text-sm text-muted-foreground">{t("desktopConnectorId")}</span>
+            <span className="code-mono truncate text-sm">{connectorId ?? t("desktopNotConfigured")}</span>
+          </div>
+          <div className="flex min-w-0 items-center px-6 py-4">
+            <span className="w-36 shrink-0 text-sm text-muted-foreground">{t("desktopServer")}</span>
+            <span className="code-mono truncate text-sm">{serverUrl ?? "—"}</span>
+          </div>
+          {state?.lastError ? (
+            <div className="flex min-w-0 items-start px-6 py-4">
+              <span className="w-36 shrink-0 text-sm text-muted-foreground">{t("desktopLastError")}</span>
+              <span className="min-w-0 text-sm text-destructive">{state.lastError}</span>
+            </div>
+          ) : null}
+        </div>
+      </section>
+
+      <section className="rounded-xl border border-border bg-card">
+        <div className="px-6 py-5">
+          <h2 className="text-base font-semibold">{t("desktopAdvanced")}</h2>
+          <p className="mt-0.5 text-sm text-muted-foreground">{t("desktopAdvancedDescription")}</p>
+        </div>
+        <Separator />
+        <div className="grid gap-5 px-6 py-5 sm:grid-cols-3">
+          <label className="flex min-w-0 flex-col gap-2 sm:col-span-3">
+            <span className="text-sm font-medium">{t("desktopUvPath")}</span>
+            <Input
+              value={advancedDraft.uvPath}
+              placeholder={state?.resolvedUvPath || t("desktopUvPathAuto")}
+              onChange={(event) => setAdvancedDraft((current) => ({ ...current, uvPath: event.currentTarget.value }))}
+            />
+            <span className="text-xs text-muted-foreground">{t("desktopUvPathDescription")}</span>
+          </label>
+          <label className="flex min-w-0 flex-col gap-2 sm:col-span-3">
+            <span className="text-sm font-medium">{t("desktopUvPypiIndexUrl")}</span>
+            <Input
+              type="url"
+              value={advancedDraft.uvPypiIndexUrl}
+              placeholder={t("desktopUvPypiIndexUrlPlaceholder")}
+              onChange={(event) => setAdvancedDraft((current) => ({ ...current, uvPypiIndexUrl: event.currentTarget.value }))}
+            />
+            <span className="text-xs text-muted-foreground">{t("desktopUvPypiIndexUrlDescription")}</span>
+          </label>
+          <DesktopNumberSetting
+            label={t("desktopLogChunkSize")}
+            value={advancedDraft.logChunkSizeKb}
+            min={64}
+            max={10240}
+            onChange={(value) => setAdvancedDraft((current) => ({ ...current, logChunkSizeKb: value }))}
+          />
+          <DesktopNumberSetting
+            label={t("desktopLogRetainChunks")}
+            value={advancedDraft.logRetainChunks}
+            min={1}
+            max={200}
+            onChange={(value) => setAdvancedDraft((current) => ({ ...current, logRetainChunks: value }))}
+          />
+          <DesktopNumberSetting
+            label={t("desktopLogRetentionDays")}
+            value={advancedDraft.logRetentionDays}
+            min={1}
+            max={365}
+            onChange={(value) => setAdvancedDraft((current) => ({ ...current, logRetentionDays: value }))}
+          />
+        </div>
+        <Separator />
+        <div className="flex justify-end px-6 py-4">
+          <Button type="button" size="sm" onClick={() => void saveAdvancedSettings()} disabled={advancedSaving || busy}>
+            {advancedSaving ? <Spinner /> : <Settings data-icon="inline-start" />}
+            {advancedSaving ? t("saving") : t("saveChanges")}
+          </Button>
+        </div>
+      </section>
+
+      <section className="rounded-xl border border-border bg-card">
+        <div className="px-6 py-5">
+          <h2 className="text-base font-semibold">{t("desktopConnectorConfig")}</h2>
+          <p className="mt-0.5 text-sm text-muted-foreground">{t("desktopConnectorConfigDescription")}</p>
+        </div>
+        <Separator />
+        <div className="grid gap-5 px-6 py-5 sm:grid-cols-3">
+          <DesktopNumberSetting
+            label={t("desktopHeartbeatSeconds")}
+            value={connectorConfigDraft.heartbeatSeconds}
+            min={1}
+            max={3600}
+            onChange={(value) => setConnectorConfigDraft((current) => ({ ...current, heartbeatSeconds: value }))}
+          />
+          <DesktopNumberSetting
+            label={t("desktopReconnectSeconds")}
+            value={connectorConfigDraft.reconnectSeconds}
+            min={1}
+            max={3600}
+            onChange={(value) => setConnectorConfigDraft((current) => ({ ...current, reconnectSeconds: value }))}
+          />
+          <DesktopNumberSetting
+            label={t("desktopSyncIntervalSeconds")}
+            value={connectorConfigDraft.syncIntervalSeconds}
+            min={1}
+            max={86400}
+            onChange={(value) => setConnectorConfigDraft((current) => ({ ...current, syncIntervalSeconds: value }))}
+          />
+        </div>
+        <Separator />
+        <DesktopSettingSwitch
+          label={t("desktopSyncExisting")}
+          description={t("desktopSyncExistingDescription")}
+          checked={connectorConfigDraft.syncExistingOnConnect}
+          disabled={connectorConfigSaving || !connectorId}
+          onCheckedChange={(checked) => setConnectorConfigDraft((current) => ({ ...current, syncExistingOnConnect: checked }))}
+        />
+        <Separator />
+        <div className="flex justify-end px-6 py-4">
+          <Button type="button" size="sm" onClick={() => void saveConnectorConfig()} disabled={connectorConfigSaving || !connectorId}>
+            {connectorConfigSaving ? <Spinner /> : <Settings data-icon="inline-start" />}
+            {connectorConfigSaving ? t("saving") : t("saveChanges")}
+          </Button>
+        </div>
+      </section>
+
+      <section className="rounded-xl border border-border bg-card">
+        <div className="flex flex-wrap items-center justify-between gap-3 px-6 py-5">
+          <div>
+            <h2 className="text-base font-semibold">{t("desktopLogs")}</h2>
+            <p className="mt-0.5 text-sm text-muted-foreground">{t("desktopLogsDescription")}</p>
+          </div>
+          <div className="flex gap-2">
+            {getDesktopWorkbenchBridge()?.connector?.exportLogs ? (
+              <Button type="button" variant="outline" size="sm" onClick={() => void exportLogs()} disabled={exportingLogs}>
+                {exportingLogs ? <Spinner /> : <Download data-icon="inline-start" />}
+                {t("desktopExportLogs")}
+              </Button>
+            ) : null}
+            <Button type="button" variant="outline" size="sm" onClick={() => void loadLogs()} disabled={logsLoading}>
+              {logsLoading ? <Spinner /> : <RotateCw data-icon="inline-start" />}
+              {t("desktopRefreshLogs")}
+            </Button>
+            <Button type="button" variant="outline" size="sm" onClick={() => void clearLogs()} disabled={clearingLogs || logs.length === 0}>
+              {clearingLogs ? <Spinner /> : <Trash2 data-icon="inline-start" />}
+              {t("desktopClearLogs")}
+            </Button>
+          </div>
+        </div>
+        <Separator />
+        <div className="max-h-80 min-h-40 overflow-y-auto bg-muted/20 px-4 py-3">
+          {logs.length === 0 ? (
+            <div className="flex min-h-32 items-center justify-center text-sm text-muted-foreground">
+              {logsLoading ? t("desktopLoadingLogs") : t("desktopNoLogs")}
+            </div>
+          ) : (
+            <div className="flex flex-col gap-1 font-mono text-xs">
+              {logs.map((entry, index) => (
+                <div
+                  key={entry.seq ?? entry.id ?? `${entry.time ?? entry.timestamp ?? "log"}-${index}`}
+                  className="grid grid-cols-[auto_auto_minmax(0,1fr)] gap-2 rounded px-2 py-1 hover:bg-muted/60"
+                >
+                  <span className="text-muted-foreground">{formatDesktopLogTime(entry.time ?? entry.timestamp)}</span>
+                  <span className={desktopLogLevelClass(entry.level)}>{entry.level ?? "INFO"}</span>
+                  <span className="min-w-0 whitespace-pre-wrap break-words text-foreground/90">{entry.message}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </section>
+
+      <section className="rounded-xl border border-border bg-card">
+        <div className="px-6 py-5">
+          <h2 className="text-base font-semibold">{t("desktopStartup")}</h2>
+          <p className="mt-0.5 text-sm text-muted-foreground">{t("desktopStartupDescription")}</p>
+        </div>
+        <Separator />
+        <div className="divide-y divide-border">
+          <DesktopSettingSwitch
+            label={t("desktopOpenAtLogin")}
+            description={t("desktopOpenAtLoginDescription")}
+            checked={Boolean(state?.openAtLogin)}
+            disabled={busy}
+            onCheckedChange={(checked) => void saveSettings({ openAtLogin: checked })}
+          />
+          <DesktopSettingSwitch
+            label={t("desktopStartConnector")}
+            description={t("desktopStartConnectorDescription")}
+            checked={Boolean(state?.startConnectorOnLaunch)}
+            disabled={busy}
+            onCheckedChange={(checked) => void saveSettings({ startConnectorOnLaunch: checked })}
+          />
+          <DesktopSettingSwitch
+            label={t("desktopSilentLaunch")}
+            description={t("desktopSilentLaunchDescription")}
+            checked={Boolean(state?.silentLaunch)}
+            disabled={busy || !state?.openAtLogin}
+            onCheckedChange={(checked) => void saveSettings({ silentLaunch: checked })}
+          />
+        </div>
+      </section>
+
+      <section className="rounded-xl border border-border bg-card">
+        <div className="flex flex-wrap items-center justify-between gap-4 px-6 py-5">
+          <div className="min-w-0">
+            <h2 className="text-base font-semibold">{t("desktopMaintenance")}</h2>
+            <p className="mt-0.5 text-sm text-muted-foreground">{t("desktopMaintenanceDescription")}</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" variant="outline" size="sm" onClick={() => void openDataFolder()}>
+              <FolderOpen data-icon="inline-start" />
+              {t("desktopOpenDataFolder")}
+            </Button>
+            {getDesktopWorkbenchBridge()?.connector?.openLogsFolder ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => void getDesktopWorkbenchBridge()?.connector?.openLogsFolder?.()}
+              >
+                <FolderOpen data-icon="inline-start" />
+                {t("desktopOpenLogsFolder")}
+              </Button>
+            ) : null}
+            <Button type="button" variant="outline" size="sm" onClick={() => void restart()} disabled={busy || !connectorId || needsReconnect}>
+              {busy ? <Spinner /> : <RotateCw data-icon="inline-start" />}
+              {t("desktopRestartConnector")}
+            </Button>
+          </div>
+        </div>
+      </section>
+    </div>
+  )
+}
+
+function DesktopSettingSwitch({
+  label,
+  description,
+  checked,
+  disabled,
+  onCheckedChange,
+}: {
+  label: string
+  description: string
+  checked: boolean
+  disabled: boolean
+  onCheckedChange: (checked: boolean) => void
+}) {
+  return (
+    <div className="flex items-center justify-between gap-6 px-6 py-4">
+      <div className="min-w-0">
+        <p className="text-sm font-medium">{label}</p>
+        <p className="mt-0.5 text-xs text-muted-foreground">{description}</p>
+      </div>
+      <Switch checked={checked} disabled={disabled} onCheckedChange={onCheckedChange} />
+    </div>
+  )
+}
+
+function DesktopNumberSetting({
+  label,
+  value,
+  min,
+  max,
+  onChange,
+}: {
+  label: string
+  value: number
+  min: number
+  max: number
+  onChange: (value: number) => void
+}) {
+  return (
+    <label className="flex min-w-0 flex-col gap-2">
+      <span className="text-sm font-medium">{label}</span>
+      <Input
+        type="number"
+        min={min}
+        max={max}
+        value={value}
+        onChange={(event) => {
+          const next = Number(event.currentTarget.value)
+          if (Number.isFinite(next)) onChange(next)
+        }}
+      />
+    </label>
+  )
+}
+
+function formatDesktopLogTime(value: string | undefined): string {
+  if (!value) return "--:--:--"
+  const timestamp = Date.parse(value)
+  if (!Number.isFinite(timestamp)) return value
+  return new Date(timestamp).toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  })
+}
+
+function desktopLogLevelClass(level: string | undefined): string {
+  const normalized = level?.toUpperCase() ?? "INFO"
+  if (normalized === "ERROR" || normalized === "CRITICAL") return "font-semibold text-destructive"
+  if (normalized === "WARNING") return "font-semibold text-amber-500"
+  if (normalized === "SUCCESS") return "font-semibold text-emerald-500"
+  return "text-muted-foreground"
 }
 
 function ResetPasswordDialog({
@@ -566,7 +1091,7 @@ export function SettingsPage() {
   }, [authMe, session?.accessToken, t])
 
   React.useEffect(() => {
-    if (settingsTab && ["account", "agent", "appearance"].includes(settingsTab)) {
+    if (settingsTab && ["account", "desktop", "agent", "appearance"].includes(settingsTab)) {
       setTab(settingsTab as SettingsTab)
     }
   }, [settingsTab])
@@ -652,6 +1177,7 @@ export function SettingsPage() {
               </div>
             )
           )}
+          {tab === "desktop" && <DesktopTab />}
           {tab === "agent" && <AgentTab token={session?.accessToken ?? ""} />}
           {tab === "appearance" && <AppearanceTab />}
         </ScrollArea>

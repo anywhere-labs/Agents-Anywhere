@@ -58,6 +58,7 @@ import type { ConnectorRevokeResponse } from "@/features/dashboard/types"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { useTranslations } from "next-intl"
 import { toast } from "sonner"
+import { useDesktopConnector } from "@/features/desktop/desktop-connector-context"
 import { RuntimeConfigDialog } from "@/components/runtime-config-dialog"
 import { RuntimeInstanceNameDialog } from "@/components/runtime-instance-name-dialog"
 import {
@@ -336,6 +337,14 @@ export function DevicePage() {
     refreshData,
   } = useWorkspace()
   const { session: authSession } = useAuth()
+  const {
+    busy: desktopActionBusy,
+    isLocalConnector,
+    reconnect: reconnectLocalDesktop,
+    disconnect: disconnectLocalDesktop,
+    updateLocalName,
+    explainRemoteReconnect,
+  } = useDesktopConnector()
   const isMobile = useIsMobile()
 
   const [connector, setConnector] = React.useState<(typeof connectors)[number] | null>(null)
@@ -449,6 +458,9 @@ export function DevicePage() {
     )
   }
 
+  const isDesktopConnector = connector.connectorKind === "desktop" || isLocalConnector(connector.id)
+  const connectorActionBusy = tokenActionBusy || desktopActionBusy
+
   const handleRevoke = async () => {
     if (!authSession?.accessToken) return
     setTokenActionBusy(true)
@@ -468,6 +480,40 @@ export function DevicePage() {
     }
   }
 
+  const handleDesktopDisconnect = async () => {
+    if (!authSession?.accessToken) return
+    if (isLocalConnector(connector.id)) {
+      if (await disconnectLocalDesktop()) {
+        setConnector((previous) => previous ? { ...previous, status: "offline" } : previous)
+        setRevokeOpen(false)
+      }
+      return
+    }
+
+    setTokenActionBusy(true)
+    try {
+      await dashboardApi.revokeConnector(authSession.accessToken, connector.id)
+      setConnector((previous) => previous ? { ...previous, status: "offline" } : previous)
+      setRevokeOpen(false)
+      refreshData()
+      toast.success(t("disconnectSucceeded"))
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t("disconnectFailed"))
+    } finally {
+      setTokenActionBusy(false)
+    }
+  }
+
+  const handleDesktopReconnect = async () => {
+    if (isLocalConnector(connector.id)) {
+      if (await reconnectLocalDesktop()) {
+        setConnector((previous) => previous ? { ...previous, status: "online" } : previous)
+      }
+      return
+    }
+    explainRemoteReconnect(connector.name)
+  }
+
   const submitName = async () => {
     if (!authSession?.accessToken) return
     const nextName = nameDraft.trim()
@@ -479,6 +525,9 @@ export function DevicePage() {
 
     try {
       const result = await dashboardApi.updateConnector(authSession.accessToken, connector.id, { name: nextName })
+      if (isLocalConnector(connector.id)) {
+        await updateLocalName(result.connector.name)
+      }
       setConnector(result.connector)
       setNameDraft(result.connector.name)
       setEditingName(false)
@@ -792,18 +841,34 @@ export function DevicePage() {
               size="sm"
               className="max-sm:size-8 max-sm:px-0"
               onClick={() => {
+                if (isDesktopConnector) {
+                  if (connector.status === "offline") {
+                    void handleDesktopReconnect()
+                  } else {
+                    setRevokeOpen(true)
+                  }
+                  return
+                }
                 if (connector.status === "offline") {
                   void handleRevoke()
                 } else {
                   setRevokeOpen(true)
                 }
               }}
-              disabled={tokenActionBusy}
-              aria-label={tokenActionBusy ? t("preparing") : connector.status === "offline" ? t("setup") : t("revoke")}
+              disabled={connectorActionBusy}
+              aria-label={connectorActionBusy
+                ? t("preparing")
+                : isDesktopConnector
+                  ? connector.status === "offline" ? t("reconnect") : t("disconnect")
+                  : connector.status === "offline" ? t("setup") : t("revoke")}
             >
               <KeyRound />
               <span className="max-sm:sr-only">
-                {tokenActionBusy ? t("preparing") : connector.status === "offline" ? t("setup") : t("revoke")}
+                {connectorActionBusy
+                  ? t("preparing")
+                  : isDesktopConnector
+                    ? connector.status === "offline" ? t("reconnect") : t("disconnect")
+                    : connector.status === "offline" ? t("setup") : t("revoke")}
               </span>
             </Button>
             <Button
@@ -1219,15 +1284,20 @@ export function DevicePage() {
       <AlertDialog open={revokeOpen} onOpenChange={setRevokeOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>{t("revokeTitle")}</AlertDialogTitle>
+            <AlertDialogTitle>{t(isDesktopConnector ? "disconnectTitle" : "revokeTitle")}</AlertDialogTitle>
             <AlertDialogDescription>
-              {t("revokeDescription", { name: connector.name })}
+              {t(isDesktopConnector ? "disconnectDescription" : "revokeDescription", { name: connector.name })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>{tCommon("cancel")}</AlertDialogCancel>
-            <AlertDialogAction onClick={handleRevoke} disabled={tokenActionBusy}>
-              {tokenActionBusy ? t("revoking") : t("revoke")}
+            <AlertDialogAction
+              onClick={() => void (isDesktopConnector ? handleDesktopDisconnect() : handleRevoke())}
+              disabled={connectorActionBusy}
+            >
+              {connectorActionBusy
+                ? t(isDesktopConnector ? "disconnecting" : "revoking")
+                : t(isDesktopConnector ? "disconnect" : "revoke")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

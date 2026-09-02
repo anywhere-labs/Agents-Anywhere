@@ -29,6 +29,7 @@ import {
   timelineClientMessageId,
   withServerAttachments,
 } from "@/components/session/optimistic-timeline"
+import { hasDesktopConnectorBridge } from "@/features/desktop/bridge"
 
 // ─── Panel / page types ───────────────────────────────────────
 
@@ -128,6 +129,7 @@ function mapConnector(connector: RealConnectorView): ConnectorView {
     userId: connector.userId,
     name: connector.name,
     deviceOs: connector.deviceOs,
+    connectorKind: connector.connectorKind,
     status: connector.status,
     lastSeenAt: connector.lastSeenAt,
   }
@@ -818,6 +820,10 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
 
   React.useEffect(() => {
     if (!routeReady || isLoading || route.page !== "home" || firstDeviceWizardCheckedRef.current) return
+    if (hasDesktopConnectorBridge()) {
+      firstDeviceWizardCheckedRef.current = true
+      return
+    }
     if (connectors.length > 0) {
       firstDeviceWizardCheckedRef.current = true
       return
