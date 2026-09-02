@@ -6,6 +6,8 @@ import time
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from pydantic import ValidationError
+
 from connector.core.config import ConnectorConfig
 from connector.logging import logger
 from connector.runtime_protocol import (
@@ -33,6 +35,7 @@ SyncStateFlusher = Callable[[], Awaitable[bool]]
 ACTIVE_SESSION_SYNC_SKIP_STATUSES: frozenset[RuntimeStatus] = frozenset(
     {"waiting", "pending", "running", "waiting_approval", "stopping"}
 )
+VALIDATION_ERROR_LOG_LIMIT = 5
 
 
 class RuntimeSyncRunner:
@@ -138,6 +141,16 @@ class RuntimeSyncRunner:
                             exc,
                         )
                         continue
+                    except ValidationError as exc:
+                        logger.error(
+                            "existing session sync validation failed runtime={} session_id={} external_session_id={} validation_errors={} details={}",
+                            session.runtime,
+                            session.session_id,
+                            session.external_session_id,
+                            exc.error_count(),
+                            validation_error_summary(exc),
+                        )
+                        continue
                     except Exception:  # noqa: BLE001
                         logger.exception(
                             "existing session sync failed runtime={} session_id={} external_session_id={}",
@@ -186,6 +199,7 @@ class RuntimeSyncRunner:
                 await self.flush_sync_state()
             except Exception:  # noqa: BLE001
                 logger.exception("history scanner sync state flush failed")
+
 
     async def sync_existing_session(
         self,
@@ -378,6 +392,24 @@ class RuntimeSyncRunner:
     def runtime_has_config(self, runtime_id: str) -> bool:
         entry = self.supervisor.entry(runtime_id)
         return entry.config is not None
+
+
+def validation_error_summary(error: ValidationError) -> str:
+    details = error.errors(
+        include_url=False,
+        include_context=False,
+        include_input=False,
+    )
+    summarized: list[str] = []
+    for detail in details[:VALIDATION_ERROR_LOG_LIMIT]:
+        location = ".".join(str(part) for part in detail.get("loc", ())) or "<root>"
+        message = str(detail.get("msg") or "validation failed")
+        error_type = str(detail.get("type") or "validation_error")
+        summarized.append(f"{location}: {message} [{error_type}]")
+    remaining = len(details) - len(summarized)
+    if remaining > 0:
+        summarized.append(f"... {remaining} more")
+    return "; ".join(summarized)
 
 
 def _preferences_signature(prefs: dict[str, Any]) -> tuple[tuple[str, Any], ...]:
