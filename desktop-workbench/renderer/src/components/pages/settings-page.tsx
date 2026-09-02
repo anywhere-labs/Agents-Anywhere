@@ -9,7 +9,9 @@ import {
   Download,
   FolderOpen,
   Laptop,
+  Logs,
   Power,
+  Rocket,
   RotateCw,
   Settings,
   Sun,
@@ -58,6 +60,14 @@ import {
 import { Input } from "@/components/ui/input"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { ScrollArea } from "@/components/ui/scroll-area"
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { Separator } from "@/components/ui/separator"
 import { Slider } from "@/components/ui/slider"
 import { Spinner } from "@/components/ui/spinner"
@@ -77,18 +87,30 @@ import {
 } from "@/features/desktop/bridge"
 import { cn } from "@/lib/utils"
 
-type SettingsTab = "account" | "desktop" | "agent" | "appearance"
+type SettingsTab = "account" | "desktop" | "startup" | "logs" | "appearance"
 type AppearanceMode = "light" | "dark" | "auto"
 
 const AVATAR_OUTPUT_SIZE = 256
 const AVATAR_MAX_FILE_SIZE = 8 * 1024 * 1024
 
-const navItems: { id: SettingsTab; labelKey: "account" | "desktop" | "agent" | "appearance"; icon: typeof User }[] = [
+const navItems: { id: SettingsTab; labelKey: SettingsTab; icon: typeof User }[] = [
   { id: "account", labelKey: "account", icon: User },
   { id: "desktop", labelKey: "desktop", icon: Laptop },
-  { id: "agent", labelKey: "agent", icon: Settings },
+  { id: "startup", labelKey: "startup", icon: Rocket },
+  { id: "logs", labelKey: "logs", icon: Logs },
   { id: "appearance", labelKey: "appearance", icon: Sun },
 ]
+
+const SYNC_INTERVAL_OPTIONS = [15, 30, 60, 300] as const
+const PYPI_MIRROR_OPTIONS = [
+  { id: "default", url: "", labelKey: "desktopPypiDefault" },
+  { id: "tsinghua", url: "https://pypi.tuna.tsinghua.edu.cn/simple", labelKey: "desktopPypiTsinghua" },
+  { id: "ustc", url: "https://mirrors.ustc.edu.cn/pypi/simple", labelKey: "desktopPypiUstc" },
+  { id: "bfsu", url: "https://mirrors.bfsu.edu.cn/pypi/web/simple", labelKey: "desktopPypiBfsu" },
+  { id: "aliyun", url: "https://mirrors.aliyun.com/pypi/simple", labelKey: "desktopPypiAliyun" },
+  { id: "tencent", url: "https://mirrors.cloud.tencent.com/pypi/simple", labelKey: "desktopPypiTencent" },
+  { id: "huawei", url: "https://repo.huaweicloud.com/repository/pypi/simple", labelKey: "desktopPypiHuawei" },
+] as const
 
 function AccountTab({
   me,
@@ -220,14 +242,6 @@ function DesktopTab() {
     factoryReset,
     openDataFolder,
   } = useDesktopConnector()
-  const [logs, setLogs] = React.useState<DesktopConnectorLog[]>([])
-  const [logsLoading, setLogsLoading] = React.useState(false)
-  const [olderLogsLoading, setOlderLogsLoading] = React.useState(false)
-  const [firstLogSeq, setFirstLogSeq] = React.useState<number | null>(null)
-  const [hasMoreLogs, setHasMoreLogs] = React.useState(false)
-  const [clearingLogs, setClearingLogs] = React.useState(false)
-  const [exportingLogs, setExportingLogs] = React.useState(false)
-  const [advancedSaving, setAdvancedSaving] = React.useState(false)
   const [connectorConfigSaving, setConnectorConfigSaving] = React.useState(false)
   const [factoryResetOpen, setFactoryResetOpen] = React.useState(false)
   const [forceFactoryResetOpen, setForceFactoryResetOpen] = React.useState(false)
@@ -242,9 +256,6 @@ function DesktopTab() {
   const [advancedDraft, setAdvancedDraft] = React.useState({
     uvPath: "",
     uvPypiIndexUrl: "",
-    logChunkSizeKb: 512,
-    logRetainChunks: 20,
-    logRetentionDays: 14,
   })
   const connectorId = binding?.connectorId ?? state?.connectorId ?? null
   const serverUrl = binding?.serverUrl || state?.serverUrl || null
@@ -254,6 +265,8 @@ function DesktopTab() {
     connectorId && (state?.authFailed || state?.manualDisconnected),
   )
   const connectorIsRunning = Boolean(!needsReconnect && (state?.running || state?.status === "running"))
+  const selectedPypiMirror = PYPI_MIRROR_OPTIONS.find((option) => option.url === advancedDraft.uvPypiIndexUrl)
+    ?? PYPI_MIRROR_OPTIONS[0]
   const statusKey = needsReconnect
     ? "desktopDisconnected"
     : provisionError || connectionStatus === "error"
@@ -272,46 +285,8 @@ function DesktopTab() {
     setAdvancedDraft({
       uvPath: state?.uvPath ?? "",
       uvPypiIndexUrl: state?.uvPypiIndexUrl ?? "",
-      logChunkSizeKb: state?.logChunkSizeKb ?? 512,
-      logRetainChunks: state?.logRetainChunks ?? 20,
-      logRetentionDays: state?.logRetentionDays ?? 14,
     })
-  }, [state?.logChunkSizeKb, state?.logRetainChunks, state?.logRetentionDays, state?.uvPath, state?.uvPypiIndexUrl])
-
-  const loadLogs = React.useCallback(async () => {
-    const bridge = getDesktopWorkbenchBridge()
-    if (!bridge?.connector) return
-    setLogsLoading(true)
-    try {
-      const page = await bridge.connector.getLogs({ pageSize: 200 })
-      setLogs(page.items)
-      setFirstLogSeq(typeof page.items[0]?.seq === "number" ? page.items[0].seq : null)
-      setHasMoreLogs(page.hasMoreBefore)
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : t("desktopLogsLoadFailed"))
-    } finally {
-      setLogsLoading(false)
-    }
-  }, [t])
-
-  const loadOlderLogs = async () => {
-    const bridge = getDesktopWorkbenchBridge()
-    if (!bridge?.connector || olderLogsLoading || firstLogSeq === null || !hasMoreLogs) return
-    setOlderLogsLoading(true)
-    try {
-      const page = await bridge.connector.getLogs({ pageSize: 200, beforeSeq: firstLogSeq })
-      setLogs((current) => {
-        const existing = new Set(current.map((entry) => entry.seq ?? entry.id))
-        return [...page.items.filter((entry) => !existing.has(entry.seq ?? entry.id)), ...current]
-      })
-      setFirstLogSeq(typeof page.items[0]?.seq === "number" ? page.items[0].seq : firstLogSeq)
-      setHasMoreLogs(page.hasMoreBefore)
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : t("desktopLogsLoadFailed"))
-    } finally {
-      setOlderLogsLoading(false)
-    }
-  }
+  }, [state?.uvPath, state?.uvPypiIndexUrl])
 
   const loadConnectorConfig = React.useCallback(async () => {
     const bridge = getDesktopWorkbenchBridge()
@@ -331,60 +306,8 @@ function DesktopTab() {
   }, [connectorId])
 
   React.useEffect(() => {
-    const bridge = getDesktopWorkbenchBridge()
-    if (!supported || !bridge?.connector) return
-    void loadLogs()
     void loadConnectorConfig()
-    const unsubscribeLog = bridge.connector.onLog((entry) => {
-      setLogs((current) => [...current.slice(-199), entry])
-    })
-    const unsubscribeCleared = bridge.connector.onLogsCleared(() => setLogs([]))
-    return () => {
-      if (typeof unsubscribeLog === "function") unsubscribeLog()
-      if (typeof unsubscribeCleared === "function") unsubscribeCleared()
-    }
-  }, [loadConnectorConfig, loadLogs, supported])
-
-  const clearLogs = async () => {
-    const bridge = getDesktopWorkbenchBridge()
-    if (!bridge?.connector || clearingLogs) return
-    setClearingLogs(true)
-    try {
-      await bridge.connector.clearLogs()
-      setLogs([])
-      setFirstLogSeq(null)
-      setHasMoreLogs(false)
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : t("desktopLogsClearFailed"))
-    } finally {
-      setClearingLogs(false)
-    }
-  }
-
-  const exportLogs = async () => {
-    const bridge = getDesktopWorkbenchBridge()
-    if (!bridge?.connector?.exportLogs || exportingLogs) return
-    setExportingLogs(true)
-    try {
-      const result = await bridge.connector.exportLogs()
-      if (!result.canceled) toast.success(t("desktopLogsExported", { count: result.count }))
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : t("desktopLogsExportFailed"))
-    } finally {
-      setExportingLogs(false)
-    }
-  }
-
-  const saveAdvancedSettings = async () => {
-    if (advancedSaving) return
-    setAdvancedSaving(true)
-    try {
-      const saved = await saveSettings(advancedDraft)
-      if (saved) toast.success(t(connectorIsRunning ? "desktopAdvancedRestarted" : "desktopAdvancedSaved"))
-    } finally {
-      setAdvancedSaving(false)
-    }
-  }
+  }, [loadConnectorConfig])
 
   const saveConnectorConfig = async () => {
     if (connectorConfigSaving || !connectorId) return
@@ -515,57 +438,50 @@ function DesktopTab() {
           <p className="mt-0.5 text-sm text-muted-foreground">{t("desktopAdvancedDescription")}</p>
         </div>
         <Separator />
-        <div className="grid gap-5 px-6 py-5 sm:grid-cols-3">
-          <label className="flex min-w-0 flex-col gap-2 sm:col-span-3">
+        <FieldGroup className="gap-0 px-6 py-5">
+          <Field>
             <span className="text-sm font-medium">{t("desktopUvPath")}</span>
             <Input
               value={advancedDraft.uvPath}
               placeholder={state?.resolvedUvPath || t("desktopUvPathAuto")}
               onChange={(event) => setAdvancedDraft((current) => ({ ...current, uvPath: event.currentTarget.value }))}
+              onBlur={(event) => void saveSettings({ uvPath: event.currentTarget.value })}
             />
             <span className="text-xs text-muted-foreground">{t("desktopUvPathDescription")}</span>
-          </label>
-          <label className="flex min-w-0 flex-col gap-2 sm:col-span-3">
-            <span className="text-sm font-medium">{t("desktopUvPypiIndexUrl")}</span>
-            <Input
-              type="url"
-              value={advancedDraft.uvPypiIndexUrl}
-              placeholder={t("desktopUvPypiIndexUrlPlaceholder")}
-              onChange={(event) => setAdvancedDraft((current) => ({ ...current, uvPypiIndexUrl: event.currentTarget.value }))}
-            />
-            <span className="text-xs text-muted-foreground">{t("desktopUvPypiIndexUrlDescription")}</span>
-          </label>
-          <DesktopNumberSetting
-            label={t("desktopLogChunkSize")}
-            value={advancedDraft.logChunkSizeKb}
-            min={64}
-            max={10240}
-            onChange={(value) => setAdvancedDraft((current) => ({ ...current, logChunkSizeKb: value }))}
-          />
-          <DesktopNumberSetting
-            label={t("desktopLogRetainChunks")}
-            value={advancedDraft.logRetainChunks}
-            min={1}
-            max={200}
-            onChange={(value) => setAdvancedDraft((current) => ({ ...current, logRetainChunks: value }))}
-          />
-          <DesktopNumberSetting
-            label={t("desktopLogRetentionDays")}
-            value={advancedDraft.logRetentionDays}
-            min={1}
-            max={365}
-            onChange={(value) => setAdvancedDraft((current) => ({ ...current, logRetentionDays: value }))}
-          />
-        </div>
-        <Separator />
-        <div className="flex justify-end px-6 py-4">
-          <Button type="button" size="sm" onClick={() => void saveAdvancedSettings()} disabled={advancedSaving || busy}>
-            {advancedSaving ? <Spinner /> : <Settings data-icon="inline-start" />}
-            {advancedSaving
-              ? t("saving")
-              : t(connectorIsRunning ? "desktopSaveAndRestart" : "saveChanges")}
-          </Button>
-        </div>
+          </Field>
+          <div className="flex min-w-0 items-center gap-4 border-t border-border py-4">
+            <span className="w-36 shrink-0 text-sm text-muted-foreground">{t("desktopResolvedUvPath")}</span>
+            <span className="code-mono min-w-0 truncate text-sm">{state?.resolvedUvPath || t("desktopUvNotFound")}</span>
+          </div>
+          <Field orientation="horizontal" className="border-t border-border py-4">
+            <FieldContent>
+              <span className="text-sm font-medium">{t("desktopUvPypiIndexUrl")}</span>
+              <span className="text-xs text-muted-foreground">{t("desktopUvPypiIndexUrlDescription")}</span>
+            </FieldContent>
+            <Select
+              value={selectedPypiMirror.url || "default"}
+              onValueChange={(value) => {
+                const uvPypiIndexUrl = value === "default" ? "" : value
+                setAdvancedDraft((current) => ({ ...current, uvPypiIndexUrl }))
+                void saveSettings({ uvPypiIndexUrl })
+              }}
+              disabled={busy}
+            >
+              <SelectTrigger className="min-w-44">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent align="end">
+                <SelectGroup>
+                  {PYPI_MIRROR_OPTIONS.map((option) => (
+                    <SelectItem key={option.id} value={option.url || "default"}>
+                      {t(option.labelKey)}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+          </Field>
+        </FieldGroup>
       </section>
 
       <section className="rounded-xl border border-border bg-card">
@@ -574,37 +490,30 @@ function DesktopTab() {
           <p className="mt-0.5 text-sm text-muted-foreground">{t("desktopConnectorConfigDescription")}</p>
         </div>
         <Separator />
-        <div className="grid gap-5 px-6 py-5 sm:grid-cols-3">
-          <DesktopNumberSetting
-            label={t("desktopHeartbeatSeconds")}
-            value={connectorConfigDraft.heartbeatSeconds}
-            min={1}
-            max={3600}
-            onChange={(value) => setConnectorConfigDraft((current) => ({ ...current, heartbeatSeconds: value }))}
-          />
-          <DesktopNumberSetting
-            label={t("desktopReconnectSeconds")}
-            value={connectorConfigDraft.reconnectSeconds}
-            min={1}
-            max={3600}
-            onChange={(value) => setConnectorConfigDraft((current) => ({ ...current, reconnectSeconds: value }))}
-          />
-          <DesktopNumberSetting
-            label={t("desktopSyncIntervalSeconds")}
-            value={connectorConfigDraft.syncIntervalSeconds}
-            min={1}
-            max={86400}
-            onChange={(value) => setConnectorConfigDraft((current) => ({ ...current, syncIntervalSeconds: value }))}
-          />
-        </div>
-        <Separator />
-        <DesktopSettingSwitch
-          label={t("desktopSyncExisting")}
-          description={t("desktopSyncExistingDescription")}
-          checked={connectorConfigDraft.syncExistingOnConnect}
-          disabled={connectorConfigSaving || !connectorId}
-          onCheckedChange={(checked) => setConnectorConfigDraft((current) => ({ ...current, syncExistingOnConnect: checked }))}
-        />
+        <FieldGroup className="px-6 py-5">
+          <Field orientation="horizontal">
+            <FieldContent>
+              <span className="text-sm font-medium">{t("desktopSyncInterval")}</span>
+              <span className="text-xs text-muted-foreground">{t("desktopSyncIntervalDescription")}</span>
+            </FieldContent>
+            <Select
+              value={String(connectorConfigDraft.syncIntervalSeconds)}
+              onValueChange={(value) => setConnectorConfigDraft((current) => ({ ...current, syncIntervalSeconds: Number(value) }))}
+              disabled={connectorConfigSaving || !connectorId}
+            >
+              <SelectTrigger className="min-w-32">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent align="end">
+                <SelectGroup>
+                  {SYNC_INTERVAL_OPTIONS.map((interval) => (
+                    <SelectItem key={interval} value={String(interval)}>{interval}s</SelectItem>
+                  ))}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+          </Field>
+        </FieldGroup>
         <Separator />
         <div className="flex justify-end px-6 py-4">
           <Button type="button" size="sm" onClick={() => void saveConnectorConfig()} disabled={connectorConfigSaving || !connectorId}>
@@ -613,97 +522,6 @@ function DesktopTab() {
               ? t("saving")
               : t(connectorIsRunning ? "desktopSaveAndRestart" : "saveChanges")}
           </Button>
-        </div>
-      </section>
-
-      <section className="rounded-xl border border-border bg-card">
-        <div className="flex flex-wrap items-center justify-between gap-3 px-6 py-5">
-          <div>
-            <h2 className="text-base font-semibold">{t("desktopLogs")}</h2>
-            <p className="mt-0.5 text-sm text-muted-foreground">{t("desktopLogsDescription")}</p>
-          </div>
-          <div className="flex gap-2">
-            {getDesktopWorkbenchBridge()?.connector?.exportLogs ? (
-              <Button type="button" variant="outline" size="sm" onClick={() => void exportLogs()} disabled={exportingLogs}>
-                {exportingLogs ? <Spinner /> : <Download data-icon="inline-start" />}
-                {t("desktopExportLogs")}
-              </Button>
-            ) : null}
-            <Button type="button" variant="outline" size="sm" onClick={() => void loadLogs()} disabled={logsLoading}>
-              {logsLoading ? <Spinner /> : <RotateCw data-icon="inline-start" />}
-              {t("desktopRefreshLogs")}
-            </Button>
-            <Button type="button" variant="outline" size="sm" onClick={() => void clearLogs()} disabled={clearingLogs || logs.length === 0}>
-              {clearingLogs ? <Spinner /> : <Trash2 data-icon="inline-start" />}
-              {t("desktopClearLogs")}
-            </Button>
-          </div>
-        </div>
-        <Separator />
-        <div className="max-h-80 min-h-40 overflow-y-auto bg-muted/20 px-4 py-3">
-          {hasMoreLogs && logs.length > 0 ? (
-            <div className="mb-2 flex justify-center">
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={() => void loadOlderLogs()}
-                disabled={olderLogsLoading}
-              >
-                {olderLogsLoading ? <Spinner /> : <ChevronDown className="rotate-180" data-icon="inline-start" />}
-                {olderLogsLoading ? t("desktopLoadingLogs") : t("desktopLoadOlderLogs")}
-              </Button>
-            </div>
-          ) : null}
-          {logs.length === 0 ? (
-            <div className="flex min-h-32 items-center justify-center text-sm text-muted-foreground">
-              {logsLoading ? t("desktopLoadingLogs") : t("desktopNoLogs")}
-            </div>
-          ) : (
-            <div className="flex flex-col gap-1 font-mono text-xs">
-              {logs.map((entry, index) => (
-                <div
-                  key={entry.seq ?? entry.id ?? `${entry.time ?? entry.timestamp ?? "log"}-${index}`}
-                  className="grid grid-cols-[auto_auto_minmax(0,1fr)] gap-2 rounded px-2 py-1 hover:bg-muted/60"
-                >
-                  <span className="text-muted-foreground">{formatDesktopLogTime(entry.time ?? entry.timestamp)}</span>
-                  <span className={desktopLogLevelClass(entry.level)}>{entry.level ?? "INFO"}</span>
-                  <span className="min-w-0 whitespace-pre-wrap break-words text-foreground/90">{entry.message}</span>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </section>
-
-      <section className="rounded-xl border border-border bg-card">
-        <div className="px-6 py-5">
-          <h2 className="text-base font-semibold">{t("desktopStartup")}</h2>
-          <p className="mt-0.5 text-sm text-muted-foreground">{t("desktopStartupDescription")}</p>
-        </div>
-        <Separator />
-        <div className="divide-y divide-border">
-          <DesktopSettingSwitch
-            label={t("desktopOpenAtLogin")}
-            description={t("desktopOpenAtLoginDescription")}
-            checked={Boolean(state?.openAtLogin)}
-            disabled={busy}
-            onCheckedChange={(checked) => void saveSettings({ openAtLogin: checked })}
-          />
-          <DesktopSettingSwitch
-            label={t("desktopStartConnector")}
-            description={t("desktopStartConnectorDescription")}
-            checked={Boolean(state?.startConnectorOnLaunch)}
-            disabled={busy}
-            onCheckedChange={(checked) => void saveSettings({ startConnectorOnLaunch: checked })}
-          />
-          <DesktopSettingSwitch
-            label={t("desktopSilentLaunch")}
-            description={t("desktopSilentLaunchDescription")}
-            checked={Boolean(state?.silentLaunch)}
-            disabled={busy || !state?.openAtLogin}
-            onCheckedChange={(checked) => void saveSettings({ silentLaunch: checked })}
-          />
         </div>
       </section>
 
@@ -819,6 +637,256 @@ function DesktopTab() {
   )
 }
 
+function StartupTab() {
+  const t = useTranslations("pages.settings")
+  const { supported, loading, busy, state, saveSettings } = useDesktopConnector()
+
+  if (!supported) return <DesktopUnavailable title={t("startup")} />
+  if (loading && !state) return <LoadingState className="min-h-64" />
+
+  return (
+    <section className="rounded-xl border border-border bg-card">
+      <div className="px-6 py-5">
+        <h2 className="text-base font-semibold">{t("desktopStartup")}</h2>
+        <p className="mt-0.5 text-sm text-muted-foreground">{t("desktopStartupDescription")}</p>
+      </div>
+      <Separator />
+      <FieldGroup className="gap-0 divide-y divide-border">
+        <DesktopSettingSwitch
+          label={t("desktopOpenAtLogin")}
+          description={t("desktopOpenAtLoginDescription")}
+          checked={Boolean(state?.openAtLogin)}
+          disabled={busy}
+          onCheckedChange={(checked) => void saveSettings({ openAtLogin: checked })}
+        />
+        <DesktopSettingSwitch
+          label={t("desktopStartConnector")}
+          description={t("desktopStartConnectorDescription")}
+          checked={Boolean(state?.startConnectorOnLaunch)}
+          disabled={busy}
+          onCheckedChange={(checked) => void saveSettings({ startConnectorOnLaunch: checked })}
+        />
+        <DesktopSettingSwitch
+          label={t("desktopSilentLaunch")}
+          description={t("desktopSilentLaunchDescription")}
+          checked={Boolean(state?.silentLaunch)}
+          disabled={busy}
+          onCheckedChange={(checked) => void saveSettings({ silentLaunch: checked })}
+        />
+      </FieldGroup>
+    </section>
+  )
+}
+
+function LogsTab() {
+  const t = useTranslations("pages.settings")
+  const { supported, loading, busy, state, saveSettings } = useDesktopConnector()
+  const [logs, setLogs] = React.useState<DesktopConnectorLog[]>([])
+  const [logsLoading, setLogsLoading] = React.useState(false)
+  const [olderLogsLoading, setOlderLogsLoading] = React.useState(false)
+  const [firstLogSeq, setFirstLogSeq] = React.useState<number | null>(null)
+  const [hasMoreLogs, setHasMoreLogs] = React.useState(false)
+  const [clearingLogs, setClearingLogs] = React.useState(false)
+  const [exportingLogs, setExportingLogs] = React.useState(false)
+  const [logSettings, setLogSettings] = React.useState({
+    logChunkSizeKb: 512,
+    logRetainChunks: 20,
+    logRetentionDays: 14,
+  })
+
+  React.useEffect(() => {
+    setLogSettings({
+      logChunkSizeKb: state?.logChunkSizeKb ?? 512,
+      logRetainChunks: state?.logRetainChunks ?? 20,
+      logRetentionDays: state?.logRetentionDays ?? 14,
+    })
+  }, [state?.logChunkSizeKb, state?.logRetainChunks, state?.logRetentionDays])
+
+  const loadLogs = React.useCallback(async () => {
+    const bridge = getDesktopWorkbenchBridge()
+    if (!bridge?.connector) return
+    setLogsLoading(true)
+    try {
+      const page = await bridge.connector.getLogs({ pageSize: 200 })
+      setLogs(page.items)
+      setFirstLogSeq(typeof page.items[0]?.seq === "number" ? page.items[0].seq : null)
+      setHasMoreLogs(page.hasMoreBefore)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t("desktopLogsLoadFailed"))
+    } finally {
+      setLogsLoading(false)
+    }
+  }, [t])
+
+  React.useEffect(() => {
+    const bridge = getDesktopWorkbenchBridge()
+    if (!supported || !bridge?.connector) return
+    void loadLogs()
+    const unsubscribeLog = bridge.connector.onLog((entry) => {
+      setLogs((current) => [...current.slice(-199), entry])
+    })
+    const unsubscribeCleared = bridge.connector.onLogsCleared(() => setLogs([]))
+    return () => {
+      if (typeof unsubscribeLog === "function") unsubscribeLog()
+      if (typeof unsubscribeCleared === "function") unsubscribeCleared()
+    }
+  }, [loadLogs, supported])
+
+  const loadOlderLogs = async () => {
+    const bridge = getDesktopWorkbenchBridge()
+    if (!bridge?.connector || olderLogsLoading || firstLogSeq === null || !hasMoreLogs) return
+    setOlderLogsLoading(true)
+    try {
+      const page = await bridge.connector.getLogs({ pageSize: 200, beforeSeq: firstLogSeq })
+      setLogs((current) => {
+        const existing = new Set(current.map((entry) => entry.seq ?? entry.id))
+        return [...page.items.filter((entry) => !existing.has(entry.seq ?? entry.id)), ...current]
+      })
+      setFirstLogSeq(typeof page.items[0]?.seq === "number" ? page.items[0].seq : firstLogSeq)
+      setHasMoreLogs(page.hasMoreBefore)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t("desktopLogsLoadFailed"))
+    } finally {
+      setOlderLogsLoading(false)
+    }
+  }
+
+  const clearLogs = async () => {
+    const bridge = getDesktopWorkbenchBridge()
+    if (!bridge?.connector || clearingLogs) return
+    setClearingLogs(true)
+    try {
+      await bridge.connector.clearLogs()
+      setLogs([])
+      setFirstLogSeq(null)
+      setHasMoreLogs(false)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t("desktopLogsClearFailed"))
+    } finally {
+      setClearingLogs(false)
+    }
+  }
+
+  const exportLogs = async () => {
+    const bridge = getDesktopWorkbenchBridge()
+    if (!bridge?.connector?.exportLogs || exportingLogs) return
+    setExportingLogs(true)
+    try {
+      const result = await bridge.connector.exportLogs()
+      if (!result.canceled) toast.success(t("desktopLogsExported", { count: result.count }))
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t("desktopLogsExportFailed"))
+    } finally {
+      setExportingLogs(false)
+    }
+  }
+
+  if (!supported) return <DesktopUnavailable title={t("logs")} />
+  if (loading && !state) return <LoadingState className="min-h-64" />
+
+  return (
+    <div className="flex flex-col gap-4">
+      <section className="rounded-xl border border-border bg-card">
+        <div className="px-6 py-5">
+          <h2 className="text-base font-semibold">{t("desktopLogStorage")}</h2>
+          <p className="mt-0.5 text-sm text-muted-foreground">{t("desktopLogsDescription")}</p>
+        </div>
+        <Separator />
+        <FieldGroup className="gap-5 px-6 py-5">
+          <DesktopNumberSetting
+            label={t("desktopLogChunkSize")}
+            value={logSettings.logChunkSizeKb}
+            min={64}
+            max={10240}
+            disabled={busy}
+            onChange={(value) => setLogSettings((current) => ({ ...current, logChunkSizeKb: value }))}
+            onBlur={(value) => void saveSettings({ logChunkSizeKb: value })}
+          />
+          <DesktopNumberSetting
+            label={t("desktopLogRetainChunks")}
+            value={logSettings.logRetainChunks}
+            min={1}
+            max={200}
+            disabled={busy}
+            onChange={(value) => setLogSettings((current) => ({ ...current, logRetainChunks: value }))}
+            onBlur={(value) => void saveSettings({ logRetainChunks: value })}
+          />
+          <DesktopNumberSetting
+            label={t("desktopLogRetentionDays")}
+            value={logSettings.logRetentionDays}
+            min={1}
+            max={365}
+            disabled={busy}
+            onChange={(value) => setLogSettings((current) => ({ ...current, logRetentionDays: value }))}
+            onBlur={(value) => void saveSettings({ logRetentionDays: value })}
+          />
+        </FieldGroup>
+      </section>
+
+      <section className="rounded-xl border border-border bg-card">
+        <div className="flex flex-wrap items-center justify-between gap-3 px-6 py-5">
+          <div>
+            <h2 className="text-base font-semibold">{t("desktopLogs")}</h2>
+            <p className="mt-0.5 text-sm text-muted-foreground">{t("desktopLogsDescription")}</p>
+          </div>
+          <div className="flex gap-2">
+            {getDesktopWorkbenchBridge()?.connector?.exportLogs ? (
+              <Button type="button" variant="outline" size="sm" onClick={() => void exportLogs()} disabled={exportingLogs}>
+                {exportingLogs ? <Spinner /> : <Download data-icon="inline-start" />}
+                {t("desktopExportLogs")}
+              </Button>
+            ) : null}
+            <Button type="button" variant="outline" size="sm" onClick={() => void loadLogs()} disabled={logsLoading}>
+              {logsLoading ? <Spinner /> : <RotateCw data-icon="inline-start" />}
+              {t("desktopRefreshLogs")}
+            </Button>
+            <Button type="button" variant="outline" size="sm" onClick={() => void clearLogs()} disabled={clearingLogs || logs.length === 0}>
+              {clearingLogs ? <Spinner /> : <Trash2 data-icon="inline-start" />}
+              {t("desktopClearLogs")}
+            </Button>
+          </div>
+        </div>
+        <Separator />
+        <div className="max-h-[32rem] min-h-64 overflow-y-auto bg-muted/20 px-4 py-3">
+          {hasMoreLogs && logs.length > 0 ? (
+            <div className="mb-2 flex justify-center">
+              <Button type="button" variant="ghost" size="sm" onClick={() => void loadOlderLogs()} disabled={olderLogsLoading}>
+                {olderLogsLoading ? <Spinner /> : <ChevronDown className="rotate-180" data-icon="inline-start" />}
+                {olderLogsLoading ? t("desktopLoadingLogs") : t("desktopLoadOlderLogs")}
+              </Button>
+            </div>
+          ) : null}
+          {logs.length === 0 ? (
+            <div className="flex min-h-56 items-center justify-center text-sm text-muted-foreground">
+              {logsLoading ? t("desktopLoadingLogs") : t("desktopNoLogs")}
+            </div>
+          ) : (
+            <div className="flex flex-col gap-1 font-mono text-xs">
+              {logs.map((entry, index) => (
+                <div key={entry.seq ?? entry.id ?? `${entry.time ?? entry.timestamp ?? "log"}-${index}`} className="grid grid-cols-[auto_auto_minmax(0,1fr)] gap-2 rounded px-2 py-1 hover:bg-muted/60">
+                  <span className="text-muted-foreground">{formatDesktopLogTime(entry.time ?? entry.timestamp)}</span>
+                  <span className={desktopLogLevelClass(entry.level)}>{entry.level ?? "INFO"}</span>
+                  <span className="min-w-0 whitespace-pre-wrap break-words text-foreground/90">{entry.message}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </section>
+    </div>
+  )
+}
+
+function DesktopUnavailable({ title }: { title: string }) {
+  const t = useTranslations("pages.settings")
+  return (
+    <section className="rounded-xl border border-border bg-card px-6 py-6">
+      <h2 className="text-base font-semibold">{title}</h2>
+      <p className="mt-1 text-sm text-muted-foreground">{t("desktopUnavailable")}</p>
+    </section>
+  )
+}
+
 function DesktopSettingSwitch({
   label,
   description,
@@ -833,13 +901,13 @@ function DesktopSettingSwitch({
   onCheckedChange: (checked: boolean) => void
 }) {
   return (
-    <div className="flex items-center justify-between gap-6 px-6 py-4">
-      <div className="min-w-0">
+    <Field orientation="horizontal" data-disabled={disabled} className="px-6 py-4">
+      <FieldContent>
         <p className="text-sm font-medium">{label}</p>
         <p className="mt-0.5 text-xs text-muted-foreground">{description}</p>
-      </div>
+      </FieldContent>
       <Switch checked={checked} disabled={disabled} onCheckedChange={onCheckedChange} />
-    </div>
+    </Field>
   )
 }
 
@@ -848,28 +916,39 @@ function DesktopNumberSetting({
   value,
   min,
   max,
+  disabled = false,
   onChange,
+  onBlur,
 }: {
   label: string
   value: number
   min: number
   max: number
+  disabled?: boolean
   onChange: (value: number) => void
+  onBlur?: (value: number) => void
 }) {
+  const id = React.useId()
   return (
-    <label className="flex min-w-0 flex-col gap-2">
-      <span className="text-sm font-medium">{label}</span>
+    <Field data-disabled={disabled}>
+      <FieldLabel htmlFor={id}>{label}</FieldLabel>
       <Input
+        id={id}
         type="number"
         min={min}
         max={max}
         value={value}
+        disabled={disabled}
         onChange={(event) => {
           const next = Number(event.currentTarget.value)
           if (Number.isFinite(next)) onChange(next)
         }}
+        onBlur={(event) => {
+          const next = Number(event.currentTarget.value)
+          if (Number.isFinite(next)) onBlur?.(next)
+        }}
       />
-    </label>
+    </Field>
   )
 }
 
@@ -1156,31 +1235,6 @@ function AvatarCropDialog({
   )
 }
 
-function AgentTab({ token: _token }: { token: string }) {
-  const t = useTranslations("pages.settings")
-
-  return (
-    <div className="flex flex-col gap-4">
-      <section className="rounded-xl border border-border bg-card">
-        <div className="px-6 py-5">
-          <div className="min-w-0">
-            <h2 className="text-base font-semibold">{t("modelCatalog")}</h2>
-            <p className="mt-0.5 text-sm text-muted-foreground">
-              Runtime catalogs are now provided by the connected local runtime through the connector.
-              Model and permission selections are managed in the New Session composer and session
-              snapshot, not as server-side user overrides.
-            </p>
-          </div>
-        </div>
-        <Separator />
-        <div className="px-6 py-6 text-sm text-muted-foreground">
-          Server-side static model lists and per-user model overrides have been removed.
-        </div>
-      </section>
-    </div>
-  )
-}
-
 const themes: { id: AppearanceMode; labelKey: string; descKey: string }[] = [
   { id: "light", labelKey: "light", descKey: "lightDescription" },
   { id: "dark", labelKey: "dark", descKey: "darkDescription" },
@@ -1242,7 +1296,9 @@ export function SettingsPage() {
   const { session, me: authMe, refreshMe } = useAuth()
   const t = useTranslations("pages.settings")
   const tCommon = useTranslations("common")
-  const [tab, setTab] = React.useState<SettingsTab>((settingsTab as SettingsTab) ?? "account")
+  const [tab, setTab] = React.useState<SettingsTab>(() => (
+    navItems.some((item) => item.id === settingsTab) ? settingsTab as SettingsTab : "account"
+  ))
   const [me, setMe] = React.useState<AuthMe | null>(authMe)
   const [loadingMe, setLoadingMe] = React.useState(!authMe)
   const [meError, setMeError] = React.useState<string | null>(null)
@@ -1280,8 +1336,10 @@ export function SettingsPage() {
   }, [authMe, session?.accessToken, t])
 
   React.useEffect(() => {
-    if (settingsTab && ["account", "desktop", "agent", "appearance"].includes(settingsTab)) {
+    if (settingsTab && ["account", "desktop", "startup", "logs", "appearance"].includes(settingsTab)) {
       setTab(settingsTab as SettingsTab)
+    } else if (settingsTab) {
+      setTab("account")
     }
   }, [settingsTab])
 
@@ -1367,7 +1425,8 @@ export function SettingsPage() {
             )
           )}
           {tab === "desktop" && <DesktopTab />}
-          {tab === "agent" && <AgentTab token={session?.accessToken ?? ""} />}
+          {tab === "startup" && <StartupTab />}
+          {tab === "logs" && <LogsTab />}
           {tab === "appearance" && <AppearanceTab />}
         </ScrollArea>
       </div>

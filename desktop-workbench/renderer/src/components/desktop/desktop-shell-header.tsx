@@ -1,10 +1,9 @@
 "use client"
 
-import { ArrowLeft, ArrowRight } from "lucide-react"
+import { ArrowLeft, ArrowRight, Info } from "lucide-react"
 import { useTranslations } from "next-intl"
 
 import { DashboardSidebarToggle } from "@/components/dashboard-sidebar-toggle"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
 import { useDesktopConnector } from "@/features/desktop/desktop-connector-context"
@@ -54,7 +53,10 @@ export function DesktopShellHeader() {
       </div>
       {needsReconnect ? (
         <div className="aa-window-no-drag absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 items-center gap-2">
-          <Badge variant="destructive" role="status" aria-live="polite">{t("localOffline")}</Badge>
+          <span className="flex items-center gap-1.5 text-xs font-medium text-foreground" role="status" aria-live="polite">
+            <Info className="size-3.5 text-destructive" aria-hidden="true" />
+            {t("localOffline")}
+          </span>
           <Button
             type="button"
             variant="outline"
