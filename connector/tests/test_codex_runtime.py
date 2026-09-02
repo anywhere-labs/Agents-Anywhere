@@ -107,6 +107,7 @@ from connector.runtimes.codex.timeline.items import (
     CodexContextCompactionItem,
     CodexDynamicToolCallItem,
     CodexFileChangeItem,
+    CodexFunctionCallOutputItem,
     CodexImageViewItem,
     CodexMarkerTimelineItem,
     CodexMcpToolCallItem,
@@ -280,6 +281,10 @@ def test_codex_timeline_native_item_classes_are_explicitly_mapped() -> None:
     assert codex_timeline_item_class("mcpToolCall") is CodexMcpToolCallItem
     assert codex_timeline_item_class("dynamicToolCall") is CodexDynamicToolCallItem
     assert codex_timeline_item_class("webSearch") is CodexWebSearchItem
+    assert (
+        codex_timeline_item_class("functionCallOutput")
+        is CodexFunctionCallOutputItem
+    )
     assert codex_timeline_item_class("contextCompaction") is CodexContextCompactionItem
     assert issubclass(CodexContextCompactionItem, MarkerTimelineItem)
     assert codex_timeline_item_class("ImageViewThreadItem") is CodexImageViewItem
@@ -2340,11 +2345,11 @@ def test_codex_runtime_reads_typed_sdk_snapshot_with_parent_turn_id() -> None:
     asyncio.run(_test_codex_runtime_reads_typed_sdk_snapshot_with_parent_turn_id())
 
 
-def test_codex_runtime_reads_typed_sdk_snapshot_from_turn_pages() -> None:
-    asyncio.run(_test_codex_runtime_reads_typed_sdk_snapshot_from_turn_pages())
+def test_codex_runtime_reads_raw_snapshot_from_turn_pages() -> None:
+    asyncio.run(_test_codex_runtime_reads_raw_snapshot_from_turn_pages())
 
 
-async def _test_codex_runtime_reads_typed_sdk_snapshot_from_turn_pages() -> None:
+async def _test_codex_runtime_reads_raw_snapshot_from_turn_pages() -> None:
     client = FakeCodexClient()
     client.results["thread/read"] = {
         "thread": Thread.model_validate(
@@ -2369,19 +2374,31 @@ async def _test_codex_runtime_reads_typed_sdk_snapshot_from_turn_pages() -> None
         assert thread_id == "thread_1"
         return CodexThreadTurnsResult(
             turns=(
-                Turn.model_validate(
-                    {
-                        "id": "turn_paged",
-                        "status": "completed",
-                        "items": [
-                            {
-                                "id": "item_paged",
-                                "type": "agentMessage",
-                                "text": "from page",
-                            }
-                        ],
-                    }
-                ),
+                {
+                    "id": "turn_paged",
+                    "status": "completed",
+                    "items": [
+                        {
+                            "id": "item_paged",
+                            "type": "agentMessage",
+                            "text": "from page",
+                        },
+                        {
+                            "id": "function_output_1",
+                            "type": "functionCallOutput",
+                            "name": "lookup",
+                            "namespace": "demo",
+                            "output": "result text",
+                        },
+                        {
+                            "id": "subagent_completed_1",
+                            "type": "subAgentActivity",
+                            "agentPath": "/root/research_agent",
+                            "agentThreadId": "thread_2",
+                            "kind": "completed",
+                        },
+                    ],
+                },
             )
         )
 
@@ -2393,11 +2410,87 @@ async def _test_codex_runtime_reads_typed_sdk_snapshot_from_turn_pages() -> None
         external_session_id="thread_1",
     )
 
-    assert [item.content["text"] for item in snapshot.items] == ["from page"]
+    assert [item.source["rawType"] for item in snapshot.items] == [
+        "agentMessage",
+        "functionCallOutput",
+        "subAgentActivity",
+    ]
+    assert snapshot.items[0].content["text"] == "from page"
+    assert snapshot.items[1].type == "tool"
+    assert snapshot.items[1].role == "tool"
+    assert snapshot.items[1].content == {
+        "kind": "tool_result",
+        "result": "result text",
+        "output": "result text",
+        "error": None,
+    }
+    assert snapshot.items[2].type == "tool"
+    assert snapshot.items[2].role == "tool"
+    assert snapshot.items[2].content["action"] == "unknown"
+    assert snapshot.items[2].content["nativeAction"] == "completed"
+    assert snapshot.items[2].status == "done"
+    assert snapshot.metadata == {"source": "codex.thread/turns/list"}
     assert client.requests[-1] == (
         "thread/read",
         {"threadId": "thread_1", "includeTurns": False},
     )
+
+
+def test_codex_runtime_reads_raw_snapshot_from_thread_read_fallback() -> None:
+    asyncio.run(_test_codex_runtime_reads_raw_snapshot_from_thread_read_fallback())
+
+
+async def _test_codex_runtime_reads_raw_snapshot_from_thread_read_fallback() -> None:
+    client = FakeCodexClient()
+    include_turns_calls: list[bool] = []
+
+    async def read_thread(
+        thread_id: str,
+        include_turns: bool = True,
+    ) -> CodexThreadReadResult:
+        assert thread_id == "thread_1"
+        include_turns_calls.append(include_turns)
+        return CodexThreadReadResult(
+            thread={
+                "id": "thread_1",
+                "turns": (
+                    [
+                        {
+                            "id": "turn_fallback",
+                            "items": [
+                                {
+                                    "id": "item_fallback",
+                                    "type": "agentMessage",
+                                    "text": "from raw fallback",
+                                }
+                            ],
+                        }
+                    ]
+                    if include_turns
+                    else []
+                ),
+            }
+        )
+
+    async def list_thread_turns(thread_id: str) -> CodexThreadTurnsResult:
+        assert thread_id == "thread_1"
+        raise RuntimeInvalidRequestError("thread/turns/list unsupported")
+
+    client.read_thread = read_thread  # type: ignore[method-assign]
+    client.list_thread_turns = list_thread_turns  # type: ignore[attr-defined]
+    runtime = CodexRuntime(config=_config(), host=FakeHost(), client=client)
+
+    snapshot = await runtime.get_session_snapshot(
+        "sess_1",
+        external_session_id="thread_1",
+    )
+
+    assert include_turns_calls == [False, True]
+    assert [item.content["text"] for item in snapshot.items] == [
+        "from raw fallback"
+    ]
+    assert snapshot.items[0].turn_id == "turn_fallback"
+    assert snapshot.metadata == {"source": "codex.thread/read"}
 
 
 async def _test_codex_runtime_reads_typed_sdk_snapshot_with_parent_turn_id() -> None:
@@ -2886,6 +2979,7 @@ async def _test_codex_runtime_reads_typed_subagent_activity_from_snapshot() -> N
         ("started", "spawn"),
         ("interacted", "send_input"),
         ("interrupted", "close"),
+        ("completed", "unknown"),
     ],
 )
 def test_codex_runtime_maps_subagent_activity_kinds(kind: str, action: str) -> None:
@@ -2912,6 +3006,12 @@ def test_codex_runtime_maps_subagent_activity_kinds(kind: str, action: str) -> N
     assert platform_item.content["kind"] == "agent_call"
     assert platform_item.content["action"] == action
     assert platform_item.content["description"] == "research_agent"
+    assert platform_item.content["nativeAction"] == {
+        "started": "spawnAgent",
+        "interacted": "sendInput",
+        "interrupted": "closeAgent",
+        "completed": "completed",
+    }[kind]
 
 
 @pytest.mark.parametrize(

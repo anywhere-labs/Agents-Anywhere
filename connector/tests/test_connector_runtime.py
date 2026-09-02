@@ -8,10 +8,11 @@ import sys
 import threading
 from collections.abc import Mapping
 from types import SimpleNamespace
-from typing import Any, Self
+from typing import Any, Literal, Self
 
 import httpx
 import pytest
+from pydantic import BaseModel, ValidationError
 from websockets.exceptions import ConnectionClosedError
 from websockets.frames import Close
 
@@ -80,7 +81,28 @@ from connector.server.rpc import (
     RPC_LOG_TRUNCATED,
     sanitize_rpc_log_value,
 )
-from connector.server.runtime_sync import RuntimeSyncRunner, _timeline_sync_notification
+from connector.server.runtime_sync import (
+    RuntimeSyncRunner,
+    _timeline_sync_notification,
+    validation_error_summary,
+)
+
+
+def test_runtime_sync_validation_error_summary_is_bounded() -> None:
+    class ClosedKinds(BaseModel):
+        kinds: list[Literal["started"]]
+
+    with pytest.raises(ValidationError) as caught:
+        ClosedKinds.model_validate(
+            {"kinds": ["completed", "future1", "future2", "future3", "future4", "future5"]}
+        )
+
+    summary = validation_error_summary(caught.value)
+
+    assert "kinds.0" in summary
+    assert "Input should be 'started'" in summary
+    assert "... 1 more" in summary
+    assert "completed" not in summary
 
 
 def test_rpc_log_payload_sanitizer_redacts_secrets_and_bounds_size() -> None:

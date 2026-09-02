@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -11,8 +11,8 @@ from openai_codex.generated.v2_all import Thread
 
 from connector.logging import logger
 from connector.runtime_protocol import (
-    RuntimeModelCatalog,
     RuntimeInvalidRequestError,
+    RuntimeModelCatalog,
     RuntimePermissionCatalog,
     RuntimeSessionSourceStateCache,
     RuntimeSessionStateCache,
@@ -323,26 +323,21 @@ class CodexSessionReader:
                 thread_id=external_session_id,
                 include_turns=False,
             )
-            if isinstance(result.thread, Thread):
-                try:
-                    turns_result = await list_thread_turns(external_session_id)
-                except RuntimeInvalidRequestError:
-                    result = await self.client.read_thread(
-                        thread_id=external_session_id,
-                        include_turns=True,
-                    )
-                else:
-                    result = result.__class__(
-                        thread=result.thread.model_copy(
-                            update={"turns": list(turns_result.turns)}
-                        )
-                    )
-                    snapshot_source = "codex.thread/turns/list"
-            else:
+            try:
+                turns_result = await list_thread_turns(external_session_id)
+            except RuntimeInvalidRequestError:
                 result = await self.client.read_thread(
                     thread_id=external_session_id,
                     include_turns=True,
                 )
+            else:
+                result = result.__class__(
+                    thread=thread_with_raw_turns(
+                        result.thread,
+                        turns_result.turns,
+                    )
+                )
+                snapshot_source = "codex.thread/turns/list"
         else:
             result = await self.client.read_thread(
                 thread_id=external_session_id,
@@ -406,3 +401,15 @@ def thread_state_from_sdk_thread(thread: Thread) -> dict[str, Any]:
     if thread.name is not None:
         state["name"] = thread.name
     return state
+
+
+def thread_with_raw_turns(
+    thread: Thread | Mapping[str, Any],
+    turns: tuple[Mapping[str, Any], ...],
+) -> dict[str, Any]:
+    if isinstance(thread, Thread):
+        raw_thread = thread.model_dump(mode="json", by_alias=True)
+    else:
+        raw_thread = dict(thread)
+    raw_thread["turns"] = [dict(turn) for turn in turns]
+    return raw_thread

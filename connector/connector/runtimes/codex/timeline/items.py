@@ -219,7 +219,10 @@ class CodexFunctionCallItem(CodexToolTimelineItem):
 
 @dataclass(frozen=True, slots=True)
 class CodexFunctionCallOutputItem(CodexToolTimelineItem):
-    expected_native_item_types: ClassVar[tuple[str, ...]] = ("function_call_output",)
+    expected_native_item_types: ClassVar[tuple[str, ...]] = (
+        "function_call_output",
+        "functionCallOutput",
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -277,6 +280,7 @@ CODEX_TIMELINE_ITEM_CLASS_BY_NATIVE_TYPE: Mapping[str, type[CodexTimelineItem]] 
     "webSearch": CodexWebSearchItem,
     "function_call": CodexFunctionCallItem,
     "function_call_output": CodexFunctionCallOutputItem,
+    "functionCallOutput": CodexFunctionCallOutputItem,
     "custom_tool_call": CodexCustomToolCallItem,
     "custom_tool_call_output": CodexCustomToolCallOutputItem,
     "toolCall": CodexToolCallItem,

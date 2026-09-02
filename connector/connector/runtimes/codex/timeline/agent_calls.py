@@ -65,6 +65,10 @@ def subagent_activity_native_action(kind: str | None) -> str:
         "started": "spawnAgent",
         "interacted": "sendInput",
         "interrupted": "closeAgent",
+        # Completion is an observed lifecycle event, not a caller action. Preserve
+        # the native value so the generic agent-call projection can degrade it to
+        # action="unknown" without misrepresenting it as an explicit close.
+        "completed": "completed",
     }.get(kind or "", "agent")
 
 

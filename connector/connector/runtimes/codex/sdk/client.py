@@ -21,7 +21,6 @@ from openai_codex.generated.v2_all import (
     TextUserInput,
     ThreadResumeParams,
     ThreadStartParams,
-    Turn,
     TurnStartParams,
     UserInput,
     WorkspaceWriteSandboxPolicy,
@@ -40,9 +39,6 @@ from connector.runtimes.codex.sdk.model_gateway import (
     CODEX_MODEL_GATEWAY_PROVIDER_ID,
     codex_model_gateway_config,
 )
-from connector.runtimes.codex.sdk.server_requests import (
-    install_deferred_server_request_reader,
-)
 from connector.runtimes.codex.sdk.runtime_client import (
     CodexCompactResult,
     CodexInterruptTurnRequest,
@@ -59,6 +55,9 @@ from connector.runtimes.codex.sdk.runtime_client import (
     CodexThreadTurnsResult,
     CodexTurnResult,
     NotificationHandler,
+)
+from connector.runtimes.codex.sdk.server_requests import (
+    install_deferred_server_request_reader,
 )
 from connector.runtimes.codex.sdk.shapes import (
     call_with_optional_handler,
@@ -88,8 +87,14 @@ CODEX_THREAD_TURNS_PAGE_SIZE = 100
 class CodexThreadTurnsListResponse(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
-    data: list[Turn]
+    data: list[dict[str, Any]]
     next_cursor: str | None = Field(default=None, alias="nextCursor")
+
+
+class CodexRawThreadReadResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    thread: dict[str, Any]
 
 
 class CodexSdkClient:
@@ -234,9 +239,20 @@ class CodexSdkClient:
         include_turns: bool = True,
     ) -> CodexThreadReadResult:
         started_at = time.monotonic()
-        thread = self._thread_handle(thread_id)
-        result = await thread.read(include_turns=include_turns)
-        projected = thread_read_result(result)
+        low_level_client = getattr(self._client, "_client", None)
+        request = getattr(low_level_client, "request", None)
+        if callable(request):
+            await ensure_codex_initialized(self._client)
+            result = await request(
+                "thread/read",
+                {"threadId": thread_id, "includeTurns": include_turns},
+                response_model=CodexRawThreadReadResponse,
+            )
+            projected = CodexThreadReadResult(thread=result.thread)
+        else:
+            thread = self._thread_handle(thread_id)
+            result = await thread.read(include_turns=include_turns)
+            projected = thread_read_result(result)
         elapsed_ms = (time.monotonic() - started_at) * 1000
         if include_turns or elapsed_ms >= 250:
             logger.info(
@@ -255,7 +271,7 @@ class CodexSdkClient:
             raise RuntimeInvalidRequestError(
                 "Codex SDK client does not expose raw request() for thread turns"
             )
-        turns_descending: list[Turn] = []
+        turns_descending: list[Mapping[str, Any]] = []
         cursor: str | None = None
         seen_cursors: set[str] = set()
         while True:
