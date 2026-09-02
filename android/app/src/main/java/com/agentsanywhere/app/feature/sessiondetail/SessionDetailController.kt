@@ -3,6 +3,7 @@ package com.agentsanywhere.app.feature.sessiondetail
 import com.agentsanywhere.app.api.ApiException
 import com.agentsanywhere.app.api.RemoteRpcResponse
 import com.agentsanywhere.app.api.RemoteSessionEventEnvelope
+import com.agentsanywhere.app.api.RemoteSessionShareResponse
 import com.agentsanywhere.app.api.RemoteRuntimeModelCatalog
 import com.agentsanywhere.app.api.RemoteRuntimePermissionCatalog
 import com.agentsanywhere.app.api.SessionsApi
@@ -544,6 +545,25 @@ class SessionDetailController(
             runCatching {
                 val auth = authSession()
                 attachmentTransfer.download(auth.serverUrl, auth.accessToken, sessionId, attachment)
+            }
+        }
+    }
+
+    suspend fun createShare(
+        sessionId: String,
+        scope: String,
+        itemIds: List<String>,
+    ): Result<RemoteSessionShareResponse> {
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                val auth = authSession()
+                sessionsApi.createSessionShare(
+                    serverUrl = auth.serverUrl,
+                    authorizationToken = auth.accessToken,
+                    sessionId = sessionId,
+                    scope = scope,
+                    itemIds = itemIds,
+                )
             }
         }
     }

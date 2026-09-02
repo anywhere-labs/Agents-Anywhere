@@ -74,6 +74,14 @@ data class RemoteSessionCreateResponse(
     val session: RemoteSession,
 )
 
+data class RemoteSessionShareResponse(
+    val shareId: String,
+    val sharePath: String,
+    val shareUrl: String,
+    val scope: String,
+    val createdAt: String,
+)
+
 data class RemoteSessionTimelinePage(
     val sessionId: String,
     val items: List<RemoteTimelineItem>,

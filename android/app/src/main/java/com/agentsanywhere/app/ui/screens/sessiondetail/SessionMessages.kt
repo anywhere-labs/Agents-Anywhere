@@ -97,6 +97,7 @@ import com.composables.icons.lucide.Clock
 import com.composables.icons.lucide.FilePenLine
 import com.composables.icons.lucide.Hammer
 import com.composables.icons.lucide.Lucide
+import com.composables.icons.lucide.Share2
 import com.composables.icons.lucide.Sparkles
 import com.composables.icons.lucide.SquareTerminal
 import com.composables.icons.lucide.WifiOff
@@ -263,6 +264,7 @@ internal fun MessageList(
     onPreviewAttachment: (TimelineAttachment) -> Unit,
     onOpenAttachment: (TimelineAttachment) -> Unit,
     onCopyMessage: (String) -> Unit,
+    onShareReply: (List<String>) -> Unit,
     onOpenFile: (String) -> Unit,
     onRespondNotice: (RuntimeNotice, RuntimeNoticeAction, Map<String, Any?>?) -> Unit = { _, _, _ -> },
 ) {
@@ -286,8 +288,8 @@ internal fun MessageList(
     val timelineItems = remember(displayMessages, interactionTargetIds) {
         groupTimelineMessages(displayMessages, interactionTargetIds)
     }
-    val agentCopyTextByTurnEnd = remember(timelineItems, turnInProgress) {
-        buildAgentCopyTextByTurnEnd(timelineItems, turnInProgress)
+    val agentActionsByTurnEnd = remember(timelineItems, turnInProgress) {
+        buildAgentActionsByTurnEnd(timelineItems, turnInProgress)
     }
     var showScrollToBottom by remember { mutableStateOf(false) }
     var autoFollowLatest by remember(sessionId) { mutableStateOf(true) }
@@ -464,12 +466,13 @@ internal fun MessageList(
                                 darkMode = darkMode,
                             )
                         }
-                        agentCopyTextByTurnEnd[item.key]?.let { copyText ->
+                        agentActionsByTurnEnd[item.key]?.let { action ->
                             DisableSelection {
-                                AgentReplyCopyAction(
+                                AgentReplyActions(
                                     darkMode = darkMode,
-                                    copyText = copyText,
+                                    action = action,
                                     onCopyMessage = onCopyMessage,
+                                    onShareReply = onShareReply,
                                 )
                             }
                         }
@@ -527,10 +530,11 @@ private fun LazyListState.isAtLatest(): Boolean {
 }
 
 @Composable
-private fun AgentReplyCopyAction(
+private fun AgentReplyActions(
     darkMode: Boolean,
-    copyText: String,
+    action: AgentReplyAction,
     onCopyMessage: (String) -> Unit,
+    onShareReply: (List<String>) -> Unit,
 ) {
     val divider = LocalAAColors.current.border.copy(alpha = 0.5f)
     Column(
@@ -547,15 +551,31 @@ private fun AgentReplyCopyAction(
         )
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.Start,
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             MessageCopyButton(
                 darkMode = darkMode,
-                label = stringResource(R.string.session_copy_reply),
-                onClick = { onCopyMessage(copyText) },
+                onClick = { onCopyMessage(action.copyText) },
+            )
+            MessageShareButton(
+                onClick = { onShareReply(action.itemIds) },
             )
         }
     }
+}
+
+@Composable
+private fun MessageShareButton(onClick: () -> Unit) {
+    Icon(
+        imageVector = Lucide.Share2,
+        contentDescription = stringResource(R.string.session_share),
+        tint = LocalAAColors.current.muted,
+        modifier = Modifier
+            .size(30.dp)
+            .clip(CircleShape)
+            .noRippleClickable(onClick = onClick)
+            .padding(7.dp),
+    )
 }
 
 internal fun groupTimelineMessages(
@@ -630,12 +650,18 @@ internal fun groupTimelineMessages(
     return result
 }
 
-private fun buildAgentCopyTextByTurnEnd(
+private data class AgentReplyAction(
+    val copyText: String,
+    val itemIds: List<String>,
+)
+
+private fun buildAgentActionsByTurnEnd(
     items: List<TimelineRenderItem>,
     latestTurnInProgress: Boolean,
-): Map<String, String> {
+): Map<String, AgentReplyAction> {
     return buildMap {
         val replyParts = mutableListOf<String>()
+        val replyItemIds = linkedSetOf<String>()
         var turnEndKey: String? = null
         var hasOpenTurn = false
 
@@ -644,10 +670,19 @@ private fun buildAgentCopyTextByTurnEnd(
                 .filter(String::isNotBlank)
                 .joinToString("\n\n")
                 .trim()
-            if (includeCopyAction && copyText.isNotBlank()) {
-                turnEndKey?.let { put(it, copyText) }
+            if (includeCopyAction && replyItemIds.isNotEmpty()) {
+                turnEndKey?.let {
+                    put(
+                        it,
+                        AgentReplyAction(
+                            copyText = copyText,
+                            itemIds = replyItemIds.toList(),
+                        ),
+                    )
+                }
             }
             replyParts.clear()
+            replyItemIds.clear()
             turnEndKey = null
             hasOpenTurn = false
         }
@@ -669,6 +704,11 @@ private fun buildAgentCopyTextByTurnEnd(
             if (hasOpenTurn) {
                 turnEndKey = item.key
                 replyParts += copyableParts
+                item.messages
+                    .filter(TimelineMessage::isCopyableAgentText)
+                    .map(TimelineMessage::sourceItemId)
+                    .filter(String::isNotBlank)
+                    .forEach(replyItemIds::add)
             }
         }
         if (hasOpenTurn) finishTurn(includeCopyAction = !latestTurnInProgress)

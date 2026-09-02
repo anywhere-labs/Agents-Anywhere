@@ -200,12 +200,16 @@ fun SessionDetailScreen(
     var preparedPermissionLoading by remember(preparedSession) { mutableStateOf(false) }
     var preparedModelError by remember(preparedSession) { mutableStateOf<String?>(null) }
     var preparedPermissionError by remember(preparedSession) { mutableStateOf<String?>(null) }
+    var optimisticSelections by remember(sessionId) { mutableStateOf(emptyMap<String, String>()) }
     var takeoverConfirm by remember(sessionId) { mutableStateOf<Boolean?>(null) }
     var previewImage by remember(sessionId) { mutableStateOf<AttachmentPreview?>(null) }
     var pendingGallerySave by remember(sessionId) { mutableStateOf<DownloadedAttachment?>(null) }
     var attachmentSaveInFlight by remember(sessionId) { mutableStateOf(false) }
     var showCamera by remember(sessionId) { mutableStateOf(false) }
     var showDeviceOffline by remember(sessionId) { mutableStateOf(false) }
+    var pendingShareItemIds by remember(sessionId) { mutableStateOf<List<String>?>(null) }
+    var shareScope by remember(sessionId) { mutableStateOf(SessionShareScope.Reply) }
+    var shareBusy by remember(sessionId) { mutableStateOf(false) }
     var pendingOpenFilePath by remember(sessionId) { mutableStateOf<String?>(null) }
     var terminalVerticalDragActive by remember(sessionId) { mutableStateOf(false) }
     var composerHeightPx by remember { mutableStateOf(0) }
@@ -279,6 +283,51 @@ fun SessionDetailScreen(
         if (copyText.isBlank()) return
         clipboard.setText(AnnotatedString(copyText))
         showToast(context.getString(R.string.common_copied))
+    }
+
+    fun requestShare(itemIds: List<String>) {
+        if (sessionId == null || itemIds.isEmpty()) return
+        shareScope = SessionShareScope.Reply
+        pendingShareItemIds = itemIds
+    }
+
+    fun createShare() {
+        val id = sessionId ?: return
+        val replyItemIds = pendingShareItemIds ?: return
+        if (shareBusy) return
+        shareBusy = true
+        scope.launch {
+            controller.createShare(
+                sessionId = id,
+                scope = shareScope.apiValue,
+                itemIds = if (shareScope == SessionShareScope.Reply) replyItemIds else emptyList(),
+            ).onSuccess { response ->
+                pendingShareItemIds = null
+                shareBusy = false
+                runCatching {
+                    val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                        type = "text/plain"
+                        putExtra(Intent.EXTRA_TEXT, response.shareUrl)
+                        putExtra(
+                            Intent.EXTRA_SUBJECT,
+                            state.session?.title ?: context.getString(R.string.session_title_fallback),
+                        )
+                    }
+                    context.startActivity(
+                        Intent.createChooser(
+                            shareIntent,
+                            context.getString(R.string.session_share_chooser_title),
+                        ),
+                    )
+                }.onFailure {
+                    showError(context.getString(R.string.session_share_open_failed))
+                }
+            }.onFailure {
+                pendingShareItemIds = null
+                shareBusy = false
+                showError(context.getString(R.string.session_share_failed))
+            }
+        }
     }
 
     fun saveDownloadedImage(downloaded: DownloadedAttachment) {
@@ -1048,17 +1097,31 @@ fun SessionDetailScreen(
         val id = sessionId ?: return
         if (state.selectionUpdating) return
         val selections = state.runtime.selections.toMutableMap().apply { put(scopeName, selectionId) }
+        optimisticSelections = optimisticSelections + (scopeName to selectionId)
         state = state.copy(selectionUpdating = true, actionError = null)
         scope.launch {
             controller.updateSelections(id, selections)
                 .onSuccess { observed ->
-                    if (observed != null && observed.updatedSeq >= state.runtime.updatedSeq) {
-                        state = state.copy(runtime = observed)
+                    if (sessionId != id) return@onSuccess
+                    val confirmedSelections = state.runtime.selections.toMutableMap().apply {
+                        put(scopeName, selectionId)
                     }
-                    state = state.copy(selectionUpdating = false)
+                    val confirmedRuntime = if (
+                        observed != null &&
+                        observed.updatedSeq >= state.runtime.updatedSeq &&
+                        observed.selections[scopeName] == selectionId
+                    ) {
+                        observed
+                    } else {
+                        state.runtime.copy(selections = confirmedSelections)
+                    }
+                    state = state.copy(runtime = confirmedRuntime, selectionUpdating = false)
+                    optimisticSelections = optimisticSelections - scopeName
                 }
                 .onFailure { error ->
+                    if (sessionId != id) return@onFailure
                     val message = error.message ?: context.getString(R.string.session_selection_update_failed)
+                    optimisticSelections = optimisticSelections - scopeName
                     state = state.copy(selectionUpdating = false, actionError = message)
                     showError(message)
                 }
@@ -1371,10 +1434,12 @@ fun SessionDetailScreen(
         }
     }.orEmpty()
     val modelSelection = modelOptions.validatedSelection(
-        if (isPreparedSession) preparedSelections.model else state.runtime.selections["model"],
+        if (isPreparedSession) preparedSelections.model
+        else optimisticSelections["model"] ?: state.runtime.selections["model"],
     )
     val permissionSelection = permissionOptions.validatedSelection(
-        if (isPreparedSession) preparedSelections.permission else state.runtime.selections["permission"],
+        if (isPreparedSession) preparedSelections.permission
+        else optimisticSelections["permission"] ?: state.runtime.selections["permission"],
     )
     val modelCapability = state.capabilities.find(SESSION_MODEL_CATALOG_CAPABILITY, runtimeId, runtimeType)
     val permissionCapability = state.capabilities.find(SESSION_PERMISSION_CATALOG_CAPABILITY, runtimeId, runtimeType)
@@ -1571,6 +1636,7 @@ fun SessionDetailScreen(
                                 onPreviewAttachment = { previewImage = AttachmentPreview.Remote(it) },
                                 onOpenAttachment = ::openAttachment,
                                 onCopyMessage = ::copyMessageText,
+                                onShareReply = ::requestShare,
                                 onOpenFile = ::openReferencedFile,
                                 onRespondNotice = ::respondNotice,
                             )
@@ -1720,6 +1786,16 @@ fun SessionDetailScreen(
         DeviceOfflineDialog(onDismiss = { showDeviceOffline = false })
     }
 
+    pendingShareItemIds?.let {
+        SessionShareDialog(
+            selectedScope = shareScope,
+            busy = shareBusy,
+            onSelectScope = { if (!shareBusy) shareScope = it },
+            onDismiss = { if (!shareBusy) pendingShareItemIds = null },
+            onConfirm = ::createShare,
+        )
+    }
+
     if (showRuntimeSettings) {
         SessionRuntimeSettingsSheet(
             runtimeLabel = state.session?.runtimeContextLabel.orEmpty(),
@@ -1789,6 +1865,136 @@ private fun SessionDetailState.effectiveRuntimeStatus(): SessionRuntimeStatus {
         SessionStatus.Blocked -> SessionRuntimeStatus.Blocked
         SessionStatus.Error -> SessionRuntimeStatus.Error
         SessionStatus.Unknown, null -> SessionRuntimeStatus.Unknown
+    }
+}
+
+private enum class SessionShareScope(val apiValue: String) {
+    Reply("message"),
+    Session("session"),
+}
+
+@Composable
+private fun SessionShareDialog(
+    selectedScope: SessionShareScope,
+    busy: Boolean,
+    onSelectScope: (SessionShareScope) -> Unit,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit,
+) {
+    val colors = LocalAAColors.current
+    val shape = RoundedCornerShape(26.dp)
+
+    Dialog(
+        onDismissRequest = { if (!busy) onDismiss() },
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Column(
+            modifier = Modifier
+                .padding(horizontal = 22.dp)
+                .widthIn(max = 380.dp)
+                .shadow(34.dp, shape, ambientColor = colors.appShadow, spotColor = colors.appShadow)
+                .clip(shape)
+                .background(colors.dialogSurface)
+                .border(1.dp, colors.border, shape)
+                .padding(22.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            Text(
+                text = stringResource(R.string.session_share_dialog_title),
+                color = colors.ink,
+                fontSize = 24.sp,
+                fontWeight = FontWeight.ExtraBold,
+                lineHeight = 29.sp,
+            )
+            Text(
+                text = stringResource(R.string.session_share_dialog_body),
+                color = colors.muted,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Medium,
+                lineHeight = 20.sp,
+            )
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                SessionShareOption(
+                    title = stringResource(R.string.session_share_reply),
+                    description = stringResource(R.string.session_share_reply_description),
+                    selected = selectedScope == SessionShareScope.Reply,
+                    enabled = !busy,
+                    onClick = { onSelectScope(SessionShareScope.Reply) },
+                )
+                SessionShareOption(
+                    title = stringResource(R.string.session_share_entire_session),
+                    description = stringResource(R.string.session_share_entire_session_description),
+                    selected = selectedScope == SessionShareScope.Session,
+                    enabled = !busy,
+                    onClick = { onSelectScope(SessionShareScope.Session) },
+                )
+            }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                TakeoverDialogButton(
+                    label = stringResource(R.string.common_cancel),
+                    background = colors.subtle,
+                    content = colors.ink,
+                    enabled = !busy,
+                    modifier = Modifier.weight(1f),
+                    onClick = onDismiss,
+                )
+                TakeoverDialogButton(
+                    label = stringResource(
+                        if (busy) R.string.session_share_creating else R.string.session_share_create,
+                    ),
+                    background = colors.primaryAction.copy(alpha = if (busy) 0.38f else 1f),
+                    content = colors.onPrimaryAction,
+                    enabled = !busy,
+                    modifier = Modifier.weight(1f),
+                    onClick = onConfirm,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SessionShareOption(
+    title: String,
+    description: String,
+    selected: Boolean,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    val colors = LocalAAColors.current
+    val optionShape = RoundedCornerShape(16.dp)
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(optionShape)
+            .background(if (selected) colors.subtle else Color.Transparent)
+            .border(
+                width = 1.dp,
+                color = if (selected) colors.ink.copy(alpha = 0.28f) else colors.border,
+                shape = optionShape,
+            )
+            .noRippleClickable(enabled = enabled, onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Text(
+            text = title,
+            color = colors.ink.copy(alpha = if (enabled) 1f else 0.55f),
+            fontSize = 15.sp,
+            fontWeight = FontWeight.Bold,
+        )
+        Text(
+            text = description,
+            color = colors.muted.copy(alpha = if (enabled) 1f else 0.55f),
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Medium,
+            lineHeight = 17.sp,
+        )
     }
 }
 

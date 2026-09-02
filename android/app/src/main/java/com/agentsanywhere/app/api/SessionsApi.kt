@@ -109,6 +109,25 @@ class SessionsApi(
         ).toRemoteSessionResponse()
     }
 
+    fun createSessionShare(
+        serverUrl: String,
+        authorizationToken: String,
+        sessionId: String,
+        scope: String,
+        itemIds: List<String>,
+    ): RemoteSessionShareResponse {
+        val body = JSONObject().apply {
+            put("scope", scope)
+            put("itemIds", JSONArray(itemIds))
+        }
+        return client.postJson(
+            serverUrl = serverUrl,
+            path = "/sessions/${sessionId.urlEncode()}/shares",
+            body = body,
+            authorizationToken = authorizationToken,
+        ).toRemoteSessionShareResponse()
+    }
+
     fun archiveSessions(
         serverUrl: String,
         authorizationToken: String,
@@ -597,6 +616,16 @@ class SessionsApi(
     private fun JSONObject.toRemoteSessionCreateResponse(): RemoteSessionCreateResponse {
         return RemoteSessionCreateResponse(
             session = getJSONObject("session").toRemoteSession(),
+        )
+    }
+
+    private fun JSONObject.toRemoteSessionShareResponse(): RemoteSessionShareResponse {
+        return RemoteSessionShareResponse(
+            shareId = getString("shareId"),
+            sharePath = getString("sharePath"),
+            shareUrl = getString("shareUrl"),
+            scope = getString("scope"),
+            createdAt = getString("createdAt"),
         )
     }
 
