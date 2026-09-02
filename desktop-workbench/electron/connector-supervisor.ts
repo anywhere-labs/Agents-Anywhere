@@ -648,6 +648,7 @@ export class ConnectorSupervisor {
     | "openAtLogin"
     | "startConnectorOnLaunch"
     | "silentLaunch"
+    | "notificationsEnabled"
     | "uvPath"
     | "uvPypiIndexUrl"
     | "logChunkSizeKb"
@@ -659,6 +660,7 @@ export class ConnectorSupervisor {
       openAtLogin: settings.openAtLogin,
       startConnectorOnLaunch: settings.startConnectorOnLaunch,
       silentLaunch: settings.silentLaunch,
+      notificationsEnabled: settings.notificationsEnabled,
       uvPath: settings.uvPath,
       uvPypiIndexUrl: settings.uvPypiIndexUrl,
       logChunkSizeKb: settings.logChunkSizeKb,

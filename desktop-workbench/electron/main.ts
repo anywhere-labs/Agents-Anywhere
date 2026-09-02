@@ -5,6 +5,7 @@ import {
   ipcMain,
   Menu,
   net,
+  Notification,
   protocol,
   session,
   shell,
@@ -28,10 +29,13 @@ import type {
   DesktopDeviceNameInput,
   DesktopDeviceProvisionInput,
   DesktopDeviceReconnectInput,
+  DesktopNotificationInput,
+  DesktopNotificationResult,
   DesktopSettingsPatch,
 } from "./connector-types";
 
 const APP_NAME = "Agents Anywhere Workbench";
+const APP_ID = "dev.agentsanywhere.workbench";
 const WEB_PROTOCOL = "aa-workbench";
 const WEB_HOST = "web";
 const DEFAULT_API_ORIGIN = "https://web.agents-anywhere.com";
@@ -61,8 +65,12 @@ let isQuitting = false;
 let shutdownComplete = false;
 let shutdownPromise: Promise<void> | null = null;
 let quitConfirmationPromise: Promise<boolean> | null = null;
+const activeNotifications = new Set<Notification>();
 
 app.setName(APP_NAME);
+if (process.platform === "win32") {
+  app.setAppUserModelId(app.isPackaged ? APP_ID : process.execPath);
+}
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -371,6 +379,34 @@ function registerIpcHandlers(): void {
     if (!/^https?:\/\//i.test(url)) throw new Error("Only http(s) URLs can be opened externally.");
     await shell.openExternal(url);
   });
+  ipcMain.handle(
+    "workbench:notifications:show",
+    (event, input: DesktopNotificationInput): DesktopNotificationResult => {
+      assertTrustedRenderer(event);
+      if (!requireSettings().get().notificationsEnabled) {
+        return { shown: false, reason: "disabled" };
+      }
+      if (!Notification.isSupported()) {
+        return { shown: false, reason: "unsupported" };
+      }
+      const title = normalizeNotificationText(input?.title, 120);
+      const body = normalizeNotificationText(input?.body, 500);
+      if (!title || !body) return { shown: false, reason: "invalid" };
+
+      const notification = new Notification({ title, body });
+      activeNotifications.add(notification);
+      notification.once("close", () => activeNotifications.delete(notification));
+      notification.once("click", () => {
+        activeNotifications.delete(notification);
+        showMainWindow();
+        sendToRenderer("workbench:notifications:click", {
+          sessionId: typeof input.sessionId === "string" ? input.sessionId : undefined,
+        });
+      });
+      notification.show();
+      return { shown: true };
+    },
+  );
   ipcMain.handle("workbench:connector:getState", async (event) => {
     assertTrustedRenderer(event);
     return requireConnector().getState();
@@ -493,6 +529,11 @@ function registerIpcHandlers(): void {
     assertTrustedRenderer(event);
     return requireDevices().updateLocalBindingName(input?.name ?? "");
   });
+}
+
+function normalizeNotificationText(value: unknown, maximumLength: number): string {
+  if (typeof value !== "string") return "";
+  return value.replace(/\s+/g, " ").trim().slice(0, maximumLength);
 }
 
 function requireConnector(): ConnectorSupervisor {

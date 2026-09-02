@@ -23,6 +23,7 @@ export type DesktopConnectorState = {
   openAtLogin: boolean
   startConnectorOnLaunch: boolean
   silentLaunch: boolean
+  notificationsEnabled: boolean
   configPath?: string
   runtimePath?: string
   dataPath?: string
@@ -80,6 +81,7 @@ export type DesktopConnectorSettings = Partial<Pick<
   | "openAtLogin"
   | "startConnectorOnLaunch"
   | "silentLaunch"
+  | "notificationsEnabled"
   | "uvPath"
   | "logChunkSizeKb"
   | "logRetainChunks"
@@ -103,6 +105,17 @@ export type DesktopWorkbenchBridge = {
     node: string
   }
   openExternal: (url: string) => Promise<void>
+  notifications?: {
+    show: (input: {
+      title: string
+      body: string
+      sessionId?: string
+    }) => Promise<{
+      shown: boolean
+      reason?: "disabled" | "unsupported" | "invalid"
+    }>
+    onClick: (listener: (input: { sessionId?: string }) => void) => void | (() => void)
+  }
   device?: {
     createAndConnect: (input: {
       userToken: string

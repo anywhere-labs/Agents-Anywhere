@@ -11,6 +11,8 @@ import type {
   DesktopDeviceNameInput,
   DesktopDeviceProvisionInput,
   DesktopDeviceReconnectInput,
+  DesktopNotificationInput,
+  DesktopNotificationResult,
   DesktopSettingsPatch,
   PublicLocalDesktopBinding,
 } from "./connector-types";
@@ -29,6 +31,12 @@ contextBridge.exposeInMainWorld("desktopWorkbench", {
     node: process.versions.node,
   },
   openExternal: (url: string): Promise<void> => ipcRenderer.invoke("workbench:openExternal", url),
+  notifications: {
+    show: (input: DesktopNotificationInput): Promise<DesktopNotificationResult> =>
+      ipcRenderer.invoke("workbench:notifications:show", input),
+    onClick: (callback: (input: { sessionId?: string }) => void): (() => void) =>
+      subscribe("workbench:notifications:click", callback),
+  },
   connector: {
     getState: (): Promise<ConnectorState> => ipcRenderer.invoke("workbench:connector:getState"),
     getConfig: (): Promise<ConnectorPublicConfig> => ipcRenderer.invoke("workbench:connector:getConfig"),

@@ -91,12 +91,14 @@ export type ConnectorState = {
   openAtLogin: boolean;
   startConnectorOnLaunch: boolean;
   silentLaunch: boolean;
+  notificationsEnabled: boolean;
 };
 
 export type DesktopSettings = {
   openAtLogin: boolean;
   startConnectorOnLaunch: boolean;
   silentLaunch: boolean;
+  notificationsEnabled: boolean;
   uvPath: string;
   uvPypiIndexUrl: string;
   logChunkSizeKb: number;
@@ -105,6 +107,17 @@ export type DesktopSettings = {
 };
 
 export type DesktopSettingsPatch = Partial<DesktopSettings>;
+
+export type DesktopNotificationInput = {
+  title: string;
+  body: string;
+  sessionId?: string;
+};
+
+export type DesktopNotificationResult = {
+  shown: boolean;
+  reason?: "disabled" | "unsupported" | "invalid";
+};
 
 export type DesktopDeviceAuthInput = {
   userToken: string;

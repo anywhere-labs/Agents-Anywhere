@@ -1027,6 +1027,12 @@
     "gotIt": "知道了",
     "localNameFailed": "服务器名称已更新，但无法同步本机 Desktop 名称。"
   },
+  "desktopNotifications": {
+    "approvalTitle": "会话等待你的确认",
+    "attentionTitle": "会话需要处理",
+    "completedTitle": "会话已完成",
+    "untitledSession": "未命名会话"
+  },
   "auth": {
     "actions": {
       "hidePassword": "隐藏密码",
@@ -1153,6 +1159,10 @@
       "appearance": "外观",
       "thisDesktop": "此 Desktop",
       "desktopDescription": "管理这台电脑的连接、运行环境和本机数据。",
+      "desktopNotifications": "通知",
+      "desktopNotificationsDescription": "管理这台电脑上的系统通知。",
+      "desktopSystemNotifications": "系统通知",
+      "desktopSystemNotificationsDescription": "会话需要确认、出现异常或运行结束时，通过系统通知提醒你。",
       "desktopUnavailable": "当前环境没有提供 Desktop Connector 控制能力。",
       "desktopOnline": "在线",
       "desktopConnecting": "连接中",

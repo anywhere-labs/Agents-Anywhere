@@ -1027,6 +1027,12 @@
     "gotIt": "Got it",
     "localNameFailed": "The server name was updated, but the local Desktop name could not be synchronized."
   },
+  "desktopNotifications": {
+    "approvalTitle": "A session needs your approval",
+    "attentionTitle": "A session needs attention",
+    "completedTitle": "Session completed",
+    "untitledSession": "Untitled session"
+  },
   "auth": {
     "actions": {
       "hidePassword": "Hide password",
@@ -1153,6 +1159,10 @@
       "appearance": "Appearance",
       "thisDesktop": "This Desktop",
       "desktopDescription": "Manage this computer's connection, runtime environment, and local data.",
+      "desktopNotifications": "Notifications",
+      "desktopNotificationsDescription": "Manage system notifications on this computer.",
+      "desktopSystemNotifications": "System notifications",
+      "desktopSystemNotificationsDescription": "Get a system notification when a session needs approval, encounters an issue, or finishes running.",
       "desktopUnavailable": "Desktop Connector controls are not available in this environment.",
       "desktopOnline": "Online",
       "desktopConnecting": "Connecting",

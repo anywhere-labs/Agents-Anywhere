@@ -5,6 +5,7 @@ const DEFAULT_SETTINGS: DesktopSettings = {
   openAtLogin: false,
   startConnectorOnLaunch: true,
   silentLaunch: true,
+  notificationsEnabled: true,
   uvPath: "",
   uvPypiIndexUrl: "",
   logChunkSizeKb: 512,
@@ -39,6 +40,10 @@ function normalizeSettings(value: Partial<DesktopSettings>): DesktopSettings {
       DEFAULT_SETTINGS.startConnectorOnLaunch,
     ),
     silentLaunch: booleanValue(value.silentLaunch, DEFAULT_SETTINGS.silentLaunch),
+    notificationsEnabled: booleanValue(
+      value.notificationsEnabled,
+      DEFAULT_SETTINGS.notificationsEnabled,
+    ),
     uvPath: typeof value.uvPath === "string" ? value.uvPath.trim() : DEFAULT_SETTINGS.uvPath,
     uvPypiIndexUrl: typeof value.uvPypiIndexUrl === "string"
       ? value.uvPypiIndexUrl.trim()

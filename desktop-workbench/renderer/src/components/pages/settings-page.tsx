@@ -434,6 +434,21 @@ function DesktopTab() {
 
       <section className="rounded-xl border border-border bg-card">
         <div className="px-6 py-5">
+          <h2 className="text-base font-semibold">{t("desktopNotifications")}</h2>
+          <p className="mt-0.5 text-sm text-muted-foreground">{t("desktopNotificationsDescription")}</p>
+        </div>
+        <Separator />
+        <DesktopSettingSwitch
+          label={t("desktopSystemNotifications")}
+          description={t("desktopSystemNotificationsDescription")}
+          checked={state?.notificationsEnabled ?? true}
+          disabled={busy}
+          onCheckedChange={(checked) => void saveSettings({ notificationsEnabled: checked })}
+        />
+      </section>
+
+      <section className="rounded-xl border border-border bg-card">
+        <div className="px-6 py-5">
           <h2 className="text-base font-semibold">{t("desktopAdvanced")}</h2>
           <p className="mt-0.5 text-sm text-muted-foreground">{t("desktopAdvancedDescription")}</p>
         </div>

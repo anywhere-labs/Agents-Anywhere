@@ -7,6 +7,7 @@ import { SidebarProvider, SidebarInset, useSidebar } from "@/components/ui/sideb
 import { DashboardSidebarControlsContext } from "@/components/dashboard-sidebar-controls"
 import { AppSidebar } from "@/components/app-sidebar"
 import { DesktopShellHeader } from "@/components/desktop/desktop-shell-header"
+import { DesktopSessionNotifications } from "@/components/desktop/desktop-session-notifications"
 import { TaskComposer } from "@/components/task-composer"
 import { SessionView } from "@/components/session-view"
 import { SettingsPage } from "@/components/pages/settings-page"
@@ -48,6 +49,7 @@ export function Demo() {
   return (
     <WorkspaceProvider>
       <DesktopConnectorProvider>
+        <DesktopSessionNotifications />
         <SidebarProvider>
           <DashboardShell />
         </SidebarProvider>
