@@ -192,7 +192,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
       setSession(stored)
       try {
-        const currentUser = await authApi.me(stored.accessToken)
+        const currentUser = normalizeAuthMe(await authApi.me(stored.accessToken), stored)
         if (cancelled) return
         setMe(currentUser)
         setScreenState(nextScreen === "login" || nextScreen === "register" ? "app" : nextScreen)
@@ -226,7 +226,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const nextSession = authResponseToSession(auth)
     saveStoredSession(nextSession)
     setSession(nextSession)
-    const currentUser = await authApi.me(nextSession.accessToken)
+    const currentUser = normalizeAuthMe(await authApi.me(nextSession.accessToken), nextSession)
     setMe(currentUser)
     setError(null)
     setOauthPending(null)
@@ -346,7 +346,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setMe(null)
       return null
     }
-    const currentUser = await authApi.me(session.accessToken)
+    const currentUser = normalizeAuthMe(await authApi.me(session.accessToken), session)
     setMe(currentUser)
     return currentUser
   }, [session?.accessToken])
@@ -388,4 +388,30 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       {children}
     </AuthContext.Provider>
   )
+}
+
+function normalizeAuthMe(value: unknown, fallback: StoredSession): AuthMe {
+  const envelope = isRecord(value) ? value : {}
+  const candidate = isRecord(envelope.user) ? envelope.user : envelope
+  const role = candidate.role === "admin" || candidate.role === "member"
+    ? candidate.role
+    : fallback.role
+
+  return {
+    userId: typeof candidate.userId === "string" && candidate.userId.trim()
+      ? candidate.userId
+      : fallback.userId,
+    role,
+    disabled: candidate.disabled === true,
+    avatar: typeof candidate.avatar === "string" ? candidate.avatar : null,
+    serverTime: typeof envelope.serverTime === "string"
+      ? envelope.serverTime
+      : typeof candidate.serverTime === "string"
+        ? candidate.serverTime
+        : "",
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object")
 }

@@ -115,16 +115,19 @@ const PYPI_MIRROR_OPTIONS = [
 function AccountTab({
   me,
   token,
+  fallbackUserId,
   onMeChange,
 }: {
   me: AuthMe
   token: string
+  fallbackUserId: string
   onMeChange: (me: AuthMe) => void
 }) {
   const t = useTranslations("pages.settings")
   const [passwordOpen, setPasswordOpen] = React.useState(false)
   const [avatarOpen, setAvatarOpen] = React.useState(false)
   const [clearingAvatar, setClearingAvatar] = React.useState(false)
+  const userId = me.userId?.trim() || fallbackUserId
 
   const clearAvatar = async () => {
     if (!token || clearingAvatar) return
@@ -146,13 +149,13 @@ function AccountTab({
         <div className="flex flex-wrap items-center justify-between gap-4 px-6 py-5">
           <div className="flex min-w-0 items-center gap-4">
             <Avatar className="size-16 rounded-full">
-              {me.avatar && <AvatarImage src={me.avatar} alt={me.userId} />}
+              {me.avatar && <AvatarImage src={me.avatar} alt={userId} />}
               <AvatarFallback className="rounded-full bg-primary text-xl text-primary-foreground">
-                {me.userId.slice(0, 2).toUpperCase()}
+                {(userId.slice(0, 2) || "AA").toUpperCase()}
               </AvatarFallback>
             </Avatar>
             <div className="min-w-0">
-              <p className="truncate text-base font-semibold">{me.userId}</p>
+              <p className="truncate text-base font-semibold">{userId}</p>
               <p className="text-sm capitalize text-muted-foreground">{me.role}</p>
             </div>
           </div>
@@ -173,7 +176,7 @@ function AccountTab({
         <div className="divide-y divide-border">
           <div className="flex items-center px-6 py-4">
             <span className="w-36 shrink-0 text-sm text-muted-foreground">{t("userId")}</span>
-            <span className="code-mono text-sm">{me.userId}</span>
+            <span className="code-mono text-sm">{userId}</span>
           </div>
           <div className="flex items-center px-6 py-4">
             <span className="w-36 shrink-0 text-sm text-muted-foreground">{t("role")}</span>
@@ -207,13 +210,13 @@ function AccountTab({
         </div>
       </section>
 
-      <MobileSignInPanel token={token} userId={me.userId} />
+      <MobileSignInPanel token={token} userId={userId} />
 
       <ResetPasswordDialog open={passwordOpen} token={token} onOpenChange={setPasswordOpen} />
       <AvatarCropDialog
         open={avatarOpen}
         token={token}
-        userId={me.userId}
+        userId={userId}
         onMeChange={onMeChange}
         onOpenChange={setAvatarOpen}
       />
@@ -1336,7 +1339,13 @@ export function SettingsPage() {
     authApi
       .me(session.accessToken)
       .then((nextMe) => {
-        if (!cancelled) setMe(nextMe)
+        if (!cancelled) {
+          setMe({
+            ...nextMe,
+            userId: nextMe.userId?.trim() || session.userId,
+            role: nextMe.role === "admin" || nextMe.role === "member" ? nextMe.role : session.role,
+          })
+        }
       })
       .catch((err) => {
         if (!cancelled) setMeError(err instanceof Error ? err.message : t("loadFailed"))
@@ -1348,7 +1357,7 @@ export function SettingsPage() {
     return () => {
       cancelled = true
     }
-  }, [authMe, session?.accessToken, t])
+  }, [authMe, session, t])
 
   React.useEffect(() => {
     if (settingsTab && ["account", "desktop", "startup", "logs", "appearance"].includes(settingsTab)) {
@@ -1432,7 +1441,12 @@ export function SettingsPage() {
             ) : meError ? (
               <div className="flex h-full items-center justify-center text-sm text-destructive">{meError}</div>
             ) : me ? (
-              <AccountTab me={me} token={session?.accessToken ?? ""} onMeChange={handleMeChange} />
+              <AccountTab
+                me={me}
+                token={session?.accessToken ?? ""}
+                fallbackUserId={session?.userId ?? ""}
+                onMeChange={handleMeChange}
+              />
             ) : (
               <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
                 {t("unavailable")}
