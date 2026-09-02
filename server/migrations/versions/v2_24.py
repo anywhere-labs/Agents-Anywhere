@@ -132,10 +132,7 @@ def _validate_sequence_ranges(bind: sa.engine.Connection) -> None:
         ("timeline_items", "updated_seq"),
     ):
         invalid = bind.execute(
-            sa.text(
-                f"SELECT 1 FROM {table_name} "
-                f"WHERE {column_name} < 0 OR {column_name} > :maximum LIMIT 1"
-            ),
+            _sequence_range_statement(table_name, column_name),
             {"maximum": _PROTOCOL_MAX_REVISION},
         ).first()
         if invalid is not None:
@@ -143,3 +140,13 @@ def _validate_sequence_ranges(bind: sa.engine.Connection) -> None:
                 "cannot upgrade to v2.24 because a session sequence is outside "
                 "the protocol range"
             )
+
+
+def _sequence_range_statement(
+    table_name: str,
+    column_name: str,
+) -> sa.sql.elements.TextClause:
+    return sa.text(
+        f"SELECT 1 FROM {table_name} "
+        f"WHERE {column_name} < 0 OR {column_name} > :maximum LIMIT 1"
+    ).bindparams(sa.bindparam("maximum", type_=sa.BigInteger()))

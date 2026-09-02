@@ -6,10 +6,11 @@ import ipaddress
 import json
 import os
 import re
-import signal
 import shlex
+import signal
 import socket
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -49,6 +50,11 @@ DB_URL = (
 REDIS_URL = f"redis://127.0.0.1:{REDIS_PORT}/0"
 
 _SCREEN_RE = re.compile(r"\s*\d+\.([^\s]+)")
+_SENSITIVE_ENV_RE = re.compile(
+    r"(?:PASSWORD|PASSWD|SECRET|TOKEN|CREDENTIAL|API_KEY|ACCESS_KEY|PRIVATE_KEY)",
+    re.IGNORECASE,
+)
+_URL_USERINFO_RE = re.compile(r"([A-Za-z][A-Za-z0-9+.-]*://)[^/@\s]+@")
 _RESTART_LOCK = threading.Lock()
 
 
@@ -128,9 +134,19 @@ def _run(
     except subprocess.TimeoutExpired as exc:
         raise DevControlError(f"Command timed out: {command[0]}") from exc
     if check and result.returncode != 0:
-        detail = result.stdout.strip().splitlines()[-1:] or ["command failed"]
-        raise DevControlError(detail[0])
+        detail = _redact_command_output(result.stdout.strip(), env=env)
+        summary = f"{Path(command[0]).name} exited with status {result.returncode}"
+        raise DevControlError(f"{summary}:\n{detail}" if detail else summary)
     return result
+
+
+def _redact_command_output(output: str, *, env: dict[str, str] | None) -> str:
+    redacted = _URL_USERINFO_RE.sub(r"\1<redacted>@", output)
+    effective_env = os.environ if env is None else env
+    for name, value in effective_env.items():
+        if _SENSITIVE_ENV_RE.search(name) and len(value) >= 4:
+            redacted = redacted.replace(value, "<redacted>")
+    return redacted
 
 
 def screen_sessions() -> set[str]:
@@ -825,5 +841,13 @@ def main() -> None:
         print(json.dumps(status_payload(), ensure_ascii=False))
 
 
+def run_cli() -> None:
+    try:
+        main()
+    except DevControlError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        raise SystemExit(1) from None
+
+
 if __name__ == "__main__":
-    main()
+    run_cli()

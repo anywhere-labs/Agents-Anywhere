@@ -91,6 +91,87 @@ def test_save_connector_credential_with_private_permissions(tmp_path: Path) -> N
     assert stat.S_IMODE(config_path.stat().st_mode) == 0o600
 
 
+def test_run_preserves_multiline_command_failure_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    secret = "local-test-secret"
+    output = (
+        "migration started\n"
+        f"AGENT_SERVER_SECRET={secret}\n"
+        "postgresql://agents:password@127.0.0.1/database\n"
+        "specific database failure\n"
+        "command failed"
+    )
+    monkeypatch.setattr(
+        control.subprocess,
+        "run",
+        lambda *_args, **_kwargs: control.subprocess.CompletedProcess(
+            ["migration"],
+            1,
+            output,
+        ),
+    )
+
+    with pytest.raises(DevControlError) as error:
+        control._run(["migration"], env={"AGENT_SERVER_SECRET": secret})
+
+    message = str(error.value)
+    assert message.startswith("migration exited with status 1:\n")
+    assert "migration started" in message
+    assert "specific database failure" in message
+    assert "command failed" in message
+    assert secret not in message
+    assert "agents:password" not in message
+    assert message.count("<redacted>") == 2
+
+
+def test_run_failure_without_output_does_not_echo_arguments(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    secret = "command-line-secret"
+    monkeypatch.setattr(
+        control.subprocess,
+        "run",
+        lambda *_args, **_kwargs: control.subprocess.CompletedProcess(
+            ["/usr/local/bin/tool", "--token", secret],
+            9,
+            "",
+        ),
+    )
+
+    with pytest.raises(DevControlError) as error:
+        control._run(["/usr/local/bin/tool", "--token", secret])
+
+    assert str(error.value) == "tool exited with status 9"
+    assert secret not in str(error.value)
+
+
+def test_run_check_false_returns_nonzero_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expected = control.subprocess.CompletedProcess(["probe"], 3, "not available")
+    monkeypatch.setattr(control.subprocess, "run", lambda *_args, **_kwargs: expected)
+
+    assert control._run(["probe"], check=False) is expected
+
+
+def test_cli_reports_expected_error_without_outer_traceback(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(
+        control,
+        "main",
+        lambda: (_ for _ in ()).throw(DevControlError("first line\nsecond line")),
+    )
+
+    with pytest.raises(SystemExit) as error:
+        control.run_cli()
+
+    assert error.value.code == 1
+    assert capsys.readouterr().err == "Error: first line\nsecond line\n"
+
+
 def test_control_api_restarts_connector_without_echoing_credential(
     control_server: tuple[str, list[tuple[str, str | None]]],
 ) -> None:

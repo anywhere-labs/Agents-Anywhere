@@ -7,6 +7,7 @@ import json
 import pytest
 from alembic import command
 from sqlalchemy import BigInteger, create_engine, inspect, text
+from sqlalchemy.dialects.postgresql import asyncpg as postgresql_asyncpg
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from agent_server.infra.db.engine import build_engine, resolve_db_url
@@ -30,6 +31,7 @@ from agent_server.infra.db.schema import (
     sessions,
     timeline_items,
 )
+from migrations.versions import v2_24
 
 
 def _sqlite_url(path) -> str:
@@ -53,6 +55,14 @@ def test_session_sequence_clocks_use_64_bit_columns() -> None:
     ):
         assert isinstance(sessions.c[column_name].type, BigInteger)
     assert isinstance(timeline_items.c.updated_seq.type, BigInteger)
+
+
+def test_v2_24_protocol_limit_uses_postgresql_bigint_bind() -> None:
+    statement = v2_24._sequence_range_statement("sessions", "last_read_seq")
+
+    compiled = str(statement.compile(dialect=postgresql_asyncpg.dialect()))
+
+    assert "$1::BIGINT" in compiled
 
 
 def test_runtime_database_url_is_required(monkeypatch) -> None:
