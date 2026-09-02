@@ -160,7 +160,22 @@ async def _test_codex_sdk_lists_paginated_thread_turns_in_chronological_order() 
 
     result = await client.list_thread_turns("thread_1")
 
-    assert [turn.id for turn in result.turns] == ["turn_1", "turn_2"]
+    assert all(isinstance(turn, Mapping) for turn in result.turns)
+    assert [turn["id"] for turn in result.turns] == ["turn_1", "turn_2"]
+    assert result.turns[1]["items"] == [
+        {
+            "id": "subagent_completed",
+            "type": "subAgentActivity",
+            "agentPath": "/root/research_agent",
+            "agentThreadId": "thread_agent",
+            "kind": "completed",
+        },
+        {
+            "id": "future_tool",
+            "type": "futureTool",
+            "futurePayload": {"preserved": True},
+        },
+    ]
     assert native.low_level.raw_requests == [
         (
             "thread/turns/list",
@@ -844,7 +859,24 @@ class _FakeLowLevelClient:
                     {
                         "id": turn_id,
                         "status": "completed",
-                        "items": [],
+                        "items": (
+                            [
+                                {
+                                    "id": "subagent_completed",
+                                    "type": "subAgentActivity",
+                                    "agentPath": "/root/research_agent",
+                                    "agentThreadId": "thread_agent",
+                                    "kind": "completed",
+                                },
+                                {
+                                    "id": "future_tool",
+                                    "type": "futureTool",
+                                    "futurePayload": {"preserved": True},
+                                },
+                            ]
+                            if "cursor" not in params
+                            else []
+                        ),
                     }
                 ],
                 "nextCursor": "older" if "cursor" not in params else None,
