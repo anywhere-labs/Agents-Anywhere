@@ -62,6 +62,45 @@ def protocol_event(
     )
 
 
+def capability_event_semantic_fingerprint(
+    event: ProtocolEventEnvelope,
+) -> str | None:
+    """Return the effective capability semantics carried by an event.
+
+    Capability-set revisions are transport metadata: the effective actions only
+    change when one of the projected capability records changes.  Canonicalize
+    the complete records (including extension fields such as ``runtimeId``) so
+    list ordering cannot create a false update.  Malformed payloads deliberately
+    return ``None`` and therefore remain unsuppressed by callers.
+    """
+
+    if event.type != "runtime.capability.updated":
+        return None
+    capability_set = event.payload.get("capabilitySet")
+    if not isinstance(capability_set, dict):
+        return None
+    capabilities = capability_set.get("capabilities")
+    if not isinstance(capabilities, list) or not all(
+        isinstance(capability, dict) for capability in capabilities
+    ):
+        return None
+    canonical_capabilities = sorted(
+        json.dumps(
+            capability,
+            sort_keys=True,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            default=str,
+        )
+        for capability in capabilities
+    )
+    return json.dumps(
+        canonical_capabilities,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+
+
 def timeline_events_from_items(
     session_id: str,
     items: list[dict[str, Any]],

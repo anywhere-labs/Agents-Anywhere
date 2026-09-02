@@ -13,6 +13,7 @@ All Server HTTP, SSE, and WebSocket API documentation should live under this dir
 - [Session API current gap](./session-api-current-gap.md): current backend implementation gaps against the target session API.
 - [Session service architecture](./session-service-architecture.md): Server, Connector, Runtime, and Web ownership boundaries for session data and realtime updates.
 - [Effective capability API](./capabilities.md): global and session-scoped effective capability semantics, paths, and realtime events.
+- [Capability event deduplication](./capability-event-deduplication.md): why repeated session capability events occurred and how live projection delivery is deduplicated safely.
 - [Realtime API](./realtime.md): session, dashboard, connector, and terminal realtime channel semantics.
 - [Frontend migration checklist](./frontend-migration-checklist.md): frontend API call-site replacements and behavior changes to apply after backend cleanup.
 

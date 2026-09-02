@@ -50,7 +50,7 @@ WS /sessions/{sessionId}/ws?ticket=...
   -> receive session.subscribed
   -> receive incremental events
 GET /sessions/{sessionId}/events?after=seq:...
-  -> only for reconnect/cursor recovery
+  -> post-subscription cursor reconciliation and reconnect recovery
 ```
 
 `/events` is not snapshot polling. It is a cursor recovery API. If WebSocket is healthy, the client should not call `/events` on a fixed interval.
@@ -94,9 +94,12 @@ Use `runtime.state.updated`, `runtime.capability.updated`,
 - Runtime state and catalogs are not recovered from Server DB. After reconnect,
   Web calls the relevant runtime live endpoint if it needs current state or
   catalogs.
-- Runtime notice and capability updates are recovered when Server has a
-  sequence-backed projection for them. Web may still refresh the corresponding
-  runtime live endpoint after reconnect when it needs the latest exact fact.
+- Runtime notices are recovered when Server has a sequence-backed projection.
+  Session meta and the latest persisted effective capability projection are
+  also returned when recovery starts at the current cursor, because presence
+  and capabilities can change without advancing the durable session sequence.
+  When the connector is online, Web reads the live session capability endpoint
+  after recovery and keeps that Runtime result authoritative.
 - `runtime.capability.updated` carries effective capabilities. On a session
   WebSocket, it is session-scoped and controls current session actions. On a
   dashboard/runtime WebSocket, it is runtime-scoped and controls setup,

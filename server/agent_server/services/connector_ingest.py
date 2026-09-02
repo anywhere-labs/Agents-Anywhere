@@ -19,7 +19,10 @@ from agent_server.services.connector_notifications import (
     ConnectorNotificationService,
     NotificationValidationError,
 )
-from agent_server.services.connector_presence import ConnectorPresencePort
+from agent_server.services.connector_presence import (
+    ConnectorPresencePort,
+    with_effective_session_connector_status,
+)
 from agent_server.services.dashboard_events import publish_dashboard_changed
 from agent_server.services.device_runtimes import (
     DeviceRuntimeNotFoundError,
@@ -279,6 +282,7 @@ class ConnectorIngestService:
                         "runtime_state": None,
                         "timeline_reset": False,
                         "session": False,
+                        "capability_changed": False,
                         "notices": [],
                         "catalogs": {},
                         "refetch": False,
@@ -318,6 +322,9 @@ class ConnectorIngestService:
                     if effect.runtime_state is not None:
                         bucket["runtime_state"] = effect.runtime_state
                     bucket["session"] = bucket["session"] or effect.session_changed
+                    bucket["capability_changed"] = (
+                        bucket["capability_changed"] or effect.protocol_changed
+                    )
                     if effect.notices:
                         bucket["notices"].extend(effect.notices)
                 if effect.catalogs:
@@ -408,17 +415,27 @@ class ConnectorIngestService:
                         session = session.model_copy(
                             update={"status": runtime_state.status}
                         )
-                    session, _runtime_capabilities, effective_capabilities = (
-                        await project_session_capabilities(
+                    effective_capabilities = None
+                    if bucket["capability_changed"]:
+                        (
+                            session,
+                            _runtime_capabilities,
+                            effective_capabilities,
+                        ) = await project_session_capabilities(
                             self._store,
                             self._presence,
                             session,
                         )
-                    )
+                    else:
+                        session = await with_effective_session_connector_status(
+                            self._presence,
+                            session,
+                        )
                     envelope["session"] = session.model_dump(mode="json")
-                    envelope["capabilitySet"] = (
-                        effective_capabilities.model_dump(mode="json")
-                    )
+                    if effective_capabilities is not None:
+                        envelope["capabilitySet"] = effective_capabilities.model_dump(
+                            mode="json"
+                        )
                 except KeyError:
                     pass
             if bucket["notices"]:

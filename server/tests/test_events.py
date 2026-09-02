@@ -6,6 +6,7 @@ import pytest
 
 from agent_server.core.events import (
     EventCursorError,
+    capability_event_semantic_fingerprint,
     event_cursor,
     events_from_invalidation,
     parse_event_cursor,
@@ -26,6 +27,78 @@ def test_event_cursor_is_a_strict_durable_revision_token() -> None:
     for invalid in ("12", "seq:-1", "seq:+1", "seq:01", "seq:"):
         with pytest.raises(EventCursorError):
             parse_event_cursor(invalid)
+
+
+def test_capability_event_fingerprint_ignores_set_revision_and_record_order() -> None:
+    first = protocol_event(
+        "session-1",
+        sequence=7,
+        event_type="runtime.capability.updated",
+        payload={
+            "capabilitySet": {
+                "revision": 7,
+                "capabilities": [
+                    {
+                        "capabilityId": "session.send_message",
+                        "runtimeId": "runtime-1",
+                        "available": True,
+                    },
+                    {
+                        "capabilityId": "session.interrupt",
+                        "available": False,
+                    },
+                ],
+            }
+        },
+    )
+    reordered = protocol_event(
+        "session-1",
+        sequence=8,
+        event_type="runtime.capability.updated",
+        payload={
+            "capabilitySet": {
+                "revision": 99,
+                "capabilities": list(
+                    reversed(first.payload["capabilitySet"]["capabilities"])
+                ),
+            }
+        },
+    )
+    changed_runtime = protocol_event(
+        "session-1",
+        sequence=8,
+        event_type="runtime.capability.updated",
+        payload={
+            "capabilitySet": {
+                "revision": 99,
+                "capabilities": [
+                    {
+                        **first.payload["capabilitySet"]["capabilities"][0],
+                        "runtimeId": "runtime-2",
+                    },
+                    first.payload["capabilitySet"]["capabilities"][1],
+                ],
+            }
+        },
+    )
+
+    assert capability_event_semantic_fingerprint(first) == (
+        capability_event_semantic_fingerprint(reordered)
+    )
+    assert capability_event_semantic_fingerprint(first) != (
+        capability_event_semantic_fingerprint(changed_runtime)
+    )
+    assert (
+        capability_event_semantic_fingerprint(
+            protocol_event(
+                "session-1",
+                sequence=8,
+                event_type="session.meta.updated",
+                payload={"session": {}},
+            )
+        )
+        is None
+    )
 
 
 def test_timeline_reset_invalidation_becomes_one_snapshot_event() -> None:

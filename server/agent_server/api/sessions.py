@@ -33,6 +33,7 @@ from agent_server.core.capabilities import (
 )
 from agent_server.core.events import (
     EventCursorError,
+    capability_event_semantic_fingerprint,
     event_cursor,
     events_from_invalidation,
     protocol_event,
@@ -119,6 +120,11 @@ from agent_server.services.timeline_write_buffer import TimelineWriteBuffer
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 
 _SESSION_WS_EVENT_DEDUP_LIMIT = 1_024
+_SESSION_WS_LIVE_PROJECTION_EVENT_TYPES = {
+    "runtime.catalog.updated",
+    "runtime.state.updated",
+    "session.meta.updated",
+}
 
 
 def validate_session_id_array(payload: list[str]) -> list[str]:
@@ -937,6 +943,8 @@ async def session_ws(
         # live socket; keep the cache bounded for long-running sessions.
         sent_event_ids: set[str] = set()
         sent_event_order: deque[str] = deque()
+        last_live_projection_event_ids: dict[str, str] = {}
+        last_capability_fingerprint: str | None = None
         async with timeline_write_buffer.session_fence(session_id):
             next_seq = await db.get_session_seq(session_id)
         await websocket.send_json(
@@ -965,6 +973,36 @@ async def session_ws(
             if not isinstance(invalidation, dict):
                 continue
             for event in events_from_invalidation(invalidation):
+                capability_fingerprint = capability_event_semantic_fingerprint(
+                    event
+                )
+                if capability_fingerprint is not None:
+                    if capability_fingerprint == last_capability_fingerprint:
+                        continue
+                    await websocket.send_json(event.model_dump(mode="json"))
+                    # Only mark the projection after it was delivered.  Keep
+                    # capability events outside the event-id cache so an actual
+                    # A -> B -> A transition remains observable even if all
+                    # three projections share one durable session sequence.
+                    last_capability_fingerprint = capability_fingerprint
+                    continue
+                if event.type in _SESSION_WS_LIVE_PROJECTION_EVENT_TYPES:
+                    projection_key = event.type
+                    if event.type == "runtime.catalog.updated":
+                        projection_key = (
+                            f"{event.type}:{event.payload.get('catalogType')}"
+                        )
+                    if (
+                        last_live_projection_event_ids.get(projection_key)
+                        == event.eventId
+                    ):
+                        continue
+                    await websocket.send_json(event.model_dump(mode="json"))
+                    # These are current-state projections rather than durable
+                    # changes.  Adjacent duplicates are redundant, while an
+                    # A -> B -> A transition at one session sequence is real.
+                    last_live_projection_event_ids[projection_key] = event.eventId
+                    continue
                 if event.eventId in sent_event_ids:
                     continue
                 await websocket.send_json(event.model_dump(mode="json"))
