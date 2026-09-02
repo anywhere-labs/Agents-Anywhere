@@ -147,6 +147,7 @@ export function DesktopConnectorProvider({ children }: { children: React.ReactNo
   } | null>(null)
   const connectionCheckRef = React.useRef<AbortController | null>(null)
   const reconnectPromptDismissedRef = React.useRef<string | null>(null)
+  const intentionalDisconnectConnectorIdRef = React.useRef<string | null>(null)
 
   const applyState = React.useCallback((nextState: DesktopConnectorState) => {
     setState(nextState)
@@ -172,7 +173,10 @@ export function DesktopConnectorProvider({ children }: { children: React.ReactNo
       return
     }
     setConnectionStatus("disconnected")
-    if (reconnectPromptDismissedRef.current !== connectorId) {
+    if (
+      reconnectPromptDismissedRef.current !== connectorId &&
+      intentionalDisconnectConnectorIdRef.current !== connectorId
+    ) {
       setReconnectPromptOpen(true)
     }
   }, [])
@@ -392,6 +396,7 @@ export function DesktopConnectorProvider({ children }: { children: React.ReactNo
         userId,
         connectorId: binding?.connectorId ?? state?.connectorId ?? undefined,
       })
+      intentionalDisconnectConnectorIdRef.current = null
       reconnectPromptDismissedRef.current = null
       setBinding(reconnected)
       setReconnectPromptOpen(false)
@@ -434,9 +439,13 @@ export function DesktopConnectorProvider({ children }: { children: React.ReactNo
     const userId = session?.userId
     const bridge = getDesktopWorkbenchBridge()
     if (!accessToken || !userId || !bridge?.device || busy) return false
+    const connectorId = binding?.connectorId ?? state?.connectorId ?? null
+    intentionalDisconnectConnectorIdRef.current = connectorId
+    setReconnectPromptOpen(false)
     setBusy(true)
     try {
       const disconnected = await bridge.device.disconnectLocal({ userToken: accessToken, userId })
+      intentionalDisconnectConnectorIdRef.current = disconnected.connectorId
       reconnectPromptDismissedRef.current = disconnected.connectorId
       setBinding(disconnected)
       setReconnectPromptOpen(false)
@@ -446,12 +455,13 @@ export function DesktopConnectorProvider({ children }: { children: React.ReactNo
       toast.success(t("disconnected"))
       return true
     } catch (error) {
+      intentionalDisconnectConnectorIdRef.current = null
       toast.error(error instanceof Error ? error.message : t("disconnectFailed"))
       return false
     } finally {
       setBusy(false)
     }
-  }, [busy, refresh, refreshData, session?.accessToken, session?.userId, t])
+  }, [binding?.connectorId, busy, refresh, refreshData, session?.accessToken, session?.userId, state?.connectorId, t])
 
   const start = React.useCallback(async () => {
     const accessToken = session?.accessToken

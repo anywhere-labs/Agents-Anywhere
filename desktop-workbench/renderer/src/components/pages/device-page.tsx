@@ -1314,7 +1314,14 @@ export function DevicePage() {
           <AlertDialogHeader>
             <AlertDialogTitle>{t(isDesktopConnector ? "disconnectTitle" : "revokeTitle")}</AlertDialogTitle>
             <AlertDialogDescription>
-              {t(isDesktopConnector ? "disconnectDescription" : "revokeDescription", { name: connector.name })}
+              {t(
+                isDesktopConnector
+                  ? isLocalDesktop
+                    ? "localDisconnectDescription"
+                    : "remoteDisconnectDescription"
+                  : "revokeDescription",
+                { name: connector.name },
+              )}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

@@ -58,6 +58,10 @@
         ]
       },
       {
+        "from": "build/icon-mac-source.png",
+        "to": "build/icon-mac-source.png"
+      },
+      {
         "from": "build/uv",
         "to": "uv",
         "filter": [
@@ -69,7 +73,7 @@
       "output": "release"
     },
     "win": {
-      "icon": "../desktop-next/build/icon.ico",
+      "icon": "build/icon.ico",
       "target": "nsis"
     },
     "nsis": {
@@ -77,7 +81,7 @@
       "allowToChangeInstallationDirectory": true
     },
     "mac": {
-      "icon": "../desktop-next/build/icon.icns",
+      "icon": "build/icon.icns",
       "hardenedRuntime": true,
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.plist",
@@ -86,7 +90,7 @@
       "target": "dmg"
     },
     "linux": {
-      "icon": "../logo/icon-light.png",
+      "icon": "build/icon-mac-source.png",
       "target": "AppImage"
     }
   }

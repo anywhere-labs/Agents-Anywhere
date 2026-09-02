@@ -56,8 +56,6 @@ const NOUNS = [
 ]
 
 const GITHUB_RELEASES_URL = "https://github.com/anywhere-labs/Agents-Anywhere/releases"
-const COMMAND_WARNING_ACCEPTED_KEY = "agents-anywhere.pairDevice.commandWarningAccepted.v2"
-const COMMAND_WARNING_WAIT_SECONDS = 5
 
 type Platform = "macos" | "windows" | "linux"
 type LinuxMethod = "terminal" | "pair-code"
@@ -66,7 +64,6 @@ type Step =
   | "desktop-install"
   | "linux-method"
   | "name"
-  | "command-warning"
   | "command"
   | "pair-code"
 
@@ -111,23 +108,6 @@ function shellQuote(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`
 }
 
-function readCommandWarningAccepted(): boolean {
-  if (typeof window === "undefined") return false
-  try {
-    return window.localStorage.getItem(COMMAND_WARNING_ACCEPTED_KEY) === "1"
-  } catch {
-    return false
-  }
-}
-
-function writeCommandWarningAccepted(): void {
-  try {
-    window.localStorage.setItem(COMMAND_WARNING_ACCEPTED_KEY, "1")
-  } catch {
-    // In-memory state is enough when persistent storage is unavailable.
-  }
-}
-
 function CodeBlock({ code, copyLabel }: { code: string; copyLabel: string }) {
   const [copied, setCopied] = React.useState(false)
   const copy = () => {
@@ -140,7 +120,7 @@ function CodeBlock({ code, copyLabel }: { code: string; copyLabel: string }) {
     <div className="grid rounded-lg border border-border bg-muted/40" style={{ gridTemplateColumns: "1fr auto" }}>
       <ScrollArea className="min-w-0">
         <div className="px-4 py-3">
-          <code className="block whitespace-nowrap code-mono text-xs text-foreground">{code}</code>
+          <code className="block whitespace-pre code-mono text-xs text-foreground">{code}</code>
         </div>
         <ScrollBar orientation="horizontal" />
       </ScrollArea>
@@ -216,10 +196,7 @@ export function PairDeviceDialog({
   const [polling, setPolling] = React.useState(false)
   const [createdThisFlow, setCreatedThisFlow] = React.useState(false)
   const [exitGuardOpen, setExitGuardOpen] = React.useState(false)
-  const [commandWarningAccepted, setCommandWarningAccepted] = React.useState(readCommandWarningAccepted)
-  const [commandCountdown, setCommandCountdown] = React.useState(COMMAND_WARNING_WAIT_SECONDS)
   const pollingRef = React.useRef<number | null>(null)
-  const countdownRef = React.useRef<number | null>(null)
   const suppressCloseGuardRef = React.useRef(false)
   const serverUrl = React.useMemo(resolvePairingServerUrl, [])
 
@@ -243,7 +220,6 @@ export function PairDeviceDialog({
     setCreating(false)
     setClaiming(false)
     setCreatedThisFlow(false)
-    setCommandCountdown(COMMAND_WARNING_WAIT_SECONDS)
   }, [setupCredential, stopPolling])
 
   React.useEffect(() => {
@@ -256,33 +232,6 @@ export function PairDeviceDialog({
   }, [open, setupCredential])
 
   React.useEffect(() => () => stopPolling(), [stopPolling])
-
-  React.useEffect(() => {
-    if (step !== "command-warning") {
-      if (countdownRef.current) window.clearInterval(countdownRef.current)
-      countdownRef.current = null
-      return
-    }
-    if (commandWarningAccepted) {
-      setCommandCountdown(0)
-      return
-    }
-    setCommandCountdown(COMMAND_WARNING_WAIT_SECONDS)
-    countdownRef.current = window.setInterval(() => {
-      setCommandCountdown((current) => {
-        if (current <= 1) {
-          if (countdownRef.current) window.clearInterval(countdownRef.current)
-          countdownRef.current = null
-          return 0
-        }
-        return current - 1
-      })
-    }, 1000)
-    return () => {
-      if (countdownRef.current) window.clearInterval(countdownRef.current)
-      countdownRef.current = null
-    }
-  }, [commandWarningAccepted, step])
 
   const completePairing = React.useCallback(() => {
     reset()
@@ -334,28 +283,12 @@ export function PairDeviceDialog({
 
   const routeToLinuxMethod = (method: LinuxMethod) => {
     setLinuxMethod(method)
-    if (method === "terminal" && !commandWarningAccepted) {
-      setCommandCountdown(COMMAND_WARNING_WAIT_SECONDS)
-      setStep("command-warning")
-      return
-    }
     if (!connectorId || !connectorToken) {
       setStep("name")
       return
     }
     setStep(method === "terminal" ? "command" : "pair-code")
     if (method === "terminal") startConnectorPolling(connectorId)
-  }
-
-  const acceptCommandWarning = () => {
-    writeCommandWarningAccepted()
-    setCommandWarningAccepted(true)
-    if (!connectorId || !connectorToken) {
-      setStep("name")
-      return
-    }
-    setStep("command")
-    startConnectorPolling(connectorId)
   }
 
   const handleCreate = async () => {
@@ -465,7 +398,6 @@ export function PairDeviceDialog({
                       platform: t(platform === "macos" ? "platformMacos" : "platformWindows"),
                     })}
                   </DialogTitle>
-                  <DialogDescription>{t("desktopInstallDescription")}</DialogDescription>
                 </DialogHeader>
                 <ol className="grid gap-3 py-2 text-sm">
                   <li className="rounded-xl border bg-muted/25 p-4">{t("desktopInstallStepDownload")}</li>
@@ -496,7 +428,7 @@ export function PairDeviceDialog({
                   <DialogTitle>{t("linuxMethodTitle")}</DialogTitle>
                   <DialogDescription>{t("linuxMethodDescription")}</DialogDescription>
                 </DialogHeader>
-                <div className="grid gap-3 py-2 sm:grid-cols-2">
+                <div className="grid gap-3 py-2">
                   <ChoiceCard
                     icon={<Terminal className="size-5" />}
                     title={t("linuxTerminalTitle")}
@@ -514,29 +446,6 @@ export function PairDeviceDialog({
                   <Button type="button" variant="ghost" size="sm" onClick={goBack} className="gap-1.5">
                     <ArrowLeft className="size-3.5" />
                     {tCommon("back")}
-                  </Button>
-                </DialogFooter>
-              </>
-            ) : null}
-
-            {step === "command-warning" ? (
-              <>
-                <DialogHeader>
-                  <DialogTitle>{t("commandWarningTitle")}</DialogTitle>
-                  <DialogDescription>{t("commandWarningDescription")}</DialogDescription>
-                </DialogHeader>
-                <div className="rounded-xl border bg-muted/25 p-4 text-sm text-muted-foreground">
-                  {t("commandWarningFallback")}
-                </div>
-                <DialogFooter className="gap-2 sm:justify-between">
-                  <Button type="button" variant="ghost" size="sm" onClick={goBack} className="gap-1.5">
-                    <ArrowLeft className="size-3.5" />
-                    {tCommon("back")}
-                  </Button>
-                  <Button type="button" onClick={acceptCommandWarning} disabled={commandCountdown > 0}>
-                    {commandCountdown > 0
-                      ? t("commandWarningCommandCountdown", { seconds: commandCountdown })
-                      : t("commandWarningConfirm")}
                   </Button>
                 </DialogFooter>
               </>
@@ -580,10 +489,11 @@ export function PairDeviceDialog({
                   <DialogDescription>{t("commandStepDescription", { name })}</DialogDescription>
                 </DialogHeader>
                 <div className="flex flex-col gap-3 py-2">
-                  <div className="rounded-xl border bg-muted/25 p-4 text-sm text-muted-foreground">
-                    {t("commandSkillReminder")}
-                  </div>
                   <CodeBlock code={tokenCommand} copyLabel={t("copyCommand")} />
+                  <p className="pt-2 text-sm text-muted-foreground">{t("linuxSessionWarning")}</p>
+                  <CodeBlock code={`screen -S anywhere\n${tokenCommand}`} copyLabel={t("copyCommand")} />
+                  <p className="pt-2 text-sm text-muted-foreground">{t("linuxDetachHint")}</p>
+                  <CodeBlock code="screen -r anywhere" copyLabel={t("copyCommand")} />
                   {polling ? <PollingIndicator label={t("waitingOnline")} /> : null}
                 </div>
                 <DialogFooter>

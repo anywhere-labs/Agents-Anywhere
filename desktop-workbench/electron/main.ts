@@ -341,8 +341,8 @@ function trayImage() {
 }
 
 function appWindowIcon(): string {
-  if (app.isPackaged) return path.join(process.resourcesPath, "logo", "icon-light.png");
-  return path.resolve(app.getAppPath(), "..", "logo", "icon-light.png");
+  if (app.isPackaged) return path.join(process.resourcesPath, "build", "icon-mac-source.png");
+  return path.join(app.getAppPath(), "build", "icon-mac-source.png");
 }
 
 function createTray(): void {
@@ -640,6 +640,7 @@ if (hasSingleInstanceLock) {
     const settings = requireSettings().get();
     const showOnLaunch = !settings.silentLaunch || !launchedAsLoginItem() || Boolean(process.env.WORKBENCH_WEB_URL);
     createMainWindow(showOnLaunch);
+    if (process.platform === "darwin" && app.dock) app.dock.setIcon(appWindowIcon());
     if (!showOnLaunch) hideDockIfIdle();
     nativeTheme.on("updated", updateTray);
 
