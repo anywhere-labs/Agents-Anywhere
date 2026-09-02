@@ -16,16 +16,6 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
-import { Button } from "@/components/ui/button"
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
-import { Input } from "@/components/ui/input"
 import { dashboardApi } from "@/features/dashboard/api"
 import {
   type DesktopConnectorConfigPatch,
@@ -150,9 +140,6 @@ export function DesktopConnectorProvider({ children }: { children: React.ReactNo
   const [binding, setBinding] = React.useState<DesktopLocalBinding | null>(null)
   const [reconnectPromptOpen, setReconnectPromptOpen] = React.useState(false)
   const [remoteReconnectName, setRemoteReconnectName] = React.useState<string | null>(null)
-  const [newDevice, setNewDevice] = React.useState<DesktopLocalBinding | null>(null)
-  const [newDeviceName, setNewDeviceName] = React.useState("")
-  const [savingName, setSavingName] = React.useState(false)
   const provisionAttemptRef = React.useRef<{
     key: string
     promise: Promise<DesktopLocalBinding>
@@ -333,7 +320,6 @@ export function DesktopConnectorProvider({ children }: { children: React.ReactNo
         const created = await attempt.promise
         if (cancelled) return
         setBinding(created)
-        const isNewBinding = !existingBinding || existingBinding.connectorId !== created.connectorId
 
         const onlineResult = await waitUntilOnline({
           userToken,
@@ -354,10 +340,6 @@ export function DesktopConnectorProvider({ children }: { children: React.ReactNo
         }
 
         attempt.completed = true
-        if (isNewBinding) {
-          setNewDevice(created)
-          setNewDeviceName(created.name ?? "")
-        }
         setProvisionError(null)
         await refresh()
         refreshData()
@@ -662,28 +644,6 @@ export function DesktopConnectorProvider({ children }: { children: React.ReactNo
     setRemoteReconnectName(name)
   }, [])
 
-  const saveNewDeviceName = async () => {
-    const accessToken = session?.accessToken
-    if (!accessToken || !newDevice || !newDeviceName.trim() || savingName) return
-    if (newDeviceName.trim() === newDevice.name) {
-      setNewDevice(null)
-      return
-    }
-    setSavingName(true)
-    try {
-      const response = await dashboardApi.updateConnector(accessToken, newDevice.connectorId, {
-        name: newDeviceName.trim(),
-      })
-      await updateLocalName(response.connector.name)
-      setNewDevice(null)
-      refreshData()
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : t("renameFailed"))
-    } finally {
-      setSavingName(false)
-    }
-  }
-
   const value = React.useMemo<DesktopConnectorContextValue>(() => ({
     supported,
     loading,
@@ -784,40 +744,6 @@ export function DesktopConnectorProvider({ children }: { children: React.ReactNo
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-
-      <Dialog open={newDevice !== null} onOpenChange={(open) => {
-        if (!open) setNewDevice(null)
-      }}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{t("onlineTitle")}</DialogTitle>
-            <DialogDescription>{t("onlineDescription")}</DialogDescription>
-          </DialogHeader>
-          <div className="flex flex-col gap-2">
-            <label htmlFor="desktop-device-name" className="text-sm font-medium">
-              {t("deviceName")}
-            </label>
-            <Input
-              id="desktop-device-name"
-              value={newDeviceName}
-              onChange={(event) => setNewDeviceName(event.currentTarget.value)}
-              disabled={savingName}
-            />
-          </div>
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setNewDevice(null)}>
-              {t("keepName")}
-            </Button>
-            <Button
-              type="button"
-              onClick={() => void saveNewDeviceName()}
-              disabled={savingName || !newDeviceName.trim() || newDeviceName.trim() === newDevice?.name}
-            >
-              {savingName ? t("saving") : t("saveName")}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </DesktopConnectorContext.Provider>
   )
 }

@@ -1028,13 +1028,6 @@
     "remoteReconnectTitle": "需要在目标设备上操作",
     "remoteReconnectDescription": "请在“{name}”上打开 Agents Anywhere Desktop，然后在弹窗或设置页面中点击“重新连接”。",
     "gotIt": "知道了",
-    "onlineTitle": "这台设备已上线",
-    "onlineDescription": "Desktop 已经完成本机 Connector 配对。你可以保留系统名称，也可以现在修改。",
-    "deviceName": "设备名称",
-    "keepName": "保持此名称",
-    "saveName": "保存修改",
-    "saving": "正在保存…",
-    "renameFailed": "设备名称保存失败。",
     "localNameFailed": "服务器名称已更新，但无法同步本机 Desktop 名称。"
   },
   "auth": {

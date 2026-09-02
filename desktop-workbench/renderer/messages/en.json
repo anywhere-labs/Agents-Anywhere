@@ -1028,13 +1028,6 @@
     "remoteReconnectTitle": "Use the target device to reconnect",
     "remoteReconnectDescription": "Open Agents Anywhere Desktop on “{name}”, then select Reconnect in the prompt or Settings.",
     "gotIt": "Got it",
-    "onlineTitle": "This device is online",
-    "onlineDescription": "Desktop paired its built-in Connector. Keep the system name or change it now.",
-    "deviceName": "Device name",
-    "keepName": "Keep this name",
-    "saveName": "Save change",
-    "saving": "Saving…",
-    "renameFailed": "Failed to save the device name.",
     "localNameFailed": "The server name was updated, but the local Desktop name could not be synchronized."
   },
   "auth": {
