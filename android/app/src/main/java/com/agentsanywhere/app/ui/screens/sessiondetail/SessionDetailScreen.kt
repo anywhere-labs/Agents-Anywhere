@@ -988,7 +988,6 @@ fun SessionDetailScreen(
                                         default = item.default || (model.default && reasoning.first() == item),
                                         enabled = model.enabled && item.enabled,
                                         disabledReason = item.disabledReason ?: model.disabledReason,
-                                        modelId = model.id,
                                     )
                                 }
                             } else {
@@ -1001,7 +1000,6 @@ fun SessionDetailScreen(
                                             default = model.default,
                                             enabled = model.enabled,
                                             disabledReason = model.disabledReason,
-                                            modelId = model.id,
                                         ),
                                     )
                                 }.orEmpty()

@@ -13,15 +13,12 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ModalBottomSheet
@@ -62,7 +59,7 @@ private data class ModelOptionGroup(
 )
 
 private val RuntimeSelectionOption.modelLabel: String
-    get() = modelId?.takeIf(String::isNotBlank) ?: label.substringBefore(" · ").ifBlank { label }
+    get() = label.substringBefore(" · ").ifBlank { label }
 
 private val RuntimeSelectionOption.effortLabel: String?
     get() = label.substringAfter(" · ", "").takeIf(String::isNotBlank)
@@ -268,10 +265,7 @@ private fun ModelOptions(
         )
         options.isEmpty() -> SheetEmpty(palette = palette)
         else -> Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(max = 260.dp)
-                .verticalScroll(rememberScrollState()),
+            modifier = Modifier.fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(5.dp),
         ) {
             options.forEach { option ->
@@ -280,6 +274,7 @@ private fun ModelOptions(
                     subtitle = null,
                     selected = option.selectionId == selectedId || option.selectionId in selectedIds,
                     enabled = !busy && !loading && option.enabled,
+                    dimmed = !option.enabled,
                     palette = palette,
                     rowHeight = 48.dp,
                     corner = 14.dp,
@@ -358,7 +353,7 @@ private fun PermissionSection(
     onRetry: () -> Unit,
     onSelect: (String) -> Unit,
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         SectionLabel(stringResource(R.string.session_runtime_permission_mode), palette)
         when {
             loading && options.isEmpty() -> SheetLoading(palette = palette, height = 72.dp)
@@ -371,11 +366,8 @@ private fun PermissionSection(
             )
             options.isEmpty() -> SheetEmpty(palette = palette)
             else -> Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(max = 260.dp)
-                    .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 options.forEach { option ->
                     OptionRow(
@@ -383,9 +375,11 @@ private fun PermissionSection(
                         subtitle = option.disabledReason ?: option.description,
                         selected = option.selectionId == selectedId,
                         enabled = !busy && !loading && option.enabled,
+                        dimmed = !option.enabled,
                         palette = palette,
-                        rowHeight = 50.dp,
+                        rowHeight = 62.dp,
                         corner = 13.dp,
+                        subtitleMaxLines = 2,
                         onClick = { onSelect(option.selectionId) },
                     )
                 }
@@ -452,12 +446,14 @@ private fun OptionRow(
     subtitle: String?,
     selected: Boolean,
     enabled: Boolean,
+    dimmed: Boolean,
     palette: RuntimeSheetPalette,
     rowHeight: Dp,
     corner: Dp,
+    subtitleMaxLines: Int = 1,
     onClick: () -> Unit,
 ) {
-    val contentAlpha = if (enabled || selected) 1f else 0.45f
+    val contentAlpha = if (dimmed && !selected) 0.45f else 1f
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -487,7 +483,7 @@ private fun OptionRow(
                         .copy(alpha = contentAlpha),
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Medium,
-                    maxLines = 1,
+                    maxLines = subtitleMaxLines,
                     overflow = TextOverflow.Ellipsis,
                 )
             }
@@ -572,7 +568,7 @@ private fun EffortSegments(
                 Text(
                     text = option.effortDisplayLabel(defaultEffortLabel),
                     color = (if (selected) palette.segmentSelectedText else palette.segmentText)
-                        .copy(alpha = if (optionEnabled || selected) 1f else 0.45f),
+                        .copy(alpha = if (option.enabled || selected) 1f else 0.45f),
                     fontSize = 10.sp,
                     lineHeight = 11.sp,
                     fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,

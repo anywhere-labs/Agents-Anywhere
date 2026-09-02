@@ -403,7 +403,6 @@ data class RuntimeSelectionOption(
     val default: Boolean,
     val enabled: Boolean = true,
     val disabledReason: String? = null,
-    val modelId: String? = null,
 )
 
 internal enum class RuntimePermissionTranslation {
@@ -475,7 +474,6 @@ internal fun RemoteRuntimeModelCatalog.selectionOptions(): List<RuntimeSelection
                     default = item.default || (model.default && reasoning.first() == item),
                     enabled = model.enabled && item.enabled,
                     disabledReason = item.disabledReason ?: model.disabledReason,
-                    modelId = model.id,
                 )
             }
         } else {
@@ -488,7 +486,6 @@ internal fun RemoteRuntimeModelCatalog.selectionOptions(): List<RuntimeSelection
                         default = model.default,
                         enabled = model.enabled,
                         disabledReason = model.disabledReason,
-                        modelId = model.id,
                     ),
                 )
             }.orEmpty()
