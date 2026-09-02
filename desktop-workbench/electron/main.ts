@@ -4,13 +4,10 @@ import {
   dialog,
   ipcMain,
   Menu,
-  nativeImage,
-  nativeTheme,
   net,
   protocol,
   session,
   shell,
-  Tray,
   type IpcMainInvokeEvent,
 } from "electron";
 import fs from "node:fs";
@@ -54,7 +51,6 @@ const API_ROUTE_PREFIXES = [
 ];
 
 let mainWindow: BrowserWindow | null = null;
-let tray: Tray | null = null;
 let devOrigin: string | null = null;
 let settingsStore: DesktopSettingsStore | null = null;
 let bindingStore: DesktopBindingStore | null = null;
@@ -252,8 +248,11 @@ function createMainWindow(showOnReady = true): BrowserWindow {
   window.on("close", (event) => {
     if (isQuitting) return;
     event.preventDefault();
-    window.hide();
-    hideDockIfIdle();
+    if (process.platform === "darwin") {
+      window.hide();
+      return;
+    }
+    void requestQuit({ confirm: true });
   });
   window.on("closed", () => {
     if (mainWindow === window) mainWindow = null;
@@ -326,61 +325,9 @@ function resolveConnectorDir(): string {
   return path.resolve(app.getAppPath(), "..", "connector");
 }
 
-function trayImage() {
-  const filename = nativeTheme.shouldUseDarkColors ? "prompt-dark.png" : "prompt-light.png";
-  const logoPath = app.isPackaged
-    ? path.join(process.resourcesPath, "logo", filename)
-    : path.resolve(app.getAppPath(), "..", "logo", filename);
-  let image = nativeImage.createFromPath(logoPath);
-  if (image.isEmpty()) {
-    image = nativeImage.createFromPath(path.join(app.getAppPath(), "renderer", "public", "icon-192.png"));
-  }
-  const size = process.platform === "darwin" ? 18 : 16;
-  image = image.resize({ width: size, height: size });
-  if (process.platform === "darwin") image.setTemplateImage(true);
-  return image;
-}
-
 function appWindowIcon(): string {
   if (app.isPackaged) return path.join(process.resourcesPath, "build", "icon-mac-source.png");
   return path.join(app.getAppPath(), "build", "icon-mac-source.png");
-}
-
-function createTray(): void {
-  tray = new Tray(trayImage());
-  tray.on("click", () => showMainWindow());
-  updateTray();
-}
-
-function updateTray(): void {
-  if (!tray) return;
-  const state = connector?.publicState();
-  const status = state?.status ?? "stopped";
-  tray.setImage(trayImage());
-  tray.setToolTip(`${APP_NAME}: ${status}`);
-  tray.setContextMenu(
-    Menu.buildFromTemplate([
-      { label: `Connector: ${status}`, enabled: false },
-      { type: "separator" },
-      {
-        label: "Start Connector",
-        enabled: Boolean(state?.hasCredential && !state.running),
-        click: () => void connector?.start().catch((error) => appendMainLog({ level: "ERROR", message: errorMessage(error) })),
-      },
-      {
-        label: "Stop Connector",
-        enabled: Boolean(state?.running),
-        click: () => void connector?.stop().catch((error) => appendMainLog({ level: "ERROR", message: errorMessage(error) })),
-      },
-      {
-        label: "Restart Connector",
-        enabled: Boolean(state?.hasCredential),
-        click: () => void connector?.restart().catch((error) => appendMainLog({ level: "ERROR", message: errorMessage(error) })),
-      },
-      { type: "separator" },
-      { label: "Quit", click: () => void requestQuit({ confirm: true }) },
-    ]),
-  );
 }
 
 function launchedAsLoginItem(): boolean {
@@ -466,7 +413,6 @@ function registerIpcHandlers(): void {
       const state = await requireConnector().applySettings(previous);
       applyLoginItemSettings();
       requireLogs().updateSettings(() => requireSettings().get());
-      updateTray();
       return state;
     } catch (error) {
       requireSettings().save(previous);
@@ -589,7 +535,6 @@ async function initializeDesktopServices(): Promise<void> {
     logs: logStore,
     onState: (state) => {
       sendToRenderer("workbench:connector:state", state);
-      updateTray();
     },
     onLog: (entry) => sendToRenderer("workbench:connector:log", entry),
   });
@@ -642,8 +587,6 @@ async function requestQuit({ confirm = false }: { confirm?: boolean } = {}): Pro
     try {
       await connector?.shutdown();
     } finally {
-      tray?.destroy();
-      tray = null;
       shutdownComplete = true;
       app.quit();
     }
@@ -661,13 +604,11 @@ if (hasSingleInstanceLock) {
     Menu.setApplicationMenu(null);
     registerStaticWebProtocol();
     await initializeDesktopServices();
-    createTray();
     const settings = requireSettings().get();
     const showOnLaunch = !settings.silentLaunch || !launchedAsLoginItem() || Boolean(process.env.WORKBENCH_WEB_URL);
     createMainWindow(showOnLaunch);
     if (process.platform === "darwin" && app.dock) app.dock.setIcon(appWindowIcon());
     if (!showOnLaunch) hideDockIfIdle();
-    nativeTheme.on("updated", updateTray);
 
     const state = await requireConnector().getState();
     if (settings.startConnectorOnLaunch && state.hasCredential && !state.manualDisconnected) {
@@ -681,7 +622,7 @@ if (hasSingleInstanceLock) {
   app.on("activate", () => showMainWindow());
   app.on("second-instance", () => showMainWindow());
   app.on("window-all-closed", () => {
-    // The tray owns the application lifetime. Explicit Quit performs cleanup.
+    // Connector cleanup is handled by the explicit quit flow.
   });
   app.on("before-quit", (event) => {
     if (shutdownComplete) return;

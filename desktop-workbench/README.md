@@ -99,8 +99,9 @@ CI. `bundle:uv` verifies the upstream archive checksum before copying it into
   the existing user-authenticated Connector API.
 - Electron Main persists the returned `connectorId` and `connectorToken`, then
   sends them to `anywhere-cli rpc` through `connector.saveConfig`.
-- Closing the window keeps the app and Connector in the tray. Explicit Quit
-  stops the runtime and terminates the full process tree.
+- Closing the window on macOS keeps the app and Connector running in the
+  background. Explicit Quit stops the runtime and terminates the full process
+  tree.
 - Open-at-login, silent launch, automatic Connector start, `uv` path, PyPI
   mirror, and log retention are Desktop settings.
 - An authentication failure is surfaced to the renderer and is not retried

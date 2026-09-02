@@ -1173,7 +1173,7 @@
       "desktopStartConnector": "启动 Desktop 时连接",
       "desktopStartConnectorDescription": "Desktop 启动后自动运行本机 Connector。",
       "desktopSilentLaunch": "静默启动",
-      "desktopSilentLaunchDescription": "由系统自动启动时仅驻留托盘，不打开主窗口。",
+      "desktopSilentLaunchDescription": "由系统自动启动时在后台运行，不打开主窗口。",
       "desktopMaintenance": "维护",
       "desktopMaintenanceDescription": "查看本机数据，或在出现异常时重新启动 Connector。",
       "desktopOpenDataFolder": "打开数据目录",

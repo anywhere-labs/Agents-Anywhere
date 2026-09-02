@@ -1173,7 +1173,7 @@
       "desktopStartConnector": "Connect when Desktop starts",
       "desktopStartConnectorDescription": "Run the local Connector whenever Desktop starts.",
       "desktopSilentLaunch": "Launch silently",
-      "desktopSilentLaunchDescription": "When launched by the system, stay in the tray without opening the main window.",
+      "desktopSilentLaunchDescription": "When launched by the system, run in the background without opening the main window.",
       "desktopMaintenance": "Maintenance",
       "desktopMaintenanceDescription": "Open local data or restart Connector if it encounters a problem.",
       "desktopOpenDataFolder": "Open data folder",
