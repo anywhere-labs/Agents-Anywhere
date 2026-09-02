@@ -4,7 +4,11 @@ import * as React from "react"
 import { CircleAlert, Loader2 } from "lucide-react"
 import { useTranslations } from "next-intl"
 
-import { TimelineEntry } from "@/components/session/session-timeline-entry"
+import {
+  groupTimelineItems,
+  TimelineGroupEntry,
+  timelineGroupKey,
+} from "@/components/session-detail"
 import { Badge } from "@/components/ui/badge"
 import { dashboardApi } from "@/features/dashboard/api"
 import type { PublicSessionShareResponse, SessionView } from "@/features/dashboard/types"
@@ -15,6 +19,8 @@ export function PublicSessionShare({ shareId }: { shareId: string }) {
   const t = useTranslations("dashboard.session")
   const [share, setShare] = React.useState<PublicSessionShareResponse | null>(null)
   const [error, setError] = React.useState(false)
+  const [groupOpenByKey, setGroupOpenByKey] = React.useState<Record<string, boolean>>({})
+  const [itemOpenById, setItemOpenById] = React.useState<Record<string, boolean>>({})
 
   React.useEffect(() => {
     let cancelled = false
@@ -50,6 +56,7 @@ export function PublicSessionShare({ shareId }: { shareId: string }) {
 
   const session = publicSessionView(share)
   const items = share.items.filter(isVisibleTimelineItem)
+  const groups = groupTimelineItems(items, new Set())
   const attachmentUrl = (fileId: string) => apiPath(
     `/public/shares/${encodeURIComponent(share.shareId)}/attachments/${encodeURIComponent(fileId)}`,
   )
@@ -71,23 +78,37 @@ export function PublicSessionShare({ shareId }: { shareId: string }) {
         <p className="text-xs text-muted-foreground">
           {share.session.runtimeName?.trim() || runtimeLabel(share.session.runtime)}
         </p>
-        {items.map((item) => (
-          <TimelineEntry
-            key={item.id}
-            token=""
-            session={session}
-            item={item}
-            resolvingNoticeId={null}
-            resolvingActionId={null}
-            onRespondInteraction={() => undefined}
-            readOnly
-            attachmentUrl={attachmentUrl}
-          />
-        ))}
+        {groups.map((group) => {
+          const groupKey = timelineGroupKey(group)
+          return (
+            <TimelineGroupEntry
+              key={groupKey}
+              group={group}
+              token=""
+              session={session}
+              interactionByTarget={EMPTY_INTERACTIONS}
+              resolvingNoticeId={null}
+              resolvingActionId={null}
+              groupOpen={group.kind === "single" ? false : groupOpenByKey[group.key] ?? false}
+              itemOpenById={itemOpenById}
+              readOnly
+              attachmentUrl={attachmentUrl}
+              onGroupOpenChange={group.kind === "single"
+                ? undefined
+                : (open) => setGroupOpenByKey((current) => ({ ...current, [group.key]: open }))}
+              onItemOpenChange={(itemId, open) => {
+                setItemOpenById((current) => ({ ...current, [itemId]: open }))
+              }}
+              onRespondInteraction={() => undefined}
+            />
+          )
+        })}
       </div>
     </main>
   )
 }
+
+const EMPTY_INTERACTIONS = new Map()
 
 function publicSessionView(share: PublicSessionShareResponse): SessionView {
   return {

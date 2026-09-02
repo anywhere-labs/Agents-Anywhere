@@ -1483,57 +1483,24 @@ export function SessionDetail({
             ) : null}
             {timelineGroups.map((group) => {
               const groupKey = timelineGroupKey(group)
-              const entry = group.kind === "reconnect" ? (
-                <ReconnectGroup
-                  group={group}
-                  open={timelineGroupOpenByKey[group.key] ?? false}
-                  onOpenChange={(open) => handleTimelineGroupOpenChange(group.key, open)}
-                />
-              ) : group.kind === "tool-run" ? (
-                <ToolRunGroup
-                  group={group}
-                  token={token}
-                  session={session}
-                  interactionByTarget={interactionByTarget}
-                  resolvingNoticeId={resolvingNoticeId}
-                  resolvingActionId={resolvingActionId}
-                  open={timelineGroupOpenByKey[group.key] ?? false}
-                  itemOpenById={timelineItemOpenById}
-                  onOpenChange={(open) => handleTimelineGroupOpenChange(group.key, open)}
-                  onItemOpenChange={handleTimelineItemOpenChange}
-                  onRespondInteraction={handleRespondInteraction}
-                />
-              ) : group.kind === "agent-calls" ? (
-                <AgentCallGroup
-                  group={group}
-                  token={token}
-                  session={session}
-                  interactionByTarget={interactionByTarget}
-                  resolvingNoticeId={resolvingNoticeId}
-                  resolvingActionId={resolvingActionId}
-                  open={timelineGroupOpenByKey[group.key] ?? false}
-                  itemOpenById={timelineItemOpenById}
-                  onOpenChange={(open) => handleTimelineGroupOpenChange(group.key, open)}
-                  onItemOpenChange={handleTimelineItemOpenChange}
-                  onRespondInteraction={handleRespondInteraction}
-                />
-              ) : (
-                <TimelineEntry
-                  token={token}
-                  session={session}
-                  item={group.item}
-                  interaction={interactionByTarget.get(group.item.id)}
-                  resolvingNoticeId={resolvingNoticeId}
-                  resolvingActionId={resolvingActionId}
-                  toolOpen={timelineItemOpenById[group.item.id] ?? false}
-                  onToolOpenChange={(open) => handleTimelineItemOpenChange(group.item.id, open)}
-                  onRespondInteraction={handleRespondInteraction}
-                />
-              )
               const turnAction = turnActionsByGroupKey.get(groupKey)
               return (
                 <React.Fragment key={groupKey}>
-                  {entry}
+                  <TimelineGroupEntry
+                    group={group}
+                    token={token}
+                    session={session}
+                    interactionByTarget={interactionByTarget}
+                    resolvingNoticeId={resolvingNoticeId}
+                    resolvingActionId={resolvingActionId}
+                    groupOpen={group.kind === "single" ? false : timelineGroupOpenByKey[group.key] ?? false}
+                    itemOpenById={timelineItemOpenById}
+                    onGroupOpenChange={group.kind === "single"
+                      ? undefined
+                      : (open) => handleTimelineGroupOpenChange(group.key, open)}
+                    onItemOpenChange={handleTimelineItemOpenChange}
+                    onRespondInteraction={handleRespondInteraction}
+                  />
                   {turnAction ? (
                     <TurnActions
                       token={token}
@@ -1793,33 +1760,33 @@ function BlockingInteractionStack({
   )
 }
 
-type TimelineSingleGroup = {
+export type TimelineSingleGroup = {
   kind: "single"
   item: TimelineItem
 }
 
-type TimelineToolRunGroup = {
+export type TimelineToolRunGroup = {
   kind: "tool-run"
   key: string
   items: TimelineItem[]
 }
 
-type TimelineReconnectGroup = {
+export type TimelineReconnectGroup = {
   kind: "reconnect"
   key: string
   items: TimelineItem[]
 }
 
-type TimelineAgentCallGroup = {
+export type TimelineAgentCallGroup = {
   kind: "agent-calls"
   key: string
   parentItemId: string
   items: TimelineItem[]
 }
 
-type TimelineGroup = TimelineSingleGroup | TimelineToolRunGroup | TimelineReconnectGroup | TimelineAgentCallGroup
+export type TimelineGroup = TimelineSingleGroup | TimelineToolRunGroup | TimelineReconnectGroup | TimelineAgentCallGroup
 
-function timelineGroupKey(group: TimelineGroup): string {
+export function timelineGroupKey(group: TimelineGroup): string {
   return group.kind === "single" ? group.item.id : group.key
 }
 
@@ -1871,7 +1838,7 @@ function buildTurnActionsByGroupKey(
   return actions
 }
 
-function groupTimelineItems(items: TimelineItem[], interactionTargetIds: Set<string>): TimelineGroup[] {
+export function groupTimelineItems(items: TimelineItem[], interactionTargetIds: Set<string>): TimelineGroup[] {
   const groups: TimelineGroup[] = []
   let pendingTools: TimelineItem[] = []
   let pendingReconnects: TimelineItem[] = []
@@ -1987,6 +1954,99 @@ function isToolRunBarItem(item: TimelineItem): boolean {
   return (item.content.kind ?? "artifact") !== "diff"
 }
 
+export function TimelineGroupEntry({
+  group,
+  token,
+  session,
+  interactionByTarget,
+  resolvingNoticeId,
+  resolvingActionId,
+  groupOpen,
+  itemOpenById,
+  readOnly = false,
+  attachmentUrl,
+  onGroupOpenChange,
+  onItemOpenChange,
+  onRespondInteraction,
+}: {
+  group: TimelineGroup
+  token: string
+  session: SessionView
+  interactionByTarget: ReadonlyMap<string | null, Notice>
+  resolvingNoticeId: string | null
+  resolvingActionId: string | null
+  groupOpen: boolean
+  itemOpenById: Record<string, boolean>
+  readOnly?: boolean
+  attachmentUrl?: (fileId: string) => string
+  onGroupOpenChange?: (open: boolean) => void
+  onItemOpenChange: (itemId: string, open: boolean) => void
+  onRespondInteraction: (noticeId: string, actionId: string, input?: Record<string, unknown>) => void
+}) {
+  if (group.kind === "reconnect") {
+    return (
+      <ReconnectGroup
+        group={group}
+        open={groupOpen}
+        onOpenChange={onGroupOpenChange}
+      />
+    )
+  }
+  if (group.kind === "tool-run") {
+    return (
+      <ToolRunGroup
+        group={group}
+        token={token}
+        session={session}
+        interactionByTarget={interactionByTarget}
+        resolvingNoticeId={resolvingNoticeId}
+        resolvingActionId={resolvingActionId}
+        open={groupOpen}
+        itemOpenById={itemOpenById}
+        readOnly={readOnly}
+        attachmentUrl={attachmentUrl}
+        onOpenChange={onGroupOpenChange}
+        onItemOpenChange={onItemOpenChange}
+        onRespondInteraction={onRespondInteraction}
+      />
+    )
+  }
+  if (group.kind === "agent-calls") {
+    return (
+      <AgentCallGroup
+        group={group}
+        token={token}
+        session={session}
+        interactionByTarget={interactionByTarget}
+        resolvingNoticeId={resolvingNoticeId}
+        resolvingActionId={resolvingActionId}
+        open={groupOpen}
+        itemOpenById={itemOpenById}
+        readOnly={readOnly}
+        attachmentUrl={attachmentUrl}
+        onOpenChange={onGroupOpenChange}
+        onItemOpenChange={onItemOpenChange}
+        onRespondInteraction={onRespondInteraction}
+      />
+    )
+  }
+  return (
+    <TimelineEntry
+      token={token}
+      session={session}
+      item={group.item}
+      interaction={interactionByTarget.get(group.item.id)}
+      resolvingNoticeId={resolvingNoticeId}
+      resolvingActionId={resolvingActionId}
+      toolOpen={itemOpenById[group.item.id] ?? false}
+      readOnly={readOnly}
+      attachmentUrl={attachmentUrl}
+      onToolOpenChange={(open) => onItemOpenChange(group.item.id, open)}
+      onRespondInteraction={onRespondInteraction}
+    />
+  )
+}
+
 function ReconnectGroup({
   group,
   open,
@@ -1994,7 +2054,7 @@ function ReconnectGroup({
 }: {
   group: TimelineReconnectGroup
   open: boolean
-  onOpenChange: (open: boolean) => void
+  onOpenChange?: (open: boolean) => void
 }) {
   const tSession = useTranslations("dashboard.session")
   const attempts = group.items
@@ -2044,6 +2104,8 @@ function ToolRunGroup({
   resolvingActionId,
   open,
   itemOpenById,
+  readOnly,
+  attachmentUrl,
   onOpenChange,
   onItemOpenChange,
   onRespondInteraction,
@@ -2051,12 +2113,14 @@ function ToolRunGroup({
   group: TimelineToolRunGroup
   token: string
   session: SessionView
-  interactionByTarget: Map<string | null, Notice>
+  interactionByTarget: ReadonlyMap<string | null, Notice>
   resolvingNoticeId: string | null
   resolvingActionId: string | null
   open: boolean
   itemOpenById: Record<string, boolean>
-  onOpenChange: (open: boolean) => void
+  readOnly: boolean
+  attachmentUrl?: (fileId: string) => string
+  onOpenChange?: (open: boolean) => void
   onItemOpenChange: (itemId: string, open: boolean) => void
   onRespondInteraction: (noticeId: string, actionId: string, input?: Record<string, unknown>) => void
 }) {
@@ -2091,6 +2155,8 @@ function ToolRunGroup({
                 resolvingNoticeId={resolvingNoticeId}
                 resolvingActionId={resolvingActionId}
                 toolOpen={itemOpenById[item.id] ?? false}
+                readOnly={readOnly}
+                attachmentUrl={attachmentUrl}
                 onToolOpenChange={(open) => onItemOpenChange(item.id, open)}
                 onRespondInteraction={onRespondInteraction}
               />
@@ -2111,6 +2177,8 @@ function AgentCallGroup({
   resolvingActionId,
   open,
   itemOpenById,
+  readOnly,
+  attachmentUrl,
   onOpenChange,
   onItemOpenChange,
   onRespondInteraction,
@@ -2118,12 +2186,14 @@ function AgentCallGroup({
   group: TimelineAgentCallGroup
   token: string
   session: SessionView
-  interactionByTarget: Map<string | null, Notice>
+  interactionByTarget: ReadonlyMap<string | null, Notice>
   resolvingNoticeId: string | null
   resolvingActionId: string | null
   open: boolean
   itemOpenById: Record<string, boolean>
-  onOpenChange: (open: boolean) => void
+  readOnly: boolean
+  attachmentUrl?: (fileId: string) => string
+  onOpenChange?: (open: boolean) => void
   onItemOpenChange: (itemId: string, open: boolean) => void
   onRespondInteraction: (noticeId: string, actionId: string, input?: Record<string, unknown>) => void
 }) {
@@ -2158,6 +2228,8 @@ function AgentCallGroup({
                 resolvingActionId={resolvingActionId}
                 nestedAgentCall
                 toolOpen={itemOpenById[item.id] ?? false}
+                readOnly={readOnly}
+                attachmentUrl={attachmentUrl}
                 onToolOpenChange={(open) => onItemOpenChange(item.id, open)}
                 onRespondInteraction={onRespondInteraction}
               />

@@ -1,11 +1,12 @@
 "use client"
 
 import * as React from "react"
-import { Check, Copy, Forward, Loader2 } from "lucide-react"
+import { Check, Copy, Loader2 } from "lucide-react"
 import { useTranslations } from "next-intl"
 import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
+import { ShareArrowIcon } from "@/components/icons/share-arrow-icon"
 import {
   Dialog,
   DialogContent,
@@ -79,7 +80,7 @@ export function TurnActions({
 
   return (
     <>
-      <div className="mt-1 border-t border-border/60 pt-1.5">
+      <div className="mt-1">
         <div className="flex items-center gap-0.5">
           <Button
             type="button"
@@ -102,7 +103,7 @@ export function TurnActions({
             onClick={() => setDialogOpen(true)}
             className="text-muted-foreground hover:text-foreground"
           >
-            <Forward />
+            <ShareArrowIcon />
           </Button>
         </div>
       </div>
@@ -129,7 +130,7 @@ export function TurnActions({
           </div>
           <DialogFooter>
             <Button type="button" onClick={createShare} disabled={sharing}>
-              {sharing ? <Loader2 className="animate-spin" data-icon="inline-start" /> : <Forward data-icon="inline-start" />}
+              {sharing ? <Loader2 className="animate-spin" data-icon="inline-start" /> : <ShareArrowIcon data-icon="inline-start" />}
               {t("createShareLink")}
             </Button>
           </DialogFooter>
