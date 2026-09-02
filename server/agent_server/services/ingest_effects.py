@@ -21,3 +21,5 @@ class IngestEffect:
     notices_changed: bool = False
     needs_refetch: bool = False
     timeline_pending: bool = False
+    accepted_sequence: int | None = None
+    timeline_published: bool = False

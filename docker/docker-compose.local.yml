@@ -19,9 +19,20 @@ services:
 
   redis:
     image: redis:8-alpine
-    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    command:
+      - redis-server
+      - --save
+      - ""
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - everysec
+      - --maxmemory-policy
+      - noeviction
     ports:
       - "127.0.0.1:${AGENTS_ANYWHERE_REDIS_PORT:-56379}:6379"
+    volumes:
+      - redis-data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 2s
@@ -30,3 +41,4 @@ services:
 
 volumes:
   postgres-data:
+  redis-data:

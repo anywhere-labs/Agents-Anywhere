@@ -24,11 +24,15 @@ services:
       - --save
       - ""
       - --appendonly
-      - "no"
+      - "yes"
+      - --appendfsync
+      - everysec
       - --maxmemory
       - ${REDIS_MAXMEMORY:-256mb}
       - --maxmemory-policy
-      - volatile-lru
+      - noeviction
+    volumes:
+      - agents-anywhere-redis-next:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -67,6 +71,7 @@ services:
       AGENT_SERVER_DB_POOL_RECYCLE: ${AGENT_SERVER_DB_POOL_RECYCLE:-1800}
       AGENT_SERVER_REDIS_URL: redis://redis-next:6379/0
       AGENT_SERVER_REDIS_CONNECT_TIMEOUT: ${AGENT_SERVER_REDIS_CONNECT_TIMEOUT:-5}
+      AGENT_SERVER_TIMELINE_REVISION_LEASE_SIZE: ${AGENT_SERVER_TIMELINE_REVISION_LEASE_SIZE:-4096}
       AGENT_SERVER_FILES_BACKEND: local
       AGENT_SERVER_FILES_LOCAL_ROOT: /data/agent-server.files
       AGENT_SERVER_SECRET: ${AGENT_SERVER_SECRET:-change-me-before-production}
@@ -79,4 +84,5 @@ services:
 
 volumes:
   agents-anywhere-pg-next:
+  agents-anywhere-redis-next:
   agents-anywhere-files-next:

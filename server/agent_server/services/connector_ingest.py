@@ -283,12 +283,21 @@ class ConnectorIngestService:
                         "catalogs": {},
                         "refetch": False,
                         "deferred_timeline_only": True,
+                        "accepted_sequence": None,
                     },
                 )
                 if not effect.timeline_pending:
                     bucket["deferred_timeline_only"] = False
                 if effect.session_id == session_id:
-                    if effect.timeline_reset and not effect.needs_refetch:
+                    if effect.accepted_sequence is not None:
+                        current_accepted_sequence = bucket["accepted_sequence"]
+                        bucket["accepted_sequence"] = max(
+                            effect.accepted_sequence,
+                            current_accepted_sequence or 0,
+                        )
+                    if effect.timeline_published:
+                        pass
+                    elif effect.timeline_reset and not effect.needs_refetch:
                         bucket["items"] = list(effect.items or [])
                         bucket["timeline_reset"] = True
                         bucket["refetch"] = False
@@ -302,7 +311,7 @@ class ConnectorIngestService:
                             bucket["timeline_reset"] = False
                             bucket["refetch"] = True
                         else:
-                            if effect.item is not None:
+                            if effect.item is not None and not effect.timeline_published:
                                 bucket["items"].append(effect.item)
                             if effect.items:
                                 bucket["items"].extend(effect.items)
@@ -314,11 +323,16 @@ class ConnectorIngestService:
                 if effect.catalogs:
                     bucket["catalogs"].update(effect.catalogs)
 
-        for session_id, bucket in by_session.items():
+        async def publish_bucket(
+            session_id: str,
+            bucket: dict[str, Any],
+        ) -> None:
             try:
                 next_seq = await self._store.get_session_seq(session_id)
             except KeyError:
-                continue
+                return
+            if bucket["accepted_sequence"] is not None:
+                next_seq = max(next_seq, bucket["accepted_sequence"])
             envelope_sequence = (
                 max(next_seq, 1)
                 if bucket["notices"] or bucket["catalogs"]
@@ -427,7 +441,7 @@ class ConnectorIngestService:
                     "catalogs",
                 )
             ):
-                continue
+                return
             await self._timeline_broker.publish(session_id, envelope)
             if not bucket["deferred_timeline_only"]:
                 await publish_dashboard_changed(
@@ -436,6 +450,14 @@ class ConnectorIngestService:
                     session_id=session_id,
                     reason="session.changed",
                 )
+
+        for session_id, bucket in by_session.items():
+            if bucket["deferred_timeline_only"]:
+                await publish_bucket(session_id, bucket)
+                continue
+            async with self._store.session_revision_fence(session_id):
+                await publish_bucket(session_id, bucket)
+
     async def _apply_runtime_status(self, connector_id: str, params: dict) -> None:
         runtime_id = params.get("runtimeId")
         status = params.get("status")

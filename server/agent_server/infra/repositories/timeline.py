@@ -10,6 +10,7 @@ from sqlalchemy import case, func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from agent_server.core.models import SessionView, TimelineItem, TimelineItemIn
+from agent_server.core.protocol import PROTOCOL_MAX_REVISION
 from agent_server.core.timeline import (
     TimelineBatchWriteResult,
     TimelineItemWriteResult,
@@ -24,6 +25,7 @@ from agent_server.core.utc import utc_now
 from agent_server.infra.db import sessions as sessions_t
 from agent_server.infra.db import timeline_items as timeline_items_t
 from agent_server.infra.db.engine import SQLITE_BACKEND
+from agent_server.infra.repositories.store_support import session_revision_fenced
 
 
 class TimelineRepositoryMixin:
@@ -47,6 +49,53 @@ class TimelineRepositoryMixin:
                 mark_read=mark_read_on_change,
             )
 
+    async def lease_session_revision_range(
+        self,
+        *,
+        session_id: str,
+        count: int,
+    ) -> tuple[int, int]:
+        """Durably lease revisions for a low-latency Redis live counter.
+
+        Leasing advances only the internal allocation high-water mark. The
+        public ``sessions.seq`` cursor advances later, in the same transaction
+        that materializes the buffered timeline projection.
+        """
+
+        if count <= 0:
+            raise ValueError("session revision lease count must be positive")
+        async with self._timeline_lock(session_id), self._engine.begin() as conn:
+            allocated_floor = case(
+                (
+                    sessions_t.c.seq_allocated_high < sessions_t.c.seq,
+                    sessions_t.c.seq,
+                ),
+                else_=sessions_t.c.seq_allocated_high,
+            )
+            leased_high = allocated_floor + count
+            row = (
+                await conn.execute(
+                    update(sessions_t)
+                    .where(
+                        sessions_t.c.id == session_id,
+                        allocated_floor <= PROTOCOL_MAX_REVISION - count,
+                    )
+                    .values(seq_allocated_high=leased_high)
+                    .returning(sessions_t.c.seq_allocated_high)
+                )
+            ).first()
+            if row is None:
+                exists = (
+                    await conn.execute(
+                        select(sessions_t.c.id).where(sessions_t.c.id == session_id)
+                    )
+                ).first()
+                if exists is None:
+                    raise KeyError(session_id)
+                raise OverflowError("session revision lease exceeds protocol limit")
+        end = int(row.seq_allocated_high)
+        return end - count + 1, end
+
     async def get_max_timeline_order_seq(self, session_id: str) -> int:
         async with self._timeline_lock(session_id), self._engine.connect() as conn:
             return await self._max_timeline_order_seq(conn, session_id)
@@ -57,6 +106,7 @@ class TimelineRepositoryMixin:
         session_id: str,
         items: list[TimelineItem],
         source_observed_at: str | None = None,
+        mark_read_on_change: bool = False,
     ) -> TimelineBatchWriteResult:
         """Persist pre-sequenced realtime items without allocating new revisions.
 
@@ -68,8 +118,7 @@ class TimelineRepositoryMixin:
         """
 
         incoming_by_id = {
-            item.id: item
-            for item in sorted(items, key=lambda value: value.updatedSeq)
+            item.id: item for item in sorted(items, key=lambda value: value.updatedSeq)
         }
         async with self._timeline_lock(session_id):
             current_items = await self.timeline.read_many(
@@ -80,9 +129,12 @@ class TimelineRepositoryMixin:
             async with self._engine.begin() as conn:
                 row = (
                     await conn.execute(
-                        select(sessions_t.c.timeline_reset_seq).where(
-                            sessions_t.c.id == session_id
-                        )
+                        select(
+                            sessions_t.c.timeline_reset_seq,
+                            sessions_t.c.seq,
+                            sessions_t.c.last_read_seq,
+                            sessions_t.c.latest_turn_end_seq,
+                        ).where(sessions_t.c.id == session_id)
                     )
                 ).first()
                 if row is None:
@@ -115,11 +167,31 @@ class TimelineRepositoryMixin:
                     source_observed_at=source_observed_at,
                 )
                 await self.timeline.upsert_many(conn, changed_items)
+                accepted_watermark = max(
+                    [int(row.seq)]
+                    + [item.updatedSeq for item in incoming_by_id.values()]
+                )
+                if accepted_watermark > int(row.seq):
+                    session_values: dict[str, Any] = {
+                        "seq": accepted_watermark,
+                        "updated_seq": accepted_watermark,
+                        "updated_at": utc_now(),
+                    }
+                    if mark_read_on_change and int(row.latest_turn_end_seq or 0) <= int(
+                        row.last_read_seq or 0
+                    ):
+                        session_values["last_read_seq"] = accepted_watermark
+                    await conn.execute(
+                        update(sessions_t)
+                        .where(sessions_t.c.id == session_id)
+                        .values(**session_values)
+                    )
         return TimelineBatchWriteResult(
             items=tuple(persistable_items),
             changed=bool(changed_items),
         )
 
+    @session_revision_fenced
     async def sync_timeline_items(
         self,
         *,
@@ -195,6 +267,7 @@ class TimelineRepositoryMixin:
             changed=True,
         )
 
+    @session_revision_fenced
     async def replace_timeline_snapshot(
         self,
         *,
@@ -251,6 +324,7 @@ class TimelineRepositoryMixin:
             changed=True,
         )
 
+    @session_revision_fenced
     async def upsert_timeline_item(
         self,
         *,
@@ -264,9 +338,8 @@ class TimelineRepositoryMixin:
         async with self._timeline_lock(session_id):
             now = utc_now()
             existing = await self.timeline.read_one(session_id, item.id)
-            unchanged = (
-                existing is not None
-                and timeline_item_state_is_unchanged(existing, item)
+            unchanged = existing is not None and timeline_item_state_is_unchanged(
+                existing, item
             )
             if unchanged and source_observed_at is None:
                 return TimelineItemWriteResult(item=existing, changed=False)
@@ -347,6 +420,7 @@ class TimelineRepositoryMixin:
             limit=limit,
         )
 
+    @session_revision_fenced
     async def record_session_turn_end(
         self,
         *,
@@ -419,11 +493,36 @@ class TimelineRepositoryMixin:
 
         if count <= 0:
             raise ValueError("timeline revision count must be positive")
-        next_seq = sessions_t.c.seq + count
+        current = (
+            await conn.execute(
+                select(
+                    sessions_t.c.seq,
+                    sessions_t.c.seq_allocated_high,
+                )
+                .where(sessions_t.c.id == session_id)
+                .with_for_update()
+            )
+        ).first()
+        if current is None:
+            raise KeyError(session_id)
+        current_seq = int(current.seq)
+        expected_high = int(current.seq_allocated_high)
+        allocated_floor = max(current_seq, expected_high)
+        if allocated_floor > PROTOCOL_MAX_REVISION - count:
+            raise OverflowError("session revision exceeds the protocol limit")
+
+        # Retire the active Redis lease only after this transaction owns the
+        # session row. If the Redis lock is replaced before sealing, the guard
+        # fails and this transaction cannot publish a stale durable revision.
+        # If replacement happens after sealing, the next allocator must wait on
+        # this row before it can lease a higher range.
+        await self.seal_session_revision_range(session_id, allocated_floor)
+        next_seq = allocated_floor + count
         values: dict[str, Any] = {
             "seq": next_seq,
             "updated_seq": next_seq,
             "updated_at": utc_now(),
+            "seq_allocated_high": next_seq,
         }
         if mark_read:
             values["last_read_seq"] = case(
@@ -436,13 +535,16 @@ class TimelineRepositoryMixin:
         row = (
             await conn.execute(
                 update(sessions_t)
-                .where(sessions_t.c.id == session_id)
+                .where(
+                    sessions_t.c.id == session_id,
+                    sessions_t.c.seq_allocated_high == expected_high,
+                )
                 .values(**values)
                 .returning(sessions_t.c.seq)
             )
         ).first()
         if row is None:
-            raise KeyError(session_id)
+            raise RuntimeError("session revision allocation fence changed")
         return int(row.seq) - count + 1
 
     async def _max_timeline_order_seq(

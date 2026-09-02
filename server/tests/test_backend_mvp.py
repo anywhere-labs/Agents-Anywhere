@@ -13,7 +13,7 @@ from starlette.websockets import WebSocketDisconnect
 
 from agent_server.api.sessions_terminal import _send_terminal_ws_error
 from agent_server.app import create_app
-from agent_server.core.models import SessionRuntimeState
+from agent_server.core.models import SessionRuntimeState, TimelineItemIn
 from agent_server.core.protocol import protocol_selection_id
 from agent_server.infra.connector_rpc import (
     ConnectorOfflineError,
@@ -8070,9 +8070,17 @@ def test_session_ws_updates_effective_capabilities_after_takeover(tmp_path):
         response = client.post(f"/sessions/{session_id}/takeover", headers=headers)
         assert response.status_code == 200, response.text
 
-        received = [ws.receive_json() for _ in range(3)]
+        received = [ws.receive_json() for _ in range(4)]
+        assert [event["sequence"] for event in received] == sorted(
+            event["sequence"] for event in received
+        )
+        assert [event["type"] for event in received].count(
+            "runtime.capability.updated"
+        ) == 1
         event = next(
-            item for item in received if item["type"] == "runtime.capability.updated"
+            item
+            for item in received
+            if item["type"] == "runtime.capability.updated"
         )
         capabilities = {
             capability["capabilityId"]: capability
@@ -8129,7 +8137,7 @@ def test_session_ws_projects_codex_timeline_sync_as_incremental_update_without_r
         assert timeline_event["payload"]["item"]["content"]["text"] == "synced over ws"
 
 
-def test_increment_after_complete_timeline_sync_requests_refetch(tmp_path):
+def test_increment_after_complete_timeline_sync_streams_in_sequence(tmp_path):
     client = make_client(tmp_path)
     _, access_token, session_id, headers = create_connector_and_session(client)
     ticket = ws_ticket(client, session_id, headers)
@@ -8179,7 +8187,12 @@ def test_increment_after_complete_timeline_sync_requests_refetch(tmp_path):
             },
         )
         assert response.status_code == 200, response.text
-        assert ws.receive_json()["type"] == "session.refetch_required"
+        snapshot = ws.receive_json()
+        incremental = ws.receive_json()
+        assert snapshot["type"] == "timeline.snapshot"
+        assert incremental["type"] == "timeline.item_created"
+        assert snapshot["sequence"] < incremental["sequence"]
+        assert incremental["payload"]["item"]["id"] == "incremental_item"
 
     state = session_view_for_assertions(client, session_id, headers)
     assert [value["id"] for value in state["items"]] == [
@@ -9992,6 +10005,49 @@ def test_archive_endpoint_rejects_too_many_ids(tmp_path):
     assert response.status_code == 422
 
 
+def test_read_endpoint_flushes_pending_timeline_before_marking_read(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("AGENT_SERVER_TIMELINE_FLUSH_INTERVAL_SECONDS", "60")
+    client = make_client(tmp_path)
+    _, _, session_id, headers = create_connector_and_session(client)
+    pending = asyncio.run(
+        client.app.state.timeline_write_buffer.accept(
+            session_id=session_id,
+            item=TimelineItemIn.model_validate(
+                {
+                    "id": "tl_pending_read",
+                    "sessionId": session_id,
+                    "type": "message",
+                    "status": "done",
+                    "role": "assistant",
+                    "content": {"text": "pending"},
+                    "source": {"runtime": "codex", "itemId": "pending-read"},
+                    "orderSeq": 1,
+                    "revision": 1,
+                    "contentHash": "sha256:pending-read",
+                }
+            ),
+            mark_read_on_change=True,
+        )
+    )
+    assert asyncio.run(client.app.state.store.timeline.read(session_id)) == []
+
+    response = client.post(
+        "/sessions/read",
+        headers=headers,
+        json=[session_id],
+    )
+
+    assert response.status_code == 200, response.text
+    stored = asyncio.run(client.app.state.store.timeline.read(session_id))
+    assert [item.id for item in stored] == ["tl_pending_read"]
+    assert stored[0].updatedSeq == pending.item.updatedSeq
+    read_session = response.json()["sessions"][0]
+    assert read_session["lastReadSeq"] == pending.item.updatedSeq
+
+
 def test_read_endpoint_marks_owned_sessions_read(tmp_path):
     client = make_client(tmp_path)
     connector_id, access_token, session_a, headers = create_connector_and_session(client)
@@ -10103,10 +10159,34 @@ def test_read_endpoint_accepts_session_id_array(tmp_path):
     assert all(session["unread"] is False for session in body["sessions"])
 
 
-def test_read_endpoint_filters_unowned_ids(tmp_path):
+def test_read_endpoint_filters_unowned_ids(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("AGENT_SERVER_TIMELINE_FLUSH_INTERVAL_SECONDS", "60")
     client = make_client(tmp_path)
     _, _, session_one, user_one_headers = create_connector_and_session(client, user_id=ADMIN_USER)
     _, _, session_two, _ = create_connector_and_session(client, user_id="user2")
+    asyncio.run(
+        client.app.state.timeline_write_buffer.accept(
+            session_id=session_two,
+            item=TimelineItemIn.model_validate(
+                {
+                    "id": "tl_foreign_pending",
+                    "sessionId": session_two,
+                    "type": "message",
+                    "status": "done",
+                    "role": "assistant",
+                    "content": {"text": "foreign"},
+                    "source": {"runtime": "codex", "itemId": "foreign"},
+                    "orderSeq": 1,
+                    "revision": 1,
+                    "contentHash": "sha256:foreign",
+                }
+            ),
+        )
+    )
+    assert asyncio.run(client.app.state.store.timeline.read(session_two)) == []
 
     response = client.post(
         "/sessions/read",
@@ -10117,6 +10197,46 @@ def test_read_endpoint_filters_unowned_ids(tmp_path):
     body = response.json()
     assert {s["id"] for s in body["sessions"]} == {session_one}
     assert set(body["notFound"]) == {session_two, "not-a-session"}
+    assert asyncio.run(client.app.state.store.timeline.read(session_two)) == []
+
+
+def test_list_endpoint_does_not_flush_unowned_pending_timeline(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("AGENT_SERVER_TIMELINE_FLUSH_INTERVAL_SECONDS", "60")
+    client = make_client(tmp_path)
+    _, _, session_one, user_one_headers = create_connector_and_session(
+        client,
+        user_id=ADMIN_USER,
+    )
+    _, _, session_two, _ = create_connector_and_session(client, user_id="user2")
+    asyncio.run(
+        client.app.state.timeline_write_buffer.accept(
+            session_id=session_two,
+            item=TimelineItemIn.model_validate(
+                {
+                    "id": "tl_foreign_pending_list",
+                    "sessionId": session_two,
+                    "type": "message",
+                    "status": "done",
+                    "role": "assistant",
+                    "content": {"text": "foreign"},
+                    "source": {"runtime": "codex", "itemId": "foreign-list"},
+                    "orderSeq": 1,
+                    "revision": 1,
+                    "contentHash": "sha256:foreign-list",
+                }
+            ),
+        )
+    )
+    assert asyncio.run(client.app.state.store.timeline.read(session_two)) == []
+
+    response = client.get("/sessions", headers=user_one_headers)
+
+    assert response.status_code == 200, response.text
+    assert [session["id"] for session in response.json()["sessions"]] == [session_one]
+    assert asyncio.run(client.app.state.store.timeline.read(session_two)) == []
 
 
 def test_read_endpoint_rejects_empty_ids(tmp_path):

@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+from sqlalchemy import case
+
 from agent_server.infra.repositories.store_support import *
 from agent_server.core.models import TimelineItem
 
 
 SESSION_CURSOR_VERSION = 1
+_SESSION_INVENTORY_UPDATE_CHUNK_SIZE = 4_000
 RUNTIME_ARCHIVED_SOURCE_STATES = frozenset(
     {"archived", "unavailable", "deleted", "missing"}
 )
@@ -243,6 +246,7 @@ class SessionRepositoryMixin:
                     takeover=int(takeover),
                     sort_at=now,
                     seq=0,
+                    seq_allocated_high=0,
                     updated_seq=0,
                     created_at=now,
                     updated_at=now,
@@ -251,6 +255,70 @@ class SessionRepositoryMixin:
         return await self.get_session(session_id)
 
     async def upsert_connector_session(
+        self,
+        *,
+        connector_id: str,
+        session_id: str,
+        runtime: str,
+        runtime_id: str | None = None,
+        external_session_id: str | None,
+        title: str | None = None,
+        cwd: str | None = None,
+        status: str | None = None,
+        last_synced_at: str | None = None,
+        source_observed_at: str | None = None,
+        last_activity_at: str | None = None,
+        model_selection_id: str | None = None,
+        permission_selection_id: str | None = None,
+        origin: str = "connector_import",
+        source_state: str | None = None,
+    ) -> SessionView:
+        identity = _runtime_identity(runtime, runtime_id)
+        canonical_session_id = session_id
+        async with self._engine.connect() as conn:
+            existing = (
+                await conn.execute(
+                    select(sessions_t.c.id).where(sessions_t.c.id == session_id)
+                )
+            ).first()
+            if existing is None and external_session_id is not None:
+                existing = (
+                    await conn.execute(
+                        select(sessions_t.c.id)
+                        .where(
+                            sessions_t.c.connector_id == connector_id,
+                            sessions_t.c.runtime_id == str(identity.runtime_id),
+                            sessions_t.c.external_session_id == external_session_id,
+                        )
+                        .order_by(
+                            sessions_t.c.takeover.desc(),
+                            sessions_t.c.created_at.asc(),
+                        )
+                        .limit(1)
+                    )
+                ).first()
+            if existing is not None:
+                canonical_session_id = str(existing.id)
+        return await self._upsert_connector_session_canonical(
+            connector_id=connector_id,
+            session_id=canonical_session_id,
+            runtime=runtime,
+            runtime_id=runtime_id,
+            external_session_id=external_session_id,
+            title=title,
+            cwd=cwd,
+            status=status,
+            last_synced_at=last_synced_at,
+            source_observed_at=source_observed_at,
+            last_activity_at=last_activity_at,
+            model_selection_id=model_selection_id,
+            permission_selection_id=permission_selection_id,
+            origin=origin,
+            source_state=source_state,
+        )
+
+    @session_revision_fenced
+    async def _upsert_connector_session_canonical(
         self,
         *,
         connector_id: str,
@@ -289,21 +357,6 @@ class SessionRepositoryMixin:
                     select(sessions_t.c.id).where(sessions_t.c.id == session_id)
                 )
             ).first()
-            if existing is None and external_session_id is not None:
-                existing = (
-                    await conn.execute(
-                        select(sessions_t.c.id)
-                        .where(
-                            sessions_t.c.connector_id == connector_id,
-                            sessions_t.c.runtime_id == runtime_id,
-                            sessions_t.c.external_session_id == external_session_id,
-                        )
-                        .order_by(sessions_t.c.takeover.desc(), sessions_t.c.created_at.asc())
-                        .limit(1)
-                    )
-                ).first()
-                if existing is not None:
-                    session_id = existing.id
             if existing is None:
                 await conn.execute(
                     insert(sessions_t).values(
@@ -326,6 +379,7 @@ class SessionRepositoryMixin:
                         source_state=source_state or "visible",
                         source_state_at=now if source_state is not None else None,
                         seq=1,
+                        seq_allocated_high=1,
                         updated_seq=1,
                         created_at=now,
                         updated_at=now,
@@ -576,7 +630,7 @@ class SessionRepositoryMixin:
     ) -> list[str]:
         now = utc_now()
         changed: list[str] = []
-        async with self._engine.begin() as conn:
+        async with self._engine.connect() as conn:
             rows = (
                 await conn.execute(
                     select(
@@ -593,27 +647,182 @@ class SessionRepositoryMixin:
                     )
                 )
             ).mappings().all()
-            by_id = {str(row["id"]): row for row in rows}
-            by_external_id = {
-                str(row["external_session_id"]): row
-                for row in rows
-                if row["external_session_id"] is not None
-            }
-            observed_ids: set[str] = set()
-            for entry in entries:
-                row = by_id.get(str(entry["session_id"]))
-                external_session_id = entry.get("external_session_id")
-                if row is None and external_session_id is not None:
-                    row = by_external_id.get(external_session_id)
-                if row is None or row["source_scan_token"] != scan_token:
-                    continue
+
+        by_id = {str(row["id"]): row for row in rows}
+        by_external_id = {
+            str(row["external_session_id"]): row
+            for row in rows
+            if row["external_session_id"] is not None
+        }
+        observed_ids: set[str] = set()
+        unchanged_observations: dict[str, dict[str, Any]] = {}
+        for entry in entries:
+            row = by_id.get(str(entry["session_id"]))
+            external_session_id = entry.get("external_session_id")
+            if row is None and external_session_id is not None:
+                row = by_external_id.get(external_session_id)
+            if row is None or row["source_scan_token"] != scan_token:
+                continue
+            session_id = str(row["id"])
+            observed_ids.add(session_id)
+            source_state = str(entry["source_state"])
+            recover_legacy_archive = (
+                source_state == "visible"
+                and row["archived"] == 1
+                and row["dsh_archive_legacy"] == 1
+            )
+            if row["source_state"] != source_state or recover_legacy_archive:
+                if await self._complete_session_inventory_observation(
+                    session_id=session_id,
+                    scan_token=scan_token,
+                    entry=entry,
+                    now=now,
+                ):
+                    changed.append(session_id)
+            else:
+                unchanged_observations[session_id] = entry
+
+        await self._complete_unchanged_session_inventory_observations(
+            observations=unchanged_observations,
+            scan_token=scan_token,
+            now=now,
+        )
+
+        remaining_rows = [
+            row
+            for row in rows
+            if row["source_scan_token"] == scan_token
+            and str(row["id"]) not in observed_ids
+        ]
+        if complete:
+            unchanged_missing_ids: list[str] = []
+            for row in remaining_rows:
                 session_id = str(row["id"])
-                observed_ids.add(session_id)
+                if row["source_state"] == "missing":
+                    unchanged_missing_ids.append(session_id)
+                elif await self._complete_session_inventory_missing(
+                    session_id=session_id,
+                    scan_token=scan_token,
+                    now=now,
+                ):
+                    changed.append(session_id)
+            if unchanged_missing_ids:
+                async with self._engine.begin() as conn:
+                    await conn.execute(
+                        update(sessions_t)
+                        .where(
+                            sessions_t.c.id.in_(unchanged_missing_ids),
+                            sessions_t.c.source_scan_token == scan_token,
+                        )
+                        .values(
+                            source_state_at=now,
+                            source_state_reason=(
+                                "not returned by complete inventory"
+                            ),
+                            source_observation_origin="inventory",
+                            source_scan_token=None,
+                        )
+                    )
+        elif remaining_rows:
+            async with self._engine.begin() as conn:
+                await conn.execute(
+                    update(sessions_t)
+                    .where(
+                        sessions_t.c.id.in_(
+                            [str(row["id"]) for row in remaining_rows]
+                        ),
+                        sessions_t.c.source_scan_token == scan_token,
+                    )
+                    .values(source_scan_token=None)
+                )
+        return changed
+
+    async def _complete_unchanged_session_inventory_observations(
+        self,
+        *,
+        observations: dict[str, dict[str, Any]],
+        scan_token: str,
+        now: str,
+    ) -> None:
+        """Batch diagnostic observation fields that do not advance revision."""
+
+        if not observations:
+            return
+        observation_items = list(observations.items())
+        async with self._engine.begin() as conn:
+            # Each row contributes up to five bind parameters across the two
+            # CASE mappings and the IN predicate.  asyncpg rejects statements
+            # with more than 32,767 arguments, so keep ample fixed-parameter
+            # and future-query headroom below that driver limit.
+            for start in range(
+                0,
+                len(observation_items),
+                _SESSION_INVENTORY_UPDATE_CHUNK_SIZE,
+            ):
+                chunk = dict(
+                    observation_items[
+                        start : start + _SESSION_INVENTORY_UPDATE_CHUNK_SIZE
+                    ]
+                )
+                observed_at_by_id = {
+                    session_id: entry.get("observed_at") or now
+                    for session_id, entry in chunk.items()
+                }
+                reason_by_id = {
+                    session_id: entry.get("reason")
+                    for session_id, entry in chunk.items()
+                }
+                await conn.execute(
+                    update(sessions_t)
+                    .where(
+                        sessions_t.c.id.in_(chunk),
+                        sessions_t.c.source_scan_token == scan_token,
+                    )
+                    .values(
+                        source_state_at=case(
+                            observed_at_by_id,
+                            value=sessions_t.c.id,
+                            else_=sessions_t.c.source_state_at,
+                        ),
+                        source_state_reason=case(
+                            reason_by_id,
+                            value=sessions_t.c.id,
+                            else_=sessions_t.c.source_state_reason,
+                        ),
+                        source_observation_origin="inventory",
+                        source_scan_token=None,
+                    )
+                )
+
+    async def _complete_session_inventory_observation(
+        self,
+        *,
+        session_id: str,
+        scan_token: str,
+        entry: dict[str, Any],
+        now: str,
+    ) -> bool:
+        async with self.session_revision_fence(session_id):
+            async with self._engine.begin() as conn:
+                row = (
+                    await conn.execute(
+                        select(
+                            sessions_t.c.source_state,
+                            sessions_t.c.source_scan_token,
+                            sessions_t.c.archived,
+                            sessions_t.c.dsh_archive_legacy,
+                        )
+                        .where(sessions_t.c.id == session_id)
+                        .with_for_update()
+                    )
+                ).first()
+                if row is None or row.source_scan_token != scan_token:
+                    return False
                 source_state = str(entry["source_state"])
                 recover_legacy_archive = (
                     source_state == "visible"
-                    and row["archived"] == 1
-                    and row["dsh_archive_legacy"] == 1
+                    and row.archived == 1
+                    and row.dsh_archive_legacy == 1
                 )
                 values: dict[str, Any] = {
                     "source_state": source_state,
@@ -628,7 +837,10 @@ class SessionRepositoryMixin:
                         archived_at=None,
                         dsh_archive_legacy=0,
                     )
-                result = await conn.execute(
+                changed = row.source_state != source_state or recover_legacy_archive
+                if changed:
+                    await self._bump_session(conn, session_id)
+                await conn.execute(
                     update(sessions_t)
                     .where(
                         sessions_t.c.id == session_id,
@@ -636,51 +848,63 @@ class SessionRepositoryMixin:
                     )
                     .values(**values)
                 )
-                if result.rowcount == 0:
-                    continue
-                if row["source_state"] != source_state or recover_legacy_archive:
-                    await self._bump_session(conn, session_id)
-                    changed.append(session_id)
+            if changed:
+                session = await self.get_session(session_id)
+                await self.publish_session_revision_result(
+                    session_id,
+                    operation="complete_session_inventory",
+                    result=session,
+                )
+            return changed
 
-            remaining_rows = [
-                row
-                for row in rows
-                if row["source_scan_token"] == scan_token
-                and str(row["id"]) not in observed_ids
-            ]
-            if complete:
-                for row in remaining_rows:
-                    session_id = str(row["id"])
-                    result = await conn.execute(
-                        update(sessions_t)
-                        .where(
-                            sessions_t.c.id == session_id,
-                            sessions_t.c.source_scan_token == scan_token,
+    async def _complete_session_inventory_missing(
+        self,
+        *,
+        session_id: str,
+        scan_token: str,
+        now: str,
+    ) -> bool:
+        async with self.session_revision_fence(session_id):
+            async with self._engine.begin() as conn:
+                row = (
+                    await conn.execute(
+                        select(
+                            sessions_t.c.source_state,
+                            sessions_t.c.source_scan_token,
                         )
-                        .values(
-                            source_state="missing",
-                            source_state_at=now,
-                            source_state_reason="not returned by complete inventory",
-                            source_observation_origin="inventory",
-                            source_scan_token=None,
-                        )
+                        .where(sessions_t.c.id == session_id)
+                        .with_for_update()
                     )
-                    if result.rowcount == 0:
-                        continue
-                    if row["source_state"] != "missing":
-                        await self._bump_session(conn, session_id)
-                        changed.append(session_id)
-            elif remaining_rows:
+                ).first()
+                if row is None or row.source_scan_token != scan_token:
+                    return False
+                changed = row.source_state != "missing"
+                if changed:
+                    await self._bump_session(conn, session_id)
                 await conn.execute(
                     update(sessions_t)
                     .where(
-                        sessions_t.c.id.in_([str(row["id"]) for row in remaining_rows]),
+                        sessions_t.c.id == session_id,
                         sessions_t.c.source_scan_token == scan_token,
                     )
-                    .values(source_scan_token=None)
+                    .values(
+                        source_state="missing",
+                        source_state_at=now,
+                        source_state_reason="not returned by complete inventory",
+                        source_observation_origin="inventory",
+                        source_scan_token=None,
+                    )
                 )
-        return changed
+            if changed:
+                session = await self.get_session(session_id)
+                await self.publish_session_revision_result(
+                    session_id,
+                    operation="complete_session_inventory",
+                    result=session,
+                )
+            return changed
 
+    @session_revision_fenced
     async def update_session_source_state(
         self,
         session_id: str,
@@ -892,6 +1116,7 @@ class SessionRepositoryMixin:
         return int(row.seq)
 
 
+    @session_revision_fenced
     async def set_takeover(self, session_id: str, takeover: bool) -> SessionView:
         async with self._engine.begin() as conn:
             await self._bump_session(conn, session_id)
@@ -1170,7 +1395,34 @@ class SessionRepositoryMixin:
         not_found = [sid for sid in ordered if sid not in owned_ids]
         return sessions, not_found
 
+    async def list_owned_session_ids(
+        self,
+        session_ids: list[str],
+        *,
+        user_id: str | None = None,
+    ) -> list[str]:
+        """Return requested session IDs visible to one user in input order."""
 
+        ordered = list(dict.fromkeys(session_ids))
+        if not ordered:
+            return []
+        statement = (
+            select(sessions_t.c.id)
+            .join(connectors_t, connectors_t.c.id == sessions_t.c.connector_id)
+            .where(
+                sessions_t.c.id.in_(ordered),
+                connectors_t.c.revoked == 0,
+            )
+        )
+        if user_id is not None:
+            statement = statement.where(connectors_t.c.user_id == user_id)
+        async with self._engine.connect() as conn:
+            rows = (await conn.execute(statement)).all()
+        owned_ids = {str(row.id) for row in rows}
+        return [session_id for session_id in ordered if session_id in owned_ids]
+
+
+    @session_revision_fenced
     async def set_session_status(
         self,
         session_id: str,
@@ -1209,6 +1461,7 @@ class SessionRepositoryMixin:
         return await self.get_session(session_id)
 
 
+    @session_revision_fenced
     async def update_session_snapshot(
         self,
         *,

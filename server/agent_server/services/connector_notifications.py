@@ -512,7 +512,7 @@ class SessionInventoryNotificationHandler:
                     ),
                 }
             )
-        changed = await self._store.complete_session_inventory(
+        await self._store.complete_session_inventory(
             connector_id,
             runtime,
             runtime_id,
@@ -520,7 +520,7 @@ class SessionInventoryNotificationHandler:
             entries,
             complete=complete,
         )
-        return IngestEffect(session_ids=changed)
+        return IngestEffect()
 
 
 class SessionStateNotificationHandler:
@@ -777,6 +777,7 @@ class TimelineNotificationHandler:
                 await self._timeline_write_buffer.invalidate(session_id)
         changed_items = list(result.items) if result.changed else []
         push_items = len(changed_items) <= TIMELINE_SYNC_PUSH_LIMIT
+        timeline_published = result.changed and self._timeline_write_buffer is not None
         return IngestEffect(
             session_id=session_id,
             items=[item.model_dump(mode="json") for item in changed_items]
@@ -784,6 +785,12 @@ class TimelineNotificationHandler:
             else None,
             timeline_reset=replace_snapshot and result.changed and push_items,
             needs_refetch=not push_items,
+            accepted_sequence=(
+                await self._store.get_session_seq(session_id)
+                if timeline_published
+                else None
+            ),
+            timeline_published=timeline_published,
         )
 
     async def _upsert(
@@ -830,6 +837,10 @@ class TimelineNotificationHandler:
             session_id=session_id,
             item=result.item.model_dump(mode="json") if result.changed else None,
             timeline_pending=(
+                result.changed and self._timeline_write_buffer is not None
+            ),
+            accepted_sequence=result.item.updatedSeq if result.changed else None,
+            timeline_published=(
                 result.changed and self._timeline_write_buffer is not None
             ),
         )

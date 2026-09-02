@@ -683,7 +683,6 @@ export function SessionDetail({
     let cancelled = false
     let socket: WebSocket | null = null
     let reconnectTimer: number | null = null
-    let delayedRefetchTimer: number | null = null
     let refetchPromise: Promise<void> | null = null
     let recoveryPromise: Promise<void> | null = null
     let snapshotReady = false
@@ -705,14 +704,6 @@ export function SessionDetail({
           refetchPromise = null
         })
       return refetchPromise
-    }
-
-    const scheduleRefetch = (reason: string) => {
-      if (cancelled || refetchPromise || delayedRefetchTimer !== null) return
-      delayedRefetchTimer = window.setTimeout(() => {
-        delayedRefetchTimer = null
-        void refetch(reason)
-      }, 1200)
     }
 
     const applyEvent = (event: ProtocolEventEnvelope) => {
@@ -753,8 +744,7 @@ export function SessionDetail({
           .then((recovery) => {
             if (cancelled) return
             if (recovery.snapshotRequired) {
-              scheduleRefetch(`${reason}:snapshot-required`)
-              return
+              return refetch(`${reason}:snapshot-required`)
             }
             for (const event of recovery.events) applyEvent(event)
             nextSeqRef.current = Math.max(
@@ -762,13 +752,27 @@ export function SessionDetail({
               cursorSequence(recovery.nextCursor),
             )
           })
-          .catch(() => undefined)
+          .catch(() => refetch(`${reason}:recovery-failed`))
           .finally(() => {
             recoveryPromise = null
+            drainBufferedEvents()
           })
         return recoveryPromise
       } catch {
         return undefined
+      }
+    }
+
+    function drainBufferedEvents() {
+      const pending = bufferedEvents.sort((a, b) => a.sequence - b.sequence)
+      bufferedEvents = []
+      for (let index = 0; index < pending.length; index += 1) {
+        if (recoveryPromise) {
+          bufferedEvents.push(...pending.slice(index))
+          return
+        }
+        const event = pending[index]
+        if (event) applyEvent(event)
       }
     }
 
@@ -784,7 +788,7 @@ export function SessionDetail({
           if (cancelled || typeof message.data !== "string") return
           const event = parseProtocolEvent(message.data)
           if (!event) return
-          if (!snapshotReady) {
+          if (!snapshotReady || recoveryPromise) {
             bufferedEvents.push(event)
             return
           }
@@ -819,18 +823,20 @@ export function SessionDetail({
         const merged = applyOptimisticItemsRef.current(next)
         clearResolvedOptimisticMessagesRef.current(sessionId, merged.items)
         setState((current) => current ? { ...merged, items: preserveOptimisticItems(merged.items, current.items) } : merged)
-        nextSeqRef.current = cursorSequence(next.eventCursor) || next.nextSeq
+        nextSeqRef.current = Math.max(
+          nextSeqRef.current,
+          cursorSequence(next.eventCursor) || next.nextSeq,
+        )
         onSessionUpdatedRef.current?.(next.session)
         snapshotReady = true
-        const pending = bufferedEvents
-        bufferedEvents = []
-        for (const event of pending.sort((a, b) => a.sequence - b.sequence)) applyEvent(event)
+        drainBufferedEvents()
       })
       .catch((err) => {
         if (!cancelled) {
           snapshotReady = true
           setError(err instanceof Error ? err.message : tSessionRef.current("loadFailed"))
           setLoading(false)
+          drainBufferedEvents()
         }
       })
 
@@ -838,7 +844,6 @@ export function SessionDetail({
       cancelled = true
       streamConnectedRef.current = false
       if (reconnectTimer !== null) window.clearTimeout(reconnectTimer)
-      if (delayedRefetchTimer !== null) window.clearTimeout(delayedRefetchTimer)
       socket?.close()
     }
   }, [

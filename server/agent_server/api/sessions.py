@@ -4,6 +4,7 @@ import asyncio
 import json
 import time
 from collections.abc import Mapping
+from contextlib import AsyncExitStack
 from typing import Any
 
 from fastapi import (
@@ -182,35 +183,36 @@ async def _publish_session_protocol_update(
     runtime_state_cache: SessionRuntimeStateCache,
     session_id: str,
 ) -> None:
-    next_seq = await db.get_session_seq(session_id)
-    session = await db.get_session(session_id)
-    runtime_state = await read_runtime_state_live(
-        db,
-        manager,
-        runtime_state_cache,
-        session,
-        None,
-    )
-    session = session_with_runtime_state(session, runtime_state)
-    session = await with_effective_session_connector_status(manager, session)
-    runtime_capabilities = await read_session_capabilities_with_fallback(
-        db,
-        manager,
-        session,
-        None,
-    )
-    effective_capabilities = derive_session_effective_capabilities(
-        session=session,
-        runtime_capabilities=runtime_capabilities,
-    )
-    envelope: dict[str, Any] = {
-        "sessionId": session_id,
-        "nextSeq": next_seq,
-        "session": session.model_dump(mode="json"),
-        "runtimeState": runtime_state.model_dump(mode="json"),
-        "capabilitySet": effective_capabilities.model_dump(mode="json"),
-    }
-    await broker.publish(session_id, envelope)
+    async with db.session_revision_fence(session_id):
+        next_seq = await db.get_session_seq(session_id)
+        session = await db.get_session(session_id)
+        runtime_state = await read_runtime_state_live(
+            db,
+            manager,
+            runtime_state_cache,
+            session,
+            None,
+        )
+        session = session_with_runtime_state(session, runtime_state)
+        session = await with_effective_session_connector_status(manager, session)
+        runtime_capabilities = await read_session_capabilities_with_fallback(
+            db,
+            manager,
+            session,
+            None,
+        )
+        effective_capabilities = derive_session_effective_capabilities(
+            session=session,
+            runtime_capabilities=runtime_capabilities,
+        )
+        envelope: dict[str, Any] = {
+            "sessionId": session_id,
+            "nextSeq": next_seq,
+            "session": session.model_dump(mode="json"),
+            "runtimeState": runtime_state.model_dump(mode="json"),
+            "capabilitySet": effective_capabilities.model_dump(mode="json"),
+        }
+        await broker.publish(session_id, envelope)
 
 
 async def _best_effort_publish_session_protocol_update(
@@ -320,7 +322,13 @@ async def list_sessions(
         get_timeline_write_buffer
     ),
 ) -> dict[str, Any]:
-    await timeline_write_buffer.flush_all()
+    dirty_session_ids = await timeline_write_buffer.dirty_session_ids()
+    owned_dirty_ids = await db.list_owned_session_ids(
+        dirty_session_ids,
+        user_id=user_id,
+    )
+    for session_id in owned_dirty_ids:
+        await timeline_write_buffer.flush_through(session_id)
     try:
         sessions, has_more, next_cursor = await db.list_sessions_page(
             archived=archived,
@@ -503,11 +511,19 @@ async def mark_sessions_read(
     db: Store = Depends(get_store),
     manager: ConnectorRpcManager = Depends(get_rpc),
     broker: TimelineBroker = Depends(get_timeline_broker),
+    timeline_write_buffer: TimelineWriteBuffer = Depends(get_timeline_write_buffer),
 ) -> BulkArchiveResponse:
-    sessions, not_found = await db.bulk_mark_sessions_read(
-        session_ids,
-        user_id=user_id,
-    )
+    normalized_ids = validate_session_id_array(session_ids)
+    owned_ids = await db.list_owned_session_ids(normalized_ids, user_id=user_id)
+    async with AsyncExitStack() as stack:
+        for session_id in sorted(owned_ids):
+            await stack.enter_async_context(
+                timeline_write_buffer.session_fence(session_id)
+            )
+        sessions, not_found = await db.bulk_mark_sessions_read(
+            normalized_ids,
+            user_id=user_id,
+        )
     for session in sessions:
         await publish_dashboard_changed(
             db,
@@ -970,13 +986,13 @@ async def enable_takeover(
         await db.get_session(session_id, user_id=user_id)
         async with timeline_write_buffer.session_fence(session_id):
             session = await db.set_takeover(session_id, True)
-        await _publish_session_protocol_update(
-            db,
-            broker,
-            manager,
-            runtime_state_cache,
-            session_id,
-        )
+            await _publish_session_protocol_update(
+                db,
+                broker,
+                manager,
+                runtime_state_cache,
+                session_id,
+            )
         return TakeoverResponse(
             session=await with_effective_session_connector_status(manager, session)
         )
@@ -1002,13 +1018,13 @@ async def disable_takeover(
         await db.get_session(session_id, user_id=user_id)
         async with timeline_write_buffer.session_fence(session_id):
             session = await db.set_takeover(session_id, False)
-        await _publish_session_protocol_update(
-            db,
-            broker,
-            manager,
-            runtime_state_cache,
-            session_id,
-        )
+            await _publish_session_protocol_update(
+                db,
+                broker,
+                manager,
+                runtime_state_cache,
+                session_id,
+            )
         return TakeoverResponse(
             session=await with_effective_session_connector_status(manager, session)
         )

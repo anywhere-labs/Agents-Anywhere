@@ -5,7 +5,9 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
+import functools
 import hashlib
+import inspect
 import json
 import re
 import secrets
@@ -93,6 +95,35 @@ def _json_loads(value: str | None) -> Any:
     if not value:
         return None
     return json.loads(value)
+
+
+def session_revision_fenced(method: Any) -> Any:
+    """Run one single-session revision writer inside the bound coordinator.
+
+    Repository mixins stay independent from the service implementation.  The
+    app-scoped timeline buffer binds the actual context manager on ``Store``;
+    tests and tools that construct a Store without a buffer keep the original
+    direct database behavior.
+    """
+
+    signature = inspect.signature(method)
+
+    @functools.wraps(method)
+    async def wrapped(self: Any, *args: Any, **kwargs: Any) -> Any:
+        arguments = signature.bind(self, *args, **kwargs).arguments
+        session_id = arguments.get("session_id")
+        if not isinstance(session_id, str) or not session_id:
+            raise ValueError("session revision writer requires a session_id")
+        async with self.session_revision_fence(session_id):
+            result = await method(self, *args, **kwargs)
+            await self.publish_session_revision_result(
+                session_id,
+                operation=method.__name__,
+                result=result,
+            )
+            return result
+
+    return wrapped
 
 
 

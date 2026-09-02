@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import AbstractAsyncContextManager
 from typing import Any, Protocol
 
 from agent_server.core.catalogs import CatalogType, CatalogUpdateOutcome
@@ -94,6 +95,8 @@ class TimelineReader(Protocol):
 
 
 class TimelineBufferReader(Protocol):
+    async def read(self, session_id: str) -> list[TimelineItem]: ...
+
     async def read_one(
         self,
         session_id: str,
@@ -115,12 +118,20 @@ class TimelineBufferRepository(DashboardEventRepository, Protocol):
         mark_read_on_change: bool = False,
     ) -> int: ...
 
+    async def lease_session_revision_range(
+        self,
+        *,
+        session_id: str,
+        count: int,
+    ) -> tuple[int, int]: ...
+
     async def persist_buffered_timeline_items(
         self,
         *,
         session_id: str,
         items: list[TimelineItem],
         source_observed_at: str | None = None,
+        mark_read_on_change: bool = False,
     ) -> TimelineBatchWriteResult: ...
 
 
@@ -145,6 +156,11 @@ class InteractionResolutionRepository(
 
 
 class ConnectorIngestRepository(DashboardEventRepository, Protocol):
+    def session_revision_fence(
+        self,
+        session_id: str,
+    ) -> AbstractAsyncContextManager[None]: ...
+
     async def record_connector_activity(self, connector_id: str) -> None: ...
 
     async def get_protocol_capabilities(
@@ -284,6 +300,11 @@ class DeviceRuntimeRepository(
     SessionStateRepository,
     Protocol,
 ):
+    def session_revision_fence(
+        self,
+        session_id: str,
+    ) -> AbstractAsyncContextManager[None]: ...
+
     async def clear_active_run(self, session_id: str) -> None: ...
 
     async def clear_device_runtime_config(

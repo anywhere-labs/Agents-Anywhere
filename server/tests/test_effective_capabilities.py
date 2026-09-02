@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import asynccontextmanager
 
 import pytest
 
@@ -209,6 +210,11 @@ def test_presence_change_publishes_reprojected_session_capabilities() -> None:
     session = _session(takeover=True)
 
     class Repository:
+        @asynccontextmanager
+        async def session_revision_fence(self, session_id: str):
+            assert session_id == session.id
+            yield
+
         async def list_sessions_for_connector(
             self, connector_id: str
         ) -> list[SessionView]:

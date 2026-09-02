@@ -167,6 +167,188 @@ def test_distributed_lock_serializes_instances() -> None:
     asyncio.run(exercise())
 
 
+def test_distributed_lock_renews_its_lease_while_held() -> None:
+    async def exercise() -> None:
+        fake_server = FakeServer()
+        coordinator_1 = _coordinator(fake_server)
+        coordinator_2 = _coordinator(fake_server)
+
+        async with coordinator_1.lock(
+            "session-revision:session-1",
+            timeout_seconds=0.2,
+            lease_seconds=0.09,
+        ):
+            await asyncio.sleep(0.16)
+            try:
+                async with coordinator_2.lock(
+                    "session-revision:session-1",
+                    timeout_seconds=0.04,
+                    lease_seconds=0.09,
+                ):
+                    raise AssertionError("second coordinator acquired a held lock")
+            except TimeoutError:
+                pass
+
+        async with coordinator_2.lock(
+            "session-revision:session-1",
+            timeout_seconds=0.2,
+            lease_seconds=0.09,
+        ):
+            pass
+
+    asyncio.run(exercise())
+
+
+def test_distributed_lock_interrupts_owner_when_renewal_fails() -> None:
+    async def exercise() -> None:
+        fake_server = FakeServer()
+        coordinator = _coordinator(fake_server)
+        reached_after_failure = False
+
+        async def fail_refresh(
+            _key: str,
+            _value: str,
+            *,
+            ttl_seconds: float,
+        ) -> bool:
+            assert ttl_seconds == 0.09
+            return False
+
+        coordinator.refresh_if_value = fail_refresh  # type: ignore[method-assign]
+        try:
+            async with coordinator.lock(
+                "session-revision:session-renewal-failure",
+                timeout_seconds=0.2,
+                lease_seconds=0.09,
+            ):
+                await asyncio.sleep(0.2)
+                reached_after_failure = True
+        except RuntimeError as exc:
+            assert "failed to renew distributed lock" in str(exc)
+        else:
+            raise AssertionError("renewal failure did not fail the lock owner")
+
+        assert reached_after_failure is False
+
+    asyncio.run(exercise())
+
+
+def test_stale_lock_owner_cannot_mutate_or_publish_after_replacement() -> None:
+    async def exercise() -> None:
+        fake_server = FakeServer()
+        coordinator_1 = _coordinator(fake_server)
+        coordinator_2 = _coordinator(fake_server)
+        broker = TimelineBroker(coordinator_1)
+        lock_name = "session-revision:session-stale-owner"
+        first_acquired = asyncio.Event()
+        attempt_publish = asyncio.Event()
+        rejected_operations: list[str] = []
+
+        async def stale_owner() -> str:
+            try:
+                async with coordinator_1.lock(
+                    lock_name,
+                    timeout_seconds=0.2,
+                    lease_seconds=30,
+                ):
+                    first_acquired.set()
+                    await attempt_publish.wait()
+                    try:
+                        await coordinator_1.incrby_while_lock_owned(
+                            lock_name,
+                            coordinator_1.key("stale-counter"),
+                            1,
+                        )
+                    except RuntimeError:
+                        rejected_operations.append("increment")
+                    try:
+                        await broker.publish(
+                            "session-stale-owner",
+                            {
+                                "sessionId": "session-stale-owner",
+                                "nextSeq": 1,
+                            },
+                        )
+                    except RuntimeError:
+                        rejected_operations.append("publish")
+            except RuntimeError as exc:
+                return str(exc)
+            raise AssertionError("stale owner release was not rejected")
+
+        stale_task = asyncio.create_task(stale_owner())
+        await first_acquired.wait()
+        await coordinator_1.client.delete(coordinator_1.key("lock", lock_name))
+        async with coordinator_2.lock(
+            lock_name,
+            timeout_seconds=0.2,
+            lease_seconds=30,
+        ):
+            attempt_publish.set()
+            error = await asyncio.wait_for(stale_task, timeout=1)
+
+        assert "distributed lock is no longer owned" in error
+        assert rejected_operations == ["increment", "publish"]
+        assert (
+            await coordinator_1.client.get(coordinator_1.key("stale-counter")) is None
+        )
+
+    asyncio.run(exercise())
+
+
+def test_counter_range_seal_discards_values_from_an_old_server_epoch() -> None:
+    async def exercise() -> None:
+        fake_server = FakeServer()
+        coordinator = _coordinator(fake_server)
+        lock_name = "session-revision:session-seal"
+        head_key = coordinator.key("session-revision", "session-seal", "head")
+        end_key = coordinator.key("session-revision", "session-seal", "lease-end")
+        epoch_key = coordinator.key("session-revision", "session-seal", "lease-epoch")
+        await coordinator.client.mset(
+            {
+                head_key: 80,
+                end_key: 100,
+                epoch_key: "redis-run-old",
+            }
+        )
+
+        async with coordinator.lock(lock_name):
+            sealed = await coordinator.seal_counter_range_while_lock_owned(
+                lock_name,
+                head_key=head_key,
+                end_key=end_key,
+                epoch_key=epoch_key,
+                floor=12,
+                epoch="redis-run-new",
+            )
+            assert sealed == 12
+            assert await coordinator.client.mget(head_key, end_key, epoch_key) == [
+                "12",
+                "12",
+                "redis-run-new",
+            ]
+
+            await coordinator.client.mset(
+                {
+                    head_key: 14,
+                    end_key: 20,
+                    epoch_key: "redis-run-new",
+                }
+            )
+            sealed = await coordinator.seal_counter_range_while_lock_owned(
+                lock_name,
+                head_key=head_key,
+                end_key=end_key,
+                epoch_key=epoch_key,
+                floor=16,
+                epoch="redis-run-new",
+            )
+            assert sealed == 20
+
+        await coordinator.close()
+
+    asyncio.run(exercise())
+
+
 def test_shell_task_completion_crosses_instances() -> None:
     async def exercise() -> None:
         fake_server = FakeServer()

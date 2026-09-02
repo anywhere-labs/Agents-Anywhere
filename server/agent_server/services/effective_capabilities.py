@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import AbstractAsyncContextManager
 from typing import Any, Protocol
 
 from agent_server.core.capabilities import (
@@ -36,6 +37,11 @@ _INHERITED_RUNTIME_CAPABILITY_IDS = (
 
 
 class SessionCapabilityRepository(Protocol):
+    def session_revision_fence(
+        self,
+        session_id: str,
+    ) -> AbstractAsyncContextManager[None]: ...
+
     async def get_protocol_capabilities(
         self,
         connector_id: str,
@@ -83,18 +89,19 @@ async def publish_connector_session_capabilities(
     connector_id: str,
 ) -> None:
     for session in await store.list_sessions_for_connector(connector_id):
-        session, _runtime_capabilities, effective_capabilities = (
-            await project_session_capabilities(store, presence, session)
-        )
-        await publisher.publish(
-            session.id,
-            {
-                "sessionId": session.id,
-                "nextSeq": await store.get_session_seq(session.id),
-                "session": session.model_dump(mode="json"),
-                "capabilitySet": effective_capabilities.model_dump(mode="json"),
-            },
-        )
+        async with store.session_revision_fence(session.id):
+            session, _runtime_capabilities, effective_capabilities = (
+                await project_session_capabilities(store, presence, session)
+            )
+            await publisher.publish(
+                session.id,
+                {
+                    "sessionId": session.id,
+                    "nextSeq": await store.get_session_seq(session.id),
+                    "session": session.model_dump(mode="json"),
+                    "capabilitySet": effective_capabilities.model_dump(mode="json"),
+                },
+            )
 
 
 def derive_session_effective_capabilities(

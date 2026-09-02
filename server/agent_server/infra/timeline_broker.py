@@ -1,10 +1,10 @@
 """Fan timeline changes out to local session subscribers.
 
 Lives alongside `TerminalBroker`. The connector ingress publishes a small
-envelope here when a timeline item is accepted, then may publish the same
-pre-sequenced item again after its coalesced database projection commits.
-Clients use the item sequence and deterministic event ID to make that durable
-echo idempotent. Dashboard invalidation remains commit-driven.
+envelope here when a timeline item is accepted. Its coalesced database commit
+does not publish a duplicate when that live envelope succeeded; a failed or
+ambiguous publication is repaired from the shared pending projection before a
+higher revision is accepted. Dashboard invalidation remains commit-driven.
 
 When Redis is configured, Pub/Sub relays these invalidation messages between
 server instances. Messages remain deliberately ephemeral; the shared pending
@@ -69,10 +69,15 @@ class TimelineBroker:
     async def publish(self, session_id: str, payload: dict) -> None:
         message = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
         if self._coordinator.distributed:
-            await self._coordinator.client.publish(
-                self._coordinator.channel("timeline", session_id),
-                message,
-            )
+            lock_name = f"session-revision:{session_id}"
+            channel = self._coordinator.channel("timeline", session_id)
+            if self._coordinator.holds_lock(lock_name):
+                async with self._coordinator.pipeline_while_lock_owned(
+                    lock_name
+                ) as pipeline:
+                    pipeline.publish(channel, message)
+            else:
+                await self._coordinator.client.publish(channel, message)
             return
         await self._fan_out(self._subs, session_id, message)
 

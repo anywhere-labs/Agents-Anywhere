@@ -27,6 +27,8 @@ from agent_server.infra.db.schema import (
     connector_runtime_catalogs,
     connector_runtime_types,
     metadata,
+    sessions,
+    timeline_items,
 )
 
 
@@ -38,6 +40,19 @@ def test_protocol_clock_revisions_use_64_bit_columns() -> None:
     assert isinstance(connector_protocol_capabilities.c.revision.type, BigInteger)
     assert isinstance(connector_runtime_catalogs.c.revision.type, BigInteger)
     assert isinstance(connector_runtime_types.c.max_instances.type, BigInteger)
+
+
+def test_session_sequence_clocks_use_64_bit_columns() -> None:
+    for column_name in (
+        "last_read_seq",
+        "latest_turn_end_seq",
+        "timeline_reset_seq",
+        "seq",
+        "seq_allocated_high",
+        "updated_seq",
+    ):
+        assert isinstance(sessions.c[column_name].type, BigInteger)
+    assert isinstance(timeline_items.c.updated_seq.type, BigInteger)
 
 
 def test_runtime_database_url_is_required(monkeypatch) -> None:
@@ -346,6 +361,7 @@ def test_v2_0_database_upgrades_through_current_revision(tmp_path) -> None:
         ("v2_19", "v2_20"),
         ("v2_20", "v2_21"),
         ("v2_21", "v2_22"),
+        ("v2_22", "v2_23"),
     ],
 )
 def test_every_adjacent_schema_upgrade(
@@ -984,6 +1000,7 @@ def test_v2_14_downgrade_rejects_instance_specific_data(
         "v2_19",
         "v2_20",
         "v2_21",
+        "v2_23",
     ],
 )
 def test_unversioned_runtime_schema_is_classified_by_actual_columns(
@@ -1021,9 +1038,9 @@ def test_unversioned_runtime_schema_is_classified_by_actual_columns(
     )
 
 
-def test_current_schema_version_is_v2_22() -> None:
-    assert CURRENT_SCHEMA_REVISION == "v2_22"
-    assert CURRENT_SCHEMA_VERSION == "2.22"
+def test_current_schema_version_is_v2_23() -> None:
+    assert CURRENT_SCHEMA_REVISION == "v2_23"
+    assert CURRENT_SCHEMA_VERSION == "2.23"
 
 
 def test_v2_20_adds_session_source_observation_details(tmp_path) -> None:
@@ -1064,6 +1081,144 @@ def test_v2_22_retires_session_message_queue_schema(tmp_path) -> None:
         assert not inspector.has_table("session_message_queue")
         assert "message_queue_updated_seq" not in {
             column["name"] for column in inspector.get_columns("sessions")
+        }
+        with engine.connect() as connection:
+            assert (
+                connection.execute(
+                    text("SELECT version_num FROM alembic_version")
+                ).scalar_one()
+                == "v2_22"
+            )
+    finally:
+        engine.dispose()
+
+
+def test_v2_23_adds_sequence_allocation_high_watermark(tmp_path) -> None:
+    path = tmp_path / "session-sequence-high-watermark.sqlite3"
+    url = _sqlite_url(path)
+    upgrade_database(db_url=url, revision="v2_22")
+
+    engine = create_engine(f"sqlite:///{path}")
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO connectors "
+                    "(id, user_id, name, status, token_hash, token_prefix, revoked, "
+                    "created_at, updated_at) VALUES "
+                    "('conn_seq', 'user_seq', 'Sequence', 'online', 'hash', "
+                    "'cxt_', 0, :now, :now)"
+                ),
+                {"now": "2026-09-02T00:00:00Z"},
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO sessions "
+                    "(id, connector_id, runtime, runtime_id, origin, status, takeover, pinned, "
+                    "archived, last_read_seq, latest_turn_end_seq, timeline_reset_seq, "
+                    "seq, updated_seq, created_at, updated_at) VALUES "
+                    "('sess_seq', 'conn_seq', 'codex', 'codex', 'connector_import', 'idle', "
+                    "0, 0, 0, 2147483650, 2147483651, 2147483652, 2147483653, "
+                    "2147483654, :now, :now)"
+                ),
+                {"now": "2026-09-02T00:00:00Z"},
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO timeline_items "
+                    "(session_id, id, type, status, order_seq, updated_seq, "
+                    "payload_json) VALUES "
+                    "('sess_seq', 'item_seq', 'message', 'completed', 1, "
+                    "2147483655, '{}')"
+                )
+            )
+    finally:
+        engine.dispose()
+
+    upgrade_database(db_url=url, revision="v2_23")
+
+    engine = create_engine(f"sqlite:///{path}")
+    try:
+        columns = {
+            column["name"]: column for column in inspect(engine).get_columns("sessions")
+        }
+        assert columns["seq_allocated_high"]["nullable"] is False
+        with engine.connect() as connection:
+            row = connection.execute(
+                text(
+                    "SELECT last_read_seq, latest_turn_end_seq, timeline_reset_seq, "
+                    "seq, seq_allocated_high, updated_seq FROM sessions "
+                    "WHERE id = 'sess_seq'"
+                )
+            ).one()
+            assert tuple(row) == (
+                2147483650,
+                2147483651,
+                2147483652,
+                2147483655,
+                2147483655,
+                2147483655,
+            )
+            assert (
+                connection.execute(
+                    text(
+                        "SELECT updated_seq FROM timeline_items "
+                        "WHERE session_id = 'sess_seq' AND id = 'item_seq'"
+                    )
+                ).scalar_one()
+                == 2147483655
+            )
+            assert (
+                connection.execute(
+                    text("SELECT version_num FROM alembic_version")
+                ).scalar_one()
+                == "v2_23"
+            )
+    finally:
+        engine.dispose()
+
+    with pytest.raises(RuntimeError, match="signed 32-bit range"):
+        command.downgrade(_alembic_config(url), "v2_22")
+
+    engine = create_engine(f"sqlite:///{path}")
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "UPDATE timeline_items SET updated_seq = 0 "
+                    "WHERE session_id = 'sess_seq'"
+                )
+            )
+            connection.execute(
+                text(
+                    "UPDATE sessions SET last_read_seq = 0, "
+                    "latest_turn_end_seq = 0, timeline_reset_seq = 0, "
+                    "seq = 0, updated_seq = 0, seq_allocated_high = 1 "
+                    "WHERE id = 'sess_seq'"
+                )
+            )
+    finally:
+        engine.dispose()
+
+    with pytest.raises(RuntimeError, match="allocated sequence ranges are ahead"):
+        command.downgrade(_alembic_config(url), "v2_22")
+
+    engine = create_engine(f"sqlite:///{path}")
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "UPDATE sessions SET seq_allocated_high = seq WHERE id = 'sess_seq'"
+                )
+            )
+    finally:
+        engine.dispose()
+
+    command.downgrade(_alembic_config(url), "v2_22")
+    engine = create_engine(f"sqlite:///{path}")
+    try:
+        assert "seq_allocated_high" not in {
+            column["name"] for column in inspect(engine).get_columns("sessions")
         }
         with engine.connect() as connection:
             assert (

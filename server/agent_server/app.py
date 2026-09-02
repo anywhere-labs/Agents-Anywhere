@@ -209,8 +209,8 @@ def create_app(
         flush_interval_seconds=float(
             os.environ.get("AGENT_SERVER_TIMELINE_FLUSH_INTERVAL_SECONDS", "1")
         ),
-        pending_ttl_seconds=int(
-            os.environ.get("AGENT_SERVER_TIMELINE_PENDING_TTL_SECONDS", "86400")
+        revision_lease_size=int(
+            os.environ.get("AGENT_SERVER_TIMELINE_REVISION_LEASE_SIZE", "4096")
         ),
     )
     app.state.session_runtime_state_cache = SessionRuntimeStateCache()

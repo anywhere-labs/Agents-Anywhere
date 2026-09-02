@@ -948,19 +948,20 @@ class DeviceRuntimeService:
             runtime_id=runtime.runtimeId,
         )
         for session in sessions:
-            await self._store.clear_active_run(session.id)
-            if self._runtime_state_cache is not None:
-                await self._runtime_state_cache.discard(session.id)
-            await self._store.set_session_status(session.id, "idle")
-            if self._timeline_broker is not None:
-                await self._timeline_broker.publish(
-                    session.id,
-                    {
-                        "sessionId": session.id,
-                        "nextSeq": await self._store.get_session_seq(session.id),
-                        "refetch": True,
-                    },
-                )
+            async with self._store.session_revision_fence(session.id):
+                await self._store.clear_active_run(session.id)
+                if self._runtime_state_cache is not None:
+                    await self._runtime_state_cache.discard(session.id)
+                await self._store.set_session_status(session.id, "idle")
+                if self._timeline_broker is not None:
+                    await self._timeline_broker.publish(
+                        session.id,
+                        {
+                            "sessionId": session.id,
+                            "nextSeq": await self._store.get_session_seq(session.id),
+                            "refetch": True,
+                        },
+                    )
 
     async def _request_validate(
         self,
