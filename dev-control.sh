@@ -45,9 +45,11 @@ Usage:
   ./dev-control.sh down
   ./dev-control.sh serve
 
-start/stop manage the localhost Dev Control page on port 8765; start also opens
-it in the system browser. bootstrap starts PostgreSQL, Redis, Server and Web.
-down stops all local services and containers.
+start/stop manage the optional localhost Dev Control page on port 8765; start
+also opens it in the system browser. bootstrap starts a detached PostgreSQL,
+Redis, Server and Web stack when no foreground local-up.sh is running. Dev
+Control never owns a foreground local-up.sh stack: use Ctrl-C in that terminal
+first. down stops the detached local services and containers.
 EOF
 }
 
@@ -150,7 +152,7 @@ start_control() {
 
 down_stack() {
   if [[ -x "${PYTHON}" ]]; then
-    "${PYTHON}" -m devtools.control stop all || true
+    "${PYTHON}" -m devtools.control stop all
   fi
   stop_control
   for session in aa-dev-server aa-dev-web aa-dev-connector aa-source-connector; do

@@ -6,7 +6,7 @@ services:
     environment:
       POSTGRES_DB: agents_anywhere
       POSTGRES_USER: agents_anywhere
-      POSTGRES_PASSWORD: agents_anywhere_dev_password
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-agents_anywhere_dev_password}"
     ports:
       - "127.0.0.1:${AGENTS_ANYWHERE_POSTGRES_PORT:-55432}:5432"
     volumes:

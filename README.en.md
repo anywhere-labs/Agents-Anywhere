@@ -205,12 +205,30 @@ After installing Docker, `uv`, Node.js, and Corepack, run this from the reposito
 ./local-up.sh
 ```
 
-The script starts PostgreSQL and Redis with Docker Compose, applies migrations,
-and runs the FastAPI Server plus `web-next` from source. Logs live under
-`.local-dev/`, while PostgreSQL data persists in a Docker volume. Pass
-`--with-connector` explicitly when debugging a local Codex/Claude Connector;
-`./local-up.sh --help` lists environment-file, skip-install, and Connector
-config options. The legacy `./dev.sh` forwards to the same entry point.
+`local-up.sh` is an independent foreground source launcher. It starts
+PostgreSQL and Redis with Docker Compose, applies migrations, and runs the
+FastAPI Server plus `web-next` in the current terminal with prefixed logs. The
+default addresses are Web `http://127.0.0.1:5174` and Server
+`http://127.0.0.1:8000`; PostgreSQL and Redis use ports `55432` and `56379`.
+Logs live under `.local-dev/`, while PostgreSQL/Redis data persists in Docker
+volumes. Press `Ctrl-C` to stop the source processes and the infrastructure
+started by this invocation. `local-up.sh` does not call or depend on
+`dev-control.sh`.
+
+Connector is opt-in: pass `--with-connector` (and optionally
+`--connector-config PATH`) when debugging a local Codex/Claude Connector.
+`--skip-install` skips dependency synchronization, `--no-reload` disables
+Server hot reload, and `--reset-data` removes the local PostgreSQL/Redis
+volumes before applying migrations to an empty database. Use `--reset-data`
+only when the local data can be discarded.
+
+`dev-control.sh` is an optional, independent detached manager. After starting
+the stack, you can run `./dev-control.sh start` in another terminal to open
+its status page. While a foreground `local-up.sh` owns the stack, Dev Control
+shows status only and refuses to take over or restart those processes. Stop
+the foreground stack with `Ctrl-C` in its own terminal; do not use
+`./dev-control.sh down` for that stack. `./dev-control.sh bootstrap` starts a
+separate screen-managed stack only when no foreground `local-up.sh` is running.
 
 ## Onboarding
 

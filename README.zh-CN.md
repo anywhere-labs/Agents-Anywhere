@@ -207,11 +207,24 @@ http://127.0.0.1:5174
 ./local-up.sh
 ```
 
-脚本会用 Docker Compose 启动 PostgreSQL/Redis、执行数据库迁移，并从源码
-启动 FastAPI Server 与 `web-next`。日志位于 `.local-dev/`，PostgreSQL 数据
-保存在 Docker volume 中。需要同时调试 Codex/Claude Connector 时，显式传入
-`--with-connector`；用 `./local-up.sh --help` 查看环境文件、跳过安装和
-Connector 配置选项。旧的 `./dev.sh` 会转发到同一入口。
+`local-up.sh` 是独立的前台源码启动器：它用 Docker Compose 启动 PostgreSQL/Redis，
+执行数据库迁移，然后在当前终端启动 FastAPI Server 和 `web-next`，并为每个服务
+显示带前缀的日志。默认地址为 Web `http://127.0.0.1:5174`、Server
+`http://127.0.0.1:8000`；PostgreSQL 和 Redis 分别使用 `55432`、`56379`。日志位于
+`.local-dev/logs/`，PostgreSQL/Redis 数据保存在 Docker volume 中。按 `Ctrl-C` 会
+停止源码子进程并关闭本次启动的基础设施；它不会调用或依赖 `dev-control.sh`。
+
+Connector 默认不随主栈启动；需要同时调试 Codex/Claude Connector 时，显式传入
+`--with-connector`（可用 `--connector-config PATH` 指定配置）。`--skip-install`
+跳过依赖同步，`--no-reload` 关闭 Server 热重载，`--reset-data` 会在启动前删除
+本地 PostgreSQL/Redis 数据卷并从空数据库重新执行迁移。确认不再需要数据后再使用
+`--reset-data`。
+
+`dev-control.sh` 是可选的、独立的后台管理器。栈启动后可以在另一个终端运行
+`./dev-control.sh start` 打开状态页面；前台 `local-up.sh` 运行期间页面只提供状态，
+不会接管或重启这些进程。要停止前台栈，请回到它的终端按 `Ctrl-C`；不要用
+`./dev-control.sh down` 代替。`./dev-control.sh bootstrap` 适用于没有前台
+`local-up.sh` 时单独启动一套 screen 后台栈。
 
 ## 首次使用流程
 

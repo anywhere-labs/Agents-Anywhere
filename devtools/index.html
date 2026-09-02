@@ -42,6 +42,7 @@
       textarea { display: block; width: 100%; min-height: 112px; resize: vertical; border: 1px solid #343840; border-radius: 7px; background: #111317; color: #e9eaec; padding: 12px; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; outline: none; }
       textarea:focus { border-color: #6f7680; }
       .actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
+      .owner-notice { margin-top: 18px; border-left: 2px solid #e0a43a; padding: 11px 0 11px 14px; color: #f1c878; font-size: 13px; line-height: 1.5; }
       .message { min-height: 44px; margin-top: 18px; border-left: 2px solid #3b3f46; padding: 11px 0 11px 14px; color: #a8acb4; font-size: 13px; line-height: 1.5; }
       .message.error { border-color: #ef5b63; color: #ff9da3; }
       .message.success { border-color: #22c993; color: #7be0bd; }
@@ -99,6 +100,10 @@
         </div>
       </section>
 
+      <div class="owner-notice" id="owner-notice" hidden>
+        local-up.sh 正在前台管理 Server、Web 和基础设施；请回到启动它的终端使用 Ctrl-C，再由 Dev Control 重启。
+      </div>
+
       <div class="controls">
         <label for="credential">Connector 凭据（首次启动时粘贴）</label>
         <textarea id="credential" autocomplete="off" spellcheck="false" placeholder="粘贴从 Agents Anywhere 复制的 Connector 凭据；重启已有 Connector 时可留空"></textarea>
@@ -118,8 +123,16 @@
       const webEntryUrl = document.querySelector("#web-entry-url");
       const androidOauthUrl = document.querySelector("#android-oauth-url");
       const copyAndroidOauth = document.querySelector("#copy-android-oauth");
+      const ownerNotice = document.querySelector("#owner-notice");
+      let localUpOwned = false;
 
       function renderStatus(status) {
+        localUpOwned = Boolean(status.localUp);
+        ownerNotice.hidden = !localUpOwned;
+        buttons.forEach((button) => {
+          button.disabled = localUpOwned;
+          button.title = localUpOwned ? "请先在 local-up.sh 终端使用 Ctrl-C" : "";
+        });
         if (status.webUrl) {
           webEntry.href = status.webUrl;
           webEntryUrl.textContent = `${status.webUrl} ↗`;
@@ -155,6 +168,11 @@
       }
 
       async function restart(target) {
+        if (localUpOwned) {
+          message.className = "message error";
+          message.textContent = "local-up.sh 正在前台运行，请先在该终端使用 Ctrl-C。";
+          return;
+        }
         buttons.forEach((button) => { button.disabled = true; });
         message.className = "message";
         message.textContent = target === "server" ? "正在重启后端…" : "正在启动 Connector…";
@@ -177,7 +195,7 @@
           message.className = "message error";
           message.textContent = error instanceof Error ? error.message : "重启失败";
         } finally {
-          buttons.forEach((button) => { button.disabled = false; });
+          buttons.forEach((button) => { button.disabled = localUpOwned; });
         }
       }
 

@@ -155,6 +155,42 @@ def test_run_check_false_returns_nonzero_result(
     assert control._run(["probe"], check=False) is expected
 
 
+def test_local_up_running_only_accepts_a_matching_foreground_process(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    pid_file = tmp_path / "local-up.pid"
+    pid_file.write_text("123\n", encoding="utf-8")
+    monkeypatch.setattr(control, "LOCAL_UP_PID_FILE", pid_file)
+    monkeypatch.setattr(control, "_process_command", lambda _pid: "bash ./local-up.sh")
+    monkeypatch.setattr(control, "_process_cwd", lambda _pid: control.ROOT)
+
+    assert control.local_up_running() is True
+
+
+def test_local_up_running_removes_a_stale_pid_marker(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    pid_file = tmp_path / "local-up.pid"
+    pid_file.write_text("123\n", encoding="utf-8")
+    monkeypatch.setattr(control, "LOCAL_UP_PID_FILE", pid_file)
+    monkeypatch.setattr(control, "_process_command", lambda _pid: "python other.py")
+    monkeypatch.setattr(control, "_process_cwd", lambda _pid: control.ROOT)
+
+    assert control.local_up_running() is False
+    assert not pid_file.exists()
+
+
+def test_dev_control_refuses_to_manage_foreground_local_up(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(control, "local_up_running", lambda: True)
+
+    with pytest.raises(DevControlError, match="local-up.sh owns the foreground stack"):
+        control._ensure_stack_not_owned_by_local_up("stopping local services")
+
+
 def test_cli_reports_expected_error_without_outer_traceback(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -223,6 +259,7 @@ def test_status_payload_exposes_android_oauth_login_url(
 
     assert payload["androidOauthLoginUrl"] == "http://192.168.1.42:5174"
     assert payload["serverUrl"] == "http://127.0.0.1:8000"
+    assert payload["localUp"] is False
 
 
 def test_discover_lan_ipv4_uses_macos_default_interface(

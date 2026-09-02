@@ -22,8 +22,11 @@ from urllib.parse import urlsplit
 from urllib.request import urlopen
 
 ROOT = Path(__file__).resolve().parents[1]
-LOCAL_DIR = ROOT / ".local-dev"
+LOCAL_DIR = Path(
+    os.environ.get("AGENTS_ANYWHERE_LOCAL_DIR", str(ROOT / ".local-dev"))
+).expanduser()
 LOG_DIR = LOCAL_DIR / "logs"
+LOCAL_UP_PID_FILE = LOCAL_DIR / "run" / "local-up.pid"
 CONNECTOR_CONFIG = LOCAL_DIR / "connector-source.json"
 COMPOSE_FILE = ROOT / "docker" / "docker-compose.local.yml"
 HTML_FILE = Path(__file__).with_name("index.html")
@@ -43,11 +46,17 @@ LISTEN_HOST = os.environ.get("AGENTS_ANYWHERE_LISTEN_HOST", "0.0.0.0")
 
 SERVER_URL = f"http://127.0.0.1:{SERVER_PORT}"
 WEB_URL = f"http://127.0.0.1:{WEB_PORT}"
-DB_URL = (
-    "postgresql+asyncpg://agents_anywhere:agents_anywhere_dev_password"
-    f"@127.0.0.1:{POSTGRES_PORT}/agents_anywhere"
+POSTGRES_PASSWORD = os.environ.get(
+    "POSTGRES_PASSWORD", "agents_anywhere_dev_password"
 )
-REDIS_URL = f"redis://127.0.0.1:{REDIS_PORT}/0"
+DB_URL = os.environ.get(
+    "AGENT_SERVER_DB_URL",
+    f"postgresql+asyncpg://agents_anywhere:{POSTGRES_PASSWORD}"
+    f"@127.0.0.1:{POSTGRES_PORT}/agents_anywhere",
+)
+REDIS_URL = os.environ.get(
+    "AGENT_SERVER_REDIS_URL", f"redis://127.0.0.1:{REDIS_PORT}/0"
+)
 
 _SCREEN_RE = re.compile(r"\s*\d+\.([^\s]+)")
 _SENSITIVE_ENV_RE = re.compile(
@@ -204,6 +213,40 @@ def _process_cwd(pid: int) -> Path | None:
     return None
 
 
+def local_up_running() -> bool:
+    """Return whether the foreground local-up launcher owns this checkout.
+
+    ``local-up.sh`` intentionally stays in the foreground and owns the child
+    Server/Web processes. Dev Control may still expose status while it is
+    running, but must never terminate or replace that process tree.
+    """
+
+    try:
+        pid = int(LOCAL_UP_PID_FILE.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return False
+    if pid <= 0 or pid == os.getpid():
+        return False
+
+    command = _process_command(pid)
+    process_cwd = _process_cwd(pid)
+    running = process_cwd == ROOT.resolve() and "local-up.sh" in command
+    if not running:
+        try:
+            LOCAL_UP_PID_FILE.unlink()
+        except OSError:
+            pass
+    return running
+
+
+def _ensure_stack_not_owned_by_local_up(action: str) -> None:
+    if local_up_running():
+        raise DevControlError(
+            "local-up.sh owns the foreground stack; stop it with Ctrl-C "
+            f"before {action}"
+        )
+
+
 def _process_is_owned(
     pid: int,
     *,
@@ -350,16 +393,19 @@ def stop_screen(name: str) -> None:
 
 
 def stop_server() -> None:
+    _ensure_stack_not_owned_by_local_up("asking Dev Control to manage local services")
     stop_screen(SERVER_SESSION)
     _stop_server_processes()
 
 
 def stop_web() -> None:
+    _ensure_stack_not_owned_by_local_up("asking Dev Control to manage local services")
     stop_screen(WEB_SESSION)
     _stop_web_processes()
 
 
 def stop_connector() -> None:
+    _ensure_stack_not_owned_by_local_up("asking Dev Control to manage local services")
     stop_screen(LEGACY_CONNECTOR_SESSION)
     stop_screen(CONNECTOR_SESSION)
 
@@ -424,6 +470,7 @@ def ensure_infrastructure() -> None:
         {
             "AGENTS_ANYWHERE_POSTGRES_PORT": str(POSTGRES_PORT),
             "AGENTS_ANYWHERE_REDIS_PORT": str(REDIS_PORT),
+            "POSTGRES_PASSWORD": POSTGRES_PASSWORD,
         }
     )
     _run(
@@ -546,6 +593,7 @@ def start_connector() -> None:
 
 
 def ensure_split_layout() -> bool:
+    _ensure_stack_not_owned_by_local_up("asking Dev Control to manage local services")
     sessions = screen_sessions()
     legacy_stack = LEGACY_STACK_SESSION in sessions
     unmanaged_server = port_open(SERVER_PORT) and SERVER_SESSION not in sessions
@@ -598,6 +646,7 @@ def restart_all(credential: str | None = None) -> None:
 
 
 def bootstrap() -> None:
+    _ensure_stack_not_owned_by_local_up("starting the detached development stack")
     stop_screen(LEGACY_STACK_SESSION)
     stop_server()
     stop_web()
@@ -608,6 +657,7 @@ def bootstrap() -> None:
 
 
 def stop_all() -> None:
+    _ensure_stack_not_owned_by_local_up("stopping local services")
     stop_connector()
     stop_web()
     stop_server()
@@ -616,6 +666,7 @@ def stop_all() -> None:
 def status_payload() -> dict[str, Any]:
     sessions = screen_sessions()
     lan_ipv4 = discover_lan_ipv4()
+    local_up = local_up_running()
     return {
         "server": _health_ok(),
         "web": port_open(WEB_PORT),
@@ -623,6 +674,7 @@ def status_payload() -> dict[str, Any]:
         "postgres": port_open(POSTGRES_PORT),
         "redis": port_open(REDIS_PORT),
         "legacy": LEGACY_STACK_SESSION in sessions,
+        "localUp": local_up,
         "serverUrl": SERVER_URL,
         "webUrl": WEB_URL,
         "androidOauthLoginUrl": (

@@ -207,20 +207,24 @@ http://127.0.0.1:5174
 ./local-up.sh
 ```
 
-脚本会先确认 Docker daemon 正在运行，再清理固定开发端口并用 Docker Compose
-启动 PostgreSQL/Redis、执行数据库迁移，最后从源码启动 FastAPI Server、
-`web-next` 和本机开发控制台。固定地址为 Web `http://127.0.0.1:5174`、Server
-`http://127.0.0.1:8000`、开发控制台 `http://127.0.0.1:8765`；PostgreSQL 和
-Redis 分别使用 `55432`、`56379`。日志位于 `.local-dev/logs/`，PostgreSQL 数据
-保存在 Docker volume 中。
+`local-up.sh` 是独立的前台源码启动器：它用 Docker Compose 启动 PostgreSQL/Redis，
+执行数据库迁移，然后在当前终端启动 FastAPI Server 和 `web-next`，并为每个服务
+显示带前缀的日志。固定默认地址为 Web `http://127.0.0.1:5174`、Server
+`http://127.0.0.1:8000`；PostgreSQL 和 Redis 分别使用 `55432`、`56379`。日志位于
+`.local-dev/logs/`，PostgreSQL/Redis 数据保存在 Docker volume 中。按 `Ctrl-C` 会
+停止源码子进程并关闭本次启动的基础设施；它不会调用或依赖 `dev-control.sh`。
 
-开发控制台可以一键重启后端，也可以粘贴 Web 配对流程复制的凭据来启动或重启
-Connector，并提供可直接打开本地 Web 的地址。启动完成后脚本会自动用系统浏览器
-打开开发控制台；无图形界面的环境会安全跳过，也可设置
-`AGENTS_ANYWHERE_NO_BROWSER=1` 主动关闭自动打开。Connector 默认不随主栈启动；
-需要启动时可在控制台操作，也可传入 `--with-connector`。用 `./local-up.sh --help`
-查看环境文件、跳过安装和 Connector 配置选项；用 `./dev-control.sh down` 停止整套
-本地服务。
+Connector 默认不随主栈启动；需要同时调试本地 Connector 时，显式传入
+`--with-connector`（可用 `--connector-config PATH` 指定配置）。`--skip-install`
+跳过依赖同步，`--no-reload` 关闭 Server 热重载，`--reset-data` 会在启动前删除
+本地 PostgreSQL/Redis 数据卷并从空数据库重新执行迁移。确认不再需要数据后再使用
+`--reset-data`。
+
+`dev-control.sh` 是可选的、独立的后台管理器。栈启动后可以在另一个终端运行
+`./dev-control.sh start` 打开状态页面；前台 `local-up.sh` 运行期间页面只提供状态，
+不会接管或重启这些进程。要停止前台栈，请回到它的终端按 `Ctrl-C`；不要用
+`./dev-control.sh down` 代替。`./dev-control.sh bootstrap` 适用于没有前台
+`local-up.sh` 时单独启动一套 screen 后台栈。
 
 ## 首次使用流程
 
