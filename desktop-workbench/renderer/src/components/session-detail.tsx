@@ -18,6 +18,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { Marker, MarkerContent, MarkerIcon } from "@/components/ui/marker"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { createClientId } from "@/lib/id"
+import { isApiError } from "@/lib/api/errors"
 import { cn } from "@/lib/utils"
 import { dashboardApi } from "@/features/dashboard/api"
 import type {
@@ -39,11 +40,11 @@ import { InteractionCard, NotificationCard } from "@/components/session/session-
 import { SessionSkeleton, SessionSkeletonInline } from "@/components/session/session-skeleton"
 import { TimelineEntry } from "@/components/session/session-timeline-entry"
 import {
-  isCreatedFileChange,
   JsonBlock,
   timelineItemStatusIsActive,
   ToolMarkerRowContent,
 } from "@/components/session/session-tool-cards"
+import { timelineRunCounts } from "@/components/session/timeline-summary"
 import { CAPABILITY, capabilityIsUsable } from "@/components/session/capabilities"
 import { SessionComposer, type AttachedFile } from "@/components/session/session-composer"
 import {
@@ -54,7 +55,8 @@ import {
   preserveOptimisticItems,
   timelineClientMessageId,
 } from "@/components/session/optimistic-timeline"
-import { recordsOf, runtimeLabel, sortTimelineItems, textOf } from "@/components/session/session-utils"
+import { isVisibleTimelineItem, runtimeLabel, textOf } from "@/components/session/session-utils"
+import { sessionRuntimeId, sessionRuntimeType } from "@/features/dashboard/runtime-instances"
 import { useWorkspace } from "@/components/workspace-context"
 
 type SessionDetailProps = {
@@ -63,6 +65,7 @@ type SessionDetailProps = {
   fallbackSession: SessionView | null
   onSessionUpdated?: (session: SessionView) => void
   onMemorySnapshotUpdated?: (snapshot: SessionMemorySnapshot | null) => void
+  onStreamProgress?: (sessionId: string, nextSeq: number | null) => void
 }
 
 export type SessionMemorySnapshot = {
@@ -117,23 +120,42 @@ type ComposerDraftState = {
   sessionId: string
   value: string
 }
+type SessionSourceErrorCode =
+  | "session_archived"
+  | "session_unavailable"
+  | "session_deleted"
+  | "session_missing"
 
 async function loadInitialSessionState(
   token: string,
   sessionId: string,
   options: { reason?: string } = {},
 ): Promise<SessionRemoteState> {
+  const reason = options.reason ?? "session-detail.initial-load"
   const snapshot = await dashboardApi.getSessionSnapshot(token, sessionId, INITIAL_TIMELINE_LIMIT, {
-    reason: options.reason ?? "session-detail.initial-load",
+    reason,
   })
-  return sessionStateFromSnapshot(snapshot)
+  const state = sessionStateFromSnapshot(snapshot)
+  console.info("[session_status_trace]", {
+    layer: "frontend-snapshot",
+    reason,
+    sessionId,
+    sessionStatus: state.session.status,
+    runtimeStatus: state.state?.status ?? null,
+    effectiveStatus: effectiveRuntimeStatus(state.state, state.session),
+    sessionUpdatedSeq: state.session.updatedSeq,
+    runtimeUpdatedSeq: state.state?.updatedSeq ?? null,
+    runtimeSource: state.state?.metadata?.source ?? null,
+    eventCursor: state.eventCursor,
+  })
+  return state
 }
 
 function sessionStateFromSnapshot(snapshot: SessionSnapshotResponse): SessionRemoteState {
   return {
     session: snapshot.session,
     state: snapshot.state ?? null,
-    items: sortTimelineItems(snapshot.timeline.items),
+    items: mergeTimelineItems([], snapshot.timeline.items),
     notices: snapshot.notices,
     nextSeq: snapshot.timeline.nextSeq,
     hasMore: snapshot.timeline.hasMore,
@@ -153,6 +175,8 @@ function nextOptimisticRuntimeState(
   return {
     sessionId: session.id,
     runtime: session.runtime,
+    runtimeId: sessionRuntimeId(session),
+    runtimeType: sessionRuntimeType(session),
     externalSessionId: session.externalSessionId,
     status,
     selections: state?.selections ?? {},
@@ -194,6 +218,34 @@ function runtimeStateWithSelections(
   }
 }
 
+function runtimeStateWithSelectionResult(
+  state: SessionRuntimeState | null | undefined,
+  session: SessionView,
+  selectionPatch: Record<string, string | null>,
+  resultState: SessionRuntimeState | null | undefined,
+): SessionRuntimeState {
+  const nextState = state ?? resultState
+  return runtimeStateWithSelections(nextState, session, {
+    ...selectionPatch,
+    ...(resultState?.selections ?? {}),
+  })
+}
+
+function runtimeStateWithSelectionRollback(
+  state: SessionRuntimeState | null | undefined,
+  session: SessionView,
+  previousSelections: Record<string, string | null>,
+  selectionPatch: Record<string, string | null>,
+): SessionRuntimeState {
+  const nextState = nextOptimisticRuntimeState(state, session, state?.status ?? "idle")
+  const selections = { ...nextState.selections }
+  for (const key of Object.keys(selectionPatch)) {
+    if (Object.hasOwn(previousSelections, key)) selections[key] = previousSelections[key] ?? null
+    else delete selections[key]
+  }
+  return { ...nextState, selections }
+}
+
 function composerDraftStorageKey(sessionId: string): string {
   return `${COMPOSER_DRAFT_STORAGE_PREFIX}${sessionId}`
 }
@@ -222,6 +274,7 @@ export function SessionDetail({
   fallbackSession,
   onSessionUpdated,
   onMemorySnapshotUpdated,
+  onStreamProgress,
 }: SessionDetailProps) {
   const tSession = useTranslations("dashboard.session")
   const tNew = useTranslations("dashboard.new")
@@ -230,10 +283,12 @@ export function SessionDetail({
     addOptimisticMessage,
     clearResolvedOptimisticMessages,
     composerInsertion,
+    consumeComposerInsertion,
     getOptimisticItems,
     getOptimisticSessionState,
     isOptimisticSession,
     markOptimisticMessageFailed,
+    replaceHome,
   } = useWorkspace()
   const initialOptimisticState = getOptimisticSessionState(sessionId)
   const [state, setState] = React.useState<SessionRemoteState | null>(() =>
@@ -249,10 +304,12 @@ export function SessionDetail({
   const [showScrollBottom, setShowScrollBottom] = React.useState(false)
   const [loadingOlder, setLoadingOlder] = React.useState(false)
   const [pendingTakeover, setPendingTakeover] = React.useState<boolean | null>(null)
+  const [sourceErrorCode, setSourceErrorCode] = React.useState<SessionSourceErrorCode | null>(null)
   const [commandQuery, setCommandQuery] = React.useState<string | null>(null)
   const [runtimeCommands, setRuntimeCommands] = React.useState<RuntimeCommand[]>([])
   const [commandsLoading, setCommandsLoading] = React.useState(false)
   const [blockingInteractionStackHeight, setBlockingInteractionStackHeight] = React.useState(0)
+  const [composerHeight, setComposerHeight] = React.useState(144)
   const [timelineGroupOpenByKey, setTimelineGroupOpenByKey] = React.useState<Record<string, boolean>>({})
   const [timelineItemOpenById, setTimelineItemOpenById] = React.useState<Record<string, boolean>>({})
   const [composerDraftState, setComposerDraftState] = React.useState<ComposerDraftState>(() => ({
@@ -261,6 +318,7 @@ export function SessionDetail({
   }))
   const timelineRef = React.useRef<HTMLDivElement | null>(null)
   const timelineContentRef = React.useRef<HTMLDivElement | null>(null)
+  const composerContainerRef = React.useRef<HTMLDivElement | null>(null)
   const nextSeqRef = React.useRef(0)
   const autoScrollOnNextUpdateRef = React.useRef(false)
   const forceScrollOnNextUpdateRef = React.useRef(false)
@@ -281,22 +339,74 @@ export function SessionDetail({
   const session = state?.session ?? fallbackSession
   const runtimeState = state?.state ?? null
   const runtimeStatus = effectiveRuntimeStatus(runtimeState, session)
-  const sessionRuntime = session?.runtime ?? null
+  const previousStatusTraceRef = React.useRef<{
+    sessionId: string
+    sessionStatus: string
+    runtimeStatus: string | null
+    effectiveStatus: string
+  } | null>(null)
+  const sessionRuntime = session ? sessionRuntimeId(session) : null
+  const sessionRuntimeScope = session
+    ? { runtimeId: sessionRuntimeId(session), runtimeType: sessionRuntimeType(session) }
+    : undefined
   const effectiveCapabilities = state?.effectiveCapabilities ?? null
   const canUseModelCatalog = Boolean(
     sessionRuntime &&
       effectiveCapabilities &&
-      capabilityIsUsable(effectiveCapabilities, CAPABILITY.modelCatalog, sessionRuntime),
+      capabilityIsUsable(effectiveCapabilities, CAPABILITY.modelCatalog, sessionRuntimeScope),
   )
   const canUsePermissionCatalog = Boolean(
     sessionRuntime &&
       effectiveCapabilities &&
-      capabilityIsUsable(effectiveCapabilities, CAPABILITY.permissionCatalog, sessionRuntime),
+      capabilityIsUsable(effectiveCapabilities, CAPABILITY.permissionCatalog, sessionRuntimeScope),
   )
   const commandSessionId = session?.id ?? null
+
+  React.useEffect(() => {
+    if (!session) return
+    const next = {
+      sessionId: session.id,
+      sessionStatus: session.status,
+      runtimeStatus: runtimeState?.status ?? null,
+      effectiveStatus: runtimeStatus,
+    }
+    const previous = previousStatusTraceRef.current
+    if (
+      previous === null ||
+      previous.sessionId !== next.sessionId ||
+      previous.sessionStatus !== next.sessionStatus ||
+      previous.runtimeStatus !== next.runtimeStatus ||
+      previous.effectiveStatus !== next.effectiveStatus
+    ) {
+      console.info("[session_status_trace]", {
+        layer: "frontend-render",
+        sessionId: session.id,
+        previous,
+        next,
+        sessionUpdatedSeq: session.updatedSeq,
+        runtimeUpdatedSeq: runtimeState?.updatedSeq ?? null,
+        runtimeSource: runtimeState?.metadata?.source ?? null,
+        eventCursor: state?.eventCursor ?? null,
+        serverTime: state?.serverTime ?? null,
+      })
+      previousStatusTraceRef.current = next
+    }
+  }, [runtimeState, runtimeStatus, session, state?.eventCursor, state?.serverTime])
+
   const composerDraft = composerDraftState.sessionId === sessionId ? composerDraftState.value : ""
   const isLocalOptimisticSession = isOptimisticSession(sessionId)
   const hasInitialSessionState = state !== null
+
+  React.useEffect(() => {
+    setSourceErrorCode(null)
+  }, [sessionId])
+
+  React.useEffect(() => {
+    if (session?.id === sessionId && session.sourceAvailability === "archived") {
+      setSourceErrorCode("session_archived")
+    }
+  }, [session?.id, session?.sourceAvailability, sessionId])
+
   const handleCommandQueryChange = React.useCallback((query: string | null) => {
     setCommandQuery(query)
   }, [])
@@ -338,14 +448,31 @@ export function SessionDetail({
         current
           ? {
               ...current,
-              state: result.state ?? runtimeStateWithSelections(current.state, current.session, selectionPatch),
+              state: runtimeStateWithSelectionResult(
+                current.state,
+                current.session,
+                selectionPatch,
+                result.state,
+              ),
             }
           : current,
       )
       return true
     } catch (err) {
       if (selectionUpdateSeqRef.current === selectionUpdateSeq) {
-        setState((current) => current ? { ...current, state: previousRuntimeState } : current)
+        setState((current) =>
+          current
+            ? {
+                ...current,
+                state: runtimeStateWithSelectionRollback(
+                  current.state,
+                  current.session,
+                  previousRuntimeState?.selections ?? {},
+                  selectionPatch,
+                ),
+              }
+            : current,
+        )
       }
       toast.error(err instanceof Error ? err.message : tSession("updateSelectionsFailed"))
       return false
@@ -506,7 +633,8 @@ export function SessionDetail({
         value: `${currentValue}${separator}${composerInsertion.text}`,
       }
     })
-  }, [composerInsertion, sessionId])
+    consumeComposerInsertion(composerInsertion.id)
+  }, [composerInsertion, consumeComposerInsertion, sessionId])
 
   React.useEffect(() => {
     if (!state) {
@@ -524,6 +652,14 @@ export function SessionDetail({
       pendingInteractionCount: blockingInteractions(state.notices, state.session.id).length,
     })
   }, [onMemorySnapshotUpdated, state])
+
+  React.useEffect(() => {
+    onStreamProgress?.(sessionId, state?.nextSeq ?? 0)
+  }, [onStreamProgress, sessionId, state?.nextSeq])
+
+  React.useEffect(() => {
+    return () => onStreamProgress?.(sessionId, null)
+  }, [onStreamProgress, sessionId])
 
   const distanceFromBottom = React.useCallback(() => {
     const viewport = timelineRef.current
@@ -853,6 +989,10 @@ export function SessionDetail({
     selections: { model?: string; permission?: string },
   ): Promise<boolean> => {
     if (!session || (!content.trim() && attachments.length === 0)) return false
+    const uploadedAttachments = attachments.flatMap((attachment) =>
+      attachment.uploaded ? [attachment.uploaded] : [],
+    )
+    if (uploadedAttachments.length !== attachments.length) return false
     const clientMessageId = createClientId("msg")
     const messageText = content.trim() || tNew("attachmentOnlyPrompt")
     forceScrollOnNextUpdateRef.current = true
@@ -887,29 +1027,29 @@ export function SessionDetail({
           current
             ? {
                 ...current,
-                state: selectionResult.state ?? {
-                  ...nextOptimisticRuntimeState(current.state, current.session, current.state?.status ?? runtimeStatus),
-                  selections: {
-                    ...(current.state?.selections ?? {}),
-                    ...selectionPatch,
-                  },
-                },
+                state: runtimeStateWithSelectionResult(
+                  current.state,
+                  current.session,
+                  selectionPatch,
+                  selectionResult.state,
+                ),
               }
             : current,
         )
       }
-      const files = attachments.map((attachment) => attachment.file)
-      const upload = files.length > 0
-        ? await dashboardApi.uploadSessionAttachments(token, session.id, files)
-        : null
       await dashboardApi.sendSessionMessage(token, session.id, messageText, {
-        attachments: upload?.attachments.map((attachment) => ({ fileId: attachment.fileId })) ?? [],
+        attachments: uploadedAttachments.map((attachment) => ({ fileId: attachment.fileId })),
         clientMessageId,
       })
       scrollToBottomThrottled()
       return true
     } catch (err) {
-      const message = err instanceof Error ? err.message : tSession("sendFailed")
+      const nextSourceErrorCode = sessionSourceErrorCode(err)
+      const message = nextSourceErrorCode
+        ? sourceErrorMessage(nextSourceErrorCode, tSession)
+        : err instanceof Error
+          ? err.message
+          : tSession("sendFailed")
       markOptimisticMessageFailed(clientMessageId, message)
       setState((current) => {
         if (!current) return current
@@ -926,7 +1066,24 @@ export function SessionDetail({
           ),
         }
       })
-      toast.error(err instanceof Error ? err.message : tSession("sendFailed"))
+      if (nextSourceErrorCode) {
+        const sourceAvailability = sourceAvailabilityFromError(nextSourceErrorCode)
+        const nextSession: SessionView = {
+          ...session,
+          archived: true,
+          archivedAt: session.archivedAt ?? new Date().toISOString(),
+          sourceAvailability,
+          sourceAvailabilityReason: message,
+          sourceAvailabilityUpdatedAt: new Date().toISOString(),
+          sourceObservationOrigin: "operation",
+          archiveSource: session.userArchived ? "both" : "runtime",
+        }
+        setState((current) => current ? { ...current, session: nextSession } : current)
+        onSessionUpdated?.(nextSession)
+        setSourceErrorCode(nextSourceErrorCode)
+      } else {
+        toast.error(err instanceof Error ? err.message : tSession("sendFailed"))
+      }
       return false
     } finally {
       setSending(false)
@@ -999,13 +1156,17 @@ export function SessionDetail({
     })
   }, [])
 
-  const handleRespondInteraction = async (noticeId: string, actionId: string) => {
+  const handleRespondInteraction = async (
+    noticeId: string,
+    actionId: string,
+    input?: Record<string, unknown>,
+  ) => {
     if (resolvingNoticeId) return
     setResolvingNoticeId(noticeId)
     setResolvingActionId(actionId)
     try {
       if (!session) return
-      const response = await dashboardApi.respondInteraction(token, session.id, noticeId, actionId)
+      const response = await dashboardApi.respondInteraction(token, session.id, noticeId, actionId, input)
       if (response.ok) {
         removeNoticeFromState(noticeId)
         return
@@ -1213,10 +1374,8 @@ export function SessionDetail({
     [state?.notices],
   )
   const blockingInteractionCount = blockingInteractionList.length
-  const timelineBottomPadding = blockingInteractionStackHeight > 0
-    ? `calc(11rem + ${blockingInteractionStackHeight}px)`
-    : undefined
-  const scrollBottomButtonOffset = `calc(9rem + ${blockingInteractionStackHeight}px)`
+  const timelineBottomPadding = `calc(${composerHeight}px + ${blockingInteractionStackHeight}px + 2rem)`
+  const scrollBottomButtonOffset = `calc(${composerHeight}px + ${blockingInteractionStackHeight}px + 0.5rem)`
   const interactionTargetIds = React.useMemo(
     () => new Set(timelineInteractions.map(noticeTimelineTargetId).filter((id): id is string => Boolean(id))),
     [timelineInteractions],
@@ -1227,8 +1386,18 @@ export function SessionDetail({
       setBlockingInteractionStackHeight(0)
     }
   }, [blockingInteractionCount, blockingInteractionStackHeight])
+
+  React.useLayoutEffect(() => {
+    const node = composerContainerRef.current
+    if (!node) return
+    const publishHeight = () => setComposerHeight(Math.ceil(node.getBoundingClientRect().height))
+    publishHeight()
+    const resizeObserver = new ResizeObserver(publishHeight)
+    resizeObserver.observe(node)
+    return () => resizeObserver.disconnect()
+  }, [session?.id])
   const timelineGroups = React.useMemo(
-    () => groupTimelineItems(state?.items ?? [], interactionTargetIds),
+    () => groupTimelineItems((state?.items ?? []).filter(isVisibleTimelineItem), interactionTargetIds),
     [interactionTargetIds, state?.items],
   )
 
@@ -1249,7 +1418,15 @@ export function SessionDetail({
   if (!session) return null
 
   const takeoverTarget = pendingTakeover ?? false
-  const takeoverAgent = runtimeLabel(session.runtime)
+  const sourceErrorDialog = sourceErrorCode
+    ? sourceErrorDialogContent(sourceErrorCode, tSession)
+    : null
+  const dismissSourceErrorDialog = () => {
+    const shouldLeaveSession = sourceErrorCode === "session_archived"
+    setSourceErrorCode(null)
+    if (shouldLeaveSession) replaceHome()
+  }
+  const takeoverAgent = session.runtimeName?.trim() || runtimeLabel(sessionRuntimeType(session))
   const takeoverDescription = (tSession.raw(
     takeoverTarget ? "takeoverEnableDescription" : "takeoverDisableDescription",
   ) as string[]).map((line) => line.replaceAll("{agent}", takeoverAgent))
@@ -1276,7 +1453,7 @@ export function SessionDetail({
             className={cn(
               "mx-auto flex w-full min-w-0 max-w-[calc(48rem+2rem)] flex-col gap-3 overflow-hidden px-4 pb-44 pt-20",
             )}
-            style={timelineBottomPadding ? { paddingBottom: timelineBottomPadding } : undefined}
+            style={{ paddingBottom: timelineBottomPadding }}
           >
             {loadingOlder ? (
               <div className="flex justify-center py-2 text-muted-foreground">
@@ -1285,7 +1462,7 @@ export function SessionDetail({
             ) : null}
             {loading && !state ? <SessionSkeletonInline /> : null}
             {state &&
-            state.items.length === 0 &&
+            timelineGroups.length === 0 &&
             detachedInteractions.length === 0 &&
             detachedNotifications.length === 0 &&
             blockingInteractionList.length === 0 ? (
@@ -1301,6 +1478,21 @@ export function SessionDetail({
                 />
               ) : group.kind === "tool-run" ? (
                 <ToolRunGroup
+                  key={group.key}
+                  group={group}
+                  token={token}
+                  session={session}
+                  interactionByTarget={interactionByTarget}
+                  resolvingNoticeId={resolvingNoticeId}
+                  resolvingActionId={resolvingActionId}
+                  open={timelineGroupOpenByKey[group.key] ?? false}
+                  itemOpenById={timelineItemOpenById}
+                  onOpenChange={(open) => handleTimelineGroupOpenChange(group.key, open)}
+                  onItemOpenChange={handleTimelineItemOpenChange}
+                  onRespondInteraction={handleRespondInteraction}
+                />
+              ) : group.kind === "agent-calls" ? (
+                <AgentCallGroup
                   key={group.key}
                   group={group}
                   token={token}
@@ -1346,8 +1538,8 @@ export function SessionDetail({
                 <Loader2 className="size-4 animate-spin" />
                 <span>
                   {runtimeStatus === "waiting" || runtimeStatus === "pending"
-                    ? tSession("runtimePending", { runtime: runtimeLabel(session.runtime) })
-                    : tSession("runtimeWorking", { runtime: runtimeLabel(session.runtime) })}
+                    ? tSession("runtimePending", { runtime: takeoverAgent })
+                    : tSession("runtimeWorking", { runtime: takeoverAgent })}
                 </span>
               </div>
             ) : null}
@@ -1376,8 +1568,9 @@ export function SessionDetail({
           onHeightChange={setBlockingInteractionStackHeight}
           onRespondInteraction={handleRespondInteraction}
         />
-        <div className="pointer-events-auto relative">
+        <div ref={composerContainerRef} className="pointer-events-auto relative">
           <SessionComposer
+            token={token}
             session={session}
             runtimeState={runtimeState}
             pendingInteractionCount={blockingInteractionCount}
@@ -1431,8 +1624,81 @@ export function SessionDetail({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <Dialog
+        open={sourceErrorDialog !== null}
+        onOpenChange={(open: boolean) => {
+          if (!open) dismissSourceErrorDialog()
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{sourceErrorDialog?.title}</DialogTitle>
+            <DialogDescription>{sourceErrorDialog?.description}</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button onClick={dismissSourceErrorDialog}>{tCommon("gotIt")}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
+}
+
+function sessionSourceErrorCode(error: unknown): SessionSourceErrorCode | null {
+  if (!isApiError(error)) return null
+  if (
+    error.code === "session_archived" ||
+    error.code === "session_unavailable" ||
+    error.code === "session_deleted" ||
+    error.code === "session_missing"
+  ) {
+    return error.code
+  }
+  return null
+}
+
+function sourceAvailabilityFromError(
+  code: SessionSourceErrorCode,
+): SessionView["sourceAvailability"] {
+  if (code === "session_archived") return "archived"
+  if (code === "session_deleted") return "deleted"
+  if (code === "session_missing") return "missing"
+  return "unavailable"
+}
+
+function sourceErrorDialogContent(
+  code: SessionSourceErrorCode,
+  tSession: ReturnType<typeof useTranslations>,
+): { title: string; description: string } {
+  if (code === "session_archived") {
+    return {
+      title: tSession("sourceArchivedTitle"),
+      description: tSession("sourceArchivedDescription"),
+    }
+  }
+  if (code === "session_deleted") {
+    return {
+      title: tSession("sourceDeletedTitle"),
+      description: tSession("sourceDeletedDescription"),
+    }
+  }
+  if (code === "session_missing") {
+    return {
+      title: tSession("sourceMissingTitle"),
+      description: tSession("sourceMissingDescription"),
+    }
+  }
+  return {
+    title: tSession("sourceUnavailableTitle"),
+    description: tSession("sourceUnavailableDescription"),
+  }
+}
+
+function sourceErrorMessage(
+  code: SessionSourceErrorCode,
+  tSession: ReturnType<typeof useTranslations>,
+): string {
+  return sourceErrorDialogContent(code, tSession).description
 }
 
 function BlockingInteractionStack({
@@ -1446,7 +1712,7 @@ function BlockingInteractionStack({
   resolvingNoticeId: string | null
   resolvingActionId: string | null
   onHeightChange: (height: number) => void
-  onRespondInteraction: (noticeId: string, actionId: string) => void
+  onRespondInteraction: (noticeId: string, actionId: string, input?: Record<string, unknown>) => void
 }) {
   const stackRef = React.useRef<HTMLDivElement | null>(null)
 
@@ -1521,12 +1787,21 @@ type TimelineReconnectGroup = {
   items: TimelineItem[]
 }
 
-type TimelineGroup = TimelineSingleGroup | TimelineToolRunGroup | TimelineReconnectGroup
+type TimelineAgentCallGroup = {
+  kind: "agent-calls"
+  key: string
+  parentItemId: string
+  items: TimelineItem[]
+}
+
+type TimelineGroup = TimelineSingleGroup | TimelineToolRunGroup | TimelineReconnectGroup | TimelineAgentCallGroup
 
 function groupTimelineItems(items: TimelineItem[], interactionTargetIds: Set<string>): TimelineGroup[] {
   const groups: TimelineGroup[] = []
   let pendingTools: TimelineItem[] = []
   let pendingReconnects: TimelineItem[] = []
+  let pendingAgentCalls: TimelineItem[] = []
+  let pendingAgentParentId: string | null = null
 
   const flushTools = () => {
     if (pendingTools.length >= 2) {
@@ -1554,7 +1829,34 @@ function groupTimelineItems(items: TimelineItem[], interactionTargetIds: Set<str
     pendingReconnects = []
   }
 
+  const flushAgentCalls = () => {
+    if (pendingAgentCalls.length >= 2 && pendingAgentParentId) {
+      groups.push({
+        kind: "agent-calls",
+        key: `agent-calls:${pendingAgentParentId}:${pendingAgentCalls[0]?.id ?? "unknown"}`,
+        parentItemId: pendingAgentParentId,
+        items: pendingAgentCalls,
+      })
+    } else {
+      for (const item of pendingAgentCalls) groups.push({ kind: "single", item })
+    }
+    pendingAgentCalls = []
+    pendingAgentParentId = null
+  }
+
   for (const item of items) {
+    const agentParentId = nestedAgentParentId(item)
+    if (agentParentId && !interactionTargetIds.has(item.id)) {
+      flushReconnects()
+      flushTools()
+      if (pendingAgentParentId && pendingAgentParentId !== agentParentId) {
+        flushAgentCalls()
+      }
+      pendingAgentParentId = agentParentId
+      pendingAgentCalls.push(item)
+      continue
+    }
+    flushAgentCalls()
     if (isReconnectErrorItem(item) && !interactionTargetIds.has(item.id)) {
       flushTools()
       pendingReconnects.push(item)
@@ -1568,9 +1870,15 @@ function groupTimelineItems(items: TimelineItem[], interactionTargetIds: Set<str
     flushTools()
     groups.push({ kind: "single", item })
   }
+  flushAgentCalls()
   flushReconnects()
   flushTools()
   return groups
+}
+
+function nestedAgentParentId(item: TimelineItem): string | null {
+  if (item.type !== "tool" || textOf(item.content.kind) !== "agent_call") return null
+  return textOf(item.content.parentItemId)
 }
 
 function isReconnectErrorItem(item: TimelineItem): boolean {
@@ -1675,7 +1983,7 @@ function ToolRunGroup({
   itemOpenById: Record<string, boolean>
   onOpenChange: (open: boolean) => void
   onItemOpenChange: (itemId: string, open: boolean) => void
-  onRespondInteraction: (noticeId: string, actionId: string) => void
+  onRespondInteraction: (noticeId: string, actionId: string, input?: Record<string, unknown>) => void
 }) {
   const tSession = useTranslations("dashboard.session")
   const summary = toolRunSummary(group.items, tSession)
@@ -1719,6 +2027,73 @@ function ToolRunGroup({
   )
 }
 
+function AgentCallGroup({
+  group,
+  token,
+  session,
+  interactionByTarget,
+  resolvingNoticeId,
+  resolvingActionId,
+  open,
+  itemOpenById,
+  onOpenChange,
+  onItemOpenChange,
+  onRespondInteraction,
+}: {
+  group: TimelineAgentCallGroup
+  token: string
+  session: SessionView
+  interactionByTarget: Map<string | null, Notice>
+  resolvingNoticeId: string | null
+  resolvingActionId: string | null
+  open: boolean
+  itemOpenById: Record<string, boolean>
+  onOpenChange: (open: boolean) => void
+  onItemOpenChange: (itemId: string, open: boolean) => void
+  onRespondInteraction: (noticeId: string, actionId: string, input?: Record<string, unknown>) => void
+}) {
+  const tSession = useTranslations("dashboard.session")
+  const status = toolRunStatus(group.items)
+
+  return (
+    <Collapsible open={open} onOpenChange={onOpenChange} className="min-w-0 max-w-full overflow-hidden">
+      <div className="flex min-w-0 max-w-full flex-col gap-2 overflow-hidden">
+        <CollapsibleTrigger asChild>
+          <Marker asChild className="w-full">
+            <button type="button" className="text-left">
+              <ToolMarkerRowContent
+                collapsible
+                kind="agent_call"
+                status={status}
+                title={tSession("agentCallGroupSummary", { count: group.items.length })}
+              />
+            </button>
+          </Marker>
+        </CollapsibleTrigger>
+        <CollapsibleContent className="min-w-0 max-w-full overflow-hidden">
+          <div className="flex flex-col gap-2">
+            {group.items.map((item) => (
+              <TimelineEntry
+                key={item.id}
+                token={token}
+                session={session}
+                item={item}
+                interaction={interactionByTarget.get(item.id)}
+                resolvingNoticeId={resolvingNoticeId}
+                resolvingActionId={resolvingActionId}
+                nestedAgentCall
+                toolOpen={itemOpenById[item.id] ?? false}
+                onToolOpenChange={(open) => onItemOpenChange(item.id, open)}
+                onRespondInteraction={onRespondInteraction}
+              />
+            ))}
+          </div>
+        </CollapsibleContent>
+      </div>
+    </Collapsible>
+  )
+}
+
 function toolRunStatus(items: TimelineItem[]): TimelineItem["status"] {
   if (items.some((item) => timelineItemStatusIsActive(item.status))) return "running"
   return "done"
@@ -1728,33 +2103,11 @@ function toolRunSummary(
   items: TimelineItem[],
   tSession: (key: string, values?: Record<string, string | number>) => string,
 ): string {
-  let commands = 0
-  let createdFiles = 0
-  let changedFiles = 0
-  let reasoning = 0
-  for (const item of items) {
-    if (item.type === "system" && textOf(item.content.kind) === "reasoning") {
-      reasoning += 1
-      continue
-    }
-    const kind = textOf(item.content.kind)
-    if (kind === "command") {
-      commands += 1
-      continue
-    }
-    if (kind === "file_change") {
-      for (const change of recordsOf(item.content.changes)) {
-        if (isCreatedFileChange(change)) createdFiles += 1
-        else changedFiles += 1
-      }
-    }
-  }
+  const counts = timelineRunCounts(items)
 
   const parts: string[] = []
-  if (reasoning > 0) parts.push(tSession("toolSummaryReasoning", { count: reasoning }))
-  if (commands > 0) parts.push(tSession("toolSummaryCommands", { count: commands }))
-  if (changedFiles > 0) parts.push(tSession("toolSummaryChangedFiles", { count: changedFiles }))
-  if (createdFiles > 0) parts.push(tSession("toolSummaryCreatedFiles", { count: createdFiles }))
+  if (counts.reasoning > 0) parts.push(tSession("toolSummaryReasoning", { count: counts.reasoning }))
+  if (counts.tools > 0) parts.push(tSession("toolSummaryTools", { count: counts.tools }))
   return parts.length > 0 ? parts.join(", ") : tSession("toolSummaryItems", { count: items.length })
 }
 
@@ -1808,6 +2161,26 @@ function mergeSessionEvent(
       runtimeState.sessionId === current.session.id &&
       runtimeState.updatedSeq >= (current.state?.updatedSeq ?? 0),
   )
+  if (session || runtimeState) {
+    console.info("[session_status_trace]", {
+      layer: "frontend-event",
+      sessionId: event.sessionId,
+      eventType: event.type,
+      eventId: event.eventId,
+      eventSequence: event.sequence,
+      currentSessionStatus: current.session.status,
+      incomingSessionStatus: session?.status ?? null,
+      currentRuntimeStatus: current.state?.status ?? null,
+      incomingRuntimeStatus: runtimeState?.status ?? null,
+      incomingRuntimeSource: runtimeState?.metadata?.source ?? null,
+      currentSessionUpdatedSeq: current.session.updatedSeq,
+      incomingSessionUpdatedSeq: session?.updatedSeq ?? null,
+      currentRuntimeUpdatedSeq: current.state?.updatedSeq ?? null,
+      incomingRuntimeUpdatedSeq: runtimeState?.updatedSeq ?? null,
+      acceptsSession,
+      acceptsRuntimeState,
+    })
+  }
   const nextRuntimeState =
     acceptsRuntimeState &&
     runtimeState &&

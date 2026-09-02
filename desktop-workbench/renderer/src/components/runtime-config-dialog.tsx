@@ -6,6 +6,7 @@ import { Eye, EyeOff, Plus, RotateCcw, Trash2, X } from "lucide-react"
 import { useTranslations } from "next-intl"
 
 import { Button } from "@/components/ui/button"
+import { Badge } from "@/components/ui/badge"
 import {
   Drawer,
   DrawerClose,
@@ -68,6 +69,9 @@ type RuntimeConfigDialogProps = {
   open: boolean
   saving: boolean
   submitLabel?: string
+  badgeLabel?: string
+  defaults?: Record<string, unknown>
+  requiredFields?: string[]
   onOpenChange: (open: boolean) => void
   onSave: (config: Record<string, unknown>) => Promise<void>
 }
@@ -87,6 +91,13 @@ const RUNTIME_CONFIG_COMPONENT_COPY: Record<string, { titleKey: string; descript
   },
 }
 
+const RUNTIME_CONFIG_FIELD_COPY: Record<string, { titleKey: string; descriptionKey?: string }> = {
+  codexHome: {
+    titleKey: "runtimeConfigFields.codexHome.label",
+    descriptionKey: "runtimeConfigFields.codexHome.description",
+  },
+}
+
 export function RuntimeConfigDialog({
   runtimeName,
   schema,
@@ -95,23 +106,31 @@ export function RuntimeConfigDialog({
   open,
   saving,
   submitLabel,
+  badgeLabel,
+  defaults,
+  requiredFields = [],
   onOpenChange,
   onSave,
 }: RuntimeConfigDialogProps) {
   const t = useTranslations("dashboard.device")
   const tCommon = useTranslations("common")
-  const [draft, setDraft] = React.useState<Record<string, unknown>>(config ?? {})
+  const [draft, setDraft] = React.useState<Record<string, unknown>>(
+    config ?? defaults ?? {},
+  )
   const [errors, setErrors] = React.useState<Record<string, string>>({})
   const [resetKey, setResetKey] = React.useState(0)
 
   React.useEffect(() => {
     if (!open) return
-    setDraft(config ?? {})
+    setDraft(config ?? defaults ?? {})
     setErrors({})
     setResetKey((value) => value + 1)
-  }, [config, open])
+  }, [config, defaults, open])
 
-  const typedSchema = schema as JsonSchema | null
+  const typedSchema = schemaWithRequiredFields(
+    schema as JsonSchema | null,
+    requiredFields,
+  )
   const properties = typedSchema?.properties ?? {}
   const required = new Set(typedSchema?.required ?? [])
   const uiOrder = Array.isArray(uiSchema.order)
@@ -138,26 +157,42 @@ export function RuntimeConfigDialog({
   }
 
   const resetAll = () => {
-    setDraft({})
+    const next = { ...(defaults ?? {}) }
+    for (const field of requiredFields) {
+      if (config?.[field] !== undefined) next[field] = config[field]
+    }
+    setDraft(next)
     setErrors({})
     setResetKey((value) => value + 1)
   }
 
   const submit = async () => {
-    if (!schema) return
+    if (!typedSchema) return
     const ajv = new Ajv2020({ allErrors: true, strict: false })
-    const validate = ajv.compile(schema)
+    const validate = ajv.compile(typedSchema)
     if (!validate(draft)) {
       const next: Record<string, string> = {}
       for (const error of validate.errors ?? []) {
-        const field = error.instancePath.split("/").filter(Boolean)[0] ?? "_root"
-        next[field] ??= error.message ?? t("runtimeConfigInvalid")
+        const path = error.instancePath.split("/").filter(Boolean)
+        const missingProperty = error.keyword === "required"
+          && typeof error.params.missingProperty === "string"
+          ? error.params.missingProperty
+          : null
+        const field = path[0]
+          ?? missingProperty
+          ?? "_root"
+        const labelField = missingProperty ?? path.at(-1) ?? field
+        next[field] ??= runtimeConfigValidationMessage(error.keyword, labelField, t)
       }
       setErrors(next)
       return
     }
-    await onSave(draft)
-    onOpenChange(false)
+    try {
+      await onSave(draft)
+      onOpenChange(false)
+    } catch {
+      // The owner reports request failures; keep the configuration open for correction or retry.
+    }
   }
 
   return (
@@ -166,7 +201,10 @@ export function RuntimeConfigDialog({
         className="data-[vaul-drawer-direction=right]:w-[min(42rem,calc(100vw-1rem))] data-[vaul-drawer-direction=right]:sm:max-w-2xl"
       >
         <DrawerHeader className="px-6 py-5 pr-16">
-          <DrawerTitle className="text-xl">{t("runtimeConfigTitle", { name: runtimeName })}</DrawerTitle>
+          <DrawerTitle className="flex items-center gap-2 text-xl">
+            <span>{t("runtimeConfigTitle", { name: runtimeName })}</span>
+            {badgeLabel ? <Badge variant="secondary">{badgeLabel}</Badge> : null}
+          </DrawerTitle>
         </DrawerHeader>
         <DrawerClose asChild>
           <Button
@@ -247,10 +285,24 @@ function RuntimeConfigField({
   const tRoot = useTranslations()
   const component = runtimeConfigComponent(schema, ui)
   const componentCopy = RUNTIME_CONFIG_COMPONENT_COPY[component ?? ""]
-  const title = schemaI18nText(tRoot, schema, "labelKey")
-    ?? (componentCopy ? t(componentCopy.titleKey) : schema.title ?? name)
-  const description = schemaI18nText(tRoot, schema, "descriptionKey")
-    ?? (componentCopy?.descriptionKey ? t(componentCopy.descriptionKey) : schema.description)
+  const fieldCopy = RUNTIME_CONFIG_FIELD_COPY[name]
+  const requiredComponentCopy = required && component === "modelGateway"
+  const title = (requiredComponentCopy
+    ? t("runtimeConfigComponents.modelGateway.requiredLabel")
+    : schemaI18nText(tRoot, schema, "labelKey"))
+    ?? (fieldCopy
+      ? t(fieldCopy.titleKey)
+      : componentCopy
+        ? t(componentCopy.titleKey)
+        : schema.title ?? name)
+  const description = (requiredComponentCopy
+    ? t("runtimeConfigComponents.modelGateway.requiredDescription")
+    : schemaI18nText(tRoot, schema, "descriptionKey"))
+    ?? (fieldCopy?.descriptionKey
+      ? t(fieldCopy.descriptionKey)
+      : componentCopy?.descriptionKey
+        ? t(componentCopy.descriptionKey)
+        : schema.description)
   const inputId = `runtime-config-${name}`
   const effectiveValue = value === undefined ? schema.default : value
 
@@ -280,6 +332,7 @@ function RuntimeConfigField({
           value={isRecord(effectiveValue) ? effectiveValue : {}}
           onChange={onChange}
           invalid={Boolean(error)}
+          required={required}
         />
         <FieldError>{error}</FieldError>
       </Field>
@@ -375,6 +428,7 @@ function RuntimeConfigField({
           }}
           aria-invalid={Boolean(error)}
           spellCheck={false}
+          required={required}
         />
         {description ? <FieldDescription>{description}</FieldDescription> : null}
         <FieldError>{error}</FieldError>
@@ -417,6 +471,55 @@ function runtimeConfigComponent(schema: JsonSchema, ui: UiField): string | undef
   return undefined
 }
 
+function schemaWithRequiredFields(
+  schema: JsonSchema | null,
+  requiredFields: string[],
+): JsonSchema | null {
+  if (!schema || requiredFields.length === 0) return schema
+  return {
+    ...schema,
+    required: [...new Set([...(schema.required ?? []), ...requiredFields])],
+  }
+}
+
+function runtimeConfigValidationMessage(
+  keyword: string,
+  field: string,
+  translate: (key: string, values?: Record<string, string>) => string,
+): string {
+  const label = runtimeConfigValidationLabel(field, translate)
+  if (keyword === "required") {
+    return translate("runtimeConfigValidation.required", { field: label })
+  }
+  if (keyword === "minLength") {
+    return translate("runtimeConfigValidation.required", { field: label })
+  }
+  if (keyword === "pattern" || keyword === "format") {
+    return translate("runtimeConfigValidation.invalidFormat", { field: label })
+  }
+  if (keyword === "type") {
+    return translate("runtimeConfigValidation.invalidType", { field: label })
+  }
+  if (keyword === "additionalProperties") {
+    return translate("runtimeConfigValidation.unsupportedField")
+  }
+  return translate("runtimeConfigInvalid")
+}
+
+function runtimeConfigValidationLabel(
+  field: string,
+  translate: (key: string) => string,
+): string {
+  const keys: Record<string, string> = {
+    codexHome: "runtimeConfigFields.codexHome.label",
+    modelGateway: "runtimeConfigComponents.modelGateway.requiredLabel",
+    baseUrl: "runtimeConfigFields.modelGatewayBaseUrl.label",
+    apiKey: "runtimeConfigFields.modelGatewayApiKey.label",
+  }
+  const key = keys[field]
+  return key ? translate(key) : field
+}
+
 function schemaI18nText(
   translate: (key: string) => string,
   schema: JsonSchema,
@@ -442,12 +545,14 @@ function ModelGatewayEditor({
   value,
   onChange,
   invalid,
+  required,
 }: {
   idPrefix: string
   schema: JsonSchema
   value: Record<string, unknown>
   onChange: (value: unknown) => void
   invalid: boolean
+  required: boolean
 }) {
   const t = useTranslations("dashboard.device")
   const tRoot = useTranslations()
@@ -482,35 +587,51 @@ function ModelGatewayEditor({
   return (
     <div className="flex flex-col gap-4 rounded-md border border-border p-4">
       <div className="flex min-w-0 flex-col gap-1.5">
-        <label htmlFor={baseUrlId} className="text-xs font-medium text-muted-foreground">{baseUrlLabel}</label>
+        <label htmlFor={baseUrlId} className="text-xs font-medium text-muted-foreground">
+          {baseUrlLabel}{required ? " *" : ""}
+        </label>
         <Input
           id={baseUrlId}
+          name={`${idPrefix}-endpoint`}
           value={baseUrl}
           onChange={(event) => update({ baseUrl: event.currentTarget.value })}
           minLength={baseUrlSchema.minLength}
           maxLength={baseUrlSchema.maxLength}
           aria-invalid={invalid}
-          autoComplete="url"
+          autoComplete="off"
           inputMode="url"
           spellCheck={false}
+          required={required}
+          data-1p-ignore
+          data-bwignore="true"
+          data-form-type="other"
+          data-lpignore="true"
         />
         {baseUrlDescription ? (
           <span className="text-xs text-muted-foreground">{baseUrlDescription}</span>
         ) : null}
       </div>
       <div className="flex min-w-0 flex-col gap-1.5">
-        <label htmlFor={apiKeyId} className="text-xs font-medium text-muted-foreground">{apiKeyLabel}</label>
+        <label htmlFor={apiKeyId} className="text-xs font-medium text-muted-foreground">
+          {apiKeyLabel}{required ? " *" : ""}
+        </label>
         <InputGroup>
           <InputGroupInput
             id={apiKeyId}
+            name={`${idPrefix}-secret`}
             type={showApiKey ? "text" : "password"}
             value={apiKey}
             onChange={(event) => update({ apiKey: event.currentTarget.value })}
             minLength={apiKeySchema.minLength}
             maxLength={apiKeySchema.maxLength}
             aria-invalid={invalid}
-            autoComplete="off"
+            autoComplete="new-password"
             spellCheck={false}
+            required={required}
+            data-1p-ignore
+            data-bwignore="true"
+            data-form-type="other"
+            data-lpignore="true"
           />
           <InputGroupAddon align="inline-end">
             <InputGroupButton

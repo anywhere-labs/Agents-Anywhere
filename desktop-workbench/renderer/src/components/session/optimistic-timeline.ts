@@ -17,14 +17,13 @@ export function isOptimisticTimelineItem(item: TimelineItem): boolean {
 
 export function preserveOptimisticItems(baseItems: TimelineItem[], previousItems: TimelineItem[]): TimelineItem[] {
   const optimisticItems = previousItems.filter(isOptimisticTimelineItem)
-  return optimisticItems.length > 0 ? mergeTimelineItems(optimisticItems, baseItems) : baseItems
+  return mergeTimelineItems(optimisticItems, baseItems)
 }
 
 export function mergeTimelineItems(
   currentItems: TimelineItem[],
   incomingItems: TimelineItem[],
 ): TimelineItem[] {
-  if (incomingItems.length === 0) return currentItems
   const byId = new Map(currentItems.map((item) => [item.id, item]))
   for (const item of incomingItems) {
     let nextItem = item
@@ -40,7 +39,54 @@ export function mergeTimelineItems(
     const existing = byId.get(nextItem.id)
     if (!existing || existing.updatedSeq <= nextItem.updatedSeq) byId.set(nextItem.id, nextItem)
   }
-  return sortTimelineItems(Array.from(byId.values()))
+  return reconcileDshAssistantActivity(sortTimelineItems(Array.from(byId.values())))
+}
+
+function reconcileDshAssistantActivity(items: TimelineItem[]): TimelineItem[] {
+  const itemIds = new Set(items.map((item) => item.id))
+  const supersededIds = new Set<string>()
+
+  for (const item of items) {
+    const replacedBy = sourceString(item, "replacedBy")
+    if (replacedBy && itemIds.has(replacedBy)) supersededIds.add(item.id)
+  }
+
+  for (let finalIndex = 0; finalIndex < items.length; finalIndex += 1) {
+    const finalItem = items[finalIndex]
+    if (!finalItem) continue
+    if (!isDshAssistantMessage(finalItem) || finalItem.status !== "done") continue
+
+    for (let candidateIndex = finalIndex - 1; candidateIndex >= 0; candidateIndex -= 1) {
+      const candidate = items[candidateIndex]
+      if (!candidate) continue
+      if (candidate.type === "message" && candidate.role === "user") break
+      if (!isDshAssistantMessage(candidate) || candidate.status !== "done") continue
+      if (candidate.contentHash !== finalItem.contentHash) continue
+
+      const candidateItemType = sourceString(candidate, "itemType")
+      const finalItemType = sourceString(finalItem, "itemType")
+      const isNativeReplacement = candidateItemType === "assistant_activity" && finalItemType === "message"
+      const isLegacyReplacement = candidateItemType === null
+        && finalItemType === null
+        && candidate.revision > 1
+        && finalItem.revision === 1
+      if (!isNativeReplacement && !isLegacyReplacement) continue
+
+      supersededIds.add(candidate.id)
+      break
+    }
+  }
+
+  return supersededIds.size > 0 ? items.filter((item) => !supersededIds.has(item.id)) : items
+}
+
+function isDshAssistantMessage(item: TimelineItem): boolean {
+  return item.type === "message" && item.role === "assistant" && sourceString(item, "runtime") === "dsh"
+}
+
+function sourceString(item: TimelineItem, key: string): string | null {
+  const value = item.source[key]
+  return typeof value === "string" && value.length > 0 ? value : null
 }
 
 function optimisticUserMessageMatchesServerItem(
@@ -61,8 +107,15 @@ function mergeOptimisticAttachmentMetadata(serverItem: TimelineItem, optimisticI
   const optimisticAttachments = attachmentsFromContent(optimisticItem.content)
   if (serverAttachments.length === 0 && optimisticAttachments.length === 0) return serverItem
 
+  const optimisticByFileId = new Map(
+    optimisticAttachments.flatMap((attachment) =>
+      typeof attachment.fileId === "string" ? [[attachment.fileId, attachment] as const] : [],
+    ),
+  )
   const nextAttachments = (serverAttachments.length > 0 ? serverAttachments : optimisticAttachments).map((attachment, index) => {
-    const optimistic = optimisticAttachments[index]
+    const optimistic = typeof attachment.fileId === "string"
+      ? optimisticByFileId.get(attachment.fileId) ?? optimisticAttachments[index]
+      : optimisticAttachments[index]
     if (!optimistic || typeof optimistic !== "object") return attachment
     const optimisticPreviewUrl = optimistic.previewUrl
     return {
@@ -110,11 +163,13 @@ export function buildOptimisticUserMessage({
   const lastOrderSeq = items.reduce((max, item) => Math.max(max, item.orderSeq), 0)
   const orderSeq = Math.max(lastOrderSeq + 1, nextSeq + 1)
   const optimisticAttachments = attachments.map((attachment) => ({
-    fileId: `optimistic:${attachment.id}`,
-    name: attachment.name,
-    size: attachment.size,
-    mediaType: attachment.file.type,
-    previewUrl: attachment.type === "image" ? URL.createObjectURL(attachment.file) : undefined,
+    fileId: attachment.uploaded?.fileId ?? `optimistic:${attachment.id}`,
+    name: attachment.uploaded?.name ?? attachment.name,
+    size: attachment.uploaded?.size ?? attachment.size,
+    mediaType: attachment.uploaded?.mediaType ?? attachment.mediaType,
+    openUrl: attachment.uploaded?.openUrl,
+    downloadUrl: attachment.uploaded?.downloadUrl,
+    previewUrl: attachment.type === "image" ? attachment.preview : undefined,
     optimistic: true,
   }))
   return {
@@ -141,11 +196,19 @@ export function withServerAttachments(
 ): TimelineItem {
   if (attachments.length === 0) return item
   const optimisticAttachments = attachmentsFromContent(item.content)
+  const optimisticByFileId = new Map(
+    optimisticAttachments.flatMap((attachment) =>
+      typeof attachment.fileId === "string" ? [[attachment.fileId, attachment] as const] : [],
+    ),
+  )
   const nextAttachments = attachments.map((attachment, index) => {
-    const optimistic = optimisticAttachments[index]
-    if (optimistic) revokeOptimisticAttachmentPreview(optimistic)
+    const optimistic = typeof attachment.fileId === "string"
+      ? optimisticByFileId.get(attachment.fileId) ?? optimisticAttachments[index]
+      : optimisticAttachments[index]
     return {
+      ...optimistic,
       ...attachment,
+      previewUrl: attachment.previewUrl ?? optimistic?.previewUrl,
       optimistic: false,
     }
   })

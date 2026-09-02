@@ -45,6 +45,7 @@ export function SessionView() {
     connectors,
     panels,
     upsertSession,
+    reportSessionStreamProgress,
     markSessionRead,
   } = useWorkspace()
   const session = activeSession
@@ -184,6 +185,7 @@ export function SessionView() {
                     fallbackSession={activeSessionFallback}
                     onSessionUpdated={upsertSession}
                     onMemorySnapshotUpdated={setMemorySnapshot}
+                    onStreamProgress={reportSessionStreamProgress}
                   />
                 ) : (
                   <div className="flex h-full items-center justify-center text-sm text-muted-foreground">

@@ -34,6 +34,7 @@ export function TimelineEntry({
   resolvingNoticeId,
   resolvingActionId,
   toolOpen,
+  nestedAgentCall = false,
   onToolOpenChange,
   onRespondInteraction,
 }: {
@@ -44,8 +45,9 @@ export function TimelineEntry({
   resolvingNoticeId: string | null
   resolvingActionId: string | null
   toolOpen?: boolean
+  nestedAgentCall?: boolean
   onToolOpenChange?: (open: boolean) => void
-  onRespondInteraction: (noticeId: string, actionId: string) => void
+  onRespondInteraction: (noticeId: string, actionId: string, input?: Record<string, unknown>) => void
 }) {
   let entry: React.ReactNode
   if (item.type === "message") {
@@ -54,17 +56,19 @@ export function TimelineEntry({
   }
   if (item.type === "tool" || isFileChangeArtifact(item)) {
     entry = (
-      <ToolCard
-        item={item}
-        token={token}
-        session={session}
-        interaction={interaction}
-        resolvingNoticeId={resolvingNoticeId}
-        resolvingActionId={resolvingActionId}
-        open={toolOpen}
-        onOpenChange={onToolOpenChange}
-        onRespondInteraction={onRespondInteraction}
-      />
+      <div className={cn(nestedAgentCall && isNestedAgentCall(item) && "ml-5 border-l border-border/60 pl-3")}>
+        <ToolCard
+          item={item}
+          token={token}
+          session={session}
+          interaction={interaction}
+          resolvingNoticeId={resolvingNoticeId}
+          resolvingActionId={resolvingActionId}
+          open={toolOpen}
+          onOpenChange={onToolOpenChange}
+          onRespondInteraction={onRespondInteraction}
+        />
+      </div>
     )
     return <TimelineEntryContextMenu item={item}>{entry}</TimelineEntryContextMenu>
   }
@@ -77,6 +81,10 @@ export function TimelineEntry({
 
 function isFileChangeArtifact(item: TimelineItem): boolean {
   return item.type === "artifact" && textOf(item.content.kind) === "file_change"
+}
+
+function isNestedAgentCall(item: TimelineItem): boolean {
+  return textOf(item.content.kind) === "agent_call" && Boolean(textOf(item.content.parentItemId))
 }
 
 function TimelineEntryContextMenu({ item, children }: { item: TimelineItem; children: React.ReactNode }) {
@@ -125,10 +133,12 @@ function copyTimelineValue(value: string) {
 
 function MessageCard({ token, session, item }: { token: string; session: SessionView; item: TimelineItem }) {
   const tSession = useTranslations("dashboard.session")
-  const text = stripInjectedAttachmentMentions(messageText(item))
+  const tNew = useTranslations("dashboard.new")
   const attachments = extractAttachments(item.content)
   const isUser = item.role === "user"
   const hasAttachments = attachments.length > 0
+  const message = stripInjectedAttachmentMentions(messageText(item))
+  const text = hasAttachments && message.trim() === tNew("attachmentOnlyPrompt") ? "" : message
   const showUserStatus = isUser && item.status === "failed"
   if (!text && !hasAttachments) {
     if (item.role === "assistant") return null
@@ -146,7 +156,7 @@ function MessageCard({ token, session, item }: { token: string; session: Session
   const attachmentList = (
     <MessageAttachments
       token={token}
-      sessionId={session.id}
+      session={session}
       attachments={attachments}
       align={isUser ? "right" : "left"}
     />

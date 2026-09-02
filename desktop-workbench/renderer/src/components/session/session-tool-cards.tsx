@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { Check, ChevronDown, Code2, Copy, FilePenLine, Hammer, Loader2, TerminalSquare } from "lucide-react"
+import { Bot, Check, ChevronDown, Code2, Copy, FilePenLine, Hammer, Loader2, TerminalSquare } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
@@ -49,10 +49,11 @@ export function ToolCard({
   resolvingActionId: string | null
   open?: boolean
   onOpenChange?: (open: boolean) => void
-  onRespondInteraction: (noticeId: string, actionId: string) => void
+  onRespondInteraction: (noticeId: string, actionId: string, input?: Record<string, unknown>) => void
 }) {
   const tSession = useTranslations("dashboard.session")
   const kind = timelineToolKind(item)
+  const isAgentCall = kind === "agent_call"
   const command = timelineToolCommand(item)
   const output =
     textOf(item.content.output) ||
@@ -62,7 +63,7 @@ export function ToolCard({
   const changes = recordsOf(item.content.changes)
   const displayOutput = changes.length > 0 ? null : output
   const title = timelineToolTitle(item, session, tSession)
-  const hasDetail = Boolean(command || displayOutput || changes.length > 0 || interaction)
+  const hasDetail = !isAgentCall && Boolean(command || displayOutput || changes.length > 0 || interaction)
   const shouldOpenForInteraction = Boolean(interaction)
   const [localOpen, setLocalOpen] = React.useState(shouldOpenForInteraction)
   const actualOpen = open ?? localOpen
@@ -204,6 +205,11 @@ export function timelineToolTitle(
     return firstTextOf(item.content.path, item.content.filePath, item.content.file, item.content.uri) ?? kind
   }
   const input = recordOf(item.content.input)
+  if (kind === "agent_call") {
+    const action = timelineAgentActionTitle(textOf(item.content.action), tSession)
+    const description = firstTextOf(item.content.description, item.content.title)
+    return description ? `${action}：${description}` : action
+  }
   const command = timelineToolCommand(item)
   const toolName = firstTextOf(item.content.toolName, item.content.name, item.content.tool, item.content.title)
   const target = timelineToolTarget(item, session)
@@ -513,7 +519,23 @@ function ToolIcon({ kind, status }: { kind: string; status: TimelineItem["status
   const className = cn("size-4", status === "failed" ? "text-destructive" : "text-muted-foreground")
   if (kind === "command") return <TerminalSquare className={className} />
   if (kind === "file_change") return <FilePenLine className={className} />
+  if (kind === "agent_call") return <Bot className={className} />
   return <Hammer className={className} />
+}
+
+function timelineAgentActionTitle(
+  action: string | null,
+  tSession: (key: string, values?: Record<string, string | number>) => string,
+): string {
+  const key = {
+    invoke: "toolAgentInvoke",
+    spawn: "toolAgentSpawn",
+    send_input: "toolAgentSendInput",
+    resume: "toolAgentResume",
+    wait: "toolAgentWait",
+    close: "toolAgentClose",
+  }[action ?? ""] ?? "toolAgentUnknown"
+  return tSession(key)
 }
 
 export function TimelineStatusBadge({ status }: { status: TimelineItem["status"] }) {
@@ -612,7 +634,7 @@ function fileChangeAction(change: Record<string, unknown>): FileChangeAction {
   const direct = textOf(change.action) || textOf(change.type) || textOf(change.status)
   const nestedKind = change.kind && typeof change.kind === "object" && !Array.isArray(change.kind)
     ? textOf((change.kind as Record<string, unknown>).type)
-    : null
+    : textOf(change.kind)
   const value = (nestedKind || direct || "").toLowerCase()
   if (value === "add" || value === "added" || value === "create" || value === "created") return "add"
   if (value === "delete" || value === "deleted" || value === "remove" || value === "removed") return "delete"
@@ -654,6 +676,5 @@ function fileChangeDisplayDiff(change: Record<string, unknown>, diff: string | n
 }
 
 export function isCreatedFileChange(change: Record<string, unknown>) {
-  const diff = textOf(change.diff)
-  return fileChangeAction(change) === "add" || Boolean(diff && !isUnifiedDiffLike(diff))
+  return fileChangeAction(change) === "add"
 }

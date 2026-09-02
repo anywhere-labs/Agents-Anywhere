@@ -250,6 +250,7 @@
   "dashboard": {
     "actions": {
       "archive": "归档",
+      "archiveChat": "归档聊天",
       "collapse": "折叠侧栏",
       "copiedDeviceId": "已复制设备 ID",
       "copiedSessionId": "已复制会话 ID",
@@ -263,6 +264,7 @@
       "open": "打开",
       "pairDevice": "配对设备",
       "pin": "置顶",
+      "pinChat": "置顶聊天",
       "refresh": "刷新",
       "rename": "重命名",
       "retry": "重试",
@@ -270,7 +272,9 @@
       "sessionOptions": "会话选项",
       "signOut": "退出登录",
       "unarchive": "取消归档",
-      "unpin": "取消置顶"
+      "unarchiveChat": "取消归档",
+      "unpin": "取消置顶",
+      "unpinChat": "取消置顶"
     },
     "account": {
       "menu": "账号菜单"
@@ -302,6 +306,7 @@
     "filters": {
       "active": "活跃",
       "all": "全部",
+      "allActive": "活跃会话",
       "archived": "已归档",
       "status": "状态",
       "devices": "设备",
@@ -309,12 +314,16 @@
       "allStatus": "全部状态",
       "allDevices": "全部设备",
       "allAgents": "全部 Agent",
+      "inProgress": "进行中",
+      "issues": "异常",
+      "needsAttention": "待处理",
       "clear": "清除筛选"
     },
     "new": {
       "askApproval": "请求确认",
       "attach": "添加附件",
       "attachmentLimit": "最多 {count} 个文件",
+      "attachmentsUnsupported": "当前 Runtime 不支持附件。请移除附件或切换其他 Runtime。",
       "createSession": "创建会话",
       "creating": "正在创建会话...",
       "creatingBase": "正在创建会话",
@@ -381,6 +390,19 @@
       "agent": "Agent",
       "createFailed": "无法创建会话。",
       "attachmentOnlyPrompt": "（无文字内容。）",
+      "imagePreview": {
+        "close": "关闭",
+        "counter": "{current} / {total}",
+        "download": "下载原图",
+        "loadFailed": "图片加载失败",
+        "loading": "加载中...",
+        "next": "下一张",
+        "previous": "上一张",
+        "resetZoom": "重置缩放",
+        "retry": "重新加载",
+        "zoomIn": "放大",
+        "zoomOut": "缩小"
+      },
       "newSessionAttachmentsUnsupported": "新会话附件需要新的 create-and-start 上传流程，目前暂未开放。",
       "deviceOffline": "没有可用的在线设备。",
       "dropTitle": "拖拽文件到此处",
@@ -447,17 +469,27 @@
       "setupFailed": "无法准备设备设置。",
       "agentRuntimes": "Agent Runtime",
       "configuredRuntimes": "已配置",
+      "unconfiguredRuntimes": "待配置实例",
+      "availableRuntimeTypes": "可添加",
+      "codexMultiInstanceName": "Codex（多实例）",
+      "codexMultiInstanceHelpLabel": "了解 Codex 多实例",
+      "codexMultiInstanceHelp": "Codex 支持多实例。你可以为不同账号、工作目录或环境分别创建实例。",
+      "beta": "Beta",
       "discoveredRuntimes": "已发现但未配置",
       "noConfiguredRuntimes": "还没有配置 Runtime。",
+      "noUnconfiguredRuntimes": "没有等待配置的 Runtime 实例。",
+      "noRuntimeTypes": "这个设备暂时没有可继续添加的 Runtime 类型。",
       "noDiscoveredRuntimes": "没有发现其他 Runtime。",
       "refreshRuntimes": "刷新",
       "discoveringRuntimes": "正在发现…",
       "loadRuntimesFailed": "无法加载 Runtime。",
       "discoverRuntimesFailed": "Runtime 发现失败。",
       "runtimeDiscovered": "可以开始配置",
+      "runtimeReadyToConfigure": "可以开始配置",
       "runtimeExecutableNotFound": "没有找到可执行文件；配置时请填写路径",
       "runtimeNotReported": "Connector 当前没有上报这个 Runtime。",
       "runtimeIssue": "异常",
+      "unknownVersion": "未知",
       "runtimeStatus": {
         "stopped": "已停止",
         "discovering": "正在发现",
@@ -471,6 +503,20 @@
         "unknown": "未知"
       },
       "configure": "配置",
+      "addRuntime": "添加",
+      "runtimeInstanceLimitReached": "这个 Runtime 类型暂时不能再创建实例。",
+      "renameRuntime": "重命名 {name}",
+      "createRuntimeTitle": "添加 {type} 实例",
+      "createRuntimeDescription": "为这个 {type} 实例命名。检查并保存配置后才会真正创建实例。",
+      "renameRuntimeTitle": "重命名 Runtime 实例",
+      "renameRuntimeDescription": "修改这个 {type} 实例的名称。已有会话仍绑定到原实例。",
+      "runtimeName": "实例名称",
+      "runtimeNamePlaceholder": "Runtime 实例名称",
+      "runtimeNameRequired": "请输入实例名称。",
+      "createRuntime": "继续",
+      "saveRuntimeName": "保存名称",
+      "createRuntimeFailed": "无法创建 Runtime 实例。",
+      "renameRuntimeFailed": "无法重命名 Runtime 实例。",
       "configureAndStart": "配置并启动",
       "configureRuntime": "配置 {name}",
       "activateRuntime": "激活 {name}",
@@ -479,6 +525,12 @@
       "runtimeConfigDescription": "Runtime 配置。",
       "runtimeSchemaUnavailable": "这个 Runtime 没有提供配置 Schema。",
       "runtimeConfigInvalid": "配置内容不合法。",
+      "runtimeConfigValidation": {
+        "required": "请填写{field}。",
+        "invalidFormat": "{field}格式不正确。",
+        "invalidType": "{field}的内容类型不正确。",
+        "unsupportedField": "配置中包含不支持的字段。"
+      },
       "runtimeConfigFields": {
         "claudeExecutablePath": {
           "label": "Claude 可执行文件路径（可选）",
@@ -487,6 +539,10 @@
         "codexExecutablePath": {
           "label": "Codex 可执行文件路径（可选）",
           "description": "可选。填写后将始终使用该程序，并忽略“使用系统 Codex”设置。留空则使用自动选择策略。"
+        },
+        "codexHome": {
+          "label": "Codex 数据目录",
+          "description": "保存此 Codex 实例的配置、登录信息和会话历史。正在运行的 Codex 实例不能使用同一个目录。"
         },
         "useSystemCodex": {
           "label": "使用系统 Codex",
@@ -512,7 +568,9 @@
         },
         "modelGateway": {
           "label": "模型 Gateway（可选）",
-          "description": "让这个 Runtime 通过兼容的自定义 Gateway 发送模型请求。两个字段都留空时，继续使用 Runtime 默认的模型地址和认证。"
+          "description": "让这个 Runtime 通过兼容的自定义 Gateway 发送模型请求。两个字段都留空时，继续使用 Runtime 默认的模型地址和认证。",
+          "requiredLabel": "模型 Gateway",
+          "requiredDescription": "新 Codex 实例必须使用模型 Gateway，请填写 Gateway 地址和 API Key。"
         }
       },
       "modelGatewayBaseUrl": "Gateway 地址",
@@ -547,7 +605,7 @@
       "deleteRuntimeConfig": "删除 {name} 的配置",
       "deleteRuntimeConfigFailed": "无法删除 Runtime 配置。",
       "deleteRuntimeConfigTitle": "删除 Runtime 配置？",
-      "deleteRuntimeConfigDescription": "{name} 会停止并回到未配置列表。已有会话和 Timeline 历史会保留，本机安装也不会被删除。",
+      "deleteRuntimeConfigDescription": "{name} 会停止并从已配置列表移除，之后仍可重新添加。实例身份、已有会话和 Timeline 历史都会保留，本机安装也不会被删除。",
       "deleteRuntimeConfigAction": "删除配置",
       "workspaces": "工作目录",
       "noWorkspaces": "还没有工作目录。",
@@ -665,6 +723,7 @@
       "none": "无",
       "overview": "会话概览",
       "runtime": "运行时",
+      "runtimeType": "Runtime 类型",
       "renameFailed": "无法重命名会话。",
       "renameTitle": "重命名会话",
       "unread": "未读更新",
@@ -704,6 +763,15 @@
       "loadFailed": "无法加载会话。",
       "loadRuntimeSettingsFailed": "无法加载运行时设置。",
       "sendFailed": "无法发送消息。",
+      "sourceUnavailablePlaceholder": "当前会话已无法继续对话",
+      "sourceArchivedTitle": "会话已在 Codex 中归档",
+      "sourceArchivedDescription": "当前会话已在本地 Codex 客户端中归档，无法继续对话。取消归档后即可继续。",
+      "sourceDeletedTitle": "会话已在 Codex 中删除",
+      "sourceDeletedDescription": "当前会话已在本地 Codex 客户端中删除，无法继续对话。",
+      "sourceMissingTitle": "无法找到 Codex 会话",
+      "sourceMissingDescription": "本地 Codex 中已找不到当前会话，无法继续对话。",
+      "sourceUnavailableTitle": "Codex 会话不可用",
+      "sourceUnavailableDescription": "当前会话在本地 Codex 中不可用，暂时无法继续对话。",
       "updateSelectionsFailed": "无法更新模型或权限。",
       "updateTakeoverFailed": "无法更新接管状态。",
       "interruptFailed": "无法中断会话。",
@@ -746,6 +814,7 @@
       "pendingPlaceholder": "等待运行时接收任务...",
       "busyPlaceholder": "发送中断，或等待当前回合结束",
       "errorPlaceholder": "这个会话有错误，发送后会重试",
+      "dshConcurrentWriter": "请先停止其他正在运行此 DSH Session 的实例，等待其退出后刷新并重试。",
       "replyPlaceholder": "回复，或用新指令中断...",
       "dropFiles": "松开以添加附件",
       "commandNoMatches": "没有匹配的指令",
@@ -757,6 +826,8 @@
       "interactionPendingPlural": "{count} 个交互待处理",
       "interactions": "交互",
       "interactionsPending": "{count} 个待处理",
+      "inputRequestOther": "其他",
+      "inputRequestSubmit": "提交",
       "toolRan": "执行了 {command}",
       "toolCommandFallback": "命令",
       "toolChangedFile": "修改了 {path}",
@@ -764,6 +835,7 @@
       "toolCreatedFile": "创建了 {path}",
       "toolCreatedFiles": "创建了文件",
       "toolSummaryReasoning": "推理了 {count} 次",
+      "toolSummaryTools": "执行了 {count} 次工具",
       "toolSummaryCommands": "执行了 {count} 条指令",
       "toolSummaryChangedFiles": "修改了 {count} 个文件",
       "toolSummaryCreatedFiles": "创建了 {count} 个文件",
@@ -775,6 +847,14 @@
       "toolWebFallback": "网页",
       "toolMcpFallback": "mcp",
       "toolToolFallback": "工具",
+      "toolAgentInvoke": "调用 Agent",
+      "toolAgentSpawn": "启动 Agent",
+      "toolAgentSendInput": "向 Agent 发送消息",
+      "toolAgentResume": "恢复 Agent",
+      "toolAgentWait": "等待 Agent",
+      "toolAgentClose": "关闭 Agent",
+      "toolAgentUnknown": "Agent 调用",
+      "agentCallGroupSummary": "调用了 {count} 个子 Agent",
       "fileChangeAdded": "新增",
       "fileChangeModified": "修改",
       "fileChangeDeleted": "删除",
@@ -860,17 +940,6 @@
       "claim": "认领",
       "successTitle": "设备已配对",
       "successDescription": "{name} 已上线，可以运行会话。",
-      "agentsTitle": "设备已配对 - 配置 Agent",
-      "agentsDescription": "{name} 已上线。配置并启动这台设备上发现的 Agent。",
-      "discoveringAgents": "正在发现这台设备上的 Agent...",
-      "noAgentsFound": "这台设备上没有发现受支持的 Agent。",
-      "refreshAgents": "刷新 Agent",
-      "agentRunning": "已配置并运行",
-      "agentConfigured": "已配置",
-      "agentReadyToConfigure": "可以开始配置",
-      "configureAgent": "配置",
-      "configureAndStart": "配置并启动",
-      "agentConfiguredAndStarted": "已配置并启动 {name}。",
       "exitTitle": "设备已创建",
       "exitDescription": "设备 {name} 已经创建但尚未完成配对。如果不再需要，请在设备列表中手动删除。",
       "continuePairing": "继续配对",
@@ -878,9 +947,7 @@
       "errors": {
         "prepareFailed": "无法准备配对。",
         "createFailed": "无法创建连接器。",
-        "claimFailed": "无法认领配对。",
-        "discoverRuntimesFailed": "无法发现这台设备上的 Agent。",
-        "configureAndStartFailed": "无法配置并启动 Agent。"
+        "claimFailed": "无法认领配对。"
       }
     },
     "firstDevice": {
@@ -1206,7 +1273,8 @@
         "usage": "使用",
         "users": "用户",
         "devices": "设备",
-        "agents": "Agent"
+        "agents": "Agent",
+        "releases": "发布"
       },
       "metrics": {
         "dau": "DAU",
@@ -1225,6 +1293,32 @@
         "medium": "中度用户",
         "heavy": "重度用户",
         "userShare": "占总用户 {percent}"
+      },
+      "releases": {
+        "title": "客户端发布",
+        "description": "管理 Android 和桌面端的版本更新记录。",
+        "create": "新增发布",
+        "platform": "平台",
+        "version": "版本号",
+        "versionCode": "内部版本号",
+        "downloadUrl": "下载地址",
+        "status": "状态",
+        "createdAt": "创建时间",
+        "published": "已发布",
+        "draft": "未发布",
+        "empty": "暂无发布记录",
+        "loadFailed": "加载发布记录失败。",
+        "created": "发布记录已创建。",
+        "createFailed": "创建发布记录失败。",
+        "dialogTitle": "新增发布",
+        "dialogDescription": "创建客户端版本记录，已发布的最新版本会被更新检查接口使用。",
+        "publishNow": "立即发布",
+        "cancel": "取消",
+        "confirmCreate": "创建发布",
+        "platforms": {
+          "android": "Android",
+          "desktop": "桌面端"
+        }
       }
     },
     "service": {
@@ -1304,6 +1398,7 @@
     "saveConflict": "文件已在磁盘上变化，请刷新后再保存。",
     "saveBeforeLeavingEdit": "请先保存或刷新，再退出编辑模式。",
     "saveBeforeClose": "请先保存或刷新，再关闭预览。",
+    "emptyDirectory": "文件夹为空",
     "binaryUnavailable": "无法预览"
   }
 }

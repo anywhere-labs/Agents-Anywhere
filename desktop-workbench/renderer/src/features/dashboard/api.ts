@@ -4,6 +4,9 @@ import type {
   AdminDashboardSettings,
   AdminDashboardSettingsUpdate,
   AdminDashboardSnapshotResponse,
+  AppReleaseCreateRequest,
+  AppReleaseListResponse,
+  AppReleaseView,
   ArchiveAllResponse,
   BulkArchiveResponse,
   ArchiveAllScope,
@@ -29,6 +32,7 @@ import type {
   ProtocolModelCatalogResponse,
   ProtocolPermissionCatalogResponse,
   RpcResponse,
+  RuntimeTypeListResponse,
   SessionCommandListResponse,
   SessionCreateAndStartRequest,
   SessionCreateRequest,
@@ -100,6 +104,17 @@ export class DashboardApi {
     );
   }
 
+  listAdminClientReleases(token: string): Promise<AppReleaseListResponse> {
+    return this.client.get<AppReleaseListResponse>("/admin/client-releases", { token });
+  }
+
+  createAdminClientRelease(
+    token: string,
+    body: AppReleaseCreateRequest,
+  ): Promise<AppReleaseView> {
+    return this.client.post<AppReleaseView>("/admin/client-releases", body, { token });
+  }
+
   listConnectors(token: string): Promise<ConnectorListResponse> {
     return this.client.get<ConnectorListResponse>("/connectors", { token });
   }
@@ -163,8 +178,11 @@ export class DashboardApi {
     return this.client.post<PairingPollResponse>("/pairing/poll", { pairingId }, { auth: false });
   }
 
-  listSessions(token: string): Promise<SessionListResponse> {
-    return this.client.get<SessionListResponse>("/sessions", { token });
+  listSessions(
+    token: string,
+    query: { archived: boolean; limit?: number; cursor?: string | null },
+  ): Promise<SessionListResponse> {
+    return this.client.get<SessionListResponse>("/sessions", { token, query });
   }
 
   archiveConnectorSessions(
@@ -777,6 +795,27 @@ export class DashboardApi {
     );
   }
 
+  getConnectorRuntimeTypes(
+    token: string,
+    connectorId: string,
+  ): Promise<RuntimeTypeListResponse> {
+    return this.client.get<RuntimeTypeListResponse>(
+      `/connectors/${encodeURIComponent(connectorId)}/runtime-types`,
+      { token },
+    );
+  }
+
+  discoverConnectorRuntimeTypes(
+    token: string,
+    connectorId: string,
+  ): Promise<RuntimeTypeListResponse> {
+    return this.client.post<RuntimeTypeListResponse>(
+      `/connectors/${encodeURIComponent(connectorId)}/runtime-types/discover`,
+      {},
+      { token },
+    );
+  }
+
   discoverConnectorRuntimes(
     token: string,
     connectorId: string,
@@ -784,6 +823,36 @@ export class DashboardApi {
     return this.client.post<DeviceRuntimeListResponse>(
       `/connectors/${encodeURIComponent(connectorId)}/runtimes/discover`,
       {},
+      { token },
+    );
+  }
+
+  createConnectorRuntime(
+    token: string,
+    connectorId: string,
+    payload: {
+      runtimeType: string;
+      name: string;
+      config: Record<string, unknown>;
+      active?: boolean;
+    },
+  ): Promise<DeviceRuntimeView> {
+    return this.client.post<DeviceRuntimeView>(
+      `/connectors/${encodeURIComponent(connectorId)}/runtimes`,
+      payload,
+      { token },
+    );
+  }
+
+  renameConnectorRuntime(
+    token: string,
+    connectorId: string,
+    runtimeId: string,
+    name: string,
+  ): Promise<DeviceRuntimeView> {
+    return this.client.patch<DeviceRuntimeView>(
+      `/connectors/${encodeURIComponent(connectorId)}/runtimes/${encodeURIComponent(runtimeId)}`,
+      { name },
       { token },
     );
   }

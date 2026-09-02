@@ -56,18 +56,57 @@ export type DeviceRuntimeView = {
   connectorId: string;
   runtimeId: string;
   runtimeType: string;
+  name?: string;
   displayName: string;
+  typeDisplayName?: string;
   present: boolean;
+  available?: boolean;
   configured: boolean;
   active: boolean;
   status: DeviceRuntimeStatus;
   discovery: Record<string, unknown>;
+  metadata: Record<string, unknown>;
   schema: Record<string, unknown> | null;
   uiSchema: Record<string, unknown>;
+  defaults?: Record<string, unknown>;
+  capabilities?: Record<string, boolean>;
   config: Record<string, unknown> | null;
   error: Record<string, unknown> | null;
   lastDiscoveredAt: string;
+  createdAt?: string;
   updatedAt: string;
+};
+
+export type RuntimeInstancePolicy = "single" | "multiple";
+
+export type RuntimeTypeView = {
+  connectorId: string;
+  runtimeType: string;
+  implementationType: string;
+  displayName: string;
+  description: string | null;
+  present: boolean;
+  available: boolean;
+  reason: string | null;
+  recommended: boolean;
+  recommendationRank: number | null;
+  discovery: Record<string, unknown>;
+  schema: Record<string, unknown> | null;
+  uiSchema: Record<string, unknown>;
+  defaults: Record<string, unknown>;
+  capabilities: Record<string, boolean>;
+  metadata: Record<string, unknown>;
+  instancePolicy: RuntimeInstancePolicy;
+  maxInstances: number | null;
+  lastDiscoveredAt: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type RuntimeTypeListResponse = {
+  connectorId: string;
+  runtimeTypes: RuntimeTypeView[];
+  serverTime: string;
 };
 
 export type DeviceRuntimeListResponse = {
@@ -93,6 +132,10 @@ export type SessionView = {
   connectorId: string;
   connectorStatus: ConnectorStatus;
   runtime: string;
+  runtimeId?: string;
+  runtimeType?: string;
+  runtimeName?: string | null;
+  runtimeTypeDisplayName?: string | null;
   externalSessionId: string | null;
   title: string | null;
   cwd: string | null;
@@ -102,6 +145,12 @@ export type SessionView = {
   pinnedAt: string | null;
   archived: boolean;
   archivedAt: string | null;
+  userArchived?: boolean;
+  sourceAvailability?: "available" | "archived" | "unavailable" | "deleted" | "missing" | "unknown";
+  sourceAvailabilityReason?: string | null;
+  sourceAvailabilityUpdatedAt?: string | null;
+  sourceObservationOrigin?: "event" | "inventory" | "operation" | null;
+  archiveSource?: "user" | "runtime" | "both" | null;
   unread: boolean;
   lastReadSeq: number;
   latestTurnEndSeq: number;
@@ -164,7 +213,14 @@ export type PairingPollResponse = {
 
 export type SessionListResponse = {
   sessions: SessionView[];
+  hasMore: boolean;
+  nextCursor: string | null;
   serverTime: string;
+};
+
+export type SessionPageInfo = {
+  hasMore: boolean;
+  nextCursor: string | null;
 };
 
 export type SessionCommandResponse = {
@@ -200,6 +256,10 @@ export type DashboardSnapshotMessage = {
   type: "dashboard.snapshot";
   connectors: ConnectorView[];
   sessions: SessionView[];
+  sessionPages: {
+    active: SessionPageInfo;
+    archived: SessionPageInfo;
+  };
   serverTime: string;
 };
 
@@ -219,6 +279,7 @@ export type SessionResponse = {
 export type SessionCreateRequest = {
   connectorId: string;
   runtime: string;
+  runtimeId?: string;
   externalSessionId?: string | null;
   title?: string;
   cwd?: string;
@@ -228,6 +289,7 @@ export type SessionCreateRequest = {
 export type SessionCreateAndStartRequest = {
   connectorId: string;
   runtime: string;
+  runtimeId?: string;
   title?: string;
   cwd?: string;
   content: string;
@@ -264,6 +326,35 @@ export type TimelineStatus =
   | "interrupted";
 
 export type TimelineRole = "user" | "assistant" | "system" | "tool";
+
+export type AgentCallAction =
+  | "invoke"
+  | "spawn"
+  | "send_input"
+  | "resume"
+  | "wait"
+  | "close"
+  | "unknown";
+
+export type AgentCallTimelineContent = {
+  kind: "agent_call";
+  action: AgentCallAction;
+  title?: string;
+  description?: string;
+  agentType?: string;
+  prompt?: string;
+  runInBackground?: boolean;
+  parentItemId?: string;
+  agentId?: string;
+  callerId?: string;
+  targetIds?: string[];
+  model?: string;
+  reasoningEffort?: string;
+  agents?: Record<string, { status?: string; message?: string | null }>;
+  usage?: { durationMs?: number; tokens?: number; toolCalls?: number };
+  input?: unknown;
+  output?: unknown;
+};
 
 export type TimelineItem = {
   id: string;
@@ -554,6 +645,8 @@ export type MessageSendOptions = {
 export type SessionRuntimeState = {
   sessionId: string;
   runtime: string;
+  runtimeId?: string;
+  runtimeType?: string;
   externalSessionId?: string | null;
   status: RuntimeStatusValue;
   selections: Record<string, string | null>;
@@ -682,6 +775,31 @@ export type AdminDashboardSnapshotResponse = {
   metrics: number;
   users: number;
   serverTime: string;
+};
+
+export type AppReleasePlatform = "android" | "desktop";
+
+export type AppReleaseView = {
+  platform: AppReleasePlatform;
+  versionCode: number;
+  versionName: string;
+  downloadUrl: string | null;
+  published: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type AppReleaseListResponse = {
+  releases: AppReleaseView[];
+  serverTime: string;
+};
+
+export type AppReleaseCreateRequest = {
+  platform: AppReleasePlatform;
+  versionCode: number;
+  versionName: string;
+  downloadUrl: string;
+  published: boolean;
 };
 
 export type DashboardState = {
