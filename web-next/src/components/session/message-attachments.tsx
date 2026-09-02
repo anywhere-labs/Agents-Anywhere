@@ -39,6 +39,7 @@ type MessageAttachmentsProps = {
   session: SessionView
   attachments: ReconcileAttachment[]
   align?: "left" | "right"
+  attachmentUrl?: (fileId: string) => string
 }
 
 type PreviewImage = {
@@ -53,6 +54,7 @@ export function MessageAttachments({
   session,
   attachments,
   align = "left",
+  attachmentUrl,
 }: MessageAttachmentsProps) {
   const t = useTranslations("dashboard.new")
   const [previewImages, setPreviewImages] = useState<Record<string, PreviewImage>>({})
@@ -99,6 +101,7 @@ export function MessageAttachments({
             token={token}
             session={session}
             attachment={attachment}
+            attachmentUrl={attachmentUrl}
             onImageReady={registerPreviewImage}
             onPreview={openPreview}
           />
@@ -117,20 +120,25 @@ function MessageAttachmentItem({
   token,
   session,
   attachment,
+  attachmentUrl,
   onImageReady,
   onPreview,
 }: {
   token: string
   session: SessionView
   attachment: ReconcileAttachment
+  attachmentUrl?: (fileId: string) => string
   onImageReady: (image: PreviewImage) => void
   onPreview: (image: PreviewImage) => void
 }) {
   const name = attachment.name || attachment.fileId
   const mediaType = attachment.mediaType || ""
-  const sessionAttachmentUrl = attachmentOpenUrl(session.id, attachment.fileId, token)
+  const sessionAttachmentUrl = attachmentUrl?.(attachment.fileId)
+    ?? attachmentOpenUrl(session.id, attachment.fileId, token)
   const presetUrl = attachment.openUrl || attachment.downloadUrl
-  const shouldReadFromDevice = Boolean(attachment.path && !attachment.optimistic && !presetUrl)
+  const shouldReadFromDevice = Boolean(
+    !attachmentUrl && attachment.path && !attachment.optimistic && !presetUrl,
+  )
   const deviceFile = useDeviceAttachmentFile({
     token,
     connectorId: session.connectorId,

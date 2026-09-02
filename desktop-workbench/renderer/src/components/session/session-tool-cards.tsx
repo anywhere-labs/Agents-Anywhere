@@ -40,6 +40,7 @@ export function ToolCard({
   open,
   onOpenChange,
   onRespondInteraction,
+  readOnly = false,
 }: {
   item: TimelineItem
   token: string
@@ -50,6 +51,7 @@ export function ToolCard({
   open?: boolean
   onOpenChange?: (open: boolean) => void
   onRespondInteraction: (noticeId: string, actionId: string, input?: Record<string, unknown>) => void
+  readOnly?: boolean
 }) {
   const tSession = useTranslations("dashboard.session")
   const kind = timelineToolKind(item)
@@ -111,6 +113,7 @@ export function ToolCard({
             command={command}
             output={displayOutput}
             changes={changes}
+            readOnly={readOnly}
           />
           {interaction ? (
             <div className="mt-2">
@@ -264,12 +267,14 @@ export function ToolDetailPanel({
   command,
   output,
   changes,
+  readOnly = false,
 }: {
   token: string
   session: SessionView
   command: string | null
   output: string | null
   changes: Array<Record<string, unknown>>
+  readOnly?: boolean
 }) {
   const hasContent = Boolean(command || output || changes.length > 0)
   if (!hasContent) return null
@@ -283,6 +288,7 @@ export function ToolDetailPanel({
               token={token}
               session={session}
               change={change}
+              readOnly={readOnly}
               key={`${textOf(change.path) ?? "change"}-${index}`}
             />
           ))}
@@ -401,10 +407,12 @@ function FileChangeRow({
   token,
   session,
   change,
+  readOnly,
 }: {
   token: string
   session: SessionView
   change: Record<string, unknown>
+  readOnly: boolean
 }) {
   const tSession = useTranslations("dashboard.session")
   const path = firstTextOf(change.path, change.filePath, change.file, change.uri) ?? "unknown path"
@@ -412,7 +420,7 @@ function FileChangeRow({
   const diff = textOf(change.diff)
   const action = fileChangeAction(change)
   const displayDiff = fileChangeDisplayDiff(change, diff)
-  const canPreview = path !== "unknown path"
+  const canPreview = !readOnly && path !== "unknown path"
   const renderAsDiff = Boolean(displayDiff)
   const editorHeight = displayDiff ? codePanelHeight(displayDiff) : diff ? codePanelHeight(diff) : 0
   const [codeOpen, setCodeOpen] = React.useState(false)
