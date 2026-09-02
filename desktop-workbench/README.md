@@ -12,7 +12,7 @@ yarn dev
 
 `yarn dev` starts the bundled `renderer` Next app on the first available local port from `5184`, waits for it, then opens Electron.
 By default, the embedded web app talks to `https://web.agents-anywhere.com`.
-That production endpoint uses root API paths such as `/auth/login`, so the desktop shell defaults to an empty API namespace.
+The desktop shell uses the `/api/v2` API namespace by default.
 
 To point Electron at an already running web app:
 
@@ -29,18 +29,18 @@ yarn build:web
 yarn start
 ```
 
-To use a different backend with root API paths:
+To use a different backend with the default `/api/v2` namespace:
 
 ```bash
 cd desktop-workbench
 WORKBENCH_API_ORIGIN=http://127.0.0.1:8000 yarn dev
 ```
 
-For the local v2 backend, include the namespace:
+To use a backend with root API paths, explicitly provide an empty namespace:
 
 ```bash
 cd desktop-workbench
-WORKBENCH_API_ORIGIN=http://127.0.0.1:8000 WORKBENCH_API_NAMESPACE=/api/v2 yarn dev
+WORKBENCH_API_ORIGIN=http://127.0.0.1:8000 WORKBENCH_API_NAMESPACE= yarn dev
 ```
 
 ## Notes

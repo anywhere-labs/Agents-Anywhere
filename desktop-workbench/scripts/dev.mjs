@@ -8,7 +8,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const rendererPackage = "agents-anywhere-desktop-renderer";
 const explicitWebUrl = process.env.WORKBENCH_WEB_URL?.trim();
 const apiOrigin = process.env.WORKBENCH_API_ORIGIN?.trim() || process.env.AGENTS_ANYWHERE_API?.trim() || "https://web.agents-anywhere.com";
-const apiNamespace = process.env.WORKBENCH_API_NAMESPACE ?? process.env.AGENTS_ANYWHERE_API_NAMESPACE ?? "";
+const apiNamespace = process.env.WORKBENCH_API_NAMESPACE ?? process.env.AGENTS_ANYWHERE_API_NAMESPACE ?? "/api/v2";
 const usesShell = process.platform === "win32";
 const host = "127.0.0.1";
 const yarnCommand = process.platform === "win32" ? "yarn.cmd" : "yarn";
