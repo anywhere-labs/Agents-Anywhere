@@ -958,6 +958,7 @@ private val NewSessionDraftSaver = listSaver<NewSessionDraft?, Any>(
                 draft.runtimeId,
                 draft.runtimeType,
                 draft.runtimeName,
+                draft.attachmentsEnabled,
                 draft.localSessionId,
             )
         }
@@ -985,7 +986,9 @@ private val NewSessionDraftSaver = listSaver<NewSessionDraft?, Any>(
                     ?: values[1] as String,
                 runtimeName = (values.getOrNull(11) as? String)?.takeIf(String::isNotBlank)
                     ?: values[5] as String,
-                localSessionId = (values.getOrNull(12) as? String)?.takeIf(String::isNotBlank)
+                attachmentsEnabled = values.getOrNull(12) as? Boolean ?: true,
+                localSessionId = (values.getOrNull(13) as? String)?.takeIf(String::isNotBlank)
+                    ?: (values.getOrNull(12) as? String)?.takeIf(String::isNotBlank)
                     ?: com.agentsanywhere.app.feature.sessions.NewSessionDraft.newLocalSessionId(),
             )
         }

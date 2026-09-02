@@ -9,6 +9,7 @@ import com.agentsanywhere.app.feature.devices.DeviceRuntimeStatus
 
 const val MODEL_CATALOG_CAPABILITY = "catalog.model"
 const val PERMISSION_CATALOG_CAPABILITY = "catalog.permission"
+const val ATTACHMENT_CAPABILITY = "runtime.attachment"
 
 data class NewSessionRuntimeRequestKey(
     val connectorId: String,
@@ -231,6 +232,11 @@ data class NewSessionRuntimeSelectionState(
 
     val canUsePermissionCatalog: Boolean
         get() = permissionCapability?.usable == true
+
+    val canUseAttachments: Boolean
+        get() = selectedRuntime?.let { runtime ->
+            capabilities.data?.find(ATTACHMENT_CAPABILITY, runtime.id, runtime.type)?.usable
+        } == true
 
     val readyForCreate: Boolean
         get() {

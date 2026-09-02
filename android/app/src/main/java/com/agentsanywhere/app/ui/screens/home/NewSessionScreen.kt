@@ -488,6 +488,7 @@ fun NewSessionScreen(
                 runtimeType = runtime.type,
                 runtimeName = runtime.name,
                 selections = runtimeSelection.selections,
+                attachmentsEnabled = runtimeSelection.canUseAttachments,
             ),
         )
     }

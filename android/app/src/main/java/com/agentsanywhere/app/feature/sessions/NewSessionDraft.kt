@@ -19,6 +19,7 @@ data class NewSessionDraft(
     val runtimeId: String = runtime,
     val runtimeType: String = runtime,
     val runtimeName: String = runtimeLabel,
+    val attachmentsEnabled: Boolean = true,
     val localSessionId: String = newLocalSessionId(),
 ) {
     fun previewSession(): AgentSession {
@@ -61,6 +62,7 @@ data class NewSessionDraft(
 internal fun NewSessionDraft.firstMessageRequest(
     content: String,
     selections: NewSessionSelections,
+    attachments: List<NewSessionAttachmentPart>,
     clientMessageId: String,
 ): NewSessionCreateDraft = NewSessionCreateDraft(
     connectorId = connectorId,
@@ -69,7 +71,7 @@ internal fun NewSessionDraft.firstMessageRequest(
     cwd = cwd,
     content = content.trim(),
     selections = selections,
-    attachments = emptyList(),
+    attachments = attachments,
     clientMessageId = clientMessageId,
     knownSessionIds = knownSessionIds,
     runtimeId = runtimeId,

@@ -78,6 +78,7 @@ import com.agentsanywhere.app.feature.sessiondetail.SessionMeta
 import com.agentsanywhere.app.feature.sessiondetail.SessionDetailState
 import com.agentsanywhere.app.feature.sessiondetail.SessionRuntimeStatus
 import com.agentsanywhere.app.feature.sessiondetail.SessionTimelineState
+import com.agentsanywhere.app.feature.sessiondetail.TimelineAttachment
 import com.agentsanywhere.app.feature.sessiondetail.TimelineMessage
 import com.agentsanywhere.app.feature.sessiondetail.beginSnapshotLoad
 import com.agentsanywhere.app.feature.sessiondetail.cacheDownloadedAttachment
@@ -105,6 +106,7 @@ import com.agentsanywhere.app.feature.sessiondetail.validatedSelection
 import com.agentsanywhere.app.feature.sessions.mergeAuthoritativeSessionMetadata
 import com.agentsanywhere.app.feature.sessions.NewSessionCreateOutcome
 import com.agentsanywhere.app.feature.sessions.NewSessionCreateDraft
+import com.agentsanywhere.app.feature.sessions.NewSessionAttachmentPart
 import com.agentsanywhere.app.feature.sessions.NewSessionDraft
 import com.agentsanywhere.app.feature.sessions.NewSessionSelections
 import com.agentsanywhere.app.feature.sessions.firstMessageRequest
@@ -128,6 +130,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.UUID
 import java.io.File
+import java.security.MessageDigest
 import java.util.concurrent.atomic.AtomicBoolean
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -168,20 +171,21 @@ fun SessionDetailScreen(
     val haptic = LocalHapticFeedback.current
     val snackbarHostState = remember { SnackbarHostState() }
     val pagerState = rememberPagerState(pageCount = { 2 })
-    val restoredComposerDraft = remember(sessionId) {
+    val composerDraftSessionId = sessionId ?: preparedSession?.localSessionId
+    val restoredComposerDraft = remember(composerDraftSessionId) {
         composerDraftStore.restore(
-            sessionId = sessionId,
+            sessionId = composerDraftSessionId,
             uploadCancelledMessage = context.getString(R.string.session_attachment_upload_failed),
         )
     }
-    var draft by remember(sessionId) { mutableStateOf(restoredComposerDraft.text) }
+    var draft by remember(composerDraftSessionId) { mutableStateOf(restoredComposerDraft.text) }
     var showRuntimeSettings by remember(sessionId) { mutableStateOf(false) }
     var noticeResponseErrors by remember(sessionId) { mutableStateOf(emptyMap<String, String>()) }
     var forceLatestRequest by remember(sessionId) { mutableStateOf(0) }
     var streamLatestRequest by remember(sessionId) { mutableStateOf(0) }
-    var attachments by remember(sessionId) { mutableStateOf(restoredComposerDraft.attachments) }
-    var retryClientMessageId by remember(sessionId) { mutableStateOf(restoredComposerDraft.clientMessageId) }
-    var retryMessageAction by remember(sessionId) { mutableStateOf(restoredComposerDraft.retryAction) }
+    var attachments by remember(composerDraftSessionId) { mutableStateOf(restoredComposerDraft.attachments) }
+    var retryClientMessageId by remember(composerDraftSessionId) { mutableStateOf(restoredComposerDraft.clientMessageId) }
+    var retryMessageAction by remember(composerDraftSessionId) { mutableStateOf(restoredComposerDraft.retryAction) }
     var preparedSessionCreating by remember(preparedSession) { mutableStateOf(false) }
     var preparedSelections by remember(preparedSession) { mutableStateOf(preparedSession?.selections ?: NewSessionSelections()) }
     var preparedModelOptions by remember(preparedSession) { mutableStateOf(emptyList<com.agentsanywhere.app.feature.sessiondetail.RuntimeSelectionOption>()) }
@@ -308,7 +312,7 @@ fun SessionDetailScreen(
         clientMessageId: String? = retryClientMessageId,
         retryAction: RuntimeMessageAction? = retryMessageAction,
     ) {
-        composerDraftStore.save(sessionId, nextDraft, nextAttachments, clientMessageId, retryAction)
+        composerDraftStore.save(composerDraftSessionId, nextDraft, nextAttachments, clientMessageId, retryAction)
     }
 
     fun setComposerDraft(nextDraft: String) {
@@ -328,7 +332,7 @@ fun SessionDetailScreen(
     fun clearComposerDraft() {
         draft = ""
         attachments = emptyList()
-        composerDraftStore.clear(sessionId)
+        composerDraftStore.clear(composerDraftSessionId)
         retryClientMessageId = null
         retryMessageAction = null
     }
@@ -339,7 +343,31 @@ fun SessionDetailScreen(
     }
 
     fun uploadPendingAttachment(attachment: PendingAttachment) {
-        val id = sessionId ?: return
+        val id = sessionId
+        if (id == null && preparedSession != null) {
+            scope.launch {
+                val uploadPart = try {
+                    withContext(Dispatchers.IO) { context.uploadPart(attachment) }
+                } catch (error: Exception) {
+                    updateAttachment(attachment.id) {
+                        it.copy(
+                            uploadState = AttachmentUploadState.Failed,
+                            errorMessage = error.message ?: context.getString(R.string.session_attachment_read_failed),
+                        )
+                    }
+                    return@launch
+                }
+                updateAttachment(attachment.id) {
+                    it.copy(
+                        uploadState = AttachmentUploadState.Uploaded,
+                        remote = uploadPart.toLocalTimelineAttachment(attachment.uri),
+                        errorMessage = null,
+                    )
+                }
+            }
+            return
+        }
+        if (id == null) return
         scope.launch {
             val uploadPart = try {
                 withContext(Dispatchers.IO) { context.uploadPart(attachment) }
@@ -574,27 +602,46 @@ fun SessionDetailScreen(
         if (pending != null) {
             if (preparedSessionCreating) return
             val message = text.trim()
-            if (message.isBlank()) return
+            val pendingAttachments = attachments
+            if (message.isBlank() && pendingAttachments.isEmpty()) return
             val clientMessageId = retryClientMessageId ?: "opt_${UUID.randomUUID()}"
             val localSessionId = pending.localSessionId
-            state = controller.addOptimisticMessage(
-                sessionId = localSessionId,
-                state = state,
-                text = message,
-                clientMessageId = clientMessageId,
-                retryAction = RuntimeMessageAction.Send,
-            )
-            clearComposerDraft()
             preparedSessionCreating = true
             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
             unfocusComposer()
             forceLatestRequest += 1
             scope.launch {
+                val inlineAttachments = try {
+                    withContext(Dispatchers.IO) {
+                        pendingAttachments.map { attachment ->
+                            context.uploadPart(attachment).toNewSessionAttachmentPart()
+                        }
+                    }
+                } catch (error: Exception) {
+                    preparedSessionCreating = false
+                    showError(error.message ?: context.getString(R.string.session_attachment_read_failed))
+                    return@launch
+                }
+                val optimisticAttachments = pendingAttachments.mapNotNull { attachment ->
+                    attachment.remote?.copy(
+                        localPreviewUri = attachment.uri.toString().takeIf { attachment.isImage },
+                    )
+                }
+                state = controller.addOptimisticMessage(
+                    sessionId = localSessionId,
+                    state = state,
+                    text = message,
+                    clientMessageId = clientMessageId,
+                    attachments = optimisticAttachments,
+                    retryAction = RuntimeMessageAction.Send,
+                )
+                clearComposerDraft()
                 when (
                     val outcome = onCreatePreparedSession(
                         pending.firstMessageRequest(
                             content = message,
                             selections = preparedSelections,
+                            attachments = inlineAttachments,
                             clientMessageId = clientMessageId,
                         ),
                     )
@@ -613,9 +660,10 @@ fun SessionDetailScreen(
                     is NewSessionCreateOutcome.Failed -> {
                         preparedSessionCreating = false
                         draft = message
+                        attachments = pendingAttachments
                         retryClientMessageId = clientMessageId
                         retryMessageAction = RuntimeMessageAction.Send
-                        saveComposerDraft(message, emptyList(), clientMessageId, RuntimeMessageAction.Send)
+                        saveComposerDraft(message, pendingAttachments, clientMessageId, RuntimeMessageAction.Send)
                         val rawMessage = outcome.error.message
                         val errorMessage = rawMessage
                             ?.takeUnless(::isInternalRuntimeError)
@@ -625,6 +673,7 @@ fun SessionDetailScreen(
                             state = state,
                             clientMessageId = clientMessageId,
                             status = "failed",
+                            attachments = optimisticAttachments,
                             errorMessage = errorMessage,
                         ).copy(actionError = errorMessage)
                         showError(errorMessage)
@@ -1168,7 +1217,11 @@ fun SessionDetailScreen(
         runtimeId,
         runtimeType,
     )
-    val canUseAttachments = state.capabilities.isUsable(SESSION_ATTACHMENT_CAPABILITY, runtimeId, runtimeType)
+    val canUseAttachments = if (isPreparedSession) {
+        preparedSession?.attachmentsEnabled == true
+    } else {
+        state.capabilities.isUsable(SESSION_ATTACHMENT_CAPABILITY, runtimeId, runtimeType)
+    }
     val canUseCommands = state.capabilities.isUsable(SESSION_COMMANDS_CAPABILITY, runtimeId, runtimeType) ||
         state.capabilities.isUsable(SESSION_COMMAND_EXECUTE_CAPABILITY, runtimeId, runtimeType)
     val capabilityFactsFresh = state.capabilities.isLoaded && state.capabilities.errorMessage == null
@@ -1215,9 +1268,8 @@ fun SessionDetailScreen(
         attachmentsReady &&
         (attachments.isEmpty() || canUseAttachments) &&
         (draft.isNotBlank() || attachments.isNotEmpty()) &&
-        if (isPreparedSession) {
-            draft.isNotBlank() && attachments.isEmpty()
-        } else if (commandMode) canUseCommands && state.commands.isLoaded else canUseSendMessage || canUseSteer
+        if (isPreparedSession) true
+        else if (commandMode) canUseCommands && state.commands.isLoaded else canUseSendMessage || canUseSteer
     val modelOptions = if (isPreparedSession) preparedModelOptions else remember(state.catalogs.model) {
         state.catalogs.model?.selectionOptions().orEmpty()
     }
@@ -1508,7 +1560,7 @@ fun SessionDetailScreen(
                                     takeoverEnabled = takeoverEnabled,
                                     takeoverBusy = isPreparedSession || state.takeoverInFlight || !connectorOnline,
                                     inputEnabled = inputEnabled,
-                                    attachmentsEnabled = !isPreparedSession && inputEnabled && canUseAttachments && !commandMode,
+                                    attachmentsEnabled = inputEnabled && canUseAttachments && !commandMode,
                                     canSend = canSend,
                                     sending = state.sending,
                                     showInterrupt = showInterrupt,
@@ -1869,6 +1921,27 @@ private fun Context.uploadPart(attachment: PendingAttachment): UploadFilePart {
         name = attachment.name,
         mediaType = mediaType,
         bytes = bytes,
+    )
+}
+
+private fun UploadFilePart.toNewSessionAttachmentPart(): NewSessionAttachmentPart =
+    NewSessionAttachmentPart(
+        name = name,
+        mediaType = mediaType,
+        bytes = bytes,
+    )
+
+private fun UploadFilePart.toLocalTimelineAttachment(uri: Uri): TimelineAttachment {
+    val sha256 = MessageDigest.getInstance("SHA-256")
+        .digest(bytes)
+        .joinToString(separator = "") { byte -> "%02x".format(byte) }
+    return TimelineAttachment(
+        fileId = sha256,
+        name = name,
+        mediaType = mediaType,
+        size = bytes.size.toLong(),
+        sha256 = sha256,
+        localPreviewUri = uri.toString().takeIf { mediaType.startsWith("image/") },
     )
 }
 
