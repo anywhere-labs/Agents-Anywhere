@@ -198,29 +198,30 @@ def _receive_discovery_request(ws: Any) -> dict[str, Any]:
     return request
 
 
-def _receive_and_resolve_runtime_start(ws: Any) -> dict[str, Any]:
-    request = ws.receive_json()
-    assert request["type"] == "request"
-    assert request["method"] == "runtime.start"
-    ws.send_json(
-        {
-            "id": request["id"],
-            "type": "response",
-            "ok": True,
-            "result": {"status": "running"},
-        }
-    )
-    return request
-
-
-def test_first_connector_connection_configures_default_codex(
+def test_first_connector_connection_does_not_configure_or_start_a_runtime(
     tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     websocket_completed = threading.Event()
+    negotiation_completed = threading.Event()
+    negotiation_errors: list[BaseException] = []
     client, connector_id, access_token = _make_connector(
         tmp_path,
         websocket_completed=websocket_completed,
     )
+    service = client.app.state.device_runtime_service
+    original_negotiate = service.negotiate_connection
+
+    async def observe_negotiation(*args: Any, **kwargs: Any) -> None:
+        try:
+            await original_negotiate(*args, **kwargs)
+        except BaseException as exc:
+            negotiation_errors.append(exc)
+            raise
+        finally:
+            negotiation_completed.set()
+
+    monkeypatch.setattr(service, "negotiate_connection", observe_negotiation)
 
     with client.websocket_connect(
         "/connector/ws",
@@ -236,18 +237,30 @@ def test_first_connector_connection_configures_default_codex(
                 "result": _v2_discovery(),
             }
         )
-        start_request = _receive_and_resolve_runtime_start(ws)
-        assert start_request["params"]["runtime"] == "codex"
-        assert start_request["params"]["name"] == "Codex"
-        _wait_for_control_version(client, connector_id, "2.0")
+        assert negotiation_completed.wait(timeout=5), (
+            "runtime negotiation did not complete without a runtime.start response"
+        )
+        assert negotiation_errors == []
 
         runtimes = asyncio.run(
             client.app.state.store.list_device_runtimes(connector_id)
         )
+        # The startup inventory may create an unconfigured type-equal row for
+        # Runtime Control 1.0 compatibility. Runtime Control 2.0 negotiation
+        # must not turn that compatibility identity into a configured instance.
         assert len(runtimes) == 1
-        assert runtimes[0]["configured"] is True
-        assert runtimes[0]["active"] is True
-        assert runtimes[0]["status"] == "running"
+        assert runtimes[0]["runtimeId"] == runtimes[0]["runtimeType"] == "codex"
+        assert runtimes[0]["config"] is None
+        assert runtimes[0]["configured"] is False
+        assert runtimes[0]["active"] is False
+        assert runtimes[0]["status"] == "stopped"
+        runtime_types = asyncio.run(
+            client.app.state.store.list_connector_runtime_types(connector_id)
+        )
+        assert [runtime_type["runtimeType"] for runtime_type in runtime_types] == [
+            "codex"
+        ]
+        assert _control_version(client, connector_id) == "2.0"
         ws.close()
         assert websocket_completed.wait(timeout=5), (
             "connector websocket did not complete"

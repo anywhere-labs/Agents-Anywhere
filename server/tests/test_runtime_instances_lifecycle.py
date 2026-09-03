@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-from copy import deepcopy
 from typing import Any
 
 from conftest import ApiV2TestClient as TestClient
@@ -265,77 +264,6 @@ def test_v2_discovery_persists_types_without_creating_instances(tmp_path: Any) -
         ).json()["runtimes"]
         == []
     )
-
-
-def test_pairing_defaults_configure_only_codex_and_claude_once(tmp_path: Any) -> None:
-    discovery = _v2_discovery(max_instances=None)
-    claude = deepcopy(discovery["runtimeTypes"][0])
-    claude.update(
-        {
-            "runtimeType": "claude",
-            "displayName": "Claude",
-            "description": "Claude runtime",
-            "instancePolicy": "single",
-            "maxInstances": 1,
-        }
-    )
-    claude["configSchema"]["defaults"] = {"home": "/tmp/claude"}
-    dsh = deepcopy(claude)
-    dsh.update(
-        {
-            "runtimeType": "dsh",
-            "displayName": "DeepSeek Harness",
-            "description": "DSH runtime",
-        }
-    )
-    dsh["configSchema"]["defaults"] = {"home": "/tmp/dsh"}
-    discovery["runtimeTypes"].extend([claude, dsh])
-    client, rpc, connector_id, headers = _make_client(tmp_path, discovery)
-
-    _discover_types(client, connector_id, headers)
-    service = client.app.state.device_runtime_service
-    asyncio.run(service.configure_pairing_defaults(connector_id))
-    asyncio.run(service.reconcile_active(connector_id))
-
-    runtimes = client.get(
-        f"/connectors/{connector_id}/runtimes",
-        headers=headers,
-    ).json()["runtimes"]
-    by_type = {runtime["runtimeType"]: runtime for runtime in runtimes}
-    assert set(by_type) == {"codex", "claude"}
-    assert by_type["codex"]["config"] == {"home": "/tmp/codex"}
-    assert by_type["claude"]["config"] == {"home": "/tmp/claude"}
-    assert all(runtime["active"] for runtime in runtimes)
-    assert all(runtime["status"] == "running" for runtime in runtimes)
-    assert {
-        request[2]["runtime"]
-        for request in rpc.requests
-        if request[1] == "runtime.start"
-    } == {"codex", "claude"}
-
-    asyncio.run(service.configure_pairing_defaults(connector_id))
-    assert len(
-        client.get(
-            f"/connectors/{connector_id}/runtimes",
-            headers=headers,
-        ).json()["runtimes"]
-    ) == 2
-
-    asyncio.run(
-        client.app.state.store.clear_device_runtime_config(
-            connector_id,
-            by_type["codex"]["runtimeId"],
-        )
-    )
-    asyncio.run(service.configure_pairing_defaults(connector_id))
-    cleared = client.get(
-        f"/connectors/{connector_id}/runtimes",
-        headers=headers,
-    ).json()["runtimes"]
-    assert len(cleared) == 2
-    assert next(
-        runtime for runtime in cleared if runtime["runtimeType"] == "codex"
-    )["configured"] is False
 
 
 def test_legacy_discovery_falls_back_to_type_equal_instance(tmp_path: Any) -> None:
