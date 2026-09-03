@@ -41,7 +41,6 @@ const WEB_HOST = "web";
 const DEFAULT_API_ORIGIN = "https://web.agents-anywhere.com";
 const DEFAULT_API_NAMESPACE = "/api/v2";
 const LOGIN_ITEM_HIDDEN_ARG = "--hidden";
-const CONNECTOR_DIAGNOSTIC_PREFIX = "[desktop-connector-diagnostic]";
 const API_ROUTE_PREFIXES = [
   "/admin",
   "/agents",
@@ -244,10 +243,6 @@ function createMainWindow(showOnReady = true): BrowserWindow {
     if (isWorkbenchUrl(url)) return;
     event.preventDefault();
     void shell.openExternal(url);
-  });
-  window.webContents.on("console-message", (details) => {
-    if (!details.message.startsWith(CONNECTOR_DIAGNOSTIC_PREFIX)) return;
-    console.log(details.message);
   });
   window.webContents.on(
     "did-fail-load",

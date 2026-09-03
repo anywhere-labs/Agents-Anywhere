@@ -113,12 +113,7 @@ export class ConnectorSupervisor {
   }
 
   async getState(): Promise<ConnectorState> {
-    const startedAt = Date.now();
     this.refreshLocalState();
-    this.log({
-      level: "INFO",
-      message: `[desktop-connector-diagnostic] main.getState.begin pending=${this.pending.size} rpc=${Boolean(this.rpcProcess)} status=${this.state.status}`,
-    });
     if (!this.state.setupIssue || this.state.setupIssue === "configMissing") {
       try {
         const runtimeState = await this.request("connector.getState", undefined, {
@@ -126,17 +121,9 @@ export class ConnectorSupervisor {
         });
         this.mergeRuntimeState(runtimeState);
       } catch (error) {
-        this.log({
-          level: "ERROR",
-          message: `[desktop-connector-diagnostic] main.getState.error elapsedMs=${Date.now() - startedAt} error=${errorMessage(error)}`,
-        });
         this.logError(error);
       }
     }
-    this.log({
-      level: "INFO",
-      message: `[desktop-connector-diagnostic] main.getState.done elapsedMs=${Date.now() - startedAt} pending=${this.pending.size} status=${this.state.status} running=${this.state.running}`,
-    });
     return this.emitState();
   }
 

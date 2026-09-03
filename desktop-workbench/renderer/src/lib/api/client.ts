@@ -109,27 +109,6 @@ export class ApiClient {
     if (response.status === 204) return undefined as T;
 
     const payload = await readPayload(response);
-    if (isConnectorDiagnosticRequest(path, options.method)) {
-      const payloadRecord = asRecord(payload);
-      const nestedDataRecord = asRecord(payloadRecord?.data);
-      console.info(
-        `[desktop-connector-diagnostic] ${JSON.stringify({
-          time: new Date().toISOString(),
-          event: "api.connector.response",
-          requestPath: path,
-          requestUrl: url,
-          responseUrl: response.url,
-          status: response.status,
-          redirected: response.redirected,
-          contentType: response.headers.get("content-type"),
-          cacheControl: response.headers.get("cache-control"),
-          age: response.headers.get("age"),
-          payloadType: Array.isArray(payload) ? "array" : typeof payload,
-          payloadKeys: payloadRecord ? Object.keys(payloadRecord) : [],
-          nestedDataKeys: nestedDataRecord ? Object.keys(nestedDataRecord) : [],
-        })}`,
-      );
-    }
     if (!response.ok) {
       const normalized = extractErrorPayload(payload);
       throw new ApiError({
@@ -161,16 +140,6 @@ export class ApiClient {
     if (namespacedPath.startsWith("http") || base) return url.toString();
     return `${url.pathname}${url.search}${url.hash}`;
   }
-}
-
-function isConnectorDiagnosticRequest(path: string, method?: string): boolean {
-  if ((method ?? "GET").toUpperCase() !== "GET") return false;
-  return /^\/connectors(?:\/[^/]+)?$/.test(path);
-}
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
-  return value as Record<string, unknown>;
 }
 
 export const apiClient = new ApiClient();

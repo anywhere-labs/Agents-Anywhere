@@ -38,21 +38,6 @@ type ConnectorOnlineCheckResult = "online" | "reconnect-required" | "timeout" | 
 
 const CONNECTOR_ONLINE_TIMEOUT_MS = 45_000
 const CONNECTOR_ONLINE_POLL_MS = 1_000
-const CONNECTOR_DIAGNOSTIC_PREFIX = "[desktop-connector-diagnostic]"
-
-let nextConnectorDiagnosticId = 1
-
-function connectorDiagnostic(event: string, details: Record<string, unknown> = {}) {
-  console.info(`${CONNECTOR_DIAGNOSTIC_PREFIX} ${JSON.stringify({
-    time: new Date().toISOString(),
-    event,
-    ...details,
-  })}`)
-}
-
-function diagnosticError(error: unknown): string {
-  return error instanceof Error ? `${error.name}: ${error.message}` : String(error)
-}
 
 async function waitForPollInterval(signal: AbortSignal): Promise<boolean> {
   if (signal.aborted) return false
@@ -82,100 +67,30 @@ async function pollConnectorOnline({
 }): Promise<ConnectorOnlineCheckResult> {
   const connectorBridge = getDesktopWorkbenchBridge()?.connector
   if (!connectorBridge) return "cancelled"
-  const diagnosticId = nextConnectorDiagnosticId++
-  const startedAt = Date.now()
   const deadline = Date.now() + CONNECTOR_ONLINE_TIMEOUT_MS
-  let iteration = 0
-
-  connectorDiagnostic("poll.start", { diagnosticId, connectorId, timeoutMs: CONNECTOR_ONLINE_TIMEOUT_MS })
 
   while (!signal.aborted && Date.now() < deadline) {
-    iteration += 1
-    const localStartedAt = Date.now()
-    connectorDiagnostic("poll.local.begin", { diagnosticId, connectorId, iteration })
     try {
       const localState = await connectorBridge.getState()
-      connectorDiagnostic("poll.local.done", {
-        diagnosticId,
-        connectorId,
-        iteration,
-        elapsedMs: Date.now() - localStartedAt,
-        aborted: signal.aborted,
-        status: localState.status,
-        running: localState.running,
-        authFailed: localState.authFailed,
-        manualDisconnected: localState.manualDisconnected,
-      })
-      if (signal.aborted) {
-        connectorDiagnostic("poll.cancelled.after-local", { diagnosticId, connectorId, iteration })
-        return "cancelled"
-      }
+      if (signal.aborted) return "cancelled"
       onLocalState(localState)
-      if (localState.authFailed || localState.manualDisconnected) {
-        connectorDiagnostic("poll.reconnect-required", { diagnosticId, connectorId, iteration })
-        return "reconnect-required"
-      }
-    } catch (error) {
-      connectorDiagnostic("poll.local.error", {
-        diagnosticId,
-        connectorId,
-        iteration,
-        elapsedMs: Date.now() - localStartedAt,
-        error: diagnosticError(error),
-      })
+      if (localState.authFailed || localState.manualDisconnected) return "reconnect-required"
+    } catch {
       // The sidecar may still be starting. The server status below is authoritative for online.
     }
 
-    const serverStartedAt = Date.now()
-    connectorDiagnostic("poll.server.begin", { diagnosticId, connectorId, iteration })
     try {
       const response = await dashboardApi.getConnector(userToken, connectorId)
-      connectorDiagnostic("poll.server.done", {
-        diagnosticId,
-        connectorId,
-        iteration,
-        elapsedMs: Date.now() - serverStartedAt,
-        aborted: signal.aborted,
-        status: response.connector.status,
-      })
-      if (signal.aborted) {
-        connectorDiagnostic("poll.cancelled.after-server", { diagnosticId, connectorId, iteration })
-        return "cancelled"
-      }
-      if (response.connector.status === "online") {
-        connectorDiagnostic("poll.online", {
-          diagnosticId,
-          connectorId,
-          iteration,
-          elapsedMs: Date.now() - startedAt,
-        })
-        return "online"
-      }
-    } catch (error) {
-      connectorDiagnostic("poll.server.error", {
-        diagnosticId,
-        connectorId,
-        iteration,
-        elapsedMs: Date.now() - serverStartedAt,
-        error: diagnosticError(error),
-      })
+      if (signal.aborted) return "cancelled"
+      if (response.connector.status === "online") return "online"
+    } catch {
       // A transient server/read failure should not fail provisioning immediately.
     }
 
-    if (!(await waitForPollInterval(signal))) {
-      connectorDiagnostic("poll.cancelled.during-wait", { diagnosticId, connectorId, iteration })
-      return "cancelled"
-    }
+    if (!(await waitForPollInterval(signal))) return "cancelled"
   }
 
-  const result = signal.aborted ? "cancelled" : "timeout"
-  connectorDiagnostic(`poll.${result}`, {
-    diagnosticId,
-    connectorId,
-    iteration,
-    elapsedMs: Date.now() - startedAt,
-  })
-  return result
+  return signal.aborted ? "cancelled" : "timeout"
 }
 
 type DesktopConnectorContextValue = {
@@ -235,13 +150,6 @@ export function DesktopConnectorProvider({ children }: { children: React.ReactNo
   const intentionalDisconnectConnectorIdRef = React.useRef<string | null>(null)
 
   const applyState = React.useCallback((nextState: DesktopConnectorState) => {
-    connectorDiagnostic("state.apply", {
-      connectorId: nextState.connectorId,
-      status: nextState.status,
-      running: nextState.running,
-      authFailed: nextState.authFailed,
-      manualDisconnected: nextState.manualDisconnected,
-    })
     setState(nextState)
     const connectorId = nextState.connectorId
     const needsReconnect = Boolean(
@@ -274,11 +182,9 @@ export function DesktopConnectorProvider({ children }: { children: React.ReactNo
   }, [])
 
   const beginConnectionCheck = React.useCallback(() => {
-    if (connectionCheckRef.current) connectorDiagnostic("connection-check.abort-previous")
     connectionCheckRef.current?.abort()
     const controller = new AbortController()
     connectionCheckRef.current = controller
-    connectorDiagnostic("connection-check.begin")
     return controller
   }, [])
 
@@ -386,85 +292,43 @@ export function DesktopConnectorProvider({ children }: { children: React.ReactNo
     const ownerUserId = userId
     const attemptKey = `${ownerUserId}:${accessToken}:${provisionRetryNonce}`
     if (provisionAttemptRef.current?.key === attemptKey && provisionAttemptRef.current.completed) return
-    const diagnosticId = nextConnectorDiagnosticId++
     let cancelled = false
     const controller = beginConnectionCheck()
-    connectorDiagnostic("initialize.effect-start", {
-      diagnosticId,
-      ownerUserId,
-      provisionRetryNonce,
-    })
 
     async function initialize() {
-      const startedAt = Date.now()
       setLoading(true)
       setBusy(true)
       setProvisionError(null)
       setProvisionErrorPromptOpen(false)
       setConnectionStatus("connecting")
       try {
-        connectorDiagnostic("initialize.local-state.begin", { diagnosticId })
         const [existingBinding, initialState] = await Promise.all([
           deviceBridge.getLocalBinding(),
           connectorBridge.getState(),
         ])
-        connectorDiagnostic("initialize.local-state.done", {
-          diagnosticId,
-          elapsedMs: Date.now() - startedAt,
-          cancelled,
-          bindingConnectorId: existingBinding?.connectorId ?? null,
-          stateConnectorId: initialState.connectorId,
-          status: initialState.status,
-          running: initialState.running,
-        })
-        if (cancelled) {
-          connectorDiagnostic("initialize.cancelled.after-local-state", { diagnosticId })
-          return
-        }
+        if (cancelled) return
         setBinding(existingBinding)
         applyState(initialState)
         setConnectionStatus("connecting")
 
         let attempt = provisionAttemptRef.current
         if (!attempt || attempt.key !== attemptKey) {
-          connectorDiagnostic("initialize.provision.create", { diagnosticId })
           attempt = {
             key: attemptKey,
             promise: deviceBridge.createAndConnect({ userToken, userId: ownerUserId }),
             completed: false,
           }
           provisionAttemptRef.current = attempt
-        } else {
-          connectorDiagnostic("initialize.provision.reuse", {
-            diagnosticId,
-            completed: attempt.completed,
-          })
         }
 
         const created = await attempt.promise
-        connectorDiagnostic("initialize.provision.done", {
-          diagnosticId,
-          cancelled,
-          connectorId: created.connectorId,
-          elapsedMs: Date.now() - startedAt,
-        })
-        if (cancelled) {
-          connectorDiagnostic("initialize.cancelled.after-provision", { diagnosticId })
-          return
-        }
+        if (cancelled) return
         setBinding(created)
 
         const onlineResult = await waitUntilOnline({
           userToken,
           connectorId: created.connectorId,
           controller,
-        })
-        connectorDiagnostic("initialize.poll-result", {
-          diagnosticId,
-          connectorId: created.connectorId,
-          result: onlineResult,
-          cancelled,
-          elapsedMs: Date.now() - startedAt,
         })
         if (cancelled || onlineResult === "cancelled") return
 
@@ -484,12 +348,6 @@ export function DesktopConnectorProvider({ children }: { children: React.ReactNo
         await refresh()
         refreshData()
       } catch (error) {
-        connectorDiagnostic("initialize.error", {
-          diagnosticId,
-          cancelled,
-          elapsedMs: Date.now() - startedAt,
-          error: diagnosticError(error),
-        })
         if (!cancelled) {
           if (provisionAttemptRef.current?.key === attemptKey) provisionAttemptRef.current = null
           const message = error instanceof Error ? error.message : t("provisionFailed")
@@ -497,11 +355,6 @@ export function DesktopConnectorProvider({ children }: { children: React.ReactNo
           toast.error(message)
         }
       } finally {
-        connectorDiagnostic("initialize.finally", {
-          diagnosticId,
-          cancelled,
-          elapsedMs: Date.now() - startedAt,
-        })
         if (!cancelled) {
           setBusy(false)
           setLoading(false)
@@ -512,7 +365,6 @@ export function DesktopConnectorProvider({ children }: { children: React.ReactNo
 
     void initialize()
     return () => {
-      connectorDiagnostic("initialize.effect-cleanup", { diagnosticId })
       cancelled = true
       controller.abort()
     }
