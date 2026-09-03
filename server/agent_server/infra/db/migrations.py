@@ -22,8 +22,8 @@ from agent_server.infra.db.engine import POSTGRES_BACKEND, resolve_db_url
 
 LEGACY_V1_REVISION = "v1_legacy"
 BASELINE_V2_REVISION = "v2_0"
-CURRENT_SCHEMA_REVISION = "v2_27"
-CURRENT_SCHEMA_VERSION = "2.27"
+CURRENT_SCHEMA_REVISION = "v2_28"
+CURRENT_SCHEMA_VERSION = "2.28"
 POSTGRES_MIGRATION_LOCK_ID = 0x414147454E545332
 DEFAULT_MIGRATION_LOCK_TIMEOUT_SECONDS = 120.0
 
@@ -313,17 +313,28 @@ def _classify_sync(connection) -> UnversionedDatabase:
                         project_foreign_key = next(
                             (
                                 foreign_key
-                                for foreign_key in inspector.get_foreign_keys("sessions")
+                                for foreign_key in inspector.get_foreign_keys(
+                                    "sessions"
+                                )
                                 if foreign_key.get("referred_table") == "projects"
                             ),
                             None,
                         )
                         if (
                             project_foreign_key is not None
-                            and project_foreign_key.get("options", {}).get("ondelete", "").upper()
+                            and project_foreign_key.get("options", {})
+                            .get("ondelete", "")
+                            .upper()
                             == "RESTRICT"
                         ):
-                            revision = "v2_27"
+                            revision = (
+                                "v2_28"
+                                if {
+                                    "uq_projects_user_connector_workspace",
+                                    "uq_projects_user_name",
+                                }.issubset(project_unique_constraints)
+                                else "v2_27"
+                            )
                         else:
                             revision = (
                                 "v2_25"

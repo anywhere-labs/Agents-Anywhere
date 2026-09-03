@@ -34,6 +34,7 @@ import { Spinner } from "@/components/ui/spinner"
 import { useWorkspace } from "@/components/workspace-context"
 import { useAuth } from "@/components/auth/auth-context"
 import { LoadingState } from "@/components/loading-state"
+import { OverflowMarquee } from "@/components/sidebar/overflow-marquee"
 import { dashboardApi } from "@/features/dashboard/api"
 import type { FsEntry } from "@/features/dashboard/types"
 import { useTranslations } from "next-intl"
@@ -302,6 +303,7 @@ export function WorkspacePicker({
 
   const [internalWorkspace, setInternalWorkspace] = React.useState<WorkspaceEntry>(homeWorkspace)
   const [dialogOpen, setDialogOpen] = React.useState(false)
+  const [hoveredProjectId, setHoveredProjectId] = React.useState<string | null>(null)
   const menuContentRef = React.useRef<HTMLDivElement | null>(null)
   const valueBelongsToActiveConnector =
     Boolean(value?.path) && (!activeConnectorId || value?.connectorId === activeConnectorId)
@@ -443,6 +445,8 @@ export function WorkspacePicker({
                     <DropdownMenuItem
                       key={project.id}
                       className="items-start gap-2.5 py-2"
+                      onPointerEnter={() => setHoveredProjectId(project.id)}
+                      onPointerLeave={() => setHoveredProjectId(null)}
                       onSelect={() => updateWorkspace({
                         label: project.name,
                         path: project.workspacePath,
@@ -451,11 +455,13 @@ export function WorkspacePicker({
                       })}
                     >
                       <FolderOpen />
-                      <span className="min-w-0 flex-1">
+                      <span className="min-w-0 flex-1 overflow-hidden">
                         <span className="block truncate font-medium">{project.name}</span>
-                        <span className="block truncate code-mono text-xs text-muted-foreground">
-                          {project.workspacePath}
-                        </span>
+                        <OverflowMarquee
+                          text={project.workspacePath}
+                          active={hoveredProjectId === project.id}
+                          className="block code-mono text-xs text-muted-foreground"
+                        />
                       </span>
                       {workspace.projectId === project.id ? <Check className="ml-auto" /> : null}
                     </DropdownMenuItem>

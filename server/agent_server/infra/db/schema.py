@@ -356,6 +356,17 @@ projects = Table(
         "connector_id",
         "workspace_key",
     ),
+    UniqueConstraint(
+        "user_id",
+        "connector_id",
+        "workspace_key",
+        name="uq_projects_user_connector_workspace",
+    ),
+    UniqueConstraint(
+        "user_id",
+        "name",
+        name="uq_projects_user_name",
+    ),
 )
 
 
@@ -478,7 +489,12 @@ session_shares = Table(
     metadata,
     Column("id", Text, primary_key=True),
     Column("user_id", Text, ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
-    Column("session_id", Text, ForeignKey("sessions.id", ondelete="CASCADE"), nullable=False),
+    Column(
+        "session_id",
+        Text,
+        ForeignKey("sessions.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
     Column("scope", Text, nullable=False),
     Column("snapshot_json", Text, nullable=False),
     Column("allowed_file_ids_json", Text, nullable=False, server_default="[]"),

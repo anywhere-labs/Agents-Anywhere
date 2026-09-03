@@ -33,6 +33,7 @@ import {
   withServerAttachments,
 } from "@/components/session/optimistic-timeline"
 import { hasDesktopConnectorBridge } from "@/features/desktop/bridge"
+import { isApiError } from "@/lib/api/errors"
 
 // ─── Panel / page types ───────────────────────────────────────
 
@@ -1136,13 +1137,9 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   ): Promise<ProjectView | null> => {
     const token = authSession?.accessToken
     if (!token) return null
-    try {
-      const response = await dashboardApi.createProject(token, payload)
-      upsertProject(response.project)
-      return response.project
-    } catch {
-      return null
-    }
+    const response = await dashboardApi.createProject(token, payload)
+    upsertProject(response.project)
+    return response.project
   }, [authSession?.accessToken, upsertProject])
 
   const updateProject = React.useCallback(async (
@@ -1155,7 +1152,10 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       const response = await dashboardApi.updateProject(token, projectId, patch)
       upsertProject(response.project)
       return response.project
-    } catch {
+    } catch (error) {
+      if (isApiError(error) && error.code === "project_name_conflict") {
+        throw error
+      }
       return null
     }
   }, [authSession?.accessToken, upsertProject])

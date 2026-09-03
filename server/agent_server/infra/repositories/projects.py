@@ -14,14 +14,24 @@ class MissingWorkspaceError(ValueError):
     """Raised when a connector session cannot be assigned to a workspace."""
 
 
+class ProjectNameConflictError(ValueError):
+    """Raised when another project owned by the user already has this name."""
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+        super().__init__(f'project name already exists: "{name}"')
+
+
 def _clean_workspace_path(path: str, device_os: str | None) -> tuple[str, str]:
     cleaned = path.strip()
     if not cleaned:
         raise ValueError("workspacePath must not be empty")
 
-    looks_windows = device_os == "windows" or (
-        len(cleaned) >= 3 and cleaned[1] == ":" and cleaned[2] in ("/", "\\")
-    ) or cleaned.startswith("\\\\")
+    looks_windows = (
+        device_os == "windows"
+        or (len(cleaned) >= 3 and cleaned[1] == ":" and cleaned[2] in ("/", "\\"))
+        or cleaned.startswith("\\\\")
+    )
     if looks_windows:
         windows_path = PureWindowsPath(cleaned)
         if not windows_path.is_absolute():
@@ -38,14 +48,12 @@ def _clean_workspace_path(path: str, device_os: str | None) -> tuple[str, str]:
 
 def _workspace_name(path: str, device_os: str | None) -> str:
     """Return the final directory component used for an auto-created project."""
-    looks_windows = device_os == "windows" or (
-        len(path) >= 3 and path[1] == ":" and path[2] in ("/", "\\")
-    ) or path.startswith("\\\\")
-    name = (
-        PureWindowsPath(path).name
-        if looks_windows
-        else PurePosixPath(path).name
+    looks_windows = (
+        device_os == "windows"
+        or (len(path) >= 3 and path[1] == ":" and path[2] in ("/", "\\"))
+        or path.startswith("\\\\")
     )
+    name = PureWindowsPath(path).name if looks_windows else PurePosixPath(path).name
     return name or "Workspace"
 
 
@@ -127,13 +135,17 @@ class ProjectRepositoryMixin:
         assign the project and write the session in one transaction.
         """
         connector = (
-            await conn.execute(
-                select(
-                    connectors_t.c.user_id,
-                    connectors_t.c.device_os,
-                ).where(connectors_t.c.id == connector_id)
+            (
+                await conn.execute(
+                    select(
+                        connectors_t.c.user_id,
+                        connectors_t.c.device_os,
+                    ).where(connectors_t.c.id == connector_id)
+                )
             )
-        ).mappings().first()
+            .mappings()
+            .first()
+        )
         if connector is None:
             raise KeyError(connector_id)
 
@@ -204,7 +216,9 @@ class ProjectRepositoryMixin:
                     )
                 )
             ).first()
-            if connector is None or (user_id is not None and connector.user_id != user_id):
+            if connector is None or (
+                user_id is not None and connector.user_id != user_id
+            ):
                 raise KeyError(connector_id)
             project_id, _ = await self._ensure_project_for_workspace(
                 conn,
@@ -259,35 +273,78 @@ class ProjectRepositoryMixin:
             raise ValueError("name must not be empty")
         project_id = f"proj_{secrets.token_urlsafe(10)}"
         now = utc_now()
-        async with self._engine.begin() as conn:
-            connector = (
-                await conn.execute(
-                    select(connectors_t.c.device_os).where(
-                        connectors_t.c.id == connector_id,
-                        connectors_t.c.user_id == user_id,
-                        connectors_t.c.revoked == 0,
+        try:
+            async with self._engine.begin() as conn:
+                connector = (
+                    await conn.execute(
+                        select(connectors_t.c.device_os).where(
+                            connectors_t.c.id == connector_id,
+                            connectors_t.c.user_id == user_id,
+                            connectors_t.c.revoked == 0,
+                        )
                     )
+                ).first()
+                if connector is None:
+                    raise KeyError(connector_id)
+                cleaned_path, workspace_key = _clean_workspace_path(
+                    workspace_path,
+                    connector.device_os,
                 )
-            ).first()
-            if connector is None:
-                raise KeyError(connector_id)
-            cleaned_path, workspace_key = _clean_workspace_path(
-                workspace_path,
-                connector.device_os,
-            )
-            await conn.execute(
-                insert(projects_t).values(
-                    id=project_id,
-                    user_id=user_id,
-                    connector_id=connector_id,
-                    name=cleaned_name,
-                    workspace_path=cleaned_path,
-                    workspace_key=workspace_key,
-                    pinned=0,
-                    created_at=now,
-                    updated_at=now,
+                existing_workspace = (
+                    await conn.execute(
+                        select(projects_t.c.id).where(
+                            projects_t.c.user_id == user_id,
+                            projects_t.c.connector_id == connector_id,
+                            projects_t.c.workspace_key == workspace_key,
+                        )
+                    )
+                ).first()
+                existing_project_id = (
+                    str(existing_workspace.id)
+                    if existing_workspace is not None
+                    else None
                 )
-            )
+                name_conflict = (
+                    await conn.execute(
+                        select(projects_t.c.id).where(
+                            projects_t.c.user_id == user_id,
+                            projects_t.c.name == cleaned_name,
+                            projects_t.c.id != (existing_project_id or ""),
+                        )
+                    )
+                ).first()
+                if name_conflict is not None:
+                    raise ProjectNameConflictError(cleaned_name)
+
+                if existing_project_id is not None:
+                    project_id = existing_project_id
+                    await conn.execute(
+                        update(projects_t)
+                        .where(projects_t.c.id == project_id)
+                        .values(
+                            name=cleaned_name,
+                            workspace_path=cleaned_path,
+                            updated_at=now,
+                        )
+                    )
+                else:
+                    await conn.execute(
+                        insert(projects_t).values(
+                            id=project_id,
+                            user_id=user_id,
+                            connector_id=connector_id,
+                            name=cleaned_name,
+                            workspace_path=cleaned_path,
+                            workspace_key=workspace_key,
+                            pinned=0,
+                            created_at=now,
+                            updated_at=now,
+                        )
+                    )
+        except IntegrityError as exc:
+            # The preflight checks provide the normal UX path. The database
+            # constraint closes the concurrent-create race.
+            raise ProjectNameConflictError(cleaned_name) from exc
         return await self.get_project(project_id, user_id=user_id)
 
     async def update_project(
@@ -308,17 +365,38 @@ class ProjectRepositoryMixin:
         if pinned is not None:
             values["pinned"] = int(pinned)
             values["pinned_at"] = (
-                current.pinnedAt if pinned and current.pinned else utc_now() if pinned else None
+                current.pinnedAt
+                if pinned and current.pinned
+                else utc_now()
+                if pinned
+                else None
             )
-        async with self._engine.begin() as conn:
-            result = await conn.execute(
-                update(projects_t)
-                .where(
-                    projects_t.c.id == project_id,
-                    projects_t.c.user_id == user_id,
+        try:
+            async with self._engine.begin() as conn:
+                if name is not None:
+                    name_conflict = (
+                        await conn.execute(
+                            select(projects_t.c.id).where(
+                                projects_t.c.user_id == user_id,
+                                projects_t.c.name == cleaned_name,
+                                projects_t.c.id != project_id,
+                            )
+                        )
+                    ).first()
+                    if name_conflict is not None:
+                        raise ProjectNameConflictError(cleaned_name)
+                result = await conn.execute(
+                    update(projects_t)
+                    .where(
+                        projects_t.c.id == project_id,
+                        projects_t.c.user_id == user_id,
+                    )
+                    .values(**values)
                 )
-                .values(**values)
-            )
+        except IntegrityError as exc:
+            if name is not None:
+                raise ProjectNameConflictError(cleaned_name) from exc
+            raise
         if result.rowcount == 0:
             raise KeyError(project_id)
         return await self.get_project(project_id, user_id=user_id)
@@ -398,9 +476,7 @@ class ProjectRepositoryMixin:
         if scope_filter is not None:
             query = query.where(scope_filter)
         async with self._engine.connect() as conn:
-            session_ids = [
-                str(row.id) for row in (await conn.execute(query)).all()
-            ]
+            session_ids = [str(row.id) for row in (await conn.execute(query)).all()]
         if not session_ids:
             return []
         changed, _ = await self.bulk_set_session_archived(

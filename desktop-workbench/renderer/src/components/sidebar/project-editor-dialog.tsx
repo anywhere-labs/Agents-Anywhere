@@ -14,6 +14,7 @@ import {
 import {
   Field,
   FieldDescription,
+  FieldError,
   FieldGroup,
   FieldLabel,
 } from "@/components/ui/field"
@@ -36,6 +37,7 @@ import type {
   ProjectPatchRequest,
   ProjectView,
 } from "@/features/dashboard/types"
+import { isApiError } from "@/lib/api/errors"
 import { useTranslations } from "next-intl"
 
 export type ProjectEditorState =
@@ -62,6 +64,7 @@ export function ProjectEditorDialog({
   const [connectorId, setConnectorId] = React.useState("")
   const [workspace, setWorkspace] = React.useState<WorkspaceSelection | null>(null)
   const [saving, setSaving] = React.useState(false)
+  const [nameError, setNameError] = React.useState("")
   const editingProject = editor?.mode === "edit" ? editor.project : null
   const onlineConnectors = connectors.filter((connector) => connector.status === "online")
   const selectedConnector = connectors.find((connector) => connector.id === connectorId)
@@ -82,6 +85,7 @@ export function ProjectEditorDialog({
       setWorkspace(null)
     }
     setSaving(false)
+    setNameError("")
   }, [editor])
 
   const submit = React.useCallback(async () => {
@@ -104,6 +108,12 @@ export function ProjectEditorDialog({
       }
       toast.success(t(editor.mode === "edit" ? "updateSuccess" : "createSuccess"))
       onOpenChange(false)
+    } catch (error) {
+      if (isApiError(error) && error.code === "project_name_conflict") {
+        setNameError(t("nameConflict", { name: projectName }))
+        return
+      }
+      toast.error(t(editor.mode === "edit" ? "updateFailed" : "createFailed"))
     } finally {
       setSaving(false)
     }
@@ -127,7 +137,7 @@ export function ProjectEditorDialog({
           </DialogHeader>
 
           <FieldGroup>
-            <Field>
+            <Field data-invalid={nameError ? true : undefined}>
               <FieldLabel htmlFor="project-name">{t("name")}</FieldLabel>
               <Input
                 id="project-name"
@@ -135,9 +145,15 @@ export function ProjectEditorDialog({
                 value={name}
                 maxLength={255}
                 disabled={saving}
-                onChange={(event) => setName(event.currentTarget.value)}
+                aria-invalid={nameError ? true : undefined}
+                aria-describedby={nameError ? "project-name-error" : undefined}
+                onChange={(event) => {
+                  setName(event.currentTarget.value)
+                  setNameError("")
+                }}
                 placeholder={t("namePlaceholder")}
               />
+              <FieldError id="project-name-error">{nameError}</FieldError>
             </Field>
 
             {editingProject ? (

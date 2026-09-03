@@ -23,6 +23,7 @@ from agent_server.deps import (
 )
 from agent_server.infra.connector_rpc import ConnectorRpcManager
 from agent_server.infra.repositories.facade import Store
+from agent_server.infra.repositories.projects import ProjectNameConflictError
 from agent_server.infra.timeline_broker import TimelineBroker
 from agent_server.services.connector_presence import (
     with_effective_session_connector_statuses,
@@ -63,6 +64,14 @@ async def create_project(
         )
     except KeyError:
         raise HTTPException(status_code=404, detail="connector not found") from None
+    except ProjectNameConflictError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "project_name_conflict",
+                "message": str(exc),
+            },
+        ) from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     await publish_dashboard_changed(
@@ -96,6 +105,14 @@ async def patch_project(
         )
     except KeyError:
         raise HTTPException(status_code=404, detail="project not found") from None
+    except ProjectNameConflictError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "project_name_conflict",
+                "message": str(exc),
+            },
+        ) from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     await publish_dashboard_changed(
