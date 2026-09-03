@@ -50,6 +50,8 @@ type ArchivedSessionGroup = {
 type ArchivedSessionsTabProps = {
   token: string
   projects: ProjectView[]
+  onOpenSession: (sessionId: string) => void
+  onSessionUpdated: (session: SessionView) => void
   onWorkspaceRefresh: () => void
 }
 
@@ -73,9 +75,12 @@ function mergeSessions(current: SessionView[], incoming: SessionView[]): Session
 export function ArchivedSessionsTab({
   token,
   projects,
+  onOpenSession,
+  onSessionUpdated,
   onWorkspaceRefresh,
 }: ArchivedSessionsTabProps) {
   const t = useTranslations("pages.settings")
+  const tActions = useTranslations("dashboard.actions")
   const locale = useLocale()
   const requestIdRef = React.useRef(0)
   const [sessions, setSessions] = React.useState<SessionView[]>([])
@@ -204,13 +209,20 @@ export function ArchivedSessionsTab({
     setUnarchivingIds((current) => [...current, sessionId])
     try {
       const response = await dashboardApi.bulkArchiveSessions(token, [sessionId], false)
-      if (!response.sessions.some((session) => session.id === sessionId)) {
+      const unarchivedSession = response.sessions.find((session) => session.id === sessionId)
+      if (!unarchivedSession) {
         toast.error(t("archivedUnarchiveFailed"))
         return
       }
+      onSessionUpdated(unarchivedSession)
       setSessions((current) => current.filter((session) => session.id !== sessionId))
       onWorkspaceRefresh()
-      toast.success(t("archivedUnarchiveSuccess"))
+      toast.success(t("archivedUnarchiveSuccess"), {
+        action: {
+          label: tActions("viewNow"),
+          onClick: () => onOpenSession(sessionId),
+        },
+      })
     } catch (err) {
       toast.error(err instanceof Error ? err.message : t("archivedUnarchiveFailed"))
     } finally {

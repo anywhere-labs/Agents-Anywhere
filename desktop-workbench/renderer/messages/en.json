@@ -252,6 +252,8 @@
     "actions": {
       "archive": "Archive",
       "archiveChat": "Archive chat",
+      "archiveSuccess": "Session archived successfully",
+      "archiveUpdateFailed": "Couldn't update the session archive status",
       "collapse": "Collapse sidebar",
       "copiedDeviceId": "Device ID copied",
       "copiedSessionId": "Session ID copied",
@@ -275,8 +277,10 @@
       "signOut": "Sign out",
       "unarchive": "Unarchive",
       "unarchiveChat": "Unarchive chat",
+      "unarchiveSuccess": "Session unarchived",
       "unpin": "Unpin",
-      "unpinChat": "Unpin chat"
+      "unpinChat": "Unpin chat",
+      "viewNow": "View now"
     },
     "account": {
       "menu": "Account menu"
@@ -1220,7 +1224,7 @@
       "archivedTimeUnavailable": "Time unavailable",
       "archivedUnarchive": "Unarchive",
       "archivedUnarchiveAll": "Unarchive all",
-      "archivedUnarchiveSuccess": "Session unarchived.",
+      "archivedUnarchiveSuccess": "Session unarchived",
       "archivedUnarchiveFailed": "Couldn't unarchive session.",
       "archivedUnarchiveAllSuccess": "All project sessions unarchived.",
       "archivedUnarchiveAllFailed": "Couldn't unarchive project sessions.",

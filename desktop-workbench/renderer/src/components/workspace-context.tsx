@@ -378,7 +378,7 @@ export type WorkspaceState = {
   closePairDeviceDialog: () => void
   closeFirstDevicePrompt: () => void
   togglePinSession: (id: string) => void
-  toggleArchiveSession: (id: string) => void
+  toggleArchiveSession: (id: string, archived?: boolean) => Promise<SessionView | null>
   renameSession: (id: string, title: string) => Promise<boolean>
   loadProjectSessions: (projectId: string) => Promise<boolean>
   createProject: (payload: ProjectCreateRequest) => Promise<ProjectView | null>
@@ -1118,18 +1118,26 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     }
   }, [authSession?.accessToken, sessions, sortSessions, upsertSession])
 
-  const toggleArchiveSession = React.useCallback(async (id: string) => {
-    const targetSession = sessions.find((s) => s.id === id)
-    if (!targetSession) return
+  const toggleArchiveSession = React.useCallback(async (
+    id: string,
+    archived?: boolean,
+  ): Promise<SessionView | null> => {
+    const targetSession = sessionsRef.current.find((session) => session.id === id)
+    if (!targetSession) return null
+    const nextArchived = archived ?? !targetSession.archived
 
     if (authSession?.accessToken) {
-      const response = await dashboardApi.patchSession(authSession.accessToken, id, { archived: !targetSession.archived })
+      const response = await dashboardApi.patchSession(authSession.accessToken, id, { archived: nextArchived })
       upsertSession(response.session)
-    } else {
-      const response = await patchMockSession("mock-token", id, { archived: !targetSession.archived })
-      setSessions((prev) => sortSessions(prev.map((s) => (s.id === id ? response.session : s))))
+      return mapSession(response.session)
     }
-  }, [authSession?.accessToken, sessions, sortSessions, upsertSession])
+
+    const response = await patchMockSession("mock-token", id, { archived: nextArchived })
+    setSessions((prev) => sortSessions(prev.map((session) => (
+      session.id === id ? response.session : session
+    ))))
+    return response.session
+  }, [authSession?.accessToken, sortSessions, upsertSession])
 
   const renameSession = React.useCallback(async (id: string, title: string) => {
     const nextTitle = title.trim()

@@ -92,8 +92,10 @@ export function ProjectSidebarItem({
         >
           <CollapsibleTrigger asChild>
             <SidebarMenuButton
-              isActive={containsActiveSession}
-              className="pr-[4.75rem] text-muted-foreground data-[active=true]:text-foreground"
+              className={cn(
+                "pr-[4.75rem] text-muted-foreground",
+                containsActiveSession && "text-foreground",
+              )}
             >
               {expanded ? <FolderOpen /> : <Folder />}
               <OverflowMarquee text={project.name} active={nameHovered} />

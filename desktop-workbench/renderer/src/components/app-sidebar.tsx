@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { Search, Smartphone, SquarePen } from "lucide-react"
+import { Smartphone, SquarePen } from "lucide-react"
 import { toast } from "sonner"
 
 import { useAuth } from "@/components/auth/auth-context"
@@ -139,6 +139,47 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
     if (!updated) toast.error(t("projects.updateFailed"))
   }, [t, updateProject])
 
+  const showSessionUnarchivedToast = React.useCallback((sessionId: string) => {
+    toast.success(t("actions.unarchiveSuccess"), {
+      action: {
+        label: t("actions.viewNow"),
+        onClick: () => openSession(sessionId),
+      },
+    })
+  }, [openSession, t])
+
+  const restoreArchivedSession = React.useCallback(async (sessionId: string) => {
+    try {
+      const updated = await toggleArchiveSession(sessionId, false)
+      if (updated && !updated.archived) showSessionUnarchivedToast(sessionId)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t("actions.archiveUpdateFailed"))
+    }
+  }, [showSessionUnarchivedToast, t, toggleArchiveSession])
+
+  const handleToggleSessionArchive = React.useCallback(async (sessionId: string) => {
+    try {
+      const updated = await toggleArchiveSession(sessionId)
+      if (!updated) return
+      if (!updated.archived) {
+        showSessionUnarchivedToast(sessionId)
+        return
+      }
+      toast.success(t("actions.archiveSuccess"), {
+        action: {
+          label: t("actions.unarchive"),
+          onClick: () => void restoreArchivedSession(sessionId),
+        },
+      })
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t("actions.archiveUpdateFailed"))
+    }
+  }, [restoreArchivedSession, showSessionUnarchivedToast, t, toggleArchiveSession])
+
+  const requestToggleSessionArchive = React.useCallback((sessionId: string) => {
+    void handleToggleSessionArchive(sessionId)
+  }, [handleToggleSessionArchive])
+
   const projectController: ProjectListController = {
     sessionsForProject,
     expandedProjectIds,
@@ -152,23 +193,16 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
     onArchiveAll: setProjectToArchive,
     onRemove: setProjectToRemove,
     onToggleSessionPin: togglePinSession,
-    onToggleSessionArchive: toggleArchiveSession,
+    onToggleSessionArchive: requestToggleSessionArchive,
     onRenameSession: renameSession,
   }
 
   return (
     <Sidebar contained={contained} className="border-sidebar-border">
       <SidebarHeader className="gap-0 px-4 pb-2 pt-3">
-        <div className="mb-3 mt-1 flex items-center justify-between gap-2">
+        <div className="mb-3 mt-1 flex items-center">
           <button type="button" onClick={goHome} className="aa-wordmark min-w-0 pr-px text-left text-xl leading-none">
             Agents Anywhere
-          </button>
-          <button
-            type="button"
-            aria-label={t("actions.search")}
-            className="shrink-0 rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-          >
-            <Search className="size-4" />
           </button>
         </div>
 
@@ -221,7 +255,7 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
           projectController={projectController}
           onOpenSession={openSession}
           onToggleSessionPin={togglePinSession}
-          onToggleSessionArchive={toggleArchiveSession}
+          onToggleSessionArchive={requestToggleSessionArchive}
           onRenameSession={renameSession}
         />
 
@@ -243,7 +277,7 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
           onMarkAllRead={markAllRead}
           onOpenSession={openSession}
           onToggleSessionPin={togglePinSession}
-          onToggleSessionArchive={toggleArchiveSession}
+          onToggleSessionArchive={requestToggleSessionArchive}
           onRenameSession={renameSession}
           onLoadMoreSessions={loadMoreSessions}
         />
