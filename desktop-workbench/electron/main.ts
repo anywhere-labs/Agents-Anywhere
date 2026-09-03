@@ -231,6 +231,18 @@ function createMainWindow(showOnReady = true): BrowserWindow {
     },
   });
   mainWindow = window;
+  if (!app.isPackaged) {
+    window.webContents.on("before-input-event", (event, input) => {
+      if (input.type !== "keyDown" || input.isAutoRepeat) return;
+      const key = input.key.toLowerCase();
+      const isToggleDevToolsShortcut = process.platform === "darwin"
+        ? input.meta && input.alt && key === "i"
+        : (input.control && input.shift && key === "i") || key === "f12";
+      if (!isToggleDevToolsShortcut) return;
+      event.preventDefault();
+      window.webContents.toggleDevTools();
+    });
+  }
   window.once("ready-to-show", () => {
     if (showOnReady) showMainWindow();
   });
