@@ -343,14 +343,17 @@ readonly DB_URL="postgresql+asyncpg://agents_anywhere:agents_anywhere_dev_passwo
 readonly REDIS_URL="redis://127.0.0.1:${REDIS_PORT}/0"
 
 printf '[server] running database migrations\n'
-env \
-  AGENT_SERVER_DB_BACKEND=postgres \
-  AGENT_SERVER_DB_URL="${DB_URL}" \
-  AGENT_SERVER_REDIS_URL="${REDIS_URL}" \
-  AGENT_SERVER_FILES_LOCAL_ROOT="${LOCAL_DIR}/files" \
-  AGENT_SERVER_PUBLIC_ORIGIN="${DESKTOP_URL}" \
-  AGENT_SERVER_CORS_ORIGINS="${DESKTOP_URL},http://localhost:${DESKTOP_PORT}" \
-  "${SERVER_DIR}/.venv/bin/python" -m agent_server.infra.db.migrations upgrade
+(
+  cd "${SERVER_DIR}"
+  env \
+    AGENT_SERVER_DB_BACKEND=postgres \
+    AGENT_SERVER_DB_URL="${DB_URL}" \
+    AGENT_SERVER_REDIS_URL="${REDIS_URL}" \
+    AGENT_SERVER_FILES_LOCAL_ROOT="${LOCAL_DIR}/files" \
+    AGENT_SERVER_PUBLIC_ORIGIN="${DESKTOP_URL}" \
+    AGENT_SERVER_CORS_ORIGINS="${DESKTOP_URL},http://localhost:${DESKTOP_PORT}" \
+    "${SERVER_DIR}/.venv/bin/python" -m agent_server.infra.db.migrations upgrade
+)
 
 printf '[server] starting on %s\n' "${SERVER_URL}"
 start_screen_session \
