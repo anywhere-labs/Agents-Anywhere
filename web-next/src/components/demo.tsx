@@ -225,7 +225,6 @@ function WorkspaceMain() {
           if (!open) closePairDeviceDialog()
         }}
         onConnectorCreated={() => {
-          closePairDeviceDialog()
           refreshData()
         }}
       />

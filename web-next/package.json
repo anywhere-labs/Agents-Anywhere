@@ -8,6 +8,7 @@
     "dev": "next dev --hostname 127.0.0.1 --port 5174",
     "build": "next build",
     "start": "next start --hostname 127.0.0.1 --port 5174",
+    "test": "node --test test/*.test.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "tsc --noEmit",
     "protocol:generate": "node scripts/generate-protocol-types.mjs",
