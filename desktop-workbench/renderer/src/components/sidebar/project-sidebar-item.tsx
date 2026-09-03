@@ -78,6 +78,7 @@ export function ProjectSidebarItem({
 }) {
   const t = useTranslations("dashboard")
   const [nameHovered, setNameHovered] = React.useState(false)
+  const [optionsOpen, setOptionsOpen] = React.useState(false)
   const visibleSessions = sessions.filter((session) => !session.archived)
   const containsActiveSession = visibleSessions.some((session) => session.id === activeSessionId)
 
@@ -102,12 +103,13 @@ export function ProjectSidebarItem({
           <TooltipProvider delayDuration={300}>
             <div
               className={cn(
-                "absolute right-1 top-1/2 hidden -translate-y-1/2 items-center gap-0.5",
-                "group-hover/project:flex group-focus-within/project:flex",
-                containsActiveSession && "flex",
+                "pointer-events-none absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-0.5 opacity-0 transition-opacity",
+                "group-hover/project:pointer-events-auto group-hover/project:opacity-100",
+                "group-focus-within/project:pointer-events-auto group-focus-within/project:opacity-100",
+                (containsActiveSession || optionsOpen) && "pointer-events-auto opacity-100",
               )}
             >
-            <DropdownMenu>
+            <DropdownMenu open={optionsOpen} onOpenChange={setOptionsOpen}>
               <Tooltip>
                 <TooltipTrigger asChild>
                   <DropdownMenuTrigger asChild>
@@ -123,7 +125,7 @@ export function ProjectSidebarItem({
                 </TooltipTrigger>
                 <TooltipContent side="top" sideOffset={4}>{t("projects.options")}</TooltipContent>
               </Tooltip>
-              <DropdownMenuContent align="start" className="w-56">
+              <DropdownMenuContent align="end" collisionPadding={8} className="w-56">
                 <DropdownMenuGroup>
                   <DropdownMenuItem onSelect={onEdit}>
                     <Pencil />
