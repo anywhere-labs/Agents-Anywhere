@@ -448,6 +448,8 @@
       "resolvingHome": "Resolving home...",
       "openWorkspace": "Open workspace",
       "browseFilesystem": "Browse filesystem...",
+      "projects": "Projects",
+      "workspaces": "Workspaces",
       "loadFailed": "Failed to load directory.",
       "noOnlineDeviceTitle": "No device is online",
       "noOnlineDeviceDescription": "Add a device before choosing a workspace or starting a session.",

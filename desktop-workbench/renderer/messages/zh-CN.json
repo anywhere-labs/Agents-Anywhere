@@ -448,6 +448,8 @@
       "resolvingHome": "正在解析 Home...",
       "openWorkspace": "打开工作目录",
       "browseFilesystem": "浏览文件系统...",
+      "projects": "项目",
+      "workspaces": "工作区",
       "loadFailed": "无法加载目录。",
       "noOnlineDeviceTitle": "当前没有在线设备",
       "noOnlineDeviceDescription": "添加设备后才能选择工作区或开始会话。",

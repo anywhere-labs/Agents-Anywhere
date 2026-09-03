@@ -996,15 +996,6 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     try {
       const response = await dashboardApi.createProject(token, payload)
       upsertProject(response.project)
-      if (payload.attachMatchingSessions && response.attachedSessions > 0) {
-        setSessions((current) => current.map((session) =>
-          !session.projectId &&
-          session.connectorId === response.project.connectorId &&
-          session.cwd === response.project.workspacePath
-            ? { ...session, projectId: response.project.id }
-            : session,
-        ))
-      }
       return response.project
     } catch {
       return null

@@ -96,7 +96,6 @@ export function ProjectEditorDialog({
               name: projectName,
               connectorId,
               workspacePath: workspace.path,
-              attachMatchingSessions: true,
             })
           : null
       if (!result) {

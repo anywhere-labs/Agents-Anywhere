@@ -14,7 +14,9 @@ import {
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
@@ -42,6 +44,7 @@ type WorkspaceEntry = {
   label: string
   path: string
   connectorId?: string
+  projectId?: string
 }
 
 export type WorkspaceSelection = WorkspaceEntry
@@ -218,13 +221,15 @@ export function WorkspacePicker({
   connectorId,
   value,
   onChange,
+  includeProjects = false,
 }: {
   connectorId?: string
   value?: WorkspaceSelection | null
   onChange?: (workspace: WorkspaceSelection) => void
+  includeProjects?: boolean
 } = {}) {
   const { session: authSession } = useAuth()
-  const { connectors, sessions, openPairDeviceDialog } = useWorkspace()
+  const { connectors, projects, sessions, openPairDeviceDialog } = useWorkspace()
   const t = useTranslations("dashboard.workspacePicker")
 
   // Pick first online connector for FS browsing
@@ -282,6 +287,13 @@ export function WorkspacePicker({
     return result
   }, [activeConnectorId, sessions])
 
+  const availableProjects = React.useMemo(
+    () => includeProjects
+      ? projects.filter((project) => project.connectorId === activeConnectorId)
+      : [],
+    [activeConnectorId, includeProjects, projects],
+  )
+
   const homeWorkspace: WorkspaceEntry = React.useMemo(() => {
     return { label: t("home"), path: resolvedHomePath, connectorId: activeConnectorId }
   }, [activeConnectorId, resolvedHomePath, t])
@@ -313,7 +325,11 @@ export function WorkspacePicker({
     }
   }, [activeConnectorId, homeWorkspace, onChange, value])
 
-  const isHome = Boolean(homeWorkspace.path && workspace.path === homeWorkspace.path)
+  const selectedProject = workspace.projectId
+    ? projects.find((project) => project.id === workspace.projectId)
+    : null
+  const isProject = Boolean(workspace.projectId)
+  const isHome = Boolean(!isProject && homeWorkspace.path && workspace.path === homeWorkspace.path)
 
   if (!hasOnlineConnector) {
     return (
@@ -339,58 +355,96 @@ export function WorkspacePicker({
             type="button"
             className="flex w-full items-center gap-3 rounded-xl border border-border px-4 py-3 text-left text-sm transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
-            <Folder className="size-4 shrink-0 text-muted-foreground" />
-            <span className="font-medium">{isHome ? t("home") : workspace.label}</span>
-            <span className="truncate code-mono text-xs text-muted-foreground">
-              {workspace.path || t("resolvingHome")}
+            {isProject
+              ? <FolderOpen className="size-4 shrink-0 text-muted-foreground" />
+              : <Folder className="size-4 shrink-0 text-muted-foreground" />}
+            <span className="max-w-48 shrink-0 truncate font-medium">
+              {isHome ? t("home") : selectedProject?.name ?? workspace.label}
             </span>
-            {resolvingHomePath ? <Spinner className="size-3.5 shrink-0 text-muted-foreground" /> : null}
+            <span className="min-w-0 flex-1 truncate code-mono text-xs text-muted-foreground">
+              {(selectedProject?.workspacePath ?? workspace.path) || t("resolvingHome")}
+            </span>
+            {isHome && resolvingHomePath ? <Spinner className="size-3.5 shrink-0 text-muted-foreground" /> : null}
             <ChevronDown className="ml-auto size-4 shrink-0 text-muted-foreground" />
           </button>
         </DropdownMenuTrigger>
 
         <DropdownMenuContent align="start" className="w-80">
-          {/* Home directory */}
-          <DropdownMenuItem
-            className="gap-2.5"
-            disabled={!homeWorkspace.path}
-            onSelect={() => updateWorkspace(homeWorkspace)}
-          >
-            <Home className="size-4 shrink-0 text-muted-foreground" />
-            <div className="flex flex-col">
-              <span>{t("home")}</span>
-              <span className="code-mono text-xs text-muted-foreground">
-                {homeWorkspace.path || t("resolvingHome")}
-              </span>
-            </div>
-            {resolvingHomePath ? <Spinner className="ml-auto size-3.5 shrink-0 text-muted-foreground" /> : null}
-            {isHome && <Check className="ml-auto size-3.5 shrink-0" />}
-          </DropdownMenuItem>
+          {availableProjects.length > 0 ? (
+            <>
+              <DropdownMenuLabel>{t("projects")}</DropdownMenuLabel>
+              <DropdownMenuGroup>
+                {availableProjects.map((project) => (
+                  <DropdownMenuItem
+                    key={project.id}
+                    className="items-start gap-2.5 py-2"
+                    onSelect={() => updateWorkspace({
+                      label: project.name,
+                      path: project.workspacePath,
+                      connectorId: project.connectorId,
+                      projectId: project.id,
+                    })}
+                  >
+                    <FolderOpen />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate font-medium">{project.name}</span>
+                      <span className="block truncate code-mono text-xs text-muted-foreground">
+                        {project.workspacePath}
+                      </span>
+                    </span>
+                    {workspace.projectId === project.id ? <Check className="ml-auto" /> : null}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuGroup>
+              <DropdownMenuSeparator />
+            </>
+          ) : null}
 
-          {/* Browse */}
-          <DropdownMenuItem className="gap-2.5" onSelect={() => setDialogOpen(true)}>
-            <Plus className="size-4 shrink-0 text-muted-foreground" />
-            <span>{t("browseFilesystem")}</span>
-          </DropdownMenuItem>
+          <DropdownMenuLabel>{t("workspaces")}</DropdownMenuLabel>
+          <DropdownMenuGroup>
+            <DropdownMenuItem
+              className="gap-2.5"
+              disabled={!homeWorkspace.path}
+              onSelect={() => updateWorkspace(homeWorkspace)}
+            >
+              <Home className="size-4 shrink-0 text-muted-foreground" />
+              <div className="flex min-w-0 flex-1 flex-col">
+                <span>{t("home")}</span>
+                <span className="truncate code-mono text-xs text-muted-foreground">
+                  {homeWorkspace.path || t("resolvingHome")}
+                </span>
+              </div>
+              {resolvingHomePath ? <Spinner className="ml-auto size-3.5 shrink-0 text-muted-foreground" /> : null}
+              {isHome ? <Check className="ml-auto size-3.5 shrink-0" /> : null}
+            </DropdownMenuItem>
 
-          {/* Recent workspaces */}
+            <DropdownMenuItem className="gap-2.5" onSelect={() => setDialogOpen(true)}>
+              <Plus className="size-4 shrink-0 text-muted-foreground" />
+              <span>{t("browseFilesystem")}</span>
+            </DropdownMenuItem>
+          </DropdownMenuGroup>
+
           {recentWorkspaces.length > 0 && (
             <>
               <DropdownMenuSeparator />
-              {recentWorkspaces.map((ws) => (
-                <DropdownMenuItem
-                  key={ws.path}
-                  className="gap-2.5"
-                  onSelect={() => updateWorkspace(ws)}
-                >
-                  <Folder className="size-4 shrink-0 text-muted-foreground" />
-                  <div className="flex min-w-0 flex-col">
-                    <span>{ws.label}</span>
-                    <span className="truncate code-mono text-xs text-muted-foreground">{ws.path}</span>
-                  </div>
-                  {workspace.path === ws.path && <Check className="ml-auto size-3.5 shrink-0" />}
-                </DropdownMenuItem>
-              ))}
+              <DropdownMenuGroup>
+                {recentWorkspaces.map((ws) => (
+                  <DropdownMenuItem
+                    key={ws.path}
+                    className="gap-2.5"
+                    onSelect={() => updateWorkspace(ws)}
+                  >
+                    <Folder className="size-4 shrink-0 text-muted-foreground" />
+                    <div className="flex min-w-0 flex-1 flex-col">
+                      <span>{ws.label}</span>
+                      <span className="truncate code-mono text-xs text-muted-foreground">{ws.path}</span>
+                    </div>
+                    {!isProject && workspace.path === ws.path
+                      ? <Check className="ml-auto size-3.5 shrink-0" />
+                      : null}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuGroup>
             </>
           )}
         </DropdownMenuContent>

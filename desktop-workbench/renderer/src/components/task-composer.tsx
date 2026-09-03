@@ -155,6 +155,7 @@ export function TaskComposer() {
     markOptimisticMessageFailed,
     newSessionProject,
     openSession,
+    projects,
   } = useWorkspace()
   const isMobile = useIsMobile()
   const t = useTranslations("dashboard.new")
@@ -218,26 +219,20 @@ export function TaskComposer() {
     [connectors, runtimeInventory],
   )
 
-  const selectableConnectors = React.useMemo(
-    () => newSessionProject
-      ? onlineConnectors.filter((connector) => connector.id === newSessionProject.connectorId)
-      : onlineConnectors,
-    [newSessionProject, onlineConnectors],
-  )
   const deviceOptions = React.useMemo(
     () =>
-      selectableConnectors.map((c) => ({
+      onlineConnectors.map((c) => ({
         id: c.id,
         label: c.name,
       })),
-    [selectableConnectors],
+    [onlineConnectors],
   )
   const hasOnlineDevice = deviceOptions.length > 0
 
   const [selectedDevice, setSelectedDevice] = React.useState(deviceOptions[0]?.id ?? "")
   const selectedConnector =
-    selectableConnectors.find((connector) => connector.id === selectedDevice) ??
-    selectableConnectors[0] ??
+    onlineConnectors.find((connector) => connector.id === selectedDevice) ??
+    onlineConnectors[0] ??
     null
   const selectedConnectorId = selectedConnector?.id ?? ""
   const agentOptions = React.useMemo(
@@ -271,6 +266,7 @@ export function TaskComposer() {
   const [preference, setPreference] = React.useState<NewSessionPreference | null>(null)
   const composerRef = React.useRef<HTMLDivElement | null>(null)
   const devicePreferenceAppliedRef = React.useRef(false)
+  const projectPrefillAppliedRef = React.useRef<string | null>(null)
   const agentPreferenceAppliedForDeviceRef = React.useRef<string | null>(null)
   const selectionPreferenceAppliedForScopeRef = React.useRef<string | null>(null)
   const composerWidth = useElementWidth(composerRef)
@@ -295,10 +291,35 @@ export function TaskComposer() {
   }, [])
 
   React.useEffect(() => {
+    if (!newSessionProject) {
+      if (projectPrefillAppliedRef.current !== null) {
+        projectPrefillAppliedRef.current = null
+        devicePreferenceAppliedRef.current = false
+        setWorkspace(null)
+      }
+      return
+    }
+
+    if (projectPrefillAppliedRef.current === newSessionProject.id) return
+    if (!deviceOptions.some((option) => option.id === newSessionProject.connectorId)) return
+
+    projectPrefillAppliedRef.current = newSessionProject.id
+    setSelectedDevice(newSessionProject.connectorId)
+    setWorkspace({
+      label: newSessionProject.name,
+      path: newSessionProject.workspacePath,
+      connectorId: newSessionProject.connectorId,
+      projectId: newSessionProject.id,
+    })
+  }, [deviceOptions, newSessionProject])
+
+  React.useEffect(() => {
     if (newSessionProject) {
-      devicePreferenceAppliedRef.current = false
-      const projectDevice = deviceOptions[0]?.id ?? newSessionProject.connectorId
-      if (projectDevice !== selectedDevice) setSelectedDevice(projectDevice)
+      if (deviceOptions.length === 0) {
+        if (selectedDevice) setSelectedDevice("")
+      } else if (!deviceOptions.some((option) => option.id === selectedDevice)) {
+        setSelectedDevice(deviceOptions[0]?.id ?? "")
+      }
       return
     }
 
@@ -326,16 +347,15 @@ export function TaskComposer() {
   }, [deviceOptions, newSessionProject, preference?.connectorId, preferenceLoaded, selectedDevice])
 
   React.useEffect(() => {
-    if (newSessionProject) {
-      setWorkspace({
-        label: newSessionProject.name,
-        path: newSessionProject.workspacePath,
-        connectorId: newSessionProject.connectorId,
-      })
-      return
-    }
-    setWorkspace(null)
-  }, [newSessionProject, selectedConnector?.id])
+    setWorkspace((current) => {
+      if (!current) return current
+      if (current.connectorId && current.connectorId !== selectedConnectorId) return null
+      if (current.projectId && !projects.some((project) => (
+        project.id === current.projectId && project.connectorId === selectedConnectorId
+      ))) return null
+      return current
+    })
+  }, [projects, selectedConnectorId])
 
   React.useEffect(() => {
     const connectorId = selectedConnectorId
@@ -595,7 +615,7 @@ export function TaskComposer() {
     const optimisticSession: RealSessionView = {
       id: localSessionId,
       connectorId: selectedConnector.id,
-      projectId: newSessionProject?.id ?? null,
+      projectId: workspace?.projectId ?? null,
       connectorStatus: selectedConnector.status,
       runtime: selectedRuntime?.runtimeType ?? selectedAgent,
       runtimeId: selectedRuntime?.runtimeId ?? selectedAgent,
@@ -667,7 +687,7 @@ export function TaskComposer() {
       }
       const createBody = {
         connectorId: selectedConnector.id,
-        projectId: newSessionProject?.id ?? undefined,
+        projectId: workspace?.projectId ?? undefined,
         ...sessionRuntimeRequestIdentity(
           selectedRuntime?.runtimeType ?? selectedAgent,
           selectedRuntime?.runtimeId ?? selectedAgent,
@@ -675,7 +695,7 @@ export function TaskComposer() {
         title: prompt.trim() || undefined,
         cwd: workspace?.path || undefined,
       }
-      if (!newSessionProject) {
+      if (!workspace?.projectId) {
         const nextPreference = withNewSessionSelectionPreference(
           preference,
           selectedConnector.id,
@@ -948,20 +968,12 @@ export function TaskComposer() {
         </div>
 
         <div className="mt-3">
-          {newSessionProject ? (
-            <div className="flex min-h-9 items-center gap-2 rounded-lg border border-border bg-muted/30 px-3 text-sm">
-              <span className="shrink-0 font-medium text-foreground">{newSessionProject.name}</span>
-              <span className="min-w-0 truncate code-mono text-xs text-muted-foreground">
-                {newSessionProject.workspacePath}
-              </span>
-            </div>
-          ) : (
-            <WorkspacePicker
-              connectorId={selectedConnectorId}
-              value={workspace}
-              onChange={setWorkspace}
-            />
-          )}
+          <WorkspacePicker
+            connectorId={selectedConnectorId}
+            value={workspace}
+            onChange={setWorkspace}
+            includeProjects
+          />
         </div>
       </div>
     </div>

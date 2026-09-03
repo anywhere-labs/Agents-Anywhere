@@ -307,7 +307,6 @@ export type ProjectCreateRequest = {
   name: string;
   connectorId: string;
   workspacePath: string;
-  attachMatchingSessions?: boolean;
 };
 
 export type ProjectCreateResponse = ProjectResponse & {
