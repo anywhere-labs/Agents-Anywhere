@@ -658,12 +658,9 @@ export async function fsList(
 export type FilterValue = {
   connectorId: string | "all"
   runtime: string | "all"
-  status: SessionStatusFilter
 }
 
-export type SessionStatusFilter = "all" | "archived"
-
-export const defaultFilter: FilterValue = { connectorId: "all", runtime: "all", status: "all" }
+export const defaultFilter: FilterValue = { connectorId: "all", runtime: "all" }
 
 function isUserArchived(session: SessionView): boolean {
   if (typeof session.userArchived === "boolean") return session.userArchived
@@ -679,11 +676,7 @@ export function filterSessions(
   return list.filter((s) => {
     if (filter.connectorId !== "all" && s.connectorId !== filter.connectorId) return false
     if (filter.runtime !== "all" && s.runtime !== filter.runtime) return false
-    if (filter.status === "archived") {
-      if (!isUserArchived(s) || s.sourceAvailability === "archived") return false
-    } else {
-      if (s.archived) return false
-    }
+    if (isUserArchived(s) || s.archived) return false
     if (query.trim() && !(s.title ?? "").toLowerCase().includes(query.trim().toLowerCase())) return false
     return true
   })

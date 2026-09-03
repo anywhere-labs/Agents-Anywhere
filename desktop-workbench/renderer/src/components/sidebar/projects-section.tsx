@@ -1,8 +1,13 @@
 "use client"
 
-import { ChevronDown, ChevronRight, Plus } from "lucide-react"
+import { Plus } from "lucide-react"
 import { ProjectSidebarItem } from "@/components/sidebar/project-sidebar-item"
 import { SidebarLoadingItem } from "@/components/sidebar/sidebar-loading-item"
+import { SidebarSectionTrigger } from "@/components/sidebar/sidebar-section-trigger"
+import {
+  Collapsible,
+  CollapsibleContent,
+} from "@/components/ui/collapsible"
 import {
   SidebarGroup,
   SidebarGroupContent,
@@ -90,45 +95,39 @@ export function ProjectsSection({
 
   return (
     <SidebarGroup>
-      <SidebarGroupLabel className="flex items-center justify-between pr-1" role="heading" aria-level={2}>
-        <button
-          type="button"
-          className="flex min-w-0 items-center gap-1 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring"
-          aria-expanded={expanded}
-          onClick={() => onExpandedChange(!expanded)}
-        >
-          <span>{t("sections.projects")}</span>
-          {expanded ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
-        </button>
-        <TooltipProvider delayDuration={300}>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                type="button"
-                aria-label={t("projects.add")}
-                onClick={onAddProject}
-                className="rounded p-0.5 text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-              >
-                <Plus className="size-3.5" />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="top">{t("projects.add")}</TooltipContent>
-          </Tooltip>
-        </TooltipProvider>
-      </SidebarGroupLabel>
-      {expanded ? (
-        <SidebarGroupContent>
-          <SidebarMenu>
-            {isLoading ? (
-              <SidebarLoadingItem label={t("status.loadingProjects")} />
-            ) : projects.length === 0 ? (
-              <p className="px-3 py-2 text-xs text-muted-foreground">{t("projects.empty")}</p>
-            ) : (
-              <ProjectList projects={projects} controller={controller} />
-            )}
-          </SidebarMenu>
-        </SidebarGroupContent>
-      ) : null}
+      <Collapsible open={expanded} onOpenChange={onExpandedChange}>
+        <SidebarGroupLabel className="flex items-center justify-between pr-1" role="heading" aria-level={2}>
+          <SidebarSectionTrigger label={t("sections.projects")} expanded={expanded} />
+          <TooltipProvider delayDuration={300}>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  aria-label={t("projects.add")}
+                  onClick={onAddProject}
+                  className="rounded p-0.5 text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+                >
+                  <Plus className="size-3.5" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="top">{t("projects.add")}</TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        </SidebarGroupLabel>
+        <CollapsibleContent>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {isLoading ? (
+                <SidebarLoadingItem label={t("status.loadingProjects")} />
+              ) : projects.length === 0 ? (
+                <p className="px-3 py-2 text-xs text-muted-foreground">{t("projects.empty")}</p>
+              ) : (
+                <ProjectList projects={projects} controller={controller} />
+              )}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </CollapsibleContent>
+      </Collapsible>
     </SidebarGroup>
   )
 }

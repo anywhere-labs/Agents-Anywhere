@@ -643,14 +643,14 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
 
   const loadMoreSessions = React.useCallback(async () => {
     const token = authSession?.accessToken
-    const pageKind = filter.status === "archived" ? "archived" : "active"
+    const pageKind = "active" as const
     const page = sessionPages[pageKind]
     if (!token || !page.hasMore || !page.nextCursor || loadingSessionPagesRef.current[pageKind]) return
     loadingSessionPagesRef.current[pageKind] = true
     setLoadingSessionPages((current) => ({ ...current, [pageKind]: true }))
     try {
       const response = await dashboardApi.listSessions(token, {
-        archived: pageKind === "archived",
+        archived: false,
         limit: 100,
         cursor: page.nextCursor,
       })
@@ -671,7 +671,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       loadingSessionPagesRef.current[pageKind] = false
       setLoadingSessionPages((current) => ({ ...current, [pageKind]: false }))
     }
-  }, [authSession?.accessToken, filter.status, sessionPages, sortSessions])
+  }, [authSession?.accessToken, sessionPages, sortSessions])
 
   React.useEffect(() => {
     initialLoadDoneRef.current = false
@@ -1343,8 +1343,8 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     projectSessionsById,
     loadingProjectSessionIds,
     isLoading,
-    hasMoreSessions: sessionPages[filter.status === "archived" ? "archived" : "active"].hasMore,
-    isLoadingMoreSessions: loadingSessionPages[filter.status === "archived" ? "archived" : "active"],
+    hasMoreSessions: sessionPages.active.hasMore,
+    isLoadingMoreSessions: loadingSessionPages.active,
     routeReady,
     page,
     activeSessionId,

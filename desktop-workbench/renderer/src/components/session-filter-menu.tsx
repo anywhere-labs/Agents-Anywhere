@@ -1,12 +1,13 @@
 "use client"
 
 import * as React from "react"
-import { ChevronRight } from "lucide-react"
+import { CheckCheck, MoreHorizontal } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuRadioGroup,
@@ -15,23 +16,23 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { cn } from "@/lib/utils"
-import { defaultFilter, type FilterValue, type SessionStatusFilter } from "@/lib/demo-api"
+import { defaultFilter, type FilterValue } from "@/lib/demo-api"
 import { useWorkspace } from "@/components/workspace-context"
 import { useTranslations } from "next-intl"
 import { runtimeLabel } from "@/components/session/session-utils"
 
-export function SessionFilterMenu() {
+export function SessionFilterMenu({
+  onMarkAllRead,
+}: {
+  onMarkAllRead?: () => void | Promise<void>
+}) {
   const { filter, setFilter, connectors, sessions } = useWorkspace()
   const t = useTranslations("dashboard")
   const [open, setOpen] = React.useState(false)
 
-  const active = filter.connectorId !== "all" || filter.runtime !== "all" || filter.status !== "all"
+  const active = filter.connectorId !== "all" || filter.runtime !== "all"
 
   const update = (patch: Partial<FilterValue>) => setFilter({ ...filter, ...patch })
-  const statuses: { value: SessionStatusFilter; label: string }[] = [
-    { value: "all", label: t("filters.allActive") },
-    { value: "archived", label: t("filters.archived") },
-  ]
 
   // Derive unique runtimes from sessions
   const runtimes = React.useMemo(
@@ -48,11 +49,13 @@ export function SessionFilterMenu() {
           size="icon"
           aria-label={t("actions.filter")}
           className={cn(
-            "size-6 rounded-md p-0",
-            active ? "text-foreground" : "text-sidebar-foreground/60",
+            "size-6 rounded-md p-0 transition-opacity",
+            active || open
+              ? "opacity-100 text-foreground"
+              : "opacity-0 text-sidebar-foreground/60 group-hover/recent:opacity-100 group-focus-within/recent:opacity-100",
           )}
         >
-          <ChevronRight className={cn("size-3.5 transition-transform", open && "rotate-90")} />
+          <MoreHorizontal />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent
@@ -79,21 +82,24 @@ export function SessionFilterMenu() {
           value={filter.runtime}
           onSelect={(v) => update({ runtime: v })}
         />
-        <DropdownMenuSeparator />
-        <FilterSection
-          label={t("filters.status")}
-          options={statuses}
-          value={filter.status}
-          onSelect={(v) => update({ status: v as SessionStatusFilter })}
-        />
-        {active && (
+        {active || onMarkAllRead ? (
           <>
             <DropdownMenuSeparator />
-            <DropdownMenuItem onSelect={() => setFilter(defaultFilter)}>
-              {t("filters.clear")}
-            </DropdownMenuItem>
+            <DropdownMenuGroup>
+              {onMarkAllRead ? (
+                <DropdownMenuItem onSelect={() => void onMarkAllRead()}>
+                  <CheckCheck />
+                  {t("actions.markAllRead")}
+                </DropdownMenuItem>
+              ) : null}
+              {active ? (
+                <DropdownMenuItem onSelect={() => setFilter(defaultFilter)}>
+                  {t("filters.clear")}
+                </DropdownMenuItem>
+              ) : null}
+            </DropdownMenuGroup>
           </>
-        )}
+        ) : null}
       </DropdownMenuContent>
     </DropdownMenu>
   )

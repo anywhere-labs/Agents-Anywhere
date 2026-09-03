@@ -175,7 +175,7 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton
-              className="h-10 font-medium"
+              className="h-9 font-medium"
               isActive={page === "home"}
               onClick={goHome}
             >
@@ -192,7 +192,7 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
             <SidebarMenu>
               <SidebarMenuItem>
                 <SidebarMenuButton
-                  className="h-10 font-medium"
+                  className="h-9 font-medium"
                   isActive={page === "mobile-connections"}
                   onClick={() => navigate("mobile-connections")}
                 >
