@@ -11,6 +11,20 @@ Renderer -> narrow preload IPC -> Electron Main -> anywhere-cli rpc -> Server
 
 ## Run
 
+From the repository root, the local Desktop launcher starts Docker-backed
+PostgreSQL and Redis, the Server on fixed port `8000`, and Desktop on fixed
+port `5184`. It releases existing listeners on those two application ports and
+always points Desktop at the local Server:
+
+```bash
+./desktop-local-up.sh
+./desktop-local-up.sh down
+```
+
+Use `./desktop-local-up.sh --skip-install` to reuse existing dependencies.
+
+To run Desktop by itself:
+
 ```bash
 cd desktop-workbench
 yarn install
