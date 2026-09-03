@@ -59,7 +59,11 @@ export function selectProjectSessions(
   sessions: WorkspaceSessionView[],
   currentSessionsById: Map<string, WorkspaceSessionView>,
 ): WorkspaceSessionView[] {
+  const currentSessions = sessions.map(
+    (session) => currentSessionsById.get(session.id) ?? session,
+  )
+
   return sortSidebarSessions(
-    sessions.map((session) => currentSessionsById.get(session.id) ?? session),
+    currentSessions.filter((session) => !session.archived && !session.pinned),
   )
 }
