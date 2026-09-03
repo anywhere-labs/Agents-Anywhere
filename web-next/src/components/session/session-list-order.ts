@@ -4,6 +4,11 @@ export type SessionListOrderValue = {
   sortAt?: string | null
 }
 
+export type SessionListOrderOptions = {
+  now?: number
+  optimisticTopUntil?: ReadonlyMap<string, number>
+}
+
 export function sessionStatusIsRunning(status: string): boolean {
   return status === "running"
 }
@@ -23,9 +28,15 @@ function sessionSortMillis(session: SessionListOrderValue): number {
 export function compareSessionListOrder(
   left: SessionListOrderValue,
   right: SessionListOrderValue,
+  options: SessionListOrderOptions = {},
 ): number {
-  const leftRunning = sessionStatusIsRunning(left.status)
-  const rightRunning = sessionStatusIsRunning(right.status)
+  const now = options.now ?? Date.now()
+  const leftRunning =
+    sessionStatusIsRunning(left.status) ||
+    (options.optimisticTopUntil?.get(left.id) ?? 0) > now
+  const rightRunning =
+    sessionStatusIsRunning(right.status) ||
+    (options.optimisticTopUntil?.get(right.id) ?? 0) > now
 
   if (leftRunning !== rightRunning) return leftRunning ? -1 : 1
   if (leftRunning) return compareAscii(left.id, right.id)
@@ -36,6 +47,15 @@ export function compareSessionListOrder(
   )
 }
 
-export function sortSessionViews<T extends SessionListOrderValue>(sessions: readonly T[]): T[] {
-  return [...sessions].sort(compareSessionListOrder)
+export function sortSessionViews<T extends SessionListOrderValue>(
+  sessions: readonly T[],
+  options: SessionListOrderOptions = {},
+): T[] {
+  const resolvedOptions = {
+    ...options,
+    now: options.now ?? Date.now(),
+  }
+  return [...sessions].sort((left, right) =>
+    compareSessionListOrder(left, right, resolvedOptions),
+  )
 }

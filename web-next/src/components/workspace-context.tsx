@@ -313,6 +313,7 @@ const WorkspaceContext = React.createContext<WorkspaceState | null>(null)
 
 const FIRST_DEVICE_WIZARD_DISMISSED_KEY = "aa-first-device-wizard-dismissed-v1"
 const PANEL_MODE_STORAGE_KEY = "aa-session-runtime-panel-modes-v1"
+const SESSION_SEND_OPTIMISTIC_TOP_MS = 1_000
 const DEFAULT_PANEL_MODES: Record<PanelId, PanelMode> = {
   files: "docked",
   terminal: "docked",
@@ -384,7 +385,70 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   const loadedBeyondFirstPageRef = React.useRef({ active: false, archived: false })
   const sessionStreamSeqRef = React.useRef(new Map<string, number>())
   const pendingSessionIndicatorRef = React.useRef(new Map<string, SessionView>())
-  const sortSessions = React.useCallback(sortSessionViews, [])
+  // Local sends temporarily affect presentation order only; remote status stays authoritative.
+  const optimisticTopUntilRef = React.useRef(new Map<string, number>())
+  const optimisticTopTimersRef = React.useRef(new Map<string, number>())
+  const sortSessions = React.useCallback(
+    (values: readonly SessionView[]) => sortSessionViews(values, {
+      now: Date.now(),
+      optimisticTopUntil: optimisticTopUntilRef.current,
+    }),
+    [],
+  )
+
+  const clearOptimisticTopTimer = React.useCallback((sessionId: string) => {
+    const timer = optimisticTopTimersRef.current.get(sessionId)
+    if (timer !== undefined) window.clearTimeout(timer)
+    optimisticTopTimersRef.current.delete(sessionId)
+  }, [])
+
+  const setOptimisticTopUntil = React.useCallback(
+    (sessionId: string, until: number) => {
+      clearOptimisticTopTimer(sessionId)
+      if (until <= Date.now()) {
+        optimisticTopUntilRef.current.delete(sessionId)
+        return
+      }
+      optimisticTopUntilRef.current.set(sessionId, until)
+      const timer = window.setTimeout(() => {
+        if (optimisticTopUntilRef.current.get(sessionId) !== until) return
+        optimisticTopUntilRef.current.delete(sessionId)
+        optimisticTopTimersRef.current.delete(sessionId)
+        setSessions((current) => sortSessions(current))
+      }, until - Date.now())
+      optimisticTopTimersRef.current.set(sessionId, timer)
+    },
+    [clearOptimisticTopTimer, sortSessions],
+  )
+
+  const clearOptimisticTop = React.useCallback((sessionId: string) => {
+    clearOptimisticTopTimer(sessionId)
+    optimisticTopUntilRef.current.delete(sessionId)
+  }, [clearOptimisticTopTimer])
+
+  const transferOptimisticTop = React.useCallback(
+    (fromSessionId: string, toSessionId: string, minimumUntil = 0) => {
+      const until = optimisticTopUntilRef.current.get(fromSessionId)
+      clearOptimisticTop(fromSessionId)
+      setOptimisticTopUntil(
+        toSessionId,
+        Math.max(
+          until ?? 0,
+          minimumUntil,
+          optimisticTopUntilRef.current.get(toSessionId) ?? 0,
+        ),
+      )
+    },
+    [clearOptimisticTop, setOptimisticTopUntil],
+  )
+
+  React.useEffect(() => () => {
+    for (const timer of optimisticTopTimersRef.current.values()) {
+      window.clearTimeout(timer)
+    }
+    optimisticTopTimersRef.current.clear()
+    optimisticTopUntilRef.current.clear()
+  }, [authSession?.accessToken])
 
   const reconcileSessionIndicator = React.useCallback((
     current: SessionView | undefined,
@@ -905,6 +969,11 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   }, [authSession?.accessToken, sessions, sortSessions, upsertSession])
 
   const addOptimisticMessage = React.useCallback((message: OptimisticSessionMessage) => {
+    setOptimisticTopUntil(
+      message.sessionId,
+      Date.now() + SESSION_SEND_OPTIMISTIC_TOP_MS,
+    )
+    setSessions((current) => sortSessions(current))
     setOptimisticMessages((prev) => {
       const index = prev.findIndex((item) => item.clientMessageId === message.clientMessageId)
       if (index === -1) {
@@ -917,9 +986,17 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       optimisticMessagesRef.current = next
       return next
     })
-  }, [])
+  }, [setOptimisticTopUntil, sortSessions])
 
   const bindOptimisticSession = React.useCallback((localSessionId: string, session: RealSessionView, attachments: AttachmentRef[] = []) => {
+    // The local new-session row is not shown in the sidebar. Start the full
+    // stability window when its canonical row first becomes sortable instead
+    // of spending that window while create-and-start is still pending.
+    transferOptimisticTop(
+      localSessionId,
+      session.id,
+      Date.now() + SESSION_SEND_OPTIMISTIC_TOP_MS,
+    )
     setSessionAliases((prev) => {
       if (prev[localSessionId] === session.id) return prev
       const next = { ...prev, [localSessionId]: session.id }
@@ -957,17 +1034,28 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       const withoutLocal = prev.filter((item) => item.id !== localSessionId)
       const index = withoutLocal.findIndex((item) => item.id === mapped.id)
       if (index === -1) return sortSessions([mapped, ...withoutLocal])
+      const current = withoutLocal[index]
+      if (!current) return sortSessions([mapped, ...withoutLocal])
       const next = [...withoutLocal]
-      next[index] = mapped
+      next[index] = current.updatedSeq >= mapped.updatedSeq
+        ? current
+        : mapped
       return sortSessions(next)
     })
     const currentRoute = routeRef.current
     if (currentRoute.page === "session" && currentRoute.sessionId === localSessionId) {
       replaceRoute({ page: "session", sessionId: session.id })
     }
-  }, [replaceRoute, sortSessions])
+  }, [replaceRoute, sortSessions, transferOptimisticTop])
 
   const markOptimisticMessageFailed = React.useCallback((clientMessageId: string, message: string) => {
+    const failed = optimisticMessagesRef.current.find(
+      (entry) => entry.clientMessageId === clientMessageId,
+    )
+    if (failed) {
+      clearOptimisticTop(failed.sessionId)
+      setSessions((current) => sortSessions(current))
+    }
     setOptimisticMessages((prev) => {
       const next = prev.map((entry) =>
         entry.clientMessageId === clientMessageId
@@ -977,7 +1065,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       optimisticMessagesRef.current = next
       return next
     })
-  }, [])
+  }, [clearOptimisticTop, sortSessions])
 
   const clearResolvedOptimisticMessages = React.useCallback((sessionId: string, items: TimelineItem[]) => {
     const resolvedClientMessageIds = new Set(

@@ -116,7 +116,18 @@ def session_revision_fenced(method: Any) -> Any:
         if not isinstance(session_id, str) or not session_id:
             raise ValueError("session revision writer requires a session_id")
         async with self.session_revision_fence(session_id):
+            try:
+                previous = await self.get_session(session_id)
+            except KeyError:
+                previous = None
             result = await method(self, *args, **kwargs)
+            if (
+                previous is not None
+                and isinstance(result, SessionView)
+                and previous.updatedSeq == result.updatedSeq
+                and previous.sortAt == result.sortAt
+            ):
+                return result
             await self.publish_session_revision_result(
                 session_id,
                 operation=method.__name__,
