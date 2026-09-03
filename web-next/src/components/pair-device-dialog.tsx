@@ -483,6 +483,8 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
   const handleClaim = async () => {
     const code = pairCode
     if (code.length < 6 || !session?.accessToken || !connectorId || !token) return
+    stopPolling()
+    const claimGeneration = pollingGenerationRef.current
     setClaiming(true)
     try {
       const result = await dashboardApi.claimPairing(session.accessToken, {
@@ -492,13 +494,16 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
         connectorId,
         connectorToken: token,
       })
+      if (claimGeneration !== pollingGenerationRef.current) return
       const claimedConnectorId = result.connector?.id ?? connectorId
       if (result.connector?.id) setConnectorId(result.connector.id)
+      setClaiming(false)
       startConnectorPolling(claimedConnectorId)
     } catch (err) {
+      if (claimGeneration !== pollingGenerationRef.current) return
       toast.error(err instanceof Error ? err.message : t("errors.claimFailed"))
     } finally {
-      setClaiming(false)
+      if (claimGeneration === pollingGenerationRef.current) setClaiming(false)
     }
   }
 
@@ -859,7 +864,7 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
                   size="sm"
                   onClick={() => { stopPolling(); setStep("desktop-method") }}
                   className="gap-1.5"
-                  disabled={polling}
+                  disabled={polling || claiming}
                 >
                   <ArrowLeft className="size-3.5" />
                   {tCommon("back")}

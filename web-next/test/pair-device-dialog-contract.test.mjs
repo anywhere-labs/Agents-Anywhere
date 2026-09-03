@@ -32,6 +32,14 @@ test("pairing waits for online and enters explicit agent setup without closing",
   assert.doesNotMatch(polling, /onOpenChange\(false\)/)
 
   const claim = sourceBetween("const handleClaim", "const handleForceClose")
+  assert.match(
+    claim,
+    /stopPolling\(\)\s*const claimGeneration = pollingGenerationRef\.current/,
+  )
+  assert.match(
+    claim,
+    /if \(claimGeneration !== pollingGenerationRef\.current\) return/,
+  )
   assert.match(claim, /startConnectorPolling\(claimedConnectorId\)/)
   assert.doesNotMatch(claim, /enterAgentsStep|onOpenChange\(false\)/)
 })
