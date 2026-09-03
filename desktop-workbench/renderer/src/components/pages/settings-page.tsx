@@ -1396,7 +1396,7 @@ export function SettingsPage() {
   return (
     <div className="flex h-full flex-col bg-background">
       <div className="px-5 pb-0 pt-5 sm:px-8 sm:pt-8">
-        <div className="mb-6 -ml-2 flex items-center gap-1">
+        <div className="-ml-2 flex items-center gap-1">
           <DashboardSidebarToggle />
           <Button
             type="button"
@@ -1408,8 +1408,8 @@ export function SettingsPage() {
             <ChevronLeft className="size-4" />
             {tCommon("back")}
           </Button>
+          <h1 className="ml-2 text-2xl font-semibold">{t("title")}</h1>
         </div>
-        <h1 className="text-2xl font-semibold">{t("title")}</h1>
         <SettingsCategoryDrawer
           tab={tab}
           activeIcon={ActiveNavIcon}
@@ -1418,7 +1418,7 @@ export function SettingsPage() {
         />
       </div>
 
-      <div className="flex min-h-0 flex-1 gap-8 overflow-hidden px-5 py-5 sm:px-8 sm:py-8">
+      <div className="flex min-h-0 flex-1 gap-8 overflow-hidden px-5 pb-5 pt-4 sm:px-8 sm:pb-8 sm:pt-5">
         <nav className="hidden w-52 shrink-0 flex-col gap-0.5 lg:flex">
           {navItems.map((item) => {
             const Icon = item.icon

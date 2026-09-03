@@ -43,6 +43,7 @@ type ArchivedSessionGroup = {
   key: string
   projectId: string | null
   name: string
+  workspacePath: string | null
   sessions: SessionView[]
 }
 
@@ -134,6 +135,15 @@ export function ArchivedSessionsTab({
     if (!projects.some((project) => project.id === projectId)) setProjectFilter(ALL_PROJECTS)
   }, [projectFilter, projects])
 
+  const selectedProject = projectFilter.startsWith(PROJECT_PREFIX)
+    ? projects.find((project) => project.id === projectFilter.slice(PROJECT_PREFIX.length)) ?? null
+    : null
+  const projectFilterLabel = selectedProject
+    ? `${selectedProject.name} · ${selectedProject.workspacePath}`
+    : projectFilter === STANDALONE_SESSIONS
+      ? t("archivedStandaloneSessions")
+      : t("archivedAllProjects")
+
   const groups = React.useMemo<ArchivedSessionGroup[]>(() => {
     const projectById = new Map(projects.map((project) => [project.id, project]))
     const filteredSessions = sessions.filter((session) => {
@@ -145,12 +155,14 @@ export function ArchivedSessionsTab({
 
     for (const session of filteredSessions) {
       const key = session.projectId ?? STANDALONE_SESSIONS
+      const project = session.projectId ? projectById.get(session.projectId) : null
       const group = grouped.get(key) ?? {
         key,
         projectId: session.projectId ?? null,
         name: session.projectId
-          ? projectById.get(session.projectId)?.name ?? t("archivedUnknownProject")
+          ? project?.name ?? t("archivedUnknownProject")
           : t("archivedStandaloneSessions"),
+        workspacePath: project?.workspacePath ?? null,
         sessions: [],
       }
       group.sessions.push(session)
@@ -248,16 +260,26 @@ export function ArchivedSessionsTab({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 className="text-xl font-semibold">{t("archivedSessions")}</h2>
         <Select value={projectFilter} onValueChange={setProjectFilter}>
-          <SelectTrigger className="w-56" aria-label={t("archivedProjectFilter")}>
-            <SelectValue />
+          <SelectTrigger className="w-full sm:w-80" aria-label={t("archivedProjectFilter")}>
+            <SelectValue>{projectFilterLabel}</SelectValue>
           </SelectTrigger>
-          <SelectContent>
+          <SelectContent className="w-80">
             <SelectGroup>
               <SelectItem value={ALL_PROJECTS}>{t("archivedAllProjects")}</SelectItem>
               <SelectItem value={STANDALONE_SESSIONS}>{t("archivedStandaloneSessions")}</SelectItem>
               {projects.map((project) => (
-                <SelectItem key={project.id} value={`${PROJECT_PREFIX}${project.id}`}>
-                  {project.name}
+                <SelectItem
+                  key={project.id}
+                  value={`${PROJECT_PREFIX}${project.id}`}
+                  textValue={`${project.name} ${project.workspacePath}`}
+                  className="items-start py-2"
+                >
+                  <span className="flex min-w-0 flex-1 flex-col items-start gap-0.5">
+                    <span className="max-w-full truncate">{project.name}</span>
+                    <span className="max-w-full truncate code-mono text-xs text-muted-foreground">
+                      {project.workspacePath}
+                    </span>
+                  </span>
                 </SelectItem>
               ))}
             </SelectGroup>
@@ -278,11 +300,20 @@ export function ArchivedSessionsTab({
           {groups.map((group) => (
             <Card key={group.key} size="sm" className="gap-0 py-0">
               <CardHeader className="border-b py-4">
-                <CardTitle className="flex min-w-0 items-center gap-2">
-                  <Folder className="size-4 shrink-0 text-muted-foreground" />
-                  <span className="truncate">{group.name}</span>
-                  <span className="shrink-0 text-xs font-normal text-muted-foreground">
-                    {t("archivedCount", { count: group.sessions.length })}
+                <CardTitle className="flex min-w-0 items-start gap-2">
+                  <Folder className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                  <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                    <span className="flex min-w-0 items-center gap-2">
+                      <span className="truncate">{group.name}</span>
+                      <span className="shrink-0 text-xs font-normal text-muted-foreground">
+                        {t("archivedCount", { count: group.sessions.length })}
+                      </span>
+                    </span>
+                    {group.workspacePath ? (
+                      <span className="truncate code-mono text-xs font-normal text-muted-foreground">
+                        {group.workspacePath}
+                      </span>
+                    ) : null}
                   </span>
                 </CardTitle>
                 {group.projectId ? (
