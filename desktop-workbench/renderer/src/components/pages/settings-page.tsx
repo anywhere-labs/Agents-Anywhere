@@ -3,6 +3,7 @@
 import * as React from "react"
 import Cropper, { type Area, type Point } from "react-easy-crop"
 import {
+  Archive,
   Camera,
   ChevronDown,
   ChevronLeft,
@@ -73,6 +74,7 @@ import { Slider } from "@/components/ui/slider"
 import { Spinner } from "@/components/ui/spinner"
 import { Switch } from "@/components/ui/switch"
 import { MobileSignInPanel } from "@/components/pages/mobile-signin-panel"
+import { ArchivedSessionsTab } from "@/components/settings/archived-sessions-tab"
 import { DashboardSidebarToggle } from "@/components/dashboard-sidebar-toggle"
 import { useAuth } from "@/components/auth/auth-context"
 import { LocaleSwitcher } from "@/components/locale-switcher"
@@ -87,18 +89,25 @@ import {
 } from "@/features/desktop/bridge"
 import { cn } from "@/lib/utils"
 
-type SettingsTab = "account" | "desktop" | "startup" | "logs" | "appearance"
+type SettingsTab = "account" | "desktop" | "startup" | "logs" | "appearance" | "archived-sessions"
+type SettingsLabelKey = "account" | "desktop" | "startup" | "logs" | "appearance" | "archivedSessions"
 type AppearanceMode = "light" | "dark" | "auto"
 
 const AVATAR_OUTPUT_SIZE = 256
 const AVATAR_MAX_FILE_SIZE = 8 * 1024 * 1024
 
-const navItems: { id: SettingsTab; labelKey: SettingsTab; icon: typeof User }[] = [
+const navItems: {
+  id: SettingsTab
+  labelKey: SettingsLabelKey
+  icon: typeof User
+  sectionStart?: boolean
+}[] = [
   { id: "account", labelKey: "account", icon: User },
   { id: "desktop", labelKey: "desktop", icon: Laptop },
   { id: "startup", labelKey: "startup", icon: Rocket },
   { id: "logs", labelKey: "logs", icon: Logs },
   { id: "appearance", labelKey: "appearance", icon: Sun },
+  { id: "archived-sessions", labelKey: "archivedSessions", icon: Archive, sectionStart: true },
 ]
 
 const SYNC_INTERVAL_OPTIONS = [15, 30, 60, 300] as const
@@ -1310,7 +1319,7 @@ function AppearanceTab() {
 }
 
 export function SettingsPage() {
-  const { navigate, settingsTab } = useWorkspace()
+  const { navigate, projects, refreshData, settingsTab } = useWorkspace()
   const { session, me: authMe, refreshMe } = useAuth()
   const t = useTranslations("pages.settings")
   const tCommon = useTranslations("common")
@@ -1360,7 +1369,7 @@ export function SettingsPage() {
   }, [authMe, session, t])
 
   React.useEffect(() => {
-    if (settingsTab && ["account", "desktop", "startup", "logs", "appearance"].includes(settingsTab)) {
+    if (settingsTab && navItems.some((item) => item.id === settingsTab)) {
       setTab(settingsTab as SettingsTab)
     } else if (settingsTab) {
       setTab("account")
@@ -1402,7 +1411,6 @@ export function SettingsPage() {
           </Button>
         </div>
         <h1 className="text-2xl font-semibold">{t("title")}</h1>
-        <p className="mt-1 text-sm text-muted-foreground">{t("description")}</p>
         <SettingsCategoryDrawer
           tab={tab}
           activeIcon={ActiveNavIcon}
@@ -1422,6 +1430,7 @@ export function SettingsPage() {
                 onClick={() => handleTabChange(item.id)}
                 className={cn(
                   "flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm transition-colors",
+                  item.sectionStart && "mt-4",
                   tab === item.id
                     ? "bg-sidebar-accent text-foreground"
                     : "text-muted-foreground hover:bg-sidebar-accent/50 hover:text-foreground",
@@ -1457,6 +1466,13 @@ export function SettingsPage() {
           {tab === "startup" && <StartupTab />}
           {tab === "logs" && <LogsTab />}
           {tab === "appearance" && <AppearanceTab />}
+          {tab === "archived-sessions" && (
+            <ArchivedSessionsTab
+              token={session?.accessToken ?? ""}
+              projects={projects}
+              onWorkspaceRefresh={refreshData}
+            />
+          )}
         </ScrollArea>
       </div>
     </div>
@@ -1503,6 +1519,7 @@ function SettingsCategoryDrawer({
                 }}
                 className={cn(
                   "flex w-full items-center gap-3 rounded-xl px-4 py-3 text-left text-sm transition-colors",
+                  item.sectionStart && "mt-3",
                   tab === item.id
                     ? "bg-accent text-foreground"
                     : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
