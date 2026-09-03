@@ -153,6 +153,7 @@ export function TaskComposer() {
     bindOptimisticSession,
     connectors,
     markOptimisticMessageFailed,
+    newSessionProject,
     openSession,
   } = useWorkspace()
   const isMobile = useIsMobile()
@@ -217,20 +218,26 @@ export function TaskComposer() {
     [connectors, runtimeInventory],
   )
 
+  const selectableConnectors = React.useMemo(
+    () => newSessionProject
+      ? onlineConnectors.filter((connector) => connector.id === newSessionProject.connectorId)
+      : onlineConnectors,
+    [newSessionProject, onlineConnectors],
+  )
   const deviceOptions = React.useMemo(
     () =>
-      onlineConnectors.map((c) => ({
+      selectableConnectors.map((c) => ({
         id: c.id,
         label: c.name,
       })),
-    [onlineConnectors],
+    [selectableConnectors],
   )
   const hasOnlineDevice = deviceOptions.length > 0
 
   const [selectedDevice, setSelectedDevice] = React.useState(deviceOptions[0]?.id ?? "")
   const selectedConnector =
-    onlineConnectors.find((connector) => connector.id === selectedDevice) ??
-    onlineConnectors[0] ??
+    selectableConnectors.find((connector) => connector.id === selectedDevice) ??
+    selectableConnectors[0] ??
     null
   const selectedConnectorId = selectedConnector?.id ?? ""
   const agentOptions = React.useMemo(
@@ -288,6 +295,13 @@ export function TaskComposer() {
   }, [])
 
   React.useEffect(() => {
+    if (newSessionProject) {
+      devicePreferenceAppliedRef.current = false
+      const projectDevice = deviceOptions[0]?.id ?? newSessionProject.connectorId
+      if (projectDevice !== selectedDevice) setSelectedDevice(projectDevice)
+      return
+    }
+
     if (deviceOptions.length === 0) {
       if (selectedDevice) setSelectedDevice("")
       return
@@ -309,11 +323,19 @@ export function TaskComposer() {
     if (!deviceOptions.some((option) => option.id === selectedDevice)) {
       setSelectedDevice(deviceOptions[0]?.id ?? "")
     }
-  }, [deviceOptions, preference?.connectorId, preferenceLoaded, selectedDevice])
+  }, [deviceOptions, newSessionProject, preference?.connectorId, preferenceLoaded, selectedDevice])
 
   React.useEffect(() => {
+    if (newSessionProject) {
+      setWorkspace({
+        label: newSessionProject.name,
+        path: newSessionProject.workspacePath,
+        connectorId: newSessionProject.connectorId,
+      })
+      return
+    }
     setWorkspace(null)
-  }, [selectedConnector?.id])
+  }, [newSessionProject, selectedConnector?.id])
 
   React.useEffect(() => {
     const connectorId = selectedConnectorId
@@ -573,6 +595,7 @@ export function TaskComposer() {
     const optimisticSession: RealSessionView = {
       id: localSessionId,
       connectorId: selectedConnector.id,
+      projectId: newSessionProject?.id ?? null,
       connectorStatus: selectedConnector.status,
       runtime: selectedRuntime?.runtimeType ?? selectedAgent,
       runtimeId: selectedRuntime?.runtimeId ?? selectedAgent,
@@ -644,6 +667,7 @@ export function TaskComposer() {
       }
       const createBody = {
         connectorId: selectedConnector.id,
+        projectId: newSessionProject?.id ?? undefined,
         ...sessionRuntimeRequestIdentity(
           selectedRuntime?.runtimeType ?? selectedAgent,
           selectedRuntime?.runtimeId ?? selectedAgent,
@@ -651,17 +675,19 @@ export function TaskComposer() {
         title: prompt.trim() || undefined,
         cwd: workspace?.path || undefined,
       }
-      const nextPreference = withNewSessionSelectionPreference(
-        preference,
-        selectedConnector.id,
-        selectedAgent,
-        {
-          model: selectedModelSelection,
-          permission: selectedPermissionSelection,
-        },
-      )
-      writeNewSessionPreference(nextPreference)
-      setPreference(nextPreference)
+      if (!newSessionProject) {
+        const nextPreference = withNewSessionSelectionPreference(
+          preference,
+          selectedConnector.id,
+          selectedAgent,
+          {
+            model: selectedModelSelection,
+            permission: selectedPermissionSelection,
+          },
+        )
+        writeNewSessionPreference(nextPreference)
+        setPreference(nextPreference)
+      }
       const created = await dashboardApi.createAndStartSession(authSession.accessToken, {
         ...createBody,
         content: messageText,
@@ -922,11 +948,20 @@ export function TaskComposer() {
         </div>
 
         <div className="mt-3">
-          <WorkspacePicker
-            connectorId={selectedConnectorId}
-            value={workspace}
-            onChange={setWorkspace}
-          />
+          {newSessionProject ? (
+            <div className="flex min-h-9 items-center gap-2 rounded-lg border border-border bg-muted/30 px-3 text-sm">
+              <span className="shrink-0 font-medium text-foreground">{newSessionProject.name}</span>
+              <span className="min-w-0 truncate code-mono text-xs text-muted-foreground">
+                {newSessionProject.workspacePath}
+              </span>
+            </div>
+          ) : (
+            <WorkspacePicker
+              connectorId={selectedConnectorId}
+              value={workspace}
+              onChange={setWorkspace}
+            />
+          )}
         </div>
       </div>
     </div>

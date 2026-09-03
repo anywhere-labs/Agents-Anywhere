@@ -16,6 +16,7 @@ import { TeamPage } from "@/components/pages/team-page"
 import { ServicePage } from "@/components/pages/service-page"
 import { DevicePage } from "@/components/pages/device-page"
 import { DeviceWorkspacePage } from "@/components/pages/device-workspace-page"
+import { MobileConnectionsPage } from "@/components/pages/mobile-connections-page"
 import { WorkspaceProvider, useWorkspace } from "@/components/workspace-context"
 import { LoadingState } from "@/components/loading-state"
 import { PairDeviceDialog } from "@/components/pair-device-dialog"
@@ -188,6 +189,7 @@ function WorkspaceMain() {
     page,
     isLoading,
     routeReady,
+    newSessionProjectId,
     firstDevicePromptOpen,
     pairDeviceDialogOpen,
     closeFirstDevicePrompt,
@@ -196,9 +198,9 @@ function WorkspaceMain() {
     refreshData,
   } = useWorkspace()
   const t = useTranslations("dashboard.firstDevice")
-  const isNewSession = page === "home"
+  const canRenderBeforeDataLoad = page === "home" && newSessionProjectId === null
   const isAdmin = me?.role === "admin"
-  if (!routeReady || (!isNewSession && isLoading)) {
+  if (!routeReady || (!canRenderBeforeDataLoad && isLoading)) {
     return <LoadingState className="h-full bg-background" />
   }
   const effectivePage = !isAdmin && (page === "dashboard" || page === "team" || page === "service") ? "home" : page
@@ -207,6 +209,7 @@ function WorkspaceMain() {
     effectivePage === "dashboard" ? <DashboardPage /> :
     effectivePage === "team" ? <TeamPage /> :
     effectivePage === "service" ? <ServicePage /> :
+    effectivePage === "mobile-connections" ? <MobileConnectionsPage /> :
     effectivePage === "session" ? <SessionView /> :
     effectivePage === "device" ? <DevicePage /> :
     effectivePage === "device-workspace" ? <DeviceWorkspacePage /> :

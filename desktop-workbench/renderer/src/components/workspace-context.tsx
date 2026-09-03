@@ -8,13 +8,16 @@ import {
   patchSession as patchMockSession,
   type ConnectorView,
   type FilterValue,
-  type SessionView,
+  type SessionView as DemoSessionView,
 } from "@/lib/demo-api"
 import { useAuth } from "@/components/auth/auth-context"
 import { dashboardApi } from "@/features/dashboard/api"
 import type {
   ConnectorView as RealConnectorView,
   DashboardSnapshotMessage,
+  ProjectCreateRequest,
+  ProjectPatchRequest,
+  ProjectView,
   SessionLocalTimelineState,
   SessionPageInfo,
   SessionRuntimeState,
@@ -44,10 +47,18 @@ export type PanelMode = "docked" | "floating" | "closed"
  *   dashboard                    →  #/dashboard
  *   team                         →  #/team
  *   service                      →  #/service
+ *   mobile-connections           →  #/mobile-connections
+ *   home + project prefill       →  #/new-session/proj-1
  *   device/:id                   →  #/device/conn-3
  *   device/:id/workspace/:path   →  #/device/conn-3/workspace/~path~
  */
-export type AppPage = "home" | "session" | "settings" | "dashboard" | "team" | "service" | "device" | "device-workspace"
+export type AppPage = "home" | "session" | "settings" | "dashboard" | "team" | "service" | "mobile-connections" | "device" | "device-workspace"
+
+export type WorkspaceSessionView = DemoSessionView & {
+  projectId?: string | null
+}
+
+type SessionView = WorkspaceSessionView
 
 export type ComposerInsertion = {
   id: number
@@ -67,12 +78,13 @@ export type OptimisticSessionMessage = {
 // ─── Hash routing helpers ─────────────────────────────────────
 
 type ParsedRoute =
-  | { page: "home" }
+  | { page: "home"; projectId?: string }
   | { page: "session"; sessionId: string }
   | { page: "settings"; tab: string }
   | { page: "dashboard" }
   | { page: "team" }
   | { page: "service" }
+  | { page: "mobile-connections" }
   | { page: "device"; connectorId: string }
   | { page: "device-workspace"; connectorId: string; workspacePath: string }
 
@@ -86,6 +98,10 @@ function parseHash(hash: string): ParsedRoute {
 
   const parts = path.split("/")
   switch (parts[0]) {
+    case "new-session":
+      return parts[1]
+        ? { page: "home", projectId: decodeURIComponent(parts[1]) }
+        : { page: "home" }
     case "session":
       return parts[1] ? { page: "session", sessionId: parts[1] } : { page: "home" }
     case "settings":
@@ -96,6 +112,8 @@ function parseHash(hash: string): ParsedRoute {
       return { page: "team" }
     case "service":
       return { page: "service" }
+    case "mobile-connections":
+      return { page: "mobile-connections" }
     case "device": {
       const connectorId = parts[1]
       if (!connectorId) return { page: "home" }
@@ -111,12 +129,13 @@ function parseHash(hash: string): ParsedRoute {
 
 function buildHash(route: ParsedRoute): string {
   switch (route.page) {
-    case "home":      return "#/"
+    case "home":      return route.projectId ? `#/new-session/${encodeURIComponent(route.projectId)}` : "#/"
     case "session":   return `#/session/${route.sessionId}`
     case "settings":  return `#/settings/${route.tab}`
     case "dashboard": return "#/dashboard"
     case "team":      return "#/team"
     case "service":   return "#/service"
+    case "mobile-connections": return "#/mobile-connections"
     case "device":    return `#/device/${route.connectorId}`
     case "device-workspace":
       return `#/device/${route.connectorId}/workspace/${encodePath(route.workspacePath)}`
@@ -139,6 +158,7 @@ function mapSession(session: RealSessionView): SessionView {
   return {
     id: session.id,
     connectorId: session.connectorId,
+    projectId: session.projectId ?? null,
     connectorStatus: session.connectorStatus,
     runtime: session.runtime,
     runtimeId: session.runtimeId,
@@ -189,6 +209,48 @@ function sortSessionViews(sessions: SessionView[]): SessionView[] {
   )
 }
 
+function projectSortMillis(project: ProjectView): number {
+  const raw = project.pinnedAt || project.lastActivityAt || project.updatedAt
+  const value = Date.parse(raw)
+  return Number.isFinite(value) ? value : 0
+}
+
+function sortProjectViews(projects: ProjectView[]): ProjectView[] {
+  return [...projects].sort((a, b) =>
+    Number(b.pinned) - Number(a.pinned) ||
+    projectSortMillis(b) - projectSortMillis(a) ||
+    a.name.localeCompare(b.name) ||
+    a.id.localeCompare(b.id),
+  )
+}
+
+function mergeProjectSessions(
+  current: Record<string, SessionView[]>,
+  incoming: SessionView[],
+): Record<string, SessionView[]> {
+  if (Object.keys(current).length === 0 || incoming.length === 0) return current
+  const incomingById = new Map(incoming.map((session) => [session.id, session]))
+  let changed = false
+  const next: Record<string, SessionView[]> = {}
+
+  for (const [projectId, sessions] of Object.entries(current)) {
+    const merged = sessions
+      .map((session) => incomingById.get(session.id) ?? session)
+      .filter((session) => session.projectId === projectId && !session.archived)
+    const knownIds = new Set(merged.map((session) => session.id))
+    for (const session of incoming) {
+      if (session.projectId === projectId && !session.archived && !knownIds.has(session.id)) {
+        merged.push(session)
+      }
+    }
+    const sorted = sortSessionViews(merged)
+    next[projectId] = sorted
+    if (!sameStableValue(sessions, sorted)) changed = true
+  }
+
+  return changed ? next : current
+}
+
 function resolveSessionAlias(sessionId: string, aliases: Record<string, string>): string {
   let current = sessionId
   const seen = new Set<string>()
@@ -217,16 +279,21 @@ function optimisticMessageMatchesSession(
   )
 }
 
-function isDashboardSnapshotMessage(value: unknown): value is DashboardSnapshotMessage {
-  if (!value || typeof value !== "object") return false
+function parseDashboardSnapshotMessage(value: unknown): DashboardSnapshotMessage | null {
+  if (!value || typeof value !== "object") return null
   const message = value as Partial<DashboardSnapshotMessage>
-  return (
-    message.type === "dashboard.snapshot" &&
-    Array.isArray(message.connectors) &&
-    Array.isArray(message.sessions) &&
-    isSessionPageInfo(message.sessionPages?.active) &&
-    isSessionPageInfo(message.sessionPages?.archived)
-  )
+  if (
+    message.type !== "dashboard.snapshot" ||
+    !Array.isArray(message.connectors) ||
+    !Array.isArray(message.sessions) ||
+    !isSessionPageInfo(message.sessionPages?.active) ||
+    !isSessionPageInfo(message.sessionPages?.archived)
+  ) return null
+
+  return {
+    ...(message as DashboardSnapshotMessage),
+    projects: Array.isArray(message.projects) ? message.projects : [],
+  }
 }
 
 function isSessionPageInfo(value: unknown): value is SessionPageInfo {
@@ -257,10 +324,13 @@ function relativeSessionTime(session: RealSessionView): string {
 
 // ─── Context shape ────────────────────────────────────────────
 
-type WorkspaceState = {
+export type WorkspaceState = {
   // Data from API
   connectors: ConnectorView[]
   sessions: SessionView[]
+  projects: ProjectView[]
+  projectSessionsById: Record<string, SessionView[]>
+  loadingProjectSessionIds: string[]
   isLoading: boolean
   hasMoreSessions: boolean
   isLoadingMoreSessions: boolean
@@ -274,6 +344,8 @@ type WorkspaceState = {
   activeSessionPending: boolean
   activeConnectorId: string | null
   activeWorkspacePath: string | null
+  newSessionProjectId: string | null
+  newSessionProject: ProjectView | null
   settingsTab: string
 
   // Sidebar filter/search
@@ -296,6 +368,7 @@ type WorkspaceState = {
   navigate: (page: AppPage, sub?: string) => void
   navigateToDevice: (connectorId: string) => void
   navigateToWorkspace: (connectorId: string, workspacePath: string) => void
+  startProjectSession: (projectId: string) => void
   setFilter: (f: FilterValue) => void
   setSearch: (q: string) => void
   setPanelMode: (id: PanelId, mode: PanelMode) => void
@@ -307,6 +380,11 @@ type WorkspaceState = {
   togglePinSession: (id: string) => void
   toggleArchiveSession: (id: string) => void
   renameSession: (id: string, title: string) => Promise<boolean>
+  loadProjectSessions: (projectId: string) => Promise<boolean>
+  createProject: (payload: ProjectCreateRequest) => Promise<ProjectView | null>
+  updateProject: (projectId: string, patch: ProjectPatchRequest) => Promise<ProjectView | null>
+  removeProject: (projectId: string) => Promise<boolean>
+  archiveProjectSessions: (projectId: string) => Promise<boolean>
   markSessionRead: (id: string) => void
   upsertSession: (session: RealSessionView) => void
   reportSessionStreamProgress: (sessionId: string, nextSeq: number | null) => void
@@ -381,6 +459,9 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   const { session: authSession } = useAuth()
   const [connectors, setConnectors] = React.useState<ConnectorView[]>([])
   const [sessions, setSessions] = React.useState<SessionView[]>([])
+  const [projects, setProjects] = React.useState<ProjectView[]>([])
+  const [projectSessionsById, setProjectSessionsById] = React.useState<Record<string, SessionView[]>>({})
+  const [loadingProjectSessionIds, setLoadingProjectSessionIds] = React.useState<string[]>([])
   const [isLoading, setIsLoading] = React.useState(true)
   const [sessionPages, setSessionPages] = React.useState<DashboardSnapshotMessage["sessionPages"]>({
     active: { hasMore: false, nextCursor: null },
@@ -398,6 +479,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   const loadedBeyondFirstPageRef = React.useRef({ active: false, archived: false })
   const sessionStreamSeqRef = React.useRef(new Map<string, number>())
   const pendingSessionIndicatorRef = React.useRef(new Map<string, SessionView>())
+  const loadingProjectSessionIdsRef = React.useRef(new Set<string>())
   const sortSessions = React.useCallback(sortSessionViews, [])
 
   const reconcileSessionIndicator = React.useCallback((
@@ -457,6 +539,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   const applyDashboardSnapshot = React.useCallback((message: DashboardSnapshotMessage) => {
     const snapshotKey = stableJson({
       connectors: message.connectors,
+      projects: message.projects,
       sessions: message.sessions,
       sessionPages: message.sessionPages,
     })
@@ -464,6 +547,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     lastDashboardSnapshotKeyRef.current = snapshotKey
 
     const nextConnectors = message.connectors.map(mapConnector)
+    const nextProjects = sortProjectViews(message.projects)
     const nextSessions = message.sessions.map(mapSession)
     const previousFirstPageIds = new Set([
       ...firstPageSessionIdsRef.current.active,
@@ -474,6 +558,8 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       archived: new Set(nextSessions.filter((session) => session.archived).map((session) => session.id)),
     }
     setConnectors((current) => sameStableValue(current, nextConnectors) ? current : nextConnectors)
+    setProjects((current) => sameStableValue(current, nextProjects) ? current : nextProjects)
+    setProjectSessionsById((current) => mergeProjectSessions(current, nextSessions))
     setSessions((current) => {
       const currentById = new Map(current.map((session) => [session.id, session]))
       const merged = new Map(
@@ -507,12 +593,17 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     }
     try {
       if (authSession?.accessToken) {
-        const [connRes, activeRes, archivedRes] = await Promise.all([
+        const [connRes, projectRes, activeRes, archivedRes] = await Promise.all([
           dashboardApi.listConnectors(authSession.accessToken),
+          dashboardApi.listProjects(authSession.accessToken).catch(() => ({
+            projects: [],
+            serverTime: new Date().toISOString(),
+          })),
           dashboardApi.listSessions(authSession.accessToken, { archived: false, limit: 100 }),
           dashboardApi.listSessions(authSession.accessToken, { archived: true, limit: 100 }),
         ])
         const nextConnectors = connRes.connectors.map(mapConnector)
+        const nextProjects = sortProjectViews(projectRes.projects)
         const nextSessions = sortSessions(
           [...activeRes.sessions, ...archivedRes.sessions].map(mapSession),
         )
@@ -522,6 +613,8 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
         }
         loadedBeyondFirstPageRef.current = { active: false, archived: false }
         setConnectors((current) => sameStableValue(current, nextConnectors) ? current : nextConnectors)
+        setProjects((current) => sameStableValue(current, nextProjects) ? current : nextProjects)
+        setProjectSessionsById((current) => mergeProjectSessions(current, nextSessions))
         setSessions((current) => sameStableValue(current, nextSessions) ? current : nextSessions)
         setSessionPages({
           active: { hasMore: activeRes.hasMore, nextCursor: activeRes.nextCursor },
@@ -535,6 +628,8 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       ])
       const nextSessions = sortSessions(sessRes.sessions)
       setConnectors((current) => sameStableValue(current, connRes.connectors) ? current : connRes.connectors)
+      setProjects([])
+      setProjectSessionsById({})
       setSessions((current) => sameStableValue(current, nextSessions) ? current : nextSessions)
       setSessionPages({
         active: { hasMore: false, nextCursor: null },
@@ -586,6 +681,10 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     loadedBeyondFirstPageRef.current = { active: false, archived: false }
     sessionStreamSeqRef.current = new Map()
     pendingSessionIndicatorRef.current = new Map()
+    loadingProjectSessionIdsRef.current = new Set()
+    setLoadingProjectSessionIds([])
+    setProjectSessionsById({})
+    setProjects([])
     setSessionPages({
       active: { hasMore: false, nextCursor: null },
       archived: { hasMore: false, nextCursor: null },
@@ -645,12 +744,13 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
           if (cancelled || typeof event.data !== "string") return
           try {
             const message = JSON.parse(event.data) as unknown
-            if (!isDashboardSnapshotMessage(message)) return
+            const snapshot = parseDashboardSnapshotMessage(message)
+            if (!snapshot) return
             if (fallbackTimer !== null) {
               window.clearTimeout(fallbackTimer)
               fallbackTimer = null
             }
-            scheduleDashboardSnapshot(message)
+            scheduleDashboardSnapshot(snapshot)
           } catch { /* ignore malformed */ }
         }
         socket.onclose = () => {
@@ -770,6 +870,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       else if (page === "dashboard") pushRoute({ page: "dashboard" })
       else if (page === "team") pushRoute({ page: "team" })
       else if (page === "service") pushRoute({ page: "service" })
+      else if (page === "mobile-connections") pushRoute({ page: "mobile-connections" })
     },
     [pushRoute],
   )
@@ -782,6 +883,11 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   const navigateToWorkspace = React.useCallback(
     (connectorId: string, workspacePath: string) =>
       pushRoute({ page: "device-workspace", connectorId, workspacePath }),
+    [pushRoute],
+  )
+
+  const startProjectSession = React.useCallback(
+    (projectId: string) => pushRoute({ page: "home", projectId }),
     [pushRoute],
   )
 
@@ -835,6 +941,139 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     setFirstDevicePromptOpen(true)
   }, [connectors.length, isLoading, route.page, routeReady])
 
+  // ── Project mutation helpers ─────────────────────────────
+
+  const upsertProject = React.useCallback((project: ProjectView) => {
+    setProjects((current) => {
+      const index = current.findIndex((item) => item.id === project.id)
+      if (index === -1) return sortProjectViews([project, ...current])
+      const next = [...current]
+      next[index] = project
+      return sortProjectViews(next)
+    })
+  }, [])
+
+  const loadProjectSessions = React.useCallback(async (projectId: string): Promise<boolean> => {
+    const token = authSession?.accessToken
+    if (!token || loadingProjectSessionIdsRef.current.has(projectId)) return false
+
+    loadingProjectSessionIdsRef.current.add(projectId)
+    setLoadingProjectSessionIds((current) => current.includes(projectId) ? current : [...current, projectId])
+    try {
+      const loaded = new Map<string, SessionView>()
+      let cursor: string | null = null
+      do {
+        const response = await dashboardApi.listProjectSessions(token, projectId, {
+          archived: false,
+          limit: 100,
+          cursor,
+        })
+        response.sessions.map(mapSession).forEach((session) => loaded.set(session.id, session))
+        cursor = response.hasMore ? response.nextCursor : null
+      } while (cursor)
+
+      const nextSessions = sortSessions(Array.from(loaded.values()))
+      setProjectSessionsById((current) => ({ ...current, [projectId]: nextSessions }))
+      setSessions((current) => {
+        const merged = new Map(current.map((session) => [session.id, session]))
+        nextSessions.forEach((session) => merged.set(session.id, session))
+        return sortSessions(Array.from(merged.values()))
+      })
+      return true
+    } catch {
+      return false
+    } finally {
+      loadingProjectSessionIdsRef.current.delete(projectId)
+      setLoadingProjectSessionIds((current) => current.filter((id) => id !== projectId))
+    }
+  }, [authSession?.accessToken, sortSessions])
+
+  const createProject = React.useCallback(async (
+    payload: ProjectCreateRequest,
+  ): Promise<ProjectView | null> => {
+    const token = authSession?.accessToken
+    if (!token) return null
+    try {
+      const response = await dashboardApi.createProject(token, payload)
+      upsertProject(response.project)
+      if (payload.attachMatchingSessions && response.attachedSessions > 0) {
+        setSessions((current) => current.map((session) =>
+          !session.projectId &&
+          session.connectorId === response.project.connectorId &&
+          session.cwd === response.project.workspacePath
+            ? { ...session, projectId: response.project.id }
+            : session,
+        ))
+      }
+      return response.project
+    } catch {
+      return null
+    }
+  }, [authSession?.accessToken, upsertProject])
+
+  const updateProject = React.useCallback(async (
+    projectId: string,
+    patch: ProjectPatchRequest,
+  ): Promise<ProjectView | null> => {
+    const token = authSession?.accessToken
+    if (!token) return null
+    try {
+      const response = await dashboardApi.updateProject(token, projectId, patch)
+      upsertProject(response.project)
+      return response.project
+    } catch {
+      return null
+    }
+  }, [authSession?.accessToken, upsertProject])
+
+  const removeProject = React.useCallback(async (projectId: string): Promise<boolean> => {
+    const token = authSession?.accessToken
+    if (!token) return false
+    try {
+      await dashboardApi.deleteProject(token, projectId)
+      setProjects((current) => current.filter((project) => project.id !== projectId))
+      setProjectSessionsById((current) => {
+        if (!(projectId in current)) return current
+        const next = { ...current }
+        delete next[projectId]
+        return next
+      })
+      setSessions((current) => current.map((session) =>
+        session.projectId === projectId ? { ...session, projectId: null } : session,
+      ))
+      if (routeRef.current.page === "home" && routeRef.current.projectId === projectId) {
+        pushRoute({ page: "home" })
+      }
+      return true
+    } catch {
+      return false
+    }
+  }, [authSession?.accessToken, pushRoute])
+
+  const archiveProjectSessions = React.useCallback(async (projectId: string): Promise<boolean> => {
+    const token = authSession?.accessToken
+    if (!token) return false
+    try {
+      const response = await dashboardApi.archiveProjectSessions(token, projectId, {
+        archived: true,
+        scope: "active",
+      })
+      const archivedSessions = response.sessions.map(mapSession)
+      setSessions((current) => {
+        const merged = new Map(current.map((session) => [session.id, session]))
+        archivedSessions.forEach((session) => merged.set(session.id, session))
+        return sortSessions(Array.from(merged.values()))
+      })
+      setProjectSessionsById((current) => ({ ...current, [projectId]: [] }))
+      setProjects((current) => sortProjectViews(current.map((project) =>
+        project.id === projectId ? { ...project, activeSessionCount: 0 } : project,
+      )))
+      return true
+    } catch {
+      return false
+    }
+  }, [authSession?.accessToken, sortSessions])
+
   const upsertSession = React.useCallback((session: RealSessionView) => {
     const mapped = mapSession(session)
     setSessions((prev) => {
@@ -844,6 +1083,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       next[index] = reconcileSessionIndicator(prev[index], mapped)
       return sortSessions(next)
     })
+    setProjectSessionsById((current) => mergeProjectSessions(current, [mapped]))
   }, [reconcileSessionIndicator, sortSessions])
 
   const reportSessionStreamProgress = React.useCallback((
@@ -979,6 +1219,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       next[index] = mapped
       return sortSessions(next)
     })
+    setProjectSessionsById((current) => mergeProjectSessions(current, [mapped]))
     const currentRoute = routeRef.current
     if (currentRoute.page === "session" && currentRoute.sessionId === localSessionId) {
       replaceRoute({ page: "session", sessionId: session.id })
@@ -1072,7 +1313,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
 
   // ── Derived route fields ──────────────────────────────────
 
-  const validPages: AppPage[] = ["home", "session", "settings", "dashboard", "team", "service", "device", "device-workspace"]
+  const validPages: AppPage[] = ["home", "session", "settings", "dashboard", "team", "service", "mobile-connections", "device", "device-workspace"]
   const page: AppPage = validPages.includes(route.page as AppPage) ? (route.page as AppPage) : "home"
 
   const routeSessionId = route.page === "session" ? route.sessionId : null
@@ -1089,11 +1330,18 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   )
   const activeConnectorId = (route.page === "device" || route.page === "device-workspace") ? route.connectorId : null
   const activeWorkspacePath = route.page === "device-workspace" ? route.workspacePath : null
+  const newSessionProjectId = route.page === "home" ? route.projectId ?? null : null
+  const newSessionProject = newSessionProjectId
+    ? projects.find((project) => project.id === newSessionProjectId) ?? null
+    : null
   const settingsTab = route.page === "settings" ? route.tab : "account"
 
   const value: WorkspaceState = {
     connectors,
     sessions,
+    projects,
+    projectSessionsById,
+    loadingProjectSessionIds,
     isLoading,
     hasMoreSessions: sessionPages[filter.status === "archived" ? "archived" : "active"].hasMore,
     isLoadingMoreSessions: loadingSessionPages[filter.status === "archived" ? "archived" : "active"],
@@ -1105,6 +1353,8 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     activeSessionPending,
     activeConnectorId,
     activeWorkspacePath,
+    newSessionProjectId,
+    newSessionProject,
     settingsTab,
     filter,
     search,
@@ -1121,6 +1371,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     navigate,
     navigateToDevice,
     navigateToWorkspace,
+    startProjectSession,
     setFilter,
     setSearch,
     setPanelMode,
@@ -1132,6 +1383,11 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     togglePinSession,
     toggleArchiveSession,
     renameSession,
+    loadProjectSessions,
+    createProject,
+    updateProject,
+    removeProject,
+    archiveProjectSessions,
     markSessionRead,
     upsertSession,
     reportSessionStreamProgress,
