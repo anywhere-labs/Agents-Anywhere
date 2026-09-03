@@ -93,8 +93,8 @@ class _ConnectorNotificationPump:
         )
 
     def enqueue_message(self, message: dict[str, Any]) -> None:
-        if self.task.done():
-            self.task.result()
+        if self._task is not None and self._task.done():
+            self._task.result()
             raise RuntimeError("connector notification pump stopped unexpectedly")
         method = message.get("method")
         params = message.get("params") or {}
@@ -323,7 +323,11 @@ async def connector_ws(
             websocket.app.state.session_runtime_state_cache,
         )
         notification_pump = _ConnectorNotificationPump(connector_id, ingest_service)
-        notification_pump.start()
+        # Read RPC responses immediately, but buffer notifications until
+        # Runtime Control negotiation establishes the connection's version.
+        # In particular, a v2 Connector sends a legacy startup inventory before
+        # it receives runtime.discover; persisting that inventory while the
+        # connection is temporarily marked 1.0 would create compatibility rows.
         negotiation_task = asyncio.create_task(
             _negotiate_runtime_control(
                 runtime_service,
@@ -343,6 +347,16 @@ async def connector_ws(
             ),
             name=f"connector-reader-{connection.connection_id}",
         )
+        done, _pending = await asyncio.wait(
+            {reader_task, negotiation_task},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        if negotiation_task not in done:
+            await reader_task
+            return
+
+        await negotiation_task
+        notification_pump.start()
         done, _pending = await asyncio.wait(
             {reader_task, notification_pump.task},
             return_when=asyncio.FIRST_COMPLETED,

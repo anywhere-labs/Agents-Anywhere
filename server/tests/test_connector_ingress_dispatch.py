@@ -141,6 +141,33 @@ def test_notification_pump_preserves_fifo_order() -> None:
     asyncio.run(exercise())
 
 
+def test_notification_pump_buffers_messages_until_started() -> None:
+    async def exercise() -> None:
+        ingest = RecordingIngestService()
+        pump = _ConnectorNotificationPump(
+            "conn_1",
+            ingest,  # type: ignore[arg-type]
+        )
+        for method in (
+            "runtime.inventoryUpdated",
+            "protocol.capabilitiesUpdated",
+            "timeline.itemUpsert",
+        ):
+            pump.enqueue_message({"type": "notification", "method": method})
+        await asyncio.sleep(0)
+        assert ingest.methods == []
+
+        pump.start()
+        await pump.close()
+        assert ingest.methods == [
+            "runtime.inventoryUpdated",
+            "protocol.capabilitiesUpdated",
+            "timeline.itemUpsert",
+        ]
+
+    asyncio.run(exercise())
+
+
 def test_notification_pump_surfaces_handler_failure() -> None:
     class FailingIngestService(RecordingIngestService):
         async def handle_notification_message(

@@ -198,30 +198,34 @@ def _receive_discovery_request(ws: Any) -> dict[str, Any]:
     return request
 
 
-def test_first_connector_connection_does_not_configure_or_start_a_runtime(
+def _observe_unsolicited_inventory(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> threading.Event:
+    inventory_ingested = threading.Event()
+    service = client.app.state.device_runtime_service
+    original_ingest = service.ingest_unsolicited_inventory
+
+    async def observe_ingest(*args: Any, **kwargs: Any) -> None:
+        try:
+            await original_ingest(*args, **kwargs)
+        finally:
+            inventory_ingested.set()
+
+    monkeypatch.setattr(service, "ingest_unsolicited_inventory", observe_ingest)
+    return inventory_ingested
+
+
+def test_first_v2_connector_connection_discovers_types_without_creating_runtime(
     tmp_path: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     websocket_completed = threading.Event()
-    negotiation_completed = threading.Event()
-    negotiation_errors: list[BaseException] = []
     client, connector_id, access_token = _make_connector(
         tmp_path,
         websocket_completed=websocket_completed,
     )
-    service = client.app.state.device_runtime_service
-    original_negotiate = service.negotiate_connection
-
-    async def observe_negotiation(*args: Any, **kwargs: Any) -> None:
-        try:
-            await original_negotiate(*args, **kwargs)
-        except BaseException as exc:
-            negotiation_errors.append(exc)
-            raise
-        finally:
-            negotiation_completed.set()
-
-    monkeypatch.setattr(service, "negotiate_connection", observe_negotiation)
+    inventory_ingested = _observe_unsolicited_inventory(client, monkeypatch)
 
     with client.websocket_connect(
         "/connector/ws",
@@ -237,23 +241,14 @@ def test_first_connector_connection_does_not_configure_or_start_a_runtime(
                 "result": _v2_discovery(),
             }
         )
-        assert negotiation_completed.wait(timeout=5), (
-            "runtime negotiation did not complete without a runtime.start response"
+        assert inventory_ingested.wait(timeout=5), (
+            "buffered startup inventory was not handled after negotiation"
         )
-        assert negotiation_errors == []
 
         runtimes = asyncio.run(
             client.app.state.store.list_device_runtimes(connector_id)
         )
-        # The startup inventory may create an unconfigured type-equal row for
-        # Runtime Control 1.0 compatibility. Runtime Control 2.0 negotiation
-        # must not turn that compatibility identity into a configured instance.
-        assert len(runtimes) == 1
-        assert runtimes[0]["runtimeId"] == runtimes[0]["runtimeType"] == "codex"
-        assert runtimes[0]["config"] is None
-        assert runtimes[0]["configured"] is False
-        assert runtimes[0]["active"] is False
-        assert runtimes[0]["status"] == "stopped"
+        assert runtimes == []
         runtime_types = asyncio.run(
             client.app.state.store.list_connector_runtime_types(connector_id)
         )
@@ -268,6 +263,134 @@ def test_first_connector_connection_does_not_configure_or_start_a_runtime(
         assert not asyncio.run(client.app.state.rpc.is_online(connector_id))
 
 
+def test_first_legacy_connector_connection_keeps_compatibility_runtime(
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    websocket_completed = threading.Event()
+    client, connector_id, access_token = _make_connector(
+        tmp_path,
+        websocket_completed=websocket_completed,
+    )
+    inventory_ingested = _observe_unsolicited_inventory(client, monkeypatch)
+
+    with client.websocket_connect(
+        "/connector/ws",
+        headers={"Authorization": f"Bearer {access_token}"},
+    ) as ws:
+        _send_inventory(ws, display_name="Startup Legacy Codex")
+        request = _receive_discovery_request(ws)
+        ws.send_json(
+            {
+                "id": request["id"],
+                "type": "response",
+                "ok": True,
+                "result": _legacy_inventory(
+                    display_name="Negotiated Legacy Codex"
+                ),
+            }
+        )
+        assert inventory_ingested.wait(timeout=5), (
+            "buffered startup inventory was not handled after negotiation"
+        )
+        runtime_types = asyncio.run(
+            client.app.state.store.list_connector_runtime_types(connector_id)
+        )
+        assert runtime_types[0]["displayName"] == "Startup Legacy Codex"
+        runtime = asyncio.run(
+            client.app.state.store.get_device_runtime(connector_id, "codex")
+        )
+        assert runtime["runtimeId"] == runtime["runtimeType"] == "codex"
+        assert runtime["config"] is None
+        assert runtime["configured"] is False
+        assert runtime["active"] is False
+        assert runtime["status"] == "stopped"
+        assert _control_version(client, connector_id) == "1.0"
+
+        ws.close()
+        assert websocket_completed.wait(timeout=5), (
+            "connector websocket did not complete"
+        )
+        assert not asyncio.run(client.app.state.rpc.is_online(connector_id))
+
+
+def test_failed_negotiation_still_ingests_buffered_startup_inventory(
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    websocket_completed = threading.Event()
+    client, connector_id, access_token = _make_connector(
+        tmp_path,
+        websocket_completed=websocket_completed,
+    )
+    inventory_ingested = _observe_unsolicited_inventory(client, monkeypatch)
+
+    with client.websocket_connect(
+        "/connector/ws",
+        headers={"Authorization": f"Bearer {access_token}"},
+    ) as ws:
+        _send_inventory(ws, display_name="Fallback Legacy Codex")
+        request = _receive_discovery_request(ws)
+        ws.send_json(
+            {
+                "id": request["id"],
+                "type": "response",
+                "ok": False,
+                "error": {
+                    "code": "runtime_discovery_failed",
+                    "message": "discovery failed",
+                },
+            }
+        )
+        assert inventory_ingested.wait(timeout=5), (
+            "buffered startup inventory was not handled after negotiation failure"
+        )
+
+        runtime_types = asyncio.run(
+            client.app.state.store.list_connector_runtime_types(connector_id)
+        )
+        assert runtime_types[0]["displayName"] == "Fallback Legacy Codex"
+        runtime = asyncio.run(
+            client.app.state.store.get_device_runtime(connector_id, "codex")
+        )
+        assert runtime["runtimeId"] == runtime["runtimeType"] == "codex"
+        assert runtime["configured"] is False
+        assert runtime["active"] is False
+        assert _control_version(client, connector_id) == "1.0"
+
+        ws.close()
+        assert websocket_completed.wait(timeout=5), (
+            "connector websocket did not complete"
+        )
+        assert not asyncio.run(client.app.state.rpc.is_online(connector_id))
+
+
+def test_disconnect_before_negotiation_discards_buffered_startup_inventory(
+    tmp_path: Any,
+) -> None:
+    websocket_completed = threading.Event()
+    client, connector_id, access_token = _make_connector(
+        tmp_path,
+        websocket_completed=websocket_completed,
+    )
+
+    with client.websocket_connect(
+        "/connector/ws",
+        headers={"Authorization": f"Bearer {access_token}"},
+    ) as ws:
+        _send_inventory(ws)
+        _receive_discovery_request(ws)
+        ws.close()
+        assert websocket_completed.wait(timeout=5), (
+            "connector websocket did not complete"
+        )
+
+    assert (
+        asyncio.run(client.app.state.store.list_device_runtimes(connector_id)) == []
+    )
+    assert not asyncio.run(client.app.state.rpc.is_online(connector_id))
+
+
 def test_new_connector_reconnect_negotiates_v2_without_manual_discovery(
     tmp_path: Any,
 ) -> None:
@@ -275,6 +398,12 @@ def test_new_connector_reconnect_negotiates_v2_without_manual_discovery(
     client, connector_id, access_token = _make_connector(
         tmp_path,
         websocket_completed=websocket_completed,
+    )
+    asyncio.run(
+        client.app.state.device_runtime_service.ingest_inventory(
+            connector_id,
+            _legacy_inventory(display_name="Historical Codex"),
+        )
     )
     _seed_v2(client, connector_id)
 
@@ -323,6 +452,10 @@ def test_new_connector_reconnect_negotiates_v2_without_manual_discovery(
         client.app.state.store.list_connector_runtime_types(connector_id)
     )
     assert runtime_types[0]["displayName"] == "Codex V2"
+    historical_runtime = asyncio.run(
+        client.app.state.store.get_device_runtime(connector_id, "codex")
+    )
+    assert historical_runtime["displayName"] == "Historical Codex"
 
 
 def test_old_connector_reconnect_remains_on_runtime_control_v1(tmp_path: Any) -> None:
