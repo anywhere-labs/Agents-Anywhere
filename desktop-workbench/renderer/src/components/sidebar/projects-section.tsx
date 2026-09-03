@@ -1,6 +1,7 @@
 "use client"
 
 import { MoreHorizontal, Plus } from "lucide-react"
+import * as React from "react"
 import { ProjectSidebarItem } from "@/components/sidebar/project-sidebar-item"
 import { SidebarLoadingItem } from "@/components/sidebar/sidebar-loading-item"
 import { SidebarSectionTrigger } from "@/components/sidebar/sidebar-section-trigger"
@@ -15,13 +16,13 @@ import {
   SidebarMenu,
 } from "@/components/ui/sidebar"
 import {
-  Popover,
-  PopoverContent,
-  PopoverHeader,
-  PopoverTitle,
-  PopoverTrigger,
-} from "@/components/ui/popover"
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import {
   Tooltip,
   TooltipContent,
@@ -31,6 +32,7 @@ import {
 import type { WorkspaceSessionView } from "@/components/workspace-context"
 import type { ProjectSessionStatusFilter } from "@/components/sidebar/sidebar-selectors"
 import type { ProjectView } from "@/features/dashboard/types"
+import { cn } from "@/lib/utils"
 import { useTranslations } from "next-intl"
 
 export type ProjectListController = {
@@ -108,54 +110,57 @@ export function ProjectsSection({
   onAddProject,
 }: ProjectsSectionProps) {
   const t = useTranslations("dashboard")
+  const [filterOpen, setFilterOpen] = React.useState(false)
 
   return (
     <SidebarGroup>
       <Collapsible open={expanded} onOpenChange={onExpandedChange}>
-        <SidebarGroupLabel className="flex items-center justify-between pr-1" role="heading" aria-level={2}>
+        <SidebarGroupLabel
+          className="group/projects-label flex items-center justify-between pr-1"
+          role="heading"
+          aria-level={2}
+        >
           <SidebarSectionTrigger label={t("sections.projects")} expanded={expanded} />
           <div className="flex items-center gap-0.5">
-            <Popover>
-              <PopoverTrigger asChild>
+            <DropdownMenu open={filterOpen} onOpenChange={setFilterOpen}>
+              <DropdownMenuTrigger asChild>
                 <button
                   type="button"
                   aria-label={t("projects.filterSessions")}
-                  className="rounded p-0.5 text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
+                  className={cn(
+                    "rounded p-0.5 text-muted-foreground opacity-0 transition-[color,background-color,opacity]",
+                    "hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+                    "group-hover/projects-label:opacity-100",
+                    filterOpen && "bg-sidebar-accent text-sidebar-accent-foreground opacity-100",
+                  )}
                 >
                   <MoreHorizontal className="size-3.5" />
                 </button>
-              </PopoverTrigger>
-              <PopoverContent align="end" sideOffset={6} className="w-64">
-                <PopoverHeader>
-                  <PopoverTitle className="text-sm">
-                    {t("projects.sessionStatus")}
-                  </PopoverTitle>
-                </PopoverHeader>
-                <ToggleGroup
-                  type="single"
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" side="right" className="w-56">
+                <DropdownMenuLabel className="text-xs text-muted-foreground">
+                  {t("projects.sessionStatus")}
+                </DropdownMenuLabel>
+                <DropdownMenuRadioGroup
                   value={sessionStatus}
-                  variant="outline"
-                  size="sm"
-                  spacing={0}
-                  className="w-full"
                   onValueChange={(value) => {
                     if (value === "active" || value === "archived" || value === "all") {
                       onSessionStatusChange(value)
                     }
                   }}
                 >
-                  <ToggleGroupItem value="active" className="flex-1">
-                    {t("projects.statusActive")}
-                  </ToggleGroupItem>
-                  <ToggleGroupItem value="archived" className="flex-1">
-                    {t("projects.statusArchived")}
-                  </ToggleGroupItem>
-                  <ToggleGroupItem value="all" className="flex-1">
-                    {t("projects.statusAll")}
-                  </ToggleGroupItem>
-                </ToggleGroup>
-              </PopoverContent>
-            </Popover>
+                  <DropdownMenuRadioItem value="active">
+                    <span className="truncate">{t("projects.statusActive")}</span>
+                  </DropdownMenuRadioItem>
+                  <DropdownMenuRadioItem value="archived">
+                    <span className="truncate">{t("projects.statusArchived")}</span>
+                  </DropdownMenuRadioItem>
+                  <DropdownMenuRadioItem value="all">
+                    <span className="truncate">{t("projects.statusAll")}</span>
+                  </DropdownMenuRadioItem>
+                </DropdownMenuRadioGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
 
             <TooltipProvider delayDuration={300}>
               <Tooltip>

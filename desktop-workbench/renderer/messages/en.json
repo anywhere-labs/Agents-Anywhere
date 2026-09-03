@@ -755,7 +755,7 @@
       "selectDevice": "Select a device",
       "selectDeviceFirst": "Select a device before choosing a workspace.",
       "sessionStatus": "Session status",
-      "statusActive": "Active",
+      "statusActive": "Active sessions",
       "statusAll": "All",
       "statusArchived": "Archived",
       "unpin": "Unpin project",

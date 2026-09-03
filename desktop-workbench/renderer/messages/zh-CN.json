@@ -755,7 +755,7 @@
       "selectDevice": "选择设备",
       "selectDeviceFirst": "请先选择设备，再选择工作区。",
       "sessionStatus": "会话状态",
-      "statusActive": "活跃",
+      "statusActive": "活跃会话",
       "statusAll": "全部",
       "statusArchived": "已归档",
       "unpin": "取消置顶项目",
