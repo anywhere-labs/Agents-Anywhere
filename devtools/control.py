@@ -601,6 +601,35 @@ def start_connector() -> None:
     )
 
 
+def _desktop_runtime_command() -> list[str]:
+    version_text = (DESKTOP_DIR / ".nvmrc").read_text(encoding="utf-8").strip()
+    version_match = re.fullmatch(r"v?(\d+)", version_text)
+    if version_match is None:
+        raise DevControlError(f"Invalid Desktop Node version: {version_text}")
+    expected_major = version_match.group(1)
+
+    current_version = _run(
+        ["node", "-p", 'process.versions.node.split(".")[0]'],
+        check=False,
+    )
+    if current_version.returncode == 0 and current_version.stdout.strip() == expected_major:
+        return ["corepack", "yarn", "dev"]
+
+    nvm_script = Path(os.environ.get("NVM_DIR", Path.home() / ".nvm")) / "nvm.sh"
+    if not nvm_script.is_file():
+        raise DevControlError(
+            f"Desktop requires Node {expected_major}; nvm was not found at {nvm_script}"
+        )
+    return [
+        "bash",
+        "-c",
+        (
+            f"source {shlex.quote(str(nvm_script))} && "
+            "nvm use >/dev/null && exec corepack yarn dev"
+        ),
+    ]
+
+
 def start_desktop() -> None:
     if not _health_ok():
         raise DevControlError(
@@ -621,9 +650,7 @@ def start_desktop() -> None:
             f"WORKBENCH_API_NAMESPACE={API_NAMESPACE}",
             f"AGENTS_ANYWHERE_API_NAMESPACE={API_NAMESPACE}",
             f"WORKBENCH_WEB_PORT={DESKTOP_PORT}",
-            "corepack",
-            "yarn",
-            "dev",
+            *_desktop_runtime_command(),
         ],
         log_name="desktop.log",
     )

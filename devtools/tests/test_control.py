@@ -195,6 +195,11 @@ def test_start_desktop_pins_local_backend_and_renderer_port(
     monkeypatch.setattr(control, "_health_ok", lambda: True)
     monkeypatch.setattr(control, "port_open", lambda _port: False)
     monkeypatch.setattr(control, "_desktop_process_pids", set)
+    monkeypatch.setattr(
+        control,
+        "_desktop_runtime_command",
+        lambda: ["corepack", "yarn", "dev"],
+    )
     monkeypatch.setattr(control, "_wait_until", lambda *_args, **_kwargs: None)
 
     def capture_start_screen(
