@@ -204,6 +204,7 @@ class SessionRepositoryMixin:
         self,
         *,
         connector_id: str,
+        project_id: str | None = None,
         user_id: str | None = None,
         runtime: str,
         runtime_id: str | None = None,
@@ -227,10 +228,25 @@ class SessionRepositoryMixin:
             connector = (await conn.execute(connector_q)).first()
             if connector is None:
                 raise KeyError(connector_id)
+            if project_id is not None:
+                project_q = select(
+                    projects_t.c.connector_id,
+                    projects_t.c.workspace_path,
+                ).where(projects_t.c.id == project_id)
+                if user_id is not None:
+                    project_q = project_q.where(projects_t.c.user_id == user_id)
+                project = (await conn.execute(project_q)).first()
+                if project is None:
+                    raise KeyError(project_id)
+                if project.connector_id != connector_id or project.workspace_path != cwd:
+                    raise ValueError(
+                        "project connector and workspace must match the session"
+                    )
             await conn.execute(
                 insert(sessions_t).values(
                     id=session_id,
                     connector_id=connector_id,
+                    project_id=project_id,
                     runtime=str(identity.runtime_type),
                     runtime_id=str(identity.runtime_id),
                     origin="platform",
@@ -470,6 +486,7 @@ class SessionRepositoryMixin:
         limit: int = 100,
         cursor: str | None = None,
         user_id: str | None = None,
+        project_id: str | None = None,
     ) -> tuple[list[SessionView], bool, str | None]:
         latest_item = _latest_timeline_item_subquery()
         sort_at = _session_sort_at(latest_item)
@@ -492,6 +509,8 @@ class SessionRepositoryMixin:
         )
         if user_id is not None:
             query = query.where(connectors_t.c.user_id == user_id)
+        if project_id is not None:
+            query = query.where(sessions_t.c.project_id == project_id)
         if cursor:
             pinned, cursor_sort_at, _order_seq, _updated_seq, session_id = (
                 _decode_session_cursor(cursor)
@@ -537,12 +556,14 @@ class SessionRepositoryMixin:
         limit: int = 100,
         cursor: str | None = None,
         user_id: str | None = None,
+        project_id: str | None = None,
     ) -> list[SessionView]:
         sessions, _, _ = await self.list_sessions_page(
             archived=archived,
             limit=limit,
             cursor=cursor,
             user_id=user_id,
+            project_id=project_id,
         )
         return sessions
 
@@ -1366,6 +1387,7 @@ class SessionRepositoryMixin:
         return SessionView(
             id=session_id,
             connectorId=row["connector_id"],
+            projectId=row["project_id"],
             connectorStatus=row["connector_status"],
             runtime=runtime,
             runtimeId=runtime_id,

@@ -777,6 +777,23 @@
     },
     "SessionView": {
       "properties": {
+        "archiveSource": {
+          "anyOf": [
+            {
+              "enum": [
+                "user",
+                "runtime",
+                "both"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Archivesource"
+        },
         "archived": {
           "default": false,
           "title": "Archived",
@@ -909,6 +926,18 @@
           "default": null,
           "title": "Pinnedat"
         },
+        "projectId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Projectid"
+        },
         "runtime": {
           "enum": [
             "codex",
@@ -931,6 +960,60 @@
           ],
           "default": null,
           "title": "Sortat"
+        },
+        "sourceAvailability": {
+          "default": "available",
+          "enum": [
+            "available",
+            "archived",
+            "unavailable",
+            "deleted",
+            "missing",
+            "unknown"
+          ],
+          "title": "Sourceavailability",
+          "type": "string"
+        },
+        "sourceAvailabilityReason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sourceavailabilityreason"
+        },
+        "sourceAvailabilityUpdatedAt": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sourceavailabilityupdatedat"
+        },
+        "sourceObservationOrigin": {
+          "anyOf": [
+            {
+              "enum": [
+                "event",
+                "inventory",
+                "operation"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sourceobservationorigin"
         },
         "sourceObservedAt": {
           "anyOf": [
@@ -982,6 +1065,11 @@
         "updatedSeq": {
           "title": "Updatedseq",
           "type": "integer"
+        },
+        "userArchived": {
+          "default": false,
+          "title": "Userarchived",
+          "type": "boolean"
         }
       },
       "required": [

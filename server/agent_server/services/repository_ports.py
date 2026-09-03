@@ -6,6 +6,7 @@ from agent_server.core.catalogs import CatalogType, CatalogUpdateOutcome
 from agent_server.core.device_runtime import RuntimeInventoryItem, RuntimeTypeDescriptor
 from agent_server.core.models import (
     ConnectorView,
+    ProjectView,
     SessionRuntimeState,
     SessionStatus,
     SessionView,
@@ -29,6 +30,38 @@ class SessionLookupRepository(Protocol):
 
 class DashboardEventRepository(SessionLookupRepository, Protocol):
     async def get_connector(self, connector_id: str) -> ConnectorView: ...
+
+
+class ProjectLookupRepository(Protocol):
+    async def get_project(
+        self,
+        project_id: str,
+        *,
+        user_id: str,
+    ) -> ProjectView: ...
+
+
+class ProjectRepository(ProjectLookupRepository, Protocol):
+    async def list_projects(self, *, user_id: str) -> list[ProjectView]: ...
+
+    async def create_project(self, **values: Any) -> tuple[ProjectView, int]: ...
+
+    async def update_project(self, project_id: str, **values: Any) -> ProjectView: ...
+
+    async def delete_project(self, project_id: str, *, user_id: str) -> int: ...
+
+    async def list_project_sessions_page(
+        self,
+        project_id: str,
+        **values: Any,
+    ) -> tuple[list[SessionView], bool, str | None]: ...
+
+    async def archive_project_sessions(
+        self,
+        project_id: str,
+        archived: bool,
+        **values: Any,
+    ) -> list[SessionView]: ...
 
 
 class CatalogRepository(Protocol):
@@ -373,6 +406,7 @@ class SessionRunRepository(
     DashboardEventRepository,
     SessionStateRepository,
     TimelineEffectRepository,
+    ProjectLookupRepository,
     Protocol,
 ):
     async def get_protocol_capabilities(

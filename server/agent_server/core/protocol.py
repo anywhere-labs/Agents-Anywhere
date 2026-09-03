@@ -46,6 +46,7 @@ class _ProtocolSnapshotExtensionModel(BaseModel):
 class SessionView(_ProtocolSnapshotExtensionModel):
     id: str
     connectorId: str
+    projectId: str | None = None
     connectorStatus: ConnectorStatus
     runtime: RuntimeName
     externalSessionId: str | None = None

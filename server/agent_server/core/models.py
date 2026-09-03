@@ -132,6 +132,62 @@ class ConnectorListResponse(BaseModel):
     serverTime: str
 
 
+class ProjectView(BaseModel):
+    id: str
+    userId: str
+    connectorId: str
+    name: str
+    workspacePath: str
+    pinned: bool = False
+    pinnedAt: str | None = None
+    activeSessionCount: int = 0
+    lastActivityAt: str | None = None
+    createdAt: str
+    updatedAt: str
+
+
+class ProjectCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    name: str = Field(min_length=1, max_length=255)
+    connectorId: str = Field(min_length=1)
+    workspacePath: str = Field(min_length=1, max_length=4096)
+    attachMatchingSessions: bool = False
+
+
+class ProjectPatchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    pinned: bool | None = None
+
+    @model_validator(mode="after")
+    def _require_change(self) -> ProjectPatchRequest:
+        if self.name is None and self.pinned is None:
+            raise ValueError("at least one project field is required")
+        return self
+
+
+class ProjectResponse(BaseModel):
+    project: ProjectView
+    serverTime: str
+
+
+class ProjectCreateResponse(ProjectResponse):
+    attachedSessions: int = 0
+
+
+class ProjectListResponse(BaseModel):
+    projects: list[ProjectView]
+    serverTime: str
+
+
+class ProjectDeleteResponse(BaseModel):
+    projectId: str
+    detachedSessions: int
+    serverTime: str
+
+
 UserRoleName = Literal["admin", "member"]
 
 
@@ -569,6 +625,7 @@ class SessionCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     connectorId: str
+    projectId: str | None = None
     runtime: RuntimeName = "codex"
     runtimeId: str | None = None
     externalSessionId: str | None = None
@@ -603,6 +660,7 @@ class SessionCreateAndStartRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     connectorId: str
+    projectId: str | None = None
     runtime: RuntimeName = "codex"
     runtimeId: str | None = None
     title: str | None = None
@@ -625,6 +683,7 @@ class SessionCreateAndStartRequest(BaseModel):
 class SessionView(BaseModel):
     id: str
     connectorId: str
+    projectId: str | None = None
     connectorStatus: ConnectorStatus
     runtime: RuntimeName
     runtimeId: str | None = None
@@ -747,6 +806,13 @@ class ArchiveAllRequest(BaseModel):
 class ArchiveAllResponse(BaseModel):
     sessions: list[SessionView]
     affected: int
+    serverTime: str
+
+
+class ProjectSessionListResponse(BaseModel):
+    sessions: list[SessionView]
+    hasMore: bool
+    nextCursor: str | None = None
     serverTime: str
 
 

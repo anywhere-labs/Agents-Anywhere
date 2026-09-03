@@ -349,6 +349,7 @@ def test_v2_0_database_upgrades_through_current_revision(tmp_path) -> None:
         ("v2_21", "v2_22"),
         ("v2_22", "v2_23"),
         ("v2_23", "v2_24"),
+        ("v2_24", "v2_25"),
     ],
 )
 def test_every_adjacent_schema_upgrade(
@@ -989,6 +990,7 @@ def test_v2_14_downgrade_rejects_instance_specific_data(
         "v2_21",
         "v2_23",
         "v2_24",
+        "v2_25",
     ],
 )
 def test_unversioned_runtime_schema_is_classified_by_actual_columns(
@@ -1026,9 +1028,9 @@ def test_unversioned_runtime_schema_is_classified_by_actual_columns(
     )
 
 
-def test_current_schema_version_is_v2_24() -> None:
-    assert CURRENT_SCHEMA_REVISION == "v2_24"
-    assert CURRENT_SCHEMA_VERSION == "2.24"
+def test_current_schema_version_is_v2_25() -> None:
+    assert CURRENT_SCHEMA_REVISION == "v2_25"
+    assert CURRENT_SCHEMA_VERSION == "2.25"
 
 
 def test_v2_20_adds_session_source_observation_details(tmp_path) -> None:
@@ -1168,6 +1170,74 @@ def test_v2_24_adds_connector_kind_and_backfills_cli(tmp_path) -> None:
                     text("SELECT version_num FROM alembic_version")
                 ).scalar_one()
                 == "v2_24"
+            )
+    finally:
+        engine.dispose()
+
+
+def test_v2_25_adds_projects_and_session_binding(tmp_path) -> None:
+    path = tmp_path / "projects.sqlite3"
+    url = _sqlite_url(path)
+    upgrade_database(db_url=url, revision="v2_24")
+
+    upgrade_database(db_url=url, revision="v2_25")
+
+    engine = create_engine(f"sqlite:///{path}")
+    try:
+        inspector = inspect(engine)
+        assert "projects" in inspector.get_table_names()
+        project_columns = {
+            column["name"] for column in inspector.get_columns("projects")
+        }
+        assert {
+            "id",
+            "user_id",
+            "connector_id",
+            "name",
+            "workspace_path",
+            "workspace_key",
+            "pinned",
+            "pinned_at",
+            "created_at",
+            "updated_at",
+        }.issubset(project_columns)
+        session_columns = {
+            column["name"] for column in inspector.get_columns("sessions")
+        }
+        assert "project_id" in session_columns
+        project_indexes = {
+            index["name"] for index in inspector.get_indexes("projects")
+        }
+        assert {
+            "idx_projects_user_pinned_updated",
+            "idx_projects_connector_workspace",
+        }.issubset(project_indexes)
+        session_indexes = {
+            index["name"] for index in inspector.get_indexes("sessions")
+        }
+        assert "idx_sessions_project_archived_sort" in session_indexes
+        project_foreign_keys = inspector.get_foreign_keys("projects")
+        assert any(
+            foreign_key["referred_table"] == "users"
+            for foreign_key in project_foreign_keys
+        )
+        assert any(
+            foreign_key["referred_table"] == "connectors"
+            for foreign_key in project_foreign_keys
+        )
+        session_foreign_keys = inspector.get_foreign_keys("sessions")
+        project_fk = next(
+            foreign_key
+            for foreign_key in session_foreign_keys
+            if foreign_key["referred_table"] == "projects"
+        )
+        assert project_fk["options"].get("ondelete") == "SET NULL"
+        with engine.connect() as connection:
+            assert (
+                connection.execute(
+                    text("SELECT version_num FROM alembic_version")
+                ).scalar_one()
+                == "v2_25"
             )
     finally:
         engine.dispose()

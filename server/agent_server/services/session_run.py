@@ -122,6 +122,12 @@ class SessionRunService:
                 raise KeyError(payload.connectorId)
         except KeyError:
             raise SessionRunNotFoundError("connector not found") from None
+        project_id = await self._validate_project_binding(
+            payload.projectId,
+            connector_id=payload.connectorId,
+            cwd=payload.cwd,
+            user_id=user_id,
+        )
         runtime_id = _request_runtime_id(payload)
         await self._require_runtime_instance(
             payload.connectorId,
@@ -135,6 +141,7 @@ class SessionRunService:
         if payload.externalSessionId is not None:
             session = await self._store.create_session(
                 connector_id=payload.connectorId,
+                project_id=project_id,
                 user_id=user_id,
                 runtime=payload.runtime,
                 runtime_id=runtime_id,
@@ -160,6 +167,12 @@ class SessionRunService:
                 raise KeyError(payload.connectorId)
         except KeyError:
             raise SessionRunNotFoundError("connector not found") from None
+        project_id = await self._validate_project_binding(
+            payload.projectId,
+            connector_id=payload.connectorId,
+            cwd=payload.cwd,
+            user_id=user_id,
+        )
         runtime_id = _request_runtime_id(payload)
         await self._require_runtime_instance(
             payload.connectorId,
@@ -182,6 +195,7 @@ class SessionRunService:
         selections = _selections_from_mapping(payload.selections)
         session = await self._store.create_session(
             connector_id=payload.connectorId,
+            project_id=project_id,
             user_id=user_id,
             runtime=payload.runtime,
             runtime_id=runtime_id,
@@ -299,6 +313,31 @@ class SessionRunService:
             "connectorResult": connector_result,
             "attachments": persisted_attachment_refs,
         }
+
+    async def _validate_project_binding(
+        self,
+        project_id: str | None,
+        *,
+        connector_id: str,
+        cwd: str | None,
+        user_id: str,
+    ) -> str | None:
+        if project_id is None:
+            return None
+        try:
+            project = await self._store.get_project(project_id, user_id=user_id)
+        except KeyError:
+            raise SessionRunNotFoundError("project not found") from None
+        if project.connectorId != connector_id or project.workspacePath != cwd:
+            raise SessionRunInvalidConfigError(
+                {
+                    "code": "project_workspace_mismatch",
+                    "message": (
+                        "project connector and workspace must match the session"
+                    ),
+                }
+            )
+        return project.id
 
     async def _mark_create_and_start_failed(
         self,

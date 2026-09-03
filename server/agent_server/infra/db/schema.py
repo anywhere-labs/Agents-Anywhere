@@ -321,11 +321,64 @@ legacy_import_archive = Table(
 )
 
 
+projects = Table(
+    "projects",
+    metadata,
+    Column("id", Text, primary_key=True),
+    Column(
+        "user_id",
+        Text,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
+    Column(
+        "connector_id",
+        Text,
+        ForeignKey("connectors.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
+    Column("name", Text, nullable=False),
+    Column("workspace_path", Text, nullable=False),
+    Column("workspace_key", Text, nullable=False),
+    Column("pinned", Integer, nullable=False, server_default="0"),
+    Column("pinned_at", Text),
+    Column("created_at", Text, nullable=False),
+    Column("updated_at", Text, nullable=False),
+    UniqueConstraint(
+        "user_id",
+        "connector_id",
+        "workspace_key",
+        name="uq_projects_user_connector_workspace",
+    ),
+    Index(
+        "idx_projects_user_pinned_updated",
+        "user_id",
+        "pinned",
+        "pinned_at",
+        "updated_at",
+    ),
+    Index(
+        "idx_projects_connector_workspace",
+        "connector_id",
+        "workspace_key",
+    ),
+)
+
+
 sessions = Table(
     "sessions",
     metadata,
     Column("id", Text, primary_key=True),
     Column("connector_id", Text, ForeignKey("connectors.id"), nullable=False),
+    Column(
+        "project_id",
+        Text,
+        ForeignKey(
+            "projects.id",
+            name="fk_sessions_project_id_projects",
+            ondelete="SET NULL",
+        ),
+    ),
     Column("runtime", Text, nullable=False),
     Column(
         "runtime_id",
@@ -367,6 +420,13 @@ sessions = Table(
         "connector_id",
         "runtime",
         "source_state",
+    ),
+    Index(
+        "idx_sessions_project_archived_sort",
+        "project_id",
+        "archived",
+        "pinned",
+        "sort_at",
     ),
 )
 

@@ -32,6 +32,7 @@ from agent_server.api import (
     error_handlers,
     oauth,
     pairing,
+    projects,
     service,
     shares,
     sessions,
@@ -285,6 +286,7 @@ def create_app(
     app.include_router(connector_ingress.router, prefix=API_V2_PREFIX)
     app.include_router(agents.router, prefix=API_V2_PREFIX)
     app.include_router(pairing.router, prefix=API_V2_PREFIX)
+    app.include_router(projects.router, prefix=API_V2_PREFIX)
     app.include_router(sessions.router, prefix=API_V2_PREFIX)
     app.include_router(sessions_fs.router, prefix=API_V2_PREFIX)
     app.include_router(sessions_terminal.router, prefix=API_V2_PREFIX)

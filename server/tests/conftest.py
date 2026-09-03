@@ -27,13 +27,14 @@ _API_ROOTS = (
     "/health",
     "/oauth",
     "/pairing",
+    "/projects",
     "/sessions",
     "/ws-ticket",
 )
 _TRUNCATE_SQL = (
     "TRUNCATE TABLE app_releases, dashboard_daily_metrics, dashboard_user_daily_facts, dashboard_settings, "
     "session_shares, timeline_items, session_active_runs, "
-    "sessions, "
+    "sessions, projects, "
     "connector_runtime_catalogs, connector_protocol_capabilities, device_runtimes, "
     "connector_runtime_types, "
     "pairing_codes, connectors, users, instance_settings "
