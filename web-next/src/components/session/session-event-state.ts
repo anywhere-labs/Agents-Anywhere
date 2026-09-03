@@ -10,6 +10,76 @@ const LIVE_PROJECTION_EVENT_TYPES = new Set<ProtocolEventEnvelope["type"]>([
   "runtime.catalog.updated",
 ])
 
+export class SessionEventSequenceCursor {
+  private sessionId: string
+  private nextSeq: number
+
+  constructor(sessionId: string, nextSeq = 0) {
+    this.sessionId = sessionId
+    this.nextSeq = nextSeq
+  }
+
+  switchTo(sessionId: string, nextSeq = 0): void {
+    if (this.sessionId === sessionId) return
+    this.sessionId = sessionId
+    this.nextSeq = nextSeq
+  }
+
+  advance(sessionId: string, nextSeq: number): void {
+    if (this.sessionId !== sessionId) return
+    this.nextSeq = Math.max(this.nextSeq, nextSeq)
+  }
+
+  replaceFromSnapshot(sessionId: string, nextSeq: number): void {
+    if (this.sessionId !== sessionId) return
+    this.nextSeq = nextSeq
+  }
+
+  current(sessionId: string): number {
+    return this.sessionId === sessionId ? this.nextSeq : 0
+  }
+
+  accepts(sessionId: string, sequence: number): boolean {
+    return this.sessionId === sessionId && sequence >= this.nextSeq
+  }
+}
+
+export function drainSessionEventBuffer(
+  events: readonly ProtocolEventEnvelope[],
+  applyEvent: (event: ProtocolEventEnvelope) => void,
+  shouldPause: () => boolean = () => false,
+): ProtocolEventEnvelope[] {
+  const pending = events
+    .map((event, index) => ({ event, index }))
+    .sort((left, right) => (
+      left.event.sequence - right.event.sequence || left.index - right.index
+    ))
+
+  for (let index = 0; index < pending.length; index += 1) {
+    if (shouldPause()) {
+      return pending.slice(index).map(({ event }) => event)
+    }
+    const entry = pending[index]
+    if (entry) applyEvent(entry.event)
+  }
+  return []
+}
+
+export async function settleSessionEventRecovery(
+  recovery: Promise<void>,
+  releaseRecovery: () => void,
+  drainBufferedEvents: () => void,
+): Promise<void> {
+  try {
+    await recovery
+  } finally {
+    // The drain must observe an inactive recovery gate. Otherwise every
+    // buffered event is paused and can remain stranded indefinitely.
+    releaseRecovery()
+    drainBufferedEvents()
+  }
+}
+
 export function sessionEventUsesDurableEventIdDedup(
   event: ProtocolEventEnvelope,
 ): boolean {

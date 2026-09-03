@@ -4161,6 +4161,79 @@ def test_session_snapshot_includes_effective_capabilities(tmp_path):
     assert running_caps["session.steer"]["available"] is True
 
 
+def test_session_snapshot_does_not_publish_revision_for_direct_status_noop(
+    tmp_path,
+):
+    client = make_client(tmp_path)
+    _connector_id, _access_token, session_id, headers = create_connector_and_session(
+        client
+    )
+    client.app.state.rpc = FakeLocalRpc()
+    ticket = ws_ticket(client, session_id, headers)
+
+    with client.websocket_connect(f"/sessions/{session_id}/ws?ticket={ticket}") as ws:
+        subscribed = ws.receive_json()
+        assert subscribed["type"] == "session.subscribed"
+
+        snapshot = client.get(f"/sessions/{session_id}/snapshot", headers=headers)
+
+        assert snapshot.status_code == 200, snapshot.text
+        assert snapshot.json()["eventCursor"] == subscribed["cursor"]
+        with pytest.raises(TimeoutError):
+            ws.portal.call(_receive_ws_test_message, ws, 0.1)
+
+
+def test_session_snapshot_reprojects_capabilities_when_connector_goes_offline(
+    tmp_path,
+):
+    client = make_client(tmp_path)
+    _connector_id, _access_token, session_id, headers = create_connector_and_session(
+        client
+    )
+
+    class DisconnectAfterCapabilitiesRpc(FakeLocalRpc):
+        online = True
+
+        async def is_online(self, _connector_id: str) -> bool:
+            return self.online
+
+        async def request(
+            self,
+            connector_id: str,
+            method: str,
+            params: dict[str, Any],
+            *,
+            timeout: float = 30,
+        ) -> Any:
+            result = await super().request(
+                connector_id,
+                method,
+                params,
+                timeout=timeout,
+            )
+            if method == "session.capabilities":
+                self.online = False
+            return result
+
+    fake_rpc = DisconnectAfterCapabilitiesRpc()
+    client.app.state.rpc = fake_rpc
+
+    snapshot = client.get(f"/sessions/{session_id}/snapshot", headers=headers)
+
+    assert snapshot.status_code == 200, snapshot.text
+    body = snapshot.json()
+    assert body["session"]["connectorStatus"] == "offline"
+    capabilities = {
+        item["capabilityId"]: item
+        for item in body["effectiveCapabilities"]["capabilities"]
+    }
+    assert capabilities["session.send_message"]["available"] is False
+    assert (
+        capabilities["session.send_message"]["unavailableReason"]
+        == "connector_offline"
+    )
+
+
 def test_session_snapshot_returns_persisted_runtime_catalogs(tmp_path):
     client = make_client(tmp_path)
     connector_id, _access_token, session_id, headers = create_connector_and_session(client)
@@ -8488,6 +8561,93 @@ def test_session_ws_preserves_same_sequence_presence_a_b_a_transition(tmp_path):
         assert observed_statuses == ["online", "offline", "online"]
         assert observed_available == [True, False, True]
         assert len(set(observed_sequences)) == 1
+
+
+def test_session_ws_preserves_rpc_presence_disconnect_and_reconnect_at_same_sequence(
+    tmp_path,
+):
+    client = make_client(tmp_path)
+    connector_id, _access_token, session_id, headers = create_connector_and_session(
+        client
+    )
+    takeover = client.post(f"/sessions/{session_id}/takeover", headers=headers)
+    assert takeover.status_code == 200, takeover.text
+    ticket = ws_ticket(client, session_id, headers)
+
+    def receive_presence_projection(ws, expected_status: str) -> list[int]:
+        events = [ws.receive_json() for _ in range(2)]
+        assert {event["type"] for event in events} == {
+            "session.meta.updated",
+            "runtime.capability.updated",
+        }, events
+        session_event = next(
+            event for event in events if event["type"] == "session.meta.updated"
+        )
+        capability_event = next(
+            event
+            for event in events
+            if event["type"] == "runtime.capability.updated"
+        )
+        assert (
+            session_event["payload"]["session"]["connectorStatus"]
+            == expected_status
+        )
+        send_capability = next(
+            capability
+            for capability in capability_event["payload"]["capabilitySet"][
+                "capabilities"
+            ]
+            if capability["capabilityId"] == "session.send_message"
+        )
+        assert send_capability["available"] is (expected_status == "online")
+        return [event["sequence"] for event in events]
+
+    with client.websocket_connect(f"/sessions/{session_id}/ws?ticket={ticket}") as ws:
+        subscribed = ws.receive_json()
+        assert subscribed["type"] == "session.subscribed"
+        observed_sequences: list[int] = []
+        manager = client.app.state.rpc
+
+        first_connection = ws.portal.call(
+            manager.register,
+            connector_id,
+            FakeWebSocket(),
+        )
+        ws.portal.call(
+            publish_connector_session_capabilities,
+            client.app.state.store,
+            manager,
+            client.app.state.timeline_broker,
+            connector_id,
+        )
+        observed_sequences.extend(receive_presence_projection(ws, "online"))
+
+        assert ws.portal.call(manager.unregister, connector_id, first_connection)
+        ws.portal.call(
+            publish_connector_session_capabilities,
+            client.app.state.store,
+            manager,
+            client.app.state.timeline_broker,
+            connector_id,
+        )
+        observed_sequences.extend(receive_presence_projection(ws, "offline"))
+
+        second_connection = ws.portal.call(
+            manager.register,
+            connector_id,
+            FakeWebSocket(),
+        )
+        ws.portal.call(
+            publish_connector_session_capabilities,
+            client.app.state.store,
+            manager,
+            client.app.state.timeline_broker,
+            connector_id,
+        )
+        observed_sequences.extend(receive_presence_projection(ws, "online"))
+
+        assert set(observed_sequences) == {subscribed["sequence"]}
+        assert ws.portal.call(manager.unregister, connector_id, second_connection)
 
 
 def test_session_ws_projects_codex_timeline_sync_as_incremental_update_without_refetch(tmp_path):

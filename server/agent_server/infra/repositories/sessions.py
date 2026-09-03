@@ -1422,7 +1422,6 @@ class SessionRepositoryMixin:
         return [session_id for session_id in ordered if session_id in owned_ids]
 
 
-    @session_revision_fenced
     async def set_session_status(
         self,
         session_id: str,
@@ -1431,34 +1430,44 @@ class SessionRepositoryMixin:
         expected_status: str | None = None,
         mark_read_on_change: bool = False,
     ) -> SessionView:
-        async with self._engine.begin() as conn:
-            statement = select(sessions_t.c.status).where(sessions_t.c.id == session_id)
-            if expected_status is not None:
-                statement = statement.with_for_update()
-            row = (
-                await conn.execute(statement)
-            ).first()
-            if row is None:
-                raise KeyError(session_id)
-            if expected_status is not None and row.status != expected_status:
-                raise ValueError("session status changed")
-            if row.status != status:
-                await self._bump_session(
-                    conn,
-                    session_id,
-                    mark_read=mark_read_on_change,
-                )
-                update_statement = update(sessions_t).where(
+        async with self.session_revision_fence(session_id):
+            changed = False
+            async with self._engine.begin() as conn:
+                statement = select(sessions_t.c.status).where(
                     sessions_t.c.id == session_id
                 )
                 if expected_status is not None:
-                    update_statement = update_statement.where(
-                        sessions_t.c.status == expected_status
-                    )
-                result = await conn.execute(update_statement.values(status=status))
-                if result.rowcount != 1:
+                    statement = statement.with_for_update()
+                row = (await conn.execute(statement)).first()
+                if row is None:
+                    raise KeyError(session_id)
+                if expected_status is not None and row.status != expected_status:
                     raise ValueError("session status changed")
-        return await self.get_session(session_id)
+                if row.status != status:
+                    await self._bump_session(
+                        conn,
+                        session_id,
+                        mark_read=mark_read_on_change,
+                    )
+                    update_statement = update(sessions_t).where(
+                        sessions_t.c.id == session_id
+                    )
+                    if expected_status is not None:
+                        update_statement = update_statement.where(
+                            sessions_t.c.status == expected_status
+                        )
+                    result = await conn.execute(update_statement.values(status=status))
+                    if result.rowcount != 1:
+                        raise ValueError("session status changed")
+                    changed = True
+            session = await self.get_session(session_id)
+            if changed:
+                await self.publish_session_revision_result(
+                    session_id,
+                    operation="set_session_status",
+                    result=session,
+                )
+            return session
 
 
     @session_revision_fenced

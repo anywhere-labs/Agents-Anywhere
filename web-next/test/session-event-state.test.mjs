@@ -4,7 +4,10 @@ import test from "node:test"
 import {
   acceptSessionEventId,
   bufferedEventsAfterLiveCapabilityRead,
+  drainSessionEventBuffer,
   mergeEffectiveCapabilities,
+  SessionEventSequenceCursor,
+  settleSessionEventRecovery,
 } from "../src/components/session/session-event-state.ts"
 
 function capabilitySet(allowed) {
@@ -40,6 +43,30 @@ function capabilityEvent(capabilitySetValue) {
   }
 }
 
+function presenceEvent(status, eventId) {
+  return {
+    protocolVersion: "1.0",
+    eventId,
+    sequence: 10,
+    cursor: "seq:10",
+    type: "session.meta.updated",
+    sessionId: "session-1",
+    emittedAt: "2026-09-02T00:00:00Z",
+    payload: {
+      session: {
+        id: "session-1",
+        connectorStatus: status,
+      },
+    },
+  }
+}
+
+function applyPresenceEvent(cursor, event, currentStatus) {
+  if (!cursor.accepts(event.sessionId, event.sequence)) return currentStatus
+  cursor.advance(event.sessionId, event.sequence)
+  return event.payload.session.connectorStatus
+}
+
 test("same-sequence capability A-B-A is not rejected by durable event-id dedup", () => {
   const first = capabilityEvent(capabilitySet(true))
   const middle = capabilityEvent(capabilitySet(false))
@@ -69,6 +96,138 @@ test("durable events keep exact event-id dedup", () => {
 
   assert.equal(acceptSessionEventId(event, processedEventIds), true)
   assert.equal(acceptSessionEventId(event, processedEventIds), false)
+})
+
+test("session switch resets a higher sequence before recovering a lower-sequence session", () => {
+  const cursor = new SessionEventSequenceCursor("session-high", 32807)
+
+  cursor.switchTo("session-low")
+  assert.equal(cursor.current("session-low"), 0)
+
+  cursor.advance("session-low", 1072)
+  assert.equal(cursor.current("session-low"), 1072)
+  assert.equal(cursor.accepts("session-low", 1072), true)
+  assert.equal(cursor.accepts("session-low", 1071), false)
+})
+
+test("stale session work cannot alter the current session cursor", () => {
+  const cursor = new SessionEventSequenceCursor("session-high", 32807)
+  cursor.switchTo("session-low", 1072)
+
+  cursor.advance("session-high", 40000)
+
+  assert.equal(cursor.current("session-low"), 1072)
+  assert.equal(cursor.current("session-high"), 0)
+  assert.equal(cursor.accepts("session-high", 40000), false)
+})
+
+test("authoritative snapshot can replace a future cursor in the same session", () => {
+  const cursor = new SessionEventSequenceCursor("session-reset", 32807)
+
+  cursor.replaceFromSnapshot("session-reset", 1072)
+
+  assert.equal(cursor.current("session-reset"), 1072)
+  assert.equal(cursor.accepts("session-reset", 1072), true)
+})
+
+test("stale session snapshot cannot replace the current session cursor", () => {
+  const cursor = new SessionEventSequenceCursor("session-old", 32807)
+  cursor.switchTo("session-current", 1072)
+
+  cursor.replaceFromSnapshot("session-old", 10)
+
+  assert.equal(cursor.current("session-current"), 1072)
+})
+
+test("pre-recovery same-sequence presence is applied before recovered presence", () => {
+  const cursor = new SessionEventSequenceCursor("session-1", 10)
+  let status = "offline"
+  const apply = (event) => {
+    status = applyPresenceEvent(cursor, event, status)
+  }
+
+  const remaining = drainSessionEventBuffer(
+    [presenceEvent("online", "evt_pre_online")],
+    apply,
+  )
+  apply(presenceEvent("offline", "evt_recovery_offline"))
+
+  assert.deepEqual(remaining, [])
+  assert.equal(status, "offline")
+})
+
+test("same-sequence presence received during recovery is applied after recovery", () => {
+  const cursor = new SessionEventSequenceCursor("session-1", 10)
+  let status = "offline"
+  const apply = (event) => {
+    status = applyPresenceEvent(cursor, event, status)
+  }
+
+  apply(presenceEvent("offline", "evt_recovery_offline"))
+  const remaining = drainSessionEventBuffer(
+    [presenceEvent("online", "evt_during_online")],
+    apply,
+  )
+
+  assert.deepEqual(remaining, [])
+  assert.equal(status, "online")
+})
+
+test("buffer drain preserves later events when an event starts nested recovery", () => {
+  const refetch = {
+    ...presenceEvent("offline", "evt_refetch"),
+    type: "session.refetch_required",
+    payload: {},
+  }
+  const online = presenceEvent("online", "evt_after_refetch")
+  const applied = []
+  let recoveryStarted = false
+
+  const remaining = drainSessionEventBuffer(
+    [refetch, online],
+    (event) => {
+      applied.push(event)
+      if (event.type === "session.refetch_required") recoveryStarted = true
+    },
+    () => recoveryStarted,
+  )
+
+  assert.deepEqual(applied, [refetch])
+  assert.deepEqual(remaining, [online])
+})
+
+test("recovery releases its gate before draining events received in flight", async () => {
+  let resolveRecovery
+  const recovery = new Promise((resolve) => {
+    resolveRecovery = resolve
+  })
+  const buffered = [presenceEvent("online", "evt_during_recovery")]
+  const applied = []
+  let recoveryActive = true
+
+  const settled = settleSessionEventRecovery(
+    recovery,
+    () => {
+      recoveryActive = false
+    },
+    () => {
+      const remaining = drainSessionEventBuffer(
+        buffered,
+        (event) => applied.push(event),
+        () => recoveryActive,
+      )
+      assert.deepEqual(remaining, [])
+    },
+  )
+
+  await Promise.resolve()
+  assert.deepEqual(applied, [])
+
+  resolveRecovery()
+  await settled
+
+  assert.equal(recoveryActive, false)
+  assert.deepEqual(applied, buffered)
 })
 
 test("capability comparison ignores set revision and capability order", () => {

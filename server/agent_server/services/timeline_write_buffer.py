@@ -23,6 +23,10 @@ from agent_server.core.timeline import (
 from agent_server.core.utc import utc_now
 from agent_server.infra.redis_coordinator import RedisCoordinator
 from agent_server.infra.timeline_broker import TimelineBroker
+from agent_server.services.connector_presence import (
+    ConnectorPresencePort,
+    with_effective_session_connector_status,
+)
 from agent_server.services.dashboard_events import publish_dashboard_changed
 from agent_server.services.repository_ports import TimelineBufferRepository
 from agent_server.services.session_revision_allocator import (
@@ -96,6 +100,7 @@ class TimelineWriteBuffer:
         broker: TimelineBroker,
         coordinator: RedisCoordinator,
         *,
+        presence: ConnectorPresencePort | None = None,
         flush_interval_seconds: float = DEFAULT_FLUSH_INTERVAL_SECONDS,
         revision_lease_size: int = DEFAULT_REVISION_LEASE_SIZE,
     ) -> None:
@@ -104,6 +109,7 @@ class TimelineWriteBuffer:
         self._store = store
         self._broker = broker
         self._coordinator = coordinator
+        self._presence = presence
         self._flush_interval_seconds = flush_interval_seconds
         self._sequences = SessionRevisionAllocator(
             store,
@@ -341,7 +347,9 @@ class TimelineWriteBuffer:
                             await self._sequences.published_head(session_id) or 0
                         )
                         if durable_sequence > published_through:
-                            session = await self._store.get_session(session_id)
+                            session = await self._project_session_connector_status(
+                                await self._store.get_session(session_id)
+                            )
                             await self._broker.publish(
                                 session_id,
                                 {
@@ -376,16 +384,12 @@ class TimelineWriteBuffer:
             and published_through >= durable_sequence
         ):
             return
-        session = (
-            result
-            if isinstance(result, SessionView)
-            else await self._store.get_session(session_id)
-        )
         envelope: dict[str, Any] = {
             "sessionId": session_id,
             "nextSeq": durable_sequence,
         }
         if isinstance(result, SessionView):
+            session = await self._project_session_connector_status(result)
             envelope["session"] = session.model_dump(mode="json")
         elif isinstance(result, TimelineItemWriteResult):
             envelope["items"] = [result.item.model_dump(mode="json")]
@@ -404,6 +408,9 @@ class TimelineWriteBuffer:
             if operation == "replace_timeline_snapshot" and "items" in envelope:
                 envelope["timelineReset"] = True
         else:
+            session = await self._project_session_connector_status(
+                await self._store.get_session(session_id)
+            )
             envelope["session"] = session.model_dump(mode="json")
         await self._broker.publish(session_id, envelope)
         await self._sequences.mark_published(session_id, durable_sequence)
@@ -466,7 +473,9 @@ class TimelineWriteBuffer:
         # an empty sequence is legal, but publish an explicit recovery boundary
         # so the next higher event cannot silently jump over it.
         live_sequence = await self._sequences.live_head(session_id)
-        session = await self._store.get_session(session_id)
+        session = await self._project_session_connector_status(
+            await self._store.get_session(session_id)
+        )
         await self._broker.publish(
             session_id,
             {
@@ -477,6 +486,17 @@ class TimelineWriteBuffer:
             },
         )
         await self._sequences.mark_published(session_id, live_sequence)
+
+    async def _project_session_connector_status(
+        self,
+        session: SessionView,
+    ) -> SessionView:
+        if self._presence is None:
+            return session
+        return await with_effective_session_connector_status(
+            self._presence,
+            session,
+        )
 
     async def flush_all(self, *, suppress_errors: bool = False) -> None:
         session_ids = await self._dirty_sessions()

@@ -51,7 +51,7 @@ def timeline_input(
     )
 
 
-async def create_buffer(tmp_path):
+async def create_buffer(tmp_path, *, presence=None):
     db_path = tmp_path / "timeline-buffer.sqlite3"
     upgrade_database(sqlite_path=db_path)
     store = Store(db_path)
@@ -70,6 +70,7 @@ async def create_buffer(tmp_path):
         store,
         broker,
         coordinator,
+        presence=presence,
         flush_interval_seconds=60,
     )
     return store, broker, buffer, connector, session
@@ -112,6 +113,89 @@ async def test_buffer_coalesces_one_item_without_resequencing(tmp_path) -> None:
         assert stored[0].content["text"] == "second"
         assert stored[0].updatedSeq == second.item.updatedSeq
         assert await store.get_session_seq(session.id) == second.item.updatedSeq
+    finally:
+        await buffer.close()
+        await store.close()
+
+
+@pytest.mark.anyio
+async def test_session_status_writer_suppresses_noop_and_projects_live_presence(
+    tmp_path,
+) -> None:
+    class Presence:
+        online = True
+
+        async def is_online(self, _connector_id: str) -> bool:
+            return self.online
+
+    presence = Presence()
+    store, broker, buffer, _connector, session = await create_buffer(
+        tmp_path,
+        presence=presence,
+    )
+    payloads: list[dict[str, Any]] = []
+
+    async def record_publish(_session_id: str, payload: dict) -> None:
+        payloads.append(payload)
+
+    broker.publish = record_publish  # type: ignore[method-assign]
+    try:
+        initial_sequence = await store.get_session_seq(session.id)
+
+        unchanged = await store.set_session_status(session.id, "idle")
+
+        assert unchanged.updatedSeq == initial_sequence
+        assert payloads == []
+
+        running = await store.set_session_status(session.id, "running")
+
+        assert running.updatedSeq == initial_sequence + 1
+        assert len(payloads) == 1
+        assert payloads[0]["nextSeq"] == running.updatedSeq
+        assert payloads[0]["session"]["status"] == "running"
+        assert payloads[0]["session"]["connectorStatus"] == "online"
+
+        presence.online = False
+        blocked = await store.set_session_status(session.id, "blocked")
+
+        assert blocked.updatedSeq == initial_sequence + 2
+        assert len(payloads) == 2
+        assert payloads[1]["nextSeq"] == blocked.updatedSeq
+        assert payloads[1]["session"]["status"] == "blocked"
+        assert payloads[1]["session"]["connectorStatus"] == "offline"
+    finally:
+        await buffer.close()
+        await store.close()
+
+
+@pytest.mark.anyio
+async def test_timeline_item_only_publish_does_not_read_connector_presence(
+    tmp_path,
+) -> None:
+    class Presence:
+        calls = 0
+
+        async def is_online(self, _connector_id: str) -> bool:
+            self.calls += 1
+            return True
+
+    presence = Presence()
+    store, _broker, buffer, _connector, session = await create_buffer(
+        tmp_path,
+        presence=presence,
+    )
+    try:
+        await buffer.accept(
+            session_id=session.id,
+            item=timeline_input(
+                session.id,
+                text="live",
+                content_hash="sha256:live",
+                revision=1,
+            ),
+        )
+
+        assert presence.calls == 0
     finally:
         await buffer.close()
         await store.close()
