@@ -8,11 +8,14 @@ import { toast } from "sonner"
 import { DashboardSidebarToggle } from "@/components/dashboard-sidebar-toggle"
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
+import { useWorkspace } from "@/components/workspace-context"
 import { getDesktopWorkbenchBridge } from "@/features/desktop/bridge"
 import { useDesktopConnector } from "@/features/desktop/desktop-connector-context"
 
 export function DesktopShellHeader() {
   const t = useTranslations("desktopConnector")
+  const tCommon = useTranslations("common")
+  const { canGoBack, canGoForward, goBack, goForward } = useWorkspace()
   const { supported, busy, state, binding, reconnect } = useDesktopConnector()
   const [canClearCache, setCanClearCache] = React.useState(false)
   const [clearingCache, setClearingCache] = React.useState(false)
@@ -53,10 +56,11 @@ export function DesktopShellHeader() {
             type="button"
             variant="ghost"
             size="icon-sm"
-            aria-label="Back"
-            aria-disabled="true"
-            tabIndex={-1}
-            className="rounded-md text-muted-foreground/65 hover:bg-muted hover:text-foreground"
+            aria-label={tCommon("back")}
+            title={tCommon("back")}
+            onClick={goBack}
+            disabled={!canGoBack}
+            className="rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
           >
             <ArrowLeft className="size-4" />
           </Button>
@@ -64,10 +68,11 @@ export function DesktopShellHeader() {
             type="button"
             variant="ghost"
             size="icon-sm"
-            aria-label="Forward"
-            aria-disabled="true"
-            tabIndex={-1}
-            className="rounded-md text-muted-foreground/40 hover:bg-muted hover:text-foreground"
+            aria-label={tCommon("forward")}
+            title={tCommon("forward")}
+            onClick={goForward}
+            disabled={!canGoForward}
+            className="rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
           >
             <ArrowRight className="size-4" />
           </Button>

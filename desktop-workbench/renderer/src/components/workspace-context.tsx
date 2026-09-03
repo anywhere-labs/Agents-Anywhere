@@ -88,6 +88,13 @@ type ParsedRoute =
   | { page: "device"; connectorId: string }
   | { page: "device-workspace"; connectorId: string; workspacePath: string }
 
+type WorkspaceHistoryMeta = {
+  index: number
+  maxIndex: number
+}
+
+const WORKSPACE_HISTORY_STATE_KEY = "__agents_anywhere_workspace_history"
+
 /** Encode a file path for use in a URL hash segment */
 function encodePath(p: string) { return encodeURIComponent(p) }
 function decodePath(p: string) { return decodeURIComponent(p) }
@@ -140,6 +147,53 @@ function buildHash(route: ParsedRoute): string {
     case "device-workspace":
       return `#/device/${route.connectorId}/workspace/${encodePath(route.workspacePath)}`
   }
+}
+
+function readWorkspaceHistoryMeta(state: unknown): WorkspaceHistoryMeta | null {
+  if (!state || typeof state !== "object") return null
+  const value = (state as Record<string, unknown>)[WORKSPACE_HISTORY_STATE_KEY]
+  if (!value || typeof value !== "object") return null
+  const meta = value as Partial<WorkspaceHistoryMeta>
+  const index = meta.index
+  const maxIndex = meta.maxIndex
+  if (typeof index !== "number" || typeof maxIndex !== "number") return null
+  if (!Number.isInteger(index) || !Number.isInteger(maxIndex)) return null
+  if (index < 0 || maxIndex < index) return null
+  return { index, maxIndex }
+}
+
+function historyStateWithMeta(state: unknown, meta: WorkspaceHistoryMeta): Record<string, unknown> {
+  const base = state && typeof state === "object" && !Array.isArray(state)
+    ? state as Record<string, unknown>
+    : {}
+  return { ...base, [WORKSPACE_HISTORY_STATE_KEY]: meta }
+}
+
+function replaceCurrentHistoryMeta(meta: WorkspaceHistoryMeta) {
+  window.history.replaceState(
+    historyStateWithMeta(window.history.state, meta),
+    "",
+    window.location.href,
+  )
+}
+
+function isWorkspaceRouteHash(hash: string): boolean {
+  const path = hash.replace(/^#\/?/, "").split("?")[0] ?? ""
+  return (
+    path === "" ||
+    path === "/" ||
+    path === "app" ||
+    path.startsWith("session/") ||
+    path.startsWith("new-session/") ||
+    path === "settings" ||
+    path.startsWith("settings/") ||
+    path === "dashboard" ||
+    path === "team" ||
+    path === "service" ||
+    path === "mobile-connections" ||
+    path === "device" ||
+    path.startsWith("device/")
+  )
 }
 
 function mapConnector(connector: RealConnectorView): ConnectorView {
@@ -337,6 +391,8 @@ export type WorkspaceState = {
   routeReady: boolean
 
   // Navigation
+  canGoBack: boolean
+  canGoForward: boolean
   page: AppPage
   activeSessionId: string | null
   activeSession: SessionView | null
@@ -363,6 +419,8 @@ export type WorkspaceState = {
 
   // Actions
   openSession: (id: string) => void
+  goBack: () => void
+  goForward: () => void
   goHome: () => void
   replaceHome: () => void
   navigate: (page: AppPage, sub?: string) => void
@@ -509,6 +567,8 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   // Derive page state from hash — start at "home" for safe SSR, correct on mount.
   const [route, setRoute] = React.useState<ParsedRoute>({ page: "home" })
   const [routeReady, setRouteReady] = React.useState(false)
+  const [canGoBack, setCanGoBack] = React.useState(false)
+  const [canGoForward, setCanGoForward] = React.useState(false)
 
   const [filter, setFilter] = React.useState<FilterValue>(defaultFilter)
   const [search, setSearch] = React.useState("")
@@ -528,6 +588,8 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   const firstDeviceWizardCheckedRef = React.useRef(false)
   const composerInsertionSeqRef = React.useRef(0)
   const routeRef = React.useRef<ParsedRoute>({ page: "home" })
+  const historyIndexRef = React.useRef(0)
+  const historyMaxIndexRef = React.useRef(0)
 
   optimisticMessagesRef.current = optimisticMessages
   sessionAliasesRef.current = sessionAliases
@@ -787,32 +849,108 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     }
   }, [applyDashboardSnapshot, authSession?.accessToken, fetchData])
 
+  const syncHistoryAvailability = React.useCallback(() => {
+    const index = historyIndexRef.current
+    const maxIndex = historyMaxIndexRef.current
+    setCanGoBack(index > 0)
+    setCanGoForward(index < maxIndex)
+  }, [])
+
   // ── Hash routing ──────────────────────────────────────────
   React.useEffect(() => {
+    const initialHash = window.location.hash || "#/"
+    const existingMeta = readWorkspaceHistoryMeta(window.history.state)
+    const initialIndex = existingMeta?.index ?? 0
+    const initialMaxIndex = Math.max(existingMeta?.maxIndex ?? initialIndex, initialIndex)
+    historyIndexRef.current = initialIndex
+    historyMaxIndexRef.current = initialMaxIndex
+    replaceCurrentHistoryMeta({ index: initialIndex, maxIndex: initialMaxIndex })
+    syncHistoryAvailability()
+
     // Correct from hash immediately on mount, then keep in sync.
-    const initialRoute = parseHash(window.location.hash)
+    const initialRoute = parseHash(initialHash)
     routeRef.current = initialRoute
     setRoute(initialRoute)
     setRouteReady(true)
     const handler = () => {
-      const nextRoute = parseHash(window.location.hash)
+      const nextHash = window.location.hash || "#/"
+      if (!isWorkspaceRouteHash(nextHash)) return
+
+      const nextRoute = parseHash(nextHash)
+      const existing = readWorkspaceHistoryMeta(window.history.state)
+      if (existing) {
+        const nextIndex = existing.index
+        const nextMaxIndex = Math.max(
+          historyMaxIndexRef.current,
+          existing.maxIndex,
+          nextIndex,
+        )
+        historyIndexRef.current = nextIndex
+        historyMaxIndexRef.current = nextMaxIndex
+        if (nextMaxIndex !== existing.maxIndex) {
+          replaceCurrentHistoryMeta({ index: nextIndex, maxIndex: nextMaxIndex })
+        }
+      } else {
+        // A direct hash change outside the workspace starts a fresh app history.
+        historyIndexRef.current = 0
+        historyMaxIndexRef.current = 0
+        replaceCurrentHistoryMeta({ index: 0, maxIndex: 0 })
+      }
+      syncHistoryAvailability()
       routeRef.current = nextRoute
       React.startTransition(() => setRoute(nextRoute))
     }
     window.addEventListener("hashchange", handler)
-    return () => window.removeEventListener("hashchange", handler)
-  }, [])
+    window.addEventListener("popstate", handler)
+    return () => {
+      window.removeEventListener("hashchange", handler)
+      window.removeEventListener("popstate", handler)
+    }
+  }, [syncHistoryAvailability])
 
   const pushRoute = React.useCallback((r: ParsedRoute) => {
+    const nextHash = buildHash(r)
+    const currentHash = window.location.hash || "#/"
+    if (nextHash === currentHash) {
+      routeRef.current = r
+      React.startTransition(() => setRoute(r))
+      return
+    }
+
+    const nextIndex = historyIndexRef.current + 1
+    historyIndexRef.current = nextIndex
+    historyMaxIndexRef.current = nextIndex
+    window.location.hash = nextHash
+    replaceCurrentHistoryMeta({ index: nextIndex, maxIndex: nextIndex })
+    syncHistoryAvailability()
     routeRef.current = r
-    window.location.hash = buildHash(r)
+    React.startTransition(() => setRoute(r))
+  }, [syncHistoryAvailability])
+
+  const replaceRoute = React.useCallback((r: ParsedRoute) => {
+    const nextHash = buildHash(r)
+    const currentMeta = readWorkspaceHistoryMeta(window.history.state)
+    const meta = currentMeta ?? {
+      index: historyIndexRef.current,
+      maxIndex: historyMaxIndexRef.current,
+    }
+    routeRef.current = r
+    window.history.replaceState(
+      historyStateWithMeta(window.history.state, meta),
+      "",
+      nextHash,
+    )
     React.startTransition(() => setRoute(r))
   }, [])
 
-  const replaceRoute = React.useCallback((r: ParsedRoute) => {
-    routeRef.current = r
-    window.history.replaceState(null, "", buildHash(r))
-    React.startTransition(() => setRoute(r))
+  const goBack = React.useCallback(() => {
+    if (historyIndexRef.current <= 0) return
+    window.history.back()
+  }, [])
+
+  const goForward = React.useCallback(() => {
+    if (historyIndexRef.current >= historyMaxIndexRef.current) return
+    window.history.forward()
   }, [])
 
   // ── Navigation helpers ────────────────────────────────────
@@ -1364,7 +1502,11 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     pairDeviceDialogOpen,
     composerInsertion,
     optimisticMessages,
+    canGoBack,
+    canGoForward,
     openSession,
+    goBack,
+    goForward,
     goHome,
     replaceHome,
     navigate,
