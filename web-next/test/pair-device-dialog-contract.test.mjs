@@ -6,6 +6,10 @@ const source = readFileSync(
   new URL("../src/components/pair-device-dialog.tsx", import.meta.url),
   "utf8",
 )
+const demoSource = readFileSync(
+  new URL("../src/components/demo.tsx", import.meta.url),
+  "utf8",
+)
 
 function sourceBetween(start, end) {
   const startIndex = source.indexOf(start)
@@ -54,6 +58,17 @@ test("online completion is idempotent and only reports success once", () => {
     /if \(onlineNotificationRef\.current === cid\) return\s*onlineNotificationRef\.current = cid/,
   )
   assert.equal(source.match(/onConnectorCreated\?\.\(\)/g)?.length, 1)
+})
+
+test("workspace refresh does not close the explicit agent setup step", () => {
+  const callbackStart = demoSource.indexOf("onConnectorCreated={() => {")
+  const callbackEnd = demoSource.indexOf("}}", callbackStart)
+  assert.notEqual(callbackStart, -1)
+  assert.notEqual(callbackEnd, -1)
+  const callback = demoSource.slice(callbackStart, callbackEnd)
+
+  assert.match(callback, /refreshData\(\)/)
+  assert.doesNotMatch(callback, /closePairDeviceDialog\(\)/)
 })
 
 test("skipping setup does not create a runtime and explicit creation starts it", () => {
