@@ -46,6 +46,10 @@ def test_connector_runtime_host_maps_session_source_observation() -> None:
     asyncio.run(_exercise_session_source_notification())
 
 
+def test_connector_runtime_host_does_not_treat_activity_as_source_observation() -> None:
+    asyncio.run(_exercise_session_meta_activity_time())
+
+
 def test_connector_runtime_host_maps_catalogs_to_backend_notifications() -> None:
     asyncio.run(_exercise_runtime_catalog_notifications())
 
@@ -156,6 +160,35 @@ async def _exercise_session_source_notification() -> None:
                 "reason": "thread/archived",
                 "observedAt": "2026-08-27T12:00:00Z",
                 "observationOrigin": "event",
+            },
+        )
+    ]
+
+
+async def _exercise_session_meta_activity_time() -> None:
+    notifications: list[tuple[str, dict[str, Any]]] = []
+
+    async def notify(method: str, params: dict[str, Any]) -> None:
+        notifications.append((method, params))
+
+    async def download(session_id: str, file_id: str) -> tuple[bytes, str, str]:
+        raise AssertionError(f"unexpected download: {session_id}/{file_id}")
+
+    host = ConnectorRuntimeHost("conn_1", notify, download)
+    await host.session_meta_upsert(
+        session_id="sess_1",
+        runtime="codex",
+        ordering_time="2026-09-02T16:02:07.000000Z",
+    )
+
+    assert notifications == [
+        (
+            "session.meta.upsert",
+            {
+                "sessionId": "sess_1",
+                "runtime": "codex",
+                "lastActivityAt": "2026-09-02T16:02:07.000000Z",
+                "metadata": {},
             },
         )
     ]

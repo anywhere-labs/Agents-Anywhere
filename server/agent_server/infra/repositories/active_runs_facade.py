@@ -19,7 +19,7 @@ class ActiveRunRepositoryMixin:
             runtime_id=runtime_id or runtime,
         )
         now = utc_now()
-        started = await self.active_runs.upsert(
+        await self.active_runs.upsert(
             session_id=session_id,
             runtime=str(identity.runtime_type),
             runtime_id=str(identity.runtime_id),
@@ -29,8 +29,6 @@ class ActiveRunRepositoryMixin:
             started_at=now,
             updated_at=now,
         )
-        if started:
-            await self.touch_session_sort_at(session_id, sort_at=now)
 
     async def get_active_run(self, session_id: str) -> dict[str, Any] | None:
         row = await self.active_runs.get(session_id)

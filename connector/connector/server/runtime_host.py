@@ -69,7 +69,6 @@ class ConnectorRuntimeHost(RuntimeHostClient):
             "title": title,
             "cwd": cwd,
             "lastActivityAt": ordering_time,
-            "sourceObservedAt": ordering_time,
             "metadata": instance_metadata,
         }
         await self._notify_server("session.meta.upsert", _drop_none(payload))

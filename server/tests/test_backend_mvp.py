@@ -1834,6 +1834,120 @@ def test_sessions_list_uses_cursor_pages_and_archive_filter(tmp_path):
     assert [session["id"] for session in archived_page.json()["sessions"]] == [archived_id]
 
 
+def test_sessions_cursor_uses_timeline_and_revision_tiebreaks(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, access_token, first_session_id, headers = create_connector_and_session(client)
+    session_ids = [first_session_id]
+    for index in range(4):
+        response = client.post(
+            "/sessions",
+            headers=headers,
+            json={
+                "connectorId": connector_id,
+                "runtime": "codex",
+                "externalSessionId": f"thr_tiebreak_{index}",
+                "title": f"Tiebreak {index}",
+                "cwd": "/repo",
+            },
+        )
+        assert response.status_code == 200, response.text
+        session_ids.append(response.json()["session"]["id"])
+
+    order_seqs = (3, 3, 2, 2, 1)
+    seeded = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={
+            "notifications": [
+                {
+                    "method": "timeline.itemUpsert",
+                    "params": {
+                        "sessionId": session_id,
+                        "item": {
+                            "id": f"tl_{session_id}",
+                            "sessionId": session_id,
+                            "type": "message",
+                            "status": "done",
+                            "role": "assistant",
+                            "content": {"text": f"item {index}", "format": "markdown"},
+                            "source": {"runtime": "codex", "itemId": f"item_{index}"},
+                            "orderSeq": order_seq,
+                            "revision": 1,
+                            "contentHash": f"sha256:tiebreak:{index}",
+                            "createdAt": "2028-05-20T12:00:00Z",
+                            "updatedAt": "2028-05-20T12:00:00Z",
+                        },
+                    },
+                }
+                for index, (session_id, order_seq) in enumerate(
+                    zip(session_ids, order_seqs, strict=True)
+                )
+            ]
+        },
+    )
+    assert seeded.status_code == 200, seeded.text
+    assert seeded.json()["accepted"] == len(session_ids)
+
+    # Flush buffered items before applying metadata-only revisions. Those
+    # revisions retain the same effective sort time and exercise updatedSeq.
+    client.get("/sessions", headers=headers).raise_for_status()
+    for session_id, titles in (
+        (session_ids[1], ("B updated",)),
+        (session_ids[2], ("C updated once", "C updated twice")),
+    ):
+        for title in titles:
+            response = client.post(
+                "/connector/ingest",
+                headers={"Authorization": f"Bearer {access_token}"},
+                json={
+                    "notifications": [
+                        {
+                            "method": "session.updated",
+                            "params": {
+                                "sessionId": session_id,
+                                "runtime": "codex",
+                                "runtimeId": "codex",
+                                "title": title,
+                            },
+                        }
+                    ]
+                },
+            )
+            assert response.status_code == 200, response.text
+            assert response.json()["accepted"] == 1
+
+    expected = [
+        session_ids[1],
+        session_ids[0],
+        session_ids[2],
+        session_ids[3],
+        session_ids[4],
+    ]
+    full = client.get(
+        "/sessions",
+        headers=headers,
+        params={"limit": 100},
+    ).json()["sessions"]
+    assert [session["id"] for session in full] == expected
+
+    seen: list[str] = []
+    cursor = None
+    while True:
+        params = {"limit": 2}
+        if cursor is not None:
+            params["cursor"] = cursor
+        response = client.get("/sessions", headers=headers, params=params)
+        assert response.status_code == 200, response.text
+        body = response.json()
+        seen.extend(session["id"] for session in body["sessions"])
+        if not body["hasMore"]:
+            break
+        cursor = body["nextCursor"]
+        assert cursor
+
+    assert seen == expected
+
+
 def test_sessions_list_rejects_invalid_cursor(tmp_path):
     client = make_client(tmp_path)
     _connector_id, _access_token, _session_id, headers = create_connector_and_session(client)
@@ -3075,7 +3189,7 @@ def test_connector_ingest_rejects_bad_notification_without_500(tmp_path):
     assert [item["id"] for item in messages] == ["item-ok-1", "item-ok-2"]
 
 
-def test_timeline_and_session_updates_do_not_change_session_order(tmp_path):
+def test_sessions_sort_by_latest_timeline_item_not_session_update(tmp_path):
     client = make_client(tmp_path)
     connector_id, access_token, first_session_id, headers = create_connector_and_session(client)
     second_response = client.post(
@@ -3159,7 +3273,7 @@ def test_timeline_and_session_updates_do_not_change_session_order(tmp_path):
 
         listed = wait_for_sessions_order(
             client,
-            [second_session_id, first_session_id],
+            [first_session_id, second_session_id],
             headers,
             extra=lambda sessions: any(
                 session["id"] == first_session_id
@@ -3167,7 +3281,7 @@ def test_timeline_and_session_updates_do_not_change_session_order(tmp_path):
                 for session in sessions
             ),
         )
-        assert [session["id"] for session in listed[:2]] == [second_session_id, first_session_id]
+        assert [session["id"] for session in listed[:2]] == [first_session_id, second_session_id]
         first_session = next(session for session in listed if session["id"] == first_session_id)
         assert first_session["lastItemAt"] == "2027-05-20T12:00:00Z"
         assert first_session["lastItemOrderSeq"] == 1
@@ -3176,7 +3290,7 @@ def test_timeline_and_session_updates_do_not_change_session_order(tmp_path):
         assert first_state["session"]["lastItemOrderSeq"] == 1
 
 
-def test_timeline_item_time_and_order_seq_do_not_change_session_order(tmp_path):
+def test_sessions_sort_by_latest_item_timestamp_not_highest_order_seq(tmp_path):
     client = make_client(tmp_path)
     connector_id, access_token, first_session_id, headers = create_connector_and_session(client)
     second_response = client.post(
@@ -3244,7 +3358,7 @@ def test_timeline_item_time_and_order_seq_do_not_change_session_order(tmp_path):
 
         listed = wait_for_sessions_order(
             client,
-            [second_session_id, first_session_id],
+            [first_session_id, second_session_id],
             headers,
             extra=lambda sessions: any(
                 session["id"] == first_session_id
@@ -3252,13 +3366,13 @@ def test_timeline_item_time_and_order_seq_do_not_change_session_order(tmp_path):
                 for session in sessions
             ),
         )
-        assert [session["id"] for session in listed[:2]] == [second_session_id, first_session_id]
+        assert [session["id"] for session in listed[:2]] == [first_session_id, second_session_id]
         first_session = next(session for session in listed if session["id"] == first_session_id)
         assert first_session["lastItemAt"] == "2027-05-20T12:00:00Z"
         assert first_session["lastItemOrderSeq"] == 9000
 
 
-def test_last_activity_updates_do_not_change_session_order(tmp_path):
+def test_sessions_sort_by_last_activity_at(tmp_path):
     client = make_client(tmp_path)
     connector_id, access_token, first_session_id, headers = create_connector_and_session(client)
     second_response = client.post(
@@ -3274,7 +3388,7 @@ def test_last_activity_updates_do_not_change_session_order(tmp_path):
         headers={"Authorization": f"Bearer {access_token}"},
     ) as ws:
         for session_id, activity_at in (
-            (first_session_id, "2026-05-20T12:00:00Z"),
+            (first_session_id, "2026-05-20T14:00:00Z"),
             (second_session_id, "2026-05-20T13:00:00Z"),
         ):
             ws.send_json(
@@ -3291,15 +3405,16 @@ def test_last_activity_updates_do_not_change_session_order(tmp_path):
 
         listed = wait_for_sessions_order(
             client,
-            [second_session_id, first_session_id],
+            [first_session_id, second_session_id],
             headers,
-            extra=lambda sessions: sessions[0]["lastActivityAt"] == "2026-05-20T13:00:00Z",
+            extra=lambda sessions: sessions[0]["lastActivityAt"] == "2026-05-20T14:00:00Z",
         )
-        assert [session["id"] for session in listed[:2]] == [second_session_id, first_session_id]
-        assert listed[0]["lastActivityAt"] == "2026-05-20T13:00:00Z"
+        assert [session["id"] for session in listed[:2]] == [first_session_id, second_session_id]
+        assert listed[0]["lastActivityAt"] == "2026-05-20T14:00:00Z"
+        assert listed[0]["sortAt"] == "2026-05-20T14:00:00Z"
 
 
-def test_sort_at_ignores_timeline_and_activity_updates(tmp_path):
+def test_sessions_sort_at_uses_newest_item_or_activity_timestamp(tmp_path):
     client = make_client(tmp_path)
     connector_id, access_token, first_session_id, headers = create_connector_and_session(client)
     second_response = client.post(
@@ -3309,9 +3424,6 @@ def test_sort_at_ignores_timeline_and_activity_updates(tmp_path):
     )
     assert second_response.status_code == 200
     second_session_id = second_response.json()["session"]["id"]
-    initial = client.get("/sessions", headers=headers).json()["sessions"]
-    initial_sort_at = {session["id"]: session["sortAt"] for session in initial}
-
     with client.websocket_connect(
         "/connector/ws",
         headers={"Authorization": f"Bearer {access_token}"},
@@ -3366,19 +3478,122 @@ def test_sort_at_ignores_timeline_and_activity_updates(tmp_path):
 
         listed = wait_for_sessions_order(
             client,
-            [second_session_id, first_session_id],
+            [first_session_id, second_session_id],
             headers,
             extra=lambda sessions: any(
                 session["id"] == first_session_id
+                and session["sortAt"] == "2026-05-20T15:00:00Z"
                 and session["lastItemAt"] == "2026-05-20T13:00:00Z"
                 for session in sessions
             ),
         )
-        assert [session["id"] for session in listed[:2]] == [second_session_id, first_session_id]
+        assert [session["id"] for session in listed[:2]] == [first_session_id, second_session_id]
         first_session = next(session for session in listed if session["id"] == first_session_id)
         assert first_session["lastActivityAt"] == "2026-05-20T15:00:00Z"
         assert first_session["lastItemAt"] == "2026-05-20T13:00:00Z"
-        assert first_session["sortAt"] == initial_sort_at[first_session_id]
+        assert first_session["sortAt"] == "2026-05-20T15:00:00Z"
+
+
+def test_complete_timeline_snapshot_recomputes_session_sort_at(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, access_token, first_session_id, headers = create_connector_and_session(client)
+    second_response = client.post(
+        "/sessions",
+        headers=headers,
+        json={
+            "connectorId": connector_id,
+            "runtime": "codex",
+            "externalSessionId": "thr_second_snapshot_sort",
+            "title": "Second",
+            "cwd": "/repo",
+        },
+    )
+    assert second_response.status_code == 200
+    second_session_id = second_response.json()["session"]["id"]
+
+    seeded = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={
+            "notifications": [
+                {
+                    "method": "session.updated",
+                    "params": {
+                        "sessionId": first_session_id,
+                        "runtime": "codex",
+                        "runtimeId": "codex",
+                        "lastActivityAt": "2027-05-20T10:00:00Z",
+                    },
+                },
+                {
+                    "method": "session.updated",
+                    "params": {
+                        "sessionId": second_session_id,
+                        "runtime": "codex",
+                        "runtimeId": "codex",
+                        "lastActivityAt": "2027-05-20T11:00:00Z",
+                    },
+                },
+                {
+                    "method": "timeline.sync",
+                    "params": {
+                        "sessionId": first_session_id,
+                        "runtime": "codex",
+                        "runtimeId": "codex",
+                        "complete": True,
+                        "items": [
+                            {
+                                "id": "tl_snapshot_latest",
+                                "sessionId": first_session_id,
+                                "type": "message",
+                                "status": "done",
+                                "role": "assistant",
+                                "content": {"text": "latest", "format": "markdown"},
+                                "source": {"runtime": "codex", "itemId": "item_latest"},
+                                "orderSeq": 1,
+                                "revision": 1,
+                                "contentHash": "sha256:snapshot-latest",
+                                "createdAt": "2028-05-20T12:00:00Z",
+                                "updatedAt": "2028-05-20T12:00:00Z",
+                            }
+                        ],
+                    },
+                },
+            ]
+        },
+    )
+    assert seeded.status_code == 200, seeded.text
+    assert seeded.json()["accepted"] == 3
+    listed = client.get("/sessions", headers=headers).json()["sessions"]
+    assert [session["id"] for session in listed[:2]] == [first_session_id, second_session_id]
+    assert listed[0]["sortAt"] == "2028-05-20T12:00:00Z"
+
+    cleared = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={
+            "notifications": [
+                {
+                    "method": "timeline.sync",
+                    "params": {
+                        "sessionId": first_session_id,
+                        "runtime": "codex",
+                        "runtimeId": "codex",
+                        "complete": True,
+                        "items": [],
+                    },
+                }
+            ]
+        },
+    )
+    assert cleared.status_code == 200, cleared.text
+    assert cleared.json()["accepted"] == 1
+
+    listed = client.get("/sessions", headers=headers).json()["sessions"]
+    assert [session["id"] for session in listed[:2]] == [second_session_id, first_session_id]
+    first_session = next(session for session in listed if session["id"] == first_session_id)
+    assert first_session["lastItemAt"] is None
+    assert first_session["sortAt"] == "2027-05-20T10:00:00Z"
 
 
 def test_empty_sessions_sort_by_session_timestamp(tmp_path):
@@ -3397,7 +3612,7 @@ def test_empty_sessions_sort_by_session_timestamp(tmp_path):
     assert listed[0]["sortAt"] >= listed[1]["sortAt"]
 
 
-def test_session_moves_once_at_turn_start_then_stays_stable(tmp_path):
+def test_session_state_does_not_move_until_timeline_output(tmp_path):
     client = make_client(tmp_path)
     connector_id, access_token, first_session_id, headers = create_connector_and_session(client)
     second_response = client.post(
@@ -3431,9 +3646,9 @@ def test_session_moves_once_at_turn_start_then_stays_stable(tmp_path):
     )
     assert running_response.status_code == 200, running_response.text
     running = client.get("/sessions", headers=headers).json()["sessions"]
-    assert [session["id"] for session in running[:2]] == [first_session_id, second_session_id]
-    started_sort_at = running[0]["sortAt"]
-    assert started_sort_at > initial_first["sortAt"]
+    assert [session["id"] for session in running[:2]] == [second_session_id, first_session_id]
+    running_first = next(session for session in running if session["id"] == first_session_id)
+    assert running_first["sortAt"] == initial_first["sortAt"]
 
     updates_response = client.post(
         "/connector/ingest",
@@ -3449,13 +3664,15 @@ def test_session_moves_once_at_turn_start_then_stays_stable(tmp_path):
                             "sessionId": first_session_id,
                             "turnId": "turn_stable",
                             "type": "message",
-                            "status": "streaming",
+                            "status": "running",
                             "role": "assistant",
                             "content": {"text": "partial", "format": "markdown"},
                             "source": {"runtime": "codex", "turnId": "turn_stable", "itemId": "assistant_1"},
                             "orderSeq": 1,
                             "revision": 1,
                             "contentHash": "sha256:partial",
+                            "createdAt": "2028-05-20T12:00:00Z",
+                            "updatedAt": "2028-05-20T12:00:00Z",
                         },
                     },
                 },
@@ -3485,12 +3702,12 @@ def test_session_moves_once_at_turn_start_then_stays_stable(tmp_path):
 
     completed = client.get("/sessions", headers=headers).json()["sessions"]
     assert [session["id"] for session in completed[:2]] == [first_session_id, second_session_id]
-    assert completed[0]["sortAt"] == started_sort_at
+    assert completed[0]["sortAt"] == "2028-05-20T12:00:00Z"
     assert completed[0]["status"] == "idle"
     assert completed[0]["unread"] is True
 
 
-def test_sort_at_ignores_sync_observed_timestamp(tmp_path):
+def test_sessions_sort_at_ignores_sync_observed_timestamp(tmp_path):
     client = make_client(tmp_path)
     connector_id, access_token, first_session_id, headers = create_connector_and_session(client)
     second_response = client.post(
@@ -3500,9 +3717,6 @@ def test_sort_at_ignores_sync_observed_timestamp(tmp_path):
     )
     assert second_response.status_code == 200
     second_session_id = second_response.json()["session"]["id"]
-    initial = client.get("/sessions", headers=headers).json()["sessions"]
-    initial_sort_at = {session["id"]: session["sortAt"] for session in initial}
-
     with client.websocket_connect(
         "/connector/ws",
         headers={"Authorization": f"Bearer {access_token}"},
@@ -3547,7 +3761,7 @@ def test_sort_at_ignores_sync_observed_timestamp(tmp_path):
 
         listed = wait_for_sessions_order(
             client,
-            [second_session_id, first_session_id],
+            [first_session_id, second_session_id],
             headers,
             extra=lambda sessions: (
                 any(
@@ -3562,8 +3776,9 @@ def test_sort_at_ignores_sync_observed_timestamp(tmp_path):
                 )
             ),
         )
-        assert [session["id"] for session in listed[:2]] == [second_session_id, first_session_id]
-        assert {session["id"]: session["sortAt"] for session in listed[:2]} == initial_sort_at
+        assert [session["id"] for session in listed[:2]] == [first_session_id, second_session_id]
+        assert listed[0]["sortAt"] == "2027-05-20T12:00:00Z"
+        assert listed[1]["sortAt"] == "2027-05-20T11:00:00Z"
 
 
 def test_takeover_gates_remote_message_and_rpc(tmp_path):

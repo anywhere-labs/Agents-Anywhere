@@ -200,7 +200,6 @@ class RuntimeSyncRunner:
             except Exception:  # noqa: BLE001
                 logger.exception("history scanner sync state flush failed")
 
-
     async def sync_existing_session(
         self,
         runtime: AgentRuntime,
@@ -214,27 +213,21 @@ class RuntimeSyncRunner:
           timeline snapshot, current state, and active notices
         - publishes an active session's meta and state once per distinct update
         """
-        if session.source_state is not None:
-            await self.host.session_source_update(
-                SessionSourceObservation(
-                    session_id=session.session_id,
-                    external_session_id=session.external_session_id,
-                    runtime=session.runtime,
-                    runtime_id=session.runtime_id,
-                    state=session.source_state,
-                )
-            )
         if not session_requires_timeline_sync(session):
             if session_sync_changed(session) is False:
+                if session.source_state is not None:
+                    await self.host.session_source_update(
+                        SessionSourceObservation(
+                            session_id=session.session_id,
+                            external_session_id=session.external_session_id,
+                            runtime=session.runtime,
+                            runtime_id=session.runtime_id,
+                            state=session.source_state,
+                        )
+                    )
                 return
-            await self.host.session_meta_upsert(
-                session_id=session.session_id,
-                runtime=session.runtime,
-                external_session_id=session.external_session_id,
-                title=session.title,
-                cwd=session.cwd,
-                ordering_time=session.ordering_time,
-                metadata=session.metadata,
+            await self._ingest_scanner_notifications(
+                [_session_meta_notification(session)]
             )
             return
         logger.info(
@@ -308,7 +301,12 @@ class RuntimeSyncRunner:
         )
         notifications = [_session_meta_notification(session)]
         if snapshot is not None:
-            notifications.append(_timeline_sync_notification(snapshot))
+            notifications.append(
+                _timeline_sync_notification(
+                    snapshot,
+                    fallback_item_time=session.ordering_time,
+                )
+            )
         if state is not None:
             notifications.append(_session_state_notification(state))
         notifications.extend(_notice_notification(notice) for notice in notices)
@@ -448,7 +446,11 @@ def _session_meta_notification(session: SessionMeta) -> dict[str, Any]:
                 "title": session.title,
                 "cwd": session.cwd,
                 "lastActivityAt": session.ordering_time,
-                "sourceObservedAt": session.ordering_time,
+                "sourceObservedAt": (
+                    session.source_state.observed_at
+                    if session.source_state is not None
+                    else None
+                ),
                 "sourceState": (
                     {
                         "availability": session.source_state.availability,
@@ -539,7 +541,10 @@ def _inventory_source_state(session: SessionMeta) -> str | dict[str, Any]:
     )
 
 
-def _timeline_sync_notification(snapshot: RuntimeTimelineSnapshot) -> dict[str, Any]:
+def _timeline_sync_notification(
+    snapshot: RuntimeTimelineSnapshot,
+    fallback_item_time: str | None = None,
+) -> dict[str, Any]:
     server_items = tuple(
         item for item in snapshot.items if item.type not in {"turn.start", "turn.end"}
     )
@@ -552,7 +557,11 @@ def _timeline_sync_notification(snapshot: RuntimeTimelineSnapshot) -> dict[str, 
                 "runtimeId": snapshot.runtime_id,
                 "externalSessionId": snapshot.external_session_id,
                 "items": [
-                    _runtime_timeline_item_payload(item) for item in server_items
+                    _runtime_timeline_item_payload(
+                        item,
+                        fallback_time=fallback_item_time,
+                    )
+                    for item in server_items
                 ],
                 "complete": snapshot.complete,
                 "metadata": dict(snapshot.metadata),
@@ -561,8 +570,15 @@ def _timeline_sync_notification(snapshot: RuntimeTimelineSnapshot) -> dict[str, 
     }
 
 
-def _runtime_timeline_item_payload(item: RuntimeTimelineItem) -> dict[str, Any]:
-    return _timeline_item_payload(item)
+def _runtime_timeline_item_payload(
+    item: RuntimeTimelineItem,
+    fallback_time: str | None = None,
+) -> dict[str, Any]:
+    payload = _timeline_item_payload(item)
+    if fallback_time is not None:
+        payload.setdefault("createdAt", fallback_time)
+        payload.setdefault("updatedAt", fallback_time)
+    return payload
 
 
 def _session_state_notification(state: SessionState) -> dict[str, Any]:

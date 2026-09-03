@@ -18,8 +18,10 @@ from openai_codex.generated.v2_all import (
     ReasoningEffort,
     SandboxMode,
     SandboxPolicy,
+    SortDirection,
     TextUserInput,
     ThreadResumeParams,
+    ThreadSortKey,
     ThreadStartParams,
     TurnStartParams,
     UserInput,
@@ -227,6 +229,8 @@ class CodexSdkClient:
             "cursor": cursor,
             "limit": limit,
             "model_providers": [],
+            "sort_direction": SortDirection.desc,
+            "sort_key": ThreadSortKey.recency_at,
         }
         if archived is not None:
             params["archived"] = archived

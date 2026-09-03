@@ -12,10 +12,12 @@ import pytest
 from openai_codex.generated.v2_all import (
     AgentMessageThreadItem,
     ContextCompactedNotification,
+    SortDirection,
     Thread,
     ThreadItem,
     ThreadReadResponse,
     ThreadResumeParams,
+    ThreadSortKey,
     ThreadStartParams,
     Turn,
     TurnStartParams,
@@ -115,7 +117,17 @@ async def _test_codex_sdk_client_delegates_runtime_protocol_methods() -> None:
 
     assert native.started is True
     assert native.stopped is True
-    assert native.requests == [("thread/list", {"limit": 1, "modelProviders": []})]
+    assert native.requests == [
+        (
+            "thread/list",
+            {
+                "limit": 1,
+                "modelProviders": [],
+                "sortDirection": "desc",
+                "sortKey": "recency_at",
+            },
+        )
+    ]
     assert native.responses == [("req_1", {"decision": "approve"})]
     assert result.threads == ()
 
@@ -733,6 +745,8 @@ class _NativeSdkClient:
         cursor: str | None = None,
         limit: int | None = None,
         model_providers: list[str] | None = None,
+        sort_direction: SortDirection | None = None,
+        sort_key: ThreadSortKey | None = None,
     ) -> dict[str, Any]:
         params: dict[str, Any] = {}
         if cursor is not None:
@@ -741,6 +755,10 @@ class _NativeSdkClient:
             params["limit"] = limit
         if model_providers is not None:
             params["modelProviders"] = model_providers
+        if sort_direction is not None:
+            params["sortDirection"] = sort_direction.value
+        if sort_key is not None:
+            params["sortKey"] = sort_key.value
         self.requests.append(("thread/list", params))
         return {"ok": True}
 
