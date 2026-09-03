@@ -1,0 +1,247 @@
+# v2 前端与 Desktop 跟进说明
+
+更新时间：2026-09-03
+
+适用分支：`v2`
+
+业务代码基线：`23d2d188`（本说明编写时已推送到 `origin/v2`）
+
+这是一份给 Web 前端组和 Desktop 维护者的说明，描述本轮已经落地的业务行为，以及各端需要如何理解和验证。它不是新的 API 迁移方案；本轮没有修改公开 REST、WebSocket 或协议 payload。
+
+## 先看结论
+
+- 设备配对成功后，Server 不再偷偷创建并启动 Codex/Claude 实例。
+- Web 配对窗口会停留在“配置 Agent”步骤，由用户决定跳过、配置并启动哪些 runtime。
+- Connector 刚上线时，`connector.status=online` 可能先于 runtime discovery 完成；Web 会在 New Session 内做一次有界的 inventory settling，避免选项暂时为空后永久消失。
+- New Session 里的设备、Agent、Model、Permission、Reasoning/Effort 在用户选择后立即写入浏览器本地 preference，不再等到会话创建成功。
+- 上述 preference 只属于 Web 的 New Session composer，不是 Server 数据，也不影响已有 session 的 runtime selection 更新。
+- Desktop 的本机 Connector 控制层不需要新增 preference IPC，也不应自动创建 runtime；但嵌入 Web 的 Desktop Workbench renderer 需要同步本轮 Web 业务逻辑。
+
+责任可以先按下面划分：
+
+| 组件 | 本轮状态 | 跟进 |
+| --- | --- | --- |
+| `web-next` | 已实现 | 直接使用 `v2` 最新代码并运行前端回归检查。 |
+| `desktop-workbench/renderer` | 尚未同步，仍是旧副本 | 同步 shared renderer 逻辑，保留 Desktop 自有壳层差异。 |
+| `desktop-next` | Connector 控制层无需改业务接口 | 验证配对、重连和 Connector 状态展示，不创建 runtime。 |
+| Server/Connector | 已实现内部时序修复 | 不需要客户端新增 endpoint 或 payload 字段。 |
+
+## 如何看到这次更新
+
+Web 前端直接拉取 `v2` 即可看到已经落地的实现：
+
+```bash
+git fetch origin
+git switch v2
+git pull --ff-only origin v2
+git log --oneline -10
+```
+
+重点查看 `web-next/src/components/task-composer.tsx`、`web-next/src/components/pair-device-dialog.tsx` 和 `web-next/src/features/dashboard/` 下的新增逻辑。`desktop-workbench/renderer` 是独立维护的复制副本，拉取分支不会自动获得 `web-next` 的这些改动；Desktop 需要按下文的同步清单处理。
+
+## 业务行为变化
+
+### 1. 配对和 runtime 生命周期
+
+之前的流程在 Connector 成功连接后由 Server 自动配置默认 Codex/Claude。这会在用户尚未选择的情况下改变设备状态，也会让“配对成功”与“Agent 已经启动”混在一起。
+
+现在的流程是：
+
+```text
+创建设备/完成认领
+  -> Connector 上线
+  -> Web 显示 Agent 配置步骤
+  -> 用户选择 Done，或明确配置并启动一个/多个 runtime
+  -> New Session 只展示已配置、active 且 status=running 的 runtime
+```
+
+几个边界要点：
+
+- 点击 `Done` 不会创建 runtime。
+- 选择“添加 runtime”才会调用 runtime 创建接口，并在提交配置时启动它。
+- 已存在但 inactive 的 runtime 会显示“配置并启动”重试入口。
+- 配置步骤期间 Connector 掉线时，配置按钮会禁用；重新上线后会自动重新读取 inventory。
+- 过期的配对 claim 响应不会覆盖新的配对状态。
+
+### 2. Connector 重连时序
+
+Server 现在把 runtime control negotiation 与当前 Connector connection 绑定，并在旧连接失效后阻止旧连接继续发送控制请求。启动 discovery 的 inventory/status 事件会按协商结果处理；普通 timeline、session、capability 等事件不需要等待整个 discovery 完成。
+
+因此客户端必须接受一个正常时序：
+
+```text
+Connector online
+  -> runtime inventory 可能暂时为空或为 starting
+  -> discovery/reconcile 完成
+  -> runtime 进入 running
+```
+
+这不是新的前端 API。它只是说明为什么 Web 不能把第一次空 inventory 当成最终结果。
+
+## Web 前端需要理解的逻辑
+
+### 配对窗口
+
+主要代码：[`pair-device-dialog.tsx`](../../../web-next/src/components/pair-device-dialog.tsx)
+
+- `agents` 是配对后的显式配置步骤，不再在 Connector online 时关闭窗口。
+- 通过 Connector presence polling 处理在线、离线和重新上线。
+- runtime 类型和实例通过现有的 connector runtime endpoints 读取；配置、创建和 active 操作仍然走现有 `dashboardApi` 方法。
+- `agentSetupOnline=false` 时只等待重连，不发起配置/启动请求。
+- 页面刷新、短暂断线和过期异步响应都不会把用户带回错误的步骤。
+
+前端不要再添加“Connector 一上线就自动创建默认 runtime”的 effect 或初始化请求。
+
+### New Session runtime inventory
+
+主要代码：[`task-composer.tsx`](../../../web-next/src/components/task-composer.tsx) 和 [`new-session-runtime-inventory.ts`](../../../web-next/src/features/dashboard/new-session-runtime-inventory.ts)
+
+New Session 只把以下 runtime 当作可选目标：
+
+```text
+configured && active && status == "running"
+```
+
+Connector 从 offline 变为 online，或首次 online 时，watcher 会：
+
+- 立即读取每个在线 Connector 的 `/connectors/{connectorId}/runtimes`；
+- 只在 inventory 为空，或存在 `configured && active` 但还不是 `running` 时重试；
+- 按 `500ms -> 1s -> 2s -> 4s -> 8s` 退避，最多 6 次请求；
+- 只合并仍在线 Connector 的结果，并对旧请求做失效检查；
+- inventory 已稳定后停止，不会因为 dashboard 的普通 session/timeline 更新持续轮询。
+
+因此，前端不要把 dashboard snapshot 的某一次空列表缓存成永久事实，也不要把每条实时事件都转换成 runtime inventory 请求。
+
+### New Session preference 即时持久化
+
+主要代码：[`task-composer.tsx`](../../../web-next/src/components/task-composer.tsx)
+
+此前唯一的写入点在 `handleCreate`：用户改了选项但没有马上发起创建时，选择不会进入 preference。这次把写入放到各个有效选择回调中；`handleCreate` 只保留最终兜底，因此“选择”和“创建请求是否成功”不再绑定。
+
+本地存储键仍是 `aa-new-session-preference-v1`。数据是浏览器 `localStorage`，不是 Server preference API。结构概念如下：
+
+```json
+{
+  "connectorId": "conn_...",
+  "agent": "rti_...",
+  "selections": {
+    "conn_...:rti_...": {
+      "model": "sel_model_...",
+      "permission": "sel_permission_..."
+    }
+  }
+}
+```
+
+选择行为现在是同步的本地写入：
+
+| 用户动作 | 立即保存的内容 |
+| --- | --- |
+| 选择设备 | 当前 New Session 的 `connectorId`，并确定该设备的 Agent |
+| 选择 Agent | `connectorId`、`agent` |
+| 选择 Model + Reasoning/Effort | 对应 runtime scope 的 protocol `selectionId` |
+| 选择 Permission | 对应 runtime scope 的 protocol `selectionId` |
+
+实现规则：
+
+- 只有 enabled 且能由当前 live catalog 解析出的选项才会写入 selection ID。
+- Model 与 Reasoning/Effort 保存为一个具体的 model selection ID；不要保存展示文案或 label。
+- 切换设备/Agent 时保留其他 scope 的历史选择。
+- `handleCreate` 仍会再写一次当前值，作为创建前的最终兜底；它不再是唯一写入点。
+- 用户离开 New Session、创建请求失败、刷新页面后，最近一次有效选择仍可被下一次打开的 composer 读取。
+- 这项改动只影响 New Session；已有 session 的 selection 仍按 runtime state/API 的现有流程处理。
+- `localStorage` 写入是 best-effort；浏览器禁用本地存储时不应把它当成 Server 持久化成功。
+
+## Desktop 需要跟进什么
+
+这里要区分两个 Desktop 代码面：
+
+- `desktop-next` 是独立的 Electron Connector 控制器，负责本机进程、配对和重连。
+- `desktop-workbench/renderer` 是一份手工 vendored 的 Web renderer，负责在 Desktop 窗口里展示 New Session、配对和 session UI。
+
+### Desktop Workbench 必须同步的内容
+
+当前 `desktop-workbench/renderer` 仍是旧版本，不能只更新 Electron 主进程。请从 `web-next` 同步 shared renderer 代码，再保留 Desktop 自有集成层。至少需要同步：
+
+- `src/components/task-composer.tsx`
+- `src/features/dashboard/new-session-runtime-inventory.ts`
+- `src/components/pair-device-dialog.tsx`
+- `src/features/dashboard/connector-presence.ts`
+- `src/components/runtime-config-dialog.tsx`
+- `src/components/runtime-instance-name-dialog.tsx`
+- `messages/en.json` 和 `messages/zh-CN.json` 中本轮 pairing 文案
+- 对应的静态契约测试；renderer 当前可以直接运行 `node --test test/*.test.mjs`、`corepack yarn typecheck` 和 `corepack yarn protocol:check`（也可以同步 `web-next/package.json` 中的 `test` script）
+
+同步后应具备以下行为：
+
+- 配对进入显式 `agents` 配置步骤，Connector online 不会直接关闭对话框。
+- Connector 离线时配置/启动按钮禁用，重连后重新加载 runtime inventory。
+- New Session 在 Connector online/discovery 竞态下能补载 runtime 选项。
+- New Session 设备、Agent、Model、Permission、Reasoning/Effort 选择后立即写入 `localStorage` preference。
+
+不要整目录覆盖 `desktop-workbench/renderer`。必须保留 Desktop-owned 差异，包括 `useIsMobile`、Desktop shell/header/sidebar、Electron bridge、嵌套 workspace 的 Next 配置、端口和窗口拖拽区域。仓库已有说明见 [`desktop-workbench/README.md`](../../../desktop-workbench/README.md)。
+
+### 本轮不需要新增的接口/功能
+
+- 不需要新增或修改 Desktop 与 Web 之间的 preference IPC。
+- 不需要在 Desktop 保存 `aa-new-session-preference-v1`；它属于浏览器端 New Session。
+- `desktop-next` 不需要增加 runtime 创建 UI，也不需要在 Electron 主进程中创建默认 Codex/Claude runtime。
+- 不需要因为本轮 preference 改动修改 Connector 配置文件格式或公开 endpoint。
+
+### `desktop-next` 发布/验证时必须确认的事
+
+1. Desktop 启动的是 Connector，不是 runtime 实例；配对完成后不要额外调用 runtime create/start。
+2. 使用与 `v2` Server 兼容的 Connector 构建产物，确认 Connector 能在短暂断线后自动重连。
+3. Desktop 自身仍应验证现有 `connector:state`、`connector:pairing` 事件和日志展示；本轮没有改变这些桥接消息的 shape。
+
+### Desktop Workbench 集成验证
+
+1. 配对后把 Workbench 页面保持在 Agent 配置步骤，验证用户点 `Done` 时设备仍可连接但没有被隐式创建的 runtime。
+2. 在 Workbench 中手动添加并启动 runtime，然后断开/恢复 Desktop Connector，确认 Web renderer 能重新发现该 runtime，且不会产生重复实例。
+3. 选择 New Session 的 Model/Permission/Reasoning 后离开页面再回来，确认 vendored renderer 的 `localStorage` preference 已即时保存。
+
+`desktop-next` 当前入口仍是 [`desktop-shell.tsx`](../../../desktop-next/src/components/desktop-shell.tsx) 和 [`connector-rpc.ts`](../../../desktop-next/src/lib/connector-rpc.ts)。Workbench 的同步入口和保留规则见 [`desktop-workbench/README.md`](../../../desktop-workbench/README.md)。如果后续要在 Desktop 增加 runtime 管理 UI，应复用 Server 的 connector runtime management API，而不是在 Electron 主进程里写一套默认创建逻辑。
+
+## 前端组手测路径
+
+建议在干净的浏览器 profile 或清除旧的 `aa-new-session-preference-v1` 后执行：
+
+1. 打开 New Session，此时没有在线设备；确认 composer 不会永久卡在空选项。
+2. 启动或重新连接 Desktop Connector；等待 runtime discovery 完成，确认设备/Agent/Model/Permission 选项出现。
+3. 先选择一个 Agent，再选择 Model、Reasoning/Effort 和 Permission；不发送消息，离开当前页面。
+4. 再次打开 New Session，确认上次有效选择被恢复；打开 DevTools 的 Application/Local Storage 可看到写入发生在每次选择之后。
+5. 创建一次 session，确认请求中的 `selections` 使用 protocol `selectionId`，而不是显示名称。
+6. 在配置步骤中选择 `Done`，确认不会凭空多出 Codex/Claude runtime；需要的 runtime 必须由用户明确添加并启动。
+7. 在上述流程中让 Connector 短暂离线再上线，确认配对窗口和 New Session 都能恢复，不产生重复请求风暴。
+
+## 验证命令
+
+```bash
+cd web-next
+corepack yarn test          # 62 passed
+corepack yarn typecheck
+corepack yarn protocol:check
+```
+
+Server 本轮相关回归测试已在提交前通过：`292 passed, 14 skipped`。本轮没有修改 Android，也没有要求 Android 跟进。
+
+Desktop Workbench renderer 同步后至少再执行：
+
+```bash
+cd desktop-workbench/renderer
+node --test test/*.test.mjs
+corepack yarn typecheck
+corepack yarn protocol:check
+```
+
+## 代码提交范围
+
+与本说明直接相关的提交：
+
+- `fb5d4115`：移除 Server 配对后的默认 runtime 创建。
+- `e4cf99f2`、`227676d6`、`ad1d3a2b`：恢复并稳定 Web 显式 Agent 配置/重连流程。
+- `f0c67237`、`33617ef0`：修正 Connector runtime negotiation、重连和旧连接隔离。
+- `f6de53c4`：修复 New Session 在 online/discovery 竞态下丢失 runtime 选项。
+- `23d2d188`：让 New Session 选择在用户操作后立即持久化。
+
+以上业务提交已连续合并在 `v2`。本说明随后作为文档提交加入同一分支；请以前端组实际拉取到的 `origin/v2` HEAD 为准。
