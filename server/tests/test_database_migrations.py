@@ -350,6 +350,7 @@ def test_v2_0_database_upgrades_through_current_revision(tmp_path) -> None:
         ("v2_22", "v2_23"),
         ("v2_23", "v2_24"),
         ("v2_24", "v2_25"),
+        ("v2_25", "v2_26"),
     ],
 )
 def test_every_adjacent_schema_upgrade(
@@ -991,6 +992,7 @@ def test_v2_14_downgrade_rejects_instance_specific_data(
         "v2_23",
         "v2_24",
         "v2_25",
+        "v2_26",
     ],
 )
 def test_unversioned_runtime_schema_is_classified_by_actual_columns(
@@ -1028,9 +1030,9 @@ def test_unversioned_runtime_schema_is_classified_by_actual_columns(
     )
 
 
-def test_current_schema_version_is_v2_25() -> None:
-    assert CURRENT_SCHEMA_REVISION == "v2_25"
-    assert CURRENT_SCHEMA_VERSION == "2.25"
+def test_current_schema_version_is_v2_26() -> None:
+    assert CURRENT_SCHEMA_REVISION == "v2_26"
+    assert CURRENT_SCHEMA_VERSION == "2.26"
 
 
 def test_v2_20_adds_session_source_observation_details(tmp_path) -> None:
@@ -1212,6 +1214,10 @@ def test_v2_25_adds_projects_and_session_binding(tmp_path) -> None:
             "idx_projects_user_pinned_updated",
             "idx_projects_connector_workspace",
         }.issubset(project_indexes)
+        assert "uq_projects_user_connector_workspace" in {
+            constraint["name"]
+            for constraint in inspector.get_unique_constraints("projects")
+        }
         session_indexes = {
             index["name"] for index in inspector.get_indexes("sessions")
         }
@@ -1239,6 +1245,72 @@ def test_v2_25_adds_projects_and_session_binding(tmp_path) -> None:
                 ).scalar_one()
                 == "v2_25"
             )
+    finally:
+        engine.dispose()
+
+
+def test_v2_26_allows_projects_to_share_a_workspace(tmp_path) -> None:
+    path = tmp_path / "shared-project-workspace.sqlite3"
+    url = _sqlite_url(path)
+    upgrade_database(db_url=url, revision="v2_25")
+
+    upgrade_database(db_url=url, revision="v2_26")
+
+    engine = create_engine(f"sqlite:///{path}")
+    try:
+        inspector = inspect(engine)
+        assert "uq_projects_user_connector_workspace" not in {
+            constraint["name"]
+            for constraint in inspector.get_unique_constraints("projects")
+        }
+        assert "idx_projects_connector_workspace" in {
+            index["name"] for index in inspector.get_indexes("projects")
+        }
+        now = "2026-09-03T00:00:00Z"
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO users "
+                    "(id, password_hash, role, disabled, created_at, updated_at) "
+                    "VALUES ('user_shared_workspace', 'hash', 'member', 0, :now, :now)"
+                ),
+                {"now": now},
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO connectors "
+                    "(id, user_id, name, connector_kind, status, token_hash, "
+                    "token_prefix, revoked, created_at, updated_at) "
+                    "VALUES ('conn_shared_workspace', 'user_shared_workspace', "
+                    "'Device', 'desktop', 'online', 'hash', 'prefix', 0, :now, :now)"
+                ),
+                {"now": now},
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO projects "
+                    "(id, user_id, connector_id, name, workspace_path, workspace_key, "
+                    "pinned, created_at, updated_at) "
+                    "VALUES (:id, 'user_shared_workspace', 'conn_shared_workspace', "
+                    ":name, '/repo', '/repo', 0, :now, :now)"
+                ),
+                [
+                    {"id": "proj_shared_a", "name": "Project A", "now": now},
+                    {"id": "proj_shared_b", "name": "Project B", "now": now},
+                ],
+            )
+            count = connection.execute(
+                text(
+                    "SELECT COUNT(*) FROM projects "
+                    "WHERE connector_id = 'conn_shared_workspace' "
+                    "AND workspace_key = '/repo'"
+                )
+            ).scalar_one()
+            revision = connection.execute(
+                text("SELECT version_num FROM alembic_version")
+            ).scalar_one()
+        assert count == 2
+        assert revision == "v2_26"
     finally:
         engine.dispose()
 

@@ -344,12 +344,6 @@ projects = Table(
     Column("pinned_at", Text),
     Column("created_at", Text, nullable=False),
     Column("updated_at", Text, nullable=False),
-    UniqueConstraint(
-        "user_id",
-        "connector_id",
-        "workspace_key",
-        name="uq_projects_user_connector_workspace",
-    ),
     Index(
         "idx_projects_user_pinned_updated",
         "user_id",

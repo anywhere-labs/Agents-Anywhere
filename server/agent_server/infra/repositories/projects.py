@@ -133,38 +133,35 @@ class ProjectRepositoryMixin:
             raise ValueError("name must not be empty")
         project_id = f"proj_{secrets.token_urlsafe(10)}"
         now = utc_now()
-        try:
-            async with self._engine.begin() as conn:
-                connector = (
-                    await conn.execute(
-                        select(connectors_t.c.device_os).where(
-                            connectors_t.c.id == connector_id,
-                            connectors_t.c.user_id == user_id,
-                            connectors_t.c.revoked == 0,
-                        )
-                    )
-                ).first()
-                if connector is None:
-                    raise KeyError(connector_id)
-                cleaned_path, workspace_key = _clean_workspace_path(
-                    workspace_path,
-                    connector.device_os,
-                )
+        async with self._engine.begin() as conn:
+            connector = (
                 await conn.execute(
-                    insert(projects_t).values(
-                        id=project_id,
-                        user_id=user_id,
-                        connector_id=connector_id,
-                        name=cleaned_name,
-                        workspace_path=cleaned_path,
-                        workspace_key=workspace_key,
-                        pinned=0,
-                        created_at=now,
-                        updated_at=now,
+                    select(connectors_t.c.device_os).where(
+                        connectors_t.c.id == connector_id,
+                        connectors_t.c.user_id == user_id,
+                        connectors_t.c.revoked == 0,
                     )
                 )
-        except IntegrityError as exc:
-            raise ValueError("a project already exists for this workspace") from exc
+            ).first()
+            if connector is None:
+                raise KeyError(connector_id)
+            cleaned_path, workspace_key = _clean_workspace_path(
+                workspace_path,
+                connector.device_os,
+            )
+            await conn.execute(
+                insert(projects_t).values(
+                    id=project_id,
+                    user_id=user_id,
+                    connector_id=connector_id,
+                    name=cleaned_name,
+                    workspace_path=cleaned_path,
+                    workspace_key=workspace_key,
+                    pinned=0,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
         return await self.get_project(project_id, user_id=user_id)
 
     async def update_project(

@@ -22,8 +22,8 @@ from agent_server.infra.db.engine import POSTGRES_BACKEND, resolve_db_url
 
 LEGACY_V1_REVISION = "v1_legacy"
 BASELINE_V2_REVISION = "v2_0"
-CURRENT_SCHEMA_REVISION = "v2_25"
-CURRENT_SCHEMA_VERSION = "2.25"
+CURRENT_SCHEMA_REVISION = "v2_26"
+CURRENT_SCHEMA_VERSION = "2.26"
 POSTGRES_MIGRATION_LOCK_ID = 0x414147454E545332
 DEFAULT_MIGRATION_LOCK_TIMEOUT_SECONDS = 120.0
 
@@ -304,7 +304,18 @@ def _classify_sync(connection) -> UnversionedDatabase:
                 if "app_releases" in tables:
                     release_columns = _column_names(inspector, "app_releases")
                     if "projects" in tables and "project_id" in session_columns:
-                        revision = "v2_25"
+                        project_unique_constraints = {
+                            constraint["name"]
+                            for constraint in inspector.get_unique_constraints(
+                                "projects"
+                            )
+                        }
+                        revision = (
+                            "v2_25"
+                            if "uq_projects_user_connector_workspace"
+                            in project_unique_constraints
+                            else "v2_26"
+                        )
                     elif (
                         "session_shares" in tables
                         and "connector_kind" in connector_columns

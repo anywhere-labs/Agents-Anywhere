@@ -10449,7 +10449,9 @@ class FakeWebSocket:
         await self.sent.put(message)
 
 
-def test_project_crud_does_not_attach_matching_sessions_and_enforces_ownership(tmp_path):
+def test_project_crud_allows_shared_workspaces_without_attaching_sessions_and_enforces_ownership(
+    tmp_path,
+):
     client = make_client(tmp_path)
     connector_id, _, session_id, headers = create_connector_and_session(client)
 
@@ -10509,17 +10511,28 @@ def test_project_crud_does_not_attach_matching_sessions_and_enforces_ownership(t
     )
     assert immutable.status_code == 422
 
-    duplicate = client.post(
+    same_workspace = client.post(
         "/projects",
         headers=headers,
         json={
-            "name": "Duplicate",
+            "name": "Second project",
             "connectorId": connector_id,
             "workspacePath": "/repo",
         },
     )
-    assert duplicate.status_code == 422
-    assert duplicate.json()["detail"] == "a project already exists for this workspace"
+    assert same_workspace.status_code == 200, same_workspace.text
+    second_project = same_workspace.json()["project"]
+    assert second_project["id"] != project_id
+    assert second_project["workspacePath"] == project["workspacePath"]
+    assert same_workspace.json()["attachedSessions"] == 0
+
+    session = client.get(
+        f"/sessions/{session_id}/meta",
+        headers=headers,
+    ).json()["session"]
+    assert session["projectId"] is None
+    projects = client.get("/projects", headers=headers).json()["projects"]
+    assert {item["id"] for item in projects} == {project_id, second_project["id"]}
 
     other_headers = auth_headers(client, user_id="user2")
     assert client.get("/projects", headers=other_headers).json()["projects"] == []
