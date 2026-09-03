@@ -1,5 +1,6 @@
 "use client"
 
+import * as React from "react"
 import {
   Archive,
   Folder,
@@ -37,6 +38,7 @@ import {
 import type { WorkspaceSessionView } from "@/components/workspace-context"
 import { SessionSidebarItem } from "@/components/sidebar/session-sidebar-item"
 import { SidebarLoadingItem } from "@/components/sidebar/sidebar-loading-item"
+import { OverflowMarquee } from "@/components/sidebar/overflow-marquee"
 import type { ProjectView } from "@/features/dashboard/types"
 import { cn } from "@/lib/utils"
 import { useTranslations } from "next-intl"
@@ -75,20 +77,25 @@ export function ProjectSidebarItem({
   onRenameSession: (sessionId: string, title: string) => Promise<boolean>
 }) {
   const t = useTranslations("dashboard")
+  const [nameHovered, setNameHovered] = React.useState(false)
   const visibleSessions = sessions.filter((session) => !session.archived)
   const containsActiveSession = visibleSessions.some((session) => session.id === activeSessionId)
 
   return (
     <SidebarMenuItem>
       <Collapsible open={expanded} onOpenChange={onExpandedChange}>
-        <div className="group/project relative">
+        <div
+          className="group/project relative"
+          onPointerEnter={() => setNameHovered(true)}
+          onPointerLeave={() => setNameHovered(false)}
+        >
           <CollapsibleTrigger asChild>
             <SidebarMenuButton
               isActive={containsActiveSession}
               className="pr-[4.75rem] text-muted-foreground data-[active=true]:text-foreground"
             >
               {expanded ? <FolderOpen /> : <Folder />}
-              <span className="min-w-0 flex-1 truncate">{project.name}</span>
+              <OverflowMarquee text={project.name} active={nameHovered} />
             </SidebarMenuButton>
           </CollapsibleTrigger>
 
@@ -162,7 +169,7 @@ export function ProjectSidebarItem({
         </div>
 
         <CollapsibleContent>
-          <SidebarMenu className="ml-4 w-[calc(100%-1rem)] border-l border-sidebar-border pl-2">
+          <SidebarMenu className="ml-4 w-[calc(100%-1rem)] pl-2">
             {loading ? (
               <SidebarLoadingItem label={t("status.loadingSessions")} />
             ) : visibleSessions.length === 0 ? (

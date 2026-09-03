@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { OverflowMarquee } from "@/components/sidebar/overflow-marquee"
 import {
   SidebarMenuButton,
   SidebarMenuItem,
@@ -55,6 +56,7 @@ export function SessionSidebarItem({
   const [renameOpen, setRenameOpen] = React.useState(false)
   const [titleDraft, setTitleDraft] = React.useState(item.title ?? "")
   const [renaming, setRenaming] = React.useState(false)
+  const [nameHovered, setNameHovered] = React.useState(false)
   const isBusy = item.status === "running" || item.status === "waiting" || item.status === "pending"
   const isWaitingApproval = item.status === "waiting_approval"
   const isUnreadIdle = item.unread && item.status === "idle"
@@ -102,7 +104,11 @@ export function SessionSidebarItem({
   return (
     <>
       <ContextMenu>
-        <SidebarMenuItem className="group/session">
+        <SidebarMenuItem
+          className="group/session"
+          onPointerEnter={() => setNameHovered(true)}
+          onPointerLeave={() => setNameHovered(false)}
+        >
           <ContextMenuTrigger asChild>
             <div>
               <SidebarMenuButton
@@ -114,7 +120,7 @@ export function SessionSidebarItem({
                   isActive && !hasStatusIndicator && "pr-[4.25rem]",
                 )}
               >
-                <span className="min-w-0 flex-1 truncate">{item.title}</span>
+                <OverflowMarquee text={item.title ?? ""} active={nameHovered} />
                 <SessionSidebarIndicator
                   busy={isBusy}
                   unreadIdle={isUnreadIdle}
