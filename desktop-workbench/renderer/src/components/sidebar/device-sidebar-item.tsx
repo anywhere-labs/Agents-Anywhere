@@ -85,4 +85,3 @@ export function DeviceSidebarItem({
     </ContextMenu>
   )
 }
-

@@ -11,4 +11,3 @@ export function SidebarLoadingItem({ label }: { label: string }) {
     </SidebarMenuItem>
   )
 }
-

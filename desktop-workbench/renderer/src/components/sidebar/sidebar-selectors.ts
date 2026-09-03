@@ -63,4 +63,3 @@ export function selectProjectSessions(
     sessions.map((session) => currentSessionsById.get(session.id) ?? session),
   )
 }
-
