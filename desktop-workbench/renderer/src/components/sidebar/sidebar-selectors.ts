@@ -2,6 +2,8 @@ import type { WorkspaceSessionView } from "@/components/workspace-context"
 import type { ProjectView } from "@/features/dashboard/types"
 import { filterSessions, type FilterValue } from "@/lib/demo-api"
 
+export type ProjectSessionStatusFilter = "active" | "archived" | "all"
+
 function timestamp(value: string | null | undefined): number {
   if (!value) return 0
   const parsed = Date.parse(value)
@@ -35,15 +37,52 @@ export function sortSidebarSessions(items: WorkspaceSessionView[]): WorkspaceSes
   })
 }
 
-export function selectPinnedProjects(projects: ProjectView[]): ProjectView[] {
-  return sortProjects(
-    projects.filter((project) => project.pinned && project.activeSessionCount > 0),
+function projectIdsForStatus(
+  sessions: WorkspaceSessionView[],
+  status: ProjectSessionStatusFilter,
+): Set<string> {
+  return new Set(
+    sessions
+      .filter((session) => session.projectId && (
+        status === "all" || session.archived === (status === "archived")
+      ))
+      .map((session) => session.projectId as string),
   )
 }
 
-export function selectRegularProjects(projects: ProjectView[]): ProjectView[] {
+function projectMatchesStatus(
+  project: ProjectView,
+  matchingProjectIds: Set<string>,
+  status: ProjectSessionStatusFilter,
+): boolean {
+  if (status === "active") return project.activeSessionCount > 0
+  if (status === "archived") return matchingProjectIds.has(project.id)
+  return project.activeSessionCount > 0 || matchingProjectIds.has(project.id)
+}
+
+export function selectPinnedProjects(
+  projects: ProjectView[],
+  sessions: WorkspaceSessionView[],
+  status: ProjectSessionStatusFilter,
+): ProjectView[] {
+  const matchingProjectIds = projectIdsForStatus(sessions, status)
+  return sortProjects(
+    projects.filter((project) =>
+      project.pinned && projectMatchesStatus(project, matchingProjectIds, status),
+    ),
+  )
+}
+
+export function selectRegularProjects(
+  projects: ProjectView[],
+  sessions: WorkspaceSessionView[],
+  status: ProjectSessionStatusFilter,
+): ProjectView[] {
+  const matchingProjectIds = projectIdsForStatus(sessions, status)
   return sortProjectsByCreatedAt(
-    projects.filter((project) => !project.pinned && project.activeSessionCount > 0),
+    projects.filter((project) =>
+      !project.pinned && projectMatchesStatus(project, matchingProjectIds, status),
+    ),
   )
 }
 
@@ -82,12 +121,17 @@ export function selectAllSessions(
 export function selectProjectSessions(
   sessions: WorkspaceSessionView[],
   currentSessionsById: Map<string, WorkspaceSessionView>,
+  status: ProjectSessionStatusFilter = "active",
 ): WorkspaceSessionView[] {
   const currentSessions = sessions.map(
     (session) => currentSessionsById.get(session.id) ?? session,
   )
 
   return sortSidebarSessions(
-    currentSessions.filter((session) => !session.archived && !session.pinned),
+    currentSessions.filter((session) => {
+      if (status === "archived") return session.archived
+      if (status === "all") return session.archived || !session.pinned
+      return !session.archived && !session.pinned
+    }),
   )
 }

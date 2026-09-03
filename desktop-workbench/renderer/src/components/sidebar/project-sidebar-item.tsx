@@ -76,8 +76,7 @@ export function ProjectSidebarItem({
   const t = useTranslations("dashboard")
   const [nameHovered, setNameHovered] = React.useState(false)
   const [optionsOpen, setOptionsOpen] = React.useState(false)
-  const visibleSessions = sessions.filter((session) => !session.archived)
-  const containsActiveSession = visibleSessions.some((session) => session.id === activeSessionId)
+  const containsActiveSession = sessions.some((session) => session.id === activeSessionId)
 
   return (
     <SidebarMenuItem>
@@ -169,10 +168,10 @@ export function ProjectSidebarItem({
           <SidebarMenu>
             {loading ? (
               <SidebarLoadingItem label={t("status.loadingSessions")} />
-            ) : visibleSessions.length === 0 ? (
+            ) : sessions.length === 0 ? (
               <li className="py-2 pl-9 pr-3 text-xs text-muted-foreground">{t("projects.noSessions")}</li>
             ) : (
-              visibleSessions.map((session) => (
+              sessions.map((session) => (
                 <SessionSidebarItem
                   key={session.id}
                   item={session}

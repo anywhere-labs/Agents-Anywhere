@@ -15,6 +15,7 @@ import {
   SidebarMenu,
 } from "@/components/ui/sidebar"
 import type { WorkspaceSessionView } from "@/components/workspace-context"
+import type { ProjectSessionStatusFilter } from "@/components/sidebar/sidebar-selectors"
 import type { ProjectView } from "@/features/dashboard/types"
 import { useTranslations } from "next-intl"
 
@@ -23,6 +24,7 @@ type PinnedSectionProps = {
   sessions: WorkspaceSessionView[]
   isLoading: boolean
   projectController: ProjectListController
+  projectSessionStatus: ProjectSessionStatusFilter
   onOpenSession: (sessionId: string) => void
   onToggleSessionPin: (sessionId: string) => void
   onToggleSessionArchive: (sessionId: string) => void
@@ -34,6 +36,7 @@ export function PinnedSection({
   sessions,
   isLoading,
   projectController,
+  projectSessionStatus,
   onOpenSession,
   onToggleSessionPin,
   onToggleSessionArchive,
@@ -53,7 +56,11 @@ export function PinnedSection({
         <CollapsibleContent>
           <SidebarGroupContent>
             <SidebarMenu>
-              <ProjectList projects={projects} controller={projectController} />
+              <ProjectList
+                projects={projects}
+                controller={projectController}
+                sessionStatus={projectSessionStatus}
+              />
               {sessions.map((item) => (
                 <SessionSidebarItem
                   key={`session-${item.id}`}

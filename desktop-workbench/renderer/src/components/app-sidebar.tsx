@@ -24,6 +24,7 @@ import {
   selectAllSessions,
   selectProjectSessions,
   selectRegularProjects,
+  type ProjectSessionStatusFilter,
 } from "@/components/sidebar/sidebar-selectors"
 import { SidebarAccountFooter } from "@/components/sidebar/sidebar-account-footer"
 import {
@@ -80,18 +81,20 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
   const [expandedProjectIds, setExpandedProjectIds] = React.useState<string[]>([])
   const [projectEditor, setProjectEditor] = React.useState<ProjectEditorState>(null)
   const [projectToArchive, setProjectToArchive] = React.useState<ProjectView | null>(null)
+  const [projectSessionStatus, setProjectSessionStatus] =
+    React.useState<ProjectSessionStatusFilter>("active")
 
   const pinnedProjects = React.useMemo(
-    () => selectPinnedProjects(projects),
-    [projects],
+    () => selectPinnedProjects(projects, sessions, projectSessionStatus),
+    [projectSessionStatus, projects, sessions],
   )
   const pinnedSessions = React.useMemo(
     () => selectPinnedSessions(sessions),
     [sessions],
   )
   const regularProjects = React.useMemo(
-    () => selectRegularProjects(projects),
-    [projects],
+    () => selectRegularProjects(projects, sessions, projectSessionStatus),
+    [projectSessionStatus, projects, sessions],
   )
   const allSessions = React.useMemo(
     () => selectAllSessions(sessions, filter, search),
@@ -103,9 +106,10 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
   )
 
   const sessionsForProject = React.useCallback(
-    (projectId: string) => selectProjectSessions(
+    (projectId: string, status: ProjectSessionStatusFilter = "active") => selectProjectSessions(
       projectSessionsById[projectId] ?? [],
       sessionsById,
+      status,
     ),
     [projectSessionsById, sessionsById],
   )
@@ -243,6 +247,7 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
           sessions={pinnedSessions}
           isLoading={isLoading}
           projectController={projectController}
+          projectSessionStatus={projectSessionStatus}
           onOpenSession={openSession}
           onToggleSessionPin={togglePinSession}
           onToggleSessionArchive={requestToggleSessionArchive}
@@ -271,7 +276,9 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
               isLoading={isLoading}
               expanded={projectsExpanded}
               controller={projectController}
+              sessionStatus={projectSessionStatus}
               onExpandedChange={setProjectsExpanded}
+              onSessionStatusChange={setProjectSessionStatus}
               onAddProject={() => setProjectEditor({ mode: "create" })}
             />
           </>
@@ -291,6 +298,7 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
       <ProjectEditorDialog
         editor={projectEditor}
         connectors={connectors}
+        projects={projects}
         onOpenChange={(open) => {
           if (!open) setProjectEditor(null)
         }}

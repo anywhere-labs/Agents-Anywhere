@@ -290,7 +290,7 @@ function mergeProjectSessions(
   for (const session of incoming) mergedById.set(session.id, session)
   const next: Record<string, SessionView[]> = {}
   for (const session of mergedById.values()) {
-    if (!session.projectId || session.archived) continue
+    if (!session.projectId) continue
     const group = next[session.projectId] ?? []
     group.push(session)
     next[session.projectId] = group
@@ -1174,7 +1174,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
         archivedSessions.forEach((session) => merged.set(session.id, session))
         return sortSessions(Array.from(merged.values()))
       })
-      setProjectSessionsById((current) => ({ ...current, [projectId]: [] }))
+      setProjectSessionsById((current) => mergeProjectSessions(current, archivedSessions))
       setProjects((current) => sortProjectViews(current.map((project) =>
         project.id === projectId ? { ...project, activeSessionCount: 0 } : project,
       )))

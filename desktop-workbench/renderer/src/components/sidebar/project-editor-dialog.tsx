@@ -2,6 +2,16 @@
 
 import * as React from "react"
 import { toast } from "sonner"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -45,15 +55,30 @@ export type ProjectEditorState =
   | { mode: "edit"; project: ProjectView }
   | null
 
+function workspaceKey(path: string, deviceOs?: string | null): string {
+  const slashNormalized = path.trim().replaceAll("\\", "/")
+  const withoutTrailingSlash = slashNormalized.replace(/\/+$/, "") || "/"
+  return deviceOs === "windows"
+    ? withoutTrailingSlash.toLocaleLowerCase()
+    : withoutTrailingSlash
+}
+
 export function ProjectEditorDialog({
   editor,
   connectors,
+  projects,
   onOpenChange,
   onCreate,
   onUpdate,
 }: {
   editor: ProjectEditorState
-  connectors: Array<{ id: string; name: string; status: string }>
+  connectors: Array<{
+    id: string
+    name: string
+    status: string
+    deviceOs?: string | null
+  }>
+  projects: ProjectView[]
   onOpenChange: (open: boolean) => void
   onCreate: (payload: ProjectCreateRequest) => Promise<ProjectView | null>
   onUpdate: (projectId: string, payload: ProjectPatchRequest) => Promise<ProjectView | null>
@@ -65,12 +90,16 @@ export function ProjectEditorDialog({
   const [workspace, setWorkspace] = React.useState<WorkspaceSelection | null>(null)
   const [saving, setSaving] = React.useState(false)
   const [nameError, setNameError] = React.useState("")
+  const [workspaceConflict, setWorkspaceConflict] = React.useState<ProjectView | null>(null)
   const editingProject = editor?.mode === "edit" ? editor.project : null
   const onlineConnectors = connectors.filter((connector) => connector.status === "online")
   const selectedConnector = connectors.find((connector) => connector.id === connectorId)
 
   React.useEffect(() => {
-    if (!editor) return
+    if (!editor) {
+      setWorkspaceConflict(null)
+      return
+    }
     if (editor.mode === "edit") {
       setName(editor.project.name)
       setConnectorId(editor.project.connectorId)
@@ -86,9 +115,10 @@ export function ProjectEditorDialog({
     }
     setSaving(false)
     setNameError("")
+    setWorkspaceConflict(null)
   }, [editor])
 
-  const submit = React.useCallback(async () => {
+  const persistProject = React.useCallback(async () => {
     const projectName = name.trim()
     if (!editor || !projectName || saving) return
     setSaving(true)
@@ -119,16 +149,35 @@ export function ProjectEditorDialog({
     }
   }, [connectorId, editor, name, onCreate, onOpenChange, onUpdate, saving, t, workspace?.path])
 
+  const submit = React.useCallback(() => {
+    const projectName = name.trim()
+    if (!editor || !projectName || saving) return
+    if (editor.mode === "create" && workspace?.path && connectorId) {
+      const connector = connectors.find((item) => item.id === connectorId)
+      const selectedWorkspaceKey = workspaceKey(workspace.path, connector?.deviceOs)
+      const existingProject = projects.find(
+        (project) => project.connectorId === connectorId
+          && workspaceKey(project.workspacePath, connector?.deviceOs) === selectedWorkspaceKey,
+      )
+      if (existingProject) {
+        setWorkspaceConflict(existingProject)
+        return
+      }
+    }
+    void persistProject()
+  }, [connectorId, connectors, editor, name, persistProject, projects, saving, workspace?.path])
+
   return (
-    <Dialog open={editor !== null} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg">
-        <form
-          className="flex flex-col gap-6"
-          onSubmit={(event) => {
-            event.preventDefault()
-            void submit()
-          }}
-        >
+    <>
+      <Dialog open={editor !== null} onOpenChange={onOpenChange}>
+        <DialogContent className="sm:max-w-lg">
+          <form
+            className="flex flex-col gap-6"
+            onSubmit={(event) => {
+              event.preventDefault()
+              submit()
+            }}
+          >
           <DialogHeader>
             <DialogTitle>{t(editingProject ? "editTitle" : "createTitle")}</DialogTitle>
             <DialogDescription>
@@ -236,8 +285,43 @@ export function ProjectEditorDialog({
               {tCommon("save")}
             </Button>
           </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog
+        open={workspaceConflict !== null}
+        onOpenChange={(open) => {
+          if (!open) setWorkspaceConflict(null)
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("workspaceConflictTitle")}</AlertDialogTitle>
+            <AlertDialogDescription className="break-words">
+              {t("workspaceConflictDescription", {
+                currentName: workspaceConflict?.name ?? "",
+                name: name.trim(),
+                path: workspaceConflict?.workspacePath ?? workspace?.path ?? "",
+              })}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={saving}>
+              {t("workspaceConflictBack")}
+            </AlertDialogCancel>
+            <AlertDialogAction
+              disabled={saving}
+              onClick={() => {
+                setWorkspaceConflict(null)
+                void persistProject()
+              }}
+            >
+              {t("workspaceConflictConfirm")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   )
 }

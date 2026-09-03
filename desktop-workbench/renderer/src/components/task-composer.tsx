@@ -1000,6 +1000,7 @@ export function TaskComposer() {
       <ProjectEditorDialog
         editor={projectEditor}
         connectors={connectors}
+        projects={projects}
         onOpenChange={(open) => {
           if (!open) setProjectEditor(null)
         }}
