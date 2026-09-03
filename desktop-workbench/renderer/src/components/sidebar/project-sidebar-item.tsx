@@ -2,9 +2,8 @@
 
 import {
   Archive,
-  ChevronDown,
-  ChevronRight,
   Folder,
+  FolderOpen,
   MoreHorizontal,
   Pencil,
   Pin,
@@ -88,8 +87,7 @@ export function ProjectSidebarItem({
               isActive={containsActiveSession}
               className="pr-[4.75rem] text-muted-foreground data-[active=true]:text-foreground"
             >
-              {expanded ? <ChevronDown /> : <ChevronRight />}
-              <Folder />
+              {expanded ? <FolderOpen /> : <Folder />}
               <span className="min-w-0 flex-1 truncate">{project.name}</span>
             </SidebarMenuButton>
           </CollapsibleTrigger>
