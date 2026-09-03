@@ -105,6 +105,9 @@ export type DesktopWorkbenchBridge = {
     node: string
   }
   openExternal: (url: string) => Promise<void>
+  development?: {
+    clearCache: () => Promise<void>
+  }
   notifications?: {
     show: (input: {
       title: string

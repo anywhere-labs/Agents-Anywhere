@@ -31,6 +31,9 @@ contextBridge.exposeInMainWorld("desktopWorkbench", {
     node: process.versions.node,
   },
   openExternal: (url: string): Promise<void> => ipcRenderer.invoke("workbench:openExternal", url),
+  development: {
+    clearCache: (): Promise<void> => ipcRenderer.invoke("workbench:development:clearCache"),
+  },
   notifications: {
     show: (input: DesktopNotificationInput): Promise<DesktopNotificationResult> =>
       ipcRenderer.invoke("workbench:notifications:show", input),

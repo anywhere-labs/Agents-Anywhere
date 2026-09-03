@@ -512,7 +512,6 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
           dashboardApi.listSessions(authSession.accessToken, { archived: false, limit: 100 }),
           dashboardApi.listSessions(authSession.accessToken, { archived: true, limit: 100 }),
         ])
-        console.log("[WorkspaceProvider.fetchData] GET /api/v2/connectors response", connRes)
         const nextConnectors = connRes.connectors.map(mapConnector)
         const nextSessions = sortSessions(
           [...activeRes.sessions, ...archivedRes.sessions].map(mapSession),

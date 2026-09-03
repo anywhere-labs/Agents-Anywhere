@@ -391,6 +391,12 @@ function registerIpcHandlers(): void {
     if (!/^https?:\/\//i.test(url)) throw new Error("Only http(s) URLs can be opened externally.");
     await shell.openExternal(url);
   });
+  ipcMain.handle("workbench:development:clearCache", async (event) => {
+    assertTrustedRenderer(event);
+    if (app.isPackaged) throw new Error("Cache clearing is only available in development mode.");
+    await event.sender.session.clearCache();
+    event.sender.reloadIgnoringCache();
+  });
   ipcMain.handle(
     "workbench:notifications:show",
     (event, input: DesktopNotificationInput): DesktopNotificationResult => {

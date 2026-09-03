@@ -1,22 +1,44 @@
 "use client"
 
-import { ArrowLeft, ArrowRight, Info } from "lucide-react"
+import * as React from "react"
+import { ArrowLeft, ArrowRight, Eraser, Info } from "lucide-react"
 import { useTranslations } from "next-intl"
+import { toast } from "sonner"
 
 import { DashboardSidebarToggle } from "@/components/dashboard-sidebar-toggle"
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
+import { getDesktopWorkbenchBridge } from "@/features/desktop/bridge"
 import { useDesktopConnector } from "@/features/desktop/desktop-connector-context"
 
 export function DesktopShellHeader() {
   const t = useTranslations("desktopConnector")
   const { supported, busy, state, binding, reconnect } = useDesktopConnector()
+  const [canClearCache, setCanClearCache] = React.useState(false)
+  const [clearingCache, setClearingCache] = React.useState(false)
   const localConnectorId = binding?.connectorId ?? state?.connectorId
   const needsReconnect = Boolean(
     supported &&
     localConnectorId &&
     (state?.authFailed || state?.manualDisconnected),
   )
+
+  React.useEffect(() => {
+    if (process.env.NODE_ENV !== "development") return
+    setCanClearCache(Boolean(getDesktopWorkbenchBridge()?.development?.clearCache))
+  }, [])
+
+  const clearCache = React.useCallback(async () => {
+    const clear = getDesktopWorkbenchBridge()?.development?.clearCache
+    if (!clear) return
+    setClearingCache(true)
+    try {
+      await clear()
+    } catch (error) {
+      setClearingCache(false)
+      toast.error(error instanceof Error ? error.message : t("clearCacheFailed"))
+    }
+  }, [t])
 
   return (
     <header className="aa-window-drag relative flex h-11 shrink-0 items-center border-b border-border/80 bg-background text-foreground">
@@ -71,8 +93,24 @@ export function DesktopShellHeader() {
       ) : null}
       <div
         data-slot="desktop-shell-header-actions"
-        className="ml-auto flex h-full min-w-0 flex-1 items-center justify-end px-3"
-      />
+        className="aa-window-no-drag ml-auto flex h-full min-w-0 flex-1 items-center justify-end px-3"
+      >
+        {canClearCache ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => void clearCache()}
+            disabled={clearingCache}
+            aria-label={t("clearCache")}
+            title={t("clearCache")}
+            className="rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+          >
+            {clearingCache ? <Spinner data-icon="inline-start" /> : <Eraser data-icon="inline-start" />}
+            {clearingCache ? t("clearingCache") : t("clearCache")}
+          </Button>
+        ) : null}
+      </div>
     </header>
   )
 }
