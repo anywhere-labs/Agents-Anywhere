@@ -152,6 +152,8 @@ class ProjectCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=255)
     connectorId: str = Field(min_length=1)
     workspacePath: str = Field(min_length=1, max_length=4096)
+    # Retained for compatibility with older clients. Project creation never
+    # binds existing sessions, even when this legacy flag is true.
     attachMatchingSessions: bool = False
 
 

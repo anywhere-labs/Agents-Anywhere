@@ -127,14 +127,12 @@ class ProjectRepositoryMixin:
         connector_id: str,
         name: str,
         workspace_path: str,
-        attach_matching_sessions: bool = False,
-    ) -> tuple[ProjectView, int]:
+    ) -> ProjectView:
         cleaned_name = name.strip()
         if not cleaned_name:
             raise ValueError("name must not be empty")
         project_id = f"proj_{secrets.token_urlsafe(10)}"
         now = utc_now()
-        attached = 0
         try:
             async with self._engine.begin() as conn:
                 connector = (
@@ -165,40 +163,9 @@ class ProjectRepositoryMixin:
                         updated_at=now,
                     )
                 )
-                if attach_matching_sessions:
-                    candidates = (
-                        await conn.execute(
-                            select(sessions_t.c.id, sessions_t.c.cwd).where(
-                                sessions_t.c.connector_id == connector_id,
-                                sessions_t.c.project_id.is_(None),
-                                sessions_t.c.cwd.is_not(None),
-                            )
-                        )
-                    ).all()
-                    matching_ids: list[str] = []
-                    for candidate in candidates:
-                        try:
-                            _, candidate_key = _clean_workspace_path(
-                                str(candidate.cwd),
-                                connector.device_os,
-                            )
-                        except ValueError:
-                            continue
-                        if candidate_key == workspace_key:
-                            matching_ids.append(str(candidate.id))
-                    if matching_ids:
-                        result = await conn.execute(
-                            update(sessions_t)
-                            .where(
-                                sessions_t.c.id.in_(matching_ids),
-                                sessions_t.c.project_id.is_(None),
-                            )
-                            .values(project_id=project_id, updated_at=now)
-                        )
-                        attached = int(result.rowcount or 0)
         except IntegrityError as exc:
             raise ValueError("a project already exists for this workspace") from exc
-        return await self.get_project(project_id, user_id=user_id), attached
+        return await self.get_project(project_id, user_id=user_id)
 
     async def update_project(
         self,

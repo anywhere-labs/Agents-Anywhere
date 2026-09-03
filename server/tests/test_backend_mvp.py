@@ -10081,17 +10081,23 @@ def _create_extra_session(
     connector_id: str,
     external_id: str,
     title: str = "Extra",
+    *,
+    project_id: str | None = None,
+    cwd: str = "/repo",
 ) -> str:
+    payload = {
+        "connectorId": connector_id,
+        "runtime": "codex",
+        "externalSessionId": external_id,
+        "title": title,
+        "cwd": cwd,
+    }
+    if project_id is not None:
+        payload["projectId"] = project_id
     response = client.post(
         "/sessions",
         headers=headers,
-        json={
-            "connectorId": connector_id,
-            "runtime": "codex",
-            "externalSessionId": external_id,
-            "title": title,
-            "cwd": "/repo",
-        },
+        json=payload,
     )
     assert response.status_code == 200, response.text
     return response.json()["session"]["id"]
@@ -10443,7 +10449,7 @@ class FakeWebSocket:
         await self.sent.put(message)
 
 
-def test_project_crud_attaches_matching_sessions_and_enforces_ownership(tmp_path):
+def test_project_crud_does_not_attach_matching_sessions_and_enforces_ownership(tmp_path):
     client = make_client(tmp_path)
     connector_id, _, session_id, headers = create_connector_and_session(client)
 
@@ -10469,18 +10475,18 @@ def test_project_crud_attaches_matching_sessions_and_enforces_ownership(tmp_path
         "workspacePath": "/repo",
         "pinned": False,
         "pinnedAt": None,
-        "activeSessionCount": 1,
-        "lastActivityAt": project["lastActivityAt"],
+        "activeSessionCount": 0,
+        "lastActivityAt": None,
         "createdAt": project["createdAt"],
         "updatedAt": project["updatedAt"],
     }
-    assert body["attachedSessions"] == 1
+    assert body["attachedSessions"] == 0
 
     session = client.get(
         f"/sessions/{session_id}/meta",
         headers=headers,
     ).json()["session"]
-    assert session["projectId"] == project_id
+    assert session["projectId"] is None
 
     listed = client.get("/projects", headers=headers)
     assert listed.status_code == 200, listed.text
@@ -10538,28 +10544,39 @@ def test_project_delete_unbinds_sessions_without_deleting_them(tmp_path):
             "name": "Project",
             "connectorId": connector_id,
             "workspacePath": "/repo",
-            "attachMatchingSessions": True,
         },
     )
     project_id = created.json()["project"]["id"]
+    bound_session_id = _create_extra_session(
+        client,
+        headers,
+        connector_id,
+        "thr_project_bound_for_delete",
+        project_id=project_id,
+    )
 
     deleted = client.delete(f"/projects/{project_id}", headers=headers)
     assert deleted.status_code == 200, deleted.text
     assert deleted.json()["detachedSessions"] == 1
     assert deleted.json()["projectId"] == project_id
-    session = client.get(
+    bound_session = client.get(
+        f"/sessions/{bound_session_id}/meta",
+        headers=headers,
+    )
+    assert bound_session.status_code == 200
+    assert bound_session.json()["session"]["projectId"] is None
+    standalone_session = client.get(
         f"/sessions/{session_id}/meta",
         headers=headers,
     )
-    assert session.status_code == 200
-    assert session.json()["session"]["projectId"] is None
+    assert standalone_session.status_code == 200
+    assert standalone_session.json()["session"]["projectId"] is None
     assert client.get("/projects", headers=headers).json()["projects"] == []
 
 
 def test_project_sessions_list_and_archive_all_are_scoped_to_project(tmp_path):
     client = make_client(tmp_path)
-    connector_id, _, session_a, headers = create_connector_and_session(client)
-    session_b = _create_extra_session(client, headers, connector_id, "thr_project_b")
+    connector_id, _, existing_session, headers = create_connector_and_session(client)
     unmatched = client.post(
         "/sessions",
         headers=headers,
@@ -10578,10 +10595,23 @@ def test_project_sessions_list_and_archive_all_are_scoped_to_project(tmp_path):
             "name": "Project",
             "connectorId": connector_id,
             "workspacePath": "/repo",
-            "attachMatchingSessions": True,
         },
     )
     project_id = created.json()["project"]["id"]
+    session_a = _create_extra_session(
+        client,
+        headers,
+        connector_id,
+        "thr_project_a",
+        project_id=project_id,
+    )
+    session_b = _create_extra_session(
+        client,
+        headers,
+        connector_id,
+        "thr_project_b",
+        project_id=project_id,
+    )
 
     listed = client.get(
         f"/projects/{project_id}/sessions",
@@ -10623,6 +10653,12 @@ def test_project_sessions_list_and_archive_all_are_scoped_to_project(tmp_path):
         f"/sessions/{unmatched}/meta",
         headers=headers,
     ).json()["session"]["archived"] is False
+    existing = client.get(
+        f"/sessions/{existing_session}/meta",
+        headers=headers,
+    ).json()["session"]
+    assert existing["projectId"] is None
+    assert existing["archived"] is False
 
 
 def test_session_create_validates_and_persists_project_binding(tmp_path):
@@ -10705,7 +10741,6 @@ def test_dashboard_snapshot_includes_projects_and_refreshes_after_create(tmp_pat
                 "name": "Live Project",
                 "connectorId": connector_id,
                 "workspacePath": "/repo",
-                "attachMatchingSessions": True,
             },
         )
         assert created.status_code == 200, created.text
@@ -10716,4 +10751,4 @@ def test_dashboard_snapshot_includes_projects_and_refreshes_after_create(tmp_pat
     refreshed_session = next(
         session for session in refreshed["sessions"] if session["id"] == session_id
     )
-    assert refreshed_session["projectId"] == project_id
+    assert refreshed_session["projectId"] is None

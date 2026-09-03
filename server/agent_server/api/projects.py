@@ -55,12 +55,11 @@ async def create_project(
     broker: TimelineBroker = Depends(get_timeline_broker),
 ) -> ProjectCreateResponse:
     try:
-        project, attached = await store.create_project(
+        project = await store.create_project(
             user_id=user_id,
             connector_id=payload.connectorId,
             name=payload.name,
             workspace_path=payload.workspacePath,
-            attach_matching_sessions=payload.attachMatchingSessions,
         )
     except KeyError:
         raise HTTPException(status_code=404, detail="connector not found") from None
@@ -75,7 +74,7 @@ async def create_project(
     )
     return ProjectCreateResponse(
         project=project,
-        attachedSessions=attached,
+        attachedSessions=0,
         serverTime=utc_now(),
     )
 
