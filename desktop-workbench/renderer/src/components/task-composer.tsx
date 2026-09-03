@@ -29,6 +29,10 @@ import {
   useAttachments,
 } from "@/components/attachment-input"
 import { buildOptimisticUserMessage } from "@/components/session/optimistic-timeline"
+import {
+  ProjectEditorDialog,
+  type ProjectEditorState,
+} from "@/components/sidebar/project-editor-dialog"
 import { WorkspacePicker, type WorkspaceSelection } from "@/components/workspace-picker"
 import { useWorkspace } from "@/components/workspace-context"
 import { useAuth } from "@/components/auth/auth-context"
@@ -40,6 +44,7 @@ import { useIsMobile } from "@/hooks/use-mobile"
 import type {
   DeviceRuntimeView,
   InlineAttachmentRef,
+  ProjectCreateRequest,
   ProtocolCapabilitySet,
   ProtocolModelCatalog,
   ProtocolPermissionCatalog,
@@ -152,10 +157,12 @@ export function TaskComposer() {
     addOptimisticMessage,
     bindOptimisticSession,
     connectors,
+    createProject,
     markOptimisticMessageFailed,
     newSessionProject,
     openSession,
     projects,
+    updateProject,
   } = useWorkspace()
   const isMobile = useIsMobile()
   const t = useTranslations("dashboard.new")
@@ -255,6 +262,7 @@ export function TaskComposer() {
   const [selectedReasoning, setSelectedReasoning] = React.useState("")
   const [selectedPermissionMode, setSelectedPermissionMode] = React.useState("")
   const [workspace, setWorkspace] = React.useState<WorkspaceSelection | null>(null)
+  const [projectEditor, setProjectEditor] = React.useState<ProjectEditorState>(null)
   const [prompt, setPrompt] = React.useState("")
   const [modelCatalog, setModelCatalog] = React.useState<ProtocolModelCatalog | null>(null)
   const [permissionCatalog, setPermissionCatalog] = React.useState<ProtocolPermissionCatalog | null>(null)
@@ -274,6 +282,19 @@ export function TaskComposer() {
   const { attachments, isDragging, add, remove, clear, onDragEnter, onDragLeave, onDragOver, onDrop } =
     useAttachments()
   const typedTitle = useTypewriterTitle(typewriterTitles, creating)
+
+  const createAndSelectProject = React.useCallback(async (payload: ProjectCreateRequest) => {
+    const project = await createProject(payload)
+    if (!project) return null
+    setSelectedDevice(project.connectorId)
+    setWorkspace({
+      label: project.name,
+      path: project.workspacePath,
+      connectorId: project.connectorId,
+      projectId: project.id,
+    })
+    return project
+  }, [createProject])
 
   React.useEffect(() => {
     if (!creating) {
@@ -973,9 +994,20 @@ export function TaskComposer() {
             value={workspace}
             onChange={setWorkspace}
             includeProjects
+            onCreateProject={() => setProjectEditor({ mode: "create" })}
           />
         </div>
       </div>
+
+      <ProjectEditorDialog
+        editor={projectEditor}
+        connectors={connectors}
+        onOpenChange={(open) => {
+          if (!open) setProjectEditor(null)
+        }}
+        onCreate={createAndSelectProject}
+        onUpdate={updateProject}
+      />
     </div>
   )
 }

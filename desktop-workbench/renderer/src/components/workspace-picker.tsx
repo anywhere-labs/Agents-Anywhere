@@ -3,6 +3,7 @@
 import * as React from "react"
 import {
   Folder,
+  FolderX,
   FolderOpen,
   ChevronDown,
   ChevronRight,
@@ -18,6 +19,9 @@ import {
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import {
@@ -222,11 +226,13 @@ export function WorkspacePicker({
   value,
   onChange,
   includeProjects = false,
+  onCreateProject,
 }: {
   connectorId?: string
   value?: WorkspaceSelection | null
   onChange?: (workspace: WorkspaceSelection) => void
   includeProjects?: boolean
+  onCreateProject?: () => void
 } = {}) {
   const { session: authSession } = useAuth()
   const { connectors, projects, sessions, openPairDeviceDialog } = useWorkspace()
@@ -331,6 +337,58 @@ export function WorkspacePicker({
   const isProject = Boolean(workspace.projectId)
   const isHome = Boolean(!isProject && homeWorkspace.path && workspace.path === homeWorkspace.path)
 
+  const workspaceMenuGroups = (
+    <>
+      <DropdownMenuLabel>{t("workspaces")}</DropdownMenuLabel>
+      <DropdownMenuGroup>
+        <DropdownMenuItem
+          className="gap-2.5"
+          disabled={!homeWorkspace.path}
+          onSelect={() => updateWorkspace(homeWorkspace)}
+        >
+          <Home />
+          <div className="flex min-w-0 flex-1 flex-col">
+            <span>{t("home")}</span>
+            <span className="truncate code-mono text-xs text-muted-foreground">
+              {homeWorkspace.path || t("resolvingHome")}
+            </span>
+          </div>
+          {resolvingHomePath ? <Spinner className="ml-auto shrink-0 text-muted-foreground" /> : null}
+          {isHome ? <Check className="ml-auto shrink-0" /> : null}
+        </DropdownMenuItem>
+
+        <DropdownMenuItem className="gap-2.5" onSelect={() => setDialogOpen(true)}>
+          <Plus />
+          <span>{t("browseFilesystem")}</span>
+        </DropdownMenuItem>
+      </DropdownMenuGroup>
+
+      {recentWorkspaces.length > 0 ? (
+        <>
+          <DropdownMenuSeparator />
+          <DropdownMenuGroup>
+            {recentWorkspaces.map((ws) => (
+              <DropdownMenuItem
+                key={ws.path}
+                className="gap-2.5"
+                onSelect={() => updateWorkspace(ws)}
+              >
+                <Folder />
+                <div className="flex min-w-0 flex-1 flex-col">
+                  <span className="truncate">{ws.label}</span>
+                  <span className="truncate code-mono text-xs text-muted-foreground">{ws.path}</span>
+                </div>
+                {!isProject && workspace.path === ws.path
+                  ? <Check className="ml-auto shrink-0" />
+                  : null}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuGroup>
+        </>
+      ) : null}
+    </>
+  )
+
   if (!hasOnlineConnector) {
     return (
       <div className="flex w-full items-center gap-3 rounded-xl border border-dashed border-border px-4 py-3 text-sm">
@@ -370,83 +428,64 @@ export function WorkspacePicker({
         </DropdownMenuTrigger>
 
         <DropdownMenuContent align="start" className="w-80">
-          {availableProjects.length > 0 ? (
+          {includeProjects ? (
             <>
-              <DropdownMenuLabel>{t("projects")}</DropdownMenuLabel>
-              <DropdownMenuGroup>
-                {availableProjects.map((project) => (
-                  <DropdownMenuItem
-                    key={project.id}
-                    className="items-start gap-2.5 py-2"
-                    onSelect={() => updateWorkspace({
-                      label: project.name,
-                      path: project.workspacePath,
-                      connectorId: project.connectorId,
-                      projectId: project.id,
-                    })}
-                  >
-                    <FolderOpen />
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate font-medium">{project.name}</span>
-                      <span className="block truncate code-mono text-xs text-muted-foreground">
-                        {project.workspacePath}
+              <ScrollArea className="h-56">
+                <DropdownMenuGroup className="min-h-full pr-1">
+                  {availableProjects.length > 0 ? availableProjects.map((project) => (
+                    <DropdownMenuItem
+                      key={project.id}
+                      className="items-start gap-2.5 py-2"
+                      onSelect={() => updateWorkspace({
+                        label: project.name,
+                        path: project.workspacePath,
+                        connectorId: project.connectorId,
+                        projectId: project.id,
+                      })}
+                    >
+                      <FolderOpen />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate font-medium">{project.name}</span>
+                        <span className="block truncate code-mono text-xs text-muted-foreground">
+                          {project.workspacePath}
+                        </span>
                       </span>
-                    </span>
-                    {workspace.projectId === project.id ? <Check className="ml-auto" /> : null}
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuGroup>
-              <DropdownMenuSeparator />
-            </>
-          ) : null}
+                      {workspace.projectId === project.id ? <Check className="ml-auto" /> : null}
+                    </DropdownMenuItem>
+                  )) : (
+                    <DropdownMenuItem disabled className="justify-center py-6 text-muted-foreground">
+                      {t("noProjects")}
+                    </DropdownMenuItem>
+                  )}
+                </DropdownMenuGroup>
+              </ScrollArea>
 
-          <DropdownMenuLabel>{t("workspaces")}</DropdownMenuLabel>
-          <DropdownMenuGroup>
-            <DropdownMenuItem
-              className="gap-2.5"
-              disabled={!homeWorkspace.path}
-              onSelect={() => updateWorkspace(homeWorkspace)}
-            >
-              <Home className="size-4 shrink-0 text-muted-foreground" />
-              <div className="flex min-w-0 flex-1 flex-col">
-                <span>{t("home")}</span>
-                <span className="truncate code-mono text-xs text-muted-foreground">
-                  {homeWorkspace.path || t("resolvingHome")}
-                </span>
-              </div>
-              {resolvingHomePath ? <Spinner className="ml-auto size-3.5 shrink-0 text-muted-foreground" /> : null}
-              {isHome ? <Check className="ml-auto size-3.5 shrink-0" /> : null}
-            </DropdownMenuItem>
-
-            <DropdownMenuItem className="gap-2.5" onSelect={() => setDialogOpen(true)}>
-              <Plus className="size-4 shrink-0 text-muted-foreground" />
-              <span>{t("browseFilesystem")}</span>
-            </DropdownMenuItem>
-          </DropdownMenuGroup>
-
-          {recentWorkspaces.length > 0 && (
-            <>
               <DropdownMenuSeparator />
               <DropdownMenuGroup>
-                {recentWorkspaces.map((ws) => (
-                  <DropdownMenuItem
-                    key={ws.path}
-                    className="gap-2.5"
-                    onSelect={() => updateWorkspace(ws)}
-                  >
-                    <Folder className="size-4 shrink-0 text-muted-foreground" />
-                    <div className="flex min-w-0 flex-1 flex-col">
-                      <span>{ws.label}</span>
-                      <span className="truncate code-mono text-xs text-muted-foreground">{ws.path}</span>
-                    </div>
-                    {!isProject && workspace.path === ws.path
-                      ? <Check className="ml-auto size-3.5 shrink-0" />
-                      : null}
-                  </DropdownMenuItem>
-                ))}
+                <DropdownMenuItem
+                  className="gap-2.5"
+                  disabled={!onCreateProject}
+                  onSelect={() => onCreateProject?.()}
+                >
+                  <Plus />
+                  <span>{t("newProject")}</span>
+                </DropdownMenuItem>
+              </DropdownMenuGroup>
+
+              <DropdownMenuSeparator />
+              <DropdownMenuGroup>
+                <DropdownMenuSub>
+                  <DropdownMenuSubTrigger className="gap-2.5">
+                    <FolderX />
+                    <span>{t("outsideProject")}</span>
+                  </DropdownMenuSubTrigger>
+                  <DropdownMenuSubContent className="w-80">
+                    {workspaceMenuGroups}
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub>
               </DropdownMenuGroup>
             </>
-          )}
+          ) : workspaceMenuGroups}
         </DropdownMenuContent>
       </DropdownMenu>
 
