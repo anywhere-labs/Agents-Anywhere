@@ -54,6 +54,8 @@ from connector.runtime_protocol import (
     RuntimeTimelineSnapshot,
     SessionMeta,
     SessionNotice,
+    SessionSourceObservation,
+    SessionSourceState,
     SessionState,
     SystemTimelineContent,
     SystemTimelineItem,
@@ -823,6 +825,12 @@ class RecordingRuntimeHost(RuntimeHostClient):
     ) -> None:
         self.events.append(("state", session_id))
 
+    async def session_source_update(
+        self,
+        observation: SessionSourceObservation,
+    ) -> None:
+        self.events.append(("source", observation.session_id))
+
     async def runtime_capabilities_update(
         self,
         capabilities: RuntimeCapabilitySet,
@@ -1333,6 +1341,10 @@ def test_runtime_sync_pushes_each_session_snapshot_before_next_meta() -> None:
     asyncio.run(_exercise_runtime_sync_pushes_each_session_snapshot_before_next_meta())
 
 
+def test_runtime_sync_publishes_source_with_meta_before_source_only_refresh() -> None:
+    asyncio.run(_exercise_runtime_sync_meta_source_ordering())
+
+
 def test_runtime_sync_uses_runtime_timeline_hook_when_available() -> None:
     asyncio.run(_exercise_runtime_sync_uses_runtime_timeline_hook_when_available())
 
@@ -1410,7 +1422,7 @@ async def _exercise_runtime_sync_pushes_each_session_snapshot_before_next_meta()
                     runtime=self.runtime_id,
                     title="Changed",
                     cwd="/repo",
-                    ordering_time="2026-08-02T00:00:00Z",
+                    ordering_time="2026-08-02T00:00:00.000000Z",
                     metadata={"sync": {"requires_timeline_sync": True}},
                 ),
                 SessionMeta(
@@ -1498,6 +1510,76 @@ async def _exercise_runtime_sync_pushes_each_session_snapshot_before_next_meta()
     ]
     assert ingested_batches[0][0]["params"]["sessionId"] == "sess_changed"
     assert ingested_batches[0][1]["params"]["sessionId"] == "sess_changed"
+    imported_item = ingested_batches[0][1]["params"]["items"][0]
+    assert imported_item["createdAt"] == "2026-08-02T00:00:00.000000Z"
+    assert imported_item["updatedAt"] == "2026-08-02T00:00:00.000000Z"
+
+
+async def _exercise_runtime_sync_meta_source_ordering() -> None:
+    runtime = FakeAgentRuntime()
+    host = RecordingRuntimeHost()
+    ingested_batches: list[list[dict[str, Any]]] = []
+
+    async def ingest_notifications(notifications: list[dict[str, Any]]) -> None:
+        ingested_batches.append(list(notifications))
+
+    runner = RuntimeSyncRunner(
+        config=ConnectorConfig(
+            server_url="http://127.0.0.1:8000",
+            connector_id="conn_1",
+            connector_token="token",
+        ),
+        supervisor=FakeRuntimeSupervisor(runtime),  # type: ignore[arg-type]
+        host=host,
+        preferences_reader=dict,
+        send_notification=unused_notification_sender,
+        ingest_notifications=ingest_notifications,
+    )
+    changed = SessionMeta(
+        session_id="sess_changed",
+        external_session_id="thr_changed",
+        runtime="codex",
+        runtime_id="rti_codex",
+        title="Changed",
+        ordering_time="2026-09-02T16:02:07.000000Z",
+        source_state=SessionSourceState(
+            availability="available",
+            reason="codex.thread/list active",
+            observed_at="2026-09-03T01:51:08.000000Z",
+            observation_origin="inventory",
+        ),
+        metadata={"sync": {"requires_timeline_sync": False, "changed": True}},
+    )
+    unchanged = SessionMeta(
+        session_id="sess_unchanged",
+        external_session_id="thr_unchanged",
+        runtime="codex",
+        runtime_id="rti_codex",
+        source_state=SessionSourceState(
+            availability="available",
+            reason="codex.thread/list active",
+            observed_at="2026-09-03T01:51:09.000000Z",
+            observation_origin="inventory",
+        ),
+        metadata={"sync": {"requires_timeline_sync": False, "changed": False}},
+    )
+
+    await runner.sync_existing_session(runtime, changed)
+    await runner.sync_existing_session(runtime, unchanged)
+
+    assert len(ingested_batches) == 1
+    assert [item["method"] for item in ingested_batches[0]] == ["session.meta.upsert"]
+    params = ingested_batches[0][0]["params"]
+    assert params["sessionId"] == "sess_changed"
+    assert params["lastActivityAt"] == "2026-09-02T16:02:07.000000Z"
+    assert params["sourceObservedAt"] == "2026-09-03T01:51:08.000000Z"
+    assert params["sourceState"] == {
+        "availability": "available",
+        "reason": "codex.thread/list active",
+        "observedAt": "2026-09-03T01:51:08.000000Z",
+        "observationOrigin": "inventory",
+    }
+    assert host.events == [("source", "sess_unchanged")]
 
 
 async def _exercise_runtime_sync_reconciles_complete_dsh_inventory_only() -> None:

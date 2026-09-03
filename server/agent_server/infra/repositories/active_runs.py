@@ -23,7 +23,7 @@ class ActiveRunRepository:
         updated_at: str,
         external_session_id: str | None = None,
         params_json: str | None = None,
-    ) -> bool:
+    ) -> None:
         async with self._engine.begin() as conn:
             existing = (
                 await conn.execute(
@@ -46,13 +46,12 @@ class ActiveRunRepository:
                         **values,
                     )
                 )
-                return True
+                return
             await conn.execute(
                 update(active_runs_t)
                 .where(active_runs_t.c.session_id == session_id)
                 .values(**values)
             )
-            return False
 
     async def get(self, session_id: str) -> Any | None:
         async with self._engine.connect() as conn:

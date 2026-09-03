@@ -3,6 +3,8 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Mapping
+from datetime import UTC, datetime
+from math import isfinite
 from typing import Any
 
 from connector.runtimes.session_identity import stable_runtime_session_id
@@ -96,18 +98,73 @@ def thread_cwd(thread_ref: dict[str, Any]) -> str | None:
 
 
 def thread_ordering_time(thread_ref: dict[str, Any]) -> str | None:
-    value = (
-        thread_ref.get("updatedAt")
-        or thread_ref.get("updated_at")
-        or thread_ref.get("createdAt")
-        or thread_ref.get("created_at")
-    )
-    return str(value) if value is not None else None
+    for key in (
+        "recencyAt",
+        "recency_at",
+        "updatedAt",
+        "updated_at",
+        "createdAt",
+        "created_at",
+    ):
+        normalized = _utc_iso_time(thread_ref.get(key))
+        if normalized is not None:
+            return normalized
+    return None
+
+
+def _utc_iso_time(value: Any) -> str | None:
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, (int, float)):
+        parsed = _datetime_from_epoch(value)
+        if parsed is None:
+            return None
+    elif isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return None
+        try:
+            epoch = float(stripped)
+        except ValueError:
+            try:
+                parsed = datetime.fromisoformat(stripped)
+            except ValueError:
+                return None
+        else:
+            parsed = _datetime_from_epoch(epoch)
+            if parsed is None:
+                return None
+    else:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    else:
+        parsed = parsed.astimezone(UTC)
+    return parsed.isoformat(timespec="microseconds").replace("+00:00", "Z")
+
+
+def _datetime_from_epoch(value: float) -> datetime | None:
+    try:
+        epoch = float(value)
+    except (OverflowError, ValueError):
+        return None
+    if not isfinite(epoch):
+        return None
+    if abs(epoch) >= 100_000_000_000:
+        epoch /= 1_000
+    try:
+        return datetime.fromtimestamp(epoch, tz=UTC)
+    except (OSError, OverflowError, ValueError):
+        return None
 
 
 def thread_sync_marker(thread_ref: dict[str, Any]) -> str | None:
     marker: dict[str, Any] = {}
     for key in (
+        "recencyAt",
+        "recency_at",
         "updatedAt",
         "updated_at",
         "revision",

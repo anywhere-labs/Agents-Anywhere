@@ -74,10 +74,11 @@ def _latest_timeline_item_subquery() -> Any:
 
 
 def _session_cursor_values(row: Any) -> tuple[int, str, int, int, str]:
+    latest_item_order_seq = row["latest_item_order_seq"]
     return (
         int(row["pinned"] or 0),
         str(row["session_sort_at"] or ""),
-        int(row["latest_item_order_seq"] or -1),
+        -1 if latest_item_order_seq is None else int(latest_item_order_seq),
         int(row["updated_seq"] or 0),
         str(row["id"]),
     )
@@ -149,10 +150,17 @@ def _runtime_identity(runtime: str, runtime_id: str | None) -> RuntimeIdentity:
 
 
 def _session_sort_at(latest_item: Any) -> Any:
+    latest_item_time = func.nullif(latest_item.c.latest_item_time, "")
+    last_activity_at = func.nullif(sessions_t.c.last_activity_at, "")
+    latest_activity_at = case(
+        (latest_item_time.is_(None), last_activity_at),
+        (last_activity_at.is_(None), latest_item_time),
+        (latest_item_time >= last_activity_at, latest_item_time),
+        else_=last_activity_at,
+    )
     return func.coalesce(
+        latest_activity_at,
         sessions_t.c.sort_at,
-        sessions_t.c.last_activity_at,
-        latest_item.c.latest_item_time,
         sessions_t.c.created_at,
     )
 
@@ -526,6 +534,10 @@ class SessionRepositoryMixin:
         user_id: str | None = None,
     ) -> tuple[list[SessionView], bool, str | None]:
         latest_item = _latest_timeline_item_subquery()
+        latest_order_seq = func.coalesce(
+            latest_item.c.latest_item_order_seq,
+            -1,
+        )
         sort_at = _session_sort_at(latest_item)
         effective_archived = _effective_archived_expression()
         query = (
@@ -540,6 +552,8 @@ class SessionRepositoryMixin:
             .order_by(
                 sessions_t.c.pinned.desc(),
                 sort_at.desc(),
+                latest_order_seq.desc(),
+                sessions_t.c.updated_seq.desc(),
                 sessions_t.c.id.desc(),
             )
             .limit(limit + 1)
@@ -547,7 +561,7 @@ class SessionRepositoryMixin:
         if user_id is not None:
             query = query.where(connectors_t.c.user_id == user_id)
         if cursor:
-            pinned, cursor_sort_at, _order_seq, _updated_seq, session_id = (
+            pinned, cursor_sort_at, order_seq, updated_seq, session_id = (
                 _decode_session_cursor(cursor)
             )
             query = query.where(
@@ -557,6 +571,19 @@ class SessionRepositoryMixin:
                     and_(
                         sessions_t.c.pinned == pinned,
                         sort_at == cursor_sort_at,
+                        latest_order_seq < order_seq,
+                    ),
+                    and_(
+                        sessions_t.c.pinned == pinned,
+                        sort_at == cursor_sort_at,
+                        latest_order_seq == order_seq,
+                        sessions_t.c.updated_seq < updated_seq,
+                    ),
+                    and_(
+                        sessions_t.c.pinned == pinned,
+                        sort_at == cursor_sort_at,
+                        latest_order_seq == order_seq,
+                        sessions_t.c.updated_seq == updated_seq,
                         sessions_t.c.id < session_id,
                     ),
                 )
@@ -568,21 +595,6 @@ class SessionRepositoryMixin:
         has_more = len(rows) > limit
         next_cursor = _encode_session_cursor(page_rows[-1]) if has_more and page_rows else None
         return sessions, has_more, next_cursor
-
-    async def touch_session_sort_at(
-        self,
-        session_id: str,
-        *,
-        sort_at: str | None = None,
-    ) -> None:
-        async with self._engine.begin() as conn:
-            result = await conn.execute(
-                update(sessions_t)
-                .where(sessions_t.c.id == session_id)
-                .values(sort_at=sort_at or utc_now())
-            )
-        if result.rowcount == 0:
-            raise KeyError(session_id)
 
     async def list_sessions(
         self,

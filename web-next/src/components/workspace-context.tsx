@@ -29,6 +29,7 @@ import {
   timelineClientMessageId,
   withServerAttachments,
 } from "@/components/session/optimistic-timeline"
+import { sortSessionViews } from "@/components/session/session-list-order"
 
 // ─── Panel / page types ───────────────────────────────────────
 
@@ -172,19 +173,6 @@ function mapSession(session: RealSessionView): SessionView {
     runtimeSettings: session.runtimeSettings ?? null,
     updatedAt: relativeSessionTime(session),
   }
-}
-
-function sessionSortMillis(session: SessionView): number {
-  const raw = session.sortAt
-  if (!raw) return 0
-  const value = Date.parse(raw)
-  return Number.isFinite(value) ? value : 0
-}
-
-function sortSessionViews(sessions: SessionView[]): SessionView[] {
-  return [...sessions].sort((a, b) =>
-    sessionSortMillis(b) - sessionSortMillis(a) || b.id.localeCompare(a.id),
-  )
 }
 
 function resolveSessionAlias(sessionId: string, aliases: Record<string, string>): string {

@@ -74,7 +74,11 @@ from connector.runtimes.codex.domain.pending_messages import (
     PendingClientMessageRegistry,
     client_message_bindings_key,
 )
-from connector.runtimes.codex.domain.sessions import stable_session_id
+from connector.runtimes.codex.domain.sessions import (
+    stable_session_id,
+    thread_ordering_time,
+    thread_sync_marker,
+)
 from connector.runtimes.codex.runtime import CodexRuntime
 from connector.runtimes.codex.sdk.client import CodexSdkClient
 from connector.runtimes.codex.sdk.events import CodexSdkEvent
@@ -546,7 +550,7 @@ class FakeCodexClient:
     ) -> CodexThreadListResult:
         params: dict[str, Any] = {
             "limit": limit,
-            "sortKey": "updated_at",
+            "sortKey": "recency_at",
         }
         if cursor is not None:
             params["cursor"] = cursor
@@ -1903,6 +1907,44 @@ def test_codex_runtime_lists_sessions_from_thread_list() -> None:
     asyncio.run(_test_codex_runtime_lists_sessions_from_thread_list())
 
 
+@pytest.mark.parametrize(
+    ("thread_ref", "expected"),
+    [
+        ({"recencyAt": 1_700_000_000}, "2023-11-14T22:13:20.000000Z"),
+        ({"recencyAt": 1_700_000_000_123}, "2023-11-14T22:13:20.123000Z"),
+        ({"recencyAt": "1700000000.5"}, "2023-11-14T22:13:20.500000Z"),
+        (
+            {
+                "recencyAt": "2026-09-03T09:00:00+08:00",
+                "updatedAt": "2026-09-04T00:00:00Z",
+            },
+            "2026-09-03T01:00:00.000000Z",
+        ),
+        (
+            {"recencyAt": "invalid", "updatedAt": "2026-09-03T01:02:03Z"},
+            "2026-09-03T01:02:03.000000Z",
+        ),
+        ({"recencyAt": "invalid"}, None),
+    ],
+)
+def test_codex_thread_ordering_time_is_normalized(
+    thread_ref: dict[str, Any],
+    expected: str | None,
+) -> None:
+    assert thread_ordering_time(thread_ref) == expected
+
+
+def test_codex_thread_sync_marker_tracks_recency() -> None:
+    before = thread_sync_marker(
+        {"updatedAt": 1_700_000_000, "recencyAt": 1_700_000_001}
+    )
+    after = thread_sync_marker({"updatedAt": 1_700_000_000, "recencyAt": 1_700_000_002})
+
+    assert before is not None
+    assert after is not None
+    assert before != after
+
+
 async def _test_codex_runtime_lists_sessions_from_thread_list() -> None:
     host = FakeHost()
     runtime = CodexRuntime(config=_config(), host=host, client=FakeCodexClient())
@@ -1914,7 +1956,7 @@ async def _test_codex_runtime_lists_sessions_from_thread_list() -> None:
     assert sessions[0].external_session_id == "thread_1"
     assert sessions[0].title == "Fix tests"
     assert sessions[0].cwd == "/repo"
-    assert sessions[0].ordering_time == "2026-08-02T00:00:00Z"
+    assert sessions[0].ordering_time == "2026-08-02T00:00:00.000000Z"
     assert sessions[0].metadata["local_state"] == "active"
     assert sessions[0].metadata["hidden"] is False
     assert sessions[0].metadata["sync"]["changed"] is True
@@ -1961,10 +2003,10 @@ async def _test_codex_runtime_complete_inventory_reads_active_and_archived_threa
     assert [
         request for request in client.requests if request[0].startswith("thread/list")
     ] == [
-        ("thread/list", {"limit": 25, "sortKey": "updated_at", "archived": False}),
+        ("thread/list", {"limit": 25, "sortKey": "recency_at", "archived": False}),
         (
             "thread/list/archived",
-            {"limit": 25, "sortKey": "updated_at", "archived": True},
+            {"limit": 25, "sortKey": "recency_at", "archived": True},
         ),
     ]
 
@@ -2177,7 +2219,7 @@ async def _test_codex_runtime_list_sessions_passes_cursor_to_runtime() -> None:
         "thread/list",
         {
             "limit": 5,
-            "sortKey": "updated_at",
+            "sortKey": "recency_at",
             "cursor": "next-page",
             "archived": False,
         },

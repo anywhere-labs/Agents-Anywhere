@@ -194,7 +194,7 @@ def test_backend_rpc_client_delegates_runtime_sync_to_runner() -> None:
     assert "RuntimeSyncRunner(" in client_source
     assert "session_meta_upsert(" not in client_source
     assert "_preferences_signature" not in client_source
-    assert "session_meta_upsert(" in runtime_sync_source
+    assert '"session.meta.upsert"' in runtime_sync_source
     assert "_preferences_signature" in runtime_sync_source
 
 
