@@ -33,6 +33,7 @@ import {
   withServerAttachments,
 } from "@/components/session/optimistic-timeline"
 import { hasDesktopConnectorBridge } from "@/features/desktop/bridge"
+import { logArchiveDebug } from "@/lib/archive-debug"
 
 // ─── Panel / page types ───────────────────────────────────────
 
@@ -543,12 +544,24 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       sessions: message.sessions,
       sessionPages: message.sessionPages,
     })
-    if (lastDashboardSnapshotKeyRef.current === snapshotKey) return
+    if (lastDashboardSnapshotKeyRef.current === snapshotKey) {
+      logArchiveDebug("dashboard.snapshot.skipped", {
+        sessionCount: message.sessions.length,
+      })
+      return
+    }
     lastDashboardSnapshotKeyRef.current = snapshotKey
 
     const nextConnectors = message.connectors.map(mapConnector)
     const nextProjects = sortProjectViews(message.projects)
     const nextSessions = message.sessions.map(mapSession)
+    logArchiveDebug("dashboard.snapshot.applied", {
+      sessionCount: nextSessions.length,
+      archivedCount: nextSessions.filter((session) => session.archived).length,
+      archivedSessionIds: nextSessions
+        .filter((session) => session.archived)
+        .map((session) => session.id),
+    })
     const previousFirstPageIds = new Set([
       ...firstPageSessionIdsRef.current.active,
       ...firstPageSessionIdsRef.current.archived,
@@ -588,6 +601,9 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   }, [reconcileSessionIndicator, sortSessions])
 
   const fetchData = React.useCallback(async () => {
+    logArchiveDebug("workspace.fetch.start", {
+      authenticated: Boolean(authSession?.accessToken),
+    })
     if (!initialLoadDoneRef.current) {
       setIsLoading(true)
     }
@@ -607,6 +623,11 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
         const nextSessions = sortSessions(
           [...activeRes.sessions, ...archivedRes.sessions].map(mapSession),
         )
+        logArchiveDebug("workspace.fetch.result", {
+          activeCount: activeRes.sessions.length,
+          archivedCount: archivedRes.sessions.length,
+          archivedSessionIds: archivedRes.sessions.map((session) => session.id),
+        })
         firstPageSessionIdsRef.current = {
           active: new Set(activeRes.sessions.map((session) => session.id)),
           archived: new Set(archivedRes.sessions.map((session) => session.id)),
@@ -627,6 +648,10 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
         listMockSessions("mock-token"),
       ])
       const nextSessions = sortSessions(sessRes.sessions)
+      logArchiveDebug("workspace.fetch.mock-result", {
+        sessionCount: nextSessions.length,
+        archivedCount: nextSessions.filter((session) => session.archived).length,
+      })
       setConnectors((current) => sameStableValue(current, connRes.connectors) ? current : connRes.connectors)
       setProjects([])
       setProjectSessionsById({})
@@ -1067,6 +1092,12 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
 
   const upsertSession = React.useCallback((session: RealSessionView) => {
     const mapped = mapSession(session)
+    logArchiveDebug("session.upsert", {
+      sessionId: mapped.id,
+      archived: mapped.archived,
+      userArchived: mapped.userArchived,
+      projectId: mapped.projectId ?? null,
+    })
     setSessions((prev) => {
       const index = prev.findIndex((item) => item.id === mapped.id)
       if (index === -1) return sortSessions([mapped, ...prev])
@@ -1123,11 +1154,26 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     archived?: boolean,
   ): Promise<SessionView | null> => {
     const targetSession = sessionsRef.current.find((session) => session.id === id)
-    if (!targetSession) return null
+    logArchiveDebug("session.archive.request", {
+      sessionId: id,
+      targetFound: Boolean(targetSession),
+      currentArchived: targetSession?.archived ?? null,
+      requestedArchived: archived ?? null,
+    })
+    if (!targetSession) {
+      logArchiveDebug("session.archive.skipped", { sessionId: id })
+      return null
+    }
     const nextArchived = archived ?? !targetSession.archived
 
     if (authSession?.accessToken) {
       const response = await dashboardApi.patchSession(authSession.accessToken, id, { archived: nextArchived })
+      logArchiveDebug("session.archive.response", {
+        sessionId: response.session.id,
+        archived: response.session.archived,
+        userArchived: response.session.userArchived,
+        projectId: response.session.projectId ?? null,
+      })
       upsertSession(response.session)
       return mapSession(response.session)
     }

@@ -34,6 +34,7 @@ import { Separator } from "@/components/ui/separator"
 import { Spinner } from "@/components/ui/spinner"
 import { dashboardApi } from "@/features/dashboard/api"
 import type { ProjectView, SessionView } from "@/features/dashboard/types"
+import { logArchiveDebug } from "@/lib/archive-debug"
 
 const ALL_PROJECTS = "all"
 const STANDALONE_SESSIONS = "standalone"
@@ -106,6 +107,7 @@ export function ArchivedSessionsTab({
 
   const loadInitial = React.useCallback(async () => {
     const requestId = ++requestIdRef.current
+    logArchiveDebug("settings.archived.load.start", { requestId })
     if (!token) {
       setSessions([])
       setLoading(false)
@@ -115,6 +117,17 @@ export function ArchivedSessionsTab({
     setError(null)
     try {
       const response = await dashboardApi.listSessions(token, { archived: true, limit: 100 })
+      logArchiveDebug("settings.archived.load.response", {
+        requestId,
+        sessionCount: response.sessions.length,
+        sessionIds: response.sessions.map((session) => session.id),
+        archivedStates: response.sessions.map((session) => ({
+          id: session.id,
+          archived: session.archived,
+          userArchived: session.userArchived,
+          projectId: session.projectId ?? null,
+        })),
+      })
       if (requestId !== requestIdRef.current) return
       setSessions(mergeSessions([], response.sessions))
       setHasMore(response.hasMore)
@@ -209,6 +222,16 @@ export function ArchivedSessionsTab({
     setUnarchivingIds((current) => [...current, sessionId])
     try {
       const response = await dashboardApi.bulkArchiveSessions(token, [sessionId], false)
+      logArchiveDebug("settings.archived.unarchive-session.response", {
+        sessionId,
+        affected: response.sessions.length,
+        sessions: response.sessions.map((session) => ({
+          id: session.id,
+          archived: session.archived,
+          userArchived: session.userArchived,
+          projectId: session.projectId ?? null,
+        })),
+      })
       const unarchivedSession = response.sessions.find((session) => session.id === sessionId)
       if (!unarchivedSession) {
         toast.error(t("archivedUnarchiveFailed"))
@@ -234,9 +257,19 @@ export function ArchivedSessionsTab({
     if (!token || unarchivingProjectId) return
     setUnarchivingProjectId(projectId)
     try {
-      await dashboardApi.archiveProjectSessions(token, projectId, {
+      const response = await dashboardApi.archiveProjectSessions(token, projectId, {
         archived: false,
         scope: "archived",
+      })
+      logArchiveDebug("settings.archived.unarchive-project.response", {
+        projectId,
+        affected: response.affected,
+        sessions: response.sessions.map((session) => ({
+          id: session.id,
+          archived: session.archived,
+          userArchived: session.userArchived,
+          projectId: session.projectId ?? null,
+        })),
       })
       setSessions((current) => current.filter((session) => session.projectId !== projectId))
       onWorkspaceRefresh()
