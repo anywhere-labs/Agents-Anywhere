@@ -87,7 +87,6 @@ class ConnectorIngestService:
         rejected: list[ConnectorIngestRejectedNotification] = []
         protocol_capabilities_changed = False
         runtime_scoped_capabilities_changed = False
-        saw_dsh_session_inventory_complete = False
         for index, notification in enumerate(payload.notifications):
             try:
                 effect = await self.apply_ingest_notification(
@@ -117,8 +116,6 @@ class ConnectorIngestService:
                 continue
             if notification.method == "runtime.statusChanged":
                 continue
-            if notification.method == "session.inventory.complete":
-                saw_dsh_session_inventory_complete = True
             effects.append(effect)
             if notification.method == "protocol.capabilitiesUpdated":
                 protocol_capabilities_changed = (
@@ -132,7 +129,7 @@ class ConnectorIngestService:
                         and not isinstance(notification.params.get("sessionId"), str)
                     )
                 )
-        await self._publish_effects(effects)
+        dashboard_changed = await self._publish_effects(effects)
         if protocol_capabilities_changed:
             await publish_connector_session_capabilities(
                 self._store,
@@ -147,26 +144,12 @@ class ConnectorIngestService:
                 self._timeline_broker,
                 connector_id,
             )
-        if protocol_capabilities_changed:
+        if dashboard_changed:
             await publish_dashboard_changed(
                 self._store,
                 self._timeline_broker,
                 connector_id=connector_id,
-                reason="protocol.capabilities",
-            )
-        if runtime_scoped_capabilities_changed:
-            await publish_dashboard_changed(
-                self._store,
-                self._timeline_broker,
-                connector_id=connector_id,
-                reason="runtime.capabilities",
-            )
-        if saw_dsh_session_inventory_complete:
-            await publish_dashboard_changed(
-                self._store,
-                self._timeline_broker,
-                connector_id=connector_id,
-                reason="dsh.session.inventory",
+                reason="connector.ingest",
             )
         return ConnectorIngestResponse(
             accepted=accepted,
@@ -223,28 +206,13 @@ class ConnectorIngestService:
             method=method,
             params=params,
         )
-        await self._publish_effects([effect])
-        if method == "session.inventory.complete":
-            await publish_dashboard_changed(
-                self._store,
-                self._timeline_broker,
-                connector_id=connector_id,
-                reason="dsh.session.inventory",
-            )
+        dashboard_changed = await self._publish_effects([effect])
         if method == "protocol.capabilitiesUpdated" and effect.protocol_changed:
             await publish_connector_session_capabilities(
                 self._store,
                 self._presence,
                 self._timeline_broker,
                 connector_id,
-            )
-            # Side effects: notifies dashboard clients that connector-scoped
-            # protocol capabilities changed.
-            await publish_dashboard_changed(
-                self._store,
-                self._timeline_broker,
-                connector_id=connector_id,
-                reason="protocol.capabilities",
             )
         if (
             method == "runtime.capability.updated"
@@ -257,14 +225,16 @@ class ConnectorIngestService:
                 self._timeline_broker,
                 connector_id,
             )
+        if dashboard_changed:
             await publish_dashboard_changed(
                 self._store,
                 self._timeline_broker,
                 connector_id=connector_id,
-                reason="runtime.capabilities",
+                reason=method,
             )
 
-    async def _publish_effects(self, effects: list[IngestEffect]) -> None:
+    async def _publish_effects(self, effects: list[IngestEffect]) -> bool:
+        dashboard_changed = any(effect.dashboard_changed for effect in effects)
         by_session: dict[str, dict[str, Any]] = {}
         for effect in effects:
             target_session_ids = []
@@ -333,11 +303,12 @@ class ConnectorIngestService:
         async def publish_bucket(
             session_id: str,
             bucket: dict[str, Any],
-        ) -> None:
+        ) -> bool:
+            status_changed = False
             try:
                 next_seq = await self._store.get_session_seq(session_id)
             except KeyError:
-                return
+                return False
             if bucket["accepted_sequence"] is not None:
                 next_seq = max(next_seq, bucket["accepted_sequence"])
             envelope_sequence = (
@@ -397,6 +368,7 @@ class ConnectorIngestService:
                         runtime_state.status,
                         mark_read_on_change=True,
                     )
+                    status_changed = persisted_session.status != bound_session.status
                     next_seq = max(
                         await self._store.get_session_seq(session_id),
                         persisted_session.updatedSeq,
@@ -458,22 +430,23 @@ class ConnectorIngestService:
                     "catalogs",
                 )
             ):
-                return
+                return status_changed
             await self._timeline_broker.publish(session_id, envelope)
-            if not bucket["deferred_timeline_only"]:
-                await publish_dashboard_changed(
-                    self._store,
-                    self._timeline_broker,
-                    session_id=session_id,
-                    reason="session.changed",
-                )
+            return status_changed
 
         for session_id, bucket in by_session.items():
             if bucket["deferred_timeline_only"]:
-                await publish_bucket(session_id, bucket)
+                dashboard_changed = (
+                    await publish_bucket(session_id, bucket)
+                    or dashboard_changed
+                )
                 continue
             async with self._store.session_revision_fence(session_id):
-                await publish_bucket(session_id, bucket)
+                dashboard_changed = (
+                    await publish_bucket(session_id, bucket)
+                    or dashboard_changed
+                )
+        return dashboard_changed
 
     async def _apply_runtime_status(self, connector_id: str, params: dict) -> None:
         runtime_id = params.get("runtimeId")

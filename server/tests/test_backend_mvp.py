@@ -2019,6 +2019,228 @@ def test_dashboard_ws_pushes_snapshot_after_dashboard_change(tmp_path):
         assert session_id in [session["id"] for session in pushed["sessions"]]
 
 
+def test_connector_ingest_skips_dashboard_for_unchanged_session_batch(tmp_path):
+    client = make_client(tmp_path)
+    _connector_id, access_token, session_id, headers = create_connector_and_session(client)
+    connector_headers = {"Authorization": f"Bearer {access_token}"}
+
+    seeded = client.post(
+        "/connector/ingest",
+        headers=connector_headers,
+        json={
+            "notifications": [
+                {
+                    "method": "session.source.updated",
+                    "params": {
+                        "sessionId": session_id,
+                        "runtime": "codex",
+                        "availability": "available",
+                        "reason": "inventory active",
+                        "observedAt": "2026-09-03T00:00:00Z",
+                        "observationOrigin": "inventory",
+                    },
+                }
+            ]
+        },
+    )
+    assert seeded.status_code == 200, seeded.text
+    before = client.get(
+        f"/sessions/{session_id}/meta",
+        headers=headers,
+    ).json()["session"]
+
+    dashboard_publications: list[tuple[str, dict[str, Any]]] = []
+    session_publications: list[tuple[str, dict[str, Any]]] = []
+
+    async def record_dashboard(user_id: str, payload: dict[str, Any]) -> None:
+        dashboard_publications.append((user_id, payload))
+
+    async def record_session(session_id: str, payload: dict[str, Any]) -> None:
+        session_publications.append((session_id, payload))
+
+    client.app.state.timeline_broker.publish_dashboard = record_dashboard
+    client.app.state.timeline_broker.publish = record_session
+    scan_token = "codex-unchanged-inventory-0001"
+    response = client.post(
+        "/connector/ingest",
+        headers=connector_headers,
+        json={
+            "notifications": [
+                {
+                    "method": "session.updated",
+                    "params": {
+                        "sessionId": session_id,
+                        "runtime": "codex",
+                        "title": before["title"],
+                        "cwd": before["cwd"],
+                    },
+                },
+                {
+                    "method": "session.source.updated",
+                    "params": {
+                        "sessionId": session_id,
+                        "runtime": "codex",
+                        "availability": "available",
+                        "reason": "inventory active",
+                        "observedAt": "2026-09-03T00:00:01Z",
+                        "observationOrigin": "inventory",
+                    },
+                },
+                {
+                    "method": "session.inventory.begin",
+                    "params": {
+                        "runtime": "codex",
+                        "scanToken": scan_token,
+                    },
+                },
+                {
+                    "method": "session.inventory.complete",
+                    "params": {
+                        "runtime": "codex",
+                        "scanToken": scan_token,
+                        "complete": True,
+                        "sessions": [
+                            {
+                                "sessionId": session_id,
+                                "sourceState": {
+                                    "availability": "available",
+                                    "reason": "inventory active",
+                                    "observedAt": "2026-09-03T00:00:02Z",
+                                },
+                            }
+                        ],
+                    },
+                },
+            ]
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["accepted"] == 4
+    assert dashboard_publications == []
+    assert session_publications == []
+    after = client.get(f"/sessions/{session_id}/meta", headers=headers).json()["session"]
+    assert after["updatedSeq"] == before["updatedSeq"]
+    assert after["sortAt"] == before["sortAt"]
+
+    activity = client.post(
+        "/connector/ingest",
+        headers=connector_headers,
+        json={
+            "notifications": [
+                {
+                    "method": "session.updated",
+                    "params": {
+                        "sessionId": session_id,
+                        "runtime": "codex",
+                        "lastActivityAt": "2099-09-03T00:00:00Z",
+                    },
+                }
+            ]
+        },
+    )
+    assert activity.status_code == 200, activity.text
+    assert len(dashboard_publications) == 1
+    assert session_publications
+    activity_session = client.get(
+        f"/sessions/{session_id}/meta",
+        headers=headers,
+    ).json()["session"]
+    assert activity_session["updatedSeq"] == after["updatedSeq"]
+    assert activity_session["sortAt"] != after["sortAt"]
+
+
+def test_connector_ingest_publishes_dashboard_once_for_changed_session_batch(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, access_token, first_session_id, headers = (
+        create_connector_and_session(client)
+    )
+    second = client.post(
+        "/sessions",
+        headers=headers,
+        json={
+            "connectorId": connector_id,
+            "runtime": "codex",
+            "externalSessionId": "thr_dashboard_batch_second",
+            "title": "Second",
+            "cwd": "/repo",
+        },
+    )
+    assert second.status_code == 200, second.text
+    second_session_id = second.json()["session"]["id"]
+
+    dashboard_publications: list[tuple[str, dict[str, Any]]] = []
+
+    async def record_dashboard(user_id: str, payload: dict[str, Any]) -> None:
+        dashboard_publications.append((user_id, payload))
+
+    client.app.state.timeline_broker.publish_dashboard = record_dashboard
+    response = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={
+            "notifications": [
+                {
+                    "method": "session.updated",
+                    "params": {
+                        "sessionId": first_session_id,
+                        "runtime": "codex",
+                        "title": "First changed",
+                    },
+                },
+                {
+                    "method": "session.updated",
+                    "params": {
+                        "sessionId": second_session_id,
+                        "runtime": "codex",
+                        "title": "Second changed",
+                    },
+                },
+            ]
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["accepted"] == 2
+    assert len(dashboard_publications) == 1
+
+
+def test_connector_ingest_publishes_dashboard_for_new_idle_session(tmp_path):
+    client = make_client(tmp_path)
+    _connector_id, access_token, _session_id, headers = (
+        create_connector_and_session(client)
+    )
+    new_session_id = "sess_unknown_idle_dashboard"
+    dashboard_publications: list[tuple[str, dict[str, Any]]] = []
+
+    async def record_dashboard(user_id: str, payload: dict[str, Any]) -> None:
+        dashboard_publications.append((user_id, payload))
+
+    client.app.state.timeline_broker.publish_dashboard = record_dashboard
+    response = client.post(
+        "/connector/ingest",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={
+            "notifications": [
+                {
+                    "method": "session.state.updated",
+                    "params": {
+                        "sessionId": new_session_id,
+                        "runtime": "codex",
+                        "status": "idle",
+                    },
+                }
+            ]
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["accepted"] == 1
+    assert len(dashboard_publications) == 1
+    sessions = client.get("/sessions", headers=headers).json()["sessions"]
+    assert any(session["id"] == new_session_id for session in sessions)
+
+
 def test_dashboard_ws_rejects_session_scoped_ticket(tmp_path):
     client = make_client(tmp_path)
     _connector_id, _access_token, session_id, headers = create_connector_and_session(client)

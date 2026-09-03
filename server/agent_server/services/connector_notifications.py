@@ -44,6 +44,18 @@ SESSION_SOURCE_ORIGINS = {"event", "inventory", "operation"}
 TURN_END_OUTCOMES = {"completed", "interrupted", "cancelled", "failed"}
 
 
+def _session_dashboard_changed(
+    previous: SessionView | None,
+    current: SessionView,
+) -> bool:
+    if previous is None:
+        return True
+    return (
+        previous.updatedSeq != current.updatedSeq
+        or previous.sortAt != current.sortAt
+    )
+
+
 class NotificationValidationError(ValueError):
     def __init__(self, code: str, message: str) -> None:
         super().__init__(message)
@@ -287,6 +299,7 @@ class SessionNotificationHandler:
         external_session_id = params.get("externalSessionId")
         runtime, runtime_id = runtime_identity_from_params(params)
         source_observation = _session_meta_source_observation(params, runtime)
+        previous_session: SessionView | None = None
         try:
             if isinstance(external_session_id, str):
                 session_id = await self._store.resolve_connector_session_id(
@@ -297,6 +310,7 @@ class SessionNotificationHandler:
                     runtime_id=runtime_id,
                 )
             existing_session = await self._store.get_session(session_id)
+            previous_session = existing_session
             _require_session_binding(
                 existing_session,
                 connector_id=connector_id,
@@ -319,7 +333,12 @@ class SessionNotificationHandler:
                     session.id,
                     **source_observation,
                 )
-            return IngestEffect(session_id=session.id, session_changed=True)
+            changed = _session_dashboard_changed(previous_session, session)
+            return IngestEffect(
+                session_id=session.id,
+                session_changed=changed,
+                dashboard_changed=changed,
+            )
         except KeyError:
             try:
                 session = await self._store.upsert_connector_session(
@@ -345,7 +364,11 @@ class SessionNotificationHandler:
                     session.id,
                     **source_observation,
                 )
-            return IngestEffect(session_id=session.id, session_changed=True)
+            return IngestEffect(
+                session_id=session.id,
+                session_changed=True,
+                dashboard_changed=True,
+            )
 
 
 class SessionSourceNotificationHandler:
@@ -394,11 +417,19 @@ class SessionSourceNotificationHandler:
                 runtime_id=runtime_id,
                 external_session_id=external_session_id,
             )
+            previous_session = None
+        else:
+            previous_session = session
         session = await self._store.update_session_source_state(
             session.id,
             **observation,
         )
-        return IngestEffect(session_id=session.id, session_changed=True)
+        changed = _session_dashboard_changed(previous_session, session)
+        return IngestEffect(
+            session_id=session.id,
+            session_changed=changed,
+            dashboard_changed=changed,
+        )
 
     def __init__(self, store: ConnectorNotificationRepository) -> None:
         self._store = store
@@ -512,7 +543,7 @@ class SessionInventoryNotificationHandler:
                     ),
                 }
             )
-        await self._store.complete_session_inventory(
+        changed_session_ids = await self._store.complete_session_inventory(
             connector_id,
             runtime,
             runtime_id,
@@ -520,7 +551,7 @@ class SessionInventoryNotificationHandler:
             entries,
             complete=complete,
         )
-        return IngestEffect()
+        return IngestEffect(dashboard_changed=bool(changed_session_ids))
 
 
 class SessionStateNotificationHandler:
@@ -551,6 +582,7 @@ class SessionStateNotificationHandler:
                 )
             except KeyError:
                 pass
+        created = False
         try:
             session = await self._store.get_session(session_id)
         except KeyError:
@@ -568,6 +600,7 @@ class SessionStateNotificationHandler:
                     str(exc),
                 ) from exc
             session_id = session.id
+            created = True
         else:
             _require_session_binding(
                 session,
@@ -597,6 +630,7 @@ class SessionStateNotificationHandler:
         return IngestEffect(
             session_id=session_id,
             runtime_state=runtime_state,
+            dashboard_changed=created,
         )
 
 
@@ -690,7 +724,11 @@ class SessionTurnEndedNotificationHandler:
                     ),
                     mark_read_on_change=False,
                 )
-        return IngestEffect(session_id=session.id, session_changed=True)
+        return IngestEffect(
+            session_id=session.id,
+            session_changed=True,
+            dashboard_changed=True,
+        )
 
 
 class TimelineNotificationHandler:
@@ -791,6 +829,7 @@ class TimelineNotificationHandler:
                 else None
             ),
             timeline_published=timeline_published,
+            dashboard_changed=result.changed,
         )
 
     async def _upsert(
@@ -842,6 +881,9 @@ class TimelineNotificationHandler:
             accepted_sequence=result.item.updatedSeq if result.changed else None,
             timeline_published=(
                 result.changed and self._timeline_write_buffer is not None
+            ),
+            dashboard_changed=(
+                result.changed and self._timeline_write_buffer is None
             ),
         )
 

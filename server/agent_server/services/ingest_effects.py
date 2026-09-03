@@ -23,3 +23,4 @@ class IngestEffect:
     timeline_pending: bool = False
     accepted_sequence: int | None = None
     timeline_published: bool = False
+    dashboard_changed: bool = False
