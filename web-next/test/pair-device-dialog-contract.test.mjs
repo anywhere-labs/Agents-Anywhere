@@ -60,6 +60,24 @@ test("online completion is idempotent and only reports success once", () => {
   assert.equal(source.match(/onConnectorCreated\?\.\(\)/g)?.length, 1)
 })
 
+test("agent setup follows connector presence and reloads after reconnect", () => {
+  assert.match(source, /watchConnectorPresence\(\{/)
+  assert.match(source, /initialOnline: agentSetupPresenceRef\.current === "online"/)
+  assert.match(source, /if \(reconnected\) void loadRuntimes\(cid\)/)
+  assert.match(source, /runtimeLoadIdRef\.current \+= 1/)
+  assert.match(source, /!agentSetupOnline \? \(\s*<Alert>/)
+  assert.match(source, /waitingReconnectTitle/)
+
+  const agentsStep = sourceBetween(
+    '{/* ── Step: Configure agents ── */}',
+    "</DialogContent>",
+  )
+  assert.match(
+    agentsStep,
+    /disabled=\{!agentSetupOnline \|\| runtimesLoading \|\| savingRuntimeId !== null\}/,
+  )
+})
+
 test("workspace refresh does not close the explicit agent setup step", () => {
   const callbackStart = demoSource.indexOf("onConnectorCreated={() => {")
   const callbackEnd = demoSource.indexOf("}}", callbackStart)
@@ -80,4 +98,15 @@ test("skipping setup does not create a runtime and explicit creation starts it",
   const create = sourceBetween("const createAndStartRuntime", "const addRuntime")
   assert.match(create, /createConnectorRuntime/)
   assert.match(create, /config,\s*active: true/)
+})
+
+test("a configured inactive runtime keeps a configure-and-start retry", () => {
+  const agentsStep = sourceBetween(
+    '{/* ── Step: Configure agents ── */}',
+    "</DialogContent>",
+  )
+  assert.match(agentsStep, /runtime\.active \? \(/)
+  assert.match(agentsStep, /onClick=\{\(\) => setConfigRuntime\(runtime\)\}/)
+  assert.match(agentsStep, /\{t\("configureAndStart"\)\}/)
+  assert.match(source, /submitDisabled=\{!agentSetupOnline\}/)
 })

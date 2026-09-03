@@ -2,6 +2,7 @@
 
 import * as React from "react"
 import {
+  AlertCircle,
   ArrowLeft,
   Check,
   CheckCircle2,
@@ -14,6 +15,7 @@ import {
   Plus,
   RefreshCw,
   Terminal,
+  WifiOff,
 } from "lucide-react"
 import { toast } from "sonner"
 import {
@@ -35,6 +37,11 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
+import {
+  Alert,
+  AlertDescription,
+  AlertTitle,
+} from "@/components/ui/alert"
 import {
   Tooltip,
   TooltipContent,
@@ -58,6 +65,7 @@ import { useTranslations } from "next-intl"
 import { RuntimeConfigDialog } from "@/components/runtime-config-dialog"
 import { RuntimeInstanceNameDialog } from "@/components/runtime-instance-name-dialog"
 import { discoverConnectorRuntimeOverview } from "@/features/dashboard/runtime-discovery"
+import { watchConnectorPresence } from "@/features/dashboard/connector-presence"
 import {
   addableRuntimeTypes,
   configuredRuntimeInstances,
@@ -96,6 +104,7 @@ const GITHUB_RELEASES_URL = "https://github.com/anywhere-labs/Agents-Anywhere/re
 const COMMAND_WARNING_ACCEPTED_KEY = "agents-anywhere.pairDevice.commandWarningAccepted.v1"
 const COMMAND_WARNING_WAIT_SECONDS = 5
 const PAIRED_RUNTIME_DISCOVERY_DELAY_MS = 750
+const AGENT_SETUP_PRESENCE_POLL_MS = 2000
 const NEW_RUNTIME_SAVING_ID = "@new-runtime"
 
 function randomName(): string {
@@ -177,6 +186,7 @@ function writeCommandWarningAccepted() {
 
 // ── Types ──────────────────────────────────────────────────
 type Step = "name" | "method" | "desktop-method" | "desktop-local" | "desktop-paircode" | "desktop-credentials" | "command-warning" | "command" | "agents"
+type AgentSetupPresence = "online" | "waiting"
 
 interface Props {
   open: boolean
@@ -249,6 +259,8 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
   const [runtimes, setRuntimes] = React.useState<DeviceRuntimeView[]>([])
   const [runtimeTypes, setRuntimeTypes] = React.useState<RuntimeTypeView[]>([])
   const [runtimesLoading, setRuntimesLoading] = React.useState(false)
+  const [runtimeLoadError, setRuntimeLoadError] = React.useState<string | null>(null)
+  const [agentSetupPresence, setAgentSetupPresence] = React.useState<AgentSetupPresence>("waiting")
   const [configRuntime, setConfigRuntime] = React.useState<DeviceRuntimeView | null>(null)
   const [createRuntimeType, setCreateRuntimeType] = React.useState<RuntimeTypeView | null>(null)
   const [pendingRuntimeCreation, setPendingRuntimeCreation] = React.useState<{
@@ -261,6 +273,8 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
   const pollingGenerationRef = React.useRef(0)
   const runtimeLoadIdRef = React.useRef(0)
   const onlineNotificationRef = React.useRef<string | null>(null)
+  const agentSetupPresenceRef = React.useRef<AgentSetupPresence>("waiting")
+  const stopAgentPresencePollingRef = React.useRef<(() => void) | null>(null)
   const commandCountdownRef = React.useRef<number | null>(null)
   const suppressCloseGuardRef = React.useRef(false)
   const serverUrl = React.useMemo(resolvePairingServerUrl, [])
@@ -287,9 +301,15 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
     setPolling(false)
   }, [])
 
+  const stopAgentPresencePolling = React.useCallback(() => {
+    stopAgentPresencePollingRef.current?.()
+    stopAgentPresencePollingRef.current = null
+  }, [])
+
   const loadRuntimes = React.useCallback(async (cid: string, waitForConnector = false) => {
     if (!session?.accessToken) return
     const loadId = ++runtimeLoadIdRef.current
+    setRuntimeLoadError(null)
     setRuntimesLoading(true)
     try {
       const overview = await discoverConnectorRuntimeOverview(session.accessToken, cid, {
@@ -300,7 +320,9 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
       setRuntimeTypes(overview.runtimeTypes)
     } catch (error) {
       if (loadId === runtimeLoadIdRef.current) {
-        toast.error(error instanceof Error ? error.message : t("errors.discoverRuntimesFailed"))
+        const message = error instanceof Error ? error.message : t("errors.discoverRuntimesFailed")
+        setRuntimeLoadError(message)
+        toast.error(message)
       }
     } finally {
       if (loadId === runtimeLoadIdRef.current) setRuntimesLoading(false)
@@ -309,6 +331,7 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
 
   const reset = React.useCallback(() => {
     stopPolling()
+    stopAgentPresencePolling()
     setStep("name")
     setName(setupCredential?.connector.name ?? randomName())
     setConnectorId(setupCredential?.connector.id ?? null)
@@ -322,13 +345,16 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
     setRuntimes([])
     setRuntimeTypes([])
     setRuntimesLoading(false)
+    setRuntimeLoadError(null)
+    setAgentSetupPresence("waiting")
+    agentSetupPresenceRef.current = "waiting"
     setConfigRuntime(null)
     setCreateRuntimeType(null)
     setPendingRuntimeCreation(null)
     setSavingRuntimeId(null)
     runtimeLoadIdRef.current += 1
     onlineNotificationRef.current = null
-  }, [setupCredential, stopPolling])
+  }, [setupCredential, stopAgentPresencePolling, stopPolling])
 
   const enterAgentsStep = React.useCallback((cid: string) => {
     if (onlineNotificationRef.current === cid) return
@@ -338,6 +364,9 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
     setPairCode("")
     setRuntimes([])
     setRuntimeTypes([])
+    setRuntimeLoadError(null)
+    setAgentSetupPresence("online")
+    agentSetupPresenceRef.current = "online"
     setStep("agents")
     onConnectorCreated?.()
     void loadRuntimes(cid, true)
@@ -366,11 +395,55 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
   }, [enterAgentsStep, session?.accessToken, stopPolling])
 
   React.useEffect(() => {
+    stopAgentPresencePolling()
+    if (
+      !open ||
+      step !== "agents" ||
+      !connectorId ||
+      !session?.accessToken
+    ) {
+      return
+    }
+
+    const cid = connectorId
+    const accessToken = session.accessToken
+    const stop = watchConnectorPresence({
+      initialOnline: agentSetupPresenceRef.current === "online",
+      intervalMs: AGENT_SETUP_PRESENCE_POLL_MS,
+      check: async () => {
+        const { connector } = await dashboardApi.getConnector(accessToken, cid)
+        return connector.status === "online"
+      },
+      onTransition: ({ online, reconnected }) => {
+        const nextPresence: AgentSetupPresence = online ? "online" : "waiting"
+        agentSetupPresenceRef.current = nextPresence
+        setAgentSetupPresence(nextPresence)
+        if (!online) {
+          runtimeLoadIdRef.current += 1
+          setRuntimesLoading(false)
+          setRuntimeLoadError(null)
+          return
+        }
+        if (reconnected) void loadRuntimes(cid)
+      },
+    })
+    stopAgentPresencePollingRef.current = stop
+
+    return () => {
+      if (stopAgentPresencePollingRef.current === stop) {
+        stopAgentPresencePollingRef.current = null
+      }
+      stop()
+    }
+  }, [connectorId, loadRuntimes, open, session?.accessToken, step, stopAgentPresencePolling])
+
+  React.useEffect(() => {
     return () => {
       runtimeLoadIdRef.current += 1
       stopPolling()
+      stopAgentPresencePolling()
     }
-  }, [stopPolling])
+  }, [stopAgentPresencePolling, stopPolling])
 
   React.useEffect(() => {
     if (step !== "command-warning") {
@@ -615,6 +688,7 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
   const desktopCredentials = connectorId && token ? connectorCredentialsPayload(serverUrl, connectorId, token) : ""
   const visibleRuntimes = configuredRuntimeInstances(runtimes)
   const visibleRuntimeTypes = addableRuntimeTypes(runtimeTypes, runtimes)
+  const agentSetupOnline = agentSetupPresence === "online"
 
   const openDesktopConnector = () => {
     if (!desktopLaunchUrl || !connectorId) return
@@ -947,7 +1021,9 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
                   {t("successTitle")}
                 </DialogTitle>
                 <DialogDescription>
-                  {t("successDescription", { name })}
+                  {agentSetupOnline
+                    ? t("successDescription", { name })
+                    : t("waitingReconnectHeader", { name })}
                 </DialogDescription>
               </DialogHeader>
               <div className="flex min-h-32 flex-col gap-3 py-1">
@@ -955,11 +1031,23 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
                   <p className="text-sm font-medium">{t("agentsTitle")}</p>
                   <p className="text-xs text-muted-foreground">{t("agentsDescription")}</p>
                 </div>
-                {runtimesLoading ? (
+                {!agentSetupOnline ? (
+                  <Alert>
+                    <WifiOff />
+                    <AlertTitle>{t("waitingReconnectTitle")}</AlertTitle>
+                    <AlertDescription>{t("waitingReconnectDescription")}</AlertDescription>
+                  </Alert>
+                ) : runtimesLoading ? (
                   <div className="flex min-h-32 items-center justify-center gap-2 text-sm text-muted-foreground">
                     <Loader2 className="size-4 animate-spin" />
                     {t("discoveringAgents")}
                   </div>
+                ) : runtimeLoadError ? (
+                  <Alert>
+                    <AlertCircle />
+                    <AlertTitle>{t("agentsLoadFailedTitle")}</AlertTitle>
+                    <AlertDescription>{runtimeLoadError}</AlertDescription>
+                  </Alert>
                 ) : visibleRuntimes.length === 0 && visibleRuntimeTypes.length === 0 ? (
                   <div className="flex min-h-32 items-center justify-center text-center">
                     <p className="text-sm text-muted-foreground">{t("noAgentsFound")}</p>
@@ -976,7 +1064,19 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
                               : t("agentConfigured")}
                           </p>
                         </div>
-                        <CheckCircle2 className="size-4 shrink-0 text-primary" aria-label={t("agentConfigured")} />
+                        {runtime.active ? (
+                          <CheckCircle2 className="size-4 shrink-0 text-primary" aria-label={t("agentConfigured")} />
+                        ) : (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setConfigRuntime(runtime)}
+                            disabled={!agentSetupOnline || savingRuntimeId !== null}
+                          >
+                            {t("configureAndStart")}
+                          </Button>
+                        )}
                       </div>
                     ))}
                     <TooltipProvider>
@@ -1017,6 +1117,7 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
                             variant="outline"
                             size="sm"
                             onClick={() => addRuntime(runtimeType)}
+                            disabled={!agentSetupOnline || savingRuntimeId !== null}
                           >
                             <Plus data-icon="inline-start" />
                             {tDevice("addRuntime")}
@@ -1032,7 +1133,7 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
                   type="button"
                   variant="outline"
                   onClick={() => connectorId && void loadRuntimes(connectorId)}
-                  disabled={runtimesLoading}
+                  disabled={!agentSetupOnline || runtimesLoading || savingRuntimeId !== null}
                 >
                   <RefreshCw data-icon="inline-start" className={cn(runtimesLoading && "animate-spin")} />
                   {t("refreshAgents")}
@@ -1057,6 +1158,7 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
             ? []
             : namedInstanceRequiredConfigFields(configRuntime)}
           saving={savingRuntimeId === configRuntime.runtimeId}
+          submitDisabled={!agentSetupOnline}
           submitLabel={t("configureAndStart")}
           open
           onOpenChange={(nextOpen) => { if (!nextOpen) setConfigRuntime(null) }}
@@ -1076,6 +1178,7 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
           cancelLabel={tCommon("cancel")}
           initialName={suggestedRuntimeInstanceName(createRuntimeType, runtimes)}
           saving={false}
+          submitDisabled={!agentSetupOnline}
           onOpenChange={(nextOpen) => { if (!nextOpen) setCreateRuntimeType(null) }}
           onSubmit={stageRuntimeCreation}
         />
@@ -1091,6 +1194,7 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
           requiredFields={namedInstanceRequiredConfigFields(pendingRuntimeCreation.runtimeType)}
           badgeLabel={pendingRuntimeCreation.runtimeType.runtimeType === "codex" ? tDevice("beta") : undefined}
           saving={savingRuntimeId === NEW_RUNTIME_SAVING_ID}
+          submitDisabled={!agentSetupOnline}
           submitLabel={t("configureAndStart")}
           open
           onOpenChange={(nextOpen) => { if (!nextOpen) setPendingRuntimeCreation(null) }}
