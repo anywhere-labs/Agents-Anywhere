@@ -269,6 +269,7 @@ export function TaskComposer() {
   const [createTick, setCreateTick] = React.useState(0)
   const [preferenceLoaded, setPreferenceLoaded] = React.useState(false)
   const [preference, setPreference] = React.useState<NewSessionPreference | null>(null)
+  const preferenceRef = React.useRef<NewSessionPreference | null>(null)
   const composerRef = React.useRef<HTMLDivElement | null>(null)
   const devicePreferenceAppliedRef = React.useRef(false)
   const agentPreferenceAppliedForDeviceRef = React.useRef<string | null>(null)
@@ -290,9 +291,36 @@ export function TaskComposer() {
   }, [creating])
 
   React.useEffect(() => {
-    setPreference(readNewSessionPreference())
+    const storedPreference = readNewSessionPreference()
+    preferenceRef.current = storedPreference
+    setPreference(storedPreference)
     setPreferenceLoaded(true)
   }, [])
+
+  const persistPreference = React.useCallback((next: NewSessionPreference) => {
+    preferenceRef.current = next
+    setPreference(next)
+    writeNewSessionPreference(next)
+  }, [])
+
+  const persistTargetPreference = React.useCallback((
+    connectorId: string,
+    agent: string,
+    selection: Partial<NewSessionSelectionPreference> = {},
+  ) => {
+    if (!preferenceLoaded || !connectorId || !agent) return
+    const scope = newSessionSelectionScope(connectorId, agent)
+    const existing = preferenceRef.current?.selections?.[scope]
+    persistPreference(withNewSessionSelectionPreference(
+      preferenceRef.current,
+      connectorId,
+      agent,
+      {
+        model: selection.model !== undefined ? selection.model : existing?.model ?? null,
+        permission: selection.permission !== undefined ? selection.permission : existing?.permission ?? null,
+      },
+    ))
+  }, [persistPreference, preferenceLoaded])
 
   React.useEffect(() => {
     if (deviceOptions.length === 0) {
@@ -548,6 +576,49 @@ export function TaskComposer() {
   const permissionDrawerItems = permissionOptions
   const selectedModelSelection = selectionIdForModelCatalog(modelCatalog, selectedModel, selectedReasoning)
   const selectedPermissionSelection = selectionIdForPermissionCatalog(permissionCatalog, selectedPermissionMode)
+
+  const handleDeviceChange = React.useCallback((connectorId: string) => {
+    const targetOptions = activeRuntimes(runtimeInventory[connectorId])
+    const preferredAgent = preferenceRef.current?.connectorId === connectorId
+      ? preferenceRef.current.agent
+      : null
+    const nextAgent = preferredAgent && targetOptions.some((runtime) => runtime.runtimeId === preferredAgent)
+      ? preferredAgent
+      : targetOptions[0]?.runtimeId ?? ""
+    setSelectedDevice(connectorId)
+    if (nextAgent) {
+      setSelectedAgent(nextAgent)
+      persistTargetPreference(connectorId, nextAgent)
+    }
+  }, [persistTargetPreference, runtimeInventory])
+
+  const handleAgentChange = React.useCallback((agent: string) => {
+    if (!selectedConnectorId || !agentOptions.some((option) => option.id === agent)) return
+    setSelectedAgent(agent)
+    persistTargetPreference(selectedConnectorId, agent)
+  }, [agentOptions, persistTargetPreference, selectedConnectorId])
+
+  const handlePermissionChange = React.useCallback((permission: string) => {
+    if (!selectedConnectorId || !selectedAgent) return
+    if (!permissionOptions.some((option) => option.id === permission && option.enabled)) return
+    setSelectedPermissionMode(permission)
+    persistTargetPreference(selectedConnectorId, selectedAgent, {
+      permission: selectionIdForPermissionCatalog(permissionCatalog, permission),
+    })
+  }, [permissionCatalog, permissionOptions, persistTargetPreference, selectedAgent, selectedConnectorId])
+
+  const handleModelChange = React.useCallback((model: string, reasoning: string) => {
+    if (!selectedConnectorId || !selectedAgent) return
+    const modelOption = models.find((option) => option.id === model)
+    if (!modelOption?.enabled) return
+    if (reasoning && !modelOption.reasoningItems.some((option) => option.id === reasoning && option.enabled)) return
+    setSelectedModel(model)
+    setSelectedReasoning(reasoning)
+    persistTargetPreference(selectedConnectorId, selectedAgent, {
+      model: selectionIdForModelCatalog(modelCatalog, model, reasoning),
+    })
+  }, [modelCatalog, models, persistTargetPreference, selectedAgent, selectedConnectorId])
+
   const requiresModelSelection = canUseModelCatalog && models.length > 0
   const requiresPermissionSelection = canUsePermissionCatalog && permissionOptions.length > 0
   const hasSelectionSettings = models.length > 0 || permissionOptions.length > 0
@@ -660,7 +731,7 @@ export function TaskComposer() {
         cwd: workspace?.path || undefined,
       }
       const nextPreference = withNewSessionSelectionPreference(
-        preference,
+        preferenceRef.current,
         selectedConnector.id,
         selectedAgent,
         {
@@ -668,8 +739,7 @@ export function TaskComposer() {
           permission: selectedPermissionSelection,
         },
       )
-      writeNewSessionPreference(nextPreference)
-      setPreference(nextPreference)
+      persistPreference(nextPreference)
       const created = await dashboardApi.createAndStartSession(authSession.accessToken, {
         ...createBody,
         content: messageText,
@@ -772,10 +842,10 @@ export function TaskComposer() {
                     agentLabel={t("agent")}
                     deviceItems={deviceOptions}
                     selectedDevice={selectedDevice}
-                    onDeviceChange={setSelectedDevice}
+                    onDeviceChange={handleDeviceChange}
                     agentItems={agentOptions}
                     selectedAgent={selectedAgent}
-                    onAgentChange={setSelectedAgent}
+                    onAgentChange={handleAgentChange}
                   />
                 ) : hasOnlineDevice ? (
                   <CascadingSelector
@@ -784,8 +854,8 @@ export function TaskComposer() {
                     secondaryOptions={agentOptions}
                     selectedPrimary={selectedDevice}
                     selectedSecondary={selectedAgent}
-                    onPrimaryChange={setSelectedDevice}
-                    onSecondaryChange={setSelectedAgent}
+                    onPrimaryChange={handleDeviceChange}
+                    onSecondaryChange={handleAgentChange}
                     secondaryLabel={t("agent")}
                   />
                 ) : null}
@@ -801,14 +871,11 @@ export function TaskComposer() {
                     reasoningLabel={t("reasoning")}
                     permissionItems={permissionDrawerItems}
                     selectedPermission={selectedPermissionMode}
-                    onPermissionChange={setSelectedPermissionMode}
+                    onPermissionChange={handlePermissionChange}
                     modelItems={hasOnlineDevice ? models : []}
                     selectedModel={selectedModel}
                     selectedReasoning={selectedReasoning}
-                    onModelChange={(modelId, reasoningId) => {
-                      setSelectedModel(modelId)
-                      setSelectedReasoning(reasoningId)
-                    }}
+                    onModelChange={handleModelChange}
                   />
                 ) : !compactSelectors ? (
                   <>
@@ -829,7 +896,7 @@ export function TaskComposer() {
                               "items-start gap-2 py-2.5",
                               selectedPermissionMode === item.id && "text-primary focus:text-primary",
                             )}
-                            onSelect={() => setSelectedPermissionMode(item.id)}
+                            onSelect={() => handlePermissionChange(item.id)}
                           >
                             <Check className={cn("mt-0.5 size-3.5", selectedPermissionMode === item.id ? "opacity-100" : "opacity-0")} />
                             <span className="min-w-0 flex-1">
@@ -865,8 +932,7 @@ export function TaskComposer() {
                                   disabled={!modelItem.enabled}
                                   className="gap-2"
                                   onSelect={() => {
-                                    setSelectedModel(modelItem.id)
-                                    setSelectedReasoning("")
+                                    handleModelChange(modelItem.id, "")
                                   }}
                                 >
                                   <Check className={cn("size-3.5", selectedModel === modelItem.id ? "opacity-100" : "opacity-0")} />
@@ -896,8 +962,7 @@ export function TaskComposer() {
                                       disabled={!item.enabled}
                                       className="gap-2"
                                       onSelect={() => {
-                                        setSelectedModel(modelItem.id)
-                                        setSelectedReasoning(item.id)
+                                        handleModelChange(modelItem.id, item.id)
                                       }}
                                     >
                                       <Check className={cn(
