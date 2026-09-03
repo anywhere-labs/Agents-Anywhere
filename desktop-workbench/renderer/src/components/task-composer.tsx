@@ -716,19 +716,17 @@ export function TaskComposer() {
         title: prompt.trim() || undefined,
         cwd: workspace?.path || undefined,
       }
-      if (!workspace?.projectId) {
-        const nextPreference = withNewSessionSelectionPreference(
-          preference,
-          selectedConnector.id,
-          selectedAgent,
-          {
-            model: selectedModelSelection,
-            permission: selectedPermissionSelection,
-          },
-        )
-        writeNewSessionPreference(nextPreference)
-        setPreference(nextPreference)
-      }
+      const nextPreference = withNewSessionSelectionPreference(
+        preference,
+        selectedConnector.id,
+        selectedAgent,
+        {
+          model: selectedModelSelection,
+          permission: selectedPermissionSelection,
+        },
+      )
+      writeNewSessionPreference(nextPreference)
+      setPreference(nextPreference)
       const created = await dashboardApi.createAndStartSession(authSession.accessToken, {
         ...createBody,
         content: messageText,
