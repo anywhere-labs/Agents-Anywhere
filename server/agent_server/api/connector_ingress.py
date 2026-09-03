@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import base64
 import time
+from collections.abc import Callable, Iterable
+from dataclasses import dataclass
 from typing import Any
 
 from fastapi import (
@@ -56,6 +58,7 @@ from agent_server.services.connector_notifications import (
 from agent_server.services.connector_realtime import ConnectorRealtimeService
 from agent_server.services.dashboard_events import publish_dashboard_changed
 from agent_server.services.device_runtimes import (
+    RUNTIME_CONTROL_NEGOTIATION_RESPONSE_TAG,
     DeviceRuntimeError,
     DeviceRuntimeService,
 )
@@ -67,15 +70,25 @@ from agent_server.services.timeline_write_buffer import TimelineWriteBuffer
 router = APIRouter(tags=["connector-ingress"])
 
 
+@dataclass(frozen=True)
+class _NotificationBarrier:
+    completed: asyncio.Future[None]
+
+
 class _ConnectorNotificationPump:
     def __init__(
         self,
         connector_id: str,
         ingest_service: ConnectorIngestService,
+        *,
+        connection_id: str | None = None,
     ) -> None:
         self._connector_id = connector_id
+        self._connection_id = connection_id
         self._ingest_service = ingest_service
-        self._queue: asyncio.Queue[tuple[str, dict[str, Any]] | None] = asyncio.Queue()
+        self._queue: asyncio.Queue[
+            tuple[str, dict[str, Any]] | _NotificationBarrier | None
+        ] = asyncio.Queue()
         self._task: asyncio.Task[None] | None = None
 
     @property
@@ -108,18 +121,39 @@ class _ConnectorNotificationPump:
             self._queue.put_nowait(None)
         await asyncio.gather(self._task, return_exceptions=True)
 
+    async def flush(self) -> None:
+        task = self.task
+        if task.done():
+            await task
+            raise RuntimeError("connector notification pump stopped unexpectedly")
+        completed: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+        self._queue.put_nowait(_NotificationBarrier(completed))
+        done, _pending = await asyncio.wait(
+            {task, completed},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        if task in done:
+            await task
+            raise RuntimeError("connector notification pump stopped unexpectedly")
+        await completed
+
     async def _run(self) -> None:
         try:
             while True:
                 notification = await self._queue.get()
                 if notification is None:
                     return
+                if isinstance(notification, _NotificationBarrier):
+                    if not notification.completed.done():
+                        notification.completed.set_result(None)
+                    continue
                 method, params = notification
                 started_at = time.monotonic()
                 await self._ingest_service.handle_notification_message(
                     connector_id=self._connector_id,
                     method=method,
                     params=params,
+                    connection_id=self._connection_id,
                 )
                 elapsed_ms = (time.monotonic() - started_at) * 1000
                 if method == "timeline.itemUpsert" or elapsed_ms >= 100:
@@ -132,12 +166,166 @@ class _ConnectorNotificationPump:
                     )
         except asyncio.CancelledError:
             raise
-        except Exception:  # noqa: BLE001 - the socket reader observes task failure
+        except Exception:
             logger.exception(
                 "connector notification worker failed connector_id={}",
                 self._connector_id,
             )
             raise
+
+
+class _RuntimeControlGate:
+    """Bound and order runtime control notifications around discovery."""
+
+    def __init__(self, forward: Callable[[dict[str, Any]], None]) -> None:
+        self._forward = forward
+        self._before_inventory: tuple[int, dict[str, Any]] | None = None
+        self._before_statuses: dict[str, tuple[int, dict[str, Any]]] = {}
+        self._after_inventory: tuple[int, dict[str, Any]] | None = None
+        self._after_statuses: dict[str, tuple[int, dict[str, Any]]] = {}
+        self._response_sequence: int | None = None
+        self._settled = False
+        self._discarded = False
+
+    def enqueue_message(
+        self,
+        message: dict[str, Any],
+        *,
+        receive_sequence: int,
+    ) -> None:
+        if self._settled:
+            if not self._discarded:
+                self._forward(message)
+            return
+
+        method = message.get("method")
+        if method not in {"runtime.inventoryUpdated", "runtime.statusChanged"}:
+            raise ValueError(f"unsupported runtime control notification: {method}")
+
+        item = (receive_sequence, message)
+        if (
+            self._response_sequence is not None
+            and receive_sequence > self._response_sequence
+        ):
+            if method == "runtime.inventoryUpdated":
+                self._after_inventory = item
+            else:
+                self._after_statuses[self._runtime_id(message)] = item
+        else:
+            if method == "runtime.inventoryUpdated":
+                self._before_inventory = item
+            else:
+                self._before_statuses[self._runtime_id(message)] = item
+
+    def mark_negotiation_response(self, receive_sequence: int) -> None:
+        if self._settled:
+            return
+        if self._response_sequence is not None:
+            raise RuntimeError("runtime negotiation response was observed twice")
+        self._response_sequence = receive_sequence
+
+    def settle(self, *, discovery_reason: str | None) -> None:
+        if self._settled:
+            raise RuntimeError("runtime control gate is already settled")
+        if discovery_reason is not None and self._response_sequence is None:
+            raise RuntimeError("runtime negotiation response was not observed")
+
+        if discovery_reason == "runtime.inventory":
+            replay = self._ordered_replay(
+                inventory=self._after_inventory,
+                statuses=self._statuses_after(
+                    *self._after_statuses.values(),
+                    inventory=self._after_inventory,
+                ),
+            )
+        elif discovery_reason == "runtime.types":
+            replay = self._ordered_replay(
+                inventory=None,
+                statuses=self._latest_statuses(
+                    *self._before_statuses.values(),
+                    *self._after_statuses.values(),
+                ),
+            )
+        elif discovery_reason is None:
+            inventories = [
+                item
+                for item in (self._before_inventory, self._after_inventory)
+                if item is not None
+            ]
+            inventory = max(inventories, key=lambda item: item[0], default=None)
+            replay = self._ordered_replay(
+                inventory=inventory,
+                statuses=self._statuses_after(
+                    *self._before_statuses.values(),
+                    *self._after_statuses.values(),
+                    inventory=inventory,
+                ),
+            )
+        else:
+            raise ValueError(f"unsupported runtime discovery reason: {discovery_reason}")
+
+        self._settled = True
+        self._clear_pending()
+        for _receive_sequence, message in replay:
+            self._forward(message)
+
+    def discard(self) -> None:
+        if self._settled:
+            return
+        self._settled = True
+        self._discarded = True
+        self._clear_pending()
+
+    @staticmethod
+    def _runtime_id(message: dict[str, Any]) -> str:
+        params = message.get("params")
+        if isinstance(params, dict):
+            runtime_id = params.get("runtimeId")
+            if isinstance(runtime_id, str) and runtime_id:
+                return runtime_id
+        return "@invalid"
+
+    @staticmethod
+    def _ordered_replay(
+        *,
+        inventory: tuple[int, dict[str, Any]] | None,
+        statuses: Iterable[tuple[int, dict[str, Any]]],
+    ) -> list[tuple[int, dict[str, Any]]]:
+        replay = list(statuses)
+        if inventory is not None:
+            replay.append(inventory)
+        replay.sort(key=lambda item: item[0])
+        return replay
+
+    @classmethod
+    def _latest_statuses(
+        cls,
+        *statuses: tuple[int, dict[str, Any]],
+    ) -> Iterable[tuple[int, dict[str, Any]]]:
+        latest: dict[str, tuple[int, dict[str, Any]]] = {}
+        for status in statuses:
+            runtime_id = cls._runtime_id(status[1])
+            current = latest.get(runtime_id)
+            if current is None or status[0] > current[0]:
+                latest[runtime_id] = status
+        return latest.values()
+
+    @classmethod
+    def _statuses_after(
+        cls,
+        *statuses: tuple[int, dict[str, Any]],
+        inventory: tuple[int, dict[str, Any]] | None,
+    ) -> Iterable[tuple[int, dict[str, Any]]]:
+        cutoff = inventory[0] if inventory is not None else -1
+        return cls._latest_statuses(
+            *(status for status in statuses if status[0] > cutoff)
+        )
+
+    def _clear_pending(self) -> None:
+        self._before_inventory = None
+        self._before_statuses.clear()
+        self._after_inventory = None
+        self._after_statuses.clear()
 
 
 @router.post("/connector/auth", response_model=ConnectorAuthResponse)
@@ -298,9 +486,12 @@ async def connector_ws(
         if not connection.ready:
             await manager.unregister(connector_id, connection)
 
-    negotiation_task: asyncio.Task[None] | None = None
+    discovery_task: asyncio.Task[str | None] | None = None
+    flush_task: asyncio.Task[None] | None = None
+    completion_task: asyncio.Task[None] | None = None
     reader_task: asyncio.Task[None] | None = None
     notification_pump: _ConnectorNotificationPump | None = None
+    control_gate: _RuntimeControlGate | None = None
     try:
         await publish_dashboard_changed(
             db,
@@ -322,19 +513,24 @@ async def connector_ws(
             manager,
             websocket.app.state.session_runtime_state_cache,
         )
-        notification_pump = _ConnectorNotificationPump(connector_id, ingest_service)
-        # Read RPC responses immediately, but buffer notifications until
-        # Runtime Control negotiation establishes the connection's version.
-        # In particular, a v2 Connector sends a legacy startup inventory before
-        # it receives runtime.discover; persisting that inventory while the
-        # connection is temporarily marked 1.0 would create compatibility rows.
-        negotiation_task = asyncio.create_task(
-            _negotiate_runtime_control(
+        notification_pump = _ConnectorNotificationPump(
+            connector_id,
+            ingest_service,
+            connection_id=connection.connection_id,
+        )
+        notification_pump.start()
+        control_gate = _RuntimeControlGate(notification_pump.enqueue_message)
+        # A v2 Connector sends a legacy inventory before it receives
+        # runtime.discover. Gate the bounded runtime-control lane; session and
+        # timeline notifications continue through the pump while discovery is
+        # in flight.
+        discovery_task = asyncio.create_task(
+            _discover_runtime_control(
                 runtime_service,
                 connector_id,
                 connection,
             ),
-            name=f"runtime-control-negotiate-{connection.connection_id}",
+            name=f"runtime-control-discover-{connection.connection_id}",
         )
         logger.info("connector connected: {}", connector_id)
         reader_task = asyncio.create_task(
@@ -344,27 +540,58 @@ async def connector_ws(
                 connection,
                 manager,
                 notification_pump,
+                control_gate,
             ),
             name=f"connector-reader-{connection.connection_id}",
         )
         done, _pending = await asyncio.wait(
-            {reader_task, negotiation_task},
-            return_when=asyncio.FIRST_COMPLETED,
-        )
-        if negotiation_task not in done:
-            await reader_task
-            return
-
-        await negotiation_task
-        notification_pump.start()
-        done, _pending = await asyncio.wait(
-            {reader_task, notification_pump.task},
+            {reader_task, discovery_task, notification_pump.task},
             return_when=asyncio.FIRST_COMPLETED,
         )
         if notification_pump.task in done:
             await notification_pump.task
             raise RuntimeError("connector notification worker stopped unexpectedly")
-        await reader_task
+        if reader_task in done:
+            await reader_task
+            return
+
+        discovery_reason = await discovery_task
+        control_gate.settle(discovery_reason=discovery_reason)
+        flush_task = asyncio.create_task(
+            notification_pump.flush(),
+            name=f"runtime-control-flush-{connection.connection_id}",
+        )
+        done, _pending = await asyncio.wait(
+            {reader_task, flush_task, notification_pump.task},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        if notification_pump.task in done:
+            await notification_pump.task
+            raise RuntimeError("connector notification worker stopped unexpectedly")
+        if reader_task in done:
+            await reader_task
+            return
+        await flush_task
+        if discovery_reason is not None:
+            completion_task = asyncio.create_task(
+                _complete_runtime_discovery(
+                    runtime_service,
+                    connector_id,
+                    connection,
+                    reason=discovery_reason,
+                ),
+                name=f"runtime-control-complete-{connection.connection_id}",
+            )
+        done, _pending = await asyncio.wait(
+            {reader_task, notification_pump.task},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        if reader_task in done:
+            await reader_task
+            return
+        if notification_pump.task in done:
+            await notification_pump.task
+            raise RuntimeError("connector notification worker stopped unexpectedly")
     except WebSocketDisconnect:
         logger.info("connector disconnected: {}", connector_id)
     finally:
@@ -372,9 +599,17 @@ async def connector_ws(
         if reader_task is not None and not reader_task.done():
             reader_task.cancel()
             await asyncio.gather(reader_task, return_exceptions=True)
-        if negotiation_task is not None:
-            negotiation_task.cancel()
-            await asyncio.gather(negotiation_task, return_exceptions=True)
+        if discovery_task is not None:
+            discovery_task.cancel()
+            await asyncio.gather(discovery_task, return_exceptions=True)
+        if flush_task is not None:
+            flush_task.cancel()
+            await asyncio.gather(flush_task, return_exceptions=True)
+        if completion_task is not None:
+            completion_task.cancel()
+            await asyncio.gather(completion_task, return_exceptions=True)
+        if control_gate is not None:
+            control_gate.discard()
         if notification_pump is not None:
             await notification_pump.close()
         removed_terminals = await broker.remove_ephemeral_for_connector(
@@ -402,13 +637,13 @@ async def connector_ws(
         )
 
 
-async def _negotiate_runtime_control(
+async def _discover_runtime_control(
     runtime_service: DeviceRuntimeService,
     connector_id: str,
     connection: ConnectorConnection,
-) -> None:
+) -> str | None:
     try:
-        await runtime_service.negotiate_connection(connector_id, connection)
+        return await runtime_service.discover_connection(connector_id, connection)
     except asyncio.CancelledError:
         raise
     except DeviceRuntimeError as exc:
@@ -420,9 +655,63 @@ async def _negotiate_runtime_control(
             exc.code,
             exc.message,
         )
+        return None
     except Exception:  # noqa: BLE001 - background task errors must be observed
         logger.exception(
             "runtime control negotiation crashed connector_id={} connection_id={}",
+            connector_id,
+            connection.connection_id,
+        )
+        return None
+
+
+async def _complete_runtime_discovery(
+    runtime_service: DeviceRuntimeService,
+    connector_id: str,
+    connection: ConnectorConnection,
+    *,
+    reason: str,
+) -> None:
+    try:
+        await runtime_service.publish_discovery(connector_id, reason)
+    except asyncio.CancelledError:
+        raise
+    except DeviceRuntimeError as exc:
+        logger.warning(
+            "runtime discovery publication failed connector_id={} "
+            "connection_id={} error_code={} error={}",
+            connector_id,
+            connection.connection_id,
+            exc.code,
+            exc.message,
+        )
+    except Exception:  # noqa: BLE001 - background task errors must be observed
+        logger.exception(
+            "runtime discovery publication crashed connector_id={} connection_id={}",
+            connector_id,
+            connection.connection_id,
+        )
+
+    try:
+        await runtime_service.reconcile_active(
+            connector_id,
+            expected_connection_id=connection.connection_id,
+            connection=connection,
+        )
+    except asyncio.CancelledError:
+        raise
+    except DeviceRuntimeError as exc:
+        logger.warning(
+            "runtime reconciliation failed connector_id={} "
+            "connection_id={} error_code={} error={}",
+            connector_id,
+            connection.connection_id,
+            exc.code,
+            exc.message,
+        )
+    except Exception:  # noqa: BLE001 - background task errors must be observed
+        logger.exception(
+            "runtime reconciliation crashed connector_id={} connection_id={}",
             connector_id,
             connection.connection_id,
         )
@@ -515,16 +804,30 @@ async def _read_connector_messages(
     connection: ConnectorConnection,
     manager: ConnectorRpcManager,
     notification_pump: _ConnectorNotificationPump,
+    control_gate: _RuntimeControlGate,
 ) -> None:
+    receive_sequence = 0
     while True:
         message = await websocket.receive_json()
+        receive_sequence += 1
         if not await manager.touch(connector_id, connection):
             return
         message_type = message.get("type")
         if message_type == "response":
-            manager.resolve_response(connector_id, message)
+            response_tag = manager.resolve_response(connector_id, message)
+            if response_tag == RUNTIME_CONTROL_NEGOTIATION_RESPONSE_TAG:
+                control_gate.mark_negotiation_response(receive_sequence)
         elif message_type == "notification":
-            notification_pump.enqueue_message(message)
+            if message.get("method") in {
+                "runtime.inventoryUpdated",
+                "runtime.statusChanged",
+            }:
+                control_gate.enqueue_message(
+                    message,
+                    receive_sequence=receive_sequence,
+                )
+            else:
+                notification_pump.enqueue_message(message)
 
 
 def _parse_connector_authorization(authorization: str) -> tuple[str, str]:

@@ -190,15 +190,21 @@ class ConnectorIngestService:
         connector_id: str,
         method: str,
         params: dict,
+        connection_id: str | None = None,
     ) -> None:
         if method == "runtime.inventoryUpdated":
             await self._device_runtimes.ingest_unsolicited_inventory(
                 connector_id,
                 params,
+                expected_connection_id=connection_id,
             )
             return
         if method == "runtime.statusChanged":
-            await self._apply_runtime_status(connector_id, params)
+            await self._apply_runtime_status(
+                connector_id,
+                params,
+                connection_id=connection_id,
+            )
             return
 
         effect = await self._notifications.apply(
@@ -448,7 +454,13 @@ class ConnectorIngestService:
                 )
         return dashboard_changed
 
-    async def _apply_runtime_status(self, connector_id: str, params: dict) -> None:
+    async def _apply_runtime_status(
+        self,
+        connector_id: str,
+        params: dict,
+        *,
+        connection_id: str | None = None,
+    ) -> None:
         runtime_id = params.get("runtimeId")
         status = params.get("status")
         if not isinstance(runtime_id, str) or not runtime_id:
@@ -462,6 +474,7 @@ class ConnectorIngestService:
                 runtime_id,
                 status,
                 error=error,
+                expected_connection_id=connection_id,
             )
         except DeviceRuntimeNotFoundError:
             # Runtime lifecycle notifications may arrive while the connector is

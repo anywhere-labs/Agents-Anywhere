@@ -94,6 +94,65 @@ def test_connector_rpc_manager_replaces_stale_connection() -> None:
     asyncio.run(exercise())
 
 
+def test_response_tag_is_bound_to_the_exact_request_id() -> None:
+    async def exercise() -> None:
+        websocket = FakeWebSocket()
+        manager = ConnectorRpcManager()
+        connection = await manager.register(
+            "conn_1",
+            websocket,  # type: ignore[arg-type]
+        )
+
+        tagged_task = asyncio.create_task(
+            manager.request_on_connection(
+                connection,
+                "runtime.discover",
+                {},
+                response_tag="negotiation",
+            )
+        )
+        tagged_request = await asyncio.wait_for(websocket.sent.get(), timeout=1)
+        untagged_task = asyncio.create_task(
+            manager.request_on_connection(
+                connection,
+                "runtime.discover",
+                {},
+            )
+        )
+        untagged_request = await asyncio.wait_for(websocket.sent.get(), timeout=1)
+
+        assert (
+            manager.resolve_response(
+                "conn_1",
+                {
+                    "id": untagged_request["id"],
+                    "type": "response",
+                    "ok": True,
+                    "result": {"source": "explicit"},
+                },
+            )
+            is None
+        )
+        assert (
+            manager.resolve_response(
+                "conn_1",
+                {
+                    "id": tagged_request["id"],
+                    "type": "response",
+                    "ok": True,
+                    "result": {"source": "negotiation"},
+                },
+            )
+            == "negotiation"
+        )
+        assert await untagged_task == {"source": "explicit"}
+        assert await tagged_task == {"source": "negotiation"}
+        assert connection.pending_response_tags == {}
+        assert await manager.unregister("conn_1", connection)
+
+    asyncio.run(exercise())
+
+
 def test_distributed_lease_rejects_duplicate_connector() -> None:
     async def exercise() -> None:
         fake_server = FakeServer()

@@ -39,6 +39,7 @@ class ConnectorConnection:
     last_seen_monotonic: float
     ready: bool = False
     pending: dict[str, asyncio.Future[dict[str, Any]]] = field(default_factory=dict)
+    pending_response_tags: dict[str, str] = field(default_factory=dict)
     send_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
@@ -342,10 +343,17 @@ class ConnectorRpcManager:
         params: dict[str, Any],
         *,
         timeout: float = 30,
+        response_tag: str | None = None,
     ) -> Any:
         if self._connections.get(connection.connector_id) is not connection:
             raise ConnectorOfflineError("connector connection was replaced")
-        return await self._request_local(connection, method, params, timeout=timeout)
+        return await self._request_local(
+            connection,
+            method,
+            params,
+            timeout=timeout,
+            response_tag=response_tag,
+        )
 
     async def is_connection_id_current(
         self,
@@ -377,16 +385,22 @@ class ConnectorRpcManager:
             and lease.connection_id == connection_id
         )
 
-    def resolve_response(self, connector_id: str, message: dict[str, Any]) -> None:
+    def resolve_response(
+        self,
+        connector_id: str,
+        message: dict[str, Any],
+    ) -> str | None:
         connection = self._connections.get(connector_id)
         if connection is None:
-            return
+            return None
         request_id = message.get("id")
         if not isinstance(request_id, str):
-            return
+            return None
         future = connection.pending.get(request_id)
         if future is not None and not future.done():
             future.set_result(message)
+            return connection.pending_response_tags.get(request_id)
+        return None
 
     async def _request_local(
         self,
@@ -395,6 +409,7 @@ class ConnectorRpcManager:
         params: dict[str, Any],
         *,
         timeout: float,
+        response_tag: str | None = None,
     ) -> Any:
         connector_id = connection.connector_id
         request_id = f"rpc_{secrets.token_urlsafe(10)}"
@@ -403,6 +418,8 @@ class ConnectorRpcManager:
             asyncio.get_running_loop().create_future()
         )
         connection.pending[request_id] = future
+        if response_tag is not None:
+            connection.pending_response_tags[request_id] = response_tag
         try:
             async with connection.send_lock:
                 if self._connections.get(
@@ -439,6 +456,7 @@ class ConnectorRpcManager:
             )
         finally:
             connection.pending.pop(request_id, None)
+            connection.pending_response_tags.pop(request_id, None)
 
         if response.get("ok") is True:
             return response.get("result")

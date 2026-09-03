@@ -11,6 +11,7 @@ from conftest import ApiV2TestClient as TestClient
 from agent_server.app import create_app
 from agent_server.core.device_runtime import RuntimeDiscoverV2Response
 from agent_server.infra.connector_rpc import ConnectorOfflineError
+from agent_server.services.connector_ingest import ConnectorIngestService
 from agent_server.services.device_runtimes import (
     SUPPORTED_RUNTIME_CONTROL_VERSIONS,
     DeviceRuntimeOfflineError,
@@ -201,19 +202,22 @@ def _receive_discovery_request(ws: Any) -> dict[str, Any]:
 def _observe_unsolicited_inventory(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
-) -> threading.Event:
+) -> tuple[threading.Event, list[dict[str, Any]]]:
     inventory_ingested = threading.Event()
+    observed: list[dict[str, Any]] = []
     service = client.app.state.device_runtime_service
     original_ingest = service.ingest_unsolicited_inventory
 
     async def observe_ingest(*args: Any, **kwargs: Any) -> None:
         try:
+            raw = args[1] if len(args) > 1 else kwargs["raw"]
+            observed.append(raw)
             await original_ingest(*args, **kwargs)
         finally:
             inventory_ingested.set()
 
     monkeypatch.setattr(service, "ingest_unsolicited_inventory", observe_ingest)
-    return inventory_ingested
+    return inventory_ingested, observed
 
 
 def test_first_v2_connector_connection_discovers_types_without_creating_runtime(
@@ -225,13 +229,23 @@ def test_first_v2_connector_connection_discovers_types_without_creating_runtime(
         tmp_path,
         websocket_completed=websocket_completed,
     )
-    inventory_ingested = _observe_unsolicited_inventory(client, monkeypatch)
+    reconciled = threading.Event()
+    service = client.app.state.device_runtime_service
+    original_reconcile = service.reconcile_active
+
+    async def observe_reconcile(*args: Any, **kwargs: Any) -> None:
+        try:
+            await original_reconcile(*args, **kwargs)
+        finally:
+            reconciled.set()
+
+    monkeypatch.setattr(service, "reconcile_active", observe_reconcile)
 
     with client.websocket_connect(
         "/connector/ws",
         headers={"Authorization": f"Bearer {access_token}"},
     ) as ws:
-        _send_inventory(ws)
+        _send_inventory(ws, display_name="Startup Legacy Codex")
         request = _receive_discovery_request(ws)
         ws.send_json(
             {
@@ -241,9 +255,8 @@ def test_first_v2_connector_connection_discovers_types_without_creating_runtime(
                 "result": _v2_discovery(),
             }
         )
-        assert inventory_ingested.wait(timeout=5), (
-            "buffered startup inventory was not handled after negotiation"
-        )
+        _send_inventory(ws, display_name="Post-response V2 Inventory")
+        assert reconciled.wait(timeout=5), "runtime reconciliation did not complete"
 
         runtimes = asyncio.run(
             client.app.state.store.list_device_runtimes(connector_id)
@@ -272,7 +285,44 @@ def test_first_legacy_connector_connection_keeps_compatibility_runtime(
         tmp_path,
         websocket_completed=websocket_completed,
     )
-    inventory_ingested = _observe_unsolicited_inventory(client, monkeypatch)
+    inventory_ingested, observed = _observe_unsolicited_inventory(
+        client,
+        monkeypatch,
+    )
+    reconciled = threading.Event()
+    runtime_start_requested = threading.Event()
+    service = client.app.state.device_runtime_service
+    original_reconcile = service.reconcile_active
+    original_request_on_connection = client.app.state.rpc.request_on_connection
+
+    async def observe_reconcile(*args: Any, **kwargs: Any) -> None:
+        try:
+            await original_reconcile(*args, **kwargs)
+        finally:
+            reconciled.set()
+
+    async def observe_request(
+        requested_connection: Any,
+        method: str,
+        params: dict[str, Any],
+        **kwargs: Any,
+    ) -> Any:
+        if method == "runtime.start":
+            runtime_start_requested.set()
+            return {}
+        return await original_request_on_connection(
+            requested_connection,
+            method,
+            params,
+            **kwargs,
+        )
+
+    monkeypatch.setattr(service, "reconcile_active", observe_reconcile)
+    monkeypatch.setattr(
+        client.app.state.rpc,
+        "request_on_connection",
+        observe_request,
+    )
 
     with client.websocket_connect(
         "/connector/ws",
@@ -290,13 +340,19 @@ def test_first_legacy_connector_connection_keeps_compatibility_runtime(
                 ),
             }
         )
+        _send_inventory(ws, display_name="Negotiated Legacy Codex")
         assert inventory_ingested.wait(timeout=5), (
-            "buffered startup inventory was not handled after negotiation"
+            "post-response inventory was not handled after negotiation"
         )
+        assert [item["runtimes"][0]["displayName"] for item in observed] == [
+            "Negotiated Legacy Codex"
+        ]
+        assert reconciled.wait(timeout=5), "runtime reconciliation did not complete"
+        assert not runtime_start_requested.is_set()
         runtime_types = asyncio.run(
             client.app.state.store.list_connector_runtime_types(connector_id)
         )
-        assert runtime_types[0]["displayName"] == "Startup Legacy Codex"
+        assert runtime_types[0]["displayName"] == "Negotiated Legacy Codex"
         runtime = asyncio.run(
             client.app.state.store.get_device_runtime(connector_id, "codex")
         )
@@ -314,6 +370,218 @@ def test_first_legacy_connector_connection_keeps_compatibility_runtime(
         assert not asyncio.run(client.app.state.rpc.is_online(connector_id))
 
 
+def test_post_response_status_waits_for_legacy_discovery_inventory(
+    tmp_path: Any,
+) -> None:
+    websocket_completed = threading.Event()
+    client, connector_id, access_token = _make_connector(
+        tmp_path,
+        websocket_completed=websocket_completed,
+    )
+
+    with client.websocket_connect(
+        "/connector/ws",
+        headers={"Authorization": f"Bearer {access_token}"},
+    ) as ws:
+        _send_inventory(ws, display_name="Startup Legacy Codex")
+        request = _receive_discovery_request(ws)
+        ws.send_json(
+            {
+                "id": request["id"],
+                "type": "response",
+                "ok": True,
+                "result": _legacy_inventory(
+                    display_name="Negotiated Legacy Codex"
+                ),
+            }
+        )
+        ws.send_json(
+            {
+                "type": "notification",
+                "method": "runtime.statusChanged",
+                "params": {"runtimeId": "codex", "status": "available"},
+            }
+        )
+
+        runtime: dict[str, Any] | None = None
+        for _ in range(100):
+            try:
+                runtime = asyncio.run(
+                    client.app.state.store.get_device_runtime(connector_id, "codex")
+                )
+            except KeyError:
+                time.sleep(0.01)
+                continue
+            if runtime["status"] == "available":
+                break
+            time.sleep(0.01)
+        assert runtime is not None
+        assert runtime["displayName"] == "Negotiated Legacy Codex"
+        assert runtime["status"] == "available"
+
+        ws.close()
+        assert websocket_completed.wait(timeout=5), (
+            "connector websocket did not complete"
+        )
+
+
+def test_post_response_absent_inventory_is_applied_before_reconcile(
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    websocket_completed = threading.Event()
+    client, connector_id, access_token = _make_connector(
+        tmp_path,
+        websocket_completed=websocket_completed,
+    )
+    service = client.app.state.device_runtime_service
+    store = client.app.state.store
+
+    async def seed_active_runtime() -> None:
+        await service.ingest_inventory(
+            connector_id,
+            _legacy_inventory(display_name="Historical Codex"),
+        )
+        await store.set_device_runtime_config(connector_id, "codex", {})
+        await store.set_device_runtime_active(connector_id, "codex", True)
+
+    asyncio.run(seed_active_runtime())
+    discovery_write_started = threading.Event()
+    allow_discovery_write = threading.Event()
+    post_inventory_received = threading.Event()
+    original_ingest_inventory = service.ingest_inventory
+    original_handle_notification = ConnectorIngestService.handle_notification_message
+
+    async def block_discovery_write(*args: Any, **kwargs: Any) -> Any:
+        if kwargs.get("publish") is False:
+            discovery_write_started.set()
+            while not allow_discovery_write.is_set():
+                await asyncio.sleep(0.001)
+        return await original_ingest_inventory(*args, **kwargs)
+
+    async def observe_post_inventory_marker(
+        ingest_service: ConnectorIngestService,
+        *,
+        connector_id: str,
+        method: str,
+        params: dict[str, Any],
+        connection_id: str | None = None,
+    ) -> None:
+        if method == "test.postInventoryReceived":
+            post_inventory_received.set()
+            return
+        await original_handle_notification(
+            ingest_service,
+            connector_id=connector_id,
+            method=method,
+            params=params,
+            connection_id=connection_id,
+        )
+
+    monkeypatch.setattr(service, "ingest_inventory", block_discovery_write)
+    monkeypatch.setattr(
+        ConnectorIngestService,
+        "handle_notification_message",
+        observe_post_inventory_marker,
+    )
+    inventory_ingested, observed = _observe_unsolicited_inventory(
+        client,
+        monkeypatch,
+    )
+    reconciled = threading.Event()
+    runtime_start_requested = threading.Event()
+    original_reconcile = service.reconcile_active
+    original_request_on_connection = client.app.state.rpc.request_on_connection
+
+    async def observe_reconcile(*args: Any, **kwargs: Any) -> None:
+        try:
+            await original_reconcile(*args, **kwargs)
+        finally:
+            reconciled.set()
+
+    async def observe_request(
+        requested_connection: Any,
+        method: str,
+        params: dict[str, Any],
+        **kwargs: Any,
+    ) -> Any:
+        if method == "runtime.start":
+            runtime_start_requested.set()
+            return {}
+        return await original_request_on_connection(
+            requested_connection,
+            method,
+            params,
+            **kwargs,
+        )
+
+    monkeypatch.setattr(service, "reconcile_active", observe_reconcile)
+    monkeypatch.setattr(
+        client.app.state.rpc,
+        "request_on_connection",
+        observe_request,
+    )
+
+    with client.websocket_connect(
+        "/connector/ws",
+        headers={"Authorization": f"Bearer {access_token}"},
+    ) as ws:
+        try:
+            _send_inventory(ws, display_name="Startup Legacy Codex")
+            request = _receive_discovery_request(ws)
+            ws.send_json(
+                {
+                    "id": request["id"],
+                    "type": "response",
+                    "ok": True,
+                    "result": _legacy_inventory(
+                        display_name="Negotiated Legacy Codex"
+                    ),
+                }
+            )
+            assert discovery_write_started.wait(timeout=5), (
+                "discovery did not reach the blocked store write"
+            )
+            ws.send_json(
+                {
+                    "type": "notification",
+                    "method": "runtime.inventoryUpdated",
+                    "params": {"runtimes": []},
+                }
+            )
+            ws.send_json(
+                {
+                    "type": "notification",
+                    "method": "test.postInventoryReceived",
+                    "params": {},
+                }
+            )
+            assert post_inventory_received.wait(timeout=5), (
+                "reader did not receive the post-response inventory"
+            )
+            assert not inventory_ingested.is_set()
+
+            allow_discovery_write.set()
+            assert inventory_ingested.wait(timeout=5), (
+                "absent inventory was not applied"
+            )
+            assert observed == [{"runtimes": []}]
+            assert reconciled.wait(timeout=5), (
+                "runtime reconciliation did not complete"
+            )
+            assert not runtime_start_requested.is_set()
+            runtime = asyncio.run(store.get_device_runtime(connector_id, "codex"))
+            assert runtime["present"] is False
+            assert runtime["active"] is True
+
+            ws.close()
+            assert websocket_completed.wait(timeout=5), (
+                "connector websocket did not complete"
+            )
+        finally:
+            allow_discovery_write.set()
+
+
 def test_failed_negotiation_still_ingests_buffered_startup_inventory(
     tmp_path: Any,
     monkeypatch: pytest.MonkeyPatch,
@@ -323,7 +591,10 @@ def test_failed_negotiation_still_ingests_buffered_startup_inventory(
         tmp_path,
         websocket_completed=websocket_completed,
     )
-    inventory_ingested = _observe_unsolicited_inventory(client, monkeypatch)
+    inventory_ingested, observed = _observe_unsolicited_inventory(
+        client,
+        monkeypatch,
+    )
 
     with client.websocket_connect(
         "/connector/ws",
@@ -345,6 +616,9 @@ def test_failed_negotiation_still_ingests_buffered_startup_inventory(
         assert inventory_ingested.wait(timeout=5), (
             "buffered startup inventory was not handled after negotiation failure"
         )
+        assert [item["runtimes"][0]["displayName"] for item in observed] == [
+            "Fallback Legacy Codex"
+        ]
 
         runtime_types = asyncio.run(
             client.app.state.store.list_connector_runtime_types(connector_id)
@@ -363,6 +637,128 @@ def test_failed_negotiation_still_ingests_buffered_startup_inventory(
             "connector websocket did not complete"
         )
         assert not asyncio.run(client.app.state.rpc.is_online(connector_id))
+
+
+def test_reconcile_failure_does_not_replay_startup_inventory(
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    websocket_completed = threading.Event()
+    client, connector_id, access_token = _make_connector(
+        tmp_path,
+        websocket_completed=websocket_completed,
+    )
+    inventory_ingested, observed = _observe_unsolicited_inventory(
+        client,
+        monkeypatch,
+    )
+    reconcile_attempted = threading.Event()
+
+    async def fail_reconcile(
+        reconcile_connector_id: str,
+        *,
+        expected_connection_id: str | None = None,
+        connection: Any | None = None,
+    ) -> None:
+        assert reconcile_connector_id == connector_id
+        assert expected_connection_id is not None
+        assert connection is not None
+        reconcile_attempted.set()
+        raise RuntimeError("reconcile failed")
+
+    monkeypatch.setattr(
+        client.app.state.device_runtime_service,
+        "reconcile_active",
+        fail_reconcile,
+    )
+
+    with client.websocket_connect(
+        "/connector/ws",
+        headers={"Authorization": f"Bearer {access_token}"},
+    ) as ws:
+        _send_inventory(ws, display_name="Startup Legacy Codex")
+        request = _receive_discovery_request(ws)
+        ws.send_json(
+            {
+                "id": request["id"],
+                "type": "response",
+                "ok": True,
+                "result": _legacy_inventory(
+                    display_name="Negotiated Legacy Codex"
+                ),
+            }
+        )
+
+        assert reconcile_attempted.wait(timeout=5), "reconciliation was not attempted"
+        assert not inventory_ingested.wait(timeout=0.2)
+        assert observed == []
+        runtime = asyncio.run(
+            client.app.state.store.get_device_runtime(connector_id, "codex")
+        )
+        assert runtime["displayName"] == "Negotiated Legacy Codex"
+
+        ws.close()
+        assert websocket_completed.wait(timeout=5), (
+            "connector websocket did not complete"
+        )
+
+
+def test_discovery_publish_failure_does_not_replay_startup_inventory(
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    websocket_completed = threading.Event()
+    client, connector_id, access_token = _make_connector(
+        tmp_path,
+        websocket_completed=websocket_completed,
+    )
+    inventory_ingested, observed = _observe_unsolicited_inventory(
+        client,
+        monkeypatch,
+    )
+    publish_attempted = threading.Event()
+
+    async def fail_publish(publish_connector_id: str, reason: str) -> None:
+        assert publish_connector_id == connector_id
+        assert reason == "runtime.inventory"
+        publish_attempted.set()
+        raise RuntimeError("dashboard publish failed")
+
+    monkeypatch.setattr(
+        client.app.state.device_runtime_service,
+        "publish_discovery",
+        fail_publish,
+    )
+
+    with client.websocket_connect(
+        "/connector/ws",
+        headers={"Authorization": f"Bearer {access_token}"},
+    ) as ws:
+        _send_inventory(ws, display_name="Startup Legacy Codex")
+        request = _receive_discovery_request(ws)
+        ws.send_json(
+            {
+                "id": request["id"],
+                "type": "response",
+                "ok": True,
+                "result": _legacy_inventory(
+                    display_name="Negotiated Legacy Codex"
+                ),
+            }
+        )
+
+        assert publish_attempted.wait(timeout=5), "publication was not attempted"
+        assert not inventory_ingested.wait(timeout=0.2)
+        assert observed == []
+        runtime = asyncio.run(
+            client.app.state.store.get_device_runtime(connector_id, "codex")
+        )
+        assert runtime["displayName"] == "Negotiated Legacy Codex"
+
+        ws.close()
+        assert websocket_completed.wait(timeout=5), (
+            "connector websocket did not complete"
+        )
 
 
 def test_disconnect_before_negotiation_discards_buffered_startup_inventory(
@@ -699,6 +1095,103 @@ def test_stale_discovery_response_waiting_for_lock_is_rejected(
             )
             == "1.0"
         )
+        assert await manager.unregister(connector_id, replacement)
+
+    asyncio.run(exercise())
+
+
+def test_stale_connection_runtime_notifications_are_ignored(tmp_path: Any) -> None:
+    client, connector_id, _ = _make_connector(tmp_path)
+
+    async def exercise() -> None:
+        manager = client.app.state.rpc
+        service = client.app.state.device_runtime_service
+        await service.ingest_inventory(
+            connector_id,
+            _legacy_inventory(display_name="Historical Codex"),
+        )
+        old_connection = await manager.register(  # type: ignore[arg-type]
+            connector_id,
+            FakeWebSocket(),
+        )
+        assert await manager.unregister(connector_id, old_connection)
+        replacement = await manager.register(  # type: ignore[arg-type]
+            connector_id,
+            FakeWebSocket(),
+        )
+        await service.prepare_connection(connector_id)
+
+        await service.ingest_unsolicited_inventory(
+            connector_id,
+            _legacy_inventory(display_name="Stale Connector Codex"),
+            expected_connection_id=old_connection.connection_id,
+        )
+        status_result = await service.apply_status(
+            connector_id,
+            "codex",
+            "running",
+            expected_connection_id=old_connection.connection_id,
+        )
+
+        assert status_result is None
+        runtime = await client.app.state.store.get_device_runtime(
+            connector_id,
+            "codex",
+        )
+        assert runtime["displayName"] == "Historical Codex"
+        assert runtime["status"] == "stopped"
+        assert await manager.unregister(connector_id, replacement)
+
+    asyncio.run(exercise())
+
+
+def test_reconcile_start_is_bound_to_the_original_connection(tmp_path: Any) -> None:
+    client, connector_id, _ = _make_connector(tmp_path)
+
+    async def exercise() -> None:
+        manager = client.app.state.rpc
+        service = client.app.state.device_runtime_service
+        store = client.app.state.store
+        await service.ingest_inventory(
+            connector_id,
+            _legacy_inventory(display_name="Historical Codex"),
+        )
+        await store.set_device_runtime_config(connector_id, "codex", {})
+        await store.set_device_runtime_active(connector_id, "codex", True)
+
+        old_websocket = FakeWebSocket()
+        old_connection = await manager.register(  # type: ignore[arg-type]
+            connector_id,
+            old_websocket,
+        )
+        replacement_websocket = FakeWebSocket()
+        async with old_connection.send_lock:
+            reconcile_task = asyncio.create_task(
+                service.reconcile_active(
+                    connector_id,
+                    expected_connection_id=old_connection.connection_id,
+                    connection=old_connection,
+                )
+            )
+            for _ in range(1000):
+                if old_connection.pending:
+                    break
+                await asyncio.sleep(0.001)
+            assert old_connection.pending, "reconcile did not reach runtime.start"
+
+            assert await manager.unregister(connector_id, old_connection)
+            for future in old_connection.pending.values():
+                if future.done() and not future.cancelled():
+                    future.exception()
+            replacement = await manager.register(  # type: ignore[arg-type]
+                connector_id,
+                replacement_websocket,
+            )
+
+        await asyncio.wait_for(reconcile_task, timeout=1)
+        assert old_websocket.messages == []
+        assert replacement_websocket.messages == []
+        assert old_connection.pending == {}
         assert await manager.unregister(connector_id, replacement)
 
     asyncio.run(exercise())
