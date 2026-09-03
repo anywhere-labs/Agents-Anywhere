@@ -207,6 +207,7 @@ def create_app(
         app.state.store,
         app.state.timeline_broker,
         app.state.redis,
+        presence=app.state.rpc,
         flush_interval_seconds=float(
             os.environ.get("AGENT_SERVER_TIMELINE_FLUSH_INTERVAL_SECONDS", "1")
         ),

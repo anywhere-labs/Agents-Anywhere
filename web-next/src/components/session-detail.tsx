@@ -51,7 +51,10 @@ import { SessionComposer, type AttachedFile } from "@/components/session/session
 import {
   acceptSessionEventId,
   bufferedEventsAfterLiveCapabilityRead,
+  drainSessionEventBuffer,
   mergeEffectiveCapabilities,
+  SessionEventSequenceCursor,
+  settleSessionEventRecovery,
   sessionEventUsesDurableEventIdDedup,
   stableStringify,
 } from "@/components/session/session-event-state"
@@ -349,7 +352,14 @@ export function SessionDetail({
   const timelineRef = React.useRef<HTMLDivElement | null>(null)
   const timelineContentRef = React.useRef<HTMLDivElement | null>(null)
   const composerContainerRef = React.useRef<HTMLDivElement | null>(null)
-  const nextSeqRef = React.useRef(0)
+  const eventSequenceCursorRef = React.useRef<SessionEventSequenceCursor | null>(null)
+  if (eventSequenceCursorRef.current === null) {
+    eventSequenceCursorRef.current = new SessionEventSequenceCursor(
+      sessionId,
+      initialOptimisticState?.nextSeq ?? 0,
+    )
+  }
+  const eventSequenceCursor = eventSequenceCursorRef.current
   const autoScrollOnNextUpdateRef = React.useRef(false)
   const forceScrollOnNextUpdateRef = React.useRef(false)
   const initialScrollDoneRef = React.useRef(false)
@@ -362,7 +372,6 @@ export function SessionDetail({
   const initialScrollFallbackTimerRef = React.useRef<number | null>(null)
   const pruneAfterScrollTimerRef = React.useRef<number | null>(null)
   const streamConnectedRef = React.useRef(false)
-  const processedEventIdsRef = React.useRef<Set<string>>(new Set())
   const catalogFetchKeyRef = React.useRef<string | null>(null)
   const selectionUpdateSeqRef = React.useRef(0)
 
@@ -824,14 +833,14 @@ export function SessionDetail({
       window.clearTimeout(initialScrollFallbackTimerRef.current)
       initialScrollFallbackTimerRef.current = null
     }
-    processedEventIdsRef.current = new Set()
     setSending(false)
     setInterrupting(false)
     setError(null)
     const optimisticState = getOptimisticSessionStateRef.current(sessionId)
+    eventSequenceCursor.switchTo(sessionId, optimisticState?.nextSeq ?? 0)
     if (optimisticState) {
       setState(remoteStateFromOptimisticState(optimisticState))
-      nextSeqRef.current = optimisticState.nextSeq
+      eventSequenceCursor.advance(sessionId, optimisticState.nextSeq)
       setLoading(false)
     } else {
       setLoading(true)
@@ -851,9 +860,11 @@ export function SessionDetail({
     let reconnectTimer: number | null = null
     let refetchPromise: Promise<void> | null = null
     let recoveryPromise: Promise<void> | null = null
+    let recoveryStarting = false
     let snapshotReady = false
     let socketSubscribed = false
     let bufferedEvents: ProtocolEventEnvelope[] = []
+    let processedEventIds = new Set<string>()
     const refetch = (reason: string) => {
       if (refetchPromise) return refetchPromise
       markAutoScrollIfNearBottomRef.current()
@@ -862,8 +873,12 @@ export function SessionDetail({
           if (cancelled) return
           const merged = applyOptimisticItemsRef.current(next)
           clearResolvedOptimisticMessagesRef.current(sessionId, merged.items)
-          nextSeqRef.current = Math.max(nextSeqRef.current, cursorSequence(next.eventCursor) || next.nextSeq)
-          setState((current) => current ? mergeSessionSnapshot(current, merged) : merged)
+          eventSequenceCursor.replaceFromSnapshot(
+            sessionId,
+            cursorSequence(next.eventCursor) || next.nextSeq,
+          )
+          processedEventIds = new Set()
+          setState(merged)
           onSessionUpdatedRef.current?.(next.session)
         })
         .catch(() => undefined)
@@ -877,19 +892,22 @@ export function SessionDetail({
       if (cancelled || event.sessionId !== sessionId) return
       if (event.type === "keepalive") return
       const usesDurableEventIdDedup = sessionEventUsesDurableEventIdDedup(event)
-      if (event.sequence < nextSeqRef.current) return
-      if (!acceptSessionEventId(event, processedEventIdsRef.current)) return
+      if (!eventSequenceCursor.accepts(sessionId, event.sequence)) return
+      if (!acceptSessionEventId(event, processedEventIds)) return
       if (usesDurableEventIdDedup) {
-        if (processedEventIdsRef.current.size > 1000) {
-          processedEventIdsRef.current = new Set(Array.from(processedEventIdsRef.current).slice(-500))
+        if (processedEventIds.size > 1000) {
+          processedEventIds = new Set(Array.from(processedEventIds).slice(-500))
         }
       }
       if (event.type === "session.refetch_required") {
-        void recoverEvents(nextSeqRef.current, "session.refetch_required")
+        void recoverEvents(
+          eventSequenceCursor.current(sessionId),
+          "session.refetch_required",
+        )
         return
       }
       if (!sessionEventCanUpdateState(event)) {
-        nextSeqRef.current = Math.max(nextSeqRef.current, event.sequence)
+        eventSequenceCursor.advance(sessionId, event.sequence)
         return
       }
       markAutoScrollIfNearBottomRef.current()
@@ -903,13 +921,24 @@ export function SessionDetail({
         ? event.payload.items.filter(isTimelineItem)
         : []
       if (items.length > 0) clearResolvedOptimisticMessagesRef.current(sessionId, items)
-      nextSeqRef.current = Math.max(nextSeqRef.current, event.sequence)
+      eventSequenceCursor.advance(sessionId, event.sequence)
     }
 
     const recoverEvents = async (afterSeq: number, reason: string) => {
-      if (recoveryPromise) return recoveryPromise
+      if (recoveryPromise || recoveryStarting) return recoveryPromise
+      recoveryStarting = true
+      // Events received before this recovery request causally precede its
+      // response. Apply them first so the recovered live projection wins at
+      // the same sequence; events received during the request remain queued.
+      // recoveryStarting also makes a buffered refetch_required join this
+      // recovery instead of recursively starting another one.
+      drainBufferedEvents({ allowWhileRecoveryStarting: true })
+      const recoveryAfterSeq = Math.max(
+        afterSeq,
+        eventSequenceCursor.current(sessionId),
+      )
       try {
-        recoveryPromise = dashboardApi.getSessionEvents(token, sessionId, `seq:${afterSeq}`)
+        const recoveryRequest = dashboardApi.getSessionEvents(token, sessionId, `seq:${recoveryAfterSeq}`)
           .then(async (recovery) => {
             if (cancelled) return
             if (recovery.snapshotRequired) {
@@ -929,8 +958,8 @@ export function SessionDetail({
               }
               applyEvent(event)
             }
-            nextSeqRef.current = Math.max(
-              nextSeqRef.current,
+            eventSequenceCursor.advance(
+              sessionId,
               cursorSequence(recovery.nextCursor),
             )
             if (shouldReadLiveCapabilities) {
@@ -983,26 +1012,43 @@ export function SessionDetail({
             }
           })
           .catch(() => refetch(`${reason}:recovery-failed`))
-          .finally(() => {
+        recoveryPromise = settleSessionEventRecovery(
+          recoveryRequest,
+          () => {
             recoveryPromise = null
-            drainBufferedEvents()
-          })
+            recoveryStarting = false
+          },
+          drainBufferedEvents,
+        )
         return recoveryPromise
       } catch {
         return undefined
+      } finally {
+        // Synchronous setup failures happen before settleSessionEventRecovery
+        // owns cleanup.
+        if (!recoveryPromise) {
+          recoveryStarting = false
+          drainBufferedEvents()
+        }
       }
     }
 
-    function drainBufferedEvents() {
-      const pending = bufferedEvents.sort((a, b) => a.sequence - b.sequence)
+    function drainBufferedEvents(
+      options: { allowWhileRecoveryStarting?: boolean } = {},
+    ) {
+      const pending = bufferedEvents
       bufferedEvents = []
-      for (let index = 0; index < pending.length; index += 1) {
-        if (recoveryPromise) {
-          bufferedEvents.push(...pending.slice(index))
-          return
-        }
-        const event = pending[index]
-        if (event) applyEvent(event)
+      const remaining = drainSessionEventBuffer(
+        pending,
+        applyEvent,
+        () => Boolean(
+          recoveryPromise || (
+            recoveryStarting && !options.allowWhileRecoveryStarting
+          ),
+        ),
+      )
+      if (remaining.length > 0) {
+        bufferedEvents = [...remaining, ...bufferedEvents]
       }
     }
 
@@ -1010,7 +1056,7 @@ export function SessionDetail({
       const pendingRecovery = recoveryPromise
       if (pendingRecovery) await pendingRecovery
       if (cancelled || !snapshotReady || !socketSubscribed) return
-      await recoverEvents(nextSeqRef.current, reason)
+      await recoverEvents(eventSequenceCursor.current(sessionId), reason)
     }
 
     const connect = async () => {
@@ -1036,7 +1082,7 @@ export function SessionDetail({
             }
             return
           }
-          if (!snapshotReady || recoveryPromise) {
+          if (!snapshotReady || recoveryPromise || recoveryStarting) {
             bufferedEvents.push(event)
             return
           }
@@ -1071,8 +1117,8 @@ export function SessionDetail({
         const merged = applyOptimisticItemsRef.current(next)
         clearResolvedOptimisticMessagesRef.current(sessionId, merged.items)
         setState((current) => current ? mergeSessionSnapshot(current, merged) : merged)
-        nextSeqRef.current = Math.max(
-          nextSeqRef.current,
+        eventSequenceCursor.advance(
+          sessionId,
           cursorSequence(next.eventCursor) || next.nextSeq,
         )
         onSessionUpdatedRef.current?.(next.session)
@@ -1127,7 +1173,7 @@ export function SessionDetail({
       text: messageText,
       attachments,
       items: state?.items ?? [],
-      nextSeq: state?.nextSeq ?? nextSeqRef.current,
+      nextSeq: state?.nextSeq ?? eventSequenceCursor.current(sessionId),
     })
     addOptimisticMessage({
       clientMessageId,

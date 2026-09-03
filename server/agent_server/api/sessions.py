@@ -829,10 +829,6 @@ async def session_snapshot(
             user_id,
         )
         log_snapshot_stage("capabilities", stage_started_at)
-        effective_capabilities = derive_session_effective_capabilities(
-            session=session,
-            runtime_capabilities=runtime_capabilities,
-        )
 
         stage_started_at = time.monotonic()
         model_catalog = await catalogs.model_catalog(
@@ -857,6 +853,10 @@ async def session_snapshot(
             next_seq = await db.get_session_seq(session_id)
         session = session_with_runtime_state(session, runtime_state)
         session = await with_effective_session_connector_status(manager, session)
+        effective_capabilities = derive_session_effective_capabilities(
+            session=session,
+            runtime_capabilities=runtime_capabilities,
+        )
         log_snapshot_stage("database", stage_started_at)
     except KeyError:
         raise HTTPException(status_code=404, detail="session not found") from None
