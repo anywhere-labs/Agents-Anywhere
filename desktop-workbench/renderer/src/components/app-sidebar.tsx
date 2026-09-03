@@ -3,7 +3,6 @@
 import * as React from "react"
 import { Smartphone, SquarePen } from "lucide-react"
 import { toast } from "sonner"
-import { logArchiveDebug } from "@/lib/archive-debug"
 
 import { useAuth } from "@/components/auth/auth-context"
 import { PairDeviceDialog } from "@/components/pair-device-dialog"
@@ -150,14 +149,8 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
   }, [openSession, t])
 
   const restoreArchivedSession = React.useCallback(async (sessionId: string) => {
-    logArchiveDebug("sidebar.toast-restore.start", { sessionId })
     try {
       const updated = await toggleArchiveSession(sessionId, false)
-      logArchiveDebug("sidebar.toast-restore.result", {
-        sessionId,
-        found: Boolean(updated),
-        archived: updated?.archived ?? null,
-      })
       if (updated && !updated.archived) showSessionUnarchivedToast(sessionId)
     } catch (error) {
       toast.error(error instanceof Error ? error.message : t("actions.archiveUpdateFailed"))
