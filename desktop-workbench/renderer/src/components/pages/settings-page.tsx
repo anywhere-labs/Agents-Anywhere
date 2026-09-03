@@ -234,7 +234,11 @@ function AccountTab({
 
 function DesktopTab() {
   const t = useTranslations("pages.settings")
-  const { connectors } = useWorkspace()
+  const {
+    connectors,
+    sidebarShowsSessions,
+    setSidebarShowsSessions,
+  } = useWorkspace()
   const {
     supported,
     loading,
@@ -455,6 +459,21 @@ function DesktopTab() {
           checked={state?.notificationsEnabled ?? true}
           disabled={busy}
           onCheckedChange={(checked) => void saveSettings({ notificationsEnabled: checked })}
+        />
+      </section>
+
+      <section className="rounded-xl border border-border bg-card">
+        <div className="px-6 py-5">
+          <h2 className="text-base font-semibold">{t("desktopSidebar")}</h2>
+          <p className="mt-0.5 text-sm text-muted-foreground">{t("desktopSidebarDescription")}</p>
+        </div>
+        <Separator />
+        <DesktopSettingSwitch
+          label={t("desktopSidebarShowSessions")}
+          description={t("desktopSidebarShowSessionsDescription")}
+          checked={sidebarShowsSessions}
+          disabled={false}
+          onCheckedChange={setSidebarShowsSessions}
         />
       </section>
 

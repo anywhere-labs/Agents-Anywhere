@@ -9,7 +9,6 @@ import {
   Pencil,
   Pin,
   SquarePen,
-  Trash2,
 } from "lucide-react"
 import {
   Collapsible,
@@ -55,7 +54,6 @@ export function ProjectSidebarItem({
   onEdit,
   onTogglePin,
   onArchiveAll,
-  onRemove,
   onToggleSessionPin,
   onToggleSessionArchive,
   onRenameSession,
@@ -71,7 +69,6 @@ export function ProjectSidebarItem({
   onEdit: () => void
   onTogglePin: () => void
   onArchiveAll: () => void
-  onRemove: () => void
   onToggleSessionPin: (sessionId: string) => void
   onToggleSessionArchive: (sessionId: string) => void
   onRenameSession: (sessionId: string, title: string) => Promise<boolean>
@@ -137,16 +134,12 @@ export function ProjectSidebarItem({
                     <Pin />
                     {project.pinned ? t("projects.unpin") : t("projects.pin")}
                   </DropdownMenuItem>
-                  <DropdownMenuItem onSelect={onArchiveAll}>
-                    <Archive />
-                    {t("projects.archiveAll")}
-                  </DropdownMenuItem>
                 </DropdownMenuGroup>
                 <DropdownMenuSeparator />
                 <DropdownMenuGroup>
-                  <DropdownMenuItem variant="destructive" onSelect={onRemove}>
-                    <Trash2 />
-                    {t("projects.remove")}
+                  <DropdownMenuItem variant="destructive" onSelect={onArchiveAll}>
+                    <Archive />
+                    {t("projects.archiveAll")}
                   </DropdownMenuItem>
                 </DropdownMenuGroup>
               </DropdownMenuContent>

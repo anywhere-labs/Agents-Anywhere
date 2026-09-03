@@ -608,7 +608,7 @@ export function TaskComposer() {
   const requiresPermissionSelection = canUsePermissionCatalog && permissionOptions.length > 0
   const hasSelectionSettings = models.length > 0 || permissionOptions.length > 0
   const canCreate =
-    Boolean(authSession?.accessToken && selectedConnector && selectedRuntime) &&
+    Boolean(authSession?.accessToken && selectedConnector && selectedRuntime && workspace?.projectId) &&
     !creating &&
     !catalogsLoading &&
     (!requiresModelSelection || Boolean(selectedModelSelection)) &&
@@ -622,7 +622,7 @@ export function TaskComposer() {
   const compactSelectors = composerWidth > 0 && composerWidth < 640
 
   const handleCreate = async () => {
-    if (!authSession?.accessToken || !selectedConnector || !selectedRuntime || creating) return
+    if (!authSession?.accessToken || !selectedConnector || !selectedRuntime || !workspace?.projectId || !workspace.path || creating) return
     if (!prompt.trim() && attachments.length === 0) return
     if (catalogsLoading) return
     if (requiresModelSelection && !selectedModelSelection) return
@@ -636,7 +636,7 @@ export function TaskComposer() {
     const optimisticSession: RealSessionView = {
       id: localSessionId,
       connectorId: selectedConnector.id,
-      projectId: workspace?.projectId ?? null,
+      projectId: workspace.projectId,
       connectorStatus: selectedConnector.status,
       runtime: selectedRuntime?.runtimeType ?? selectedAgent,
       runtimeId: selectedRuntime?.runtimeId ?? selectedAgent,
@@ -645,7 +645,7 @@ export function TaskComposer() {
       runtimeTypeDisplayName: selectedRuntime ? runtimeTypeName(selectedRuntime) : null,
       externalSessionId: null,
       title: prompt.trim() || null,
-      cwd: workspace?.path || null,
+      cwd: workspace.path,
       status: "waiting",
       takeover: true,
       pinned: false,
@@ -708,13 +708,13 @@ export function TaskComposer() {
       }
       const createBody = {
         connectorId: selectedConnector.id,
-        projectId: workspace?.projectId ?? undefined,
+        projectId: workspace.projectId,
         ...sessionRuntimeRequestIdentity(
           selectedRuntime?.runtimeType ?? selectedAgent,
           selectedRuntime?.runtimeId ?? selectedAgent,
         ),
         title: prompt.trim() || undefined,
-        cwd: workspace?.path || undefined,
+        cwd: workspace.path,
       }
       const nextPreference = withNewSessionSelectionPreference(
         preference,

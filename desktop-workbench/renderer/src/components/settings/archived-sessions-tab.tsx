@@ -36,7 +36,7 @@ import { dashboardApi } from "@/features/dashboard/api"
 import type { ProjectView, SessionView } from "@/features/dashboard/types"
 
 const ALL_PROJECTS = "all"
-const STANDALONE_SESSIONS = "standalone"
+const UNKNOWN_PROJECT_GROUP = "unknown-project"
 const PROJECT_PREFIX = "project:"
 
 type ArchivedSessionGroup = {
@@ -145,28 +145,25 @@ export function ArchivedSessionsTab({
     : null
   const projectFilterLabel = selectedProject
     ? `${selectedProject.name} · ${selectedProject.workspacePath}`
-    : projectFilter === STANDALONE_SESSIONS
-      ? t("archivedStandaloneSessions")
-      : t("archivedAllProjects")
+    : t("archivedAllProjects")
 
   const groups = React.useMemo<ArchivedSessionGroup[]>(() => {
     const projectById = new Map(projects.map((project) => [project.id, project]))
     const filteredSessions = sessions.filter((session) => {
       if (projectFilter === ALL_PROJECTS) return true
-      if (projectFilter === STANDALONE_SESSIONS) return !session.projectId
       return session.projectId === projectFilter.slice(PROJECT_PREFIX.length)
     })
     const grouped = new Map<string, ArchivedSessionGroup>()
 
     for (const session of filteredSessions) {
-      const key = session.projectId ?? STANDALONE_SESSIONS
+      const key = session.projectId ?? UNKNOWN_PROJECT_GROUP
       const project = session.projectId ? projectById.get(session.projectId) : null
       const group = grouped.get(key) ?? {
         key,
         projectId: session.projectId ?? null,
         name: session.projectId
           ? project?.name ?? t("archivedUnknownProject")
-          : t("archivedStandaloneSessions"),
+          : t("archivedUnknownProject"),
         workspacePath: project?.workspacePath ?? null,
         sessions: [],
       }
@@ -275,10 +272,9 @@ export function ArchivedSessionsTab({
           <SelectTrigger className="w-full sm:w-80" aria-label={t("archivedProjectFilter")}>
             <SelectValue>{projectFilterLabel}</SelectValue>
           </SelectTrigger>
-          <SelectContent className="w-80">
+          <SelectContent className="w-80 max-h-[min(15rem,30vh)]">
             <SelectGroup>
               <SelectItem value={ALL_PROJECTS}>{t("archivedAllProjects")}</SelectItem>
-              <SelectItem value={STANDALONE_SESSIONS}>{t("archivedStandaloneSessions")}</SelectItem>
               {projects.map((project) => (
                 <SelectItem
                   key={project.id}

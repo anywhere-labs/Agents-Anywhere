@@ -21,6 +21,7 @@ import { useTranslations } from "next-intl"
 
 type RecentSessionsSectionProps = {
   sessions: WorkspaceSessionView[]
+  label?: string
   isLoading: boolean
   hasMoreSessions: boolean
   isLoadingMoreSessions: boolean
@@ -35,6 +36,7 @@ type RecentSessionsSectionProps = {
 
 export function RecentSessionsSection({
   sessions,
+  label,
   isLoading,
   hasMoreSessions,
   isLoadingMoreSessions,
@@ -57,7 +59,7 @@ export function RecentSessionsSection({
           role="heading"
           aria-level={2}
         >
-          <SidebarSectionTrigger label={t("sections.recents")} expanded={expanded} />
+          <SidebarSectionTrigger label={label ?? t("sections.recents")} expanded={expanded} />
           <SessionFilterMenu onMarkAllRead={onMarkAllRead} />
         </SidebarGroupLabel>
         <CollapsibleContent>

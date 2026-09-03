@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from agent_server.infra.repositories.store_support import *
+from agent_server.infra.repositories.projects import _clean_workspace_path
 from agent_server.core.models import TimelineItem
 
 
@@ -220,7 +221,11 @@ class SessionRepositoryMixin:
         session_id = f"sess_{secrets.token_urlsafe(10)}"
         now = utc_now()
         async with self._engine.begin() as conn:
-            connector_q = select(connectors_t.c.status).where(
+            connector_q = select(
+                connectors_t.c.status,
+                connectors_t.c.user_id,
+                connectors_t.c.device_os,
+            ).where(
                 connectors_t.c.id == connector_id, connectors_t.c.revoked == 0
             )
             if user_id is not None:
@@ -228,20 +233,33 @@ class SessionRepositoryMixin:
             connector = (await conn.execute(connector_q)).first()
             if connector is None:
                 raise KeyError(connector_id)
-            if project_id is not None:
-                project_q = select(
-                    projects_t.c.connector_id,
-                    projects_t.c.workspace_path,
-                ).where(projects_t.c.id == project_id)
-                if user_id is not None:
-                    project_q = project_q.where(projects_t.c.user_id == user_id)
-                project = (await conn.execute(project_q)).first()
-                if project is None:
-                    raise KeyError(project_id)
-                if project.connector_id != connector_id or project.workspace_path != cwd:
+            if not project_id:
+                raise ValueError("project_id is required for every session")
+            project_q = select(
+                projects_t.c.connector_id,
+                projects_t.c.user_id,
+                projects_t.c.workspace_path,
+                projects_t.c.workspace_key,
+            ).where(projects_t.c.id == project_id)
+            if user_id is not None:
+                project_q = project_q.where(projects_t.c.user_id == user_id)
+            project = (await conn.execute(project_q)).first()
+            if project is None:
+                raise KeyError(project_id)
+            if project.connector_id != connector_id:
+                raise ValueError("project connector and workspace must match the session")
+            if cwd is None:
+                cwd = project.workspace_path
+            else:
+                cleaned_cwd, cwd_key = _clean_workspace_path(
+                    cwd,
+                    connector.device_os,
+                )
+                if cwd_key != project.workspace_key:
                     raise ValueError(
                         "project connector and workspace must match the session"
                     )
+                cwd = project.workspace_path or cleaned_cwd
             await conn.execute(
                 insert(sessions_t).values(
                     id=session_id,
@@ -295,7 +313,11 @@ class SessionRepositoryMixin:
         async with self._engine.begin() as conn:
             connector = (
                 await conn.execute(
-                    select(connectors_t.c.status).where(connectors_t.c.id == connector_id)
+                    select(
+                        connectors_t.c.status,
+                        connectors_t.c.user_id,
+                        connectors_t.c.device_os,
+                    ).where(connectors_t.c.id == connector_id)
                 )
             ).first()
             if connector is None:
@@ -321,10 +343,17 @@ class SessionRepositoryMixin:
                 if existing is not None:
                     session_id = existing.id
             if existing is None:
+                project_id, normalized_cwd = await self._ensure_project_for_workspace(
+                    conn,
+                    connector_id=connector_id,
+                    workspace_path=cwd,
+                    now=now,
+                )
                 await conn.execute(
                     insert(sessions_t).values(
                         id=session_id,
                         connector_id=connector_id,
+                        project_id=project_id,
                         runtime=runtime,
                         runtime_id=runtime_id,
                         origin=normalized_origin,
@@ -332,7 +361,7 @@ class SessionRepositoryMixin:
                         permission_selection_id=permission_selection_id,
                         external_session_id=external_session_id,
                         title=title,
-                        cwd=cwd,
+                        cwd=normalized_cwd,
                         status=status or "idle",
                         takeover=0,
                         last_synced_at=last_synced_at,
@@ -357,6 +386,7 @@ class SessionRepositoryMixin:
                             sessions_t.c.external_session_id,
                             sessions_t.c.title,
                             sessions_t.c.cwd,
+                            sessions_t.c.project_id,
                             sessions_t.c.status,
                             sessions_t.c.model_selection_id,
                             sessions_t.c.permission_selection_id,
@@ -377,8 +407,15 @@ class SessionRepositoryMixin:
                     values["external_session_id"] = external_session_id
                 if title is not None:
                     values["title"] = title
-                if cwd is not None:
-                    values["cwd"] = cwd
+                if cwd is not None or current.project_id is None:
+                    project_id, normalized_cwd = await self._ensure_project_for_workspace(
+                        conn,
+                        connector_id=connector_id,
+                        workspace_path=cwd or current.cwd,
+                        now=now,
+                    )
+                    values["project_id"] = project_id
+                    values["cwd"] = normalized_cwd
                 if status is not None:
                     values["status"] = status
                 if last_synced_at is not None:
@@ -410,6 +447,7 @@ class SessionRepositoryMixin:
                         "external_session_id",
                         "title",
                         "cwd",
+                        "project_id",
                         "status",
                         "model_selection_id",
                         "permission_selection_id",
@@ -1249,8 +1287,6 @@ class SessionRepositoryMixin:
             values["status"] = status
         if title is not None:
             values["title"] = title
-        if cwd is not None:
-            values["cwd"] = cwd
         if external_session_id is not None:
             values["external_session_id"] = external_session_id
         if last_synced_at is not None:
@@ -1267,6 +1303,8 @@ class SessionRepositoryMixin:
             row = (
                 await conn.execute(
                     select(
+                        sessions_t.c.connector_id,
+                        sessions_t.c.project_id,
                         sessions_t.c.status,
                         sessions_t.c.title,
                         sessions_t.c.cwd,
@@ -1281,6 +1319,14 @@ class SessionRepositoryMixin:
             ).first()
             if row is None:
                 raise KeyError(session_id)
+            if cwd is not None or row.project_id is None:
+                project_id, normalized_cwd = await self._ensure_project_for_workspace(
+                    conn,
+                    connector_id=row.connector_id,
+                    workspace_path=cwd if cwd is not None else row.cwd,
+                )
+                values["project_id"] = project_id
+                values["cwd"] = normalized_cwd
             if (
                 row.runtime == "dsh"
                 and source_state == "visible"
@@ -1294,6 +1340,7 @@ class SessionRepositoryMixin:
                 "status",
                 "title",
                 "cwd",
+                "project_id",
                 "external_session_id",
                 "source_state",
                 "archived",

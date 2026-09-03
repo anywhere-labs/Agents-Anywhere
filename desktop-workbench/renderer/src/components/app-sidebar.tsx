@@ -21,8 +21,8 @@ import { RecentSessionsSection } from "@/components/sidebar/recent-sessions-sect
 import {
   selectPinnedProjects,
   selectPinnedSessions,
+  selectAllSessions,
   selectProjectSessions,
-  selectRecentSessions,
   selectRegularProjects,
 } from "@/components/sidebar/sidebar-selectors"
 import { SidebarAccountFooter } from "@/components/sidebar/sidebar-account-footer"
@@ -62,10 +62,9 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
     navigate,
     navigateToDevice,
     startProjectSession,
-    loadProjectSessions,
+    sidebarShowsSessions,
     createProject,
     updateProject,
-    removeProject,
     archiveProjectSessions,
     togglePinSession,
     toggleArchiveSession,
@@ -81,7 +80,6 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
   const [expandedProjectIds, setExpandedProjectIds] = React.useState<string[]>([])
   const [projectEditor, setProjectEditor] = React.useState<ProjectEditorState>(null)
   const [projectToArchive, setProjectToArchive] = React.useState<ProjectView | null>(null)
-  const [projectToRemove, setProjectToRemove] = React.useState<ProjectView | null>(null)
 
   const pinnedProjects = React.useMemo(
     () => selectPinnedProjects(projects),
@@ -95,8 +93,8 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
     () => selectRegularProjects(projects),
     [projects],
   )
-  const recentSessions = React.useMemo(
-    () => selectRecentSessions(sessions, filter, search),
+  const allSessions = React.useMemo(
+    () => selectAllSessions(sessions, filter, search),
     [filter, search, sessions],
   )
   const sessionsById = React.useMemo(
@@ -125,14 +123,7 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
       if (open) return current.includes(projectId) ? current : [...current, projectId]
       return current.filter((id) => id !== projectId)
     })
-    if (open) {
-      void loadProjectSessions(projectId).then((loaded) => {
-        if (loaded) return
-        setExpandedProjectIds((current) => current.filter((id) => id !== projectId))
-        toast.error(t("projects.loadSessionsFailed"))
-      })
-    }
-  }, [loadProjectSessions, t])
+  }, [])
 
   const toggleProjectPin = React.useCallback(async (project: ProjectView) => {
     const updated = await updateProject(project.id, { pinned: !project.pinned })
@@ -191,7 +182,6 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
     onEdit: (project) => setProjectEditor({ mode: "edit", project }),
     onTogglePin: (project) => void toggleProjectPin(project),
     onArchiveAll: setProjectToArchive,
-    onRemove: setProjectToRemove,
     onToggleSessionPin: togglePinSession,
     onToggleSessionArchive: requestToggleSessionArchive,
     onRenameSession: renameSession,
@@ -249,7 +239,7 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
         />
 
         <PinnedSection
-          projects={pinnedProjects}
+          projects={sidebarShowsSessions ? [] : pinnedProjects}
           sessions={pinnedSessions}
           isLoading={isLoading}
           projectController={projectController}
@@ -259,28 +249,33 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
           onRenameSession={renameSession}
         />
 
-        <ProjectsSection
-          projects={regularProjects}
-          isLoading={isLoading}
-          expanded={projectsExpanded}
-          controller={projectController}
-          onExpandedChange={setProjectsExpanded}
-          onAddProject={() => setProjectEditor({ mode: "create" })}
-        />
-
-        <RecentSessionsSection
-          sessions={recentSessions}
-          isLoading={isLoading}
-          hasMoreSessions={hasMoreSessions}
-          isLoadingMoreSessions={isLoadingMoreSessions}
-          activeSessionId={activeSessionId}
-          onMarkAllRead={markAllRead}
-          onOpenSession={openSession}
-          onToggleSessionPin={togglePinSession}
-          onToggleSessionArchive={requestToggleSessionArchive}
-          onRenameSession={renameSession}
-          onLoadMoreSessions={loadMoreSessions}
-        />
+        {sidebarShowsSessions ? (
+          <RecentSessionsSection
+            label={t("sections.sessions")}
+            sessions={allSessions}
+            isLoading={isLoading}
+            hasMoreSessions={hasMoreSessions}
+            isLoadingMoreSessions={isLoadingMoreSessions}
+            activeSessionId={activeSessionId}
+            onMarkAllRead={markAllRead}
+            onOpenSession={openSession}
+            onToggleSessionPin={togglePinSession}
+            onToggleSessionArchive={requestToggleSessionArchive}
+            onRenameSession={renameSession}
+            onLoadMoreSessions={loadMoreSessions}
+          />
+        ) : (
+          <>
+            <ProjectsSection
+              projects={regularProjects}
+              isLoading={isLoading}
+              expanded={projectsExpanded}
+              controller={projectController}
+              onExpandedChange={setProjectsExpanded}
+              onAddProject={() => setProjectEditor({ mode: "create" })}
+            />
+          </>
+        )}
       </SidebarContent>
 
       <SidebarAccountFooter me={me} navigate={navigate} signOut={signOut} />
@@ -305,11 +300,8 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
 
       <ProjectConfirmationDialogs
         projectToArchive={projectToArchive}
-        projectToRemove={projectToRemove}
         onProjectToArchiveChange={setProjectToArchive}
-        onProjectToRemoveChange={setProjectToRemove}
         onArchiveProjectSessions={archiveProjectSessions}
-        onRemoveProject={removeProject}
       />
     </Sidebar>
   )

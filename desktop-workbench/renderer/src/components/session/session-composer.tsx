@@ -287,12 +287,12 @@ export function SessionComposer({
   }
   const placeholder = creatingSession
     ? tSession("creatingPlaceholder")
-    : sourceUnavailable
-      ? tSession("sourceUnavailablePlaceholder")
-    : !session.takeover
-    ? tSession("readOnlyPlaceholder")
     : isDisconnected || !connectorOnline
       ? tSession("deviceOfflinePlaceholder")
+      : sourceUnavailable
+        ? tSession("sourceUnavailablePlaceholder")
+        : !session.takeover
+          ? tSession("readOnlyPlaceholder")
       : pendingInteractionCount > 0
         ? tSession("waitingApprovalPlaceholder")
         : isWaiting
@@ -433,7 +433,7 @@ export function SessionComposer({
                 }
               }}
               placeholder={placeholder}
-              disabled={!connectorOnline || creatingSession || sourceUnavailable}
+              disabled={!connectorOnline || isDisconnected || creatingSession || sourceUnavailable}
               className="min-h-12 max-h-40 resize-none overflow-y-auto rounded-none border-0 bg-transparent p-0 text-sm shadow-none focus-visible:ring-0 dark:bg-transparent"
             />
           </div>
@@ -443,7 +443,7 @@ export function SessionComposer({
               onAttach={add}
               isDragging={isDragging}
               className="size-8"
-              disabled={!canUseAttachments || sourceUnavailable || creatingSession}
+              disabled={!canUseAttachments || isDisconnected || sourceUnavailable || creatingSession}
             />
             {attachments.length > 0 && !canUseAttachments ? (
               <span className="px-2 text-xs text-amber-600 dark:text-amber-400">

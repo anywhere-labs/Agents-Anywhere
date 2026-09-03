@@ -119,6 +119,8 @@ async def delete_project(
         detached = await store.delete_project(project_id, user_id=user_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="project not found") from None
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     await publish_dashboard_changed(
         store,
         broker,

@@ -36,11 +36,15 @@ export function sortSidebarSessions(items: WorkspaceSessionView[]): WorkspaceSes
 }
 
 export function selectPinnedProjects(projects: ProjectView[]): ProjectView[] {
-  return sortProjects(projects.filter((project) => project.pinned))
+  return sortProjects(
+    projects.filter((project) => project.pinned && project.activeSessionCount > 0),
+  )
 }
 
 export function selectRegularProjects(projects: ProjectView[]): ProjectView[] {
-  return sortProjectsByCreatedAt(projects.filter((project) => !project.pinned))
+  return sortProjectsByCreatedAt(
+    projects.filter((project) => !project.pinned && project.activeSessionCount > 0),
+  )
 }
 
 export function selectPinnedSessions(
@@ -62,6 +66,16 @@ export function selectRecentSessions(
       filter,
       search,
     ).filter((session) => session.archived || !session.pinned) as WorkspaceSessionView[],
+  )
+}
+
+export function selectAllSessions(
+  sessions: WorkspaceSessionView[],
+  filter: FilterValue,
+  search: string,
+): WorkspaceSessionView[] {
+  return sortSidebarSessions(
+    filterSessions(sessions, filter, search).filter((session) => !session.pinned),
   )
 }
 

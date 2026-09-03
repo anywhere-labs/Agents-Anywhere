@@ -25,6 +25,7 @@ from agent_server.core.protocol import (
 from agent_server.core.runtime_identity import RuntimeIdentity, RuntimeIdentityError
 from agent_server.services.connector_realtime import ConnectorRealtimeService
 from agent_server.services.ingest_effects import IngestEffect
+from agent_server.infra.repositories.projects import MissingWorkspaceError
 from agent_server.services.repository_ports import ConnectorNotificationRepository
 
 TIMELINE_SYNC_PUSH_LIMIT = 100
@@ -97,14 +98,25 @@ class ConnectorNotificationService:
             params=params,
         ):
             return IngestEffect()
-        for handler in self._handlers:
-            effect = await handler.apply(
-                connector_id=connector_id,
-                method=method,
-                params=params,
+        try:
+            for handler in self._handlers:
+                effect = await handler.apply(
+                    connector_id=connector_id,
+                    method=method,
+                    params=params,
+                )
+                if effect is not None:
+                    return effect
+        except MissingWorkspaceError:
+            # Runtime sync can emit a lifecycle event before metadata (and its
+            # cwd) arrives.  Such a session is intentionally ignored instead
+            # of being persisted without a project.
+            logger.info(
+                "discarding connector session notification without workdir connector_id={} method={}",
+                connector_id,
+                method,
             )
-            if effect is not None:
-                return effect
+            return IngestEffect()
         return IngestEffect()
 
 
@@ -333,6 +345,8 @@ class SessionNotificationHandler:
                     last_activity_at=params.get("lastActivityAt"),
                     source_state=None,
                 )
+            except MissingWorkspaceError:
+                return IngestEffect()
             except ValueError as exc:
                 raise NotificationValidationError(
                     "session_identity_conflict",
@@ -385,13 +399,16 @@ class SessionSourceNotificationHandler:
                 runtime_id=runtime_id,
             )
         except KeyError:
-            session = await self._store.upsert_connector_session(
-                connector_id=connector_id,
-                session_id=session_id,
-                runtime=runtime,
-                runtime_id=runtime_id,
-                external_session_id=external_session_id,
-            )
+            try:
+                session = await self._store.upsert_connector_session(
+                    connector_id=connector_id,
+                    session_id=session_id,
+                    runtime=runtime,
+                    runtime_id=runtime_id,
+                    external_session_id=external_session_id,
+                )
+            except MissingWorkspaceError:
+                return IngestEffect()
         session = await self._store.update_session_source_state(
             session.id,
             **observation,
@@ -560,6 +577,8 @@ class SessionStateNotificationHandler:
                     runtime_id=runtime_id,
                     external_session_id=external_session_id,
                 )
+            except MissingWorkspaceError:
+                return IngestEffect()
             except ValueError as exc:
                 raise NotificationValidationError(
                     "session_identity_conflict",
@@ -653,6 +672,8 @@ class SessionTurnEndedNotificationHandler:
                     runtime_id=runtime_id,
                     external_session_id=external_session_id,
                 )
+            except MissingWorkspaceError:
+                return IngestEffect()
             except ValueError as exc:
                 raise NotificationValidationError(
                     "session_identity_conflict",

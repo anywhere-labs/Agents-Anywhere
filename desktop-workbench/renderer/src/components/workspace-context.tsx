@@ -282,27 +282,22 @@ function mergeProjectSessions(
   current: Record<string, SessionView[]>,
   incoming: SessionView[],
 ): Record<string, SessionView[]> {
-  if (Object.keys(current).length === 0 || incoming.length === 0) return current
-  const incomingById = new Map(incoming.map((session) => [session.id, session]))
-  let changed = false
-  const next: Record<string, SessionView[]> = {}
-
-  for (const [projectId, sessions] of Object.entries(current)) {
-    const merged = sessions
-      .map((session) => incomingById.get(session.id) ?? session)
-      .filter((session) => session.projectId === projectId && !session.archived)
-    const knownIds = new Set(merged.map((session) => session.id))
-    for (const session of incoming) {
-      if (session.projectId === projectId && !session.archived && !knownIds.has(session.id)) {
-        merged.push(session)
-      }
-    }
-    const sorted = sortSessionViews(merged)
-    next[projectId] = sorted
-    if (!sameStableValue(sessions, sorted)) changed = true
+  const mergedById = new Map<string, SessionView>()
+  for (const sessions of Object.values(current)) {
+    for (const session of sessions) mergedById.set(session.id, session)
   }
-
-  return changed ? next : current
+  for (const session of incoming) mergedById.set(session.id, session)
+  const next: Record<string, SessionView[]> = {}
+  for (const session of mergedById.values()) {
+    if (!session.projectId || session.archived) continue
+    const group = next[session.projectId] ?? []
+    group.push(session)
+    next[session.projectId] = group
+  }
+  for (const [projectId, sessions] of Object.entries(next)) {
+    next[projectId] = sortSessionViews(sessions)
+  }
+  return sameStableValue(current, next) ? current : next
 }
 
 function resolveSessionAlias(sessionId: string, aliases: Record<string, string>): string {
@@ -407,6 +402,7 @@ export type WorkspaceState = {
   // Sidebar filter/search
   filter: FilterValue
   search: string
+  sidebarShowsSessions: boolean
 
   // Panels
   panels: Record<PanelId, PanelMode>
@@ -429,6 +425,7 @@ export type WorkspaceState = {
   startProjectSession: (projectId: string) => void
   setFilter: (f: FilterValue) => void
   setSearch: (q: string) => void
+  setSidebarShowsSessions: (show: boolean) => void
   setPanelMode: (id: PanelId, mode: PanelMode) => void
   toggleCollapse: (id: PanelId) => void
   dismissPopupBlocked: () => void
@@ -441,7 +438,6 @@ export type WorkspaceState = {
   loadProjectSessions: (projectId: string) => Promise<boolean>
   createProject: (payload: ProjectCreateRequest) => Promise<ProjectView | null>
   updateProject: (projectId: string, patch: ProjectPatchRequest) => Promise<ProjectView | null>
-  removeProject: (projectId: string) => Promise<boolean>
   archiveProjectSessions: (projectId: string) => Promise<boolean>
   markSessionRead: (id: string) => void
   upsertSession: (session: RealSessionView) => void
@@ -463,6 +459,7 @@ const WorkspaceContext = React.createContext<WorkspaceState | null>(null)
 
 const FIRST_DEVICE_WIZARD_DISMISSED_KEY = "aa-first-device-wizard-dismissed-v1"
 const PANEL_MODE_STORAGE_KEY = "aa-session-runtime-panel-modes-v1"
+const SIDEBAR_SHOW_SESSIONS_STORAGE_KEY = "aa-sidebar-show-sessions-v1"
 const DEFAULT_PANEL_MODES: Record<PanelId, PanelMode> = {
   files: "docked",
   terminal: "docked",
@@ -502,6 +499,24 @@ function writeStoredPanelModes(panels: Record<PanelId, PanelMode>) {
     )
   } catch {
     // Persisting the panel preference is best-effort.
+  }
+}
+
+function readStoredSidebarShowsSessions(): boolean {
+  if (typeof window === "undefined") return false
+  try {
+    return window.localStorage.getItem(SIDEBAR_SHOW_SESSIONS_STORAGE_KEY) === "1"
+  } catch {
+    return false
+  }
+}
+
+function writeStoredSidebarShowsSessions(show: boolean) {
+  if (typeof window === "undefined") return
+  try {
+    window.localStorage.setItem(SIDEBAR_SHOW_SESSIONS_STORAGE_KEY, show ? "1" : "0")
+  } catch {
+    // Persisting the sidebar preference is best-effort.
   }
 }
 
@@ -572,6 +587,9 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
 
   const [filter, setFilter] = React.useState<FilterValue>(defaultFilter)
   const [search, setSearch] = React.useState("")
+  const [sidebarShowsSessions, setSidebarShowsSessionsState] = React.useState(
+    readStoredSidebarShowsSessions,
+  )
   const [panels, setPanels] = React.useState<Record<PanelId, PanelMode>>(readStoredPanelModes)
   const [collapsed, setCollapsed] = React.useState<Record<PanelId, boolean>>({
     files: false,
@@ -657,15 +675,17 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       if (authSession?.accessToken) {
         const [connRes, projectRes, activeRes, archivedRes] = await Promise.all([
           dashboardApi.listConnectors(authSession.accessToken),
-          dashboardApi.listProjects(authSession.accessToken).catch(() => ({
-            projects: [],
-            serverTime: new Date().toISOString(),
-          })),
+          sidebarShowsSessions
+            ? Promise.resolve({ projects: [], serverTime: new Date().toISOString() })
+            : dashboardApi.listProjects(authSession.accessToken).catch(() => ({
+                projects: [],
+                serverTime: new Date().toISOString(),
+              })),
           dashboardApi.listSessions(authSession.accessToken, { archived: false, limit: 100 }),
           dashboardApi.listSessions(authSession.accessToken, { archived: true, limit: 100 }),
         ])
         const nextConnectors = connRes.connectors.map(mapConnector)
-        const nextProjects = sortProjectViews(projectRes.projects)
+        const nextProjects = sidebarShowsSessions ? null : sortProjectViews(projectRes.projects)
         const nextSessions = sortSessions(
           [...activeRes.sessions, ...archivedRes.sessions].map(mapSession),
         )
@@ -675,7 +695,9 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
         }
         loadedBeyondFirstPageRef.current = { active: false, archived: false }
         setConnectors((current) => sameStableValue(current, nextConnectors) ? current : nextConnectors)
-        setProjects((current) => sameStableValue(current, nextProjects) ? current : nextProjects)
+        if (nextProjects) {
+          setProjects((current) => sameStableValue(current, nextProjects) ? current : nextProjects)
+        }
         setProjectSessionsById((current) => mergeProjectSessions(current, nextSessions))
         setSessions((current) => sameStableValue(current, nextSessions) ? current : nextSessions)
         setSessionPages({
@@ -701,7 +723,12 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       setIsLoading(false)
       initialLoadDoneRef.current = true
     }
-  }, [authSession?.accessToken, sortSessions])
+  }, [authSession?.accessToken, sidebarShowsSessions, sortSessions])
+
+  const setSidebarShowsSessions = React.useCallback((show: boolean) => {
+    setSidebarShowsSessionsState(show)
+    writeStoredSidebarShowsSessions(show)
+  }, [])
 
   const loadMoreSessions = React.useCallback(async () => {
     const token = authSession?.accessToken
@@ -722,6 +749,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
         incoming.forEach((session) => merged.set(session.id, session))
         return sortSessions(Array.from(merged.values()))
       })
+      setProjectSessionsById((current) => mergeProjectSessions(current, incoming))
       loadedBeyondFirstPageRef.current[pageKind] = true
       setSessionPages((current) => ({
         ...current,
@@ -757,6 +785,11 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   React.useEffect(() => {
     if (authSession?.accessToken) return
     fetchData()
+  }, [authSession?.accessToken, fetchData])
+
+  React.useEffect(() => {
+    if (!authSession?.accessToken || !initialLoadDoneRef.current) return
+    void fetchData()
   }, [authSession?.accessToken, fetchData])
 
   // ── Dashboard WebSocket ────────────────────────────────────
@@ -1092,39 +1125,11 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   const loadProjectSessions = React.useCallback(async (projectId: string): Promise<boolean> => {
-    const token = authSession?.accessToken
-    if (!token || loadingProjectSessionIdsRef.current.has(projectId)) return false
+    if (!projects.some((project) => project.id === projectId)) return false
+    setProjectSessionsById((current) => mergeProjectSessions(current, sessions))
+    return true
+  }, [projects, sessions])
 
-    loadingProjectSessionIdsRef.current.add(projectId)
-    setLoadingProjectSessionIds((current) => current.includes(projectId) ? current : [...current, projectId])
-    try {
-      const loaded = new Map<string, SessionView>()
-      let cursor: string | null = null
-      do {
-        const response = await dashboardApi.listProjectSessions(token, projectId, {
-          archived: false,
-          limit: 100,
-          cursor,
-        })
-        response.sessions.map(mapSession).forEach((session) => loaded.set(session.id, session))
-        cursor = response.hasMore ? response.nextCursor : null
-      } while (cursor)
-
-      const nextSessions = sortSessions(Array.from(loaded.values()))
-      setProjectSessionsById((current) => ({ ...current, [projectId]: nextSessions }))
-      setSessions((current) => {
-        const merged = new Map(current.map((session) => [session.id, session]))
-        nextSessions.forEach((session) => merged.set(session.id, session))
-        return sortSessions(Array.from(merged.values()))
-      })
-      return true
-    } catch {
-      return false
-    } finally {
-      loadingProjectSessionIdsRef.current.delete(projectId)
-      setLoadingProjectSessionIds((current) => current.filter((id) => id !== projectId))
-    }
-  }, [authSession?.accessToken, sortSessions])
 
   const createProject = React.useCallback(async (
     payload: ProjectCreateRequest,
@@ -1155,37 +1160,13 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     }
   }, [authSession?.accessToken, upsertProject])
 
-  const removeProject = React.useCallback(async (projectId: string): Promise<boolean> => {
-    const token = authSession?.accessToken
-    if (!token) return false
-    try {
-      await dashboardApi.deleteProject(token, projectId)
-      setProjects((current) => current.filter((project) => project.id !== projectId))
-      setProjectSessionsById((current) => {
-        if (!(projectId in current)) return current
-        const next = { ...current }
-        delete next[projectId]
-        return next
-      })
-      setSessions((current) => current.map((session) =>
-        session.projectId === projectId ? { ...session, projectId: null } : session,
-      ))
-      if (routeRef.current.page === "home" && routeRef.current.projectId === projectId) {
-        pushRoute({ page: "home" })
-      }
-      return true
-    } catch {
-      return false
-    }
-  }, [authSession?.accessToken, pushRoute])
-
   const archiveProjectSessions = React.useCallback(async (projectId: string): Promise<boolean> => {
     const token = authSession?.accessToken
     if (!token) return false
     try {
       const response = await dashboardApi.archiveProjectSessions(token, projectId, {
         archived: true,
-        scope: "active",
+        scope: "all",
       })
       const archivedSessions = response.sessions.map(mapSession)
       setSessions((current) => {
@@ -1495,6 +1476,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     settingsTab,
     filter,
     search,
+    sidebarShowsSessions,
     panels,
     collapsed,
     popupBlocked,
@@ -1515,6 +1497,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     startProjectSession,
     setFilter,
     setSearch,
+    setSidebarShowsSessions,
     setPanelMode,
     toggleCollapse,
     dismissPopupBlocked,
@@ -1527,7 +1510,6 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     loadProjectSessions,
     createProject,
     updateProject,
-    removeProject,
     archiveProjectSessions,
     markSessionRead,
     upsertSession,

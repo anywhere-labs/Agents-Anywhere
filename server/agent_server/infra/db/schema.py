@@ -370,7 +370,7 @@ sessions = Table(
         ForeignKey(
             "projects.id",
             name="fk_sessions_project_id_projects",
-            ondelete="SET NULL",
+            ondelete="RESTRICT",
         ),
     ),
     Column("runtime", Text, nullable=False),

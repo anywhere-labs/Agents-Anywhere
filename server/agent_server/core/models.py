@@ -627,7 +627,7 @@ class SessionCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     connectorId: str
-    projectId: str | None = None
+    projectId: str = Field(min_length=1)
     runtime: RuntimeName = "codex"
     runtimeId: str | None = None
     externalSessionId: str | None = None
@@ -662,7 +662,7 @@ class SessionCreateAndStartRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     connectorId: str
-    projectId: str | None = None
+    projectId: str = Field(min_length=1)
     runtime: RuntimeName = "codex"
     runtimeId: str | None = None
     title: str | None = None

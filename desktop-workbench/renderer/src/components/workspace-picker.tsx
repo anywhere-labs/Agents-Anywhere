@@ -3,7 +3,6 @@
 import * as React from "react"
 import {
   Folder,
-  FolderX,
   FolderOpen,
   ChevronDown,
   ChevronRight,
@@ -19,9 +18,6 @@ import {
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import {
@@ -230,7 +226,7 @@ export function WorkspacePicker({
 }: {
   connectorId?: string
   value?: WorkspaceSelection | null
-  onChange?: (workspace: WorkspaceSelection) => void
+  onChange?: (workspace: WorkspaceSelection | null) => void
   includeProjects?: boolean
   onCreateProject?: () => void
 } = {}) {
@@ -307,11 +303,13 @@ export function WorkspacePicker({
   const [internalWorkspace, setInternalWorkspace] = React.useState<WorkspaceEntry>(homeWorkspace)
   const [dialogOpen, setDialogOpen] = React.useState(false)
   const menuContentRef = React.useRef<HTMLDivElement | null>(null)
-  const workspaceSubTriggerRef = React.useRef<HTMLDivElement | null>(null)
-  const [workspaceSubmenuAlignOffset, setWorkspaceSubmenuAlignOffset] = React.useState(0)
   const valueBelongsToActiveConnector =
     Boolean(value?.path) && (!activeConnectorId || value?.connectorId === activeConnectorId)
-  const workspace = valueBelongsToActiveConnector ? value! : internalWorkspace
+  const workspace = includeProjects
+    ? valueBelongsToActiveConnector
+      ? value!
+      : { label: t("selectProject"), path: "", connectorId: activeConnectorId }
+    : valueBelongsToActiveConnector ? value! : internalWorkspace
 
   const updateWorkspace = React.useCallback(
     (next: WorkspaceEntry) => {
@@ -322,6 +320,7 @@ export function WorkspacePicker({
   )
 
   React.useEffect(() => {
+    if (includeProjects) return
     if (value?.connectorId && activeConnectorId && value.connectorId !== activeConnectorId) {
       setInternalWorkspace({ label: t("home"), path: "", connectorId: activeConnectorId })
     }
@@ -332,22 +331,13 @@ export function WorkspacePicker({
     } else if (activeConnectorId && value.connectorId !== activeConnectorId) {
       onChange?.(homeWorkspace)
     }
-  }, [activeConnectorId, homeWorkspace, onChange, value])
+  }, [activeConnectorId, homeWorkspace, includeProjects, onChange, value])
 
   const selectedProject = workspace.projectId
     ? projects.find((project) => project.id === workspace.projectId)
     : null
-  const isProject = Boolean(workspace.projectId)
+  const isProject = Boolean(selectedProject)
   const isHome = Boolean(!isProject && homeWorkspace.path && workspace.path === homeWorkspace.path)
-
-  const alignWorkspaceSubmenu = React.useCallback(() => {
-    const menuContent = menuContentRef.current
-    const submenuTrigger = workspaceSubTriggerRef.current
-    if (!menuContent || !submenuTrigger) return
-    setWorkspaceSubmenuAlignOffset(
-      Math.round(menuContent.getBoundingClientRect().top - submenuTrigger.getBoundingClientRect().top),
-    )
-  }, [])
 
   const workspaceMenuGroups = (
     <>
@@ -429,11 +419,15 @@ export function WorkspacePicker({
               ? <FolderOpen className="size-4 shrink-0 text-muted-foreground" />
               : <Folder className="size-4 shrink-0 text-muted-foreground" />}
             <span className="max-w-48 shrink-0 truncate font-medium">
-              {isHome ? t("home") : selectedProject?.name ?? workspace.label}
+              {isHome
+                ? t("home")
+                : selectedProject?.name ?? (includeProjects ? t("selectProject") : workspace.label)}
             </span>
-            <span className="min-w-0 flex-1 truncate code-mono text-xs text-muted-foreground">
-              {(selectedProject?.workspacePath ?? workspace.path) || t("resolvingHome")}
-            </span>
+            {(selectedProject?.workspacePath ?? workspace.path) ? (
+              <span className="min-w-0 flex-1 truncate code-mono text-xs text-muted-foreground">
+                {selectedProject?.workspacePath ?? workspace.path}
+              </span>
+            ) : null}
             {isHome && resolvingHomePath ? <Spinner className="size-3.5 shrink-0 text-muted-foreground" /> : null}
             <ChevronDown className="ml-auto size-4 shrink-0 text-muted-foreground" />
           </button>
@@ -442,6 +436,7 @@ export function WorkspacePicker({
         <DropdownMenuContent ref={menuContentRef} align="start" className="w-80">
           {includeProjects ? (
             <>
+              <DropdownMenuLabel>{t("projects")}</DropdownMenuLabel>
               <ScrollArea className="max-h-56" viewportProps={{ className: "max-h-56" }}>
                 <DropdownMenuGroup className="pr-1">
                   {availableProjects.length > 0 ? availableProjects.map((project) => (
@@ -483,36 +478,12 @@ export function WorkspacePicker({
                   <span>{t("newProject")}</span>
                 </DropdownMenuItem>
               </DropdownMenuGroup>
-
-              <DropdownMenuSeparator />
-              <DropdownMenuGroup>
-                <DropdownMenuSub onOpenChange={(open) => {
-                  if (open) alignWorkspaceSubmenu()
-                }}>
-                  <DropdownMenuSubTrigger
-                    ref={workspaceSubTriggerRef}
-                    className="gap-2.5"
-                    onFocus={alignWorkspaceSubmenu}
-                    onPointerEnter={alignWorkspaceSubmenu}
-                  >
-                    <FolderX />
-                    <span>{t("outsideProject")}</span>
-                  </DropdownMenuSubTrigger>
-                  <DropdownMenuSubContent
-                    align="start"
-                    alignOffset={workspaceSubmenuAlignOffset}
-                    className="w-80"
-                  >
-                    {workspaceMenuGroups}
-                  </DropdownMenuSubContent>
-                </DropdownMenuSub>
-              </DropdownMenuGroup>
             </>
           ) : workspaceMenuGroups}
         </DropdownMenuContent>
       </DropdownMenu>
 
-      <FileBrowserDialog
+      {!includeProjects ? <FileBrowserDialog
         open={dialogOpen}
         onOpenChange={setDialogOpen}
         connectorId={activeConnector?.id ?? ""}
@@ -526,7 +497,7 @@ export function WorkspacePicker({
           const label = parts[parts.length - 1] || path
           updateWorkspace({ label, path, connectorId: activeConnectorId })
         }}
-      />
+      /> : null}
     </>
   )
 }

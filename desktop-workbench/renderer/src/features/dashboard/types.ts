@@ -328,7 +328,7 @@ export type ProjectSessionListResponse = SessionListResponse;
 
 export type SessionCreateRequest = {
   connectorId: string;
-  projectId?: string | null;
+  projectId: string;
   runtime: string;
   runtimeId?: string;
   externalSessionId?: string | null;
@@ -339,7 +339,7 @@ export type SessionCreateRequest = {
 
 export type SessionCreateAndStartRequest = {
   connectorId: string;
-  projectId?: string | null;
+  projectId: string;
   runtime: string;
   runtimeId?: string;
   title?: string;

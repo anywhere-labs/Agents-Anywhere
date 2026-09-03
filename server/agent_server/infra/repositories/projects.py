@@ -10,6 +10,10 @@ from sqlalchemy import case
 from agent_server.infra.repositories.store_support import *
 
 
+class MissingWorkspaceError(ValueError):
+    """Raised when a connector session cannot be assigned to a workspace."""
+
+
 def _clean_workspace_path(path: str, device_os: str | None) -> tuple[str, str]:
     cleaned = path.strip()
     if not cleaned:
@@ -30,6 +34,28 @@ def _clean_workspace_path(path: str, device_os: str | None) -> tuple[str, str]:
         raise ValueError("workspacePath must be an absolute path")
     display = posixpath.normpath(cleaned)
     return display, display
+
+
+def _workspace_name(path: str, device_os: str | None) -> str:
+    """Return the final directory component used for an auto-created project."""
+    looks_windows = device_os == "windows" or (
+        len(path) >= 3 and path[1] == ":" and path[2] in ("/", "\\")
+    ) or path.startswith("\\\\")
+    name = (
+        PureWindowsPath(path).name
+        if looks_windows
+        else PurePosixPath(path).name
+    )
+    return name or "Workspace"
+
+
+def _next_project_name(base: str, existing_names: set[str]) -> str:
+    candidate = base
+    suffix = 1
+    while candidate in existing_names:
+        candidate = f"{base} ({suffix})"
+        suffix += 1
+    return candidate
 
 
 def _project_from_row(row: Any) -> ProjectView:
@@ -87,6 +113,106 @@ def _project_view_query() -> Any:
 
 
 class ProjectRepositoryMixin:
+    async def _ensure_project_for_workspace(
+        self,
+        conn: Any,
+        *,
+        connector_id: str,
+        workspace_path: str | None,
+        now: str | None = None,
+    ) -> tuple[str, str]:
+        """Find or create the project that owns a connector workspace.
+
+        The helper is intentionally transaction-friendly so session upserts can
+        assign the project and write the session in one transaction.
+        """
+        connector = (
+            await conn.execute(
+                select(
+                    connectors_t.c.user_id,
+                    connectors_t.c.device_os,
+                ).where(connectors_t.c.id == connector_id)
+            )
+        ).mappings().first()
+        if connector is None:
+            raise KeyError(connector_id)
+
+        device_os = connector["device_os"]
+        if not isinstance(workspace_path, str) or not workspace_path.strip():
+            raise MissingWorkspaceError("session workdir is required")
+        candidate_path = workspace_path.strip()
+        cleaned_path, workspace_key = _clean_workspace_path(candidate_path, device_os)
+        existing = (
+            await conn.execute(
+                select(projects_t.c.id)
+                .where(
+                    projects_t.c.user_id == connector["user_id"],
+                    projects_t.c.connector_id == connector_id,
+                    projects_t.c.workspace_key == workspace_key,
+                )
+                .order_by(projects_t.c.created_at.asc(), projects_t.c.id.asc())
+                .limit(1)
+            )
+        ).first()
+        if existing is not None:
+            return str(existing.id), cleaned_path
+
+        existing_names = {
+            str(row[0])
+            for row in (
+                await conn.execute(
+                    select(projects_t.c.name).where(
+                        projects_t.c.user_id == connector["user_id"]
+                    )
+                )
+            ).all()
+        }
+        name = _next_project_name(
+            _workspace_name(cleaned_path, device_os),
+            existing_names,
+        )
+        project_id = f"proj_{secrets.token_urlsafe(10)}"
+        timestamp = now or utc_now()
+        await conn.execute(
+            insert(projects_t).values(
+                id=project_id,
+                user_id=connector["user_id"],
+                connector_id=connector_id,
+                name=name,
+                workspace_path=cleaned_path,
+                workspace_key=workspace_key,
+                pinned=0,
+                created_at=timestamp,
+                updated_at=timestamp,
+            )
+        )
+        return project_id, cleaned_path
+
+    async def ensure_project_for_workspace(
+        self,
+        *,
+        connector_id: str,
+        workspace_path: str | None,
+        user_id: str | None = None,
+    ) -> ProjectView:
+        """Public wrapper used by migrations/tools and sync-focused callers."""
+        async with self._engine.begin() as conn:
+            connector = (
+                await conn.execute(
+                    select(connectors_t.c.user_id).where(
+                        connectors_t.c.id == connector_id
+                    )
+                )
+            ).first()
+            if connector is None or (user_id is not None and connector.user_id != user_id):
+                raise KeyError(connector_id)
+            project_id, _ = await self._ensure_project_for_workspace(
+                conn,
+                connector_id=connector_id,
+                workspace_path=workspace_path,
+            )
+        return await self.get_project(project_id, user_id=connector.user_id)
+
     async def list_projects(self, *, user_id: str) -> list[ProjectView]:
         query = (
             _project_view_query()
@@ -198,7 +324,6 @@ class ProjectRepositoryMixin:
         return await self.get_project(project_id, user_id=user_id)
 
     async def delete_project(self, project_id: str, *, user_id: str) -> int:
-        now = utc_now()
         async with self._engine.begin() as conn:
             owned = (
                 await conn.execute(
@@ -210,18 +335,27 @@ class ProjectRepositoryMixin:
             ).first()
             if owned is None:
                 raise KeyError(project_id)
-            detached_result = await conn.execute(
-                update(sessions_t)
-                .where(sessions_t.c.project_id == project_id)
-                .values(project_id=None, updated_at=now)
+            attached = int(
+                (
+                    await conn.execute(
+                        select(func.count())
+                        .select_from(sessions_t)
+                        .where(sessions_t.c.project_id == project_id)
+                    )
+                ).scalar_one()
+                or 0
             )
+            if attached:
+                raise ValueError(
+                    "project has sessions; archive or move them before deleting it"
+                )
             await conn.execute(
                 delete(projects_t).where(
                     projects_t.c.id == project_id,
                     projects_t.c.user_id == user_id,
                 )
             )
-        return int(detached_result.rowcount or 0)
+        return 0
 
     async def list_project_sessions_page(
         self,

@@ -35,7 +35,6 @@ export type ProjectListController = {
   onEdit: (project: ProjectView) => void
   onTogglePin: (project: ProjectView) => void
   onArchiveAll: (project: ProjectView) => void
-  onRemove: (project: ProjectView) => void
   onToggleSessionPin: (sessionId: string) => void
   onToggleSessionArchive: (sessionId: string) => void
   onRenameSession: (sessionId: string, title: string) => Promise<boolean>
@@ -64,7 +63,6 @@ export function ProjectList({
           onEdit={() => controller.onEdit(project)}
           onTogglePin={() => controller.onTogglePin(project)}
           onArchiveAll={() => controller.onArchiveAll(project)}
-          onRemove={() => controller.onRemove(project)}
           onToggleSessionPin={controller.onToggleSessionPin}
           onToggleSessionArchive={controller.onToggleSessionArchive}
           onRenameSession={controller.onRenameSession}
