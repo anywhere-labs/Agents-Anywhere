@@ -4,6 +4,8 @@ import * as React from "react"
 
 import { cn } from "@/lib/utils"
 
+const MARQUEE_MILLISECONDS_PER_PIXEL = 30
+
 type OverflowMarqueeProps = {
   text: string
   active: boolean
@@ -62,7 +64,7 @@ export function OverflowMarquee({
       ],
       {
         delay: 350,
-        duration: Math.min(8000, Math.max(1500, overflowDistance * 30)),
+        duration: overflowDistance * MARQUEE_MILLISECONDS_PER_PIXEL,
         easing: "linear",
         fill: "forwards",
       },

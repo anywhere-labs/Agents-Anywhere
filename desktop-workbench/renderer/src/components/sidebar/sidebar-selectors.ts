@@ -18,6 +18,16 @@ export function sortProjects(items: ProjectView[]): ProjectView[] {
   })
 }
 
+export function sortProjectsByCreatedAt(items: ProjectView[]): ProjectView[] {
+  return [...items].sort((left, right) => {
+    const createdDelta = timestamp(right.createdAt) - timestamp(left.createdAt)
+    if (createdDelta !== 0) return createdDelta
+    const nameDelta = left.name.localeCompare(right.name)
+    if (nameDelta !== 0) return nameDelta
+    return left.id.localeCompare(right.id)
+  })
+}
+
 export function sortSidebarSessions(items: WorkspaceSessionView[]): WorkspaceSessionView[] {
   return [...items].sort((left, right) => {
     if (left.pinned !== right.pinned) return left.pinned ? -1 : 1
@@ -30,7 +40,7 @@ export function selectPinnedProjects(projects: ProjectView[]): ProjectView[] {
 }
 
 export function selectRegularProjects(projects: ProjectView[]): ProjectView[] {
-  return sortProjects(projects.filter((project) => !project.pinned))
+  return sortProjectsByCreatedAt(projects.filter((project) => !project.pinned))
 }
 
 export function selectPinnedSessions(
