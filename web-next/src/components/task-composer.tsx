@@ -62,6 +62,7 @@ import {
   runtimeTypeName,
   sessionRuntimeRequestIdentity,
 } from "@/features/dashboard/runtime-instances"
+import { watchNewSessionRuntimeInventory } from "@/features/dashboard/new-session-runtime-inventory"
 
 const NEW_SESSION_PREFERENCE_KEY = "aa-new-session-preference-v1"
 const TITLE_WRITE_MS = 58
@@ -168,6 +169,8 @@ export function TaskComposer() {
 
   const [runtimeInventory, setRuntimeInventory] = React.useState<Record<string, DeviceRuntimeView[]>>({})
   const [runtimeInventoryLoading, setRuntimeInventoryLoading] = React.useState(true)
+  const runtimeInventoryRef = React.useRef(runtimeInventory)
+  runtimeInventoryRef.current = runtimeInventory
   const onlineConnectorKey = React.useMemo(
     () => connectors
       .filter((connector) => connector.status === "online")
@@ -189,25 +192,28 @@ export function TaskComposer() {
       setRuntimeInventoryLoading(false)
       return
     }
-    let cancelled = false
-    setRuntimeInventoryLoading(true)
-    Promise.allSettled(
-      online.map(async (connector) => ({
-        connectorId: connector.id,
-        response: await dashboardApi.getConnectorRuntimes(authSession.accessToken, connector.id),
-      })),
-    ).then((results) => {
-      if (cancelled) return
-      const next: Record<string, DeviceRuntimeView[]> = {}
-      for (const result of results) {
-        if (result.status === "fulfilled") next[result.value.connectorId] = result.value.response.runtimes
-      }
-      setRuntimeInventory((current) => sameRuntimeInventory(current, next) ? current : next)
-      setRuntimeInventoryLoading(false)
+    const onlineIds = new Set(online.map((connector) => connector.id))
+    const retainedInventory = Object.fromEntries(
+      Object.entries(runtimeInventoryRef.current).filter(([connectorId]) => onlineIds.has(connectorId)),
+    )
+    setRuntimeInventory((current) => sameRuntimeInventory(current, retainedInventory) ? current : retainedInventory)
+    setRuntimeInventoryLoading(
+      !online.some((connector) => activeRuntimes(retainedInventory[connector.id]).length > 0),
+    )
+
+    return watchNewSessionRuntimeInventory({
+      connectorIds: online.map((connector) => connector.id),
+      load: async (connectorId) => (
+        await dashboardApi.getConnectorRuntimes(authSession.accessToken, connectorId)
+      ).runtimes,
+      onUpdate: (connectorId, runtimes) => {
+        setRuntimeInventory((current) => {
+          const next = { ...current, [connectorId]: runtimes }
+          return sameRuntimeInventory(current, next) ? current : next
+        })
+      },
+      onInitialSettled: () => setRuntimeInventoryLoading(false),
     })
-    return () => {
-      cancelled = true
-    }
   }, [authSession?.accessToken, onlineConnectorKey])
 
   // New sessions can only target runtimes that the Server has activated and the Connector reports as running.
