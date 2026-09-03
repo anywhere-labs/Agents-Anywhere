@@ -76,10 +76,12 @@ function hashToScreen(hash: string): AuthScreen {
     path === "" ||
     path === "app" ||
     path.startsWith("session/") ||
+    path.startsWith("new-session/") ||
     path.startsWith("settings") ||
     path === "dashboard" ||
     path === "team" ||
     path === "service" ||
+    path === "mobile-connections" ||
     path.startsWith("device")
 
   if (isAppRoute) return "app"
