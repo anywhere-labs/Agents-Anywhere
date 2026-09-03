@@ -41,6 +41,7 @@ import { useWorkspace } from "@/components/workspace-context"
 import { dashboardApi } from "@/features/dashboard/api"
 import { useDesktopConnector } from "@/features/desktop/desktop-connector-context"
 import type { ProjectView } from "@/features/dashboard/types"
+import { useMobileConnectionsSidebarVisibility } from "@/features/mobile-connections/sidebar-visibility"
 import { useTranslations } from "next-intl"
 
 export function AppSidebar({ contained = false }: { contained?: boolean }) {
@@ -75,6 +76,7 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
   } = useWorkspace()
   const { signOut, me, session: authSession } = useAuth()
   const { isLocalConnector } = useDesktopConnector()
+  const [mobileConnectionsSidebarVisible] = useMobileConnectionsSidebarVisibility()
   const t = useTranslations("dashboard")
   const [pairOpen, setPairOpen] = React.useState(false)
   const [projectsExpanded, setProjectsExpanded] = React.useState(true)
@@ -215,22 +217,24 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
       </SidebarHeader>
 
       <SidebarContent className="px-2">
-        <SidebarGroup className="pb-0 pt-0">
-          <SidebarGroupContent>
-            <SidebarMenu>
-              <SidebarMenuItem>
-                <SidebarMenuButton
-                  className="h-9 font-medium"
-                  isActive={page === "mobile-connections"}
-                  onClick={() => navigate("mobile-connections")}
-                >
-                  <Smartphone />
-                  <span>{t("actions.mobileConnections")}</span>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
+        {mobileConnectionsSidebarVisible ? (
+          <SidebarGroup className="pb-0 pt-0">
+            <SidebarGroupContent>
+              <SidebarMenu>
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    className="h-9 font-medium"
+                    isActive={page === "mobile-connections"}
+                    onClick={() => navigate("mobile-connections")}
+                  >
+                    <Smartphone />
+                    <span>{t("actions.mobileConnections")}</span>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        ) : null}
 
         <DevicesSection
           connectors={connectors}

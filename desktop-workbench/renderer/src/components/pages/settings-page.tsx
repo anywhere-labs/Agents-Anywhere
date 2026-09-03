@@ -15,6 +15,7 @@ import {
   Rocket,
   RotateCw,
   Settings,
+  Smartphone,
   Sun,
   Trash2,
   Upload,
@@ -26,6 +27,13 @@ import { toast } from "sonner"
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -73,7 +81,7 @@ import { Separator } from "@/components/ui/separator"
 import { Slider } from "@/components/ui/slider"
 import { Spinner } from "@/components/ui/spinner"
 import { Switch } from "@/components/ui/switch"
-import { MobileSignInPanel } from "@/components/pages/mobile-signin-panel"
+import { MobileConnectionOnboarding } from "@/components/pages/mobile-signin-panel"
 import { ArchivedSessionsTab } from "@/components/settings/archived-sessions-tab"
 import { DashboardSidebarToggle } from "@/components/dashboard-sidebar-toggle"
 import { useAuth } from "@/components/auth/auth-context"
@@ -87,10 +95,25 @@ import {
   getDesktopWorkbenchBridge,
   type DesktopConnectorLog,
 } from "@/features/desktop/bridge"
+import { useMobileConnectionsSidebarVisibility } from "@/features/mobile-connections/sidebar-visibility"
 import { cn } from "@/lib/utils"
 
-type SettingsTab = "account" | "desktop" | "startup" | "logs" | "appearance" | "archived-sessions"
-type SettingsLabelKey = "account" | "desktop" | "startup" | "logs" | "appearance" | "archivedSessions"
+type SettingsTab =
+  | "account"
+  | "mobile-connections"
+  | "desktop"
+  | "startup"
+  | "logs"
+  | "appearance"
+  | "archived-sessions"
+type SettingsLabelKey =
+  | "account"
+  | "mobileConnections"
+  | "desktop"
+  | "startup"
+  | "logs"
+  | "appearance"
+  | "archivedSessions"
 type AppearanceMode = "light" | "dark" | "auto"
 
 const AVATAR_OUTPUT_SIZE = 256
@@ -102,6 +125,7 @@ const navItems: {
   icon: typeof User
 }[] = [
   { id: "account", labelKey: "account", icon: User },
+  { id: "mobile-connections", labelKey: "mobileConnections", icon: Smartphone },
   { id: "desktop", labelKey: "desktop", icon: Laptop },
   { id: "startup", labelKey: "startup", icon: Rocket },
   { id: "logs", labelKey: "logs", icon: Logs },
@@ -218,8 +242,6 @@ function AccountTab({
         </div>
       </section>
 
-      <MobileSignInPanel token={token} userId={userId} />
-
       <ResetPasswordDialog open={passwordOpen} token={token} onOpenChange={setPasswordOpen} />
       <AvatarCropDialog
         open={avatarOpen}
@@ -228,6 +250,41 @@ function AccountTab({
         onMeChange={onMeChange}
         onOpenChange={setAvatarOpen}
       />
+    </div>
+  )
+}
+
+function MobileConnectionsTab({ token, userId }: { token: string; userId: string }) {
+  const t = useTranslations("pages.settings")
+  const [sidebarVisible, setSidebarVisible] = useMobileConnectionsSidebarVisibility()
+
+  return (
+    <div className="flex max-w-3xl flex-col gap-4">
+      <Card>
+        <CardHeader className="border-b">
+          <CardTitle>{t("mobileSidebarTitle")}</CardTitle>
+          <CardDescription>{t("mobileSidebarDescription")}</CardDescription>
+        </CardHeader>
+        <CardContent className="px-0">
+          <FieldGroup className="gap-0">
+            <Field orientation="horizontal" className="px-6 py-1">
+              <FieldContent>
+                <FieldLabel htmlFor="mobile-connections-sidebar-visible">
+                  {t("mobileSidebarShow")}
+                </FieldLabel>
+                <FieldDescription>{t("mobileSidebarShowDescription")}</FieldDescription>
+              </FieldContent>
+              <Switch
+                id="mobile-connections-sidebar-visible"
+                checked={sidebarVisible}
+                onCheckedChange={setSidebarVisible}
+              />
+            </Field>
+          </FieldGroup>
+        </CardContent>
+      </Card>
+
+      <MobileConnectionOnboarding token={token} userId={userId} />
     </div>
   )
 }
@@ -1478,6 +1535,12 @@ export function SettingsPage() {
                 {t("unavailable")}
               </div>
             )
+          )}
+          {tab === "mobile-connections" && (
+            <MobileConnectionsTab
+              token={session?.accessToken ?? ""}
+              userId={session?.userId ?? ""}
+            />
           )}
           {tab === "desktop" && <DesktopTab />}
           {tab === "startup" && <StartupTab />}
