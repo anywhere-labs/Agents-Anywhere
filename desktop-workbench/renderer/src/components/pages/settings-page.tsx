@@ -100,14 +100,13 @@ const navItems: {
   id: SettingsTab
   labelKey: SettingsLabelKey
   icon: typeof User
-  sectionStart?: boolean
 }[] = [
   { id: "account", labelKey: "account", icon: User },
   { id: "desktop", labelKey: "desktop", icon: Laptop },
   { id: "startup", labelKey: "startup", icon: Rocket },
   { id: "logs", labelKey: "logs", icon: Logs },
   { id: "appearance", labelKey: "appearance", icon: Sun },
-  { id: "archived-sessions", labelKey: "archivedSessions", icon: Archive, sectionStart: true },
+  { id: "archived-sessions", labelKey: "archivedSessions", icon: Archive },
 ]
 
 const SYNC_INTERVAL_OPTIONS = [15, 30, 60, 300] as const
@@ -1430,7 +1429,6 @@ export function SettingsPage() {
                 onClick={() => handleTabChange(item.id)}
                 className={cn(
                   "flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm transition-colors",
-                  item.sectionStart && "mt-4",
                   tab === item.id
                     ? "bg-sidebar-accent text-foreground"
                     : "text-muted-foreground hover:bg-sidebar-accent/50 hover:text-foreground",
@@ -1519,7 +1517,6 @@ function SettingsCategoryDrawer({
                 }}
                 className={cn(
                   "flex w-full items-center gap-3 rounded-xl px-4 py-3 text-left text-sm transition-colors",
-                  item.sectionStart && "mt-3",
                   tab === item.id
                     ? "bg-accent text-foreground"
                     : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
