@@ -118,6 +118,8 @@ import {
   WorkspacePicker,
   type WorkspaceSelection,
 } from "@/components/workspace-picker"
+import { PairDeviceDialog } from "@/components/pair-device-dialog"
+import { useDesktopConnector } from "@/features/desktop/desktop-connector-context"
 import { useTranslations } from "next-intl"
 
 type ProjectEditorState =
@@ -159,12 +161,14 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
     hasMoreSessions,
     isLoadingMoreSessions,
     activeSessionId,
+    activeConnectorId,
     page,
     filter,
     search,
     openSession,
     goHome,
     navigate,
+    navigateToDevice,
     startProjectSession,
     loadProjectSessions,
     createProject,
@@ -178,9 +182,11 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
     loadMoreSessions,
   } = useWorkspace()
   const { signOut, me, session: authSession } = useAuth()
+  const { isLocalConnector } = useDesktopConnector()
   const t = useTranslations("dashboard")
   const tCommon = useTranslations("common")
   const [signOutOpen, setSignOutOpen] = React.useState(false)
+  const [pairOpen, setPairOpen] = React.useState(false)
   const [projectsExpanded, setProjectsExpanded] = React.useState(true)
   const [expandedProjectIds, setExpandedProjectIds] = React.useState<string[]>([])
   const [projectEditor, setProjectEditor] = React.useState<ProjectEditorState>(null)
@@ -195,6 +201,12 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
   const pinnedProjects = React.useMemo(
     () => sortProjects(projects.filter((project) => project.pinned)),
     [projects],
+  )
+  const pinnedSessions = React.useMemo(
+    () => sortSidebarSessions(
+      sessions.filter((session) => session.pinned && !session.archived),
+    ),
+    [sessions],
   )
   const regularProjects = React.useMemo(
     () => sortProjects(projects.filter((project) => !project.pinned)),
@@ -229,7 +241,7 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
         sessions.filter((session) => !session.projectId),
         filter,
         search,
-      ) as WorkspaceSessionView[],
+      ).filter((session) => session.archived || !session.pinned) as WorkspaceSessionView[],
     ),
     [filter, search, sessions],
   )
@@ -280,28 +292,71 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
               <span>{t("actions.newSession")}</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
-          <SidebarMenuItem>
-            <SidebarMenuButton
-              className="h-10 font-medium"
-              isActive={page === "mobile-connections"}
-              onClick={() => navigate("mobile-connections")}
-            >
-              <Smartphone />
-              <span>{t("actions.mobileConnections")}</span>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
         </SidebarMenu>
       </SidebarHeader>
 
       <SidebarContent className="px-2">
-        {!isLoading && pinnedProjects.length > 0 ? (
+        <SidebarGroup className="pb-0 pt-0">
+          <SidebarGroupContent>
+            <SidebarMenu>
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  className="h-10 font-medium"
+                  isActive={page === "mobile-connections"}
+                  onClick={() => navigate("mobile-connections")}
+                >
+                  <Smartphone />
+                  <span>{t("actions.mobileConnections")}</span>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+
+        <SidebarGroup>
+          <SidebarGroupLabel className="flex items-center justify-between pr-1" role="heading" aria-level={2}>
+            <span>{t("sections.devices")}</span>
+            <button
+              type="button"
+              aria-label={t("actions.pairDevice")}
+              onClick={() => setPairOpen(true)}
+              className="rounded p-0.5 text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+            >
+              <Plus className="size-3.5" />
+            </button>
+          </SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {isLoading ? (
+                <SidebarLoadingItem label={t("status.loadingDevices")} />
+              ) : connectors.length === 0 ? (
+                <p className="px-3 py-2 text-xs text-muted-foreground">{t("empty.noDevicesShort")}</p>
+              ) : (
+                connectors.map((connector) => (
+                  <DeviceSidebarItem
+                    key={connector.id}
+                    connector={connector}
+                    isLocal={isLocalConnector(connector.id)}
+                    isActive={
+                      (page === "device" || page === "device-workspace") &&
+                      activeConnectorId === connector.id
+                    }
+                    onOpen={() => navigateToDevice(connector.id)}
+                  />
+                ))
+              )}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+
+        {!isLoading && (pinnedProjects.length > 0 || pinnedSessions.length > 0) ? (
           <SidebarGroup>
             <SidebarGroupLabel role="heading" aria-level={2}>{t("sections.pinned")}</SidebarGroupLabel>
             <SidebarGroupContent>
               <SidebarMenu>
                 {pinnedProjects.map((project) => (
                   <ProjectSidebarItem
-                    key={project.id}
+                    key={`project-${project.id}`}
                     project={project}
                     sessions={sessionsForProject(project.id)}
                     expanded={expandedProjectIds.includes(project.id)}
@@ -317,6 +372,17 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
                     onToggleSessionPin={togglePinSession}
                     onToggleSessionArchive={toggleArchiveSession}
                     onRenameSession={renameSession}
+                  />
+                ))}
+                {pinnedSessions.map((item) => (
+                  <SessionSidebarItem
+                    key={`session-${item.id}`}
+                    item={item}
+                    isActive={page === "session" && activeSessionId === item.id}
+                    onOpen={() => openSession(item.id)}
+                    onTogglePin={() => togglePinSession(item.id)}
+                    onToggleArchive={() => toggleArchiveSession(item.id)}
+                    onRename={(title) => renameSession(item.id, title)}
                   />
                 ))}
               </SidebarMenu>
@@ -486,6 +552,14 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
           </DropdownMenuContent>
         </DropdownMenu>
       </SidebarFooter>
+
+      <PairDeviceDialog
+        open={pairOpen}
+        onOpenChange={setPairOpen}
+        onConnectorCreated={() => {
+          refreshData()
+        }}
+      />
 
       <ProjectEditorDialog
         editor={projectEditor}
@@ -1203,6 +1277,75 @@ function SessionSidebarIndicator({
     )
   }
   return null
+}
+
+function DeviceSidebarItem({
+  connector,
+  isLocal,
+  isActive,
+  onOpen,
+}: {
+  connector: { id: string; name: string; status: string }
+  isLocal: boolean
+  isActive: boolean
+  onOpen: () => void
+}) {
+  const t = useTranslations("dashboard")
+  const tCommon = useTranslations("common")
+
+  const copyDeviceId = async () => {
+    try {
+      await copyText(connector.id)
+      toast.success(t("actions.copiedDeviceId"))
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : t("actions.copyFailed"))
+    }
+  }
+
+  return (
+    <ContextMenu>
+      <SidebarMenuItem>
+        <ContextMenuTrigger asChild>
+          <div>
+            <SidebarMenuButton
+              className="code-mono text-[13px]"
+              isActive={isActive}
+              onClick={onOpen}
+            >
+              <span
+                className={cn(
+                  "size-1.5 rounded-full",
+                  connector.status === "online" ? "bg-emerald-500" : "bg-muted-foreground/40",
+                )}
+              />
+              <span
+                className={cn(
+                  "flex min-w-0 flex-1",
+                  connector.status === "offline" && "text-muted-foreground",
+                )}
+              >
+                <span className="min-w-0 truncate">{connector.name}</span>
+                {isLocal ? (
+                  <span className="shrink-0">{tCommon("localDeviceSuffix")}</span>
+                ) : null}
+              </span>
+            </SidebarMenuButton>
+          </div>
+        </ContextMenuTrigger>
+      </SidebarMenuItem>
+      <ContextMenuContent className="w-52">
+        <ContextMenuItem onSelect={onOpen}>
+          <FolderOpen className="size-4" />
+          {t("actions.open")}
+        </ContextMenuItem>
+        <ContextMenuSeparator />
+        <ContextMenuItem onSelect={() => void copyDeviceId()}>
+          <Copy className="size-4" />
+          {t("actions.copyDeviceId")}
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
+  )
 }
 
 function SidebarLoadingItem({ label }: { label: string }) {
