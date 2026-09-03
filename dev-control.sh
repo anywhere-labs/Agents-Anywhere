@@ -21,6 +21,7 @@ fi
 
 readonly SERVER_PORT=8000
 readonly WEB_PORT=5174
+readonly DESKTOP_PORT=5184
 readonly POSTGRES_PORT=55432
 readonly REDIS_PORT=56379
 readonly CONTROL_PORT=8765
@@ -28,7 +29,7 @@ readonly CONTROL_URL="http://127.0.0.1:${CONTROL_PORT}"
 
 # Keep every entry point on the same port contract even if .env.local contains
 # values from an older checkout.
-export SERVER_PORT WEB_PORT
+export SERVER_PORT WEB_PORT DESKTOP_PORT
 export AGENTS_ANYWHERE_POSTGRES_PORT="${POSTGRES_PORT}"
 export AGENTS_ANYWHERE_REDIS_PORT="${REDIS_PORT}"
 
@@ -41,13 +42,14 @@ Usage:
   ./dev-control.sh stop
   ./dev-control.sh bootstrap
   ./dev-control.sh status
-  ./dev-control.sh restart server|web|connector|all
+  ./dev-control.sh restart server|web|desktop|connector|all
   ./dev-control.sh down
   ./dev-control.sh serve
 
 start/stop manage the localhost Dev Control page on port 8765; start also opens
 it in the system browser. bootstrap starts PostgreSQL, Redis, Server and Web.
-down stops all local services and containers.
+Desktop is started on demand with an explicit local Server address. down stops
+all local services and containers.
 EOF
 }
 
@@ -153,7 +155,12 @@ down_stack() {
     "${PYTHON}" -m devtools.control stop all || true
   fi
   stop_control
-  for session in aa-dev-server aa-dev-web aa-dev-connector aa-source-connector; do
+  for session in \
+    aa-dev-server \
+    aa-dev-web \
+    aa-desktop-workbench \
+    aa-dev-connector \
+    aa-source-connector; do
     if session_exists "${session}"; then
       screen -S "${session}" -X quit >/dev/null 2>&1 || true
     fi
@@ -184,9 +191,10 @@ case "${1:-start}" in
     exec "${PYTHON}" -m devtools.control status
     ;;
   restart)
-    [[ $# -eq 2 ]] || fail "usage: ./dev-control.sh restart server|web|connector|all"
+    [[ $# -eq 2 ]] || \
+      fail "usage: ./dev-control.sh restart server|web|desktop|connector|all"
     case "$2" in
-      server|web|connector|all) ;;
+      server|web|desktop|connector|all) ;;
       *) fail "unsupported restart target: $2" ;;
     esac
     require_python

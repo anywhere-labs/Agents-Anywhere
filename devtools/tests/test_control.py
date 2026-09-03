@@ -31,7 +31,13 @@ def control_server(
     monkeypatch.setattr(
         control,
         "status_payload",
-        lambda: {"server": True, "web": True, "connector": True, "legacy": False},
+        lambda: {
+            "server": True,
+            "web": True,
+            "desktop": True,
+            "connector": True,
+            "legacy": False,
+        },
     )
     server = control.ThreadingHTTPServer(("127.0.0.1", 0), control.DevControlHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -137,11 +143,14 @@ def test_status_payload_exposes_android_oauth_login_url(
     monkeypatch.setattr(control, "_health_ok", lambda: True)
     monkeypatch.setattr(control, "port_open", lambda _port: True)
     monkeypatch.setattr(control, "connector_process_running", lambda: False)
+    monkeypatch.setattr(control, "desktop_process_running", lambda: True)
 
     payload = control.status_payload()
 
     assert payload["androidOauthLoginUrl"] == "http://192.168.1.42:5174"
     assert payload["serverUrl"] == "http://127.0.0.1:8000"
+    assert payload["desktop"] is True
+    assert payload["desktopBackendUrl"] == "http://127.0.0.1:8000/api/v2"
 
 
 def test_discover_lan_ipv4_uses_macos_default_interface(
@@ -168,6 +177,78 @@ def test_control_page_explains_android_oauth_login_address() -> None:
 
     assert "Android OAuth 登录地址" in page
     assert "这不是后端 API 地址" in page
+
+
+def test_control_page_exposes_desktop_restart_and_local_backend() -> None:
+    page = control.HTML_FILE.read_text(encoding="utf-8")
+
+    assert 'data-target="desktop"' in page
+    assert "Desktop · 5184" in page
+    assert "http://127.0.0.1:8000/api/v2" in page
+
+
+def test_start_desktop_pins_local_backend_and_renderer_port(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(control, "_health_ok", lambda: True)
+    monkeypatch.setattr(control, "port_open", lambda _port: False)
+    monkeypatch.setattr(control, "_desktop_process_pids", set)
+    monkeypatch.setattr(control, "_wait_until", lambda *_args, **_kwargs: None)
+
+    def capture_start_screen(
+        name: str,
+        *,
+        cwd: Path,
+        command: list[str],
+        log_name: str,
+    ) -> None:
+        captured.update(
+            name=name,
+            cwd=cwd,
+            command=command,
+            log_name=log_name,
+        )
+
+    monkeypatch.setattr(control, "start_screen", capture_start_screen)
+
+    control.start_desktop()
+
+    assert captured["name"] == control.DESKTOP_SESSION
+    assert captured["cwd"] == control.DESKTOP_DIR
+    assert captured["log_name"] == "desktop.log"
+    assert captured["command"] == [
+        "env",
+        "WORKBENCH_API_ORIGIN=http://127.0.0.1:8000",
+        "AGENTS_ANYWHERE_API=http://127.0.0.1:8000",
+        "WORKBENCH_API_NAMESPACE=/api/v2",
+        "AGENTS_ANYWHERE_API_NAMESPACE=/api/v2",
+        "WORKBENCH_WEB_PORT=5184",
+        "corepack",
+        "yarn",
+        "dev",
+    ]
+
+
+def test_perform_restart_dispatches_desktop(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+    monkeypatch.setattr(
+        control,
+        "restart_desktop",
+        lambda: calls.append("desktop"),
+    )
+
+    control.perform_restart("desktop")
+
+    assert calls == ["desktop"]
+
+
+def test_server_environment_allows_desktop_renderer_origin() -> None:
+    origins = control._server_environment()["AGENT_SERVER_CORS_ORIGINS"].split(",")
+
+    assert "http://127.0.0.1:5184" in origins
+    assert "http://localhost:5184" in origins
 
 
 def test_ensure_split_layout_recovers_orphaned_legacy_processes(
@@ -261,3 +342,24 @@ def test_stop_connector_cleans_orphaned_owned_process_group(
     control.stop_connector()
 
     assert terminated == [({101}, "Connector")]
+
+
+def test_stop_desktop_cleans_orphaned_owned_process_group(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    process_state = {200, 201}
+    terminated: list[tuple[set[int], str]] = []
+
+    monkeypatch.setattr(control, "stop_screen", lambda _name: None)
+    monkeypatch.setattr(control, "_desktop_process_pids", lambda: set(process_state))
+    monkeypatch.setattr(control, "port_open", lambda _port: False)
+
+    def terminate(pids: set[int], *, name: str) -> None:
+        terminated.append((pids, name))
+        process_state.clear()
+
+    monkeypatch.setattr(control, "_terminate_process_groups", terminate)
+
+    control.stop_desktop()
+
+    assert terminated == [({200, 201}, "Desktop")]

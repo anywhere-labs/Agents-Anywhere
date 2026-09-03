@@ -28,6 +28,7 @@
       section { border-top: 1px solid #292c31; }
       .service { display: grid; grid-template-columns: 1fr auto; align-items: center; min-height: 72px; border-bottom: 1px solid #292c31; }
       .service-name { display: flex; align-items: center; gap: 10px; font-weight: 600; }
+      .service-detail { margin: 6px 0 0 18px; color: #8f949d; font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; }
       .dot { width: 8px; height: 8px; border-radius: 50%; background: #62666e; box-shadow: 0 0 0 3px #17191d; }
       .dot.online { background: #22c993; }
       .dot.offline { background: #ef5b63; }
@@ -86,6 +87,13 @@
           <div class="state" data-state="web">检查中</div>
         </div>
         <div class="service">
+          <div>
+            <div class="service-name"><span class="dot" data-dot="desktop"></span>Desktop · 5184</div>
+            <div class="service-detail" id="desktop-backend">后端 http://127.0.0.1:8000/api/v2</div>
+          </div>
+          <div class="state" data-state="desktop">检查中</div>
+        </div>
+        <div class="service">
           <div class="service-name"><span class="dot" data-dot="connector"></span>Connector</div>
           <div class="state" data-state="connector">检查中</div>
         </div>
@@ -104,6 +112,7 @@
         <textarea id="credential" autocomplete="off" spellcheck="false" placeholder="粘贴从 Agents Anywhere 复制的 Connector 凭据；重启已有 Connector 时可留空"></textarea>
         <div class="actions">
           <button type="button" data-target="server">↻ 重启后端</button>
+          <button type="button" data-target="desktop">↻ 启动 / 重启 Desktop</button>
           <button type="button" class="primary" data-target="connector">↻ 启动 / 重启 Connector</button>
         </div>
         <div class="message" id="message" aria-live="polite">就绪</div>
@@ -116,6 +125,7 @@
       const message = document.querySelector("#message");
       const webEntry = document.querySelector("#web-entry");
       const webEntryUrl = document.querySelector("#web-entry-url");
+      const desktopBackend = document.querySelector("#desktop-backend");
       const androidOauthUrl = document.querySelector("#android-oauth-url");
       const copyAndroidOauth = document.querySelector("#copy-android-oauth");
 
@@ -123,6 +133,9 @@
         if (status.webUrl) {
           webEntry.href = status.webUrl;
           webEntryUrl.textContent = `${status.webUrl} ↗`;
+        }
+        if (status.desktopBackendUrl) {
+          desktopBackend.textContent = `后端 ${status.desktopBackendUrl}`;
         }
         if (status.androidOauthLoginUrl) {
           androidOauthUrl.textContent = status.androidOauthLoginUrl;
@@ -133,7 +146,7 @@
           copyAndroidOauth.disabled = true;
           delete copyAndroidOauth.dataset.url;
         }
-        for (const name of ["server", "web", "connector", "postgres", "redis"]) {
+        for (const name of ["server", "web", "desktop", "connector", "postgres", "redis"]) {
           const online = Boolean(status[name]);
           const dot = document.querySelector(`[data-dot="${name}"]`);
           const label = document.querySelector(`[data-state="${name}"]`);
@@ -147,7 +160,7 @@
           const response = await fetch("/api/status", { cache: "no-store" });
           renderStatus(await response.json());
         } catch {
-          for (const name of ["server", "web", "connector", "postgres", "redis"]) {
+          for (const name of ["server", "web", "desktop", "connector", "postgres", "redis"]) {
             document.querySelector(`[data-dot="${name}"]`).className = "dot offline";
             document.querySelector(`[data-state="${name}"]`).textContent = "不可达";
           }
@@ -157,14 +170,19 @@
       async function restart(target) {
         buttons.forEach((button) => { button.disabled = true; });
         message.className = "message";
-        message.textContent = target === "server" ? "正在重启后端…" : "正在启动 Connector…";
+        const progressMessages = {
+          server: "正在重启后端…",
+          desktop: `正在启动 Desktop；后端固定为 ${desktopBackend.textContent.replace("后端 ", "")}…`,
+          connector: "正在启动 Connector…",
+        };
+        message.textContent = progressMessages[target] || "正在重启服务…";
         try {
           const response = await fetch("/api/restart", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               target,
-              credential: target === "server" ? null : credential.value.trim() || null,
+              credential: target === "connector" ? credential.value.trim() || null : null,
             }),
           });
           const result = await response.json();
