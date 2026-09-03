@@ -2,25 +2,17 @@
 
 import * as React from "react"
 import {
-  Archive,
   CheckCheck,
   ChevronDown,
   ChevronRight,
-  Copy,
-  Folder,
-  FolderOpen,
   LayoutDashboard,
   LogOut,
-  MoreHorizontal,
-  Pencil,
-  Pin,
   Plus,
   Search,
   Server,
   Settings,
   Smartphone,
   SquarePen,
-  Trash2,
   Users,
 } from "lucide-react"
 import { toast } from "sonner"
@@ -40,18 +32,10 @@ import {
 import {
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import {
-  ContextMenu,
-  ContextMenuContent,
-  ContextMenuItem,
-  ContextMenuSeparator,
-  ContextMenuTrigger,
-} from "@/components/ui/context-menu"
 import {
   Dialog,
   DialogContent,
@@ -73,82 +57,34 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible"
-import {
-  Field,
-  FieldDescription,
-  FieldGroup,
-  FieldLabel,
-} from "@/components/ui/field"
-import { Input } from "@/components/ui/input"
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
-import { Spinner } from "@/components/ui/spinner"
-import {
   Tooltip,
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-import { copyText } from "@/lib/clipboard"
-import { cn } from "@/lib/utils"
-import { filterSessions } from "@/lib/demo-api"
-import {
-  useWorkspace,
-  type WorkspaceSessionView,
-} from "@/components/workspace-context"
+import { useWorkspace } from "@/components/workspace-context"
 import { SessionFilterMenu } from "@/components/session-filter-menu"
 import { useAuth } from "@/components/auth/auth-context"
 import { dashboardApi } from "@/features/dashboard/api"
-import type {
-  ProjectCreateRequest,
-  ProjectPatchRequest,
-  ProjectView,
-} from "@/features/dashboard/types"
-import {
-  WorkspacePicker,
-  type WorkspaceSelection,
-} from "@/components/workspace-picker"
+import type { ProjectView } from "@/features/dashboard/types"
 import { PairDeviceDialog } from "@/components/pair-device-dialog"
+import { DeviceSidebarItem } from "@/components/sidebar/device-sidebar-item"
+import {
+  ProjectEditorDialog,
+  type ProjectEditorState,
+} from "@/components/sidebar/project-editor-dialog"
+import { ProjectSidebarItem } from "@/components/sidebar/project-sidebar-item"
+import {
+  selectPinnedProjects,
+  selectPinnedSessions,
+  selectProjectSessions,
+  selectRecentSessions,
+  selectRegularProjects,
+} from "@/components/sidebar/sidebar-selectors"
+import { SessionPageTrigger, SessionSidebarItem } from "@/components/sidebar/session-sidebar-item"
+import { SidebarLoadingItem } from "@/components/sidebar/sidebar-loading-item"
 import { useDesktopConnector } from "@/features/desktop/desktop-connector-context"
 import { useTranslations } from "next-intl"
-
-type ProjectEditorState =
-  | { mode: "create" }
-  | { mode: "edit"; project: ProjectView }
-  | null
-
-function timestamp(value: string | null | undefined): number {
-  if (!value) return 0
-  const parsed = Date.parse(value)
-  return Number.isNaN(parsed) ? 0 : parsed
-}
-
-function sortProjects(items: ProjectView[]): ProjectView[] {
-  return [...items].sort((left, right) => {
-    const pinnedDelta = timestamp(right.pinnedAt) - timestamp(left.pinnedAt)
-    if (pinnedDelta !== 0) return pinnedDelta
-    const activityDelta = timestamp(right.lastActivityAt) - timestamp(left.lastActivityAt)
-    if (activityDelta !== 0) return activityDelta
-    return left.name.localeCompare(right.name)
-  })
-}
-
-function sortSidebarSessions(items: WorkspaceSessionView[]): WorkspaceSessionView[] {
-  return [...items].sort((left, right) => {
-    if (left.pinned !== right.pinned) return left.pinned ? -1 : 1
-    return timestamp(right.sortAt ?? right.updatedAt) - timestamp(left.sortAt ?? left.updatedAt)
-  })
-}
 
 export function AppSidebar({ contained = false }: { contained?: boolean }) {
   const {
@@ -199,17 +135,15 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
   const isAdmin = me?.role === "admin"
 
   const pinnedProjects = React.useMemo(
-    () => sortProjects(projects.filter((project) => project.pinned)),
+    () => selectPinnedProjects(projects),
     [projects],
   )
   const pinnedSessions = React.useMemo(
-    () => sortSidebarSessions(
-      sessions.filter((session) => session.pinned && !session.archived),
-    ),
+    () => selectPinnedSessions(sessions),
     [sessions],
   )
   const regularProjects = React.useMemo(
-    () => sortProjects(projects.filter((project) => !project.pinned)),
+    () => selectRegularProjects(projects),
     [projects],
   )
   const sessionsById = React.useMemo(
@@ -218,10 +152,9 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
   )
 
   const sessionsForProject = React.useCallback(
-    (projectId: string) => sortSidebarSessions(
-      (projectSessionsById[projectId] ?? []).map(
-        (session) => sessionsById.get(session.id) ?? session,
-      ),
+    (projectId: string) => selectProjectSessions(
+      projectSessionsById[projectId] ?? [],
+      sessionsById,
     ),
     [projectSessionsById, sessionsById],
   )
@@ -236,13 +169,7 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
 
 
   const recentSessions = React.useMemo(
-    () => sortSidebarSessions(
-      filterSessions(
-        sessions.filter((session) => !session.projectId),
-        filter,
-        search,
-      ).filter((session) => session.archived || !session.pinned) as WorkspaceSessionView[],
-    ),
+    () => selectRecentSessions(sessions, filter, search),
     [filter, search, sessions],
   )
 
@@ -660,701 +587,5 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
         </DialogContent>
       </Dialog>
     </Sidebar>
-  )
-}
-
-function ProjectSidebarItem({
-  project,
-  sessions,
-  expanded,
-  loading,
-  activeSessionId,
-  onExpandedChange,
-  onOpenSession,
-  onNewSession,
-  onEdit,
-  onTogglePin,
-  onArchiveAll,
-  onRemove,
-  onToggleSessionPin,
-  onToggleSessionArchive,
-  onRenameSession,
-}: {
-  project: ProjectView
-  sessions: WorkspaceSessionView[]
-  expanded: boolean
-  loading: boolean
-  activeSessionId: string | null
-  onExpandedChange: (open: boolean) => void
-  onOpenSession: (sessionId: string) => void
-  onNewSession: () => void
-  onEdit: () => void
-  onTogglePin: () => void
-  onArchiveAll: () => void
-  onRemove: () => void
-  onToggleSessionPin: (sessionId: string) => void
-  onToggleSessionArchive: (sessionId: string) => void
-  onRenameSession: (sessionId: string, title: string) => Promise<boolean>
-}) {
-  const t = useTranslations("dashboard")
-  const visibleSessions = sessions.filter((session) => !session.archived)
-  const containsActiveSession = visibleSessions.some((session) => session.id === activeSessionId)
-
-  return (
-    <SidebarMenuItem>
-      <Collapsible open={expanded} onOpenChange={onExpandedChange}>
-        <div className="group/project relative">
-          <CollapsibleTrigger asChild>
-            <SidebarMenuButton
-              isActive={containsActiveSession}
-              className="pr-[4.75rem] text-muted-foreground data-[active=true]:text-foreground"
-            >
-              {expanded ? <ChevronDown /> : <ChevronRight />}
-              <Folder />
-              <span className="min-w-0 flex-1 truncate">{project.name}</span>
-            </SidebarMenuButton>
-          </CollapsibleTrigger>
-
-          <TooltipProvider delayDuration={300}>
-            <div
-              className={cn(
-                "absolute right-1 top-1/2 hidden -translate-y-1/2 items-center gap-0.5",
-                "group-hover/project:flex group-focus-within/project:flex",
-                containsActiveSession && "flex",
-              )}
-            >
-            <DropdownMenu>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <DropdownMenuTrigger asChild>
-                    <button
-                      type="button"
-                      aria-label={t("projects.options")}
-                      onClick={(event) => event.stopPropagation()}
-                      className="rounded p-1 text-muted-foreground transition-colors hover:bg-sidebar-accent/65 hover:text-foreground"
-                    >
-                      <MoreHorizontal className="size-3.5" />
-                    </button>
-                  </DropdownMenuTrigger>
-                </TooltipTrigger>
-                <TooltipContent side="top" sideOffset={4}>{t("projects.options")}</TooltipContent>
-              </Tooltip>
-              <DropdownMenuContent align="start" className="w-56">
-                <DropdownMenuGroup>
-                  <DropdownMenuItem onSelect={onEdit}>
-                    <Pencil />
-                    {t("projects.edit")}
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onSelect={onTogglePin}>
-                    <Pin />
-                    {project.pinned ? t("projects.unpin") : t("projects.pin")}
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onSelect={onArchiveAll}>
-                    <Archive />
-                    {t("projects.archiveAll")}
-                  </DropdownMenuItem>
-                </DropdownMenuGroup>
-                <DropdownMenuSeparator />
-                <DropdownMenuGroup>
-                  <DropdownMenuItem variant="destructive" onSelect={onRemove}>
-                    <Trash2 />
-                    {t("projects.remove")}
-                  </DropdownMenuItem>
-                </DropdownMenuGroup>
-              </DropdownMenuContent>
-            </DropdownMenu>
-
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  aria-label={t("projects.newSession")}
-                  onClick={(event) => {
-                    event.stopPropagation()
-                    onNewSession()
-                  }}
-                  className="rounded p-1 text-muted-foreground transition-colors hover:bg-sidebar-accent/65 hover:text-foreground"
-                >
-                  <SquarePen className="size-3.5" />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="top" sideOffset={4}>{t("projects.newSession")}</TooltipContent>
-            </Tooltip>
-            </div>
-          </TooltipProvider>
-        </div>
-
-        <CollapsibleContent>
-          <SidebarMenu className="ml-4 w-[calc(100%-1rem)] border-l border-sidebar-border pl-2">
-            {loading ? (
-              <SidebarLoadingItem label={t("status.loadingSessions")} />
-            ) : visibleSessions.length === 0 ? (
-              <li className="px-3 py-2 text-xs text-muted-foreground">{t("projects.noSessions")}</li>
-            ) : (
-              visibleSessions.map((session) => (
-                <SessionSidebarItem
-                  key={session.id}
-                  item={session}
-                  isActive={activeSessionId === session.id}
-                  onOpen={() => onOpenSession(session.id)}
-                  onTogglePin={() => onToggleSessionPin(session.id)}
-                  onToggleArchive={() => onToggleSessionArchive(session.id)}
-                  onRename={(title) => onRenameSession(session.id, title)}
-                />
-              ))
-            )}
-          </SidebarMenu>
-        </CollapsibleContent>
-      </Collapsible>
-    </SidebarMenuItem>
-  )
-}
-
-function ProjectEditorDialog({
-  editor,
-  connectors,
-  onOpenChange,
-  onCreate,
-  onUpdate,
-}: {
-  editor: ProjectEditorState
-  connectors: Array<{ id: string; name: string; status: string }>
-  onOpenChange: (open: boolean) => void
-  onCreate: (payload: ProjectCreateRequest) => Promise<ProjectView | null>
-  onUpdate: (projectId: string, payload: ProjectPatchRequest) => Promise<ProjectView | null>
-}) {
-  const t = useTranslations("dashboard.projects")
-  const tCommon = useTranslations("common")
-  const [name, setName] = React.useState("")
-  const [connectorId, setConnectorId] = React.useState("")
-  const [workspace, setWorkspace] = React.useState<WorkspaceSelection | null>(null)
-  const [saving, setSaving] = React.useState(false)
-  const editingProject = editor?.mode === "edit" ? editor.project : null
-  const onlineConnectors = connectors.filter((connector) => connector.status === "online")
-  const selectedConnector = connectors.find((connector) => connector.id === connectorId)
-
-  React.useEffect(() => {
-    if (!editor) return
-    if (editor.mode === "edit") {
-      setName(editor.project.name)
-      setConnectorId(editor.project.connectorId)
-      setWorkspace({
-        label: editor.project.name,
-        path: editor.project.workspacePath,
-        connectorId: editor.project.connectorId,
-      })
-    } else {
-      setName("")
-      setConnectorId(onlineConnectors[0]?.id ?? "")
-      setWorkspace(null)
-    }
-    setSaving(false)
-  }, [editor])
-
-  const submit = React.useCallback(async () => {
-    const projectName = name.trim()
-    if (!editor || !projectName || saving) return
-    setSaving(true)
-    try {
-      const result = editor.mode === "edit"
-        ? await onUpdate(editor.project.id, { name: projectName })
-        : workspace?.path && connectorId
-          ? await onCreate({
-              name: projectName,
-              connectorId,
-              workspacePath: workspace.path,
-              attachMatchingSessions: true,
-            })
-          : null
-      if (!result) {
-        toast.error(t(editor.mode === "edit" ? "updateFailed" : "createFailed"))
-        return
-      }
-      toast.success(t(editor.mode === "edit" ? "updateSuccess" : "createSuccess"))
-      onOpenChange(false)
-    } finally {
-      setSaving(false)
-    }
-  }, [connectorId, editor, name, onCreate, onOpenChange, onUpdate, saving, t, workspace?.path])
-
-  return (
-    <Dialog open={editor !== null} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg">
-        <form
-          className="flex flex-col gap-6"
-          onSubmit={(event) => {
-            event.preventDefault()
-            void submit()
-          }}
-        >
-          <DialogHeader>
-            <DialogTitle>{t(editingProject ? "editTitle" : "createTitle")}</DialogTitle>
-            <DialogDescription>
-              {t(editingProject ? "editDescription" : "createDescription")}
-            </DialogDescription>
-          </DialogHeader>
-
-          <FieldGroup>
-            <Field>
-              <FieldLabel htmlFor="project-name">{t("name")}</FieldLabel>
-              <Input
-                id="project-name"
-                autoFocus
-                value={name}
-                maxLength={255}
-                disabled={saving}
-                onChange={(event) => setName(event.currentTarget.value)}
-                placeholder={t("namePlaceholder")}
-              />
-            </Field>
-
-            {editingProject ? (
-              <>
-                <Field data-disabled>
-                  <FieldLabel htmlFor="project-device">{t("device")}</FieldLabel>
-                  <Input
-                    id="project-device"
-                    value={selectedConnector?.name ?? editingProject.connectorId}
-                    disabled
-                    readOnly
-                  />
-                </Field>
-                <Field data-disabled>
-                  <FieldLabel htmlFor="project-workspace">{t("workspace")}</FieldLabel>
-                  <Input
-                    id="project-workspace"
-                    className="code-mono text-xs"
-                    value={editingProject.workspacePath}
-                    disabled
-                    readOnly
-                  />
-                  <FieldDescription>{t("workspaceImmutable")}</FieldDescription>
-                </Field>
-              </>
-            ) : (
-              <>
-                <Field data-disabled={onlineConnectors.length === 0 || undefined}>
-                  <FieldLabel>{t("device")}</FieldLabel>
-                  <Select
-                    value={connectorId}
-                    disabled={onlineConnectors.length === 0 || saving}
-                    onValueChange={(value) => {
-                      setConnectorId(value)
-                      setWorkspace(null)
-                    }}
-                  >
-                    <SelectTrigger className="w-full">
-                      <SelectValue placeholder={t("selectDevice")} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectGroup>
-                        {onlineConnectors.map((connector) => (
-                          <SelectItem key={connector.id} value={connector.id}>
-                            {connector.name}
-                          </SelectItem>
-                        ))}
-                      </SelectGroup>
-                    </SelectContent>
-                  </Select>
-                  {onlineConnectors.length === 0 ? (
-                    <FieldDescription>{t("onlineDeviceRequired")}</FieldDescription>
-                  ) : null}
-                </Field>
-                <Field data-disabled={!connectorId || undefined}>
-                  <FieldLabel>{t("workspace")}</FieldLabel>
-                  {connectorId ? (
-                    <WorkspacePicker
-                      connectorId={connectorId}
-                      value={workspace}
-                      onChange={setWorkspace}
-                    />
-                  ) : (
-                    <FieldDescription>{t("selectDeviceFirst")}</FieldDescription>
-                  )}
-                </Field>
-              </>
-            )}
-          </FieldGroup>
-
-          <DialogFooter className="gap-2 sm:gap-2">
-            <Button type="button" variant="outline" disabled={saving} onClick={() => onOpenChange(false)}>
-              {tCommon("cancel")}
-            </Button>
-            <Button
-              type="submit"
-              disabled={saving || name.trim().length === 0 || (!editingProject && (!connectorId || !workspace?.path))}
-            >
-              {saving ? <Spinner data-icon="inline-start" /> : null}
-              {tCommon("save")}
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
-  )
-}
-
-function SessionPageTrigger({
-  loading,
-  label,
-  onVisible,
-}: {
-  loading: boolean
-  label: string
-  onVisible: () => void
-}) {
-  const ref = React.useRef<HTMLDivElement>(null)
-  const onVisibleRef = React.useRef(onVisible)
-  onVisibleRef.current = onVisible
-
-  React.useEffect(() => {
-    const element = ref.current
-    if (!element) return
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        if (entry?.isIntersecting && !loading) onVisibleRef.current()
-      },
-      { rootMargin: "160px 0px" },
-    )
-    observer.observe(element)
-    return () => observer.disconnect()
-  }, [loading])
-
-  return (
-    <div ref={ref} className="flex h-9 items-center justify-center" aria-label={label}>
-      {loading ? <Spinner className="size-4 text-muted-foreground" /> : null}
-    </div>
-  )
-}
-
-function SessionSidebarItem({
-  item,
-  isActive,
-  onOpen,
-  onTogglePin,
-  onToggleArchive,
-  onRename,
-}: {
-  item: { id: string; title?: string | null; status: string; unread: boolean; pinned: boolean; archived: boolean }
-  isActive: boolean
-  onOpen: () => void
-  onTogglePin: () => void
-  onToggleArchive: () => void
-  onRename: (title: string) => Promise<boolean>
-}) {
-  const t = useTranslations("dashboard")
-  const tSession = useTranslations("dashboard.session")
-  const tCommon = useTranslations("common")
-  const [renameOpen, setRenameOpen] = React.useState(false)
-  const [titleDraft, setTitleDraft] = React.useState(item.title ?? "")
-  const [renaming, setRenaming] = React.useState(false)
-  const isBusy = item.status === "running" || item.status === "waiting" || item.status === "pending"
-  const isWaitingApproval = item.status === "waiting_approval"
-  const isUnreadIdle = item.unread && item.status === "idle"
-  const hasStatusIndicator = isBusy || isWaitingApproval || isUnreadIdle
-
-  React.useEffect(() => {
-    if (!renameOpen) setTitleDraft(item.title ?? "")
-  }, [item.title, renameOpen])
-
-  const cancelRename = React.useCallback(() => {
-    setTitleDraft(item.title ?? "")
-    setRenameOpen(false)
-  }, [item.title])
-
-  const submitRename = React.useCallback(async () => {
-    const nextTitle = titleDraft.trim()
-    if (!nextTitle) {
-      cancelRename()
-      return
-    }
-    if (renaming) return
-    if (nextTitle === item.title) {
-      setRenameOpen(false)
-      return
-    }
-    setRenaming(true)
-    try {
-      const ok = await onRename(nextTitle)
-      if (ok) setRenameOpen(false)
-      else toast.error(tSession("renameFailed"))
-    } finally {
-      setRenaming(false)
-    }
-  }, [cancelRename, item.title, onRename, renaming, tSession, titleDraft])
-
-  const copySessionId = async () => {
-    try {
-      await copyText(item.id)
-      toast.success(t("actions.copiedSessionId"))
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : t("actions.copyFailed"))
-    }
-  }
-
-  return (
-    <>
-      <ContextMenu>
-        <SidebarMenuItem className="group/session">
-          <ContextMenuTrigger asChild>
-            <div>
-              <SidebarMenuButton
-                isActive={isActive}
-                onClick={onOpen}
-                className={cn(
-                  "text-muted-foreground data-[active=true]:text-foreground",
-                  !hasStatusIndicator && "group-hover/session:pr-[4.25rem] group-focus-within/session:pr-[4.25rem]",
-                  isActive && !hasStatusIndicator && "pr-[4.25rem]",
-                )}
-              >
-                <span className="min-w-0 flex-1 truncate">{item.title}</span>
-                <SessionSidebarIndicator
-                  busy={isBusy}
-                  unreadIdle={isUnreadIdle}
-                  waitingApproval={isWaitingApproval}
-                />
-              </SidebarMenuButton>
-            </div>
-          </ContextMenuTrigger>
-
-          {!hasStatusIndicator ? (
-            <TooltipProvider delayDuration={300}>
-              <div
-                className={cn(
-                  "absolute right-1 top-1/2 hidden -translate-y-1/2 items-center gap-0.5",
-                  "group-hover/session:flex group-focus-within/session:flex",
-                  isActive && "flex",
-                )}
-              >
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <button
-                      type="button"
-                      aria-label={item.pinned ? t("actions.unpinChat") : t("actions.pinChat")}
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        onTogglePin()
-                      }}
-                      className={cn(
-                        "rounded p-1 transition-colors hover:bg-sidebar-accent/65 hover:text-foreground",
-                        item.pinned ? "text-primary" : "text-muted-foreground",
-                      )}
-                    >
-                      <Pin className="size-3" />
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent side="top" sideOffset={4}>
-                    {item.pinned ? t("actions.unpinChat") : t("actions.pinChat")}
-                  </TooltipContent>
-                </Tooltip>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <button
-                      type="button"
-                      aria-label={item.archived ? t("actions.unarchiveChat") : t("actions.archiveChat")}
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        onToggleArchive()
-                      }}
-                      className="rounded p-1 text-muted-foreground transition-colors hover:bg-sidebar-accent/65 hover:text-foreground"
-                    >
-                      <Archive className="size-3" />
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent side="top" sideOffset={4}>
-                    {item.archived ? t("actions.unarchiveChat") : t("actions.archiveChat")}
-                  </TooltipContent>
-                </Tooltip>
-              </div>
-            </TooltipProvider>
-          ) : null}
-        </SidebarMenuItem>
-        <ContextMenuContent className="w-52">
-          <ContextMenuItem onSelect={onOpen}>
-            <FolderOpen className="size-4" />
-            {t("actions.open")}
-          </ContextMenuItem>
-          <ContextMenuItem onSelect={() => setRenameOpen(true)}>
-            <Pencil className="size-4" />
-            {t("actions.rename")}
-          </ContextMenuItem>
-          <ContextMenuItem onSelect={onTogglePin}>
-            <Pin className="size-4" />
-            {item.pinned ? t("actions.unpin") : t("actions.pin")}
-          </ContextMenuItem>
-          <ContextMenuItem onSelect={onToggleArchive}>
-            <Archive className="size-4" />
-            {item.archived ? t("actions.unarchive") : t("actions.archive")}
-          </ContextMenuItem>
-          <ContextMenuSeparator />
-          <ContextMenuItem onSelect={() => void copySessionId()}>
-            <Copy className="size-4" />
-            {t("actions.copySessionId")}
-          </ContextMenuItem>
-        </ContextMenuContent>
-      </ContextMenu>
-
-      <Dialog open={renameOpen} onOpenChange={(open: boolean) => {
-        if (open) {
-          setTitleDraft(item.title ?? "")
-          setRenameOpen(true)
-        } else {
-          cancelRename()
-        }
-      }}>
-        <DialogContent className="sm:max-w-sm">
-          <form
-            className="space-y-4"
-            onSubmit={(event) => {
-              event.preventDefault()
-              void submitRename()
-            }}
-          >
-            <DialogHeader>
-              <DialogTitle>{tSession("renameTitle")}</DialogTitle>
-            </DialogHeader>
-            <Input
-              autoFocus
-              value={titleDraft}
-              onChange={(event) => setTitleDraft(event.currentTarget.value)}
-              onKeyDown={(event) => {
-                if (event.nativeEvent.isComposing) return
-                if (event.key === "Escape") {
-                  event.preventDefault()
-                  cancelRename()
-                }
-              }}
-              disabled={renaming}
-              aria-label={tSession("renameTitle")}
-            />
-            <DialogFooter className="gap-2 sm:gap-2">
-              <Button type="button" variant="outline" onClick={cancelRename} disabled={renaming}>
-                {tCommon("cancel")}
-              </Button>
-              <Button type="submit" disabled={renaming || titleDraft.trim().length === 0}>
-                {tCommon("save")}
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
-    </>
-  )
-}
-
-function SessionSidebarIndicator({
-  busy,
-  unreadIdle,
-  waitingApproval,
-}: {
-  busy: boolean
-  unreadIdle: boolean
-  waitingApproval: boolean
-}) {
-  const t = useTranslations("dashboard")
-
-  if (waitingApproval) {
-    return (
-      <span className="ml-2 shrink-0 rounded-full bg-emerald-500/20 px-2 py-0.5 text-[11px] font-medium leading-4 text-emerald-400 ring-1 ring-emerald-500/20">
-        {t("sessionStatus.waitingApproval")}
-      </span>
-    )
-  }
-  if (busy) {
-    return (
-      <span
-        aria-label={t("sessionStatus.running")}
-        className="ml-2 size-3.5 shrink-0 animate-spin rounded-full border-2 border-sidebar-foreground/25 border-t-sidebar-foreground/75"
-      />
-    )
-  }
-  if (unreadIdle) {
-    return (
-      <span
-        aria-label={t("sessionStatus.unread")}
-        className="ml-2 size-2 shrink-0 rounded-full bg-emerald-500"
-      />
-    )
-  }
-  return null
-}
-
-function DeviceSidebarItem({
-  connector,
-  isLocal,
-  isActive,
-  onOpen,
-}: {
-  connector: { id: string; name: string; status: string }
-  isLocal: boolean
-  isActive: boolean
-  onOpen: () => void
-}) {
-  const t = useTranslations("dashboard")
-  const tCommon = useTranslations("common")
-
-  const copyDeviceId = async () => {
-    try {
-      await copyText(connector.id)
-      toast.success(t("actions.copiedDeviceId"))
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : t("actions.copyFailed"))
-    }
-  }
-
-  return (
-    <ContextMenu>
-      <SidebarMenuItem>
-        <ContextMenuTrigger asChild>
-          <div>
-            <SidebarMenuButton
-              className="code-mono text-[13px]"
-              isActive={isActive}
-              onClick={onOpen}
-            >
-              <span
-                className={cn(
-                  "size-1.5 rounded-full",
-                  connector.status === "online" ? "bg-emerald-500" : "bg-muted-foreground/40",
-                )}
-              />
-              <span
-                className={cn(
-                  "flex min-w-0 flex-1",
-                  connector.status === "offline" && "text-muted-foreground",
-                )}
-              >
-                <span className="min-w-0 truncate">{connector.name}</span>
-                {isLocal ? (
-                  <span className="shrink-0">{tCommon("localDeviceSuffix")}</span>
-                ) : null}
-              </span>
-            </SidebarMenuButton>
-          </div>
-        </ContextMenuTrigger>
-      </SidebarMenuItem>
-      <ContextMenuContent className="w-52">
-        <ContextMenuItem onSelect={onOpen}>
-          <FolderOpen className="size-4" />
-          {t("actions.open")}
-        </ContextMenuItem>
-        <ContextMenuSeparator />
-        <ContextMenuItem onSelect={() => void copyDeviceId()}>
-          <Copy className="size-4" />
-          {t("actions.copyDeviceId")}
-        </ContextMenuItem>
-      </ContextMenuContent>
-    </ContextMenu>
-  )
-}
-
-function SidebarLoadingItem({ label }: { label: string }) {
-  return (
-    <SidebarMenuItem>
-      <div className="flex items-center gap-2 px-3 py-2 text-xs text-muted-foreground">
-        <Spinner className="size-3.5" />
-        <span>{label}</span>
-      </div>
-    </SidebarMenuItem>
   )
 }
