@@ -173,16 +173,17 @@ export function ProjectSidebarItem({
         </div>
 
         <CollapsibleContent>
-          <SidebarMenu className="ml-4 w-[calc(100%-1rem)] pl-2">
+          <SidebarMenu>
             {loading ? (
               <SidebarLoadingItem label={t("status.loadingSessions")} />
             ) : visibleSessions.length === 0 ? (
-              <li className="px-3 py-2 text-xs text-muted-foreground">{t("projects.noSessions")}</li>
+              <li className="py-2 pl-9 pr-3 text-xs text-muted-foreground">{t("projects.noSessions")}</li>
             ) : (
               visibleSessions.map((session) => (
                 <SessionSidebarItem
                   key={session.id}
                   item={session}
+                  inset
                   isActive={activeSessionId === session.id}
                   onOpen={() => onOpenSession(session.id)}
                   onTogglePin={() => onToggleSessionPin(session.id)}

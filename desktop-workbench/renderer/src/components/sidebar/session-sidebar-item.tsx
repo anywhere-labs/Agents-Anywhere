@@ -37,6 +37,7 @@ import { useTranslations } from "next-intl"
 
 export function SessionSidebarItem({
   item,
+  inset = false,
   isActive,
   onOpen,
   onTogglePin,
@@ -44,6 +45,7 @@ export function SessionSidebarItem({
   onRename,
 }: {
   item: { id: string; title?: string | null; status: string; unread: boolean; pinned: boolean; archived: boolean }
+  inset?: boolean
   isActive: boolean
   onOpen: () => void
   onTogglePin: () => void
@@ -116,6 +118,7 @@ export function SessionSidebarItem({
                 onClick={onOpen}
                 className={cn(
                   "text-muted-foreground data-[active=true]:text-foreground",
+                  inset && "pl-9",
                   !hasStatusIndicator && "group-hover/session:pr-[4.25rem] group-focus-within/session:pr-[4.25rem]",
                   isActive && !hasStatusIndicator && "pr-[4.25rem]",
                 )}

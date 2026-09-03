@@ -306,6 +306,9 @@ export function WorkspacePicker({
 
   const [internalWorkspace, setInternalWorkspace] = React.useState<WorkspaceEntry>(homeWorkspace)
   const [dialogOpen, setDialogOpen] = React.useState(false)
+  const menuContentRef = React.useRef<HTMLDivElement | null>(null)
+  const workspaceSubTriggerRef = React.useRef<HTMLDivElement | null>(null)
+  const [workspaceSubmenuAlignOffset, setWorkspaceSubmenuAlignOffset] = React.useState(0)
   const valueBelongsToActiveConnector =
     Boolean(value?.path) && (!activeConnectorId || value?.connectorId === activeConnectorId)
   const workspace = valueBelongsToActiveConnector ? value! : internalWorkspace
@@ -336,6 +339,15 @@ export function WorkspacePicker({
     : null
   const isProject = Boolean(workspace.projectId)
   const isHome = Boolean(!isProject && homeWorkspace.path && workspace.path === homeWorkspace.path)
+
+  const alignWorkspaceSubmenu = React.useCallback(() => {
+    const menuContent = menuContentRef.current
+    const submenuTrigger = workspaceSubTriggerRef.current
+    if (!menuContent || !submenuTrigger) return
+    setWorkspaceSubmenuAlignOffset(
+      Math.round(menuContent.getBoundingClientRect().top - submenuTrigger.getBoundingClientRect().top),
+    )
+  }, [])
 
   const workspaceMenuGroups = (
     <>
@@ -427,11 +439,11 @@ export function WorkspacePicker({
           </button>
         </DropdownMenuTrigger>
 
-        <DropdownMenuContent align="start" className="w-80">
+        <DropdownMenuContent ref={menuContentRef} align="start" className="w-80">
           {includeProjects ? (
             <>
-              <ScrollArea className="h-56">
-                <DropdownMenuGroup className="min-h-full pr-1">
+              <ScrollArea className="max-h-56" viewportProps={{ className: "max-h-56" }}>
+                <DropdownMenuGroup className="pr-1">
                   {availableProjects.length > 0 ? availableProjects.map((project) => (
                     <DropdownMenuItem
                       key={project.id}
@@ -474,12 +486,23 @@ export function WorkspacePicker({
 
               <DropdownMenuSeparator />
               <DropdownMenuGroup>
-                <DropdownMenuSub>
-                  <DropdownMenuSubTrigger className="gap-2.5">
+                <DropdownMenuSub onOpenChange={(open) => {
+                  if (open) alignWorkspaceSubmenu()
+                }}>
+                  <DropdownMenuSubTrigger
+                    ref={workspaceSubTriggerRef}
+                    className="gap-2.5"
+                    onFocus={alignWorkspaceSubmenu}
+                    onPointerEnter={alignWorkspaceSubmenu}
+                  >
                     <FolderX />
                     <span>{t("outsideProject")}</span>
                   </DropdownMenuSubTrigger>
-                  <DropdownMenuSubContent className="w-80">
+                  <DropdownMenuSubContent
+                    align="start"
+                    alignOffset={workspaceSubmenuAlignOffset}
+                    className="w-80"
+                  >
                     {workspaceMenuGroups}
                   </DropdownMenuSubContent>
                 </DropdownMenuSub>
