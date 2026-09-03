@@ -91,13 +91,6 @@ const RUNTIME_CONFIG_COMPONENT_COPY: Record<string, { titleKey: string; descript
   },
 }
 
-const RUNTIME_CONFIG_FIELD_COPY: Record<string, { titleKey: string; descriptionKey?: string }> = {
-  codexHome: {
-    titleKey: "runtimeConfigFields.codexHome.label",
-    descriptionKey: "runtimeConfigFields.codexHome.description",
-  },
-}
-
 export function RuntimeConfigDialog({
   runtimeName,
   schema,
@@ -285,24 +278,19 @@ function RuntimeConfigField({
   const tRoot = useTranslations()
   const component = runtimeConfigComponent(schema, ui)
   const componentCopy = RUNTIME_CONFIG_COMPONENT_COPY[component ?? ""]
-  const fieldCopy = RUNTIME_CONFIG_FIELD_COPY[name]
   const requiredComponentCopy = required && component === "modelGateway"
   const title = (requiredComponentCopy
     ? t("runtimeConfigComponents.modelGateway.requiredLabel")
     : schemaI18nText(tRoot, schema, "labelKey"))
-    ?? (fieldCopy
-      ? t(fieldCopy.titleKey)
-      : componentCopy
-        ? t(componentCopy.titleKey)
-        : schema.title ?? name)
+    ?? (componentCopy
+      ? t(componentCopy.titleKey)
+      : schema.title ?? name)
   const description = (requiredComponentCopy
     ? t("runtimeConfigComponents.modelGateway.requiredDescription")
     : schemaI18nText(tRoot, schema, "descriptionKey"))
-    ?? (fieldCopy?.descriptionKey
-      ? t(fieldCopy.descriptionKey)
-      : componentCopy?.descriptionKey
-        ? t(componentCopy.descriptionKey)
-        : schema.description)
+    ?? (componentCopy?.descriptionKey
+      ? t(componentCopy.descriptionKey)
+      : schema.description)
   const inputId = `runtime-config-${name}`
   const effectiveValue = value === undefined ? schema.default : value
 
@@ -511,7 +499,6 @@ function runtimeConfigValidationLabel(
   translate: (key: string) => string,
 ): string {
   const keys: Record<string, string> = {
-    codexHome: "runtimeConfigFields.codexHome.label",
     modelGateway: "runtimeConfigComponents.modelGateway.requiredLabel",
     baseUrl: "runtimeConfigFields.modelGatewayBaseUrl.label",
     apiKey: "runtimeConfigFields.modelGatewayApiKey.label",

@@ -199,7 +199,8 @@ class ConnectorRpcManager:
                 ttl_seconds=self._heartbeat_timeout_seconds,
             )
             if not promoted:
-                self._connections.pop(connector_id, None)
+                if self._connections.get(connector_id) is connection:
+                    self._connections.pop(connector_id, None)
                 self._fail_pending(connection, "connector ownership was lost")
                 return False
             if self._connections.get(connector_id) is not connection:
@@ -267,7 +268,8 @@ class ConnectorRpcManager:
             ttl_seconds=self._heartbeat_timeout_seconds,
         )
         if not refreshed:
-            self._connections.pop(connector_id, None)
+            if self._connections.get(connector_id) is current:
+                self._connections.pop(connector_id, None)
             self._fail_pending(current, "connector ownership was lost")
         return refreshed
 

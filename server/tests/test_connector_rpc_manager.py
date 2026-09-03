@@ -63,6 +63,58 @@ class PausingPromotionCoordinator(RedisCoordinator):
         return result
 
 
+class PausingBeforePromotionCoordinator(RedisCoordinator):
+    def __init__(self, server: FakeServer) -> None:
+        super().__init__(
+            prefix="test-connector-routing",
+            client=FakeRedis(server=server, decode_responses=True),
+        )
+        self.started = asyncio.Event()
+        self.resume = asyncio.Event()
+
+    async def replace_if_value(
+        self,
+        key: str,
+        expected_value: str,
+        replacement_value: str,
+        *,
+        ttl_seconds: float,
+    ) -> bool:
+        self.started.set()
+        await self.resume.wait()
+        return await super().replace_if_value(
+            key,
+            expected_value,
+            replacement_value,
+            ttl_seconds=ttl_seconds,
+        )
+
+
+class PausingRefreshCoordinator(RedisCoordinator):
+    def __init__(self, server: FakeServer) -> None:
+        super().__init__(
+            prefix="test-connector-routing",
+            client=FakeRedis(server=server, decode_responses=True),
+        )
+        self.started = asyncio.Event()
+        self.resume = asyncio.Event()
+
+    async def refresh_if_value(
+        self,
+        key: str,
+        value: str,
+        *,
+        ttl_seconds: float,
+    ) -> bool:
+        self.started.set()
+        await self.resume.wait()
+        return await super().refresh_if_value(
+            key,
+            value,
+            ttl_seconds=ttl_seconds,
+        )
+
+
 def test_connector_rpc_manager_rejects_duplicate_online_connection() -> None:
     async def exercise() -> None:
         manager = ConnectorRpcManager(heartbeat_timeout_seconds=60, clock=lambda: 10)
@@ -251,6 +303,60 @@ def test_cancelling_ready_promotion_releases_promoted_lease() -> None:
         assert not await other.is_online("conn_1")
         replacement = await other.register("conn_1", FakeWebSocket())  # type: ignore[arg-type]
         assert await other.unregister("conn_1", replacement)
+
+    asyncio.run(exercise())
+
+
+def test_failed_ready_promotion_does_not_remove_replacement_connection() -> None:
+    async def exercise() -> None:
+        fake_server = FakeServer()
+        coordinator = PausingBeforePromotionCoordinator(fake_server)
+        manager = ConnectorRpcManager(coordinator, instance_id="server-a")
+        original = await manager.register(
+            "conn_1",
+            FakeWebSocket(),  # type: ignore[arg-type]
+            ready=False,
+        )
+
+        promotion = asyncio.create_task(manager.mark_ready(original))
+        await asyncio.wait_for(coordinator.started.wait(), timeout=1)
+        assert await manager.unregister("conn_1", original)
+        replacement = await manager.register(
+            "conn_1",
+            FakeWebSocket(),  # type: ignore[arg-type]
+        )
+        coordinator.resume.set()
+
+        assert not await promotion
+        assert manager._connections.get("conn_1") is replacement
+        assert await manager.unregister("conn_1", replacement)
+
+    asyncio.run(exercise())
+
+
+def test_failed_heartbeat_does_not_remove_replacement_connection() -> None:
+    async def exercise() -> None:
+        fake_server = FakeServer()
+        coordinator = PausingRefreshCoordinator(fake_server)
+        manager = ConnectorRpcManager(coordinator, instance_id="server-a")
+        original = await manager.register(
+            "conn_1",
+            FakeWebSocket(),  # type: ignore[arg-type]
+            ready=True,
+        )
+
+        heartbeat = asyncio.create_task(manager.touch("conn_1", original))
+        await asyncio.wait_for(coordinator.started.wait(), timeout=1)
+        assert await manager.unregister("conn_1", original)
+        replacement = await manager.register(
+            "conn_1",
+            FakeWebSocket(),  # type: ignore[arg-type]
+        )
+        coordinator.resume.set()
+
+        assert not await heartbeat
+        assert manager._connections.get("conn_1") is replacement
+        assert await manager.unregister("conn_1", replacement)
 
     asyncio.run(exercise())
 

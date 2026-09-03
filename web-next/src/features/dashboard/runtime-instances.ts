@@ -116,17 +116,6 @@ export function addableRuntimeTypes(
   return runtimeTypes.filter((runtimeType) => runtimeTypeCanCreateInstance(runtimeType, runtimes))
 }
 
-export function isAdditionalCodexRuntimeType(
-  runtimeType: RuntimeTypeView,
-  runtimes: readonly DeviceRuntimeView[],
-): boolean {
-  return runtimeType.runtimeType === "codex"
-    && runtimeType.instancePolicy === "multiple"
-    && runtimes.some((runtime) => (
-      runtime.runtimeType === "codex" && runtime.configured
-    ))
-}
-
 export function reconfigurableRuntimeInstance(
   runtimeType: Pick<RuntimeTypeView, "runtimeType">,
   runtimes: readonly DeviceRuntimeView[],
@@ -149,38 +138,22 @@ export function suggestedRuntimeInstanceName(
 
 export function runtimeCreationDefaults(
   runtimeType: RuntimeTypeView,
-  instanceName: string,
-  randomId: string = globalThis.crypto.randomUUID(),
 ): Record<string, unknown> {
-  const defaults = { ...runtimeType.defaults }
-  if (runtimeType.runtimeType !== "codex") return defaults
-
-  const suffix = randomId.replace(/[^a-zA-Z0-9]/g, "").toLocaleLowerCase().slice(0, 12)
-  if (!suffix) throw new Error("A random identifier is required for the Codex Home")
-  return {
-    ...defaults,
-    codexHome: `~/.agents-anywhere/codex-homes/${runtimeInstancePathSlug(instanceName)}-${suffix}`,
-    modelGateway: { baseUrl: "", apiKey: "" },
-  }
+  return { ...runtimeType.defaults }
 }
 
 export function runtimeConfigDraft(
   runtimeType: RuntimeTypeView,
   runtime: DeviceRuntimeView,
-  randomId?: string,
 ): Record<string, unknown> {
   if (runtime.config !== null) return { ...runtime.config }
   if (runtime.runtimeId === runtime.runtimeType) return { ...runtimeType.defaults }
-  return runtimeCreationDefaults(
-    runtimeType,
-    runtimeInstanceName(runtime),
-    randomId ?? globalThis.crypto.randomUUID(),
-  )
+  return runtimeCreationDefaults(runtimeType)
 }
 
 export function namedInstanceRequiredConfigFields(
-  runtime: Pick<RuntimeTypeView, "runtimeType" | "schema" | "uiSchema">
-    | Pick<DeviceRuntimeView, "runtimeType" | "schema" | "uiSchema">,
+  runtime: Pick<RuntimeTypeView, "schema" | "uiSchema">
+    | Pick<DeviceRuntimeView, "schema" | "uiSchema">,
 ): string[] {
   const properties = isRecord(runtime.schema?.properties)
     ? runtime.schema.properties
@@ -188,22 +161,9 @@ export function namedInstanceRequiredConfigFields(
   const configuredFields = Array.isArray(runtime.uiSchema.requiredForNamedInstance)
     ? runtime.uiSchema.requiredForNamedInstance
     : []
-  const fallbackFields = runtime.runtimeType === "codex"
-    ? ["codexHome", "modelGateway"]
-    : []
-  return [...new Set([...configuredFields, ...fallbackFields].filter((field): field is string => (
+  return [...new Set(configuredFields.filter((field): field is string => (
     typeof field === "string" && field.length > 0 && field in properties
   )))]
-}
-
-function runtimeInstancePathSlug(value: string): string {
-  return value
-    .normalize("NFKD")
-    .toLocaleLowerCase()
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 40) || "codex"
 }
 
 function compareRuntimeTypes(left: RuntimeTypeView, right: RuntimeTypeView): number {

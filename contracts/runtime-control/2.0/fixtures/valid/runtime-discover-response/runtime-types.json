@@ -8,9 +8,7 @@
         "session.send_message": true
       },
       "configSchema": {
-        "defaults": {
-          "codexHome": "~/.codex"
-        },
+        "defaults": {},
         "metadata": {
           "sourceClaim": "codex-home"
         },
@@ -19,7 +17,6 @@
           "additionalProperties": false,
           "properties": {
             "codexHome": {
-              "minLength": 1,
               "type": "string"
             }
           },
@@ -34,8 +31,8 @@
       "description": "OpenAI Codex runtime",
       "displayName": "Codex",
       "implementationType": "sdk",
-      "instancePolicy": "multiple",
-      "maxInstances": 4,
+      "instancePolicy": "single",
+      "maxInstances": 1,
       "metadata": {},
       "reason": null,
       "recommended": true,

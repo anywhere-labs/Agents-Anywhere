@@ -84,9 +84,9 @@ def codex_config_schema() -> dict[str, Any]:
                 "type": "string",
                 "title": "Codex Home",
                 "description": (
-                    "Directory used by this Codex instance for configuration, "
-                    "credentials, and session history. Two running instances "
-                    "cannot use the same directory."
+                    "Optional directory used by this Codex instance for "
+                    "configuration, credentials, and session history. Leave it "
+                    "empty to use CODEX_HOME or ~/.codex."
                 ),
                 "metadata": {
                     "i18n": {
@@ -94,12 +94,10 @@ def codex_config_schema() -> dict[str, Any]:
                             "dashboard.device.runtimeConfigFields.codexHome.label"
                         ),
                         "descriptionKey": (
-                            "dashboard.device.runtimeConfigFields."
-                            "codexHome.description"
+                            "dashboard.device.runtimeConfigFields.codexHome.description"
                         ),
                     }
                 },
-                "minLength": 1,
                 "maxLength": MAX_CODEX_HOME_LENGTH,
             },
             "modelGateway": model_gateway_schema(),
@@ -233,8 +231,6 @@ def ensure_codex_home(path: str) -> None:
         if not existed and os.name != "nt":
             candidate.chmod(0o700)
     except OSError as exc:
-        raise RuntimeInvalidRequestError(
-            "codexHome could not be created"
-        ) from exc
+        raise RuntimeInvalidRequestError("codexHome could not be created") from exc
     if not candidate.is_dir():
         raise RuntimeInvalidRequestError("codexHome must point to a directory")

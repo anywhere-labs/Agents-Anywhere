@@ -6,7 +6,6 @@ import {
   ArrowLeft,
   Check,
   CheckCircle2,
-  CircleHelp,
   Copy,
   ExternalLink,
   KeyRound,
@@ -42,12 +41,6 @@ import {
   AlertDescription,
   AlertTitle,
 } from "@/components/ui/alert"
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp"
@@ -69,7 +62,6 @@ import { watchConnectorPresence } from "@/features/dashboard/connector-presence"
 import {
   addableRuntimeTypes,
   configuredRuntimeInstances,
-  isAdditionalCodexRuntimeType,
   namedInstanceRequiredConfigFields,
   reconfigurableRuntimeInstance,
   runtimeConfigDraft,
@@ -631,7 +623,7 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
     setPendingRuntimeCreation({
       runtimeType: createRuntimeType,
       name: runtimeName,
-      initialConfig: runtimeCreationDefaults(createRuntimeType, runtimeName),
+      initialConfig: runtimeCreationDefaults(createRuntimeType),
     })
     setCreateRuntimeType(null)
   }
@@ -1079,34 +1071,11 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
                         )}
                       </div>
                     ))}
-                    <TooltipProvider>
-                      {visibleRuntimeTypes.map((runtimeType) => (
+                    {visibleRuntimeTypes.map((runtimeType) => (
                         <div key={runtimeType.runtimeType} className="flex min-w-0 items-center gap-3 rounded-lg border border-dashed px-4 py-3">
                           <div className="min-w-0 flex-1">
                             <div className="flex min-w-0 items-center gap-1">
-                              <p className="truncate text-sm font-medium">
-                                {isAdditionalCodexRuntimeType(runtimeType, runtimes)
-                                  ? tDevice("codexMultiInstanceName")
-                                  : runtimeType.displayName}
-                              </p>
-                              {isAdditionalCodexRuntimeType(runtimeType, runtimes) ? (
-                                <Tooltip>
-                                  <TooltipTrigger asChild>
-                                    <Button
-                                      type="button"
-                                      variant="ghost"
-                                      size="icon-sm"
-                                      className="size-6 shrink-0"
-                                      aria-label={tDevice("codexMultiInstanceHelpLabel")}
-                                    >
-                                      <CircleHelp />
-                                    </Button>
-                                  </TooltipTrigger>
-                                  <TooltipContent side="top" className="max-w-xs">
-                                    {tDevice("codexMultiInstanceHelp")}
-                                  </TooltipContent>
-                                </Tooltip>
-                              ) : null}
+                              <p className="truncate text-sm font-medium">{runtimeType.displayName}</p>
                             </div>
                             <p className="truncate text-xs text-muted-foreground">
                               {runtimeType.description || runtimeType.reason || runtimeType.implementationType}
@@ -1123,8 +1092,7 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
                             {tDevice("addRuntime")}
                           </Button>
                         </div>
-                      ))}
-                    </TooltipProvider>
+                    ))}
                   </>
                 )}
               </div>
@@ -1192,7 +1160,6 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
           config={pendingRuntimeCreation.initialConfig}
           defaults={pendingRuntimeCreation.runtimeType.defaults}
           requiredFields={namedInstanceRequiredConfigFields(pendingRuntimeCreation.runtimeType)}
-          badgeLabel={pendingRuntimeCreation.runtimeType.runtimeType === "codex" ? tDevice("beta") : undefined}
           saving={savingRuntimeId === NEW_RUNTIME_SAVING_ID}
           submitDisabled={!agentSetupOnline}
           submitLabel={t("configureAndStart")}

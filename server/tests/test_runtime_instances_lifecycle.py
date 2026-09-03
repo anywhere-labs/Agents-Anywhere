@@ -113,6 +113,7 @@ def _make_client(
 def _v2_discovery(
     *,
     max_instances: int | None = 3,
+    instance_policy: str = "multiple",
     implementation_type: str | None = None,
     available: bool = True,
     runtime_type: str = "codex",
@@ -149,7 +150,7 @@ def _v2_discovery(
                 },
                 "capabilities": {"modelCatalog": True},
                 "metadata": {"sdk": {"available": True}},
-                "instancePolicy": "multiple",
+                "instancePolicy": instance_policy,
                 "maxInstances": max_instances,
             }
         ],
@@ -513,6 +514,7 @@ def test_v2_named_instance_enforces_discovered_required_fields(
     assert missing_gateway.status_code == 422, missing_gateway.text
     assert missing_home.status_code == 422, missing_home.text
     assert rpc.requests == []
+
     assert client.get(
         f"/connectors/{connector_id}/runtimes",
         headers=headers,
@@ -546,6 +548,53 @@ def test_v2_named_instance_enforces_discovered_required_fields(
     )
     assert rejected_update.status_code == 422, rejected_update.text
     assert rpc.requests == []
+
+
+def test_v2_codex_named_instance_allows_optional_home_and_enforces_single_policy(
+    tmp_path: Any,
+) -> None:
+    discovery = _v2_discovery(instance_policy="single", max_instances=1)
+    config_schema = discovery["runtimeTypes"][0]["configSchema"]
+    config_schema["schema"] = {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+            "codexHome": {"type": "string"},
+        },
+        "additionalProperties": False,
+    }
+    config_schema["uiSchema"] = {"codexHome": {"component": "path"}}
+    config_schema["defaults"] = {}
+    client, rpc, connector_id, headers = _make_client(tmp_path, discovery)
+    _discover_types(client, connector_id, headers)
+    rpc.requests.clear()
+
+    created = client.post(
+        f"/connectors/{connector_id}/runtimes",
+        headers=headers,
+        json={
+            "runtimeType": "codex",
+            "name": "Default Codex",
+            "config": {"codexHome": ""},
+            "active": False,
+        },
+    )
+    assert created.status_code == 201, created.text
+    assert created.json()["config"] == {"codexHome": ""}
+
+    second = client.post(
+        f"/connectors/{connector_id}/runtimes",
+        headers=headers,
+        json={
+            "runtimeType": "codex",
+            "name": "Second Codex",
+            "config": {},
+            "active": False,
+        },
+    )
+    assert second.status_code == 409, second.text
+    assert second.json()["detail"]["code"] == "runtime_conflict"
+    assert second.json()["detail"]["message"] == "runtime instance limit reached"
 
 
 def test_v2_create_enforces_runtime_type_instance_limit(tmp_path: Any) -> None:

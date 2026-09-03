@@ -46,7 +46,7 @@ async def _test_codex_provider_requires_sdk_for_runnable_surface() -> None:
 
     assert item.available is False
     assert item.metadata["configured"] is False
-    assert item.instance_policy == "multiple"
+    assert item.instance_policy == "single"
     assert item.capabilities["commands"] is False
     assert item.capabilities["ipc"] is False
     assert item.metadata["sdk"]["available"] is False
@@ -66,8 +66,8 @@ async def _test_codex_provider_treats_sdk_as_only_active_surface() -> None:
 
     assert item.available is True
     assert item.metadata["configured"] is True
-    assert item.instance_policy == "multiple"
-    assert item.max_instances is None
+    assert item.instance_policy == "single"
+    assert item.max_instances == 1
     assert item.metadata["sdk"]["available"] is True
     assert item.metadata["runtimeBinary"]["mode"] == "prefer_system"
     assert "appServer" not in item.metadata
@@ -98,10 +98,7 @@ async def _test_codex_provider_schema_exposes_no_ipc_or_app_server_switches() ->
     ]
     assert schema.ui_schema["customModels"]["component"] == "customModels"
     assert schema.ui_schema["modelGateway"]["component"] == "modelGateway"
-    assert schema.ui_schema["requiredForNamedInstance"] == [
-        "codexHome",
-        "modelGateway",
-    ]
+    assert "requiredForNamedInstance" not in schema.ui_schema
     assert set(schema.schema["properties"]) == {
         "codexExecutablePath",
         "codexHome",
@@ -138,6 +135,7 @@ async def _test_codex_provider_schema_exposes_no_ipc_or_app_server_switches() ->
             ),
         }
     }
+    assert "minLength" not in schema.schema["properties"]["codexHome"]
     assert "sdkMode" not in schema.schema["properties"]
     assert "ipcEnabled" not in schema.schema["properties"]
     assert "executablePath" not in schema.schema["properties"]
@@ -200,6 +198,23 @@ async def _test_codex_provider_validates_sdk_config() -> None:
     assert config.metadata["sdk"]["available"] is True
     assert config.metadata["runtimeBinary"]["mode"] == "prefer_system"
     assert "launchTarget" not in config.metadata
+
+
+def test_codex_provider_accepts_empty_codex_home(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("CODEX_HOME", raising=False)
+
+    async def run() -> None:
+        provider = CodexProvider(sdk_checker=_available_sdk)
+
+        config = await provider.validate_config({"codexHome": "   "})
+
+        assert config.values["codexHome"] == provider_config.canonical_path(
+            Path.home() / ".codex"
+        )
+
+    asyncio.run(run())
 
 
 def test_codex_provider_preserves_model_gateway_config() -> None:
@@ -479,7 +494,7 @@ def test_codex_provider_blocks_case_and_unicode_home_aliases(tmp_path: Path) -> 
     asyncio.run(run())
 
 
-def test_codex_provider_runs_distinct_homes_and_rejects_same_source(
+def test_codex_provider_allows_only_one_instance(
     tmp_path: Path,
 ) -> None:
     async def run() -> None:
@@ -499,27 +514,16 @@ def test_codex_provider_runs_distinct_homes_and_rejects_same_source(
             RuntimeInstanceSpec("rti_codex_first", "codex", "First Codex"),
             {"codexHome": str(tmp_path / "first")},
         )
-        second = await supervisor.start(
-            RuntimeInstanceSpec("rti_codex_second", "codex", "Second Codex"),
-            {"codexHome": str(tmp_path / "second")},
-        )
-
         assert isinstance(first, RuntimeInstance)
-        assert isinstance(second, RuntimeInstance)
         assert isinstance(first.native_runtime, CodexRuntime)
-        assert isinstance(second.native_runtime, CodexRuntime)
-        assert first.identity.runtime == second.identity.runtime == "codex"
+        assert first.identity.runtime == "codex"
         assert first.identity.runtime_id == "rti_codex_first"
-        assert second.identity.runtime_id == "rti_codex_second"
-        assert first.native_runtime.host.session_namespace != (
-            second.native_runtime.host.session_namespace
-        )
-        assert len(clients) == 2
+        assert len(clients) == 1
 
-        with pytest.raises(RuntimeConflictError, match="already used"):
+        with pytest.raises(RuntimeConflictError, match="at most 1 configured instance"):
             await supervisor.start(
-                RuntimeInstanceSpec("rti_codex_conflict", "codex", "Conflict"),
-                {"codexHome": str(tmp_path / "first" / ".")},
+                RuntimeInstanceSpec("rti_codex_second", "codex", "Second Codex"),
+                {"codexHome": str(tmp_path / "second")},
             )
 
     asyncio.run(run())

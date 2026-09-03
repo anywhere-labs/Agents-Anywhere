@@ -84,7 +84,6 @@ def _config_schema_for_instance(
     ui_schema: dict[str, Any],
     *,
     named: bool,
-    runtime_type: str,
 ) -> dict[str, Any]:
     if not named:
         return schema
@@ -94,12 +93,9 @@ def _config_schema_for_instance(
     configured_fields = ui_schema.get(NAMED_INSTANCE_REQUIRED_FIELDS_KEY)
     if not isinstance(configured_fields, list):
         configured_fields = []
-    fallback_fields = (
-        ["codexHome", "modelGateway"] if runtime_type == "codex" else []
-    )
     required_for_instance = [
         field
-        for field in [*configured_fields, *fallback_fields]
+        for field in configured_fields
         if isinstance(field, str) and field in properties
     ]
     if not required_for_instance:
@@ -419,7 +415,6 @@ class DeviceRuntimeService:
                     runtime_type_row.schema_,
                     runtime_type_row.uiSchema,
                     named=True,
-                    runtime_type=runtime_type_row.runtimeType,
                 ),
             )
             if not await self._manager.is_online(connector_id):
@@ -507,7 +502,6 @@ class DeviceRuntimeService:
                 self._schema(runtime),
                 runtime.uiSchema,
                 named=runtime.runtimeId != runtime.runtimeType,
-                runtime_type=runtime.runtimeType,
             )
             self._validate(config, schema)
             if not await self._manager.is_online(connector_id):

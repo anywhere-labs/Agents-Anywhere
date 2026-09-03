@@ -34,7 +34,7 @@ from connector.runtimes.model_gateway import model_gateway_from_config
 
 SdkChecker = Callable[[], dict[str, Any]]
 SdkClientFactory = Callable[[RuntimeConfig], Any]
-CODEX_CONFIG_SCHEMA_REVISION = 6
+CODEX_CONFIG_SCHEMA_REVISION = 7
 
 
 class CodexProvider(RuntimeProvider):
@@ -64,11 +64,11 @@ class CodexProvider(RuntimeProvider):
 
     @property
     def instance_policy(self) -> RuntimeInstancePolicy:
-        return "multiple"
+        return "single"
 
     @property
     def max_instances(self) -> int | None:
-        return None
+        return 1
 
     def __init__(
         self,
@@ -132,7 +132,6 @@ class CodexProvider(RuntimeProvider):
                 "modelGateway": {"component": "modelGateway"},
                 "environment": {"component": "keyValue"},
                 "customModels": {"component": "customModels"},
-                "requiredForNamedInstance": ["codexHome", "modelGateway"],
             },
             defaults={
                 "useSystemCodex": True,

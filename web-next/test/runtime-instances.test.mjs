@@ -13,7 +13,6 @@ import { findCapability } from "../src/components/session/capabilities.ts"
 import {
   addableRuntimeTypes,
   configuredRuntimeInstances,
-  isAdditionalCodexRuntimeType,
   mergeRuntimeTypes,
   namedInstanceRequiredConfigFields,
   reconfigurableRuntimeInstance,
@@ -91,36 +90,28 @@ test("configured instances and addable types are mutually scoped", () => {
   assert.deepEqual(addableRuntimeTypes([runtimeType], [configured]), [])
 })
 
-test("only an additional configured Codex instance gets the multi-instance label", () => {
+test("instance availability follows the runtime descriptor policy", () => {
   const [baseType] = mergeRuntimeTypes([], [legacyRuntime])
-  const codexType = {
+  const singleType = {
     ...baseType,
-    runtimeType: "codex",
-    displayName: "Codex",
-    instancePolicy: "multiple",
-    maxInstances: null,
+    runtimeType: "example",
+    displayName: "Example",
+    instancePolicy: "single",
+    maxInstances: 1,
   }
-  const configuredCodex = {
+  const configured = {
     ...legacyRuntime,
-    runtimeId: "rti_codex",
-    runtimeType: "codex",
+    runtimeId: "rti_example",
+    runtimeType: "example",
     configured: true,
     config: {},
   }
 
-  assert.equal(isAdditionalCodexRuntimeType(codexType, []), false)
-  assert.equal(isAdditionalCodexRuntimeType(codexType, [configuredCodex]), true)
-  assert.equal(
-    isAdditionalCodexRuntimeType(codexType, [{ ...configuredCodex, configured: false }]),
-    false,
-  )
-  assert.equal(
-    isAdditionalCodexRuntimeType({ ...codexType, runtimeType: "claude" }, [configuredCodex]),
-    false,
-  )
+  assert.equal(runtimeTypeCanCreateInstance(singleType, []), true)
+  assert.equal(runtimeTypeCanCreateInstance(singleType, [configured]), false)
 })
 
-test("a new Codex instance gets an isolated Home and required gateway defaults", () => {
+test("creation defaults and required fields come only from the descriptor", () => {
   const [baseType] = mergeRuntimeTypes([], [legacyRuntime])
   const codexType = {
     ...baseType,
@@ -134,59 +125,38 @@ test("a new Codex instance gets an isolated Home and required gateway defaults",
         modelGateway: { type: "object" },
       },
     },
-    uiSchema: {
-      requiredForNamedInstance: ["codexHome", "modelGateway", "codexHome"],
-    },
+    uiSchema: {},
   }
 
-  assert.deepEqual(
-    runtimeCreationDefaults(
-      codexType,
-      "Codex 2",
-      "123e4567-e89b-12d3-a456-426614174000",
-    ),
-    {
-      useSystemCodex: true,
-      codexHome: "~/.agents-anywhere/codex-homes/codex-2-123e4567e89b",
-      modelGateway: { baseUrl: "", apiKey: "" },
-    },
-  )
-  assert.deepEqual(namedInstanceRequiredConfigFields(codexType), [
-    "codexHome",
-    "modelGateway",
-  ])
+  assert.deepEqual(runtimeCreationDefaults(codexType), { useSystemCodex: true })
+  assert.deepEqual(namedInstanceRequiredConfigFields(codexType), [])
+
+  const declared = {
+    ...codexType,
+    uiSchema: { requiredForNamedInstance: ["codexHome", "modelGateway", "codexHome", "missing"] },
+  }
+  assert.deepEqual(namedInstanceRequiredConfigFields(declared), ["codexHome", "modelGateway"])
 })
 
-test("an unconfigured named Codex instance gets creation defaults when resumed", () => {
+test("an unconfigured named instance gets descriptor defaults when resumed", () => {
   const [baseType] = mergeRuntimeTypes([], [legacyRuntime])
-  const codexType = {
+  const runtimeType = {
     ...baseType,
-    runtimeType: "codex",
-    displayName: "Codex",
-    defaults: { useSystemCodex: true },
+    runtimeType: "example",
+    displayName: "Example",
+    defaults: { workspace: "default" },
   }
-  const pendingCodex = {
+  const pendingRuntime = {
     ...legacyRuntime,
-    runtimeId: "rti_codex_2",
-    runtimeType: "codex",
-    name: "Codex 2",
-    displayName: "Codex 2",
+    runtimeId: "rti_example_2",
+    runtimeType: "example",
+    name: "Example 2",
+    displayName: "Example 2",
     configured: false,
     config: null,
   }
 
-  assert.deepEqual(
-    runtimeConfigDraft(
-      codexType,
-      pendingCodex,
-      "123e4567-e89b-12d3-a456-426614174000",
-    ),
-    {
-      useSystemCodex: true,
-      codexHome: "~/.agents-anywhere/codex-homes/codex-2-123e4567e89b",
-      modelGateway: { baseUrl: "", apiKey: "" },
-    },
-  )
+  assert.deepEqual(runtimeConfigDraft(runtimeType, pendingRuntime), { workspace: "default" })
 })
 
 test("a runtime type without a configuration schema is not addable", () => {

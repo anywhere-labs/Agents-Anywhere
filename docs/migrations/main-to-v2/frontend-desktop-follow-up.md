@@ -4,9 +4,9 @@
 
 适用分支：`v2`
 
-业务代码基线：`23d2d188`（本说明编写时已推送到 `origin/v2`）
+业务代码基线：`v2` 当前 HEAD（本说明随本轮修复一起更新）
 
-这是一份给 Web 前端组和 Desktop 维护者的说明，描述本轮已经落地的业务行为，以及各端需要如何理解和验证。它不是新的 API 迁移方案；本轮没有修改公开 REST、WebSocket 或协议 payload。
+这是一份给 Web 前端组和 Desktop 维护者的说明，描述本轮已经落地的业务行为，以及各端需要如何理解和验证。它不是新的 API 迁移方案；本轮没有修改公开 REST、WebSocket 或协议 payload 的 shape。
 
 ## 先看结论
 
@@ -15,16 +15,17 @@
 - Connector 刚上线时，`connector.status=online` 可能先于 runtime discovery 完成；Web 会在 New Session 内做一次有界的 inventory settling，避免选项暂时为空后永久消失。
 - New Session 里的设备、Agent、Model、Permission、Reasoning/Effort 在用户选择后立即写入浏览器本地 preference，不再等到会话创建成功。
 - 上述 preference 只属于 Web 的 New Session composer，不是 Server 数据，也不影响已有 session 的 runtime selection 更新。
-- Desktop 的本机 Connector 控制层不需要新增 preference IPC，也不应自动创建 runtime；但嵌入 Web 的 Desktop Workbench renderer 需要同步本轮 Web 业务逻辑。
+- Codex runtime descriptor 现在声明单实例（`instancePolicy=single`、`maxInstances=1`）；`codexHome` 是可选配置，省略或填写空白时由 Connector 使用 `CODEX_HOME` 或 `~/.codex`。
+- Desktop 的本机 Connector 控制层不需要新增 preference IPC，也不应自动创建 runtime；Workbench renderer 只应按 descriptor/schema 驱动，不得恢复平台专属默认值或多实例分支。
 
 责任可以先按下面划分：
 
 | 组件 | 本轮状态 | 跟进 |
 | --- | --- | --- |
 | `web-next` | 已实现 | 直接使用 `v2` 最新代码并运行前端回归检查。 |
-| `desktop-workbench/renderer` | 尚未同步，仍是旧副本 | 同步 shared renderer 逻辑，保留 Desktop 自有壳层差异。 |
+| `desktop-workbench/renderer` | 部分同步；配对和 New Session 主流程仍是旧副本 | 先同步下文列出的 shared renderer 逻辑，保留 Desktop 自有壳层差异。 |
 | `desktop-next` | Connector 控制层无需改业务接口 | 验证配对、重连和 Connector 状态展示，不创建 runtime。 |
-| Server/Connector | 已实现内部时序修复 | 不需要客户端新增 endpoint 或 payload 字段。 |
+| Server/Connector | 已实现连接替换保护；ownership lease 竞态仍是已知限制 | 不需要客户端新增 endpoint 或 payload 字段。 |
 
 ## 如何看到这次更新
 
@@ -37,7 +38,7 @@ git pull --ff-only origin v2
 git log --oneline -10
 ```
 
-重点查看 `web-next/src/components/task-composer.tsx`、`web-next/src/components/pair-device-dialog.tsx` 和 `web-next/src/features/dashboard/` 下的新增逻辑。`desktop-workbench/renderer` 是独立维护的复制副本，拉取分支不会自动获得 `web-next` 的这些改动；Desktop 需要按下文的同步清单处理。
+重点查看 `web-next/src/components/task-composer.tsx`、`web-next/src/components/pair-device-dialog.tsx`、`web-next/src/features/dashboard/`，以及 Connector 的 Codex descriptor。`desktop-workbench/renderer` 是独立维护的复制副本；本轮已同步其中的 runtime helper、设备页和配置对话框，但配对和 Composer 主流程仍需要按下文清单跟进。
 
 ## 业务行为变化
 
@@ -77,6 +78,51 @@ Connector online
 ```
 
 这不是新的前端 API。它只是说明为什么 Web 不能把第一次空 inventory 当成最终结果。
+
+### 3. Server 重启时的 Connector ownership 竞态
+
+这次排查确认了一个与 capability 数据无关的已知 Server 边界：Connector
+ownership lease 当前在 Redis 中保留约 60 秒。若 Server 进程非正常退出，旧
+Server 的 Pub/Sub owner channel 会先消失，但 lease 可能还在；新 Server 在
+这段窗口内可能把 Connector 判为 online，随后 RPC 路由返回：
+
+```json
+{"detail":"connector owner is unavailable"}
+```
+
+这不是新的接口或 payload，也不是前端 capability schema 错误。当前实现没有
+仅凭 Pub/Sub 订阅数强制删除 lease，因为短暂的 Redis 断订阅也可能表现为零
+订阅，直接抢占会制造两个 owner。真正的提前接管需要独立的 owner liveness
+和 fencing 协议；在该协议落地前，lease 到期仍是唯一安全的自动回收边界。
+
+Web 和 Desktop 的处理约定：
+
+- 将 `409 connector owner is unavailable` 视为短暂的 Connector/Server
+  ownership 状态，而不是 capability 内容错误；按现有有界退避重新读取
+  Connector presence、runtime inventory 或 capabilities。
+- 不要因为一次 409 清空本地 runtime 配置或把 Connector 标记为永久离线。
+- 不要在客户端按 `codex`、`claude` 或其他平台名称实现强制接管；服务端
+  lease 重新可路由后，现有通用读取流程会恢复。
+- 这条竞态目前仍可能在 Server 重启后的 lease 窗口内出现；本轮没有改变
+  REST、WebSocket 或 capability payload，也没有把不安全的抢占逻辑带入
+  `v2`。
+
+### 4. Codex runtime 配置
+
+Codex 的可运行实例策略和配置约束现在由 Connector 返回的 runtime
+descriptor/schema 作为唯一来源：
+
+- `instancePolicy=single`、`maxInstances=1`；Server 和 Connector 都拒绝第二个
+  Codex 实例，但不会按平台名称在前端生成另一套规则。
+- `codexHome` 不再带 `minLength`，因此配置请求可以省略该字段或传空字符串。
+- Connector 校验时把空值解析为 `CODEX_HOME`，没有该环境变量时回退到
+  `~/.codex`，并在实际 runtime config/resource claim 中使用规范化后的路径。
+- Web 和 Workbench renderer 的创建默认值、named-instance required 字段、字段
+  标题和校验文案都只读取 descriptor/schema metadata；前端不再生成隔离的
+  `codexHome`、强制 `modelGateway`，也不再显示 Codex 专属的多实例标签。
+
+这不是新的 endpoint 或 payload 字段；现有 Runtime Control 2.0
+`runtimeTypes[].instancePolicy/maxInstances/configSchema` 即可表达上述行为。
 
 ## Web 前端需要理解的逻辑
 
@@ -161,7 +207,7 @@ Connector 从 offline 变为 online，或首次 online 时，watcher 会：
 
 ### Desktop Workbench 必须同步的内容
 
-当前 `desktop-workbench/renderer` 仍是旧版本，不能只更新 Electron 主进程。请从 `web-next` 同步 shared renderer 代码，再保留 Desktop 自有集成层。至少需要同步：
+当前 `desktop-workbench/renderer` 不是完整同步版本，不能只更新 Electron 主进程。本轮已经同步 runtime helper、设备页和 runtime config dialog 的 descriptor-driven 改动；仍请从 `web-next` 同步配对和 New Session 主流程，再保留 Desktop 自有集成层。至少需要核对：
 
 - `src/components/task-composer.tsx`
 - `src/features/dashboard/new-session-runtime-inventory.ts`
@@ -171,6 +217,10 @@ Connector 从 offline 变为 online，或首次 online 时，watcher 会：
 - `src/components/runtime-instance-name-dialog.tsx`
 - `messages/en.json` 和 `messages/zh-CN.json` 中本轮 pairing 文案
 - 对应的静态契约测试；renderer 当前可以直接运行 `node --test test/*.test.mjs`、`corepack yarn typecheck` 和 `corepack yarn protocol:check`（也可以同步 `web-next/package.json` 中的 `test` script）
+
+其中 `runtime-instances.ts`、`device-page.tsx`、`runtime-config-dialog.tsx` 和
+对应测试已经按本轮 descriptor 规则更新；`pair-device-dialog.tsx`、
+`task-composer.tsx` 及其 inventory/presence 逻辑仍需要单独同步。
 
 同步后应具备以下行为：
 
@@ -223,7 +273,10 @@ corepack yarn typecheck
 corepack yarn protocol:check
 ```
 
-Server 本轮相关回归测试已在提交前通过：`292 passed, 14 skipped`。本轮没有修改 Android，也没有要求 Android 跟进。
+本轮受影响的回归测试已通过：Connector Codex/runtime-control 共 `202 passed`，
+Server runtime/connector RPC 共 `69 passed`（另有 1 个现有 deprecation warning），
+Web `62 passed` 且 typecheck 通过，Workbench renderer 静态测试 `10 passed`。
+本轮没有修改 Android，也没有要求 Android 跟进。
 
 Desktop Workbench renderer 同步后至少再执行：
 
@@ -243,5 +296,7 @@ corepack yarn protocol:check
 - `f0c67237`、`33617ef0`：修正 Connector runtime negotiation、重连和旧连接隔离。
 - `f6de53c4`：修复 New Session 在 online/discovery 竞态下丢失 runtime 选项。
 - `23d2d188`：让 New Session 选择在用户操作后立即持久化。
+- 本轮：让 Codex descriptor 声明单实例并允许空 `codexHome`；移除前端按 Codex
+  名称生成的多实例/必填逻辑；保护 Connector 重连期间的替换连接不被旧心跳清理。
 
 以上业务提交已连续合并在 `v2`。本说明随后作为文档提交加入同一分支；请以前端组实际拉取到的 `origin/v2` HEAD 为准。

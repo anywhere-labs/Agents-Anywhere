@@ -15,7 +15,6 @@ import {
   AlertCircle,
   Archive,
   Pencil,
-  CircleHelp,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -67,7 +66,6 @@ import {
 import {
   addableRuntimeTypes,
   configuredRuntimeInstances,
-  isAdditionalCodexRuntimeType,
   namedInstanceRequiredConfigFields,
   reconfigurableRuntimeInstance,
   runtimeConfigDraft,
@@ -526,7 +524,7 @@ export function DevicePage() {
     setPendingRuntimeCreation({
       runtimeType: createRuntimeType,
       name,
-      initialConfig: runtimeCreationDefaults(createRuntimeType, name),
+      initialConfig: runtimeCreationDefaults(createRuntimeType),
     })
     setCreateRuntimeType(null)
   }
@@ -930,9 +928,7 @@ export function DevicePage() {
                     <p className="px-2 py-3 text-sm text-muted-foreground">{t("noRuntimeTypes")}</p>
                   ) : (
                     <div className="flex flex-col gap-1">
-                      {availableRuntimeTypes.map((runtimeType) => {
-                        const isBeta = isAdditionalCodexRuntimeType(runtimeType, runtimes)
-                        return (
+                      {availableRuntimeTypes.map((runtimeType) => (
                         <div key={runtimeType.runtimeType} className="flex min-h-12 items-center gap-3 rounded-lg px-2 py-2 hover:bg-accent/30">
                           <span className={cn(
                             "size-2 shrink-0 rounded-full",
@@ -940,30 +936,7 @@ export function DevicePage() {
                           )} />
                           <div className="min-w-0 flex-1">
                             <div className="flex min-w-0 items-center gap-1">
-                              <p className="truncate text-sm font-medium">
-                                {isBeta
-                                  ? t("codexMultiInstanceName")
-                                  : runtimeType.displayName}
-                              </p>
-                              {isBeta ? <Badge variant="secondary">{t("beta")}</Badge> : null}
-                              {isBeta ? (
-                                <Tooltip>
-                                  <TooltipTrigger asChild>
-                                    <Button
-                                      type="button"
-                                      variant="ghost"
-                                      size="icon-sm"
-                                      className="size-6 shrink-0"
-                                      aria-label={t("codexMultiInstanceHelpLabel")}
-                                    >
-                                      <CircleHelp />
-                                    </Button>
-                                  </TooltipTrigger>
-                                  <TooltipContent side="top" className="max-w-xs">
-                                    {t("codexMultiInstanceHelp")}
-                                  </TooltipContent>
-                                </Tooltip>
-                              ) : null}
+                              <p className="truncate text-sm font-medium">{runtimeType.displayName}</p>
                             </div>
                             <p className="truncate text-xs text-muted-foreground">
                               {runtimeType.description || runtimeType.reason || runtimeType.implementationType}
@@ -979,8 +952,7 @@ export function DevicePage() {
                             {t("addRuntime")}
                           </Button>
                         </div>
-                        )
-                      })}
+                      ))}
                     </div>
                   )}
                 </div>
@@ -1179,7 +1151,6 @@ export function DevicePage() {
           config={pendingRuntimeCreation.initialConfig}
           defaults={pendingRuntimeCreation.runtimeType.defaults}
           requiredFields={namedInstanceRequiredConfigFields(pendingRuntimeCreation.runtimeType)}
-          badgeLabel={pendingRuntimeCreation.runtimeType.runtimeType === "codex" ? t("beta") : undefined}
           saving={savingRuntimeId === NEW_RUNTIME_SAVING_ID}
           submitLabel={t("configureAndStart")}
           open
