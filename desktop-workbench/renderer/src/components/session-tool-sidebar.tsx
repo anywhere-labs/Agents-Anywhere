@@ -244,7 +244,7 @@ export function SessionToolSidebar({
       )}
       style={panelStyle}
     >
-      <div className="aa-window-drag flex h-11 shrink-0 items-center gap-1 border-b border-border bg-background px-1.5">
+      <div className="aa-window-drag flex h-11 shrink-0 items-center gap-1 bg-background px-1.5">
         <div
           role="tablist"
           aria-label={t("tabsLabel")}
