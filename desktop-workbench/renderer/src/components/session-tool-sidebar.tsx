@@ -38,6 +38,12 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty"
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
 
 export type SessionToolKind = "review" | "terminal" | "files"
@@ -311,17 +317,25 @@ export function SessionToolSidebar({
           >
             {controller.expanded ? <Minimize2 /> : <Maximize2 />}
           </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            aria-label={t("collapse")}
-            title={t("collapse")}
-            onClick={collapseAndRestoreFocus}
-            className="rounded-lg"
-          >
-            <PanelRightClose />
-          </Button>
+          <TooltipProvider delayDuration={800}>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label={t("collapse")}
+                  onClick={collapseAndRestoreFocus}
+                  className="rounded-lg"
+                >
+                  <PanelRightClose />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" align="end" sideOffset={6}>
+                {t("visibilityToggle")}
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
         </div>
       </div>
 

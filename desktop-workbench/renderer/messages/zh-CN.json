@@ -884,6 +884,7 @@
         "restore": "退出全屏",
         "collapse": "收起工具侧栏",
         "toggle": "打开工具侧栏",
+        "visibilityToggle": "显示/隐藏侧边面板",
         "reviewPlaceholderTitle": "审查",
         "reviewPlaceholderDescription": "审查功能将在后续版本中提供。"
       },

@@ -9,6 +9,12 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card"
 import { Input } from "@/components/ui/input"
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
 import { DashboardSidebarToggle } from "@/components/dashboard-sidebar-toggle"
 import { useWorkspace } from "@/components/workspace-context"
 import { useIsMobile } from "@/hooks/use-mobile"
@@ -172,22 +178,30 @@ export function SessionViewHeader({
           desktopPortalTargets.session,
         )}
         {toolsOpen ? null : createPortal(
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            aria-label={tSession(toolsOpen ? "tools.collapse" : "tools.toggle")}
-            title={tSession(toolsOpen ? "tools.collapse" : "tools.toggle")}
-            aria-pressed={toolsOpen}
-            onClick={onToggleTools}
-            data-slot="session-tool-sidebar-toggle"
-            className={cn(
-              "rounded-md text-muted-foreground hover:bg-muted hover:text-foreground",
-              toolsOpen && "bg-muted text-foreground",
-            )}
-          >
-            <PanelRight />
-          </Button>,
+          <TooltipProvider delayDuration={800}>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label={tSession(toolsOpen ? "tools.collapse" : "tools.toggle")}
+                  aria-pressed={toolsOpen}
+                  onClick={onToggleTools}
+                  data-slot="session-tool-sidebar-toggle"
+                  className={cn(
+                    "rounded-md text-muted-foreground hover:bg-muted hover:text-foreground",
+                    toolsOpen && "bg-muted text-foreground",
+                  )}
+                >
+                  <PanelRight />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" align="end" sideOffset={6}>
+                {tSession("tools.visibilityToggle")}
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>,
           desktopPortalTargets.actions,
         )}
       </>

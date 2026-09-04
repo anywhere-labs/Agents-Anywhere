@@ -884,6 +884,7 @@
         "restore": "Restore tool sidebar",
         "collapse": "Collapse tool sidebar",
         "toggle": "Open tool sidebar",
+        "visibilityToggle": "Show/hide side panel",
         "reviewPlaceholderTitle": "Review",
         "reviewPlaceholderDescription": "Review will be available in a future version."
       },
