@@ -177,7 +177,7 @@ type SessionToolSidebarProps = {
   onWidthChange: (width: number) => void
   onWidthChangeEnd: (width: number) => void
   onOpenTool: (kind: SessionToolKind) => void
-  onDetachTool: (kind: Exclude<SessionToolKind, "review">) => void
+  onDetachFiles: () => void
 }
 
 export function SessionToolSidebar({
@@ -194,13 +194,14 @@ export function SessionToolSidebar({
   onWidthChange,
   onWidthChangeEnd,
   onOpenTool,
-  onDetachTool,
+  onDetachFiles,
 }: SessionToolSidebarProps) {
   const t = useTranslations("dashboard.session.tools")
   const dashboardSidebarControls = useDashboardSidebarControls()
   const tabButtonRefs = React.useRef(new Map<SessionToolKind, HTMLButtonElement>())
   const newTabButtonRef = React.useRef<HTMLButtonElement | null>(null)
   const launcherButtonRef = React.useRef<HTMLButtonElement | null>(null)
+  const [terminalTabBarTarget, setTerminalTabBarTarget] = React.useState<HTMLElement | null>(null)
   const resizeStateRef = React.useRef<{
     pointerId: number
     startClientX: number
@@ -283,6 +284,7 @@ export function SessionToolSidebar({
   }
 
   const handleTabKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if ((event.target as HTMLElement).closest("[data-terminal-tabs]")) return
     if ((event.target as HTMLElement).getAttribute("role") !== "tab") return
     if (!controller.activeTabId || controller.tabs.length === 0) return
 
@@ -382,6 +384,18 @@ export function SessionToolSidebar({
             const Icon = meta.icon
             const active = controller.activeTabId === tab.id
             const label = t(meta.labelKey)
+
+            if (tab.kind === "terminal" && active) {
+              return (
+                <div
+                  key={tab.id}
+                  id={`session-tool-tab-${tab.id}`}
+                  ref={setTerminalTabBarTarget}
+                  className="aa-term-tabs-shell min-w-0 flex-1 basis-0 overflow-hidden"
+                />
+              )
+            }
+
             return (
               <div
                 key={tab.id}
@@ -475,10 +489,7 @@ export function SessionToolSidebar({
                     connectorId={connectorId}
                     root={root}
                     variant="tab"
-                    onPopOut={() => {
-                      closeTabAndRestoreFocus(tab.id)
-                      onDetachTool("terminal")
-                    }}
+                    tabBarTarget={active ? terminalTabBarTarget : null}
                   />
                 ) : null}
                 {tab.kind === "files" ? (
@@ -490,7 +501,7 @@ export function SessionToolSidebar({
                     variant="tab"
                     onPopOut={() => {
                       closeTabAndRestoreFocus(tab.id)
-                      onDetachTool("files")
+                      onDetachFiles()
                     }}
                   />
                 ) : null}
