@@ -6,6 +6,7 @@ import errno
 import os
 import time
 from collections.abc import Awaitable, Callable
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -33,6 +34,10 @@ class TerminalNotFoundError(RuntimeError):
     code = "terminal_not_found"
 
 
+class TerminalLimitError(RuntimeError):
+    code = "terminal_limit_reached"
+
+
 class TerminalBackend:
     def __init__(
         self,
@@ -45,6 +50,9 @@ class TerminalBackend:
     ) -> None:
         self.notify = notify
         self._terminals: dict[str, dict[str, Any]] = {}
+        self._retired_executors: list[ThreadPoolExecutor] = []
+        self._close_lock = asyncio.Lock()
+        self._closed = False
         self._idle_ttl_seconds = _env_float(
             "AGENT_CONNECTOR_TERMINAL_IDLE_TTL_SECONDS",
             TERMINAL_IDLE_TTL_SECONDS,
@@ -83,6 +91,8 @@ class TerminalBackend:
         *,
         output: TerminalOutput | None = None,
     ) -> dict[str, Any]:
+        if self._closed:
+            raise RuntimeError("terminal backend is closed")
         self._gc()
         root = workspace_root(params)
         raw_cwd = params.get("cwd")
@@ -121,6 +131,11 @@ class TerminalBackend:
                 env[k] = v
         if terminal_id in self._terminals:
             raise ValueError(f"terminal already exists: {terminal_id}")
+        active_count = sum(not record["closed"] for record in self._terminals.values())
+        if active_count >= TERMINAL_MAX_RECORDS:
+            raise TerminalLimitError(
+                f"active terminal limit reached ({TERMINAL_MAX_RECORDS})"
+            )
 
         pty = self._spawn(argv, cwd=cwd, env=env, rows=rows, cols=cols)
         now_mono = time.monotonic()
@@ -155,6 +170,17 @@ class TerminalBackend:
             "chunksBytes": 0,
             "seq": 0,
             "output": output,
+            # A PTY read is intentionally blocking for as long as an idle shell
+            # has no output. Isolate each direction so reads cannot consume
+            # asyncio's shared pool and a blocked write cannot delay the next read.
+            "readExecutor": ThreadPoolExecutor(
+                max_workers=1,
+                thread_name_prefix=f"terminal-read-{terminal_id}",
+            ),
+            "writeExecutor": ThreadPoolExecutor(
+                max_workers=1,
+                thread_name_prefix=f"terminal-write-{terminal_id}",
+            ),
         }
         record["task"] = asyncio.create_task(self._pump_terminal_output(record))
         record["reaperTask"] = asyncio.create_task(self._reap_terminal(record))
@@ -193,7 +219,12 @@ class TerminalBackend:
         except Exception as exc:
             raise ValueError("dataBase64 must be valid base64") from exc
         self._touch(record)
-        await asyncio.to_thread(self._write_all, record["pty"], data)
+        await asyncio.get_running_loop().run_in_executor(
+            record["writeExecutor"],
+            self._write_all,
+            record["pty"],
+            data,
+        )
         return {"terminalId": terminal_id, "bytesWritten": len(data)}
 
     async def resize(self, params: dict[str, Any]) -> dict[str, Any]:
@@ -293,13 +324,39 @@ class TerminalBackend:
             "outputs": outputs,
         }
 
+    async def aclose(self) -> None:
+        async with self._close_lock:
+            if self._closed:
+                return
+            self._closed = True
+            records = list(self._terminals.values())
+            tasks = [
+                task
+                for record in records
+                for task in (record.get("task"), record.get("reaperTask"))
+                if isinstance(task, asyncio.Task)
+            ]
+            for record in records:
+                await self._kill_terminal(record)
+                self._forget_terminal(record["id"])
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
+            retired_executors, self._retired_executors = (
+                self._retired_executors,
+                [],
+            )
+            for executor in retired_executors:
+                executor.shutdown(wait=True, cancel_futures=True)
+
     async def _pump_terminal_output(self, record: dict[str, Any]) -> None:
         pty = record["pty"]
         loop = asyncio.get_running_loop()
         try:
             while True:
                 try:
-                    data = await loop.run_in_executor(None, self._read, pty)
+                    data = await loop.run_in_executor(
+                        record["readExecutor"], self._read, pty
+                    )
                 except OSError as exc:
                     if exc.errno in (errno.EIO,):
                         break
@@ -362,6 +419,11 @@ class TerminalBackend:
         record["closedAt"] = time.time()
         record["closedAtMono"] = time.monotonic()
         self._close(record["pty"])
+        for key in ("readExecutor", "writeExecutor"):
+            executor = record.get(key)
+            if isinstance(executor, ThreadPoolExecutor):
+                executor.shutdown(wait=False, cancel_futures=True)
+                self._retired_executors.append(executor)
 
     async def _reap_terminal(self, record: dict[str, Any]) -> None:
         terminal_id = record["id"]
@@ -446,6 +508,11 @@ class TerminalBackend:
         return terminal_view(record, self._pid(record["pty"]))
 
     def _gc(self) -> None:
+        self._retired_executors = [
+            executor
+            for executor in self._retired_executors
+            if any(thread.is_alive() for thread in executor._threads)
+        ]
         now = time.monotonic()
         for terminal_id, record in list(self._terminals.items()):
             if not record["closed"]:
