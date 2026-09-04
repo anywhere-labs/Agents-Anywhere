@@ -2,9 +2,11 @@
 
 import * as React from "react"
 import {
+  Apple,
   CheckCircle2,
   Clock,
-  Download,
+  ExternalLink,
+  Info,
   Loader2,
   QrCode,
   RefreshCw,
@@ -18,14 +20,14 @@ import QRCode from "qrcode"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import {
-  Card,
-  CardAction,
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog"
 import { Progress } from "@/components/ui/progress"
 import { authApi } from "@/features/auth/api"
 import type {
@@ -37,16 +39,15 @@ import { cn } from "@/lib/utils"
 type Props = {
   token: string
   userId: string
-  autoStart?: boolean
-  className?: string
-  onDone?: () => void
-  onExit?: () => void
+  children: React.ReactElement
 }
 
-type Stage = "idle" | "install" | "generating" | "scan" | "confirming"
+type Stage = "install" | "generating" | "scan" | "confirming"
 
 const POLL_INTERVAL_MS = 1600
-const MOBILE_APP_DOWNLOAD_URL = "https://github.com/anywhere-labs/Agents-Anywhere/releases/latest"
+const ANDROID_APP_DOWNLOAD_URL = "https://github.com/anywhere-labs/Agents-Anywhere/releases/latest"
+// TODO: Replace this placeholder when the iOS App Store listing is available.
+const IOS_APP_DOWNLOAD_URL = "https://apps.apple.com/app/agents-anywhere/id0000000000"
 
 function formatExpiry(value: string): string {
   const date = new Date(value)
@@ -78,17 +79,11 @@ function mobileLoginQrPayload(qr: MobileLoginQrCreateResponse) {
   }
 }
 
-export function MobileConnectionOnboarding({
-  token,
-  userId,
-  autoStart = false,
-  className,
-  onDone,
-  onExit,
-}: Props) {
+export function MobileConnectionDialog({ token, userId, children }: Props) {
   const t = useTranslations("dashboard.mobileConnections")
   const tCommon = useTranslations("common")
-  const [stage, setStage] = React.useState<Stage>(autoStart ? "install" : "idle")
+  const [open, setOpen] = React.useState(false)
+  const [stage, setStage] = React.useState<Stage>("install")
   const [error, setError] = React.useState<string | null>(null)
   const [qrLogin, setQrLogin] = React.useState<MobileLoginQrCreateResponse | null>(null)
   const [qrStatus, setQrStatus] = React.useState<MobileLoginStatusResponse | null>(null)
@@ -103,13 +98,13 @@ export function MobileConnectionOnboarding({
 
   const reset = React.useCallback(() => {
     clearQr()
-    setStage("idle")
+    setStage("install")
   }, [clearQr])
 
   React.useEffect(() => {
-    clearQr()
-    setStage(autoStart ? "install" : "idle")
-  }, [autoStart, clearQr, userId])
+    setOpen(false)
+    reset()
+  }, [reset, userId])
 
   const generateQr = React.useCallback(async () => {
     if (!token) {
@@ -156,7 +151,8 @@ export function MobileConnectionOnboarding({
 
   const status = qrStatus?.status
   const shouldPoll = Boolean(
-    qrLogin
+    open
+      && qrLogin
       && stage === "scan"
       && (!status || status === "pending_scan" || status === "pending_web_confirm" || status === "approved"),
   )
@@ -182,14 +178,18 @@ export function MobileConnectionOnboarding({
     }
   }, [qrLogin, shouldPoll, token])
 
-  const handleExit = () => {
+  const busy = stage === "generating" || stage === "confirming"
+  const currentStep = stage === "install" ? 1 : 2
+
+  const handleOpenChange = (nextOpen: boolean) => {
+    if (!nextOpen && busy) return
     reset()
-    onExit?.()
+    setOpen(nextOpen)
   }
 
-  const handleDone = () => {
+  const handleExit = () => {
     reset()
-    onDone?.()
+    setOpen(false)
   }
 
   const returnToInstall = () => {
@@ -197,220 +197,202 @@ export function MobileConnectionOnboarding({
     setStage("install")
   }
 
-  const currentStep = stage === "install" ? 1 : 2
-
   return (
-    <Card className={cn("w-full", className)}>
-      <CardHeader className={cn(stage !== "idle" && "border-b")}>
-        <CardTitle>{stage === "idle" ? t("onboardingTitle") : stage === "install" ? t("installTitle") : t("scanTitle")}</CardTitle>
-        <CardDescription>
-          {stage === "idle"
-            ? t("onboardingDescription")
-            : stage === "install"
-              ? t("installDescription")
-              : t("scanDescription")}
-        </CardDescription>
-        <CardAction>
-          {stage === "idle" ? (
-            <QrCode className="size-5 text-muted-foreground" />
-          ) : (
-            <span className="text-xs font-medium text-muted-foreground">
+    <Dialog open={open} onOpenChange={handleOpenChange}>
+      <DialogTrigger asChild>{children}</DialogTrigger>
+      <DialogContent
+        className="sm:max-w-lg"
+        showCloseButton={!busy}
+        onEscapeKeyDown={(event) => {
+          if (busy) event.preventDefault()
+        }}
+        onPointerDownOutside={(event) => {
+          if (busy) event.preventDefault()
+        }}
+      >
+        <DialogHeader>
+          <div className="flex items-center justify-between gap-4 pr-8">
+            <DialogTitle>{stage === "install" ? t("installTitle") : t("scanTitle")}</DialogTitle>
+            <span className="shrink-0 text-xs font-medium text-muted-foreground">
               {t("stepProgress", { current: currentStep, total: 2 })}
             </span>
-          )}
-        </CardAction>
-        {stage !== "idle" ? (
-          <Progress className="col-span-full mt-2" value={currentStep * 50} />
-        ) : null}
-      </CardHeader>
+          </div>
+          <Progress className="mt-2" value={currentStep * 50} />
+        </DialogHeader>
 
-      {stage === "idle" ? (
-        <CardContent>
-          <Alert>
-            <ShieldCheck />
-            <AlertTitle>{t("securityTitle")}</AlertTitle>
-            <AlertDescription>{t("securityDescription")}</AlertDescription>
-          </Alert>
-        </CardContent>
-      ) : null}
-
-      {stage === "install" ? (
-        <CardContent>
-          <div className="flex flex-col items-center gap-4 py-5 text-center">
-            <div className="flex size-16 items-center justify-center rounded-3xl bg-primary/10 text-primary">
-              <Smartphone className="size-8" />
-            </div>
-            <div className="flex max-w-md flex-col gap-1">
-              <p className="font-medium">{t("installReadyTitle")}</p>
-              <p className="text-sm text-muted-foreground">{t("installReadyDescription")}</p>
+        {stage === "install" ? (
+          <div className="flex min-h-64 flex-col items-center justify-center gap-6 py-4 text-center">
+            <p className="text-base font-medium">{t("downloadPrompt")}</p>
+            <div className="flex flex-wrap items-center justify-center gap-3">
+              <Button type="button" variant="outline" size="lg" className="min-w-36" asChild>
+                <a href={ANDROID_APP_DOWNLOAD_URL} target="_blank" rel="noreferrer">
+                  <Smartphone data-icon="inline-start" />
+                  {t("androidDownloadOption")}
+                  <ExternalLink data-icon="inline-end" />
+                </a>
+              </Button>
+              <Button type="button" variant="outline" size="lg" className="min-w-36" asChild>
+                <a href={IOS_APP_DOWNLOAD_URL} target="_blank" rel="noreferrer">
+                  <Apple data-icon="inline-start" />
+                  {t("iosDownloadOption")}
+                  <ExternalLink data-icon="inline-end" />
+                </a>
+              </Button>
             </div>
           </div>
-        </CardContent>
-      ) : null}
+        ) : null}
 
-      {stage === "generating" ? (
-        <CardContent>
+        {stage === "generating" ? (
           <div className="flex min-h-72 flex-col items-center justify-center gap-3 text-center">
             <Loader2 className="size-8 animate-spin text-muted-foreground" />
             <p className="text-sm text-muted-foreground">{t("generating")}</p>
           </div>
-        </CardContent>
-      ) : null}
+        ) : null}
 
-      {stage === "confirming" ? (
-        <CardContent>
+        {stage === "confirming" ? (
           <div className="flex min-h-72 flex-col items-center justify-center gap-3 text-center">
             <Loader2 className="size-8 animate-spin text-muted-foreground" />
             <p className="text-sm text-muted-foreground">{t("confirming")}</p>
           </div>
-        </CardContent>
-      ) : null}
+        ) : null}
 
-      {stage === "scan" ? (
-        <CardContent className="flex min-h-72 flex-col gap-5">
-          {error ? (
-            <Alert variant="destructive">
-              <XCircle />
-              <AlertTitle>{t("errorTitle")}</AlertTitle>
-              <AlertDescription>{error}</AlertDescription>
-            </Alert>
-          ) : null}
-
-          {!qrLogin ? (
-            <ConnectionState
-              icon={QrCode}
-              title={t("generateFailedTitle")}
-              description={t("generateFailedDescription")}
-            />
-          ) : status === "pending_web_confirm" ? (
-            <div className="flex min-h-56 items-center">
-              <Alert>
-                <ShieldCheck />
-                <AlertTitle>{t("pendingConfirmationTitle")}</AlertTitle>
-                <AlertDescription>{t("pendingConfirmationDescription")}</AlertDescription>
+        {stage === "scan" ? (
+          <div className="flex min-h-72 flex-col gap-5">
+            {error ? (
+              <Alert variant="destructive">
+                <XCircle />
+                <AlertTitle>{t("errorTitle")}</AlertTitle>
+                <AlertDescription>{error}</AlertDescription>
               </Alert>
-            </div>
-          ) : status === "approved" ? (
-            <ConnectionState
-              icon={Loader2}
-              iconClassName="animate-spin"
-              title={t("finishingTitle")}
-              description={t("finishingDescription")}
-            />
-          ) : status === "consumed" ? (
-            <ConnectionState
-              icon={CheckCircle2}
-              title={t("completeTitle")}
-              description={t("completeDescription")}
-              tone="success"
-            />
-          ) : status === "rejected" ? (
-            <ConnectionState
-              icon={XCircle}
-              title={t("rejectedTitle")}
-              description={t("rejectedDescription")}
-              tone="destructive"
-            />
-          ) : status === "expired" ? (
-            <ConnectionState
-              icon={Clock}
-              title={t("expiredTitle")}
-              description={t("expiredDescription")}
-            />
-          ) : qrImage ? (
-            <div className="flex flex-col items-center gap-4">
-              <div className="rounded-2xl border border-border bg-white p-3 shadow-sm">
-                <img
-                  src={qrImage}
-                  alt={t("qrAlt")}
-                  className="size-[260px]"
-                  width={260}
-                  height={260}
-                />
+            ) : null}
+
+            {!qrLogin ? (
+              <ConnectionState
+                icon={QrCode}
+                title={t("generateFailedTitle")}
+                description={t("generateFailedDescription")}
+              />
+            ) : status === "pending_web_confirm" ? (
+              <div className="flex min-h-56 items-center">
+                <Alert>
+                  <ShieldCheck />
+                  <AlertTitle>{t("pendingConfirmationTitle")}</AlertTitle>
+                  <AlertDescription>{t("pendingConfirmationDescription")}</AlertDescription>
+                </Alert>
               </div>
-              <div className="flex flex-col items-center gap-1 text-center">
-                <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <Loader2 className="size-4 animate-spin" />
-                  <span>{t("waitingForScan")}</span>
+            ) : status === "approved" ? (
+              <ConnectionState
+                icon={Loader2}
+                iconClassName="animate-spin"
+                title={t("finishingTitle")}
+                description={t("finishingDescription")}
+              />
+            ) : status === "consumed" ? (
+              <ConnectionState
+                icon={CheckCircle2}
+                title={t("completeTitle")}
+                description={t("completeDescription")}
+                tone="success"
+              />
+            ) : status === "rejected" ? (
+              <ConnectionState
+                icon={XCircle}
+                title={t("rejectedTitle")}
+                description={t("rejectedDescription")}
+                tone="destructive"
+              />
+            ) : status === "expired" ? (
+              <ConnectionState
+                icon={Clock}
+                title={t("expiredTitle")}
+                description={t("expiredDescription")}
+              />
+            ) : qrImage ? (
+              <div className="flex flex-col items-center gap-4">
+                <DialogDescription className="flex max-w-md items-start gap-2 text-left">
+                  <Info className="mt-0.5 size-4 shrink-0" />
+                  <span>{t("scanInstruction")}</span>
+                </DialogDescription>
+                <div className="rounded-2xl border border-border bg-white p-3 shadow-sm">
+                  <img
+                    src={qrImage}
+                    alt={t("qrAlt")}
+                    className="size-[260px]"
+                    width={260}
+                    height={260}
+                  />
                 </div>
-                <p className="text-xs text-muted-foreground">
-                  {t("expiresAt", { time: formatExpiry(qrLogin.expiresAt) })}
-                </p>
+                <div className="flex flex-col items-center gap-1 text-center">
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Loader2 className="size-4 animate-spin" />
+                    <span>{t("waitingForScan")}</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    {t("expiresAt", { time: formatExpiry(qrLogin.expiresAt) })}
+                  </p>
+                </div>
               </div>
-            </div>
+            ) : null}
+          </div>
+        ) : null}
+
+        <DialogFooter>
+          {stage === "install" ? (
+            <>
+              <Button type="button" variant="ghost" onClick={handleExit}>
+                {tCommon("cancel")}
+              </Button>
+              <Button type="button" onClick={() => void generateQr()}>
+                {t("installedContinue")}
+              </Button>
+            </>
           ) : null}
-        </CardContent>
-      ) : null}
 
-      <CardFooter className="flex-wrap justify-end gap-2 border-t">
-        {stage === "idle" ? (
-          <Button type="button" onClick={() => setStage("install")}>
-            <QrCode data-icon="inline-start" />
-            {t("startConnection")}
-          </Button>
-        ) : null}
-
-        {stage === "install" ? (
-          <>
-            <Button type="button" variant="ghost" onClick={handleExit}>
-              {tCommon("cancel")}
-            </Button>
-            <Button type="button" variant="outline" asChild>
-              <a href={MOBILE_APP_DOWNLOAD_URL} target="_blank" rel="noreferrer">
-                <Download data-icon="inline-start" />
-                {t("downloadAndroid")}
-              </a>
-            </Button>
-            <Button type="button" onClick={() => void generateQr()}>
-              {t("installedContinue")}
-            </Button>
-          </>
-        ) : null}
-
-        {stage === "generating" || stage === "confirming" ? (
-          <Button type="button" variant="outline" disabled>
-            {tCommon("back")}
-          </Button>
-        ) : null}
-
-        {stage === "scan" && status === "pending_web_confirm" ? (
-          <>
-            <Button type="button" variant="outline" onClick={() => void confirmQrLogin(false)}>
-              {t("rejectConnection")}
-            </Button>
-            <Button type="button" onClick={() => void confirmQrLogin(true)}>
-              <ShieldCheck data-icon="inline-start" />
-              {t("confirmConnection")}
-            </Button>
-          </>
-        ) : null}
-
-        {stage === "scan" && status === "consumed" ? (
-          <Button type="button" onClick={handleDone}>
-            <CheckCircle2 data-icon="inline-start" />
-            {tCommon("done")}
-          </Button>
-        ) : null}
-
-        {stage === "scan" && (status === "rejected" || status === "expired" || !qrLogin) ? (
-          <>
-            <Button type="button" variant="outline" onClick={returnToInstall}>
+          {stage === "generating" || stage === "confirming" ? (
+            <Button type="button" variant="outline" disabled>
               {tCommon("back")}
             </Button>
-            <Button type="button" onClick={() => void generateQr()}>
-              <RefreshCw data-icon="inline-start" />
-              {t("generateNew")}
-            </Button>
-          </>
-        ) : null}
+          ) : null}
 
-        {stage === "scan" && (status === "pending_scan" || !status || status === "approved") && qrLogin ? (
-          <Button type="button" variant="outline" onClick={status === "approved" ? handleExit : returnToInstall}>
-            {status === "approved" ? tCommon("close") : tCommon("back")}
-          </Button>
-        ) : null}
-      </CardFooter>
-    </Card>
+          {stage === "scan" && status === "pending_web_confirm" ? (
+            <>
+              <Button type="button" variant="outline" onClick={() => void confirmQrLogin(false)}>
+                {t("rejectConnection")}
+              </Button>
+              <Button type="button" onClick={() => void confirmQrLogin(true)}>
+                <ShieldCheck data-icon="inline-start" />
+                {t("confirmConnection")}
+              </Button>
+            </>
+          ) : null}
+
+          {stage === "scan" && status === "consumed" ? (
+            <Button type="button" onClick={handleExit}>
+              <CheckCircle2 data-icon="inline-start" />
+              {tCommon("done")}
+            </Button>
+          ) : null}
+
+          {stage === "scan" && (status === "rejected" || status === "expired" || !qrLogin) ? (
+            <>
+              <Button type="button" variant="outline" onClick={returnToInstall}>
+                {tCommon("back")}
+              </Button>
+              <Button type="button" onClick={() => void generateQr()}>
+                <RefreshCw data-icon="inline-start" />
+                {t("generateNew")}
+              </Button>
+            </>
+          ) : null}
+
+          {stage === "scan" && (status === "pending_scan" || !status || status === "approved") && qrLogin ? (
+            <Button type="button" variant="outline" onClick={status === "approved" ? handleExit : returnToInstall}>
+              {status === "approved" ? tCommon("close") : tCommon("back")}
+            </Button>
+          ) : null}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 

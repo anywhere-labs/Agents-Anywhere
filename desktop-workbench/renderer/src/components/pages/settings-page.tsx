@@ -31,6 +31,7 @@ import {
   Card,
   CardContent,
   CardDescription,
+  CardFooter,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
@@ -81,7 +82,7 @@ import { Separator } from "@/components/ui/separator"
 import { Slider } from "@/components/ui/slider"
 import { Spinner } from "@/components/ui/spinner"
 import { Switch } from "@/components/ui/switch"
-import { MobileConnectionOnboarding } from "@/components/pages/mobile-signin-panel"
+import { MobileConnectionDialog } from "@/components/pages/mobile-signin-panel"
 import { ArchivedSessionsTab } from "@/components/settings/archived-sessions-tab"
 import { DashboardSidebarToggle } from "@/components/dashboard-sidebar-toggle"
 import { useAuth } from "@/components/auth/auth-context"
@@ -125,11 +126,11 @@ const navItems: {
   icon: typeof User
 }[] = [
   { id: "account", labelKey: "account", icon: User },
+  { id: "appearance", labelKey: "appearance", icon: Sun },
   { id: "mobile-connections", labelKey: "mobileConnections", icon: Smartphone },
   { id: "desktop", labelKey: "desktop", icon: Laptop },
   { id: "startup", labelKey: "startup", icon: Rocket },
   { id: "logs", labelKey: "logs", icon: Logs },
-  { id: "appearance", labelKey: "appearance", icon: Sun },
   { id: "archived-sessions", labelKey: "archivedSessions", icon: Archive },
 ]
 
@@ -256,6 +257,7 @@ function AccountTab({
 
 function MobileConnectionsTab({ token, userId }: { token: string; userId: string }) {
   const t = useTranslations("pages.settings")
+  const tMobile = useTranslations("dashboard.mobileConnections")
   const [sidebarVisible, setSidebarVisible] = useMobileConnectionsSidebarVisibility()
 
   return (
@@ -284,7 +286,20 @@ function MobileConnectionsTab({ token, userId }: { token: string; userId: string
         </CardContent>
       </Card>
 
-      <MobileConnectionOnboarding token={token} userId={userId} />
+      <Card>
+        <CardHeader>
+          <CardTitle>{tMobile("onboardingTitle")}</CardTitle>
+          <CardDescription>{tMobile("onboardingDescription")}</CardDescription>
+        </CardHeader>
+        <CardFooter className="justify-end border-t">
+          <MobileConnectionDialog token={token} userId={userId}>
+            <Button type="button">
+              <Smartphone data-icon="inline-start" />
+              {tMobile("startConnection")}
+            </Button>
+          </MobileConnectionDialog>
+        </CardFooter>
+      </Card>
     </div>
   )
 }
@@ -502,21 +517,6 @@ function DesktopTab() {
             </div>
           ) : null}
         </div>
-      </section>
-
-      <section className="rounded-xl border border-border bg-card">
-        <div className="px-6 py-5">
-          <h2 className="text-base font-semibold">{t("desktopNotifications")}</h2>
-          <p className="mt-0.5 text-sm text-muted-foreground">{t("desktopNotificationsDescription")}</p>
-        </div>
-        <Separator />
-        <DesktopSettingSwitch
-          label={t("desktopSystemNotifications")}
-          description={t("desktopSystemNotificationsDescription")}
-          checked={state?.notificationsEnabled ?? true}
-          disabled={busy}
-          onCheckedChange={(checked) => void saveSettings({ notificationsEnabled: checked })}
-        />
       </section>
 
       <section className="rounded-xl border border-border bg-card">
@@ -747,36 +747,53 @@ function StartupTab() {
   if (loading && !state) return <LoadingState className="min-h-64" />
 
   return (
-    <section className="rounded-xl border border-border bg-card">
-      <div className="px-6 py-5">
-        <h2 className="text-base font-semibold">{t("desktopStartup")}</h2>
-        <p className="mt-0.5 text-sm text-muted-foreground">{t("desktopStartupDescription")}</p>
-      </div>
-      <Separator />
-      <FieldGroup className="gap-0 divide-y divide-border">
+    <div className="flex flex-col gap-4">
+      <section className="rounded-xl border border-border bg-card">
+        <div className="px-6 py-5">
+          <h2 className="text-base font-semibold">{t("desktopStartup")}</h2>
+          <p className="mt-0.5 text-sm text-muted-foreground">{t("desktopStartupDescription")}</p>
+        </div>
+        <Separator />
+        <FieldGroup className="gap-0 divide-y divide-border">
+          <DesktopSettingSwitch
+            label={t("desktopOpenAtLogin")}
+            description={t("desktopOpenAtLoginDescription")}
+            checked={Boolean(state?.openAtLogin)}
+            disabled={busy}
+            onCheckedChange={(checked) => void saveSettings({ openAtLogin: checked })}
+          />
+          <DesktopSettingSwitch
+            label={t("desktopStartConnector")}
+            description={t("desktopStartConnectorDescription")}
+            checked={Boolean(state?.startConnectorOnLaunch)}
+            disabled={busy}
+            onCheckedChange={(checked) => void saveSettings({ startConnectorOnLaunch: checked })}
+          />
+          <DesktopSettingSwitch
+            label={t("desktopSilentLaunch")}
+            description={t("desktopSilentLaunchDescription")}
+            checked={Boolean(state?.silentLaunch)}
+            disabled={busy}
+            onCheckedChange={(checked) => void saveSettings({ silentLaunch: checked })}
+          />
+        </FieldGroup>
+      </section>
+
+      <section className="rounded-xl border border-border bg-card">
+        <div className="px-6 py-5">
+          <h2 className="text-base font-semibold">{t("desktopNotifications")}</h2>
+          <p className="mt-0.5 text-sm text-muted-foreground">{t("desktopNotificationsDescription")}</p>
+        </div>
+        <Separator />
         <DesktopSettingSwitch
-          label={t("desktopOpenAtLogin")}
-          description={t("desktopOpenAtLoginDescription")}
-          checked={Boolean(state?.openAtLogin)}
+          label={t("desktopSystemNotifications")}
+          description={t("desktopSystemNotificationsDescription")}
+          checked={state?.notificationsEnabled ?? true}
           disabled={busy}
-          onCheckedChange={(checked) => void saveSettings({ openAtLogin: checked })}
+          onCheckedChange={(checked) => void saveSettings({ notificationsEnabled: checked })}
         />
-        <DesktopSettingSwitch
-          label={t("desktopStartConnector")}
-          description={t("desktopStartConnectorDescription")}
-          checked={Boolean(state?.startConnectorOnLaunch)}
-          disabled={busy}
-          onCheckedChange={(checked) => void saveSettings({ startConnectorOnLaunch: checked })}
-        />
-        <DesktopSettingSwitch
-          label={t("desktopSilentLaunch")}
-          description={t("desktopSilentLaunchDescription")}
-          checked={Boolean(state?.silentLaunch)}
-          disabled={busy}
-          onCheckedChange={(checked) => void saveSettings({ silentLaunch: checked })}
-        />
-      </FieldGroup>
-    </section>
+      </section>
+    </div>
   )
 }
 
