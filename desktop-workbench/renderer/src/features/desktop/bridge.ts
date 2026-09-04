@@ -105,6 +105,13 @@ export type DesktopWorkbenchBridge = {
     node: string
   }
   openExternal: (url: string) => Promise<void>
+  lifecycle?: {
+    onBeforeQuit: (listener: () => void | Promise<void>) => () => void
+    trackTerminal?: (input: { connectorId: string; terminalId: string; userId: string; token: string }) => Promise<void>
+    closeTerminal?: (input: { connectorId: string; terminalId: string }) => Promise<{ handled: boolean }>
+    untrackTerminal?: (input: { connectorId: string; terminalId: string }) => Promise<void>
+    updateTerminalAuth?: (input: { userId: string; token: string }) => Promise<void>
+  }
   development?: {
     clearCache: () => Promise<void>
   }

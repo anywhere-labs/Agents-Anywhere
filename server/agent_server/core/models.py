@@ -1228,6 +1228,10 @@ class TerminalView(BaseModel):
     scrollbackBytes: int = 0
     scrollbackSeq: int = 0
     ephemeralGroupId: str | None = None
+    persistent: bool = Field(
+        default=False,
+        description="Keep the terminal alive through a renewable lease instead of the ordinary Connector idle TTL.",
+    )
     createdAt: str
 
 
@@ -1241,11 +1245,19 @@ class TerminalCreateRequest(BaseModel):
     rows: int = Field(default=24, ge=1, le=200)
     label: str | None = Field(default=None, max_length=64)
     ephemeralGroupId: str | None = Field(default=None, min_length=1, max_length=96)
+    persistent: bool = Field(
+        default=False,
+        description="Keep the terminal alive through a renewable lease instead of the ordinary Connector idle TTL.",
+    )
     env: dict[str, str] | None = None
 
 
 class TerminalPatchRequest(BaseModel):
     label: str = Field(min_length=1, max_length=64)
+
+
+class TerminalPersistenceRequest(BaseModel):
+    persistent: bool
 
 
 class TerminalResizeRequest(BaseModel):

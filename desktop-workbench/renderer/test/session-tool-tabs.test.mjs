@@ -6,7 +6,6 @@ import {
   createSessionToolTab,
   INITIAL_SESSION_TOOL_TABS_STATE,
   sessionToolTabsReducer,
-  terminalTabId,
 } from "../src/components/session-tool-tabs.ts"
 
 function terminal(terminalId, label) {
@@ -89,26 +88,12 @@ test("each direct file preview opens a new tab without replacing the generic fil
   assert.equal(state.open, true)
 })
 
-test("restored backend terminals become first-level tabs", () => {
-  const first = terminal("trm_1", "Terminal")
-  const second = terminal("trm_2", "Terminal 2")
-  const state = sessionToolTabsReducer(INITIAL_SESSION_TOOL_TABS_STATE, {
-    type: "restore-terminals",
-    terminals: [first, second],
-  })
-
-  assert.deepEqual(state.tabs.map((tab) => tab.id), [terminalTabId("trm_1"), terminalTabId("trm_2")])
-  assert.deepEqual(state.tabs.map((tab) => tab.title), ["Terminal", "Terminal 2"])
-  assert.equal(state.activeTabId, terminalTabId("trm_1"))
-})
-
-test("resolving a pending terminal removes a duplicate restored tab", () => {
+test("resolving a pending terminal keeps the tab identity", () => {
   const resolved = terminal("trm_1", "Terminal")
   let state = sessionToolTabsReducer(INITIAL_SESSION_TOOL_TABS_STATE, {
     type: "open-tool",
     tab: createSessionToolTab("terminal:pending:1", "terminal", "Terminal"),
   })
-  state = sessionToolTabsReducer(state, { type: "restore-terminals", terminals: [resolved] })
   state = sessionToolTabsReducer(state, {
     type: "resolve-terminal",
     id: "terminal:pending:1",
@@ -118,19 +103,4 @@ test("resolving a pending terminal removes a duplicate restored tab", () => {
   assert.equal(state.tabs.length, 1)
   assert.equal(state.tabs[0]?.id, "terminal:pending:1")
   assert.equal(state.tabs[0]?.terminal?.terminalId, "trm_1")
-})
-
-test("resetting terminal tabs preserves other tool tabs", () => {
-  let state = sessionToolTabsReducer(INITIAL_SESSION_TOOL_TABS_STATE, {
-    type: "open-tool",
-    tab: createSessionToolTab("review", "review"),
-  })
-  state = sessionToolTabsReducer(state, {
-    type: "open-tool",
-    tab: createSessionToolTab("terminal:pending:1", "terminal", "Terminal"),
-  })
-  state = sessionToolTabsReducer(state, { type: "reset-terminals" })
-
-  assert.deepEqual(state.tabs.map((tab) => tab.id), ["review"])
-  assert.equal(state.activeTabId, "review")
 })

@@ -450,6 +450,7 @@ async def connector_terminal_relay_ws(
             "cols": term.cols,
             "rows": term.rows,
             "env": term.env,
+            "persistent": term.persistent,
         }
     )
     try:

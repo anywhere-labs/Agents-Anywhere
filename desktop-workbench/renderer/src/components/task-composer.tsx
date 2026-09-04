@@ -35,6 +35,7 @@ import {
 } from "@/components/sidebar/project-editor-dialog"
 import { WorkspacePicker, type WorkspaceSelection } from "@/components/workspace-picker"
 import { useWorkspace } from "@/components/workspace-context"
+import { useSessionToolSidebarStore } from "@/components/session-tool-sidebar-state"
 import { useAuth } from "@/components/auth/auth-context"
 import { dashboardApi } from "@/features/dashboard/api"
 import { createClientId } from "@/lib/id"
@@ -153,6 +154,7 @@ type MobileNewSessionTitleKey = (typeof MOBILE_NEW_SESSION_TITLE_KEYS)[number]
 
 export function TaskComposer() {
   const { session: authSession } = useAuth()
+  const sessionToolSidebarStore = useSessionToolSidebarStore()
   const {
     addOptimisticMessage,
     bindOptimisticSession,
@@ -736,6 +738,7 @@ export function TaskComposer() {
           : undefined,
         clientMessageId,
       })
+      sessionToolSidebarStore.migrateSession(localSessionId, created.session.id)
       bindOptimisticSession(localSessionId, created.session, created.attachments)
     } catch (err) {
       const message = err instanceof Error ? err.message : t("createFailed")

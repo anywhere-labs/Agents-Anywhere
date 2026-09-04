@@ -24,6 +24,8 @@ import { FilesPanelBody } from "@/components/panels/files-panel"
 import { TerminalSessionPanel } from "@/components/panels/terminal-panel"
 import { DashboardSidebarToggle } from "@/components/dashboard-sidebar-toggle"
 import { useDashboardSidebarControls } from "@/components/dashboard-sidebar-controls"
+import { useAuth } from "@/components/auth/auth-context"
+import { useWorkspace, type PanelId } from "@/components/workspace-context"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -42,15 +44,25 @@ import {
 import {
   createSessionFilePreviewTab,
   createSessionToolTab,
-  INITIAL_SESSION_TOOL_TABS_STATE,
-  sessionToolTabsReducer,
   type SessionToolKind,
   type SessionToolTabsAction,
   type SessionToolTabsState,
 } from "@/components/session-tool-tabs"
+import {
+  useSessionToolSidebarStore,
+  useSessionToolSidebarHostBounds,
+  useStoredSessionToolSidebarContext,
+  useStoredSessionToolSidebarIds,
+  useStoredSessionToolSidebarState,
+} from "@/components/session-tool-sidebar-state"
 import type { SessionFilePreviewTarget } from "@/components/session/session-file-preview-context"
 import { dashboardApi } from "@/features/dashboard/api"
+import { getDesktopWorkbenchBridge } from "@/features/desktop/bridge"
+import { useIsMobile } from "@/hooks/use-mobile"
+import { isApiError } from "@/lib/api/errors"
+import { createClientId } from "@/lib/id"
 import { cn } from "@/lib/utils"
+import { toast } from "sonner"
 
 export type { SessionToolKind } from "@/components/session-tool-tabs"
 
@@ -76,11 +88,15 @@ export type SessionToolSidebarController = SessionToolTabsState & {
   openTool: (kind: SessionToolKind) => void
   openFilePreview: (target: SessionFilePreviewTarget) => void
   activateTab: (id: string) => void
-  closeTab: (id: string) => void
+  closeTab: (id: string) => Promise<boolean>
   setTabTitle: (id: string, title: string | null) => void
+  setPreferredWidth: (width: number) => void
+  setResizing: (resizing: boolean) => void
 }
 
 type SessionToolSidebarOptions = {
+  sessionId: string | null
+  userId: string | null
   token: string | null
   connectorId: string | null
   root: string
@@ -89,6 +105,8 @@ type SessionToolSidebarOptions = {
 }
 
 export function useSessionToolSidebar({
+  sessionId,
+  userId,
   token,
   connectorId,
   root,
@@ -96,99 +114,167 @@ export function useSessionToolSidebar({
   onTerminalError,
 }: SessionToolSidebarOptions): SessionToolSidebarController {
   const effectiveRoot = root.trim() || "."
-  const [state, reactDispatch] = React.useReducer(
-    sessionToolTabsReducer,
-    INITIAL_SESSION_TOOL_TABS_STATE,
-  )
-  const stateRef = React.useRef(state)
-  const terminalTabIdRef = React.useRef(0)
-  const filePreviewTabIdRef = React.useRef(0)
-  const terminalLabelSequenceRef = React.useRef(0)
-  const terminalContextGenerationRef = React.useRef(0)
-  stateRef.current = state
+  const store = useSessionToolSidebarStore()
+  const state = useStoredSessionToolSidebarState(sessionId)
+  const closingTerminalIdsRef = React.useRef(new Set<string>())
 
   const dispatch = React.useCallback((action: SessionToolTabsAction) => {
-    stateRef.current = sessionToolTabsReducer(stateRef.current, action)
-    reactDispatch(action)
-  }, [])
+    if (sessionId) store.dispatch(sessionId, action)
+  }, [sessionId, store])
 
   const toggleSidebar = React.useCallback(() => dispatch({ type: "toggle-sidebar" }), [dispatch])
   const collapseSidebar = React.useCallback(() => dispatch({ type: "collapse-sidebar" }), [dispatch])
   const toggleExpanded = React.useCallback(() => dispatch({ type: "toggle-expanded" }), [dispatch])
   const openTool = React.useCallback((kind: SessionToolKind) => {
+    if (!sessionId || store.isShuttingDown()) return
     if (kind !== "terminal") {
       dispatch({ type: "open-tool", tab: createSessionToolTab(kind, kind) })
       return
     }
 
-    terminalTabIdRef.current += 1
-    terminalLabelSequenceRef.current += 1
-    const tabId = `terminal:pending:${terminalTabIdRef.current}`
-    const terminalNumber = terminalLabelSequenceRef.current
-    const title = terminalNumber === 1 ? terminalLabel : `${terminalLabel} ${terminalNumber}`
-    const contextGeneration = terminalContextGenerationRef.current
+    const tabId = createClientId("terminal_pending")
+    const title = nextTerminalTitle(store.getState(sessionId), terminalLabel)
     dispatch({ type: "open-tool", tab: createSessionToolTab(tabId, "terminal", title) })
 
-    if (!token || !connectorId) return
-    void dashboardApi.connectorTerminalCreateV2(token, connectorId, effectiveRoot, {
+    if (!userId || !token || !connectorId) return
+    const creation = dashboardApi.connectorTerminalCreateV2(token, connectorId, effectiveRoot, {
       cols: 80,
       rows: 24,
       label: title,
-    }).then((response) => {
-      const terminal = response.result
-      const tabStillExists = stateRef.current.tabs.some((tab) => tab.id === tabId)
-      if (contextGeneration !== terminalContextGenerationRef.current || !tabStillExists) {
-        void dashboardApi.connectorTerminalCloseV2(token, connectorId, terminal.terminalId).catch(() => undefined)
+    }).then(async (response) => {
+      let terminal = response.result
+      let trackedByDesktop = false
+      try {
+        trackedByDesktop = await trackDesktopTerminal(
+          userId,
+          token,
+          connectorId,
+          terminal.terminalId,
+        )
+      } catch (error) {
+        await closeTerminalWithRetry(token, connectorId, terminal.terminalId).catch(() => undefined)
+        throw error
+      }
+      if (store.isShuttingDown()) {
+        if (!trackedByDesktop) {
+          await closeTerminalWithRetry(token, connectorId, terminal.terminalId)
+        }
+        return
+      }
+      if (trackedByDesktop) {
+        try {
+          const promoted = await dashboardApi.connectorTerminalSetPersistenceV2(
+            token,
+            connectorId,
+            terminal.terminalId,
+            true,
+          )
+          terminal = promoted.result
+        } catch (promotionError) {
+          try {
+            await closeDesktopTerminalOrFallback(token, connectorId, terminal.terminalId)
+          } catch (cleanupError) {
+            await trackDesktopTerminal(
+              userId,
+              token,
+              connectorId,
+              terminal.terminalId,
+            ).catch(() => undefined)
+            if (!store.isShuttingDown()) {
+              const tabStillExists = store.getState(sessionId).tabs.some((tab) => tab.id === tabId)
+              if (!tabStillExists) {
+                dispatch({ type: "open-tool", tab: createSessionToolTab(tabId, "terminal", title) })
+              }
+              dispatch({ type: "resolve-terminal", id: tabId, terminal })
+              onTerminalError?.(
+                cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
+              )
+            }
+            return
+          }
+          await untrackDesktopTerminal(connectorId, terminal.terminalId).catch(() => undefined)
+          throw promotionError
+        }
+      }
+      if (store.isShuttingDown()) return
+      const tabStillExists = store.getState(sessionId).tabs.some((tab) => tab.id === tabId)
+      if (!tabStillExists) {
+        try {
+          await closeDesktopTerminalOrFallback(token, connectorId, terminal.terminalId)
+          await untrackDesktopTerminal(connectorId, terminal.terminalId).catch(() => undefined)
+        } catch (cleanupError) {
+          await trackDesktopTerminal(
+            userId,
+            token,
+            connectorId,
+            terminal.terminalId,
+          ).catch(() => undefined)
+          if (!store.isShuttingDown()) {
+            dispatch({ type: "open-tool", tab: createSessionToolTab(tabId, "terminal", title) })
+            dispatch({ type: "resolve-terminal", id: tabId, terminal })
+            onTerminalError?.(
+              cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
+            )
+          }
+        }
         return
       }
       dispatch({ type: "resolve-terminal", id: tabId, terminal })
     }).catch((error: unknown) => {
-      if (contextGeneration !== terminalContextGenerationRef.current) return
+      if (store.isShuttingDown()) return
       const message = error instanceof Error ? error.message : String(error)
       dispatch({ type: "fail-terminal", id: tabId, error: message })
     })
-  }, [connectorId, dispatch, effectiveRoot, terminalLabel, token])
+    store.trackTerminalTask(creation)
+  }, [connectorId, dispatch, effectiveRoot, sessionId, store, terminalLabel, token, userId])
   const openFilePreview = React.useCallback((target: SessionFilePreviewTarget) => {
-    filePreviewTabIdRef.current += 1
-    const tabId = `files:preview:${filePreviewTabIdRef.current}`
+    if (!sessionId || store.isShuttingDown()) return
+    const tabId = createClientId("files_preview")
     dispatch({ type: "open-tool", tab: createSessionFilePreviewTab(tabId, target) })
-  }, [dispatch])
+  }, [dispatch, sessionId, store])
   const activateTab = React.useCallback(
     (id: string) => dispatch({ type: "activate-tab", id }),
     [dispatch],
   )
-  const closeTab = React.useCallback((id: string) => {
-    const tab = stateRef.current.tabs.find((item) => item.id === id)
-    dispatch({ type: "close-tab", id })
-    if (tab?.kind !== "terminal" || !tab.terminal || !token || !connectorId) return
-    void dashboardApi.connectorTerminalCloseV2(token, connectorId, tab.terminal.terminalId).catch((error: unknown) => {
+  const closeTab = React.useCallback(async (id: string) => {
+    if (!sessionId) return false
+    const tab = store.getState(sessionId).tabs.find((item) => item.id === id)
+    if (!tab) return false
+    if (tab.kind !== "terminal" || !tab.terminal) {
+      dispatch({ type: "close-tab", id })
+      return true
+    }
+    if (!userId || !token || !connectorId) return false
+    const terminalId = tab.terminal.terminalId
+    if (closingTerminalIdsRef.current.has(terminalId)) return false
+
+    closingTerminalIdsRef.current.add(terminalId)
+    const closing = closeDesktopTerminalOrFallback(token, connectorId, terminalId)
+    try {
+      await store.trackTerminalTask(closing)
+      await untrackDesktopTerminal(connectorId, terminalId).catch(() => undefined)
+      dispatch({ type: "close-tab", id })
+      return true
+    } catch (error: unknown) {
+      await trackDesktopTerminal(userId, token, connectorId, terminalId).catch(() => undefined)
       onTerminalError?.(error instanceof Error ? error.message : String(error))
-    })
-  }, [connectorId, dispatch, onTerminalError, token])
+      return false
+    } finally {
+      closingTerminalIdsRef.current.delete(terminalId)
+    }
+  }, [connectorId, dispatch, onTerminalError, sessionId, store, token, userId])
   const setTabTitle = React.useCallback(
     (id: string, title: string | null) => dispatch({ type: "set-tab-title", id, title }),
     [dispatch],
   )
-
-  React.useEffect(() => {
-    terminalContextGenerationRef.current += 1
-    const contextGeneration = terminalContextGenerationRef.current
-    terminalLabelSequenceRef.current = 0
-    dispatch({ type: "reset-terminals" })
-    if (!token || !connectorId) return
-
-    let cancelled = false
-    void dashboardApi.connectorTerminalListV2(token, connectorId).then((response) => {
-      if (cancelled || contextGeneration !== terminalContextGenerationRef.current) return
-      const terminals = response.result.terminals.filter((terminal) => terminal.root === effectiveRoot)
-      terminalLabelSequenceRef.current = Math.max(terminalLabelSequenceRef.current, terminals.length)
-      dispatch({ type: "restore-terminals", terminals })
-    }).catch(() => undefined)
-
-    return () => {
-      cancelled = true
-    }
-  }, [connectorId, dispatch, effectiveRoot, token])
+  const setPreferredWidth = React.useCallback(
+    (width: number) => dispatch({ type: "set-preferred-width", width }),
+    [dispatch],
+  )
+  const setResizing = React.useCallback(
+    (resizing: boolean) => dispatch({ type: "set-resizing", resizing }),
+    [dispatch],
+  )
 
   return React.useMemo(
     () => ({
@@ -201,6 +287,8 @@ export function useSessionToolSidebar({
       activateTab,
       closeTab,
       setTabTitle,
+      setPreferredWidth,
+      setResizing,
     }),
     [
       activateTab,
@@ -209,11 +297,81 @@ export function useSessionToolSidebar({
       openFilePreview,
       openTool,
       setTabTitle,
+      setPreferredWidth,
+      setResizing,
       state,
       toggleExpanded,
       toggleSidebar,
     ],
   )
+}
+
+async function trackDesktopTerminal(
+  userId: string,
+  token: string,
+  connectorId: string,
+  terminalId: string,
+) {
+  const trackTerminal = getDesktopWorkbenchBridge()?.lifecycle?.trackTerminal
+  if (!trackTerminal) return false
+  await trackTerminal({ connectorId, terminalId, userId, token })
+  return true
+}
+
+async function untrackDesktopTerminal(connectorId: string, terminalId: string) {
+  await getDesktopWorkbenchBridge()?.lifecycle?.untrackTerminal?.({ connectorId, terminalId })
+}
+
+async function closeDesktopTerminalOrFallback(
+  token: string,
+  connectorId: string,
+  terminalId: string,
+) {
+  const closeTerminal = getDesktopWorkbenchBridge()?.lifecycle?.closeTerminal
+  if (closeTerminal) {
+    const result = await closeTerminal({ connectorId, terminalId })
+    if (result.handled) return
+  }
+  await closeTerminalWithRetry(token, connectorId, terminalId)
+}
+
+async function closeTerminalWithRetry(
+  token: string,
+  connectorId: string,
+  terminalId: string,
+) {
+  let lastError: unknown
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      return await dashboardApi.connectorTerminalCloseV2(
+        token,
+        connectorId,
+        terminalId,
+        AbortSignal.timeout(4_000),
+      )
+    } catch (error: unknown) {
+      if (isApiError(error) && error.status === 404) return
+      lastError = error
+      if (attempt < 2) await delay(250 * (attempt + 1))
+    }
+  }
+  throw lastError
+}
+
+function delay(milliseconds: number) {
+  return new Promise<void>((resolve) => setTimeout(resolve, milliseconds))
+}
+
+function nextTerminalTitle(state: SessionToolTabsState, baseLabel: string) {
+  const labels = new Set(
+    state.tabs
+      .filter((tab) => tab.kind === "terminal" && tab.title)
+      .map((tab) => tab.title),
+  )
+  if (!labels.has(baseLabel)) return baseLabel
+  let sequence = 2
+  while (labels.has(`${baseLabel} ${sequence}`)) sequence += 1
+  return `${baseLabel} ${sequence}`
 }
 
 function sessionToolSidebarResizeBounds(hostWidth: number) {
@@ -244,8 +402,134 @@ export function sessionToolSidebarWidth(hostWidth: number) {
   )
 }
 
+export function SessionToolSidebarsHost() {
+  const { session: authSession } = useAuth()
+  const {
+    page,
+    activeSessionId,
+    activeSession,
+    connectors,
+    setPanelMode,
+  } = useWorkspace()
+  const isMobile = useIsMobile()
+  const t = useTranslations("dashboard.session")
+  const store = useSessionToolSidebarStore()
+  const sessionIds = useStoredSessionToolSidebarIds()
+  const hostBounds = useSessionToolSidebarHostBounds()
+  const connector = connectors.find((item) => item.id === activeSession?.connectorId)
+  const ownedSessionIds = authSession
+    ? sessionIds.filter((sessionId) => (
+        store.getContext(sessionId)?.ownerUserId === authSession.userId
+      ))
+    : []
+
+  React.useEffect(() => {
+    if (!activeSessionId || !activeSession) return
+    store.setContext(activeSessionId, {
+      ownerUserId: authSession?.userId ?? "",
+      connectorId: activeSession.connectorId,
+      connectorDeviceOs: connector?.deviceOs,
+      root: activeSession.cwd || ".",
+      terminalLabel: t("tools.terminal"),
+    })
+  }, [activeSession, activeSessionId, authSession?.userId, connector?.deviceOs, store, t])
+
+  return (
+    <>
+      {ownedSessionIds.map((sessionId) => (
+        <PersistentSessionToolSidebar
+          key={store.getHostKey(sessionId)}
+          sessionId={sessionId}
+          presented={!isMobile && page === "session" && activeSessionId === sessionId}
+          token={authSession?.accessToken ?? null}
+          userId={authSession?.userId ?? null}
+          hostLeft={hostBounds.left}
+          hostWidth={hostBounds.width}
+          setPanelMode={setPanelMode}
+        />
+      ))}
+    </>
+  )
+}
+
+function PersistentSessionToolSidebar({
+  sessionId,
+  presented,
+  token,
+  userId,
+  hostLeft,
+  hostWidth,
+  setPanelMode,
+}: {
+  sessionId: string
+  presented: boolean
+  token: string | null
+  userId: string | null
+  hostLeft: number
+  hostWidth: number
+  setPanelMode: (id: PanelId, mode: "docked" | "floating" | "closed") => void
+}) {
+  const context = useStoredSessionToolSidebarContext(sessionId)
+  const handleTerminalError = React.useCallback((message: string) => toast.error(message), [])
+  const controller = useSessionToolSidebar({
+    sessionId,
+    userId,
+    token,
+    connectorId: context?.connectorId ?? null,
+    root: context?.root ?? ".",
+    terminalLabel: context?.terminalLabel ?? "Terminal",
+    onTerminalError: handleTerminalError,
+  })
+  const previousExpanded = usePreviousValue(controller.expanded)
+  const defaultWidth = sessionToolSidebarWidth(hostWidth)
+  const width = clampSessionToolSidebarWidth(
+    controller.preferredWidth ?? defaultWidth,
+    hostWidth,
+  )
+  const motionEnabled = !controller.resizing
+    && !controller.expanded
+    && previousExpanded !== true
+  const handleOpenTool = React.useCallback((kind: SessionToolKind) => {
+    if (kind !== "review") setPanelMode(kind, "closed")
+    controller.openTool(kind)
+  }, [controller.openTool, setPanelMode])
+
+  if (!context) return null
+
+  return (
+    <SessionToolSidebar
+      controller={controller}
+      presented={presented}
+      hostLeft={hostLeft}
+      hostWidth={hostWidth}
+      width={width}
+      motionEnabled={motionEnabled}
+      token={token}
+      connectorId={context.connectorId}
+      connectorDeviceOs={context.connectorDeviceOs}
+      root={context.root}
+      onResizeStart={() => controller.setResizing(true)}
+      onWidthChange={controller.setPreferredWidth}
+      onWidthChangeEnd={(nextWidth) => {
+        controller.setPreferredWidth(nextWidth)
+        controller.setResizing(false)
+      }}
+      onOpenTool={handleOpenTool}
+    />
+  )
+}
+
+function usePreviousValue<T>(value: T) {
+  const ref = React.useRef<T | undefined>(undefined)
+  React.useEffect(() => {
+    ref.current = value
+  }, [value])
+  return ref.current
+}
+
 type SessionToolSidebarProps = {
   controller: SessionToolSidebarController
+  presented: boolean
   hostLeft: number
   hostWidth: number
   width: number
@@ -262,6 +546,7 @@ type SessionToolSidebarProps = {
 
 export function SessionToolSidebar({
   controller,
+  presented,
   hostLeft,
   hostWidth,
   width,
@@ -277,6 +562,7 @@ export function SessionToolSidebar({
 }: SessionToolSidebarProps) {
   const t = useTranslations("dashboard.session.tools")
   const dashboardSidebarControls = useDashboardSidebarControls()
+  const domIdPrefix = React.useId()
   const tabButtonRefs = React.useRef(new Map<string, HTMLButtonElement>())
   const newTabButtonRef = React.useRef<HTMLButtonElement | null>(null)
   const launcherButtonRef = React.useRef<HTMLButtonElement | null>(null)
@@ -297,7 +583,7 @@ export function SessionToolSidebar({
   React.useEffect(() => restoreDocumentPointerStyles, [restoreDocumentPointerStyles])
 
   React.useEffect(() => {
-    if (!controller.open) return
+    if (!presented || !controller.open) return
     const frame = window.requestAnimationFrame(() => {
       if (controller.activeTabId) {
         tabButtonRefs.current.get(controller.activeTabId)?.focus()
@@ -306,7 +592,7 @@ export function SessionToolSidebar({
       }
     })
     return () => window.cancelAnimationFrame(frame)
-  }, [controller.activeTabId, controller.open])
+  }, [controller.activeTabId, controller.open, presented])
 
   if (width === 0 || typeof document === "undefined") return null
 
@@ -323,14 +609,15 @@ export function SessionToolSidebar({
     window.requestAnimationFrame(() => tabButtonRefs.current.get(id)?.focus())
   }
 
-  const closeTabAndRestoreFocus = (id: string) => {
+  const closeTabAndRestoreFocus = async (id: string) => {
     const closedIndex = controller.tabs.findIndex((tab) => tab.id === id)
     const remainingTabs = controller.tabs.filter((tab) => tab.id !== id)
     const nextTabId = controller.activeTabId === id
       ? remainingTabs[Math.min(closedIndex, remainingTabs.length - 1)]?.id ?? null
       : controller.activeTabId
 
-    controller.closeTab(id)
+    const closed = await controller.closeTab(id)
+    if (!closed) return
     window.requestAnimationFrame(() => {
       if (nextTabId) tabButtonRefs.current.get(nextTabId)?.focus()
       else newTabButtonRef.current?.focus()
@@ -380,11 +667,12 @@ export function SessionToolSidebar({
   return createPortal(
     <aside
       aria-label={t("sidebarLabel")}
-      aria-hidden={!controller.open}
-      inert={!controller.open ? true : undefined}
+      aria-hidden={!presented || !controller.open}
+      inert={!presented || !controller.open ? true : undefined}
       className={cn(
         "fixed inset-y-0 z-40 flex min-w-0 flex-col overflow-hidden border-l border-border bg-background text-foreground",
-        controller.open ? "pointer-events-auto" : "pointer-events-none",
+        presented ? "visible" : "invisible",
+        presented && controller.open ? "pointer-events-auto" : "pointer-events-none",
         motionEnabled && !controller.expanded
           ? "will-change-transform transition-transform duration-[220ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none"
           : "transition-none",
@@ -475,12 +763,12 @@ export function SessionToolSidebar({
                     else tabButtonRefs.current.delete(tab.id)
                   }}
                   type="button"
-                  id={`session-tool-tab-${tab.id}`}
+                  id={`${domIdPrefix}-tab-${tab.id}`}
                   role="tab"
                   variant="ghost"
                   size="sm"
                   aria-selected={active}
-                  aria-controls={`session-tool-panel-${tab.id}`}
+                  aria-controls={`${domIdPrefix}-panel-${tab.id}`}
                   tabIndex={active ? 0 : -1}
                   onClick={() => controller.activateTab(tab.id)}
                   className="h-8 min-w-0 flex-1 justify-start rounded-xl px-2 hover:bg-transparent"
@@ -494,7 +782,7 @@ export function SessionToolSidebar({
                   size="icon-xs"
                   aria-label={t("closeTab", { title: label })}
                   title={t("closeTab", { title: label })}
-                  onClick={() => closeTabAndRestoreFocus(tab.id)}
+                  onClick={() => void closeTabAndRestoreFocus(tab.id)}
                   className={cn(
                     "mr-0.5 shrink-0 rounded-lg opacity-0 transition-opacity hover:bg-transparent focus-visible:opacity-100",
                     active
@@ -540,16 +828,17 @@ export function SessionToolSidebar({
         ) : (
           controller.tabs.map((tab) => {
             const active = controller.activeTabId === tab.id
+            const panelActive = presented && active
             return (
               <section
                 key={tab.id}
-                id={`session-tool-panel-${tab.id}`}
+                id={`${domIdPrefix}-panel-${tab.id}`}
                 role="tabpanel"
-                aria-labelledby={`session-tool-tab-${tab.id}`}
-                aria-hidden={!active}
+                aria-labelledby={`${domIdPrefix}-tab-${tab.id}`}
+                aria-hidden={!panelActive}
                 className={cn(
                   "absolute inset-0 min-h-0 overflow-hidden",
-                  active ? "visible pointer-events-auto" : "invisible pointer-events-none",
+                  panelActive ? "visible pointer-events-auto" : "invisible pointer-events-none",
                 )}
               >
                 {tab.kind === "review" ? <ReviewPlaceholder /> : null}
@@ -559,7 +848,7 @@ export function SessionToolSidebar({
                     token={token}
                     connectorId={connectorId}
                     terminal={tab.terminal}
-                    active={active}
+                    active={panelActive}
                     creationError={tab.error}
                   />
                 ) : null}

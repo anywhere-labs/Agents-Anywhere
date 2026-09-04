@@ -15,6 +15,8 @@ export type SessionToolTab = {
 export type SessionToolTabsState = {
   open: boolean
   expanded: boolean
+  preferredWidth: number | null
+  resizing: boolean
   tabs: SessionToolTab[]
   activeTabId: string | null
 }
@@ -23,18 +25,20 @@ export type SessionToolTabsAction =
   | { type: "toggle-sidebar" }
   | { type: "collapse-sidebar" }
   | { type: "toggle-expanded" }
+  | { type: "set-preferred-width"; width: number }
+  | { type: "set-resizing"; resizing: boolean }
   | { type: "open-tool"; tab: SessionToolTab }
   | { type: "activate-tab"; id: string }
   | { type: "close-tab"; id: string }
   | { type: "set-tab-title"; id: string; title: string | null }
   | { type: "resolve-terminal"; id: string; terminal: TerminalView }
   | { type: "fail-terminal"; id: string; error: string }
-  | { type: "restore-terminals"; terminals: TerminalView[] }
-  | { type: "reset-terminals" }
 
 export const INITIAL_SESSION_TOOL_TABS_STATE: SessionToolTabsState = {
   open: false,
   expanded: false,
+  preferredWidth: null,
+  resizing: false,
   tabs: [],
   activeTabId: null,
 }
@@ -61,21 +65,6 @@ export function createSessionFilePreviewTab(
   }
 }
 
-export function restoredTerminalTab(terminal: TerminalView): SessionToolTab {
-  return {
-    id: terminalTabId(terminal.terminalId),
-    kind: "terminal",
-    title: terminal.label,
-    terminal,
-    filePreview: null,
-    error: null,
-  }
-}
-
-export function terminalTabId(terminalId: string) {
-  return `terminal:${terminalId}`
-}
-
 export function sessionToolTabsReducer(
   state: SessionToolTabsState,
   action: SessionToolTabsAction,
@@ -90,6 +79,14 @@ export function sessionToolTabsReducer(
   }
   if (action.type === "toggle-expanded") {
     return { ...state, expanded: !state.expanded }
+  }
+  if (action.type === "set-preferred-width") {
+    if (state.preferredWidth === action.width) return state
+    return { ...state, preferredWidth: action.width }
+  }
+  if (action.type === "set-resizing") {
+    if (state.resizing === action.resizing) return state
+    return { ...state, resizing: action.resizing }
   }
   if (action.type === "open-tool") {
     const singleton = action.tab.kind === "review"
@@ -134,21 +131,13 @@ export function sessionToolTabsReducer(
   if (action.type === "resolve-terminal") {
     const pending = state.tabs.find((tab) => tab.id === action.id && tab.kind === "terminal")
     if (!pending) return state
-    const duplicateIds = new Set(
-      state.tabs
-        .filter((tab) => tab.id !== action.id && tab.terminal?.terminalId === action.terminal.terminalId)
-        .map((tab) => tab.id),
-    )
     return {
       ...state,
-      activeTabId: duplicateIds.has(state.activeTabId ?? "") ? action.id : state.activeTabId,
-      tabs: state.tabs
-        .filter((tab) => !duplicateIds.has(tab.id))
-        .map((tab) => (
-          tab.id === action.id
-            ? { ...tab, title: action.terminal.label || tab.title, terminal: action.terminal, error: null }
-            : tab
-        )),
+      tabs: state.tabs.map((tab) => (
+        tab.id === action.id
+          ? { ...tab, title: action.terminal.label || tab.title, terminal: action.terminal, error: null }
+          : tab
+      )),
     }
   }
   if (action.type === "fail-terminal") {
@@ -160,27 +149,6 @@ export function sessionToolTabsReducer(
         item.id === action.id ? { ...item, error: action.error } : item
       )),
     }
-  }
-  if (action.type === "restore-terminals") {
-    const knownTerminalIds = new Set(
-      state.tabs.flatMap((tab) => tab.terminal ? [tab.terminal.terminalId] : []),
-    )
-    const additions = action.terminals
-      .filter((terminal) => !knownTerminalIds.has(terminal.terminalId))
-      .map(restoredTerminalTab)
-    if (additions.length === 0) return state
-    return {
-      ...state,
-      tabs: [...state.tabs, ...additions],
-      activeTabId: state.activeTabId ?? additions[0]?.id ?? null,
-    }
-  }
-  if (action.type === "reset-terminals") {
-    const tabs = state.tabs.filter((tab) => tab.kind !== "terminal")
-    const activeTabId = tabs.some((tab) => tab.id === state.activeTabId)
-      ? state.activeTabId
-      : tabs.at(-1)?.id ?? null
-    return { ...state, tabs, activeTabId }
   }
   return state
 }

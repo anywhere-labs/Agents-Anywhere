@@ -25,6 +25,12 @@ TERMINAL_IDLE_TTL_SECONDS = 30 * 60
 TERMINAL_CLOSED_TTL_SECONDS = 15 * 60
 TERMINAL_MAX_RECORDS = 32
 TERMINAL_REAPER_POLL_SECONDS = 30
+TERMINAL_PERSISTENT_LEASE_TTL_SECONDS = 24 * 60 * 60
+TERMINAL_PERSISTENT_LEASE_MIN_SECONDS = 60
+
+
+class TerminalNotFoundError(RuntimeError):
+    code = "terminal_not_found"
 
 
 class TerminalBackend:
@@ -35,6 +41,7 @@ class TerminalBackend:
         idle_ttl_seconds: float | None = None,
         closed_ttl_seconds: float | None = None,
         reaper_poll_seconds: float | None = None,
+        persistent_lease_ttl_seconds: float | None = None,
     ) -> None:
         self.notify = notify
         self._terminals: dict[str, dict[str, Any]] = {}
@@ -54,6 +61,19 @@ class TerminalBackend:
                 "AGENT_CONNECTOR_TERMINAL_REAPER_POLL_SECONDS",
                 TERMINAL_REAPER_POLL_SECONDS,
                 reaper_poll_seconds,
+            ),
+        )
+        minimum_persistent_lease = (
+            0.1
+            if persistent_lease_ttl_seconds is not None
+            else TERMINAL_PERSISTENT_LEASE_MIN_SECONDS
+        )
+        self._persistent_lease_ttl_seconds = max(
+            minimum_persistent_lease,
+            _env_float(
+                "AGENT_CONNECTOR_TERMINAL_PERSISTENT_LEASE_TTL_SECONDS",
+                TERMINAL_PERSISTENT_LEASE_TTL_SECONDS,
+                persistent_lease_ttl_seconds,
             ),
         )
 
@@ -78,6 +98,9 @@ class TerminalBackend:
         label = params.get("label")
         if not isinstance(label, str) or not label.strip():
             label = "Shell"
+        raw_persistent = params.get("persistent", False)
+        if not isinstance(raw_persistent, bool):
+            raise ValueError("persistent must be a boolean")
         command = params.get("command")
         raw_args = params.get("args")
         if command is not None and not isinstance(command, str):
@@ -112,6 +135,12 @@ class TerminalBackend:
             "shell": shell_cmd,
             "command": command,
             "args": args,
+            "persistent": raw_persistent,
+            "persistentLeaseDeadlineMono": (
+                now_mono + self._persistent_lease_ttl_seconds
+                if raw_persistent
+                else None
+            ),
             "closed": False,
             "status": "running",
             "exitCode": None,
@@ -146,6 +175,7 @@ class TerminalBackend:
             "exitCode": record["exitCode"],
             "scrollbackBytes": 0,
             "scrollbackSeq": 0,
+            "persistent": record["persistent"],
             "createdAt": record["createdAt"],
         }
 
@@ -205,6 +235,23 @@ class TerminalBackend:
         if not label:
             raise ValueError("label is required")
         record["label"] = label
+        return self._terminal_view(record)
+
+    async def set_persistent(self, params: dict[str, Any]) -> dict[str, Any]:
+        self._gc()
+        terminal_id = required_string(params, "terminalId")
+        record = self._terminals.get(terminal_id)
+        if record is None:
+            raise TerminalNotFoundError(f"terminal not found: {terminal_id}")
+        persistent = params.get("persistent")
+        if not isinstance(persistent, bool):
+            raise ValueError("persistent must be a boolean")
+        record["persistent"] = persistent
+        record["persistentLeaseDeadlineMono"] = (
+            time.monotonic() + self._persistent_lease_ttl_seconds
+            if persistent
+            else None
+        )
         return self._terminal_view(record)
 
     async def release(self, params: dict[str, Any]) -> dict[str, Any]:
@@ -339,12 +386,24 @@ class TerminalBackend:
                 last_activity_at = record.get("lastActivityAtMono")
                 if not isinstance(last_activity_at, (int, float)):
                     last_activity_at = record.get("createdAtMono") or now
+                if record["persistent"]:
+                    lease_deadline = record.get("persistentLeaseDeadlineMono")
+                    if not isinstance(lease_deadline, (int, float)) or now >= lease_deadline:
+                        await self._expire_terminal(record, reason="persistent_lease_expired")
+                        return
+                    await asyncio.sleep(
+                        min(
+                            self._reaper_poll_seconds,
+                            max(0.1, lease_deadline - now),
+                        )
+                    )
+                    continue
                 if self._idle_ttl_seconds <= 0:
                     await asyncio.sleep(self._reaper_poll_seconds)
                     continue
                 idle_for = now - last_activity_at
                 if idle_for >= self._idle_ttl_seconds:
-                    await self._expire_idle_terminal(record)
+                    await self._expire_terminal(record, reason="idle_timeout")
                     return
                 await asyncio.sleep(
                     min(
@@ -355,7 +414,7 @@ class TerminalBackend:
         except asyncio.CancelledError:
             raise
 
-    async def _expire_idle_terminal(self, record: dict[str, Any]) -> None:
+    async def _expire_terminal(self, record: dict[str, Any], *, reason: str) -> None:
         if record["closed"] or self._terminals.get(record["id"]) is not record:
             return
         try:
@@ -365,7 +424,7 @@ class TerminalBackend:
                     "terminalId": record["id"],
                     "sessionId": record["sessionId"],
                     "exitCode": None,
-                    "reason": "idle_timeout",
+                    "reason": reason,
                 },
             )
         finally:

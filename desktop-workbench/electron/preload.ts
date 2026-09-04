@@ -23,6 +23,19 @@ function subscribe<T>(channel: string, callback: (value: T) => void): () => void
   return () => ipcRenderer.removeListener(channel, listener);
 }
 
+type BeforeQuitListener = () => void | Promise<void>;
+
+const beforeQuitListeners = new Set<BeforeQuitListener>();
+
+ipcRenderer.on("workbench:lifecycle:beforeQuit", async (_event, input: { requestId?: number }) => {
+  const requestId = input?.requestId;
+  if (typeof requestId !== "number") return;
+  await Promise.allSettled(
+    Array.from(beforeQuitListeners, (listener) => Promise.resolve().then(listener)),
+  );
+  ipcRenderer.send("workbench:lifecycle:quitReady", { requestId });
+});
+
 contextBridge.exposeInMainWorld("desktopWorkbench", {
   platform: process.platform,
   versions: {
@@ -31,6 +44,20 @@ contextBridge.exposeInMainWorld("desktopWorkbench", {
     node: process.versions.node,
   },
   openExternal: (url: string): Promise<void> => ipcRenderer.invoke("workbench:openExternal", url),
+  lifecycle: {
+    onBeforeQuit: (listener: BeforeQuitListener): (() => void) => {
+      beforeQuitListeners.add(listener);
+      return () => beforeQuitListeners.delete(listener);
+    },
+    trackTerminal: (input: { connectorId: string; terminalId: string; userId: string; token: string }): Promise<void> =>
+      ipcRenderer.invoke("workbench:lifecycle:trackTerminal", input),
+    closeTerminal: (input: { connectorId: string; terminalId: string }): Promise<{ handled: boolean }> =>
+      ipcRenderer.invoke("workbench:lifecycle:closeTerminal", input),
+    untrackTerminal: (input: { connectorId: string; terminalId: string }): Promise<void> =>
+      ipcRenderer.invoke("workbench:lifecycle:untrackTerminal", input),
+    updateTerminalAuth: (input: { userId: string; token: string }): Promise<void> =>
+      ipcRenderer.invoke("workbench:lifecycle:updateTerminalAuth", input),
+  },
   development: {
     clearCache: (): Promise<void> => ipcRenderer.invoke("workbench:development:clearCache"),
   },

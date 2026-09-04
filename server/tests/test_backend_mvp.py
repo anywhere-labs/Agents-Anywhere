@@ -1293,6 +1293,7 @@ class FakeLocalRpc:
                 "label": params.get("label") or "Shell",
                 "cols": params.get("cols") or 80,
                 "rows": params.get("rows") or 24,
+                "persistent": params.get("persistent", False),
                 "status": "running",
                 "pid": 123,
                 "closed": False,
@@ -5817,6 +5818,7 @@ def test_connector_terminal_v2_forwards_lifecycle_to_connector(tmp_path):
             "rows": 24,
             "env": {},
             "label": "Shell",
+            "persistent": False,
         },
         15,
     )

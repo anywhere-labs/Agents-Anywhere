@@ -10,6 +10,7 @@ import { DesktopShellHeader } from "@/components/desktop/desktop-shell-header"
 import { DesktopSessionNotifications } from "@/components/desktop/desktop-session-notifications"
 import { TaskComposer } from "@/components/task-composer"
 import { SessionView } from "@/components/session-view"
+import { SessionToolSidebarsHost } from "@/components/session-tool-sidebar"
 import { SettingsPage } from "@/components/pages/settings-page"
 import { DashboardPage } from "@/components/pages/dashboard-page"
 import { TeamPage } from "@/components/pages/team-page"
@@ -254,6 +255,7 @@ function DesktopResizableShell() {
           </ResizablePanel>
         </ResizablePanelGroup>
       </div>
+      <SessionToolSidebarsHost />
     </DashboardSidebarControlsContext.Provider>
   )
 }

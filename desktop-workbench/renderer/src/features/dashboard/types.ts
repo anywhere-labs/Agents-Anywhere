@@ -670,12 +670,15 @@ export type TerminalView = {
   scrollbackBytes: number;
   scrollbackSeq: number;
   ephemeralGroupId?: string | null;
+  persistent?: boolean;
   createdAt: string;
 };
 
 export type TerminalCreateRequest = {
   cols: number;
   rows: number;
+  /** Use the renewable persistent lease instead of the ordinary Connector idle TTL. */
+  persistent?: boolean;
   label?: string;
   cwd?: string;
   shell?: string;

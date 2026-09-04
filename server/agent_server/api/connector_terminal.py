@@ -26,6 +26,7 @@ from agent_server.core.models import (
     TerminalCreateRequest,
     TerminalListResponse,
     TerminalPatchRequest,
+    TerminalPersistenceRequest,
     TerminalResizeRequest,
     TerminalResponse,
 )
@@ -39,6 +40,7 @@ from agent_server.deps import (
 from agent_server.infra.connector_rpc import ConnectorRpcManager
 from agent_server.infra.repositories.facade import Store
 from agent_server.infra.terminal_broker import TerminalBroker
+from agent_server.services.connector_rpc import ConnectorUpstreamError
 from agent_server.services.terminal import (
     TerminalService,
     TerminalServiceError,
@@ -89,6 +91,7 @@ def _normalize_terminal_v2_view(
     item.setdefault("exitCode", None)
     item.setdefault("scrollbackBytes", 0)
     item.setdefault("scrollbackSeq", 0)
+    item.setdefault("persistent", False)
     item.setdefault("createdAt", utc_now())
     return item
 
@@ -140,6 +143,7 @@ async def connector_terminal_create_v2(
             "rows": payload.rows,
             "env": payload.env or {},
             "label": payload.label,
+            "persistent": payload.persistent,
         },
         timeout=15,
     )
@@ -270,6 +274,55 @@ async def connector_terminal_rename_v2(
         },
         timeout=10,
     )
+    if isinstance(result, dict):
+        meta = await db.get_connector_terminal_root(
+            connector_id=connector_id,
+            terminal_id=terminal_id,
+        )
+        result = _normalize_terminal_v2_view(
+            result,
+            session_id=scope_id,
+            terminal_id=terminal_id,
+            root=meta["root"] if meta is not None else None,
+            cwd=meta["cwd"] if meta is not None else None,
+        )
+    return RpcResponsePayload(ok=True, result=result)
+
+
+@router.patch(
+    "/{connector_id}/terminals-v2/{terminal_id}/persistence",
+    response_model=RpcResponsePayload,
+)
+async def connector_terminal_set_persistence_v2(
+    connector_id: str,
+    terminal_id: str,
+    payload: TerminalPersistenceRequest,
+    user_id: str = Depends(current_user_id),
+    db: Store = Depends(get_store),
+    manager: ConnectorRpcManager = Depends(get_rpc),
+) -> RpcResponsePayload:
+    await require_owned_online_connector(connector_id, user_id, db, manager)
+    scope_id = terminal_connector_scope_id(connector_id)
+    try:
+        result = await request_connector(
+            manager,
+            connector_id,
+            "terminal.setPersistent",
+            {
+                "terminalId": terminal_id,
+                "sessionId": scope_id,
+                "persistent": payload.persistent,
+            },
+            timeout=10,
+        )
+    except ConnectorUpstreamError as exc:
+        if getattr(exc.__cause__, "code", None) == "terminal_not_found":
+            await db.forget_connector_terminal_root(
+                connector_id=connector_id,
+                terminal_id=terminal_id,
+            )
+            raise HTTPException(status_code=404, detail="terminal not found") from exc
+        raise
     if isinstance(result, dict):
         meta = await db.get_connector_terminal_root(
             connector_id=connector_id,

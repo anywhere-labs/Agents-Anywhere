@@ -9,6 +9,7 @@ import {
   protocol,
   session,
   shell,
+  type IpcMainEvent,
   type IpcMainInvokeEvent,
 } from "electron";
 import fs from "node:fs";
@@ -41,6 +42,10 @@ const WEB_HOST = "web";
 const DEFAULT_API_ORIGIN = "https://web.agents-anywhere.com";
 const DEFAULT_API_NAMESPACE = "/api/v2";
 const LOGIN_ITEM_HIDDEN_ARG = "--hidden";
+const RENDERER_QUIT_CLEANUP_TIMEOUT_MS = 20_000;
+const TERMINAL_CLEANUP_ATTEMPT_TIMEOUT_MS = 4_000;
+const TERMINAL_CLEANUP_ATTEMPTS = 3;
+const TERMINAL_LEASE_RENEW_INTERVAL_MS = 20_000;
 const API_ROUTE_PREFIXES = [
   "/admin",
   "/agents",
@@ -65,7 +70,20 @@ let isQuitting = false;
 let shutdownComplete = false;
 let shutdownPromise: Promise<void> | null = null;
 let quitConfirmationPromise: Promise<boolean> | null = null;
+let quitCleanupRequestSequence = 0;
+let terminalLeaseRenewTimer: NodeJS.Timeout | null = null;
+const trackedTerminals = new Map<string, TrackedTerminal>();
+const latestTerminalTokensByUser = new Map<string, string>();
 const activeNotifications = new Set<Notification>();
+
+type TrackedTerminal = {
+  connectorId: string;
+  terminalId: string;
+  userId: string;
+  token: string;
+  closing: boolean;
+  closingPromise?: Promise<void>;
+};
 
 app.setName(APP_NAME);
 if (process.platform === "win32") {
@@ -386,6 +404,33 @@ function appendMainLog(entry: string | Partial<ConnectorLogEntry>): void {
 }
 
 function registerIpcHandlers(): void {
+  ipcMain.handle("workbench:lifecycle:trackTerminal", (event, input: unknown) => {
+    assertTrustedRenderer(event);
+    const terminal = parseTrackedTerminal(input);
+    latestTerminalTokensByUser.set(terminal.userId, terminal.token);
+    trackedTerminals.set(trackedTerminalKey(terminal), terminal);
+    startTerminalLeaseRenewal();
+    void renewTrackedTerminalLease(terminal).catch(() => undefined);
+  });
+  ipcMain.handle("workbench:lifecycle:closeTerminal", async (event, input: unknown) => {
+    assertTrustedRenderer(event);
+    const terminal = parseTrackedTerminal(input, { requireToken: false });
+    const tracked = trackedTerminals.get(trackedTerminalKey(terminal));
+    if (!tracked) return { handled: false };
+    await closeTrackedTerminal(tracked);
+    return { handled: true };
+  });
+  ipcMain.handle("workbench:lifecycle:untrackTerminal", (event, input: unknown) => {
+    assertTrustedRenderer(event);
+    const terminal = parseTrackedTerminal(input, { requireToken: false });
+    trackedTerminals.delete(trackedTerminalKey(terminal));
+    if (trackedTerminals.size === 0) stopTerminalLeaseRenewal();
+  });
+  ipcMain.handle("workbench:lifecycle:updateTerminalAuth", (event, input: unknown) => {
+    assertTrustedRenderer(event);
+    const auth = parseTerminalAuth(input);
+    latestTerminalTokensByUser.set(auth.userId, auth.token);
+  });
   ipcMain.handle("workbench:openExternal", async (event, url: string) => {
     assertTrustedRenderer(event);
     if (!/^https?:\/\//i.test(url)) throw new Error("Only http(s) URLs can be opened externally.");
@@ -517,6 +562,11 @@ function registerIpcHandlers(): void {
         serverUrl: input?.serverUrl,
       });
     }
+    isQuitting = true;
+    stopTerminalLeaseRenewal();
+    await prepareRendererForQuit();
+    quiesceRendererForShutdown();
+    await closeTrackedTerminals();
     await requireConnector().shutdown();
     await session.defaultSession.clearStorageData();
     await session.defaultSession.clearCache();
@@ -642,8 +692,12 @@ async function requestQuit({ confirm = false }: { confirm?: boolean } = {}): Pro
   if (confirm && !(await confirmQuit())) return;
   if (shutdownPromise) return shutdownPromise;
   isQuitting = true;
+  stopTerminalLeaseRenewal();
   shutdownPromise = (async () => {
     try {
+      await prepareRendererForQuit();
+      quiesceRendererForShutdown();
+      await closeTrackedTerminals();
       await connector?.shutdown();
     } finally {
       shutdownComplete = true;
@@ -651,6 +705,190 @@ async function requestQuit({ confirm = false }: { confirm?: boolean } = {}): Pro
     }
   })();
   return shutdownPromise;
+}
+
+async function closeTrackedTerminals(): Promise<void> {
+  const terminals = Array.from(trackedTerminals.values());
+  const results = await Promise.allSettled(
+    terminals.map(async (terminal) => {
+      await closeTrackedTerminal(terminal);
+    }),
+  );
+  results.forEach((result, index) => {
+    if (result.status === "fulfilled") return;
+    const terminal = terminals[index];
+    appendMainLog({
+      level: "ERROR",
+      message: terminal
+        ? `Failed to close terminal ${terminal.terminalId} on Connector ${terminal.connectorId} during quit: ${errorMessage(result.reason)}`
+        : `Failed to close a terminal during quit: ${errorMessage(result.reason)}`,
+    });
+  });
+}
+
+async function closeTrackedTerminalWithRetry(terminal: TrackedTerminal): Promise<void> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < TERMINAL_CLEANUP_ATTEMPTS; attempt += 1) {
+    try {
+      const token = latestTerminalTokensByUser.get(terminal.userId) ?? terminal.token;
+      const response = await net.fetch(
+        `${apiOrigin()}${apiNamespace()}/connectors/${encodeURIComponent(terminal.connectorId)}/terminals-v2/${encodeURIComponent(terminal.terminalId)}`,
+        {
+          method: "DELETE",
+          headers: {
+            accept: "application/json",
+            authorization: `Bearer ${token}`,
+          },
+          signal: AbortSignal.timeout(TERMINAL_CLEANUP_ATTEMPT_TIMEOUT_MS),
+        },
+      );
+      if (response.ok || response.status === 404) return;
+      lastError = new Error(`HTTP ${response.status}`);
+      if (response.status === 401 || response.status === 403) break;
+    } catch (error) {
+      lastError = error;
+    }
+    if (attempt < TERMINAL_CLEANUP_ATTEMPTS - 1) {
+      await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
+    }
+  }
+  throw lastError ?? new Error("Terminal cleanup failed.");
+}
+
+function startTerminalLeaseRenewal(): void {
+  if (terminalLeaseRenewTimer || isQuitting || trackedTerminals.size === 0) return;
+  terminalLeaseRenewTimer = setInterval(() => {
+    void renewTrackedTerminalLeases();
+  }, TERMINAL_LEASE_RENEW_INTERVAL_MS);
+  terminalLeaseRenewTimer.unref();
+}
+
+function stopTerminalLeaseRenewal(): void {
+  if (!terminalLeaseRenewTimer) return;
+  clearInterval(terminalLeaseRenewTimer);
+  terminalLeaseRenewTimer = null;
+}
+
+async function renewTrackedTerminalLeases(): Promise<void> {
+  if (isQuitting) return;
+  await Promise.allSettled(
+    Array.from(trackedTerminals.values())
+      .filter((terminal) => !terminal.closing)
+      .map((terminal) => renewTrackedTerminalLease(terminal)),
+  );
+}
+
+function closeTrackedTerminal(terminal: TrackedTerminal): Promise<void> {
+  if (terminal.closingPromise) return terminal.closingPromise;
+  terminal.closing = true;
+  const key = trackedTerminalKey(terminal);
+  const closingPromise = (async () => {
+    try {
+      await closeTrackedTerminalWithRetry(terminal);
+    } catch (error) {
+      if (trackedTerminals.get(key) === terminal) {
+        terminal.closing = false;
+        terminal.closingPromise = undefined;
+      }
+      throw error;
+    }
+    if (trackedTerminals.get(key) !== terminal) return;
+    trackedTerminals.delete(key);
+    if (trackedTerminals.size === 0) stopTerminalLeaseRenewal();
+  })();
+  terminal.closingPromise = closingPromise;
+  return closingPromise;
+}
+
+async function renewTrackedTerminalLease(terminal: TrackedTerminal): Promise<void> {
+  if (isQuitting || terminal.closing) return;
+  const key = trackedTerminalKey(terminal);
+  if (trackedTerminals.get(key) !== terminal) return;
+  const token = latestTerminalTokensByUser.get(terminal.userId) ?? terminal.token;
+  const response = await net.fetch(
+    `${apiOrigin()}${apiNamespace()}/connectors/${encodeURIComponent(terminal.connectorId)}/terminals-v2/${encodeURIComponent(terminal.terminalId)}/persistence`,
+    {
+      method: "PATCH",
+      headers: {
+        accept: "application/json",
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ persistent: true }),
+      signal: AbortSignal.timeout(TERMINAL_CLEANUP_ATTEMPT_TIMEOUT_MS),
+    },
+  );
+  if (response.status === 404) {
+    trackedTerminals.delete(key);
+    if (trackedTerminals.size === 0) stopTerminalLeaseRenewal();
+    return;
+  }
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+}
+
+function trackedTerminalKey(terminal: Pick<TrackedTerminal, "connectorId" | "terminalId">): string {
+  return `${terminal.connectorId}:${terminal.terminalId}`;
+}
+
+function parseTrackedTerminal(
+  input: unknown,
+  options: { requireToken?: boolean } = {},
+): TrackedTerminal {
+  if (!input || typeof input !== "object") throw new Error("Terminal registration is required.");
+  const value = input as Partial<TrackedTerminal>;
+  const connectorId = typeof value.connectorId === "string" ? value.connectorId.trim() : "";
+  const terminalId = typeof value.terminalId === "string" ? value.terminalId.trim() : "";
+  const userId = typeof value.userId === "string" ? value.userId.trim() : "";
+  const token = typeof value.token === "string" ? value.token.trim() : "";
+  if (
+    !connectorId ||
+    !terminalId ||
+    (options.requireToken !== false && (!userId || !token))
+  ) {
+    throw new Error("Terminal registration is invalid.");
+  }
+  return { connectorId, terminalId, userId, token, closing: false };
+}
+
+function parseTerminalAuth(input: unknown): Pick<TrackedTerminal, "userId" | "token"> {
+  if (!input || typeof input !== "object") throw new Error("Terminal auth is required.");
+  const value = input as Partial<TrackedTerminal>;
+  const userId = typeof value.userId === "string" ? value.userId.trim() : "";
+  const token = typeof value.token === "string" ? value.token.trim() : "";
+  if (!userId || !token) throw new Error("Terminal auth is invalid.");
+  return { userId, token };
+}
+
+function quiesceRendererForShutdown(): void {
+  const window = mainWindow;
+  if (!window || window.isDestroyed()) return;
+  window.destroy();
+}
+
+async function prepareRendererForQuit(): Promise<void> {
+  const window = mainWindow;
+  if (!window || window.isDestroyed() || window.webContents.isDestroyed()) return;
+
+  quitCleanupRequestSequence += 1;
+  const requestId = quitCleanupRequestSequence;
+  await new Promise<void>((resolve) => {
+    let settled = false;
+    let timer: NodeJS.Timeout | null = null;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      ipcMain.removeListener("workbench:lifecycle:quitReady", handleReady);
+      resolve();
+    };
+    const handleReady = (event: IpcMainEvent, input: { requestId?: number }) => {
+      if (event.sender !== window.webContents || input?.requestId !== requestId) return;
+      finish();
+    };
+    ipcMain.on("workbench:lifecycle:quitReady", handleReady);
+    timer = setTimeout(finish, RENDERER_QUIT_CLEANUP_TIMEOUT_MS);
+    window.webContents.send("workbench:lifecycle:beforeQuit", { requestId });
+  });
 }
 
 function errorMessage(error: unknown): string {

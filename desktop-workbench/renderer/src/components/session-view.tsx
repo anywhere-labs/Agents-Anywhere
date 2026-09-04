@@ -5,11 +5,13 @@ import * as React from "react"
 import { SessionDetail, type SessionMemorySnapshot } from "@/components/session-detail"
 import {
   clampSessionToolSidebarWidth,
-  SessionToolSidebar,
   sessionToolSidebarWidth,
-  type SessionToolKind,
   useSessionToolSidebar,
 } from "@/components/session-tool-sidebar"
+import {
+  updateSessionToolSidebarHostBounds,
+  useSessionToolSidebarStore,
+} from "@/components/session-tool-sidebar-state"
 import { SessionViewHeader } from "@/components/session-view-header"
 import {
   SessionFilePreviewProvider,
@@ -31,7 +33,6 @@ import { sortTimelineItems } from "@/components/session/session-utils"
 import { SessionSkeleton } from "@/components/session/session-skeleton"
 
 const PANEL_IDS: PanelId[] = ["files", "terminal"]
-const SESSION_TOOL_SIDEBAR_WIDTH_STORAGE_KEY = "agents-anywhere-session-tool-sidebar-width"
 
 type ElementBounds = {
   left: number
@@ -61,45 +62,34 @@ export function SessionView() {
   const token = authSession?.accessToken ?? null
   const connectorId = session?.connectorId ?? null
   const root = session?.cwd ?? "."
-  const handleTerminalError = React.useCallback((message: string) => {
-    toast.error(message)
-  }, [])
   const viewRef = React.useRef<HTMLDivElement | null>(null)
   const viewBounds = useElementBounds(viewRef, Boolean(session))
+  const toolSidebarStore = useSessionToolSidebarStore()
   const toolSidebar = useSessionToolSidebar({
+    sessionId: session?.id ?? activeSessionId,
+    userId: authSession?.userId ?? null,
     token,
     connectorId,
     root,
     terminalLabel: t("tools.terminal"),
-    onTerminalError: handleTerminalError,
   })
   const previousToolSidebarExpanded = usePrevious(toolSidebar.expanded)
-  const [toolSidebarResizing, setToolSidebarResizing] = React.useState(false)
-  const [preferredToolSidebarWidth, setPreferredToolSidebarWidth] = React.useState<number | null>(() => {
-    if (typeof window === "undefined") return null
-    const stored = Number(window.localStorage.getItem(SESSION_TOOL_SIDEBAR_WIDTH_STORAGE_KEY))
-    return Number.isFinite(stored) && stored > 0 ? stored : null
-  })
 
   const availablePanelIds = isMobile ? (["files"] satisfies PanelId[]) : PANEL_IDS
   const floatingPanels = availablePanelIds.filter((id) => panels[id] === "floating")
   const defaultToolSidebarWidth = sessionToolSidebarWidth(viewBounds.width)
   const toolSidebarWidth = clampSessionToolSidebarWidth(
-    preferredToolSidebarWidth ?? defaultToolSidebarWidth,
+    toolSidebar.preferredWidth ?? defaultToolSidebarWidth,
     viewBounds.width,
   )
   const reservedSidebarWidth = !isMobile && toolSidebar.open && !toolSidebar.expanded
     ? toolSidebarWidth
     : 0
   const toolSidebarExpanded = !isMobile && toolSidebar.open && toolSidebar.expanded
-  const toolSidebarMotionEnabled = !toolSidebarResizing
+  const toolSidebarMotionEnabled = !toolSidebar.resizing
     && !toolSidebar.expanded
     && previousToolSidebarExpanded !== true
 
-  const handleOpenTool = React.useCallback((kind: SessionToolKind) => {
-    if (kind !== "review") setPanelMode(kind, "closed")
-    toolSidebar.openTool(kind)
-  }, [setPanelMode, toolSidebar.openTool])
   const handleOpenFilePreview = React.useCallback(
     (target: SessionFilePreviewTarget) => {
       setPanelMode("files", "closed")
@@ -107,6 +97,11 @@ export function SessionView() {
     },
     [setPanelMode, toolSidebar.openFilePreview],
   )
+
+  React.useLayoutEffect(() => {
+    if (!session) return
+    updateSessionToolSidebarHostBounds(toolSidebarStore, viewBounds)
+  }, [session, toolSidebarStore, viewBounds])
 
   React.useEffect(() => {
     setMemorySnapshot(null)
@@ -196,6 +191,7 @@ export function SessionView() {
     <>
       <div
         ref={viewRef}
+        data-slot="session-view"
         aria-hidden={toolSidebarExpanded || undefined}
         inert={toolSidebarExpanded || undefined}
         className={toolSidebarMotionEnabled
@@ -242,28 +238,6 @@ export function SessionView() {
           </div>
         </div>
       </div>
-
-      {!isMobile ? (
-        <SessionToolSidebar
-          controller={toolSidebar}
-          hostLeft={viewBounds.left}
-          hostWidth={viewBounds.width}
-          width={toolSidebarWidth}
-          motionEnabled={toolSidebarMotionEnabled}
-          token={token}
-          connectorId={connectorId}
-          connectorDeviceOs={connector?.deviceOs}
-          root={root}
-          onResizeStart={() => setToolSidebarResizing(true)}
-          onWidthChange={setPreferredToolSidebarWidth}
-          onWidthChangeEnd={(width) => {
-            setPreferredToolSidebarWidth(width)
-            setToolSidebarResizing(false)
-            window.localStorage.setItem(SESSION_TOOL_SIDEBAR_WIDTH_STORAGE_KEY, String(width))
-          }}
-          onOpenTool={handleOpenTool}
-        />
-      ) : null}
 
       {isMobile ? (
         <MobileRuntimePanelDrawers
