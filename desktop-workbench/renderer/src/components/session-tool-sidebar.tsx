@@ -46,6 +46,7 @@ export type SessionToolKind = "review" | "terminal" | "files"
 type SessionToolTab = {
   id: SessionToolKind
   kind: SessionToolKind
+  title: string | null
 }
 
 type SessionToolSidebarState = {
@@ -62,6 +63,7 @@ type SessionToolSidebarAction =
   | { type: "open-tool"; kind: SessionToolKind }
   | { type: "activate-tab"; id: SessionToolKind }
   | { type: "close-tab"; id: SessionToolKind }
+  | { type: "set-tab-title"; id: SessionToolKind; title: string | null }
 
 const INITIAL_STATE: SessionToolSidebarState = {
   open: false,
@@ -92,6 +94,7 @@ export type SessionToolSidebarController = SessionToolSidebarState & {
   openTool: (kind: SessionToolKind) => void
   activateTab: (id: SessionToolKind) => void
   closeTab: (id: SessionToolKind) => void
+  setTabTitle: (id: SessionToolKind, title: string | null) => void
 }
 
 export function useSessionToolSidebar(): SessionToolSidebarController {
@@ -112,6 +115,10 @@ export function useSessionToolSidebar(): SessionToolSidebarController {
     (id: SessionToolKind) => dispatch({ type: "close-tab", id }),
     [],
   )
+  const setTabTitle = React.useCallback(
+    (id: SessionToolKind, title: string | null) => dispatch({ type: "set-tab-title", id, title }),
+    [],
+  )
 
   return React.useMemo(
     () => ({
@@ -122,12 +129,14 @@ export function useSessionToolSidebar(): SessionToolSidebarController {
       openTool,
       activateTab,
       closeTab,
+      setTabTitle,
     }),
     [
       activateTab,
       closeTab,
       collapseSidebar,
       openTool,
+      setTabTitle,
       state,
       toggleExpanded,
       toggleSidebar,
@@ -209,6 +218,10 @@ export function SessionToolSidebar({
   const restoreDocumentPointerStylesRef = React.useRef<(() => void) | null>(null)
   const resizeBounds = sessionToolSidebarResizeBounds(hostWidth)
   const showDashboardSidebarToggle = controller.expanded && dashboardSidebarControls?.open === false
+  const setFilesTabTitle = React.useCallback(
+    (title: string | null) => controller.setTabTitle("files", title),
+    [controller.setTabTitle],
+  )
 
   const restoreDocumentPointerStyles = React.useCallback(() => {
     restoreDocumentPointerStylesRef.current?.()
@@ -381,7 +394,7 @@ export function SessionToolSidebar({
             const meta = TOOL_META[tab.kind]
             const Icon = meta.icon
             const active = controller.activeTabId === tab.id
-            const label = t(meta.labelKey)
+            const label = tab.title || t(meta.labelKey)
 
             if (tab.kind === "terminal" && active) {
               return (
@@ -428,7 +441,12 @@ export function SessionToolSidebar({
                   aria-label={t("closeTab", { title: label })}
                   title={t("closeTab", { title: label })}
                   onClick={() => closeTabAndRestoreFocus(tab.id)}
-                  className="mr-0.5 rounded-lg hover:bg-transparent"
+                  className={cn(
+                    "mr-0.5 shrink-0 rounded-lg opacity-0 transition-opacity hover:bg-transparent focus-visible:opacity-100",
+                    active
+                      ? "opacity-100"
+                      : "pointer-events-none group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100",
+                  )}
                 >
                   <X />
                 </Button>
@@ -497,6 +515,7 @@ export function SessionToolSidebar({
                     connectorDeviceOs={connectorDeviceOs}
                     root={root}
                     variant="tab"
+                    onSelectedFileNameChange={setFilesTabTitle}
                   />
                 ) : null}
               </section>
@@ -622,7 +641,7 @@ function sessionToolSidebarReducer(
     return {
       ...state,
       open: true,
-      tabs: exists ? state.tabs : [...state.tabs, { id: action.kind, kind: action.kind }],
+      tabs: exists ? state.tabs : [...state.tabs, { id: action.kind, kind: action.kind, title: null }],
       activeTabId: action.kind,
     }
   }
@@ -638,6 +657,16 @@ function sessionToolSidebarReducer(
       ? tabs[Math.min(closedIndex, tabs.length - 1)]?.id ?? null
       : state.activeTabId
     return { ...state, tabs, activeTabId }
+  }
+  if (action.type === "set-tab-title") {
+    const tab = state.tabs.find((item) => item.id === action.id)
+    if (!tab || tab.title === action.title) return state
+    return {
+      ...state,
+      tabs: state.tabs.map((item) => (
+        item.id === action.id ? { ...item, title: action.title } : item
+      )),
+    }
   }
   return state
 }

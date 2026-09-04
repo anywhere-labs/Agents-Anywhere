@@ -703,9 +703,12 @@
   border-radius: 999px;
   color: color-mix(in oklab, var(--foreground) 70%, transparent);
   opacity: 0;
+  transition: opacity 120ms ease;
 }
 
-.aa-term-tab:hover .close {
+.aa-term-tab:hover .close,
+.aa-term-tab:focus-visible .close,
+.aa-term-tab.active .close {
   opacity: 1;
 }
 

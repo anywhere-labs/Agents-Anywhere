@@ -69,6 +69,7 @@ type FilesPanelBodyProps = {
   onClose?: () => void
   onPopOut?: () => void
   onPopupBlocked?: () => void
+  onSelectedFileNameChange?: (name: string | null) => void
 }
 
 export function FilesPanelBody({
@@ -80,6 +81,7 @@ export function FilesPanelBody({
   onClose,
   onPopOut,
   onPopupBlocked,
+  onSelectedFileNameChange,
 }: FilesPanelBodyProps) {
   const t = useTranslations("dashboard.panels.files")
   const { appendPathToComposer } = useWorkspace()
@@ -99,6 +101,10 @@ export function FilesPanelBody({
 
   const canLoad = Boolean(token && connectorId)
   const isWindowsConnector = connectorDeviceOs === "windows"
+
+  React.useEffect(() => {
+    onSelectedFileNameChange?.(selectedFile?.name ?? null)
+  }, [onSelectedFileNameChange, selectedFile])
 
   const toggleTree = React.useCallback(() => {
     const panel = treePanelRef.current
