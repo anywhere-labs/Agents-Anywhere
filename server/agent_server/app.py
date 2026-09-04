@@ -230,7 +230,7 @@ def create_app(
     @app.get(f"{API_V2_PREFIX}/health")
     @app.get(f"{API_V2_PREFIX}/health/live")
     def health() -> dict[str, str]:
-        return {"status": "ok", "serverTime": utc_now()}
+        return {"status": "ok", "version": app.version, "serverTime": utc_now()}
 
     @app.get(f"{API_V2_PREFIX}/health/ready")
     async def readiness() -> JSONResponse:
