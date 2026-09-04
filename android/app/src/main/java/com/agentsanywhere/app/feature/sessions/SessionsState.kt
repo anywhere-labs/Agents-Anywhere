@@ -1,11 +1,13 @@
 package com.agentsanywhere.app.feature.sessions
 
 import com.agentsanywhere.app.model.AgentDevice
+import com.agentsanywhere.app.model.AgentProject
 import com.agentsanywhere.app.model.AgentSession
 
 data class SessionsState(
     val sessions: List<AgentSession> = emptyList(),
     val archivedSessions: List<AgentSession> = emptyList(),
+    val projects: List<AgentProject> = emptyList(),
     val devices: List<AgentDevice> = emptyList(),
     val isLoading: Boolean = false,
     val errorMessage: String? = null,
@@ -45,6 +47,26 @@ val SessionsState.pinnedSessions: List<AgentSession>
 
 val SessionsState.recentSessions: List<AgentSession>
     get() = sessions.filterNot { it.pinned }
+
+val SessionsState.pinnedProjects: List<AgentProject>
+    get() = projects.filter { it.pinned }
+
+val SessionsState.unpinnedProjects: List<AgentProject>
+    get() = projects.filterNot { it.pinned }
+
+fun SessionsState.withPatchedProject(project: AgentProject): SessionsState {
+    val nextProjects = if (projects.any { it.id == project.id }) {
+        projects.map { current -> if (current.id == project.id) project else current }
+    } else {
+        projects + project
+    }
+    return copy(
+        projects = nextProjects.sortedWith(projectComparator()),
+        isLoading = false,
+        errorMessage = null,
+        hasLoaded = true,
+    )
+}
 
 fun SessionsState.beginSessionRequest(ids: Collection<String> = emptyList()): SessionRequestStart {
     val generation = nextRequestGeneration
@@ -256,12 +278,20 @@ fun SessionsState.withPatchedDevice(device: AgentDevice): SessionsState {
 fun SessionsState.withDeletedDevice(deviceId: String): SessionsState {
     return copy(
         devices = devices.filterNot { it.id == deviceId },
+        projects = projects.filterNot { it.connectorId == deviceId },
         sessions = sessions.filterNot { it.connectorId == deviceId },
         archivedSessions = archivedSessions.filterNot { it.connectorId == deviceId },
         isLoading = false,
         errorMessage = null,
         hasLoaded = true,
     )
+}
+
+private fun projectComparator(): Comparator<AgentProject> {
+    return compareByDescending<AgentProject> { it.pinned }
+        .thenByDescending { it.pinnedAt.orEmpty() }
+        .thenByDescending { it.lastActivityAt.orEmpty() }
+        .thenByDescending { it.updatedAt }
 }
 
 private fun AgentSession.withDeviceInfo(device: AgentDevice): AgentSession {

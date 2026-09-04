@@ -21,11 +21,13 @@ data class NewSessionDraft(
     val runtimeName: String = runtimeLabel,
     val attachmentsEnabled: Boolean = true,
     val localSessionId: String = newLocalSessionId(),
+    val projectId: String = "",
 ) {
     fun previewSession(): AgentSession {
         return AgentSession(
             id = localSessionId,
             connectorId = connectorId,
+            projectId = projectId,
             deviceName = deviceName,
             title = title.orEmpty(),
             summary = "",
@@ -76,4 +78,5 @@ internal fun NewSessionDraft.firstMessageRequest(
     knownSessionIds = knownSessionIds,
     runtimeId = runtimeId,
     runtimeType = runtimeType,
+    projectId = projectId,
 )

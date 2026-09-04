@@ -105,6 +105,7 @@ import com.agentsanywhere.app.feature.sessions.pinnedSessions
 import com.agentsanywhere.app.feature.sessions.recentSessions
 import com.agentsanywhere.app.feature.update.AppUpdateViewModel
 import com.agentsanywhere.app.model.AgentDevice
+import com.agentsanywhere.app.model.AgentProject
 import com.agentsanywhere.app.model.AgentSession
 import com.agentsanywhere.app.navigation.AppDestination
 import com.agentsanywhere.app.ui.designsystem.AAToastHost
@@ -149,12 +150,17 @@ fun HomeScreen(
     serverUrl: String,
     appearanceMode: String,
     languageMode: String,
+    sidebarViewMode: String,
     appUpdateViewModel: AppUpdateViewModel,
+    projectSessionsById: Map<String, List<AgentSession>>,
+    loadingProjectIds: Set<String>,
     onRefresh: () -> Unit,
     onLoadMore: (HomeTab) -> Unit,
     onTabSelected: (HomeTab) -> Unit,
     onAppearanceModeChange: (String) -> Unit,
     onLanguageModeChange: (String) -> Unit,
+    onSidebarViewModeChange: (String) -> Unit,
+    onOpenArchivedSessions: () -> Unit,
     onLoadAccount: suspend () -> Result<AuthMeResponse>,
     onUpdateAvatar: suspend (String) -> Result<AuthMeResponse>,
     onClearAvatar: suspend () -> Result<AuthMeResponse>,
@@ -163,6 +169,10 @@ fun HomeScreen(
     onRenameSession: suspend (String, String) -> Result<AgentSession>,
     onSetSessionPinned: suspend (String, Boolean) -> Result<AgentSession>,
     onSetSessionArchived: suspend (String, Boolean) -> Result<AgentSession>,
+    onLoadProjectSessions: (String) -> Unit,
+    onUpdateProject: suspend (String, String?, Boolean?) -> Result<AgentProject>,
+    onArchiveProjectSessions: suspend (String) -> Result<List<AgentSession>>,
+    onNewSessionInProject: (AgentProject) -> Unit,
     onOpenSession: (AgentSession) -> Unit,
     onOpenDevice: (AgentDevice) -> Unit,
     deviceAgentPreviews: DeviceAgentPreviews,
@@ -176,6 +186,13 @@ fun HomeScreen(
     var renameErrorMessage by remember { mutableStateOf<String?>(null) }
     var renameBusy by remember { mutableStateOf(false) }
     var profileOpen by remember { mutableStateOf(false) }
+    var projectActionMenu by remember { mutableStateOf<HomeProjectActionMenu?>(null) }
+    var expandedProjectIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var editingProject by remember { mutableStateOf<AgentProject?>(null) }
+    var projectEditBusy by remember { mutableStateOf(false) }
+    var projectEditError by remember { mutableStateOf<String?>(null) }
+    var projectToArchive by remember { mutableStateOf<AgentProject?>(null) }
+    var projectArchiveBusy by remember { mutableStateOf(false) }
 
     fun showToast(message: String, isError: Boolean = false) {
         scope.launch {
@@ -204,13 +221,27 @@ fun HomeScreen(
                 navigate = navigate,
                 state = state,
                 selectedTab = selectedTab,
+                sidebarViewMode = sidebarViewMode,
                 isRefreshing = isRefreshing,
+                projectSessionsById = projectSessionsById,
+                loadingProjectIds = loadingProjectIds,
+                expandedProjectIds = expandedProjectIds,
                 onRefresh = onRefresh,
                 onLoadMore = onLoadMore,
                 onTabSelected = onTabSelected,
                 onProfile = { profileOpen = true },
                 onSearch = { showToast(context.getString(R.string.home_search_coming_soon)) },
                 onSessionLongPress = { session, bounds -> actionMenu = HomeSessionActionMenu(session, bounds) },
+                onProjectLongPress = { project, bounds -> projectActionMenu = HomeProjectActionMenu(project, bounds) },
+                onProjectExpandedChange = { project, expanded ->
+                    expandedProjectIds = if (expanded) {
+                        expandedProjectIds + project.id
+                    } else {
+                        expandedProjectIds - project.id
+                    }
+                    if (expanded) onLoadProjectSessions(project.id)
+                },
+                onNewSessionInProject = onNewSessionInProject,
                 onOpenSession = onOpenSession,
                 onOpenDevice = onOpenDevice,
                 deviceAgentPreviews = deviceAgentPreviews,
@@ -252,6 +283,41 @@ fun HomeScreen(
                     },
                 )
             }
+            projectActionMenu?.let { menu ->
+                HomeProjectActionOverlay(
+                    menu = menu,
+                    onDismiss = { projectActionMenu = null },
+                    onEdit = {
+                        projectActionMenu = null
+                        projectEditError = null
+                        editingProject = menu.project
+                    },
+                    onTogglePinned = {
+                        val project = menu.project
+                        projectActionMenu = null
+                        scope.launch {
+                            onUpdateProject(project.id, null, !project.pinned)
+                                .onSuccess {
+                                    showToast(
+                                        context.getString(
+                                            if (it.pinned) R.string.home_project_pinned else R.string.home_project_unpinned,
+                                        ),
+                                    )
+                                }
+                                .onFailure {
+                                    showToast(
+                                        it.message ?: context.getString(R.string.home_project_update_failed),
+                                        isError = true,
+                                    )
+                                }
+                        }
+                    },
+                    onArchive = {
+                        projectActionMenu = null
+                        projectToArchive = menu.project
+                    },
+                )
+            }
             ProfileSettingsDrawer(
                 open = profileOpen,
                 userId = userId,
@@ -259,13 +325,16 @@ fun HomeScreen(
                 serverUrl = serverUrl,
                 appearanceMode = appearanceMode,
                 languageMode = languageMode,
+                sidebarViewMode = sidebarViewMode,
                 appUpdateViewModel = appUpdateViewModel,
                 onAppearanceModeChange = onAppearanceModeChange,
                 onLanguageModeChange = onLanguageModeChange,
+                onSidebarViewModeChange = onSidebarViewModeChange,
                 onLoadAccount = onLoadAccount,
                 onUpdateAvatar = onUpdateAvatar,
                 onClearAvatar = onClearAvatar,
                 onChangePassword = onChangePassword,
+                onOpenArchivedSessions = onOpenArchivedSessions,
                 onSignOut = onSignOut,
                 onClose = { profileOpen = false },
                 onNotice = ::showToast,
@@ -305,6 +374,66 @@ fun HomeScreen(
                                 renameErrorMessage = it.message ?: context.getString(R.string.home_rename_failed)
                             }
                         renameBusy = false
+                    }
+                }
+            },
+        )
+    }
+
+    editingProject?.let { project ->
+        HomeProjectEditSheet(
+            project = project,
+            deviceName = state.devices.firstOrNull { it.id == project.connectorId }?.name ?: project.connectorId,
+            busy = projectEditBusy,
+            errorMessage = projectEditError,
+            onDismiss = {
+                if (!projectEditBusy) {
+                    editingProject = null
+                    projectEditError = null
+                }
+            },
+            onSave = { name ->
+                if (!projectEditBusy) {
+                    projectEditBusy = true
+                    projectEditError = null
+                    scope.launch {
+                        onUpdateProject(project.id, name, null)
+                            .onSuccess {
+                                editingProject = null
+                                showToast(context.getString(R.string.home_project_updated))
+                            }
+                            .onFailure {
+                                projectEditError = it.message ?: context.getString(R.string.home_project_update_failed)
+                            }
+                        projectEditBusy = false
+                    }
+                }
+            },
+        )
+    }
+
+    projectToArchive?.let { project ->
+        HomeArchiveProjectDialog(
+            project = project,
+            busy = projectArchiveBusy,
+            onDismiss = { if (!projectArchiveBusy) projectToArchive = null },
+            onConfirm = {
+                if (!projectArchiveBusy) {
+                    projectArchiveBusy = true
+                    scope.launch {
+                        onArchiveProjectSessions(project.id)
+                            .onSuccess {
+                                expandedProjectIds = expandedProjectIds - project.id
+                                projectToArchive = null
+                                showToast(context.getString(R.string.home_project_archived))
+                            }
+                            .onFailure {
+                                showToast(
+                                    it.message ?: context.getString(R.string.home_project_archive_failed),
+                                    isError = true,
+                                )
+                            }
+                        projectArchiveBusy = false
                     }
                 }
             },
@@ -723,13 +852,20 @@ private fun HomeContent(
     navigate: (AppDestination) -> Unit,
     state: SessionsState,
     selectedTab: HomeTab,
+    sidebarViewMode: String,
     isRefreshing: Boolean,
+    projectSessionsById: Map<String, List<AgentSession>>,
+    loadingProjectIds: Set<String>,
+    expandedProjectIds: Set<String>,
     onRefresh: () -> Unit,
     onLoadMore: (HomeTab) -> Unit,
     onTabSelected: (HomeTab) -> Unit,
     onProfile: () -> Unit,
     onSearch: () -> Unit,
     onSessionLongPress: (AgentSession, Rect) -> Unit,
+    onProjectLongPress: (AgentProject, Rect) -> Unit,
+    onProjectExpandedChange: (AgentProject, Boolean) -> Unit,
+    onNewSessionInProject: (AgentProject) -> Unit,
     onOpenSession: (AgentSession) -> Unit,
     onOpenDevice: (AgentDevice) -> Unit,
     deviceAgentPreviews: DeviceAgentPreviews,
@@ -754,7 +890,9 @@ private fun HomeContent(
             onTerminalClick = { navigate(AppDestination.Terminal) },
             onFilesClick = { navigate(AppDestination.Files) },
         )
-        HomeTabs(selectedTab = selectedTab, onTabSelected = onTabSelected)
+        if (sidebarViewMode == HomeSidebarViewMode.Session) {
+            HomeTabs(selectedTab = selectedTab, onTabSelected = onTabSelected)
+        }
         PullToRefreshBox(
             isRefreshing = isRefreshing,
             state = refreshState,
@@ -772,18 +910,33 @@ private fun HomeContent(
                 )
             },
         ) {
-            HomeList(
-                state = state,
-                tab = selectedTab,
-                darkMode = darkMode,
-                onSessionLongPress = onSessionLongPress,
-                onOpenSession = onOpenSession,
-                onOpenDevice = onOpenDevice,
-                deviceAgentPreviews = deviceAgentPreviews,
-                onCreateSession = { navigate(AppDestination.NewSession) },
-                onPairDevice = onPairDevice,
-                onLoadMore = onLoadMore,
-            )
+            if (sidebarViewMode == HomeSidebarViewMode.Project) {
+                HomeProjectModeList(
+                    state = state,
+                    projectSessionsById = projectSessionsById,
+                    loadingProjectIds = loadingProjectIds,
+                    expandedProjectIds = expandedProjectIds,
+                    onProjectExpandedChange = onProjectExpandedChange,
+                    onProjectLongPress = onProjectLongPress,
+                    onNewSessionInProject = onNewSessionInProject,
+                    onSessionLongPress = onSessionLongPress,
+                    onOpenSession = onOpenSession,
+                    onPairDevice = onPairDevice,
+                )
+            } else {
+                HomeList(
+                    state = state,
+                    tab = selectedTab,
+                    darkMode = darkMode,
+                    onSessionLongPress = onSessionLongPress,
+                    onOpenSession = onOpenSession,
+                    onOpenDevice = onOpenDevice,
+                    deviceAgentPreviews = deviceAgentPreviews,
+                    onCreateSession = { navigate(AppDestination.NewSession) },
+                    onPairDevice = onPairDevice,
+                    onLoadMore = onLoadMore,
+                )
+            }
         }
     }
 
@@ -795,6 +948,65 @@ private fun HomeContent(
             onClick = { navigate(AppDestination.NewSession) },
             modifier = Modifier.padding(end = 18.dp, bottom = 32.dp),
         )
+    }
+}
+
+@Composable
+private fun HomeProjectModeList(
+    state: SessionsState,
+    projectSessionsById: Map<String, List<AgentSession>>,
+    loadingProjectIds: Set<String>,
+    expandedProjectIds: Set<String>,
+    onProjectExpandedChange: (AgentProject, Boolean) -> Unit,
+    onProjectLongPress: (AgentProject, Rect) -> Unit,
+    onNewSessionInProject: (AgentProject) -> Unit,
+    onSessionLongPress: (AgentSession, Rect) -> Unit,
+    onOpenSession: (AgentSession) -> Unit,
+    onPairDevice: () -> Unit,
+) {
+    when {
+        state.isLoading && !state.hasLoaded -> HomeLoadingState()
+        state.errorMessage != null && !state.hasLoaded -> AuthErrorNotice(
+            message = state.errorMessage,
+            modifier = Modifier.padding(top = 10.dp),
+        )
+        state.devices.isEmpty() -> AppEmptyState(
+            message = stringResource(R.string.home_pair_device_first),
+            buttonLabel = stringResource(R.string.home_pair_new_device),
+            buttonIcon = Lucide.Monitor,
+            onButtonClick = onPairDevice,
+            contentOffsetY = (-32).dp,
+        )
+        else -> {
+            val fallbackSessions = remember(state.sessions) {
+                state.sessions.filter { it.projectId != null }.groupBy { it.projectId.orEmpty() }
+            }
+            val visibleSessions = remember(projectSessionsById, state.sessions, state.archivedSessions) {
+                val activeById = state.sessions.associateBy(AgentSession::id)
+                val archivedIds = state.archivedSessions.mapTo(mutableSetOf(), AgentSession::id)
+                (fallbackSessions.keys + projectSessionsById.keys).associateWith { projectId ->
+                    val cached = projectSessionsById[projectId].orEmpty()
+                        .mapNotNull { session ->
+                            activeById[session.id] ?: session.takeIf { it.id !in archivedIds && !it.archived }
+                        }
+                    (cached + fallbackSessions[projectId].orEmpty())
+                        .distinctBy(AgentSession::id)
+                        .sortedByDescending(AgentSession::sortKey)
+                }
+            }
+            HomeProjectList(
+                projects = state.projects,
+                pinnedSessions = state.sessions.filter(AgentSession::pinned),
+                sessionsByProject = visibleSessions,
+                loadingProjectIds = loadingProjectIds,
+                expandedProjectIds = expandedProjectIds,
+                onProjectExpandedChange = onProjectExpandedChange,
+                onProjectLongPress = onProjectLongPress,
+                onNewSession = onNewSessionInProject,
+                onSessionLongPress = onSessionLongPress,
+                onOpenSession = onOpenSession,
+            )
+        }
     }
 }
 

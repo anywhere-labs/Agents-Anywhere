@@ -28,6 +28,7 @@ internal fun RemoteSession.toAgentSession(devicesById: Map<String, AgentDevice>)
     return AgentSession(
         id = id,
         connectorId = connectorId,
+        projectId = projectId,
         deviceName = deviceName,
         title = displayTitle,
         summary = summaryText(statusValue, cwd, connectorStatus),

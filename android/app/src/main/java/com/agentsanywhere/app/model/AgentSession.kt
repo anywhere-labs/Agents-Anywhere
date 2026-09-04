@@ -3,6 +3,7 @@ package com.agentsanywhere.app.model
 data class AgentSession(
     val id: String,
     val connectorId: String,
+    val projectId: String?,
     val deviceName: String,
     val title: String,
     val summary: String,

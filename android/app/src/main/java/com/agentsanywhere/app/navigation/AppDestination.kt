@@ -12,5 +12,6 @@ enum class AppDestination(val title: String) {
     Files("Files"),
     DeviceDetail("Device Detail"),
     SessionDetail("Session"),
+    ArchivedSessions("Archived Sessions"),
     DeviceSetup("Device Setup"),
 }

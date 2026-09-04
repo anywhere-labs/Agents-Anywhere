@@ -8,6 +8,111 @@ import java.util.Base64
 class SessionsApi(
     private val client: ApiClient = ApiClient(),
 ) {
+    fun listProjects(
+        serverUrl: String,
+        authorizationToken: String,
+    ): RemoteProjectListResponse {
+        val response = client.getJson(
+            serverUrl = serverUrl,
+            path = "/projects",
+            authorizationToken = authorizationToken,
+        )
+        return RemoteProjectListResponse(
+            projects = response.optJSONArray("projects").toObjectList { toRemoteProject() },
+            serverTime = response.optNullableString("serverTime"),
+        )
+    }
+
+    fun createProject(
+        serverUrl: String,
+        authorizationToken: String,
+        name: String,
+        connectorId: String,
+        workspacePath: String,
+    ): RemoteProjectCreateResponse {
+        val body = JSONObject()
+            .put("name", name)
+            .put("connectorId", connectorId)
+            .put("workspacePath", workspacePath)
+        val response = client.postJson(
+            serverUrl = serverUrl,
+            path = "/projects",
+            body = body,
+            authorizationToken = authorizationToken,
+        )
+        return RemoteProjectCreateResponse(
+            project = response.getJSONObject("project").toRemoteProject(),
+            attachedSessions = response.optInt("attachedSessions", 0),
+            serverTime = response.optNullableString("serverTime"),
+        )
+    }
+
+    fun updateProject(
+        serverUrl: String,
+        authorizationToken: String,
+        projectId: String,
+        name: String? = null,
+        pinned: Boolean? = null,
+    ): RemoteProjectResponse {
+        val body = JSONObject().apply {
+            name?.let { put("name", it) }
+            pinned?.let { put("pinned", it) }
+        }
+        val response = client.patchJson(
+            serverUrl = serverUrl,
+            path = "/projects/${projectId.urlEncode()}",
+            body = body,
+            authorizationToken = authorizationToken,
+        )
+        return RemoteProjectResponse(
+            project = response.getJSONObject("project").toRemoteProject(),
+            serverTime = response.optNullableString("serverTime"),
+        )
+    }
+
+    fun listProjectSessions(
+        serverUrl: String,
+        authorizationToken: String,
+        projectId: String,
+        archived: Boolean = false,
+        limit: Int = 100,
+        cursor: String? = null,
+    ): RemoteSessionPage {
+        val query = buildString {
+            append("/projects/${projectId.urlEncode()}/sessions?archived=$archived&limit=$limit")
+            cursor?.let { append("&cursor=${it.urlEncode()}") }
+        }
+        val response = client.getJson(
+            serverUrl = serverUrl,
+            path = query,
+            authorizationToken = authorizationToken,
+        )
+        return RemoteSessionPage(
+            sessions = response.optJSONArray("sessions").toObjectList { toRemoteSession() },
+            hasMore = response.optBoolean("hasMore", false),
+            nextCursor = response.optNullableString("nextCursor"),
+            serverTime = response.optNullableString("serverTime"),
+        )
+    }
+
+    fun archiveAllProjectSessions(
+        serverUrl: String,
+        authorizationToken: String,
+        projectId: String,
+        archived: Boolean,
+        scope: String,
+    ): List<RemoteSession> {
+        val body = JSONObject()
+            .put("archived", archived)
+            .put("scope", scope)
+        return client.postJson(
+            serverUrl = serverUrl,
+            path = "/projects/${projectId.urlEncode()}/sessions/archive-all",
+            body = body,
+            authorizationToken = authorizationToken,
+        ).optJSONArray("sessions").toObjectList { toRemoteSession() }
+    }
+
     fun listSessions(
         serverUrl: String,
         authorizationToken: String,
@@ -39,6 +144,7 @@ class SessionsApi(
     ): RemoteSessionCreateResponse {
         val body = JSONObject().apply {
             put("connectorId", request.connectorId)
+            put("projectId", request.projectId)
             put("runtime", request.runtimeType)
             request.runtimeId.takeIf { it.isNotBlank() && it != request.runtimeType }?.let {
                 put("runtimeId", it)
@@ -537,6 +643,8 @@ class SessionsApi(
 
     internal fun parseSession(value: JSONObject): RemoteSession = value.toRemoteSession()
 
+    internal fun parseProject(value: JSONObject): RemoteProject = value.toRemoteProject()
+
     internal fun parseSessionEvent(value: JSONObject): RemoteSessionEventEnvelope {
         val payload = value.optJSONObject("payload") ?: JSONObject()
         val catalogType = payload.optNullableString("catalogType")
@@ -580,6 +688,7 @@ class SessionsApi(
         return RemoteSession(
             id = getString("id"),
             connectorId = getString("connectorId"),
+            projectId = optNullableString("projectId"),
             connectorStatus = optString("connectorStatus", "offline"),
             runtime = runtimeType,
             externalSessionId = optNullableString("externalSessionId"),
@@ -603,6 +712,22 @@ class SessionsApi(
             runtimeId = runtimeId,
             runtimeType = runtimeType,
             runtimeName = runtimeName,
+        )
+    }
+
+    private fun JSONObject.toRemoteProject(): RemoteProject {
+        return RemoteProject(
+            id = getString("id"),
+            userId = getString("userId"),
+            connectorId = getString("connectorId"),
+            name = getString("name"),
+            workspacePath = getString("workspacePath"),
+            pinned = optBoolean("pinned", false),
+            pinnedAt = optNullableString("pinnedAt"),
+            activeSessionCount = optInt("activeSessionCount", 0),
+            lastActivityAt = optNullableString("lastActivityAt"),
+            createdAt = optString("createdAt", ""),
+            updatedAt = optString("updatedAt", ""),
         )
     }
 

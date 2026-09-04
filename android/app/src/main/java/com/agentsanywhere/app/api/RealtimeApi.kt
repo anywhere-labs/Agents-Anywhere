@@ -94,6 +94,7 @@ class RealtimeApi(
         val archivedPage = sessionPages.optJSONObject("archived") ?: return null
         return RemoteDashboardSnapshot(
             devices = message.optJSONArray("connectors").toObjectList { devicesApi.parseDevice(this) },
+            projects = message.optJSONArray("projects").toObjectList { sessionsApi.parseProject(this) },
             sessions = message.optJSONArray("sessions").toObjectList { sessionsApi.parseSession(this) },
             activePage = activePage.toRemoteSessionPageInfo(),
             archivedPage = archivedPage.toRemoteSessionPageInfo(),

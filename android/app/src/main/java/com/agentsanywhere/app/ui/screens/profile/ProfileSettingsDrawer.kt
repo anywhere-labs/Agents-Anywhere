@@ -78,15 +78,19 @@ import com.agentsanywhere.app.ui.designsystem.AALanguageMode
 import com.agentsanywhere.app.ui.designsystem.AgentsAnywhereColors
 import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 import com.agentsanywhere.app.ui.designsystem.noRippleClickable
+import com.agentsanywhere.app.ui.screens.home.HomeSidebarViewMode
+import com.composables.icons.lucide.Archive
 import com.composables.icons.lucide.Check
 import com.composables.icons.lucide.ChevronLeft
 import com.composables.icons.lucide.ChevronRight
 import com.composables.icons.lucide.ChevronsUpDown
 import com.composables.icons.lucide.Circle
 import com.composables.icons.lucide.Globe
+import com.composables.icons.lucide.Folder
 import com.composables.icons.lucide.KeyRound
 import com.composables.icons.lucide.LogOut
 import com.composables.icons.lucide.Lucide
+import com.composables.icons.lucide.List as ListIcon
 import com.composables.icons.lucide.Moon
 import com.composables.icons.lucide.PackageCheck
 import com.composables.icons.lucide.Server
@@ -116,13 +120,16 @@ fun ProfileSettingsDrawer(
     serverUrl: String,
     appearanceMode: String,
     languageMode: String,
+    sidebarViewMode: String,
     appUpdateViewModel: AppUpdateViewModel,
     onAppearanceModeChange: (String) -> Unit,
     onLanguageModeChange: (String) -> Unit,
+    onSidebarViewModeChange: (String) -> Unit,
     onLoadAccount: suspend () -> Result<AuthMeResponse>,
     onUpdateAvatar: suspend (String) -> Result<AuthMeResponse>,
     onClearAvatar: suspend () -> Result<AuthMeResponse>,
     onChangePassword: suspend (String) -> Result<Unit>,
+    onOpenArchivedSessions: () -> Unit,
     onSignOut: () -> Unit,
     onClose: () -> Unit,
     onNotice: (String, Boolean) -> Unit,
@@ -144,6 +151,7 @@ fun ProfileSettingsDrawer(
     var avatarBusy by remember { mutableStateOf(false) }
     var detailPage by remember { mutableStateOf(ProfileDetailPage.None) }
     var appearanceMenuOpen by remember { mutableStateOf(false) }
+    var sidebarViewMenuOpen by remember { mutableStateOf(false) }
     var passwordOpen by remember { mutableStateOf(false) }
     var signOutOpen by remember { mutableStateOf(false) }
     val picker = rememberLauncherForActivityResult(
@@ -177,6 +185,7 @@ fun ProfileSettingsDrawer(
         if (!open) {
             detailPage = ProfileDetailPage.None
             appearanceMenuOpen = false
+            sidebarViewMenuOpen = false
             return@LaunchedEffect
         }
         appUpdateViewModel.checkForUpdate(showPrompt = false)
@@ -283,6 +292,27 @@ fun ProfileSettingsDrawer(
                             )
                         }
                     }
+                    item("sidebar-view") {
+                        ProfileCard {
+                            ProfileRow(
+                                icon = Lucide.ListIcon,
+                                title = stringResource(R.string.profile_sidebar_display),
+                                trailing = sidebarViewMode.labelForSidebarView(),
+                                trailingIcon = Lucide.ChevronsUpDown,
+                                showChevron = false,
+                                onClick = { sidebarViewMenuOpen = true },
+                            )
+                            SidebarViewPopup(
+                                open = sidebarViewMenuOpen,
+                                selectedMode = sidebarViewMode,
+                                onSelect = {
+                                    onSidebarViewModeChange(it)
+                                    sidebarViewMenuOpen = false
+                                },
+                                onDismiss = { sidebarViewMenuOpen = false },
+                            )
+                        }
+                    }
                     item("version") {
                         ProfileCard {
                             ProfileRow(
@@ -301,6 +331,18 @@ fun ProfileSettingsDrawer(
                                     null
                                 },
                                 onClick = { detailPage = ProfileDetailPage.Updates },
+                            )
+                        }
+                    }
+                    item("archived-sessions") {
+                        ProfileCard {
+                            ProfileRow(
+                                icon = Lucide.Archive,
+                                title = stringResource(R.string.profile_archived_sessions),
+                                onClick = {
+                                    onClose()
+                                    onOpenArchivedSessions()
+                                },
                             )
                         }
                     }
@@ -897,6 +939,51 @@ private fun AppearancePopup(
 }
 
 @Composable
+private fun SidebarViewPopup(
+    open: Boolean,
+    selectedMode: String,
+    onSelect: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val colors = LocalAAColors.current
+    if (!open) return
+    Popup(
+        alignment = Alignment.TopEnd,
+        offset = androidx.compose.ui.unit.IntOffset(x = 0, y = 48),
+        onDismissRequest = onDismiss,
+        properties = PopupProperties(focusable = true),
+    ) {
+        AnimatedVisibility(
+            visible = true,
+            enter = fadeIn() + slideInVertically(initialOffsetY = { -10 }),
+            exit = fadeOut() + slideOutVertically(targetOffsetY = { -10 }),
+        ) {
+            Column(
+                modifier = Modifier
+                    .width(204.dp)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(colors.raisedSurface)
+                    .border(1.dp, colors.border, RoundedCornerShape(14.dp)),
+            ) {
+                AppearanceMenuRow(
+                    title = stringResource(R.string.profile_project_view),
+                    icon = Lucide.Folder,
+                    selected = selectedMode == HomeSidebarViewMode.Project,
+                    onClick = { onSelect(HomeSidebarViewMode.Project) },
+                )
+                ProfileDivider(start = 0.dp, end = 0.dp)
+                AppearanceMenuRow(
+                    title = stringResource(R.string.profile_session_view),
+                    icon = Lucide.ListIcon,
+                    selected = selectedMode == HomeSidebarViewMode.Session,
+                    onClick = { onSelect(HomeSidebarViewMode.Session) },
+                )
+            }
+        }
+    }
+}
+
+@Composable
 private fun AppearanceMenuRow(
     title: String,
     icon: ImageVector,
@@ -1171,6 +1258,12 @@ private fun String.labelForLanguage(): String = when (this) {
     AALanguageMode.English -> stringResource(R.string.profile_english)
     AALanguageMode.SimplifiedChinese -> stringResource(R.string.profile_simplified_chinese)
     else -> stringResource(R.string.profile_language_follow_system)
+}
+
+@Composable
+private fun String.labelForSidebarView(): String = when (this) {
+    HomeSidebarViewMode.Session -> stringResource(R.string.profile_session_view)
+    else -> stringResource(R.string.profile_project_view)
 }
 
 @Composable

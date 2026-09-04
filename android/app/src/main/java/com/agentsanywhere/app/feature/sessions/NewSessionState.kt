@@ -39,6 +39,7 @@ data class NewSessionCreateDraft(
     val knownSessionIds: Set<String>,
     val runtimeId: String = runtime,
     val runtimeType: String = runtime,
+    val projectId: String = "",
 )
 
 sealed interface NewSessionCreateOutcome {
@@ -101,6 +102,7 @@ internal fun SessionsState.newCreateCandidates(draft: NewSessionCreateDraft): Li
     return (sessions + archivedSessions).filter { session ->
         session.id !in draft.knownSessionIds &&
             session.connectorId == draft.connectorId &&
+            session.projectId == draft.projectId &&
             session.runtimeId == draft.runtimeId &&
             session.runtimeType == draft.runtimeType &&
             (expectedTitle.isEmpty() || session.title == expectedTitle) &&

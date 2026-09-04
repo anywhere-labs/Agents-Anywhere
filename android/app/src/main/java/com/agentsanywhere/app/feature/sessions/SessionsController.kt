@@ -4,6 +4,7 @@ import com.agentsanywhere.app.api.ApiException
 import com.agentsanywhere.app.api.DevicesApi
 import com.agentsanywhere.app.api.FilesApi
 import com.agentsanywhere.app.api.RemoteInlineAttachmentRef
+import com.agentsanywhere.app.api.RemoteProject
 import com.agentsanywhere.app.api.SessionsApi
 import com.agentsanywhere.app.api.RemoteDevice
 import com.agentsanywhere.app.api.RemoteSession
@@ -18,6 +19,7 @@ import com.agentsanywhere.app.feature.devices.DeviceRuntimeList
 import com.agentsanywhere.app.feature.devices.toAgentDevice
 import com.agentsanywhere.app.feature.devices.toDeviceRuntimeList
 import com.agentsanywhere.app.model.AgentDevice
+import com.agentsanywhere.app.model.AgentProject
 import com.agentsanywhere.app.model.AgentSession
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
@@ -36,6 +38,7 @@ class SessionsController(
         return toState(
             remoteSessions = snapshot.sessions,
             remoteDevices = snapshot.devices,
+            remoteProjects = snapshot.projects,
             activePage = snapshot.activePage,
             archivedPage = snapshot.archivedPage,
         )
@@ -63,9 +66,14 @@ class SessionsController(
                     serverUrl = serverUrl,
                     authorizationToken = accessToken,
                 )
+                val projects = sessionsApi.listProjects(
+                    serverUrl = serverUrl,
+                    authorizationToken = accessToken,
+                )
                 toState(
                     remoteSessions = activePage.sessions + archivedPage.sessions,
                     remoteDevices = devices,
+                    remoteProjects = projects.projects,
                     activePage = activePage.pageInfo(),
                     archivedPage = archivedPage.pageInfo(),
                 )
@@ -142,6 +150,7 @@ class SessionsController(
                     authorizationToken = accessToken,
                     request = RemoteSessionCreateAndStartRequest(
                         connectorId = draft.connectorId,
+                        projectId = draft.projectId,
                         runtime = draft.runtimeType,
                         title = draft.title?.trim()?.takeIf(String::isNotBlank),
                         cwd = draft.cwd?.trim()?.takeIf(String::isNotBlank),
@@ -182,9 +191,11 @@ class SessionsController(
         val refreshedState = runCatching {
             val activePage = sessionsApi.listSessions(serverUrl, accessToken, archived = false)
             val archivedPage = sessionsApi.listSessions(serverUrl, accessToken, archived = true)
+            val projects = sessionsApi.listProjects(serverUrl, accessToken)
             toState(
                 remoteSessions = activePage.sessions + archivedPage.sessions,
                 remoteDevices = devicesApi.listDevices(serverUrl, accessToken),
+                remoteProjects = projects.projects,
                 activePage = activePage.pageInfo(),
                 archivedPage = archivedPage.pageInfo(),
             )
@@ -340,6 +351,131 @@ class SessionsController(
         )
     }
 
+    suspend fun loadProjects(): Result<List<AgentProject>> {
+        val auth = newSessionAuth()
+            ?: return Result.failure(IllegalStateException("Sign in again to load projects."))
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                sessionsApi.listProjects(
+                    serverUrl = auth.serverUrl,
+                    authorizationToken = auth.accessToken,
+                ).projects.map(RemoteProject::toAgentProject)
+            }.wrapNewSessionFailure("Could not load projects.")
+        }
+    }
+
+    suspend fun loadProjectSessions(
+        projectId: String,
+        devices: List<AgentDevice>,
+    ): Result<List<AgentSession>> {
+        if (projectId.isBlank()) return Result.failure(IllegalArgumentException("Project ID is required."))
+        val auth = newSessionAuth()
+            ?: return Result.failure(IllegalStateException("Sign in again to load project sessions."))
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                val sessions = mutableListOf<RemoteSession>()
+                val seenCursors = mutableSetOf<String>()
+                var cursor: String? = null
+                do {
+                    val page = sessionsApi.listProjectSessions(
+                        serverUrl = auth.serverUrl,
+                        authorizationToken = auth.accessToken,
+                        projectId = projectId,
+                        archived = false,
+                        cursor = cursor,
+                    )
+                    sessions += page.sessions
+                    val nextCursor = page.nextCursor?.takeIf(String::isNotBlank)
+                    val shouldContinue = page.hasMore && nextCursor != null && seenCursors.add(nextCursor)
+                    cursor = nextCursor
+                } while (shouldContinue)
+                val devicesById = devices.associateBy { it.id }
+                sessions.distinctBy { it.id }.map { it.toAgentSession(devicesById) }
+            }.wrapNewSessionFailure("Could not load project sessions.")
+        }
+    }
+
+    suspend fun createProject(
+        name: String,
+        connectorId: String,
+        workspacePath: String,
+    ): Result<AgentProject> {
+        val normalizedName = name.trim()
+        val normalizedPath = workspacePath.trim()
+        if (normalizedName.isBlank()) return Result.failure(IllegalArgumentException("Project name is required."))
+        if (connectorId.isBlank()) return Result.failure(IllegalArgumentException("Connector is required."))
+        if (normalizedPath.isBlank()) return Result.failure(IllegalArgumentException("Project path is required."))
+        val auth = newSessionAuth()
+            ?: return Result.failure(IllegalStateException("Sign in again to create a project."))
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                sessionsApi.createProject(
+                    serverUrl = auth.serverUrl,
+                    authorizationToken = auth.accessToken,
+                    name = normalizedName,
+                    connectorId = connectorId,
+                    workspacePath = normalizedPath,
+                ).project.toAgentProject()
+            }.wrapNewSessionFailure("Could not create this project.")
+        }
+    }
+
+    suspend fun updateProject(
+        projectId: String,
+        name: String? = null,
+        pinned: Boolean? = null,
+    ): Result<AgentProject> {
+        if (projectId.isBlank()) return Result.failure(IllegalArgumentException("Project ID is required."))
+        val normalizedName = name?.trim()
+        if (normalizedName != null && normalizedName.isBlank()) {
+            return Result.failure(IllegalArgumentException("Project name is required."))
+        }
+        if (normalizedName == null && pinned == null) {
+            return Result.failure(IllegalArgumentException("A project change is required."))
+        }
+        val auth = newSessionAuth()
+            ?: return Result.failure(IllegalStateException("Sign in again to update this project."))
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                sessionsApi.updateProject(
+                    serverUrl = auth.serverUrl,
+                    authorizationToken = auth.accessToken,
+                    projectId = projectId,
+                    name = normalizedName,
+                    pinned = pinned,
+                ).project.toAgentProject()
+            }.wrapNewSessionFailure("Could not update this project.")
+        }
+    }
+
+    suspend fun setProjectPinned(
+        projectId: String,
+        pinned: Boolean,
+    ): Result<AgentProject> = updateProject(projectId = projectId, pinned = pinned)
+
+    suspend fun archiveProjectSessions(
+        projectId: String,
+        devices: List<AgentDevice>,
+        archived: Boolean = true,
+        scope: String = "active",
+    ): Result<List<AgentSession>> {
+        if (projectId.isBlank()) return Result.failure(IllegalArgumentException("Project ID is required."))
+        val auth = newSessionAuth()
+            ?: return Result.failure(IllegalStateException("Sign in again to update project sessions."))
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                val devicesById = devices.associateBy { it.id }
+                sessionsApi.archiveAllProjectSessions(
+                    serverUrl = auth.serverUrl,
+                    authorizationToken = auth.accessToken,
+                    projectId = projectId,
+                    archived = archived,
+                    scope = scope,
+                ).map { it.toAgentSession(devicesById) }
+            }.wrapNewSessionFailure("Could not update project sessions.")
+        }
+    }
+
     suspend fun setSessionArchived(
         sessionId: String,
         archived: Boolean,
@@ -472,6 +608,7 @@ class SessionsController(
     private fun toState(
         remoteSessions: List<RemoteSession>,
         remoteDevices: List<RemoteDevice>,
+        remoteProjects: List<RemoteProject>,
         activePage: com.agentsanywhere.app.api.RemoteSessionPageInfo,
         archivedPage: com.agentsanywhere.app.api.RemoteSessionPageInfo,
     ): SessionsState {
@@ -491,6 +628,7 @@ class SessionsController(
         return SessionsState(
             sessions = sessions,
             archivedSessions = archivedSessions,
+            projects = remoteProjects.map(RemoteProject::toAgentProject),
             devices = devices,
             isLoading = false,
             errorMessage = null,
@@ -568,6 +706,7 @@ class SessionsController(
 
 internal fun validateNewSessionDraft(draft: NewSessionCreateDraft): String? {
     if (draft.connectorId.isBlank()) return "Choose a connector before starting."
+    if (draft.projectId.isBlank()) return "Choose a project before starting."
     if (!draft.runtimeType.isValidRuntimeType() || draft.runtime != draft.runtimeType) {
         return "Choose a valid runtime type before starting."
     }

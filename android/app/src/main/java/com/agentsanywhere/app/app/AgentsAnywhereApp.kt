@@ -67,6 +67,7 @@ import com.agentsanywhere.app.feature.sessions.mergedWithRefresh
 import com.agentsanywhere.app.feature.sessions.replacedByDashboardSnapshot
 import com.agentsanywhere.app.feature.sessions.withDeletedDevice
 import com.agentsanywhere.app.feature.sessions.withPatchedDevice
+import com.agentsanywhere.app.feature.sessions.withPatchedProject
 import com.agentsanywhere.app.feature.sessions.withPatchedSession
 import com.agentsanywhere.app.feature.sessions.withPatchedSessions
 import com.agentsanywhere.app.feature.sessions.withMissingSessionsRemoved
@@ -77,6 +78,7 @@ import com.agentsanywhere.app.feature.terminal.RemoteTerminalPool
 import com.agentsanywhere.app.feature.terminal.TerminalController
 import com.agentsanywhere.app.model.MobileLoginQrPayload
 import com.agentsanywhere.app.model.AgentDevice
+import com.agentsanywhere.app.model.AgentProject
 import com.agentsanywhere.app.model.AgentSession
 import com.agentsanywhere.app.navigation.AppDestination
 import com.agentsanywhere.app.ui.designsystem.AgentsAnywhereTheme
@@ -95,6 +97,7 @@ import com.agentsanywhere.app.ui.screens.sessiondetail.SessionComposerDraftStore
 import com.agentsanywhere.app.ui.screens.sessiondetail.SessionDetailScreen
 import com.agentsanywhere.app.ui.screens.home.HomeTab
 import com.agentsanywhere.app.ui.screens.home.HomeScreen
+import com.agentsanywhere.app.ui.screens.home.ArchivedSessionsScreen
 import com.agentsanywhere.app.ui.screens.home.NewSessionScreen
 import com.agentsanywhere.app.ui.screens.terminal.TerminalScreen
 import com.agentsanywhere.app.ui.screens.update.AppUpdatePromptDialog
@@ -108,8 +111,10 @@ import java.io.File
 fun AgentsAnywhereApp(
     appearanceMode: String = "system",
     languageMode: String = AALanguageMode.System,
+    sidebarViewMode: String = com.agentsanywhere.app.ui.screens.home.HomeSidebarViewMode.Project,
     onAppearanceModeChange: (String) -> Unit = {},
     onLanguageModeChange: (String) -> Unit = {},
+    onSidebarViewModeChange: (String) -> Unit = {},
     oauthCallbackUri: Uri? = null,
     onOAuthCallbackConsumed: () -> Unit = {},
     webLoginViewModel: WebLoginViewModel,
@@ -129,6 +134,7 @@ fun AgentsAnywhereApp(
     }
     var pendingMobileLoginQr by remember { mutableStateOf<MobileLoginQrPayload?>(null) }
     var selectedSessionId by rememberSaveable { mutableStateOf<String?>(null) }
+    var initialNewSessionProjectId by rememberSaveable { mutableStateOf<String?>(null) }
     var preparedSessionDraft by rememberSaveable(stateSaver = NewSessionDraftSaver) {
         mutableStateOf<NewSessionDraft?>(null)
     }
@@ -203,6 +209,8 @@ fun AgentsAnywhereApp(
         )
     }
     var isRefreshingSessions by remember { mutableStateOf(false) }
+    var projectSessionsById by remember { mutableStateOf<Map<String, List<AgentSession>>>(emptyMap()) }
+    var loadingProjectIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     val scope = rememberCoroutineScope()
     val lifecycleOwner = LocalLifecycleOwner.current
     var appVisible by remember(lifecycleOwner) {
@@ -250,7 +258,10 @@ fun AgentsAnywhereApp(
         remoteTerminalPool.disposeLocal()
         sessionsState = SessionsState()
         isRefreshingSessions = false
+        projectSessionsById = emptyMap()
+        loadingProjectIds = emptySet()
         selectedSessionId = null
+        initialNewSessionProjectId = null
         preparedSessionDraft = null
         selectedDeviceId = null
         pendingMobileLoginQr = null
@@ -344,6 +355,19 @@ fun AgentsAnywhereApp(
             }
         }
     }
+
+    fun loadProjectSessions(projectId: String) {
+        if (projectId.isBlank() || projectId in loadingProjectIds) return
+        loadingProjectIds = loadingProjectIds + projectId
+        scope.launch {
+            sessionsController.loadProjectSessions(projectId, sessionsState.devices)
+                .onSuccess { sessions ->
+                    projectSessionsById = projectSessionsById + (projectId to sessions)
+                }
+            loadingProjectIds = loadingProjectIds - projectId
+        }
+    }
+
     val navigate: (AppDestination) -> Unit = { destination ->
         if (destination == AppDestination.QrLogin) {
             pendingMobileLoginQr = null
@@ -359,6 +383,9 @@ fun AgentsAnywhereApp(
         }
         if (destination != AppDestination.SessionDetail) {
             preparedSessionDraft = null
+        }
+        if (destination == AppDestination.NewSession) {
+            initialNewSessionProjectId = null
         }
         if (
             destination == AppDestination.DeviceSetup &&
@@ -433,6 +460,10 @@ fun AgentsAnywhereApp(
         serverUrl = authController.savedServerUrl(),
         appearanceMode = appearanceMode,
         languageMode = languageMode,
+        sidebarViewMode = sidebarViewMode,
+        projectSessionsById = projectSessionsById,
+        loadingProjectIds = loadingProjectIds,
+        initialNewSessionProjectId = initialNewSessionProjectId,
         sessionDetailController = sessionDetailController,
         sessionRealtimeController = sessionRealtimeController,
         filesController = filesController,
@@ -483,6 +514,7 @@ fun AgentsAnywhereApp(
         },
         onAppearanceModeChange = onAppearanceModeChange,
         onLanguageModeChange = onLanguageModeChange,
+        onSidebarViewModeChange = onSidebarViewModeChange,
         onLoadAccount = { authController.me() },
         onUpdateAvatar = { avatar -> authController.updateAvatar(avatar) },
         onClearAvatar = { authController.clearAvatar() },
@@ -634,6 +666,48 @@ fun AgentsAnywhereApp(
                     }
             }
         },
+        onLoadProjectSessions = ::loadProjectSessions,
+        onUpdateProject = { projectId, name, pinned ->
+            if (!hasAuthSession) {
+                Result.failure(IllegalStateException("Sign in again to update this project."))
+            } else {
+                sessionsController.updateProject(projectId, name, pinned)
+                    .onSuccess { project ->
+                        sessionsState = sessionsState.withPatchedProject(project)
+                    }
+            }
+        },
+        onArchiveProjectSessions = { projectId ->
+            if (!hasAuthSession) {
+                Result.failure(IllegalStateException("Sign in again to archive project sessions."))
+            } else {
+                val targetIds = (projectSessionsById[projectId].orEmpty() + sessionsState.sessions)
+                    .filter { it.projectId == projectId && !it.archived }
+                    .map(AgentSession::id)
+                    .distinct()
+                val request = sessionsState.beginSessionRequest(targetIds)
+                sessionsState = request.state
+                sessionsController.archiveProjectSessions(projectId, sessionsState.devices)
+                    .onSuccess { sessions ->
+                        sessionsState = sessionsState.withPatchedSessions(sessions, request.generation)
+                        projectSessionsById = projectSessionsById + (projectId to emptyList())
+                    }
+            }
+        },
+        onCreateProject = { name, connectorId, workspacePath ->
+            if (!hasAuthSession) {
+                Result.failure(IllegalStateException("Sign in again to create a project."))
+            } else {
+                sessionsController.createProject(name, connectorId, workspacePath)
+                    .onSuccess { project ->
+                        sessionsState = sessionsState.withPatchedProject(project)
+                    }
+            }
+        },
+        onNewSessionInProject = { project ->
+            initialNewSessionProjectId = project.id
+            destinationName = AppDestination.NewSession.name
+        },
         onCreateSession = { draft ->
             if (!hasAuthSession) {
                 NewSessionCreateOutcome.Failed(IllegalStateException("Sign in again to create a session."))
@@ -725,6 +799,10 @@ private fun AgentsAnywhereNavHost(
     serverUrl: String,
     appearanceMode: String,
     languageMode: String,
+    sidebarViewMode: String,
+    projectSessionsById: Map<String, List<AgentSession>>,
+    loadingProjectIds: Set<String>,
+    initialNewSessionProjectId: String?,
     sessionDetailController: SessionDetailController,
     sessionRealtimeController: SessionRealtimeController,
     filesController: FilesController,
@@ -740,6 +818,7 @@ private fun AgentsAnywhereNavHost(
     onHomeTabSelected: (HomeTab) -> Unit,
     onAppearanceModeChange: (String) -> Unit,
     onLanguageModeChange: (String) -> Unit,
+    onSidebarViewModeChange: (String) -> Unit,
     onLoadAccount: suspend () -> Result<com.agentsanywhere.app.api.AuthMeResponse>,
     onUpdateAvatar: suspend (String) -> Result<com.agentsanywhere.app.api.AuthMeResponse>,
     onClearAvatar: suspend () -> Result<com.agentsanywhere.app.api.AuthMeResponse>,
@@ -758,6 +837,11 @@ private fun AgentsAnywhereNavHost(
     onRenameSession: suspend (String, String) -> Result<com.agentsanywhere.app.model.AgentSession>,
     onSetSessionPinned: suspend (String, Boolean) -> Result<com.agentsanywhere.app.model.AgentSession>,
     onSetSessionArchived: suspend (String, Boolean) -> Result<com.agentsanywhere.app.model.AgentSession>,
+    onLoadProjectSessions: (String) -> Unit,
+    onUpdateProject: suspend (String, String?, Boolean?) -> Result<AgentProject>,
+    onArchiveProjectSessions: suspend (String) -> Result<List<AgentSession>>,
+    onCreateProject: suspend (String, String, String) -> Result<AgentProject>,
+    onNewSessionInProject: (AgentProject) -> Unit,
     onCreateSession: suspend (NewSessionCreateDraft) -> NewSessionCreateOutcome,
     onPrepareSession: (NewSessionDraft) -> Unit,
     onPreparedSessionCreated: (AgentSession) -> Unit,
@@ -828,12 +912,17 @@ private fun AgentsAnywhereNavHost(
                     serverUrl = serverUrl,
                     appearanceMode = appearanceMode,
                     languageMode = languageMode,
+                    sidebarViewMode = sidebarViewMode,
                     appUpdateViewModel = appUpdateViewModel,
+                    projectSessionsById = projectSessionsById,
+                    loadingProjectIds = loadingProjectIds,
                     onRefresh = onRefreshSessions,
                     onLoadMore = { tab -> onLoadMoreSessions(tab == HomeTab.Archived) },
                     onTabSelected = onHomeTabSelected,
                     onAppearanceModeChange = onAppearanceModeChange,
                     onLanguageModeChange = onLanguageModeChange,
+                    onSidebarViewModeChange = onSidebarViewModeChange,
+                    onOpenArchivedSessions = { navigate(AppDestination.ArchivedSessions) },
                     onLoadAccount = onLoadAccount,
                     onUpdateAvatar = onUpdateAvatar,
                     onClearAvatar = onClearAvatar,
@@ -842,6 +931,10 @@ private fun AgentsAnywhereNavHost(
                     onRenameSession = onRenameSession,
                     onSetSessionPinned = onSetSessionPinned,
                     onSetSessionArchived = onSetSessionArchived,
+                    onLoadProjectSessions = onLoadProjectSessions,
+                    onUpdateProject = onUpdateProject,
+                    onArchiveProjectSessions = onArchiveProjectSessions,
+                    onNewSessionInProject = onNewSessionInProject,
                     onOpenSession = onOpenSession,
                     onOpenDevice = onOpenDevice,
                     deviceAgentPreviews = deviceAgentPreviews,
@@ -856,6 +949,8 @@ private fun AgentsAnywhereNavHost(
                     onLoadModelCatalog = onLoadNewSessionModelCatalog,
                     onLoadPermissionCatalog = onLoadNewSessionPermissionCatalog,
                     onPrepareSession = onPrepareSession,
+                    initialProjectId = initialNewSessionProjectId,
+                    onCreateProject = onCreateProject,
                 )
                 AppDestination.SessionDetail -> SessionDetailScreen(
                     navigate = navigate,
@@ -928,6 +1023,9 @@ private fun AgentsAnywhereNavHost(
                     onCreateCredential = onCreateDeviceSetup,
                     onRenameDevice = onRenameDevice,
                 )
+                AppDestination.ArchivedSessions -> ArchivedSessionsScreen(
+                    onBack = { navigate(AppDestination.Sessions) },
+                )
             }
         }
     }
@@ -960,6 +1058,7 @@ private val NewSessionDraftSaver = listSaver<NewSessionDraft?, Any>(
                 draft.runtimeName,
                 draft.attachmentsEnabled,
                 draft.localSessionId,
+                draft.projectId,
             )
         }
     },
@@ -990,6 +1089,7 @@ private val NewSessionDraftSaver = listSaver<NewSessionDraft?, Any>(
                 localSessionId = (values.getOrNull(13) as? String)?.takeIf(String::isNotBlank)
                     ?: (values.getOrNull(12) as? String)?.takeIf(String::isNotBlank)
                     ?: com.agentsanywhere.app.feature.sessions.NewSessionDraft.newLocalSessionId(),
+                projectId = (values.getOrNull(14) as? String).orEmpty(),
             )
         }
     },

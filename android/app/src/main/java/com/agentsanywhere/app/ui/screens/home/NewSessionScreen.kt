@@ -1,6 +1,5 @@
 package com.agentsanywhere.app.ui.screens.home
 
-import android.content.Context
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
@@ -82,8 +81,8 @@ import com.agentsanywhere.app.feature.sessions.NewSessionPreferenceStore
 import com.agentsanywhere.app.feature.sessions.NewSessionRuntimeCapabilities
 import com.agentsanywhere.app.feature.sessions.NewSessionRuntimeSelectionState
 import com.agentsanywhere.app.feature.sessions.SessionsState
-import com.agentsanywhere.app.feature.sessions.workspaceOptionsFor
 import com.agentsanywhere.app.model.AgentDevice
+import com.agentsanywhere.app.model.AgentProject
 import com.agentsanywhere.app.navigation.AppDestination
 import com.agentsanywhere.app.ui.designsystem.BackGlyph
 import com.agentsanywhere.app.ui.designsystem.CheckGlyph
@@ -92,7 +91,6 @@ import com.agentsanywhere.app.ui.designsystem.DownGlyph
 import com.agentsanywhere.app.ui.designsystem.ForwardGlyph
 import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 import com.agentsanywhere.app.ui.designsystem.ScreenScaffold
-import com.agentsanywhere.app.ui.designsystem.SearchGlyph
 import com.agentsanywhere.app.ui.designsystem.noRippleClickable
 import com.agentsanywhere.app.ui.designsystem.runtimePermissionLocalizer
 import com.composables.icons.lucide.ChevronDown
@@ -101,6 +99,7 @@ import com.composables.icons.lucide.ChevronUp
 import com.composables.icons.lucide.Folder
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Pencil
+import com.composables.icons.lucide.Plus
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -116,6 +115,10 @@ fun NewSessionScreen(
     onLoadModelCatalog: suspend (String, String) -> Result<NewSessionModelCatalog>,
     onLoadPermissionCatalog: suspend (String, String) -> Result<NewSessionPermissionCatalog>,
     onPrepareSession: (NewSessionDraft) -> Unit,
+    initialProjectId: String? = null,
+    onCreateProject: suspend (String, String, String) -> Result<AgentProject> = { _, _, _ ->
+        Result.failure(IllegalStateException("Project creation is not connected."))
+    },
 ) {
     val colors = LocalAAColors.current
     val darkMode = colors.canvas == Color(0xFF09090B)
@@ -129,8 +132,19 @@ fun NewSessionScreen(
     val devices = remember(sessionsState.devices) {
         sessionsState.devices.filter { it.online }
     }
+    var localProject by remember { mutableStateOf<AgentProject?>(null) }
+    val projects = remember(sessionsState.projects, localProject) {
+        val local = localProject
+        if (local == null || sessionsState.projects.any { it.id == local.id }) {
+            sessionsState.projects
+        } else {
+            sessionsState.projects + local
+        }
+    }
     var title by rememberSaveable { mutableStateOf(defaultTitle) }
     var editingTitle by rememberSaveable { mutableStateOf(false) }
+    var selectedProjectId by rememberSaveable(initialProjectId) { mutableStateOf(initialProjectId) }
+    var pendingInitialProjectId by rememberSaveable(initialProjectId) { mutableStateOf(initialProjectId) }
     var selectedDeviceId by rememberSaveable { mutableStateOf(initialPreference?.connectorId) }
     var runtimeSelection by remember {
         mutableStateOf(
@@ -149,11 +163,48 @@ fun NewSessionScreen(
     var pathLoading by remember { mutableStateOf(false) }
     var pathError by remember { mutableStateOf<String?>(null) }
     var expandedConfiguration by remember { mutableStateOf<NewSessionConfigurationKey?>(null) }
-    var workspaceListExpanded by rememberSaveable { mutableStateOf(true) }
-    BackHandler { navigate(AppDestination.Sessions) }
+    var projectListExpanded by rememberSaveable { mutableStateOf(true) }
+    var creatingProject by rememberSaveable { mutableStateOf(false) }
+    var projectName by rememberSaveable { mutableStateOf("") }
+    var projectCreating by remember { mutableStateOf(false) }
+    var projectCreateError by remember { mutableStateOf<String?>(null) }
+    val selectedProject = projects.firstOrNull { it.id == selectedProjectId }
 
-    LaunchedEffect(devices, sessionsState.hasLoaded) {
-        if (devices.isNotEmpty() && devices.none { it.id == selectedDeviceId }) {
+    BackHandler {
+        when {
+            choosePath -> choosePath = false
+            creatingProject -> {
+                creatingProject = false
+                projectCreateError = null
+            }
+            else -> navigate(AppDestination.Sessions)
+        }
+    }
+
+    LaunchedEffect(projects, sessionsState.hasLoaded) {
+        val requested = pendingInitialProjectId?.let { id -> projects.firstOrNull { it.id == id } }
+        val current = projects.firstOrNull { it.id == selectedProjectId }
+        val next = requested ?: current ?: projects.firstOrNull()
+        if (next?.id != selectedProjectId) {
+            selectedProjectId = next?.id
+        }
+        if (requested != null || sessionsState.hasLoaded) {
+            pendingInitialProjectId = null
+        }
+    }
+
+    LaunchedEffect(selectedProject?.id, selectedProject?.connectorId, selectedProject?.workspacePath, creatingProject) {
+        if (!creatingProject && selectedProject != null) {
+            selectedDeviceId = selectedProject.connectorId
+            selectedWorkspacePath = selectedProject.workspacePath
+            currentPath = selectedProject.workspacePath
+        }
+    }
+
+    LaunchedEffect(devices, sessionsState.hasLoaded, creatingProject, selectedProject?.id) {
+        if (!creatingProject && selectedProject != null) {
+            selectedDeviceId = selectedProject.connectorId
+        } else if (devices.isNotEmpty() && devices.none { it.id == selectedDeviceId }) {
             selectedDeviceId = devices.firstOrNull()?.id
         } else if (devices.isEmpty() && sessionsState.hasLoaded) {
             selectedDeviceId = null
@@ -283,10 +334,17 @@ fun NewSessionScreen(
         pathLoading = false
     }
 
-    LaunchedEffect(selectedDevice?.id) {
+    LaunchedEffect(selectedDevice?.id, creatingProject, selectedProject?.id) {
         if (selectedDevice == null) {
             homePath = null
             pathEntries = emptyList()
+            return@LaunchedEffect
+        }
+        if (!creatingProject && selectedProject != null) {
+            homePath = null
+            pathEntries = emptyList()
+            currentPath = selectedProject.workspacePath
+            selectedWorkspacePath = selectedProject.workspacePath
             return@LaunchedEffect
         }
         homePath = null
@@ -302,18 +360,11 @@ fun NewSessionScreen(
         }
     }
 
-    val workspaceSessions = remember(sessionsState.sessions, sessionsState.archivedSessions) {
-        sessionsState.sessions + sessionsState.archivedSessions
-    }
-    val workspaces = remember(workspaceSessions, selectedDevice?.id, homePath) {
-        workspaceOptionsFor(workspaceSessions, selectedDevice?.id, homePath)
-    }
-    val selectedWorkspace = workspaces.firstOrNull { it.path == selectedWorkspacePath }
-    val selectedWorkspaceTitle = selectedWorkspace?.title?.localizedWorkspaceTitle()
-        ?: pathTitle(selectedWorkspacePath, stringResource(R.string.new_session_home_directory))
-    val selectedWorkspaceDetail = selectedWorkspace?.detail ?: selectedWorkspacePath
+    val selectedProjectDevice = sessionsState.devices.firstOrNull { it.id == selectedProject?.connectorId }
+    val selectedProjectTitle = selectedProject?.name ?: stringResource(R.string.new_session_choose_project)
+    val selectedProjectDetail = selectedProject?.workspacePath ?: stringResource(R.string.new_session_no_project)
     val canUseCurrentPath = isSelectableRemoteDirectory(currentPath, selectedDeviceOs)
-    val effectiveWorkspacePath = if (choosePath) currentPath else selectedWorkspacePath
+    val effectiveWorkspacePath = selectedProject?.workspacePath.orEmpty()
     val catalogsLoading = selectedRuntime != null && (
         !runtimeSelection.capabilities.loaded ||
             runtimeSelection.capabilities.loading ||
@@ -350,15 +401,19 @@ fun NewSessionScreen(
             NewSessionConfigurationField(
                 key = NewSessionConfigurationKey.Device,
                 label = stringResource(R.string.new_session_device),
-                value = selectedDevice?.name ?: stringResource(R.string.new_session_no_device),
-                selectedId = selectedDevice?.id,
+                value = if (creatingProject) {
+                    selectedDevice?.name ?: stringResource(R.string.new_session_no_device)
+                } else {
+                    selectedProjectDevice?.name ?: stringResource(R.string.new_session_no_device)
+                },
+                selectedId = if (creatingProject) selectedDevice?.id else selectedProject?.connectorId,
                 options = devices.map { device ->
                     NewSessionConfigurationOption(id = device.id, label = device.name)
                 },
-                enabled = devices.isNotEmpty(),
+                enabled = creatingProject && devices.isNotEmpty() && !projectCreating,
             ),
         )
-        add(
+        if (!creatingProject) add(
             NewSessionConfigurationField(
                 key = NewSessionConfigurationKey.Agent,
                 label = stringResource(R.string.new_session_agent),
@@ -375,7 +430,7 @@ fun NewSessionScreen(
                 loading = selectedDevice != null && runtimeSelection.runtimesLoading,
             ),
         )
-        if (showModelConfiguration) {
+        if (!creatingProject && showModelConfiguration) {
             add(
                 NewSessionConfigurationField(
                     key = NewSessionConfigurationKey.Model,
@@ -421,7 +476,7 @@ fun NewSessionScreen(
                 ),
             )
         }
-        if (showPermissionConfiguration) {
+        if (!creatingProject && showPermissionConfiguration) {
             add(
                 NewSessionConfigurationField(
                     key = NewSessionConfigurationKey.Permission,
@@ -453,11 +508,12 @@ fun NewSessionScreen(
             )
         }
     }
-    val canStart = selectedDevice != null &&
+    val canStart = selectedProject != null &&
+        selectedDevice != null &&
         selectedRuntime != null &&
         runtimeSelection.readyForCreate &&
         effectiveWorkspacePath.isNotBlank() &&
-        (!choosePath || (!pathLoading && canUseCurrentPath))
+        !creatingProject
 
     fun submitTitle() {
         title = title.trim().ifBlank { defaultTitle }
@@ -466,6 +522,7 @@ fun NewSessionScreen(
     }
 
     fun startSession() {
+        val project = selectedProject ?: return
         val device = selectedDevice ?: return
         val runtime = selectedRuntime ?: return
         if (!canStart) return
@@ -477,6 +534,7 @@ fun NewSessionScreen(
         onPrepareSession(
             NewSessionDraft(
                 connectorId = device.id,
+                projectId = project.id,
                 runtime = runtime.type,
                 title = title.trim().takeIf(String::isNotBlank),
                 cwd = effectiveWorkspacePath.trim().takeIf(String::isNotBlank),
@@ -491,6 +549,46 @@ fun NewSessionScreen(
                 attachmentsEnabled = runtimeSelection.canUseAttachments,
             ),
         )
+    }
+
+    fun beginProjectCreation() {
+        projectName = ""
+        projectCreateError = null
+        projectCreating = false
+        choosePath = false
+        creatingProject = true
+        expandedConfiguration = null
+        val preferredDeviceId = selectedProject?.connectorId
+            ?.takeIf { id -> devices.any { it.id == id } }
+            ?: initialPreference?.connectorId?.takeIf { id -> devices.any { it.id == id } }
+            ?: devices.firstOrNull()?.id
+        selectedDeviceId = preferredDeviceId
+    }
+
+    fun createProject() {
+        val device = selectedDevice ?: return
+        val cleanName = projectName.trim()
+        val cleanPath = selectedWorkspacePath.trim()
+        if (cleanName.isBlank() || cleanPath.isBlank() || projectCreating) return
+        projectCreating = true
+        projectCreateError = null
+        scope.launch {
+            onCreateProject(cleanName, device.id, cleanPath)
+                .onSuccess { project ->
+                    localProject = project
+                    selectedProjectId = project.id
+                    selectedDeviceId = project.connectorId
+                    selectedWorkspacePath = project.workspacePath
+                    currentPath = project.workspacePath
+                    projectListExpanded = false
+                    creatingProject = false
+                    choosePath = false
+                }
+                .onFailure { error ->
+                    projectCreateError = error.message ?: context.getString(R.string.new_session_project_create_failed)
+                }
+            projectCreating = false
+        }
     }
 
     ScreenScaffold {
@@ -530,7 +628,13 @@ fun NewSessionScreen(
                     onDismiss = { expandedConfiguration = null },
                     onSelect = { key, id ->
                         when (key) {
-                            NewSessionConfigurationKey.Device -> selectedDeviceId = id
+                            NewSessionConfigurationKey.Device -> {
+                                if (creatingProject) {
+                                    selectedDeviceId = id
+                                    projectCreateError = null
+                                    choosePath = false
+                                }
+                            }
                             NewSessionConfigurationKey.Agent -> {
                                 runtimeSelection = runtimeSelection.selectRuntime(id)
                             }
@@ -584,7 +688,6 @@ fun NewSessionScreen(
                             if (canUseCurrentPath) {
                                 selectedWorkspacePath = currentPath
                                 choosePath = false
-                                workspaceListExpanded = false
                             }
                         },
                         onOpenEntry = { entry ->
@@ -596,40 +699,70 @@ fun NewSessionScreen(
                             }
                         },
                     )
-                } else {
-                    WorkspaceSection(
-                        selectedTitle = selectedWorkspaceTitle,
-                        selectedDetail = selectedWorkspaceDetail,
-                        workspaces = workspaces,
-                        expanded = workspaceListExpanded,
+                } else if (creatingProject) {
+                    CreateProjectSection(
+                        name = projectName,
+                        workspacePath = selectedWorkspacePath,
+                        canBrowse = selectedDevice != null && !projectCreating,
+                        canCreate = projectName.isNotBlank() &&
+                            selectedDevice != null &&
+                            selectedWorkspacePath.isNotBlank() &&
+                            !projectCreating,
+                        creating = projectCreating,
+                        error = projectCreateError,
                         darkMode = darkMode,
                         modifier = Modifier.weight(1f),
-                        onChoosePath = {
-                            choosePath = true
-                            val startPath = if (isWindowsDevice) "" else selectedWorkspacePath
-                            scope.launch {
-                                loadDirectory(
-                                    targetPath = startPath,
-                                    fallbackRoot = selectedWorkspacePath,
-                                )
+                        onNameChange = {
+                            projectName = it
+                            projectCreateError = null
+                        },
+                        onChooseDirectory = {
+                            if (selectedDevice != null) {
+                                choosePath = true
+                                val startPath = if (isWindowsDevice) "" else selectedWorkspacePath
+                                scope.launch {
+                                    loadDirectory(
+                                        targetPath = startPath,
+                                        fallbackRoot = selectedWorkspacePath,
+                                    )
+                                }
                             }
                         },
-                        onToggleExpanded = { workspaceListExpanded = !workspaceListExpanded },
-                        onSelectWorkspace = {
-                            selectedWorkspacePath = it.path
-                            workspaceListExpanded = false
+                        onCancel = {
+                            creatingProject = false
+                            projectCreateError = null
+                        },
+                        onCreate = ::createProject,
+                    )
+                } else {
+                    ProjectSection(
+                        selectedTitle = selectedProjectTitle,
+                        selectedDetail = selectedProjectDetail,
+                        projects = projects,
+                        selectedProjectId = selectedProjectId,
+                        expanded = projectListExpanded,
+                        darkMode = darkMode,
+                        modifier = Modifier.weight(1f),
+                        onCreateProject = ::beginProjectCreation,
+                        onToggleExpanded = { projectListExpanded = !projectListExpanded },
+                        onSelectProject = { project ->
+                            selectedProjectId = project.id
+                            selectedDeviceId = project.connectorId
+                            selectedWorkspacePath = project.workspacePath
+                            currentPath = project.workspacePath
+                            projectListExpanded = false
                         },
                     )
                 }
             }
 
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .windowInsetsPadding(WindowInsets.navigationBars)
-                    .padding(start = 18.dp, end = 18.dp, bottom = 10.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
+            if (!creatingProject) Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .windowInsetsPadding(WindowInsets.navigationBars)
+                        .padding(start = 18.dp, end = 18.dp, bottom = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
                 val runtimeError = when {
                     devices.isEmpty() -> stringResource(R.string.new_session_no_online_agent)
                     runtimeSelection.runtimesErrorMessage != null -> runtimeSelection.runtimesErrorMessage
@@ -696,7 +829,7 @@ fun NewSessionScreen(
                     enabled = canStart,
                     onClick = ::startSession,
                 )
-            }
+                }
         }
     }
 
@@ -830,16 +963,17 @@ private fun HeaderCircleButton(
 }
 
 @Composable
-private fun WorkspaceSection(
+private fun ProjectSection(
     selectedTitle: String,
     selectedDetail: String,
-    workspaces: List<com.agentsanywhere.app.feature.sessions.NewSessionWorkspace>,
+    projects: List<AgentProject>,
+    selectedProjectId: String?,
     expanded: Boolean,
     darkMode: Boolean,
     modifier: Modifier,
-    onChoosePath: () -> Unit,
+    onCreateProject: () -> Unit,
     onToggleExpanded: () -> Unit,
-    onSelectWorkspace: (com.agentsanywhere.app.feature.sessions.NewSessionWorkspace) -> Unit,
+    onSelectProject: (AgentProject) -> Unit,
 ) {
     Column(
         modifier = modifier.fillMaxWidth(),
@@ -859,10 +993,15 @@ private fun WorkspaceSection(
                 fontWeight = FontWeight.ExtraBold,
                 lineHeight = 21.sp,
             )
-            SmallPill(darkMode = darkMode, onClick = onChoosePath) {
-                SearchGlyph(color = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF555555))
+            SmallPill(darkMode = darkMode, onClick = onCreateProject) {
+                Icon(
+                    imageVector = Lucide.Plus,
+                    contentDescription = null,
+                    tint = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF555555),
+                    modifier = Modifier.size(15.dp),
+                )
                 Text(
-                    text = stringResource(R.string.new_session_choose_path),
+                    text = stringResource(R.string.new_session_create_project),
                     color = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF555555),
                     fontSize = 13.sp,
                     fontWeight = FontWeight.ExtraBold,
@@ -875,7 +1014,7 @@ private fun WorkspaceSection(
             detail = selectedDetail,
             expanded = expanded,
             darkMode = darkMode,
-            onToggleExpanded = onToggleExpanded,
+            onToggleExpanded = { if (projects.isNotEmpty()) onToggleExpanded() },
         )
         if (expanded) {
             LazyColumn(
@@ -883,12 +1022,21 @@ private fun WorkspaceSection(
                     .fillMaxWidth()
                     .weight(1f),
             ) {
-                items(workspaces, key = { it.path }) { workspace ->
-                    WorkspaceRow(
-                        title = workspace.title,
-                        detail = workspace.detail,
+                if (projects.isEmpty()) {
+                    item {
+                        PathMessage(
+                            message = stringResource(R.string.new_session_no_projects),
+                            darkMode = darkMode,
+                        )
+                    }
+                }
+                items(projects, key = { it.id }) { project ->
+                    ProjectRow(
+                        title = project.name,
+                        detail = project.workspacePath,
+                        selected = project.id == selectedProjectId,
                         darkMode = darkMode,
-                        onClick = { onSelectWorkspace(workspace) },
+                        onClick = { onSelectProject(project) },
                     )
                 }
             }
@@ -967,9 +1115,10 @@ private fun WorkspaceTrigger(
 }
 
 @Composable
-private fun WorkspaceRow(
+private fun ProjectRow(
     title: String,
     detail: String,
+    selected: Boolean,
     darkMode: Boolean,
     onClick: () -> Unit,
 ) {
@@ -1049,6 +1198,16 @@ private fun WorkspaceRow(
                 maxLines = 1,
                 softWrap = false,
                 overflow = TextOverflow.StartEllipsis,
+            )
+        }
+        if (selected) {
+            CheckGlyph(color = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF16A34A))
+        } else {
+            Icon(
+                imageVector = Lucide.ChevronRight,
+                contentDescription = null,
+                tint = if (darkMode) Color(0xFF71717A) else Color(0xFFA8A6A0),
+                modifier = Modifier.size(20.dp),
             )
         }
     }
@@ -1240,6 +1399,156 @@ private fun PathRow(
 }
 
 @Composable
+private fun CreateProjectSection(
+    name: String,
+    workspacePath: String,
+    canBrowse: Boolean,
+    canCreate: Boolean,
+    creating: Boolean,
+    error: String?,
+    darkMode: Boolean,
+    modifier: Modifier,
+    onNameChange: (String) -> Unit,
+    onChooseDirectory: () -> Unit,
+    onCancel: () -> Unit,
+    onCreate: () -> Unit,
+) {
+    val colors = LocalAAColors.current
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .windowInsetsPadding(WindowInsets.navigationBars),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(32.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = stringResource(R.string.new_session_create_project),
+                color = colors.ink,
+                fontSize = 17.sp,
+                fontWeight = FontWeight.ExtraBold,
+                lineHeight = 21.sp,
+            )
+            SmallPill(darkMode = darkMode, onClick = onCancel) {
+                BackGlyph(color = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF555555))
+                Text(
+                    text = stringResource(R.string.common_cancel),
+                    color = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF555555),
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                )
+            }
+        }
+        Text(
+            text = stringResource(R.string.new_session_project_name),
+            color = colors.inkSoft,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.padding(start = 2.dp),
+        )
+        BasicTextField(
+            value = name,
+            onValueChange = onNameChange,
+            enabled = !creating,
+            singleLine = true,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(54.dp)
+                .clip(RoundedCornerShape(18.dp))
+                .background(colors.raisedSurface)
+                .border(1.dp, colors.border, RoundedCornerShape(18.dp))
+                .padding(horizontal = 16.dp),
+            textStyle = TextStyle(
+                color = colors.ink,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.SemiBold,
+                fontFamily = FontFamily.SansSerif,
+            ),
+            cursorBrush = SolidColor(colors.ink),
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+            keyboardActions = KeyboardActions(onDone = { if (canCreate) onCreate() }),
+            decorationBox = { inner ->
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.CenterStart,
+                ) {
+                    if (name.isBlank()) {
+                        Text(
+                            text = stringResource(R.string.new_session_project_name_placeholder),
+                            color = colors.faint,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+                    inner()
+                }
+            },
+        )
+        Text(
+            text = stringResource(R.string.new_session_project_directory),
+            color = colors.inkSoft,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.padding(start = 2.dp),
+        )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(56.dp)
+                .clip(RoundedCornerShape(18.dp))
+                .background(colors.raisedSurface)
+                .border(1.dp, colors.border, RoundedCornerShape(18.dp))
+                .then(if (canBrowse) Modifier.noRippleClickable(onClick = onChooseDirectory) else Modifier)
+                .padding(horizontal = 14.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                imageVector = Lucide.Folder,
+                contentDescription = null,
+                tint = colors.inkSoft.copy(alpha = if (canBrowse) 1f else 0.45f),
+                modifier = Modifier.size(20.dp),
+            )
+            Text(
+                text = workspacePath.ifBlank { stringResource(R.string.new_session_choose_directory) },
+                color = colors.ink.copy(alpha = if (canBrowse) 1f else 0.45f),
+                fontSize = 15.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.MiddleEllipsis,
+                modifier = Modifier.weight(1f),
+            )
+            ForwardGlyph(color = colors.muted.copy(alpha = if (canBrowse) 1f else 0.45f))
+        }
+        error?.let { message ->
+            Text(
+                text = message,
+                color = colors.errorText,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+                lineHeight = 17.sp,
+                modifier = Modifier.padding(horizontal = 2.dp),
+            )
+        }
+        Spacer(Modifier.weight(1f))
+        StartChatButton(
+            label = if (creating) {
+                stringResource(R.string.new_session_project_creating)
+            } else {
+                stringResource(R.string.new_session_create_project)
+            },
+            enabled = canCreate,
+            onClick = onCreate,
+        )
+    }
+}
+
+@Composable
 private fun PathMessage(message: String, darkMode: Boolean) {
     Text(
         text = message,
@@ -1335,17 +1644,6 @@ private fun StartChatButton(
     }
 }
 
-private fun pathTitle(path: String, homeDirectory: String): String {
-    val clean = path.trim().trimEnd('/').ifBlank { path }
-    if (clean == "~") return homeDirectory
-    return clean.substringAfterLast('/').ifBlank { clean }
-}
-
 private fun String.textFieldValueAtEnd(): TextFieldValue {
     return TextFieldValue(text = this, selection = TextRange(length))
-}
-
-@Composable
-private fun String.localizedWorkspaceTitle(): String {
-    return if (this == "Home directory") stringResource(R.string.new_session_home_directory) else this
 }
