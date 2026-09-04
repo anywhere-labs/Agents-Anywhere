@@ -6,6 +6,7 @@ import { SessionDetail, type SessionMemorySnapshot } from "@/components/session-
 import {
   SessionToolSidebar,
   sessionToolSidebarWidth,
+  type SessionToolKind,
   useSessionToolSidebar,
 } from "@/components/session-tool-sidebar"
 import { SessionViewHeader } from "@/components/session-view-header"
@@ -60,9 +61,16 @@ export function SessionView() {
   const root = session?.cwd ?? "."
   const availablePanelIds = isMobile ? (["files"] satisfies PanelId[]) : PANEL_IDS
   const floatingPanels = availablePanelIds.filter((id) => panels[id] === "floating")
+  const toolSidebarWidth = sessionToolSidebarWidth(viewBounds.width)
   const reservedSidebarWidth = !isMobile && toolSidebar.open && !toolSidebar.expanded
-    ? sessionToolSidebarWidth(viewBounds.width)
+    ? toolSidebarWidth
     : 0
+  const toolSidebarExpanded = !isMobile && toolSidebar.open && toolSidebar.expanded
+
+  const handleOpenTool = React.useCallback((kind: SessionToolKind) => {
+    if (kind !== "review") setPanelMode(kind, "closed")
+    toolSidebar.openTool(kind)
+  }, [setPanelMode, toolSidebar.openTool])
 
   React.useEffect(() => {
     setMemorySnapshot(null)
@@ -152,6 +160,8 @@ export function SessionView() {
     <>
       <div
         ref={viewRef}
+        aria-hidden={toolSidebarExpanded || undefined}
+        inert={toolSidebarExpanded || undefined}
         className="h-full min-h-0 overflow-hidden overscroll-none bg-background"
         style={{ paddingRight: reservedSidebarWidth }}
         onPointerDownCapture={markActiveSessionRead}
@@ -167,6 +177,8 @@ export function SessionView() {
             onExportRemoteTimeline={handleExportRemoteTimeline}
             exporting={exporting}
             toolsOpen={toolSidebar.open}
+            toolsExpanded={toolSidebar.expanded}
+            toolsOverlayWidth={reservedSidebarWidth}
             onToggleTools={toolSidebar.toggleSidebar}
           />
 
@@ -198,6 +210,7 @@ export function SessionView() {
           connectorId={connectorId}
           connectorDeviceOs={connector?.deviceOs}
           root={root}
+          onOpenTool={handleOpenTool}
           onDetachTool={(kind) => setPanelMode(kind, "floating")}
         />
       ) : null}

@@ -144,6 +144,7 @@ type SessionToolSidebarProps = {
   connectorId: string | null
   connectorDeviceOs?: string | null
   root: string
+  onOpenTool: (kind: SessionToolKind) => void
   onDetachTool: (kind: Exclude<SessionToolKind, "review">) => void
 }
 
@@ -155,13 +156,28 @@ export function SessionToolSidebar({
   connectorId,
   connectorDeviceOs,
   root,
+  onOpenTool,
   onDetachTool,
 }: SessionToolSidebarProps) {
   const t = useTranslations("dashboard.session.tools")
   const tabButtonRefs = React.useRef(new Map<SessionToolKind, HTMLButtonElement>())
+  const newTabButtonRef = React.useRef<HTMLButtonElement | null>(null)
+  const launcherButtonRef = React.useRef<HTMLButtonElement | null>(null)
   const width = sessionToolSidebarWidth(hostWidth)
 
-  if (!controller.open || width === 0 || typeof document === "undefined") return null
+  React.useEffect(() => {
+    if (!controller.open || width === 0) return
+    const frame = window.requestAnimationFrame(() => {
+      if (controller.activeTabId) {
+        tabButtonRefs.current.get(controller.activeTabId)?.focus()
+      } else {
+        launcherButtonRef.current?.focus()
+      }
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [controller.activeTabId, controller.open, width])
+
+  if (width === 0 || typeof document === "undefined") return null
 
   const panelStyle: React.CSSProperties = controller.expanded
     ? { left: hostLeft, width: hostWidth }
@@ -170,6 +186,29 @@ export function SessionToolSidebar({
   const focusTab = (id: SessionToolKind) => {
     controller.activateTab(id)
     window.requestAnimationFrame(() => tabButtonRefs.current.get(id)?.focus())
+  }
+
+  const closeTabAndRestoreFocus = (id: SessionToolKind) => {
+    const closedIndex = controller.tabs.findIndex((tab) => tab.id === id)
+    const remainingTabs = controller.tabs.filter((tab) => tab.id !== id)
+    const nextTabId = controller.activeTabId === id
+      ? remainingTabs[Math.min(closedIndex, remainingTabs.length - 1)]?.id ?? null
+      : controller.activeTabId
+
+    controller.closeTab(id)
+    window.requestAnimationFrame(() => {
+      if (nextTabId) tabButtonRefs.current.get(nextTabId)?.focus()
+      else newTabButtonRef.current?.focus()
+    })
+  }
+
+  const collapseAndRestoreFocus = () => {
+    controller.collapseSidebar()
+    window.requestAnimationFrame(() => {
+      document.querySelector<HTMLButtonElement>(
+        '[data-slot="session-tool-sidebar-toggle"]',
+      )?.focus()
+    })
   }
 
   const handleTabKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
@@ -192,7 +231,11 @@ export function SessionToolSidebar({
   return createPortal(
     <aside
       aria-label={t("sidebarLabel")}
-      className="fixed inset-y-0 z-40 flex min-w-0 flex-col overflow-hidden border-l border-border bg-background text-foreground"
+      aria-hidden={!controller.open}
+      className={cn(
+        "fixed inset-y-0 z-40 flex min-w-0 flex-col overflow-hidden border-l border-border bg-background text-foreground",
+        controller.open ? "visible pointer-events-auto" : "invisible pointer-events-none",
+      )}
       style={panelStyle}
     >
       <div className="aa-window-drag flex h-11 shrink-0 items-center gap-1 border-b border-border bg-background px-1.5">
@@ -221,6 +264,7 @@ export function SessionToolSidebar({
                     else tabButtonRefs.current.delete(tab.id)
                   }}
                   type="button"
+                  id={`session-tool-tab-${tab.id}`}
                   role="tab"
                   variant="ghost"
                   size="sm"
@@ -239,7 +283,7 @@ export function SessionToolSidebar({
                   size="icon-xs"
                   aria-label={t("closeTab", { title: label })}
                   title={t("closeTab", { title: label })}
-                  onClick={() => controller.closeTab(tab.id)}
+                  onClick={() => closeTabAndRestoreFocus(tab.id)}
                   className="mr-0.5 rounded-lg"
                 >
                   <X />
@@ -249,7 +293,10 @@ export function SessionToolSidebar({
           })}
         </div>
 
-        <ToolMenu controller={controller} />
+        <ToolMenu
+          triggerRef={newTabButtonRef}
+          onOpenTool={onOpenTool}
+        />
 
         <div className="aa-window-no-drag ml-1 flex shrink-0 items-center gap-0.5">
           <Button
@@ -270,7 +317,7 @@ export function SessionToolSidebar({
             size="icon-sm"
             aria-label={t("collapse")}
             title={t("collapse")}
-            onClick={controller.collapseSidebar}
+            onClick={collapseAndRestoreFocus}
             className="rounded-lg"
           >
             <PanelRightClose />
@@ -280,7 +327,10 @@ export function SessionToolSidebar({
 
       <div className="relative min-h-0 flex-1 overflow-hidden bg-background">
         {controller.tabs.length === 0 ? (
-          <ToolLauncher controller={controller} />
+          <ToolLauncher
+            firstButtonRef={launcherButtonRef}
+            onOpenTool={onOpenTool}
+          />
         ) : (
           controller.tabs.map((tab) => {
             const active = controller.activeTabId === tab.id
@@ -289,7 +339,7 @@ export function SessionToolSidebar({
                 key={tab.id}
                 id={`session-tool-panel-${tab.id}`}
                 role="tabpanel"
-                aria-label={t(TOOL_META[tab.kind].labelKey)}
+                aria-labelledby={`session-tool-tab-${tab.id}`}
                 aria-hidden={!active}
                 className={cn(
                   "absolute inset-0 min-h-0 overflow-hidden",
@@ -304,7 +354,7 @@ export function SessionToolSidebar({
                     root={root}
                     variant="tab"
                     onPopOut={() => {
-                      controller.closeTab(tab.id)
+                      closeTabAndRestoreFocus(tab.id)
                       onDetachTool("terminal")
                     }}
                   />
@@ -317,7 +367,7 @@ export function SessionToolSidebar({
                     root={root}
                     variant="tab"
                     onPopOut={() => {
-                      controller.closeTab(tab.id)
+                      closeTabAndRestoreFocus(tab.id)
                       onDetachTool("files")
                     }}
                   />
@@ -332,13 +382,20 @@ export function SessionToolSidebar({
   )
 }
 
-function ToolMenu({ controller }: { controller: SessionToolSidebarController }) {
+function ToolMenu({
+  triggerRef,
+  onOpenTool,
+}: {
+  triggerRef: React.RefObject<HTMLButtonElement | null>
+  onOpenTool: (kind: SessionToolKind) => void
+}) {
   const t = useTranslations("dashboard.session.tools")
 
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button
+          ref={triggerRef}
           type="button"
           variant="ghost"
           size="icon-sm"
@@ -355,7 +412,7 @@ function ToolMenu({ controller }: { controller: SessionToolSidebarController }) 
             const meta = TOOL_META[kind]
             const Icon = meta.icon
             return (
-              <DropdownMenuItem key={kind} onSelect={() => controller.openTool(kind)}>
+              <DropdownMenuItem key={kind} onSelect={() => onOpenTool(kind)}>
                 <Icon />
                 {t(meta.labelKey)}
               </DropdownMenuItem>
@@ -367,22 +424,29 @@ function ToolMenu({ controller }: { controller: SessionToolSidebarController }) 
   )
 }
 
-function ToolLauncher({ controller }: { controller: SessionToolSidebarController }) {
+function ToolLauncher({
+  firstButtonRef,
+  onOpenTool,
+}: {
+  firstButtonRef: React.RefObject<HTMLButtonElement | null>
+  onOpenTool: (kind: SessionToolKind) => void
+}) {
   const t = useTranslations("dashboard.session.tools")
 
   return (
     <nav aria-label={t("navigationLabel")} className="flex h-full items-center justify-center p-8">
       <div className="flex w-full max-w-md flex-col gap-2">
-        {TOOL_KINDS.map((kind) => {
+        {TOOL_KINDS.map((kind, index) => {
           const meta = TOOL_META[kind]
           const Icon = meta.icon
           return (
             <Button
+              ref={index === 0 ? firstButtonRef : undefined}
               key={kind}
               type="button"
               variant="secondary"
               size="lg"
-              onClick={() => controller.openTool(kind)}
+              onClick={() => onOpenTool(kind)}
               className="h-12 w-full justify-start rounded-xl px-4 text-base font-normal"
             >
               <Icon data-icon="inline-start" />

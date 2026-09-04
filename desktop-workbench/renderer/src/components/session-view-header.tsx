@@ -41,6 +41,8 @@ type SessionViewHeaderProps = {
   onExportRemoteTimeline?: () => void
   exporting?: boolean
   toolsOpen: boolean
+  toolsExpanded: boolean
+  toolsOverlayWidth: number
   onToggleTools: () => void
 }
 
@@ -52,6 +54,8 @@ export function SessionViewHeader({
   onExportRemoteTimeline,
   exporting,
   toolsOpen,
+  toolsExpanded,
+  toolsOverlayWidth,
   onToggleTools,
 }: SessionViewHeaderProps) {
   const { renameSession } = useWorkspace()
@@ -123,8 +127,11 @@ export function SessionViewHeader({
 
     return (
       <>
-        {createPortal(
-          <div className="flex min-w-0 items-center gap-2 overflow-hidden">
+        {toolsExpanded ? null : createPortal(
+          <div
+            className="flex w-full min-w-0 items-center gap-2 overflow-hidden"
+            style={{ paddingRight: toolsOverlayWidth }}
+          >
             {editingTitle ? (
               <Input
                 autoFocus
@@ -164,7 +171,7 @@ export function SessionViewHeader({
           </div>,
           desktopPortalTargets.session,
         )}
-        {createPortal(
+        {toolsOpen ? null : createPortal(
           <Button
             type="button"
             variant="ghost"
@@ -173,6 +180,7 @@ export function SessionViewHeader({
             title={tSession(toolsOpen ? "tools.collapse" : "tools.toggle")}
             aria-pressed={toolsOpen}
             onClick={onToggleTools}
+            data-slot="session-tool-sidebar-toggle"
             className={cn(
               "rounded-md text-muted-foreground hover:bg-muted hover:text-foreground",
               toolsOpen && "bg-muted text-foreground",
@@ -324,18 +332,24 @@ function SessionMetaBadge({
   return (
     <HoverCard openDelay={120} closeDelay={80}>
       <HoverCardTrigger asChild>
-        <Badge
-          variant="secondary"
-          className="max-w-[min(24rem,40vw)] shrink-0 cursor-default gap-1.5 font-normal"
+        <button
+          type="button"
+          aria-label={`${t("overview")}: ${label}`}
+          className="max-w-[min(24rem,40vw)] min-w-0 shrink-0 rounded-2xl text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
-          <span
-            className={cn(
-              "size-1.5 rounded-full",
-              session.connectorStatus === "online" ? "bg-emerald-500" : "bg-muted-foreground/40",
-            )}
-          />
-          <span className="min-w-0 truncate">{label}</span>
-        </Badge>
+          <Badge
+            variant="secondary"
+            className="max-w-full cursor-default gap-1.5 font-normal"
+          >
+            <span
+              className={cn(
+                "size-1.5 rounded-full",
+                session.connectorStatus === "online" ? "bg-emerald-500" : "bg-muted-foreground/40",
+              )}
+            />
+            <span className="min-w-0 truncate">{label}</span>
+          </Badge>
+        </button>
       </HoverCardTrigger>
       <HoverCardContent align="end" sideOffset={10} className="w-[420px] rounded-xl p-4">
         <div className="space-y-4">
