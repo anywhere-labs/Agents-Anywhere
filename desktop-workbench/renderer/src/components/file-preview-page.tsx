@@ -498,7 +498,7 @@ export function FilePreviewSurface({
                 <ExternalLink className="size-4" />
               </Button>
               <div className="ml-auto flex shrink-0 items-center gap-2">
-                <Label htmlFor={embeddedEditModeId} className="aa-file-preview-action-label">
+                <Label htmlFor={embeddedEditModeId}>
                   {t("edit")}
                 </Label>
                 <Switch
@@ -511,7 +511,7 @@ export function FilePreviewSurface({
                 />
               </div>
               <Button
-                className="aa-file-preview-labelled-action shrink-0"
+                className="shrink-0"
                 size="sm"
                 type="button"
                 aria-label={t("save")}
@@ -519,10 +519,7 @@ export function FilePreviewSurface({
                 disabled={isScopedPreview || state.kind !== "text" || !dirty || saving || !editMode}
                 onClick={() => void handleSave()}
               >
-                {saving ? <Spinner data-icon="inline-start" /> : <Save data-icon="inline-start" />}
-                <span className="aa-file-preview-action-label">
-                  {saving ? t("saving") : t("save")}
-                </span>
+                {saving ? t("saving") : t("save")}
               </Button>
             </>
           ) : (
