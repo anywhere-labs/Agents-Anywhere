@@ -686,7 +686,7 @@
         "preview": "预览",
         "fileTree": "文件树",
         "resizeTree": "调整文件树宽度",
-        "showTree": "显示文件树",
+        "showTree": "打开文件树",
         "hideTree": "隐藏文件树",
         "openFile": "打开文件",
         "openFileDescription": "从右侧文件树中选择文件",

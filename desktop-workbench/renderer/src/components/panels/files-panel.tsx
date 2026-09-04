@@ -10,8 +10,8 @@ import {
   File,
   Folder,
   FolderOpen,
+  ListTree,
   MessageSquarePlus,
-  PanelRight,
   RefreshCw,
   X,
 } from "lucide-react"
@@ -38,6 +38,12 @@ import {
 } from "@/components/ui/context-menu"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Separator } from "@/components/ui/separator"
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
 import {
   ResizableHandle,
   ResizablePanel,
@@ -402,19 +408,27 @@ export function FilesPanelBody({
         <CardContent className="aa-rt-content">
           <header className="aa-fs-shared-header">
             <FilePathBreadcrumb path={selectedFile?.path || currentPath || effectiveRoot} />
-            <Button
-              className="aa-fs-tree-toggle shrink-0"
-              variant="ghost"
-              size="icon-sm"
-              type="button"
-              title={treeOpen ? t("hideTree") : t("showTree")}
-              aria-label={treeOpen ? t("hideTree") : t("showTree")}
-              aria-expanded={treeOpen}
-              data-open={treeOpen ? "true" : "false"}
-              onClick={toggleTree}
-            >
-              <PanelRight />
-            </Button>
+            <TooltipProvider delayDuration={500}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    className="aa-fs-tree-toggle shrink-0"
+                    variant="ghost"
+                    size="icon-sm"
+                    type="button"
+                    aria-label={treeOpen ? t("hideTree") : t("showTree")}
+                    aria-expanded={treeOpen}
+                    data-open={treeOpen ? "true" : "false"}
+                    onClick={toggleTree}
+                  >
+                    <ListTree />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" align="end" sideOffset={6}>
+                  {treeOpen ? t("hideTree") : t("showTree")}
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
           </header>
           <ResizablePanelGroup
             direction="horizontal"

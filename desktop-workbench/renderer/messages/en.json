@@ -686,7 +686,7 @@
         "preview": "Preview",
         "fileTree": "File tree",
         "resizeTree": "Resize file tree",
-        "showTree": "Show file tree",
+        "showTree": "Open file tree",
         "hideTree": "Hide file tree",
         "openFile": "Open a file",
         "openFileDescription": "Select a file from the file tree on the right",

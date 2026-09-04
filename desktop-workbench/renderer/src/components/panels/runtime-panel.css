@@ -193,11 +193,11 @@
 .aa-fs-tree-toggle {
   background: transparent;
   box-shadow: none;
-  color: color-mix(in oklab, var(--muted-foreground) 70%, transparent);
+  color: color-mix(in oklab, var(--muted-foreground) 55%, transparent);
 }
 
 .aa-fs-tree-toggle[data-open="true"] {
-  color: var(--foreground);
+  color: var(--primary);
 }
 
 .aa-fs-tree-toggle:hover:not(:disabled) {
