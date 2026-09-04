@@ -24,8 +24,10 @@ import { useRouteSearchParams } from "@/components/hash-route-params"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Label } from "@/components/ui/label"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Spinner } from "@/components/ui/spinner"
+import { Switch } from "@/components/ui/switch"
 import { MonacoCodeView, type MonacoCodeViewApi } from "@/components/monaco-code-view"
 import { openNativeFilePreviewWindow } from "@/lib/file-preview-window"
 import { dashboardApi } from "@/features/dashboard/api"
@@ -164,6 +166,7 @@ export function FilePreviewSurface({
   const [downloadError, setDownloadError] = React.useState<string | null>(null)
   const [savedFlash, setSavedFlash] = React.useState(false)
   const [copied, setCopied] = React.useState(false)
+  const embeddedEditModeId = React.useId()
   const editorRef = React.useRef<MonacoCodeViewApi | null>(null)
   const editorInitialContentRef = React.useRef("")
   const objectUrlRef = React.useRef<string | null>(null)
@@ -331,20 +334,19 @@ export function FilePreviewSurface({
     }
   }, [connectorId, editMode, isScopedPreview, path, root, state, t, token])
 
-  const handleEmbeddedEditSave = React.useCallback(async () => {
-    if (isScopedPreview || state.kind !== "text") return
-    if (!editMode) {
-      setEditMode(true)
-      window.requestAnimationFrame(() => editorRef.current?.focus())
-      return
-    }
-    if (!dirty) {
+  const handleEmbeddedEditModeChange = React.useCallback(
+    (checked: boolean) => {
+      if (isScopedPreview || state.kind !== "text" || saving) return
+      if (!checked && dirty) {
+        setSaveError(t("saveBeforeLeavingEdit"))
+        return
+      }
       setSaveError(null)
-      setEditMode(false)
-      return
-    }
-    if (await handleSave()) setEditMode(false)
-  }, [dirty, editMode, handleSave, isScopedPreview, state.kind])
+      setEditMode(checked)
+      if (checked) window.requestAnimationFrame(() => editorRef.current?.focus())
+    },
+    [dirty, isScopedPreview, saving, state.kind, t],
+  )
 
   React.useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -414,27 +416,7 @@ export function FilePreviewSurface({
           <Button variant="ghost" size="icon-sm" type="button" aria-label={t("refresh")} onClick={() => void loadFile()}>
             <RotateCw className="size-4" />
           </Button>
-          {mode === "embedded" ? (
-            <Button
-              className="aa-file-preview-labelled-action"
-              variant={editMode ? "secondary" : "ghost"}
-              size="sm"
-              type="button"
-              disabled={state.kind !== "text" || isScopedPreview || saving}
-              onClick={() => void handleEmbeddedEditSave()}
-            >
-              {saving ? (
-                <Loader2 className="size-3.5 animate-spin" />
-              ) : editMode ? (
-                <Save className="size-3.5" />
-              ) : (
-                <Edit3 className="size-3.5" />
-              )}
-              <span className="aa-file-preview-action-label">
-                {saving ? t("saving") : editMode ? t("save") : t("edit")}
-              </span>
-            </Button>
-          ) : (
+          {mode === "window" ? (
             <Button
               className="aa-file-preview-labelled-action"
               variant={editMode ? "secondary" : "ghost"}
@@ -457,7 +439,7 @@ export function FilePreviewSurface({
               <Edit3 className="size-3.5" />
               <span className="aa-file-preview-action-label">{t("edit")}</span>
             </Button>
-          )}
+          ) : null}
           <Button
             variant="ghost"
             size="icon-sm"
@@ -503,17 +485,46 @@ export function FilePreviewSurface({
             </>
           ) : null}
           {mode === "embedded" ? (
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              type="button"
-              title={t("openWindow")}
-              aria-label={t("openWindow")}
-              disabled={!onOpenExternal}
-              onClick={onOpenExternal}
-            >
-              <ExternalLink className="size-4" />
-            </Button>
+            <>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                type="button"
+                title={t("openWindow")}
+                aria-label={t("openWindow")}
+                disabled={!onOpenExternal}
+                onClick={onOpenExternal}
+              >
+                <ExternalLink className="size-4" />
+              </Button>
+              <div className="ml-auto flex shrink-0 items-center gap-2">
+                <Label htmlFor={embeddedEditModeId} className="aa-file-preview-action-label">
+                  {t("edit")}
+                </Label>
+                <Switch
+                  id={embeddedEditModeId}
+                  size="sm"
+                  checked={editMode}
+                  disabled={state.kind !== "text" || isScopedPreview || saving}
+                  aria-label={t("edit")}
+                  onCheckedChange={handleEmbeddedEditModeChange}
+                />
+              </div>
+              <Button
+                className="aa-file-preview-labelled-action shrink-0"
+                size="sm"
+                type="button"
+                aria-label={t("save")}
+                title={t("save")}
+                disabled={isScopedPreview || state.kind !== "text" || !dirty || saving || !editMode}
+                onClick={() => void handleSave()}
+              >
+                {saving ? <Spinner data-icon="inline-start" /> : <Save data-icon="inline-start" />}
+                <span className="aa-file-preview-action-label">
+                  {saving ? t("saving") : t("save")}
+                </span>
+              </Button>
+            </>
           ) : (
             <Button
               variant="ghost"
