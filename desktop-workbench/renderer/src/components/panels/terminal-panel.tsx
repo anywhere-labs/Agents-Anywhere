@@ -3,6 +3,7 @@
 import * as React from "react"
 import { Plus, SquareTerminal, X } from "lucide-react"
 import { useTranslations } from "next-intl"
+import { useTheme } from "next-themes"
 
 import "./runtime-panel.css"
 import { Button } from "@/components/ui/button"
@@ -432,8 +433,17 @@ function XtermHost({
   onError: (message: string) => void
 }) {
   const t = useTranslations("dashboard.panels.terminal")
+  const { resolvedTheme } = useTheme()
   const hostRef = React.useRef<HTMLDivElement | null>(null)
+  const terminalRef = React.useRef<import("@xterm/xterm").Terminal | null>(null)
+  const resolvedThemeRef = React.useRef(resolvedTheme)
   const [status, setStatus] = React.useState<"connecting" | "open" | "exited">("connecting")
+
+  React.useEffect(() => {
+    resolvedThemeRef.current = resolvedTheme
+    if (!terminalRef.current) return
+    terminalRef.current.options.theme = terminalTheme(resolvedTheme, hostRef.current?.ownerDocument)
+  }, [resolvedTheme])
 
   React.useEffect(() => {
     let cancelled = false
@@ -485,16 +495,12 @@ function XtermHost({
         cursorStyle: "block",
         fontSize: 12.5,
         fontFamily: '"Menlo", "JetBrains Mono", "SF Mono", monospace',
-        theme: {
-          background: "#000000",
-          foreground: "#d4d4d4",
-          cursor: "#d4d4d4",
-          selectionBackground: "rgba(255,255,255,0.15)",
-        },
+        theme: terminalTheme(resolvedThemeRef.current, host.ownerDocument),
         scrollback: 5000,
         convertEol: true,
         allowProposedApi: true,
       })
+      terminalRef.current = term
       fit = new FitAddon()
       term.loadAddon(fit)
       term.loadAddon(new WebLinksAddon())
@@ -567,6 +573,7 @@ function XtermHost({
       if (resizeFrame != null) cancelAnimationFrame(resizeFrame)
       resizeObserver?.disconnect()
       socket?.close()
+      if (terminalRef.current === term) terminalRef.current = null
       term?.dispose()
     }
   }, [connectorId, onError, t, terminal.terminalId, token])
@@ -596,6 +603,49 @@ function XtermHost({
       ) : null}
     </>
   )
+}
+
+const LIGHT_TERMINAL_THEME: import("@xterm/xterm").ITheme = {
+  background: "#ffffff",
+  foreground: "#24292f",
+  cursor: "#24292f",
+  cursorAccent: "#ffffff",
+  selectionBackground: "rgba(9, 105, 218, 0.2)",
+  selectionInactiveBackground: "rgba(140, 149, 159, 0.2)",
+  black: "#24292f",
+  red: "#cf222e",
+  green: "#116329",
+  yellow: "#7d4e00",
+  blue: "#0969da",
+  magenta: "#8250df",
+  cyan: "#1b7c83",
+  white: "#6e7781",
+  brightBlack: "#57606a",
+  brightRed: "#a40e26",
+  brightGreen: "#1a7f37",
+  brightYellow: "#633c01",
+  brightBlue: "#0550ae",
+  brightMagenta: "#6639ba",
+  brightCyan: "#096b72",
+  brightWhite: "#24292f",
+}
+
+const DARK_TERMINAL_THEME: import("@xterm/xterm").ITheme = {
+  background: "#000000",
+  foreground: "#d4d4d4",
+  cursor: "#d4d4d4",
+  cursorAccent: "#000000",
+  selectionBackground: "rgba(255, 255, 255, 0.15)",
+}
+
+function terminalTheme(
+  resolvedTheme: string | undefined,
+  ownerDocument: Document | undefined,
+): import("@xterm/xterm").ITheme {
+  const isDark =
+    resolvedTheme === "dark" ||
+    (resolvedTheme !== "light" && ownerDocument?.documentElement.classList.contains("dark"))
+  return { ...(isDark ? DARK_TERMINAL_THEME : LIGHT_TERMINAL_THEME) }
 }
 
 function utf8ToBase64(value: string): string {

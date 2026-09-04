@@ -7,7 +7,7 @@
   --aa-rt-field-bg: color-mix(in oklab, var(--sidebar) 94%, var(--foreground) 3%);
   --aa-rt-row-hover-bg: var(--sidebar-accent);
   --aa-rt-muted-chip-bg: color-mix(in oklab, var(--muted) 78%, transparent);
-  --aa-term-surface: rgb(0 0 0);
+  --aa-term-surface: var(--background);
 }
 
 .dark .aa-rt-pane {
@@ -16,6 +16,15 @@
   --aa-rt-field-bg: color-mix(in oklab, var(--aa-rt-surface) 82%, black 18%);
   --aa-rt-row-hover-bg: var(--accent);
   --aa-rt-muted-chip-bg: color-mix(in oklab, var(--muted) 72%, transparent);
+  --aa-term-surface: rgb(0 0 0);
+}
+
+.aa-mobile-term {
+  --aa-term-surface: var(--background);
+}
+
+.dark .aa-mobile-term {
+  --aa-term-surface: rgb(0 0 0);
 }
 
 .aa-rt-pane {
