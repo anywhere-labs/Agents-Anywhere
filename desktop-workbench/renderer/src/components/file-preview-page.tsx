@@ -497,10 +497,15 @@ export function FilePreviewSurface({
               >
                 <ExternalLink className="size-4" />
               </Button>
-              <div className="ml-auto flex shrink-0 items-center gap-2">
-                <Label htmlFor={embeddedEditModeId}>
-                  {t("edit")}
-                </Label>
+              <Label
+                htmlFor={embeddedEditModeId}
+                className={cn(
+                  "ml-auto h-8 shrink-0 cursor-pointer gap-2 rounded-md border border-input bg-background px-2.5 text-xs shadow-xs transition-colors hover:bg-accent hover:text-accent-foreground",
+                  editMode && "border-primary/30 bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary",
+                  (state.kind !== "text" || isScopedPreview || saving) && "pointer-events-none cursor-not-allowed opacity-50",
+                )}
+              >
+                <span>{t("edit")}</span>
                 <Switch
                   id={embeddedEditModeId}
                   size="sm"
@@ -509,7 +514,7 @@ export function FilePreviewSurface({
                   aria-label={t("edit")}
                   onCheckedChange={handleEmbeddedEditModeChange}
                 />
-              </div>
+              </Label>
               <Button
                 className="shrink-0"
                 size="sm"
