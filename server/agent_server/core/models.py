@@ -308,8 +308,12 @@ class DashboardHistogramSettings(BaseModel):
 
 
 class DashboardSettingsView(BaseModel):
-    intensity: DashboardIntensitySettings = Field(default_factory=DashboardIntensitySettings)
-    histogramBins: DashboardHistogramSettings = Field(default_factory=DashboardHistogramSettings)
+    intensity: DashboardIntensitySettings = Field(
+        default_factory=DashboardIntensitySettings
+    )
+    histogramBins: DashboardHistogramSettings = Field(
+        default_factory=DashboardHistogramSettings
+    )
     serverTime: str | None = None
 
 
@@ -528,7 +532,14 @@ class MobileLoginStatusRequest(BaseModel):
 
 
 class MobileLoginStatusResponse(BaseModel):
-    status: Literal["pending_scan", "pending_web_confirm", "approved", "rejected", "expired", "consumed"]
+    status: Literal[
+        "pending_scan",
+        "pending_web_confirm",
+        "approved",
+        "rejected",
+        "expired",
+        "consumed",
+    ]
     userId: str | None = None
     deviceName: str | None = None
     expiresAt: str | None = None
@@ -941,7 +952,9 @@ NoticeStatus = Literal[
     "cancelled",
     "failed",
 ]
-InteractionType = Literal["approval", "execution_error", "confirmation", "input_request", "unknown"]
+InteractionType = Literal[
+    "approval", "execution_error", "confirmation", "input_request", "unknown"
+]
 NoticeActionStyle = Literal["primary", "secondary", "danger"]
 
 
@@ -1029,7 +1042,9 @@ class MessageCreateRequest(BaseModel):
 class SessionCommandRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    command: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z][A-Za-z0-9_-]*$")
+    command: str = Field(
+        min_length=1, max_length=64, pattern=r"^[A-Za-z][A-Za-z0-9_-]*$"
+    )
     args: list[str] = Field(default_factory=list, max_length=32)
     raw: str | None = Field(default=None, max_length=4096)
 
@@ -1290,7 +1305,12 @@ class RpcResponsePayload(BaseModel):
     error: RpcError | None = None
 
 
-AppReleasePlatform = Literal["android", "desktop"]
+AppReleasePlatform = Literal[
+    "android",
+    "desktop",
+    "desktop-macos",
+    "desktop-windows",
+]
 
 
 class AppUpdateCheckResponse(BaseModel):
