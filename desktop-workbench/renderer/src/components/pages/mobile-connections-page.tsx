@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { ArrowRight, EyeOff, Smartphone } from "lucide-react"
+import { ArrowRight, EyeOff } from "lucide-react"
 import { useTranslations } from "next-intl"
 import { toast } from "sonner"
 
@@ -27,11 +27,8 @@ export function MobileConnectionsPage() {
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
-      <header className="flex h-14 shrink-0 items-center justify-between gap-3 px-3">
-        <div className="flex min-w-0 items-center gap-3">
-          <DashboardSidebarToggle />
-          <h1 className="truncate text-sm font-semibold">{t("title")}</h1>
-        </div>
+      <header className="flex h-14 shrink-0 items-center gap-1 px-3">
+        <DashboardSidebarToggle />
         {sidebarVisible ? (
           <Button type="button" variant="ghost" size="sm" onClick={hideFromSidebar}>
             <EyeOff data-icon="inline-start" />
@@ -52,17 +49,13 @@ export function MobileConnectionsPage() {
             />
           </div>
         ) : (
-          <div className="mx-auto grid min-h-full w-full max-w-7xl items-center gap-10 px-6 py-10 md:px-10 xl:grid-cols-[minmax(0,0.82fr)_minmax(30rem,1.18fr)] xl:gap-16 xl:px-12">
-            <section className="flex max-w-xl flex-col items-start gap-6">
-              <div className="inline-flex items-center gap-2 rounded-full border border-border bg-muted/50 px-3 py-1.5 text-xs font-medium text-muted-foreground">
-                <Smartphone className="size-3.5" />
-                {t("heroEyebrow")}
-              </div>
-              <div className="flex flex-col gap-4">
-                <h2 className="text-balance text-4xl font-semibold tracking-tight sm:text-5xl">
+          <div className="mx-auto grid min-h-full w-full max-w-[88rem] items-center gap-12 px-6 py-12 md:px-8 xl:grid-cols-2 xl:px-10 2xl:gap-20 2xl:px-12">
+            <section className="flex max-w-[36rem] flex-col items-start gap-8">
+              <div className="flex flex-col gap-5">
+                <h2 className="text-pretty text-4xl font-semibold leading-[1.12] tracking-tight sm:text-[2.75rem] xl:text-5xl">
                   {t("heroTitle")}
                 </h2>
-                <p className="max-w-lg text-pretty text-base leading-7 text-muted-foreground sm:text-lg">
+                <p className="max-w-xl text-pretty text-base leading-7 text-muted-foreground sm:text-lg">
                   {t("heroDescription")}
                 </p>
               </div>
@@ -72,7 +65,7 @@ export function MobileConnectionsPage() {
               </Button>
             </section>
 
-            <div className="mx-auto w-full max-w-3xl overflow-hidden rounded-[2rem] border border-border bg-muted/30 shadow-2xl shadow-foreground/10 xl:max-w-none">
+            <div className="mx-auto w-full max-w-[36rem] overflow-hidden rounded-[2rem] border border-border bg-muted/30 shadow-2xl shadow-foreground/10">
               <img
                 src="/mobile-connections-preview.png"
                 alt={t("previewAlt")}

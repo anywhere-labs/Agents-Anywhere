@@ -789,7 +789,6 @@
       "generateNew": "重新生成",
       "generating": "正在生成登录二维码...",
       "heroDescription": "扫码登录手机端，随时查看会话、处理审批，让正在运行的任务不中断。",
-      "heroEyebrow": "Agents Anywhere Mobile",
       "heroTitle": "离开电脑，也能继续和 Agent 协作",
       "hiddenToast": "已隐藏“手机连接”，可在设置中重新显示。",
       "hideFromSidebar": "从侧边栏隐藏",
