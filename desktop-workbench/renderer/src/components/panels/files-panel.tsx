@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import type { PanelImperativeHandle } from "react-resizable-panels"
 import {
   ChevronRight,
   ChevronUp,
@@ -10,8 +11,7 @@ import {
   Folder,
   FolderOpen,
   MessageSquarePlus,
-  PanelRightClose,
-  PanelRightOpen,
+  PanelRight,
   RefreshCw,
   X,
 } from "lucide-react"
@@ -38,7 +38,12 @@ import {
 } from "@/components/ui/context-menu"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Separator } from "@/components/ui/separator"
-import { FilePreviewSurface } from "@/components/file-preview-page"
+import {
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
+} from "@/components/ui/resizable"
+import { FilePathBreadcrumb, FilePreviewSurface } from "@/components/file-preview-page"
 import { LazyFileTree } from "@/components/panels/lazy-file-tree"
 import { useWorkspace } from "@/components/workspace-context"
 import { dashboardApi } from "@/features/dashboard/api"
@@ -82,10 +87,23 @@ export function FilesPanelBody({
   const [contextEntry, setContextEntry] = React.useState<FsEntry | null>(null)
   const [selectedFile, setSelectedFile] = React.useState<PickedFile | null>(null)
   const [treeOpen, setTreeOpen] = React.useState(true)
+  const [treeResizeActive, setTreeResizeActive] = React.useState(false)
   const loadRequestIdRef = React.useRef(0)
+  const treePanelRef = React.useRef<PanelImperativeHandle | null>(null)
 
   const canLoad = Boolean(token && connectorId)
   const isWindowsConnector = connectorDeviceOs === "windows"
+
+  const toggleTree = React.useCallback(() => {
+    const panel = treePanelRef.current
+    if (treeOpen) {
+      panel?.collapse()
+      setTreeOpen(false)
+      return
+    }
+    panel?.expand()
+    setTreeOpen(true)
+  }, [treeOpen])
 
   const loadDir = React.useCallback(
     async (nextPath: string) => {
@@ -382,58 +400,99 @@ export function FilesPanelBody({
     return (
       <Card size="sm" className="aa-rt-pane aa-rt-pane-tab">
         <CardContent className="aa-rt-content">
-          <div className="aa-fs-workspace">
-            <section className="aa-fs-preview" aria-label={t("preview")}>
-              {selectedFile ? (
-                <FilePreviewSurface
-                  key={`${connectorId}:${effectiveRoot}:${selectedFile.path}`}
-                  token={token ?? null}
-                  connectorId={connectorId ?? ""}
-                  root={effectiveRoot}
-                  initialPath={selectedFile.path}
-                  initialName={selectedFile.name}
-                  mode="embedded"
-                  onOpenExternal={() => {
-                    openNativeFilePreviewWindow({
-                      token,
-                      connectorId,
-                      root: effectiveRoot,
-                      file: selectedFile,
-                      onBlocked: onPopupBlocked,
-                    })
-                  }}
-                />
-              ) : (
-                <Empty className="h-full rounded-none border-0">
-                  <EmptyHeader>
-                    <EmptyMedia variant="icon">
-                      <FolderOpen />
-                    </EmptyMedia>
-                    <EmptyTitle>{t("openFile")}</EmptyTitle>
-                    <EmptyDescription>{t("openFileDescription")}</EmptyDescription>
-                  </EmptyHeader>
-                </Empty>
-              )}
-            </section>
+          <header className="aa-fs-shared-header">
+            <FilePathBreadcrumb path={selectedFile?.path || currentPath || effectiveRoot} />
+            <Button
+              className="aa-fs-tree-toggle shrink-0"
+              variant="ghost"
+              size="icon-sm"
+              type="button"
+              title={treeOpen ? t("hideTree") : t("showTree")}
+              aria-label={treeOpen ? t("hideTree") : t("showTree")}
+              aria-expanded={treeOpen}
+              data-open={treeOpen ? "true" : "false"}
+              onClick={toggleTree}
+            >
+              <PanelRight />
+            </Button>
+          </header>
+          <ResizablePanelGroup
+            direction="horizontal"
+            className={cn("aa-fs-workspace", treeResizeActive && "is-resizing")}
+          >
+            <ResizablePanel id="files-preview" defaultSize="60%" minSize="35%">
+              <section className="aa-fs-preview" aria-label={t("preview")}>
+                {selectedFile ? (
+                  <FilePreviewSurface
+                    key={`${connectorId}:${effectiveRoot}:${selectedFile.path}`}
+                    token={token ?? null}
+                    connectorId={connectorId ?? ""}
+                    root={effectiveRoot}
+                    initialPath={selectedFile.path}
+                    initialName={selectedFile.name}
+                    mode="embedded"
+                    onOpenExternal={() => {
+                      openNativeFilePreviewWindow({
+                        token,
+                        connectorId,
+                        root: effectiveRoot,
+                        file: selectedFile,
+                        onBlocked: onPopupBlocked,
+                      })
+                    }}
+                  />
+                ) : (
+                  <Empty className="h-full rounded-none border-0">
+                    <EmptyHeader>
+                      <EmptyMedia variant="icon">
+                        <FolderOpen />
+                      </EmptyMedia>
+                      <EmptyTitle>{t("openFile")}</EmptyTitle>
+                      <EmptyDescription>{t("openFileDescription")}</EmptyDescription>
+                    </EmptyHeader>
+                  </Empty>
+                )}
+              </section>
+            </ResizablePanel>
 
-            <aside className={cn("aa-fs-tree", !treeOpen && "collapsed")} aria-label={t("fileTree")}>
-              <div className="aa-fs-tree-toolbar">
-                <Button
-                  className="aa-rt-iconbtn shrink-0"
-                  variant="ghost"
-                  size="icon-sm"
-                  type="button"
-                  title={treeOpen ? t("hideTree") : t("showTree")}
-                  aria-label={treeOpen ? t("hideTree") : t("showTree")}
-                  aria-expanded={treeOpen}
-                  onClick={() => setTreeOpen((open) => !open)}
-                >
-                  {treeOpen ? <PanelRightClose /> : <PanelRightOpen />}
-                </Button>
-              </div>
-              {treeOpen ? fileTreeBrowser : null}
-            </aside>
-          </div>
+            <ResizableHandle
+              className={cn("aa-fs-tree-resize-handle", !treeOpen && "hidden")}
+              showSeparator={false}
+              title={t("resizeTree")}
+              aria-label={t("resizeTree")}
+              onPointerDown={(event) => {
+                event.currentTarget.setPointerCapture(event.pointerId)
+                setTreeResizeActive(true)
+              }}
+              onPointerUp={(event) => {
+                if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+                  event.currentTarget.releasePointerCapture(event.pointerId)
+                }
+                setTreeResizeActive(false)
+              }}
+              onPointerCancel={() => setTreeResizeActive(false)}
+              onLostPointerCapture={() => setTreeResizeActive(false)}
+            />
+
+            <ResizablePanel
+              id="files-tree"
+              panelRef={treePanelRef}
+              collapsible
+              collapsedSize="0px"
+              defaultSize="40%"
+              minSize="160px"
+              maxSize="65%"
+              groupResizeBehavior="preserve-pixel-size"
+              onResize={(size) => {
+                const collapsed = treePanelRef.current?.isCollapsed() ?? size.inPixels <= 1
+                setTreeOpen(!collapsed)
+              }}
+            >
+              <aside className={cn("aa-fs-tree", !treeOpen && "collapsed")} aria-label={t("fileTree")}>
+                {treeOpen ? fileTreeBrowser : null}
+              </aside>
+            </ResizablePanel>
+          </ResizablePanelGroup>
         </CardContent>
       </Card>
     )

@@ -685,6 +685,7 @@
         "parent": "parent",
         "preview": "Preview",
         "fileTree": "File tree",
+        "resizeTree": "Resize file tree",
         "showTree": "Show file tree",
         "hideTree": "Hide file tree",
         "openFile": "Open a file",

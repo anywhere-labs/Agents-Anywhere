@@ -398,7 +398,7 @@ export function SessionToolSidebar({
               <div
                 key={tab.id}
                 className={cn(
-                  "flex min-w-0 max-w-56 flex-1 basis-0 items-center overflow-hidden rounded-xl",
+                  "group flex min-w-0 max-w-48 flex-1 basis-0 items-center overflow-hidden rounded-xl transition-colors hover:bg-secondary focus-within:bg-secondary",
                   active && "bg-secondary text-secondary-foreground",
                 )}
               >
@@ -416,7 +416,7 @@ export function SessionToolSidebar({
                   aria-controls={`session-tool-panel-${tab.id}`}
                   tabIndex={active ? 0 : -1}
                   onClick={() => controller.activateTab(tab.id)}
-                  className="h-8 min-w-0 flex-1 justify-start rounded-xl px-2"
+                  className="h-8 min-w-0 flex-1 justify-start rounded-xl px-2 hover:bg-transparent"
                 >
                   <Icon data-icon="inline-start" />
                   <span className="truncate">{label}</span>
@@ -428,7 +428,7 @@ export function SessionToolSidebar({
                   aria-label={t("closeTab", { title: label })}
                   title={t("closeTab", { title: label })}
                   onClick={() => closeTabAndRestoreFocus(tab.id)}
-                  className="mr-0.5 rounded-lg"
+                  className="mr-0.5 rounded-lg hover:bg-transparent"
                 >
                   <X />
                 </Button>
