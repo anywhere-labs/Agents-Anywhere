@@ -14,7 +14,6 @@ import {
   FolderTree,
   Maximize2,
   Minimize2,
-  PanelRight,
   Plus,
   SquareTerminal,
   X,
@@ -40,12 +39,6 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty"
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
 
 export type SessionToolKind = "review" | "terminal" | "files"
@@ -87,6 +80,10 @@ const TOOL_META: Record<
 }
 
 const TOOL_KINDS: SessionToolKind[] = ["review", "terminal", "files"]
+const SESSION_TOOL_SIDEBAR_MIN_WIDTH = 360
+const SESSION_TOOL_SIDEBAR_MAX_WIDTH = 880
+const SESSION_TOOL_MAIN_MIN_WIDTH = 360
+const SESSION_TOOL_SIDEBAR_RESIZE_STEP = 16
 
 export type SessionToolSidebarController = SessionToolSidebarState & {
   toggleSidebar: () => void
@@ -138,20 +135,47 @@ export function useSessionToolSidebar(): SessionToolSidebarController {
   )
 }
 
+function sessionToolSidebarResizeBounds(hostWidth: number) {
+  const available = Math.max(0, hostWidth)
+  const max = Math.min(
+    available,
+    SESSION_TOOL_SIDEBAR_MAX_WIDTH,
+    Math.max(SESSION_TOOL_SIDEBAR_MIN_WIDTH, available - SESSION_TOOL_MAIN_MIN_WIDTH),
+  )
+  return {
+    min: Math.min(SESSION_TOOL_SIDEBAR_MIN_WIDTH, max),
+    max,
+  }
+}
+
+export function clampSessionToolSidebarWidth(width: number, hostWidth: number) {
+  if (hostWidth <= 0) return 0
+  const bounds = sessionToolSidebarResizeBounds(hostWidth)
+  return Math.round(Math.min(bounds.max, Math.max(bounds.min, width)))
+}
+
 export function sessionToolSidebarWidth(hostWidth: number) {
   const available = Math.max(0, hostWidth)
   if (available === 0) return 0
-  return Math.round(Math.min(available, Math.max(360, Math.min(680, available * 0.42))))
+  return clampSessionToolSidebarWidth(
+    Math.max(SESSION_TOOL_SIDEBAR_MIN_WIDTH, Math.min(680, available * 0.42)),
+    available,
+  )
 }
 
 type SessionToolSidebarProps = {
   controller: SessionToolSidebarController
   hostLeft: number
   hostWidth: number
+  width: number
+  motionEnabled: boolean
   token: string | null
   connectorId: string | null
   connectorDeviceOs?: string | null
   root: string
+  onResizeStart: () => void
+  onWidthChange: (width: number) => void
+  onWidthChangeEnd: (width: number) => void
   onOpenTool: (kind: SessionToolKind) => void
   onDetachTool: (kind: Exclude<SessionToolKind, "review">) => void
 }
@@ -160,10 +184,15 @@ export function SessionToolSidebar({
   controller,
   hostLeft,
   hostWidth,
+  width,
+  motionEnabled,
   token,
   connectorId,
   connectorDeviceOs,
   root,
+  onResizeStart,
+  onWidthChange,
+  onWidthChangeEnd,
   onOpenTool,
   onDetachTool,
 }: SessionToolSidebarProps) {
@@ -172,11 +201,25 @@ export function SessionToolSidebar({
   const tabButtonRefs = React.useRef(new Map<SessionToolKind, HTMLButtonElement>())
   const newTabButtonRef = React.useRef<HTMLButtonElement | null>(null)
   const launcherButtonRef = React.useRef<HTMLButtonElement | null>(null)
-  const width = sessionToolSidebarWidth(hostWidth)
+  const resizeStateRef = React.useRef<{
+    pointerId: number
+    startClientX: number
+    startWidth: number
+    currentWidth: number
+  } | null>(null)
+  const restoreDocumentPointerStylesRef = React.useRef<(() => void) | null>(null)
+  const resizeBounds = sessionToolSidebarResizeBounds(hostWidth)
   const showDashboardSidebarToggle = controller.expanded && dashboardSidebarControls?.open === false
 
+  const restoreDocumentPointerStyles = React.useCallback(() => {
+    restoreDocumentPointerStylesRef.current?.()
+    restoreDocumentPointerStylesRef.current = null
+  }, [])
+
+  React.useEffect(() => restoreDocumentPointerStyles, [restoreDocumentPointerStyles])
+
   React.useEffect(() => {
-    if (!controller.open || width === 0) return
+    if (!controller.open) return
     const frame = window.requestAnimationFrame(() => {
       if (controller.activeTabId) {
         tabButtonRefs.current.get(controller.activeTabId)?.focus()
@@ -185,13 +228,17 @@ export function SessionToolSidebar({
       }
     })
     return () => window.cancelAnimationFrame(frame)
-  }, [controller.activeTabId, controller.open, width])
+  }, [controller.activeTabId, controller.open])
 
   if (width === 0 || typeof document === "undefined") return null
 
   const panelStyle: React.CSSProperties = controller.expanded
-    ? { left: hostLeft, width: hostWidth }
-    : { left: hostLeft + hostWidth - width, width }
+    ? { left: hostLeft, width: hostWidth, transform: "translateX(0)" }
+    : {
+        left: hostLeft + hostWidth - width,
+        width,
+        transform: controller.open ? "translateX(0)" : "translateX(100%)",
+      }
 
   const focusTab = (id: SessionToolKind) => {
     controller.activateTab(id)
@@ -212,13 +259,27 @@ export function SessionToolSidebar({
     })
   }
 
-  const collapseAndRestoreFocus = () => {
-    controller.collapseSidebar()
-    window.requestAnimationFrame(() => {
-      document.querySelector<HTMLButtonElement>(
-        '[data-slot="session-tool-sidebar-toggle"]',
-      )?.focus()
-    })
+  const finishResize = (target: HTMLDivElement, pointerId: number) => {
+    const resizeState = resizeStateRef.current
+    if (!resizeState || resizeState.pointerId !== pointerId) return
+    resizeStateRef.current = null
+    if (target.hasPointerCapture(pointerId)) target.releasePointerCapture(pointerId)
+    restoreDocumentPointerStyles()
+    onWidthChangeEnd(resizeState.currentWidth)
+  }
+
+  const handleResizeKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    let nextWidth: number | null = null
+    if (event.key === "ArrowLeft") nextWidth = width + SESSION_TOOL_SIDEBAR_RESIZE_STEP
+    else if (event.key === "ArrowRight") nextWidth = width - SESSION_TOOL_SIDEBAR_RESIZE_STEP
+    else if (event.key === "Home") nextWidth = resizeBounds.min
+    else if (event.key === "End") nextWidth = resizeBounds.max
+    if (nextWidth === null) return
+
+    event.preventDefault()
+    const clampedWidth = clampSessionToolSidebarWidth(nextWidth, hostWidth)
+    onWidthChange(clampedWidth)
+    onWidthChangeEnd(clampedWidth)
   }
 
   const handleTabKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
@@ -242,13 +303,65 @@ export function SessionToolSidebar({
     <aside
       aria-label={t("sidebarLabel")}
       aria-hidden={!controller.open}
+      inert={!controller.open ? true : undefined}
       className={cn(
         "fixed inset-y-0 z-40 flex min-w-0 flex-col overflow-hidden border-l border-border bg-background text-foreground",
-        controller.open ? "visible pointer-events-auto" : "invisible pointer-events-none",
+        controller.open ? "pointer-events-auto" : "pointer-events-none",
+        motionEnabled && !controller.expanded
+          ? "will-change-transform transition-transform duration-[220ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none"
+          : "transition-none",
       )}
       style={panelStyle}
     >
-      <div className="aa-window-drag flex h-11 shrink-0 items-center gap-1 bg-background px-1.5">
+      {controller.open && !controller.expanded ? (
+        <div
+          role="separator"
+          aria-label={t("sidebarLabel")}
+          aria-orientation="vertical"
+          aria-valuemin={resizeBounds.min}
+          aria-valuemax={resizeBounds.max}
+          aria-valuenow={width}
+          tabIndex={0}
+          className="aa-window-no-drag absolute inset-y-0 left-0 z-20 w-2 cursor-col-resize touch-none bg-transparent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+          onKeyDown={handleResizeKeyDown}
+          onPointerDown={(event) => {
+            if (event.button !== 0) return
+            event.preventDefault()
+            event.currentTarget.setPointerCapture(event.pointerId)
+            resizeStateRef.current = {
+              pointerId: event.pointerId,
+              startClientX: event.clientX,
+              startWidth: width,
+              currentWidth: width,
+            }
+            const body = document.body
+            const previousCursor = body.style.cursor
+            const previousUserSelect = body.style.userSelect
+            body.style.cursor = "col-resize"
+            body.style.userSelect = "none"
+            restoreDocumentPointerStylesRef.current = () => {
+              body.style.cursor = previousCursor
+              body.style.userSelect = previousUserSelect
+            }
+            onResizeStart()
+          }}
+          onPointerMove={(event) => {
+            const resizeState = resizeStateRef.current
+            if (!resizeState || resizeState.pointerId !== event.pointerId) return
+            const nextWidth = clampSessionToolSidebarWidth(
+              resizeState.startWidth + resizeState.startClientX - event.clientX,
+              hostWidth,
+            )
+            resizeState.currentWidth = nextWidth
+            onWidthChange(nextWidth)
+          }}
+          onPointerUp={(event) => finishResize(event.currentTarget, event.pointerId)}
+          onPointerCancel={(event) => finishResize(event.currentTarget, event.pointerId)}
+          onLostPointerCapture={(event) => finishResize(event.currentTarget, event.pointerId)}
+        />
+      ) : null}
+
+      <div className="aa-window-drag flex h-11 shrink-0 items-center gap-1 bg-background pl-1.5 pr-3">
         {showDashboardSidebarToggle ? (
           <>
             <div className="w-[6.5rem] shrink-0" aria-hidden="true" />
@@ -330,25 +443,7 @@ export function SessionToolSidebar({
           >
             {controller.expanded ? <Minimize2 /> : <Maximize2 />}
           </Button>
-          <TooltipProvider delayDuration={800}>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-sm"
-                  aria-label={t("collapse")}
-                  onClick={collapseAndRestoreFocus}
-                  className="rounded-lg text-white hover:text-white"
-                >
-                  <PanelRight />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom" align="end" sideOffset={6}>
-                {t("visibilityToggle")}
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
+          <div className="size-8 shrink-0" aria-hidden="true" />
         </div>
       </div>
 

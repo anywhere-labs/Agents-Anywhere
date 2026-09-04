@@ -233,7 +233,7 @@ function DesktopResizableShell() {
             </div>
           </ResizablePanel>
           <ResizableHandle
-            className="bg-transparent transition-colors hover:bg-border/40 focus-visible:bg-border/60"
+            className="bg-transparent"
             onPointerDown={(event) => {
               event.currentTarget.setPointerCapture(event.pointerId)
               setSidebarResizeActive(true)

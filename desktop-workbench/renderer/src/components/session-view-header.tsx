@@ -49,6 +49,7 @@ type SessionViewHeaderProps = {
   toolsOpen: boolean
   toolsExpanded: boolean
   toolsOverlayWidth: number
+  toolsMotionEnabled: boolean
   onToggleTools: () => void
 }
 
@@ -62,6 +63,7 @@ export function SessionViewHeader({
   toolsOpen,
   toolsExpanded,
   toolsOverlayWidth,
+  toolsMotionEnabled,
   onToggleTools,
 }: SessionViewHeaderProps) {
   const { renameSession } = useWorkspace()
@@ -135,7 +137,12 @@ export function SessionViewHeader({
       <>
         {toolsExpanded ? null : createPortal(
           <div
-            className="flex w-full min-w-0 items-center gap-2 overflow-hidden"
+            className={cn(
+              "flex w-full min-w-0 items-center gap-2 overflow-hidden",
+              toolsMotionEnabled
+                ? "transition-[padding-right] duration-[220ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none"
+                : "transition-none",
+            )}
             style={{ paddingRight: toolsOverlayWidth }}
           >
             {editingTitle ? (
@@ -177,7 +184,7 @@ export function SessionViewHeader({
           </div>,
           desktopPortalTargets.session,
         )}
-        {toolsOpen ? null : createPortal(
+        {createPortal(
           <TooltipProvider delayDuration={800}>
             <Tooltip>
               <TooltipTrigger asChild>
@@ -190,8 +197,10 @@ export function SessionViewHeader({
                   onClick={onToggleTools}
                   data-slot="session-tool-sidebar-toggle"
                   className={cn(
-                    "rounded-md text-muted-foreground/70 hover:bg-muted hover:text-foreground",
-                    toolsOpen && "bg-muted text-foreground",
+                    "relative z-50 rounded-md hover:bg-muted",
+                    toolsOpen
+                      ? "text-white hover:text-white"
+                      : "text-muted-foreground/70 hover:text-foreground",
                   )}
                 >
                   <PanelRight />
