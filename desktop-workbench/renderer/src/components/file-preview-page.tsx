@@ -92,8 +92,11 @@ export function FilePathBreadcrumb({ path }: { path: string }) {
   const normalizedPath = path.trim().replaceAll("\\", "/") || "."
   const segments = React.useMemo(() => {
     const values = normalizedPath.split("/").filter(Boolean)
-    if (normalizedPath.startsWith("/")) values.unshift("/")
-    return values.length > 0 ? values : [normalizedPath]
+    return values.length > 0
+      ? values
+      : normalizedPath.startsWith("/")
+        ? []
+        : [normalizedPath]
   }, [normalizedPath])
 
   React.useLayoutEffect(() => {
