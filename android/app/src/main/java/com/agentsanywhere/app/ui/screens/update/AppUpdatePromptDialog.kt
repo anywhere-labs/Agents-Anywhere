@@ -31,17 +31,23 @@ import java.util.Locale
 @Composable
 fun AppUpdatePromptDialog(
     state: AppUpdateUiState,
+    onCheckForUpdate: () -> Unit,
     onUpdate: () -> Unit,
     onLater: () -> Unit,
     onCancelDownload: () -> Unit,
 ) {
-    val release = state.release ?: return
-    if (!state.promptVisible) return
+    val forced = state.forcedUpdateRequired
+    val release = state.release
+    if (!forced && (release == null || !state.promptVisible)) return
     val colors = LocalAAColors.current
     val shape = RoundedCornerShape(20.dp)
     Dialog(
-        onDismissRequest = { if (!state.downloading) onLater() },
-        properties = DialogProperties(usePlatformDefaultWidth = false),
+        onDismissRequest = { if (!forced && !state.downloading) onLater() },
+        properties = DialogProperties(
+            dismissOnBackPress = !forced,
+            dismissOnClickOutside = !forced,
+            usePlatformDefaultWidth = false,
+        ),
     ) {
         Column(
             modifier = Modifier
@@ -56,8 +62,9 @@ fun AppUpdatePromptDialog(
             Text(
                 text = stringResource(
                     when {
-                        state.downloading -> R.string.update_downloading_title
-                        state.preparingInstall -> R.string.update_preparing_install
+                        state.downloading && release != null -> R.string.update_downloading_title
+                        state.preparingInstall && release != null -> R.string.update_preparing_install
+                        forced && release == null -> R.string.update_force_title
                         else -> R.string.update_available_title
                     },
                 ),
@@ -66,7 +73,7 @@ fun AppUpdatePromptDialog(
                 fontWeight = FontWeight.SemiBold,
                 lineHeight = 24.sp,
             )
-            if (state.downloading) {
+            if (state.downloading && release != null) {
                 Text(
                     text = stringResource(R.string.update_downloading_version, release.versionName),
                     color = colors.muted,
@@ -75,13 +82,30 @@ fun AppUpdatePromptDialog(
                     lineHeight = 20.sp,
                 )
                 AppUpdateDownloadProgress(state = state)
-            } else if (state.preparingInstall) {
+            } else if (state.preparingInstall && release != null) {
                 LinearProgressIndicator(
                     modifier = Modifier.fillMaxWidth(),
                     color = colors.ink,
                     trackColor = colors.subtle,
                 )
-            } else {
+            } else if (forced && release == null) {
+                Text(
+                    text = stringResource(R.string.update_force_message),
+                    color = colors.muted,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Medium,
+                    lineHeight = 20.sp,
+                )
+                if (state.checkFailed) {
+                    Text(
+                        text = stringResource(R.string.update_force_check_failed),
+                        color = colors.errorText,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
+                        lineHeight = 18.sp,
+                    )
+                }
+            } else if (release != null) {
                 Text(
                     text = stringResource(R.string.update_available_message, release.versionName),
                     color = colors.muted,
@@ -100,13 +124,15 @@ fun AppUpdatePromptDialog(
                 )
             }
             if (state.downloading) {
-                UpdateDialogButton(
-                    label = stringResource(R.string.update_cancel_download),
-                    primary = false,
-                    enabled = true,
-                    modifier = Modifier.fillMaxWidth(),
-                    onClick = onCancelDownload,
-                )
+                if (!forced) {
+                    UpdateDialogButton(
+                        label = stringResource(R.string.update_cancel_download),
+                        primary = false,
+                        enabled = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        onClick = onCancelDownload,
+                    )
+                }
             } else if (state.preparingInstall) {
                 UpdateDialogButton(
                     label = stringResource(R.string.update_preparing_install),
@@ -114,6 +140,24 @@ fun AppUpdatePromptDialog(
                     enabled = false,
                     modifier = Modifier.fillMaxWidth(),
                     onClick = {},
+                )
+            } else if (forced && release == null) {
+                UpdateDialogButton(
+                    label = stringResource(
+                        if (state.checking) R.string.update_force_checking else R.string.update_force_check,
+                    ),
+                    primary = true,
+                    enabled = !state.checking,
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick = onCheckForUpdate,
+                )
+            } else if (forced) {
+                UpdateDialogButton(
+                    label = stringResource(if (state.downloadFailed) R.string.update_retry else R.string.update_now),
+                    primary = true,
+                    enabled = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick = onUpdate,
                 )
             } else {
                 Row(
@@ -166,7 +210,7 @@ fun AppUpdateDownloadProgress(
             )
         }
         Text(
-            text = if (progress != null && totalBytes != null) {
+            text = if (progress != null) {
                 stringResource(
                     R.string.update_download_progress,
                     (progress * 100).toInt(),

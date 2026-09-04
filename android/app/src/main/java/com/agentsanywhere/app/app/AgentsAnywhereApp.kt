@@ -32,6 +32,7 @@ import com.agentsanywhere.app.feature.auth.AuthController
 import com.agentsanywhere.app.feature.auth.AuthSessionStore
 import com.agentsanywhere.app.feature.auth.WebLoginState
 import com.agentsanywhere.app.feature.auth.WebLoginViewModel
+import com.agentsanywhere.app.feature.update.AppUpdateCheckSource
 import com.agentsanywhere.app.feature.update.AppUpdateViewModel
 import com.agentsanywhere.app.feature.devices.DevicesController
 import com.agentsanywhere.app.feature.files.FilesController
@@ -736,6 +737,7 @@ fun AgentsAnywhereApp(
     )
     AppUpdatePromptDialog(
         state = appUpdateViewModel.state,
+        onCheckForUpdate = { appUpdateViewModel.checkForUpdate(AppUpdateCheckSource.Forced) },
         onUpdate = appUpdateViewModel::downloadUpdate,
         onLater = appUpdateViewModel::dismissPrompt,
         onCancelDownload = appUpdateViewModel::cancelDownload,

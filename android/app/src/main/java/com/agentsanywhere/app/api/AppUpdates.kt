@@ -8,7 +8,19 @@ data class AndroidAppRelease(
     val downloadUrl: String,
 )
 
+data class BackendHealth(
+    val version: String,
+)
+
 class AppUpdatesApi(private val client: ApiClient = ApiClient()) {
+    fun health(serverUrl: String): BackendHealth {
+        val payload = client.getJson(serverUrl = serverUrl, path = "/health")
+        if (payload.optString("status") != "ok") {
+            throw ApiException("The update service is not healthy.")
+        }
+        return BackendHealth(version = payload.requireText("version"))
+    }
+
     fun check(serverUrl: String, currentVersionCode: Int): AndroidAppRelease? {
         val payload = client.getJson(
             serverUrl = serverUrl,

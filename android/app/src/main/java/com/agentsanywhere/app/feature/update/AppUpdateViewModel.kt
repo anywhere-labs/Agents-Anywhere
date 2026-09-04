@@ -9,6 +9,7 @@ import androidx.lifecycle.viewModelScope
 import com.agentsanywhere.app.api.AndroidAppRelease
 import com.agentsanywhere.app.api.AppUpdatesApi
 import com.agentsanywhere.app.config.AppConfig
+import com.agentsanywhere.app.feature.auth.AuthSessionStore
 import java.io.File
 import java.io.FileOutputStream
 import kotlinx.coroutines.CancellationException
@@ -24,6 +25,9 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 
 data class AppUpdateUiState(
+    val healthChecking: Boolean = false,
+    val backendVersion: String? = null,
+    val forcedUpdateRequired: Boolean = false,
     val checking: Boolean = false,
     val checked: Boolean = false,
     val release: AndroidAppRelease? = null,
@@ -37,41 +41,115 @@ data class AppUpdateUiState(
     val installFile: File? = null,
 )
 
+enum class AppUpdateCheckSource {
+    Automatic,
+    Settings,
+    Forced,
+}
+
 class AppUpdateViewModel(application: Application) : AndroidViewModel(application) {
     private val api = AppUpdatesApi()
     private val downloadClient = OkHttpClient()
+    private val sessionStore = AuthSessionStore(application)
+    private val preferenceStore = AppUpdatePreferenceStore(application)
     private var downloadJob: Job? = null
+    private var releaseServerOrigin: String? = null
     @Volatile
     private var activeDownloadCall: Call? = null
     @Suppress("DEPRECATION")
-    private val currentVersionCode = application.packageManager
-        .getPackageInfo(application.packageName, 0)
-        .versionCode
+    private val packageInfo = application.packageManager.getPackageInfo(application.packageName, 0)
+    @Suppress("DEPRECATION")
+    private val currentVersionCode = packageInfo.versionCode
+    private val currentVersionName = packageInfo.versionName.orEmpty()
 
     var state by mutableStateOf(AppUpdateUiState())
         private set
 
-    fun checkForUpdate(showPrompt: Boolean) {
+    suspend fun checkBackendCompatibility(): Boolean {
+        val serverOrigin = currentServerOrigin()
+        if (serverOrigin.isBlank()) return !state.forcedUpdateRequired
+        state = state.copy(healthChecking = true)
+        return try {
+            val health = withContext(Dispatchers.IO) { api.health(serverOrigin) }
+            val comparison = compareNumericVersions(health.version, currentVersionName)
+            if (comparison == null) {
+                state = state.copy(
+                    healthChecking = false,
+                    backendVersion = health.version,
+                )
+                !state.forcedUpdateRequired
+            } else {
+                val forcedUpdateRequired = comparison > 0
+                val resetRelease = (forcedUpdateRequired || releaseServerOrigin != serverOrigin) &&
+                    !state.downloading && !state.preparingInstall
+                if (resetRelease) releaseServerOrigin = null
+                state = state.copy(
+                    healthChecking = false,
+                    backendVersion = health.version,
+                    forcedUpdateRequired = forcedUpdateRequired,
+                    checked = if (forcedUpdateRequired && resetRelease) false else state.checked,
+                    release = if (resetRelease) null else state.release,
+                    promptVisible = if (resetRelease) false else state.promptVisible,
+                    checkFailed = if (forcedUpdateRequired && resetRelease) false else state.checkFailed,
+                    downloadFailed = if (resetRelease) false else state.downloadFailed,
+                )
+                !forcedUpdateRequired
+            }
+        } catch (error: CancellationException) {
+            state = state.copy(healthChecking = false)
+            throw error
+        } catch (_: Throwable) {
+            state = state.copy(healthChecking = false)
+            !state.forcedUpdateRequired
+        }
+    }
+
+    fun checkForUpdate(source: AppUpdateCheckSource) {
         if (state.checking || state.downloading) return
-        state = state.copy(checking = true, checkFailed = false)
+        if (state.forcedUpdateRequired && source != AppUpdateCheckSource.Forced) return
+        val serverOrigin = currentServerOrigin()
+        if (serverOrigin.isBlank()) {
+            state = state.copy(checked = true, checkFailed = true)
+            return
+        }
+        val resetRelease = source == AppUpdateCheckSource.Forced ||
+            (releaseServerOrigin != null && releaseServerOrigin != serverOrigin)
+        if (resetRelease) releaseServerOrigin = null
+        state = state.copy(
+            checking = true,
+            checked = if (source == AppUpdateCheckSource.Forced) false else state.checked,
+            release = if (resetRelease) null else state.release,
+            promptVisible = if (resetRelease) false else state.promptVisible,
+            checkFailed = false,
+            downloadFailed = if (resetRelease) false else state.downloadFailed,
+        )
         viewModelScope.launch {
             runCatching {
                 withContext(Dispatchers.IO) {
-                    api.check(AppConfig.UPDATE_SERVICE_URL, currentVersionCode)
+                    api.check(serverOrigin, currentVersionCode)
                 }
             }.onSuccess { release ->
+                releaseServerOrigin = release?.let { serverOrigin }
+                val deferred = release?.let {
+                    preferenceStore.isDeferred(serverOrigin, it.versionCode)
+                } == true
+                val promptVisible = source == AppUpdateCheckSource.Automatic &&
+                    release != null && !deferred
                 state = state.copy(
                     checking = false,
                     checked = true,
                     release = release,
-                    promptVisible = release != null && (showPrompt || state.promptVisible),
-                    checkFailed = false,
+                    promptVisible = promptVisible,
+                    checkFailed = source == AppUpdateCheckSource.Forced && release == null,
                     downloadFailed = false,
                 )
             }.onFailure {
+                if (source == AppUpdateCheckSource.Forced) releaseServerOrigin = null
                 state = state.copy(
                     checking = false,
                     checked = true,
+                    release = if (source == AppUpdateCheckSource.Forced) null else state.release,
+                    promptVisible = if (source == AppUpdateCheckSource.Forced) false else state.promptVisible,
                     checkFailed = true,
                 )
             }
@@ -79,12 +157,22 @@ class AppUpdateViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun dismissPrompt() {
-        if (!state.downloading) state = state.copy(promptVisible = false)
+        if (state.forcedUpdateRequired || state.downloading) return
+        val release = state.release
+        val serverOrigin = releaseServerOrigin
+        if (release != null && serverOrigin != null) {
+            preferenceStore.recordDeferred(serverOrigin, release.versionCode)
+        }
+        state = state.copy(promptVisible = false)
     }
 
     fun downloadUpdate() {
         val release = state.release ?: return
         if (state.downloading || state.installFile != null) return
+        preferenceStore.recordAccepted(
+            releaseServerOrigin ?: currentServerOrigin(),
+            release.versionCode,
+        )
         state = state.copy(
             downloading = true,
             downloadedBytes = 0,
@@ -187,7 +275,34 @@ class AppUpdateViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    private fun currentServerOrigin(): String {
+        return sessionStore.readServerUrl()
+            .ifBlank { AppConfig.OFFICIAL_WEB_LOGIN_URL }
+            .trim()
+            .trimEnd('/')
+    }
+
     companion object {
         private const val PROGRESS_UPDATE_INTERVAL_NANOS = 100_000_000L
     }
+}
+
+private fun compareNumericVersions(left: String, right: String): Int? {
+    val leftParts = left.numericVersionParts() ?: return null
+    val rightParts = right.numericVersionParts() ?: return null
+    val size = maxOf(leftParts.size, rightParts.size)
+    repeat(size) { index ->
+        val leftPart = leftParts.getOrElse(index) { 0L }
+        val rightPart = rightParts.getOrElse(index) { 0L }
+        if (leftPart != rightPart) return leftPart.compareTo(rightPart)
+    }
+    return 0
+}
+
+private fun String.numericVersionParts(): List<Long>? {
+    val normalized = trim().removePrefix("v").removePrefix("V")
+    if (normalized.isBlank()) return null
+    val parts = normalized.split('.')
+    if (parts.any { it.isBlank() || it.any { character -> !character.isDigit() } }) return null
+    return parts.map { it.toLongOrNull() ?: return null }
 }

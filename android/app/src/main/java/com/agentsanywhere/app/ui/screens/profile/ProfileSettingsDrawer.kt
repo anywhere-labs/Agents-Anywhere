@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.dp
 import com.agentsanywhere.app.R
 import com.agentsanywhere.app.api.AuthMeResponse
 import com.agentsanywhere.app.config.AppConfig
+import com.agentsanywhere.app.feature.update.AppUpdateCheckSource
 import com.agentsanywhere.app.feature.update.AppUpdateViewModel
 import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 import com.composables.icons.lucide.Archive
@@ -129,7 +130,7 @@ fun ProfileSettingsDrawer(
             sidebarViewMenuOpen = false
             return@LaunchedEffect
         }
-        appUpdateViewModel.checkForUpdate(showPrompt = false)
+        appUpdateViewModel.checkForUpdate(AppUpdateCheckSource.Settings)
         onLoadAccount()
             .onSuccess { account = it }
             .onFailure { onNotice(it.message ?: context.getString(R.string.profile_account_load_failed), true) }

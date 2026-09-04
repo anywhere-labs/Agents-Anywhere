@@ -585,6 +585,11 @@
     <string name="update_available_title">New version available</string>
     <string name="update_new_version_badge">New version</string>
     <string name="update_available_message">Version v%1$s is available. Update now?</string>
+    <string name="update_force_title">Client update required</string>
+    <string name="update_force_message">This client is older than the version required by the server. Update before continuing to avoid compatibility issues or unexpected errors.</string>
+    <string name="update_force_check">Check for updates</string>
+    <string name="update_force_checking">Checking…</string>
+    <string name="update_force_check_failed">A compatible update is not available right now. Check your connection and try again.</string>
     <string name="update_now">Update now</string>
     <string name="update_later">Later</string>
     <string name="update_retry">Try again</string>

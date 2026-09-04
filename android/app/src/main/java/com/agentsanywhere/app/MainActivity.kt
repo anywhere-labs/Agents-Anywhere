@@ -9,7 +9,9 @@ import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -19,6 +21,7 @@ import coil3.disk.DiskCache
 import coil3.memory.MemoryCache
 import com.agentsanywhere.app.app.AgentsAnywhereApp
 import com.agentsanywhere.app.feature.auth.WebLoginViewModel
+import com.agentsanywhere.app.feature.update.AppUpdateCheckSource
 import com.agentsanywhere.app.feature.update.AppUpdateInstaller
 import com.agentsanywhere.app.feature.update.AppUpdateViewModel
 import com.agentsanywhere.app.ui.designsystem.AAAppearanceMode
@@ -28,6 +31,7 @@ import com.agentsanywhere.app.ui.screens.home.HomeSidebarViewMode
 import java.io.File
 import java.util.Locale
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okio.Path.Companion.toOkioPath
@@ -72,7 +76,15 @@ class MainActivity : ComponentActivity() {
             preferences.getString(KEY_SIDEBAR_VIEW_MODE, HomeSidebarViewMode.Project),
         )
         oauthCallbackUri.value = intent?.data
-        appUpdateViewModel.checkForUpdate(showPrompt = true)
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                val compatible = appUpdateViewModel.checkBackendCompatibility()
+                if (compatible) {
+                    delay(AUTOMATIC_UPDATE_CHECK_DELAY_MILLIS)
+                    appUpdateViewModel.checkForUpdate(AppUpdateCheckSource.Automatic)
+                }
+            }
+        }
         setContent {
             AgentsAnywhereTheme(appearanceMode = appearanceMode) {
                 AgentsAnywhereApp(
@@ -170,5 +182,6 @@ class MainActivity : ComponentActivity() {
         private const val KEY_APPEARANCE_MODE = "appearance_mode"
         private const val KEY_LANGUAGE_MODE = "language_mode"
         private const val KEY_SIDEBAR_VIEW_MODE = "sidebar_view_mode"
+        private const val AUTOMATIC_UPDATE_CHECK_DELAY_MILLIS = 60_000L
     }
 }
