@@ -86,6 +86,7 @@ type FilePreviewSurfaceProps = {
   sourceUrl?: string
   sourceMediaType?: string
   sourceSize?: number
+  readOnly?: boolean
   mode?: "window" | "embedded"
   onOpenExternal?: () => void
 }
@@ -155,6 +156,7 @@ export function FilePreviewSurface({
   sourceUrl = "",
   sourceMediaType = "",
   sourceSize,
+  readOnly = false,
   mode = "embedded",
   onOpenExternal,
 }: FilePreviewSurfaceProps) {
@@ -176,12 +178,13 @@ export function FilePreviewSurface({
   const editorRef = React.useRef<MonacoCodeViewApi | null>(null)
   const editorInitialContentRef = React.useRef("")
   const objectUrlRef = React.useRef<string | null>(null)
+  const loadRequestIdRef = React.useRef(0)
   const containerRef = React.useRef<HTMLElement | null>(null)
 
   const isScopedPreview = Boolean(previewToken)
   const isSourcePreview = Boolean(sourceUrl)
-  const readOnlyPreview = isScopedPreview || isSourcePreview
-  const canLoad = readOnlyPreview || Boolean(token && connectorId && root && path)
+  const readOnlyPreview = readOnly || isScopedPreview || isSourcePreview
+  const canLoad = isScopedPreview || isSourcePreview || Boolean(token && connectorId && root && path)
 
   const revokeObjectUrl = React.useCallback(() => {
     if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current)
@@ -189,6 +192,8 @@ export function FilePreviewSurface({
   }, [])
 
   const loadFile = React.useCallback(async () => {
+    const requestId = ++loadRequestIdRef.current
+    const requestIsCurrent = () => requestId === loadRequestIdRef.current
     revokeObjectUrl()
     editorRef.current?.destroy()
     editorRef.current = null
@@ -205,11 +210,13 @@ export function FilePreviewSurface({
     try {
       if (sourceUrl) {
         const blob = await dashboardApi.downloadBlob(token, sourceUrl)
+        if (!requestIsCurrent()) return
         const mediaType = resolvedPreviewMediaType(sourceMediaType, blob.type, name)
         const size = sourceSize ?? blob.size
         if (canTextPreview(mediaType, name)) {
           const truncated = blob.size > TEXT_MAX_BYTES
           const content = await blob.slice(0, TEXT_MAX_BYTES).text()
+          if (!requestIsCurrent()) return
           setState({
             kind: "text",
             file: {
@@ -239,14 +246,20 @@ export function FilePreviewSurface({
           objectUrl = URL.createObjectURL(new Blob([blob], {
             type: mediaType || blob.type || "application/octet-stream",
           }))
+          if (!requestIsCurrent()) {
+            URL.revokeObjectURL(objectUrl)
+            return
+          }
           objectUrlRef.current = objectUrl
         }
+        if (!requestIsCurrent()) return
         setState({ kind: "binary", file: binary, objectUrl })
         return
       }
       let scopedSession = previewSession
       if (previewToken && !scopedSession) {
         scopedSession = await dashboardApi.createConnectorFsPreviewSession(previewToken)
+        if (!requestIsCurrent()) return
         setPreviewSession(scopedSession)
       }
       const text = scopedSession
@@ -254,6 +267,7 @@ export function FilePreviewSurface({
         : token
           ? await dashboardApi.connectorFsReadText(token, connectorId, root, path, TEXT_MAX_BYTES)
           : null
+      if (!requestIsCurrent()) return
       if (!text) {
         setState({ kind: "error", message: t("missingContext") })
         return
@@ -267,6 +281,7 @@ export function FilePreviewSurface({
         : token
           ? await dashboardApi.connectorFsRead(token, connectorId, root, path)
           : null
+      if (!requestIsCurrent()) return
       if (!response) {
         setState({ kind: "error", message: t("missingContext") })
         return
@@ -279,14 +294,22 @@ export function FilePreviewSurface({
       let objectUrl: string | null = null
       if (canBrowserPreview(mediaType, binary.name)) {
         const blob = await dashboardApi.downloadBlob(scopedSession ? null : token, binary.downloadUrl)
+        if (!requestIsCurrent()) return
         objectUrl = URL.createObjectURL(new Blob([blob], { type: mediaType || blob.type || "application/octet-stream" }))
+        if (!requestIsCurrent()) {
+          URL.revokeObjectURL(objectUrl)
+          return
+        }
         objectUrlRef.current = objectUrl
       }
+      if (!requestIsCurrent()) return
       setState({ kind: "binary", file: binary, objectUrl })
     } catch (err) {
+      if (!requestIsCurrent()) return
       if (!sourceUrl && !previewToken && token && connectorId && path) {
         try {
           const response = await dashboardApi.connectorFsList(token, connectorId, { root, path })
+          if (!requestIsCurrent()) return
           if (samePath(response.result.path, path)) {
             setState({ kind: "directory", path: response.result.path, entries: response.result.entries })
             return
@@ -295,6 +318,7 @@ export function FilePreviewSurface({
           // Preserve the original file-preview error when the target is not a directory.
         }
       }
+      if (!requestIsCurrent()) return
       setState({ kind: "error", message: err instanceof Error ? err.message : String(err) })
     }
   }, [
@@ -315,7 +339,10 @@ export function FilePreviewSurface({
 
   React.useEffect(() => {
     void loadFile()
-    return revokeObjectUrl
+    return () => {
+      loadRequestIdRef.current += 1
+      revokeObjectUrl()
+    }
   }, [loadFile, revokeObjectUrl])
 
   React.useEffect(() => {

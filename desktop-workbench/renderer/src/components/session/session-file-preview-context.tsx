@@ -3,6 +3,7 @@
 import * as React from "react"
 
 export type SessionFilePreviewTarget = {
+  source: "workspace" | "attachment"
   name: string
   path: string
   root: string

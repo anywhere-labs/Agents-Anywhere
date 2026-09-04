@@ -56,11 +56,13 @@ test("review and generic files stay singletons while terminal tabs can have mult
 
 test("each direct file preview opens a new tab without replacing the generic files tab", () => {
   const firstFile = {
+    source: "workspace",
     name: "first.ts",
     path: "src/first.ts",
     root: "/repo",
   }
   const secondFile = {
+    source: "attachment",
     name: "second.pdf",
     path: "second.pdf",
     root: "/repo",

@@ -1,4 +1,5 @@
 import { ApiClient, apiClient, apiPath } from "@/lib/api";
+import { shouldAuthorizeDownloadUrl } from "@/lib/api/download-auth";
 import type {
   AdminDashboardOverviewResponse,
   AdminDashboardSettings,
@@ -535,7 +536,7 @@ export class DashboardApi {
 
   async downloadBlob(token: string | null, url: string): Promise<Blob> {
     const headers: HeadersInit = {};
-    if (token) headers.authorization = `Bearer ${token}`;
+    if (token && shouldAuthorizeDownloadUrl(url)) headers.authorization = `Bearer ${token}`;
     const response = await fetch(url, {
       headers,
     });

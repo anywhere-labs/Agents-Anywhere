@@ -584,6 +584,7 @@ export function openSessionFilePreview(
   if (openFilePreview) {
     openFilePreview({
       ...file,
+      source: "workspace",
       root: session.cwd || ".",
     })
     return

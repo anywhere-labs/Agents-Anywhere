@@ -163,6 +163,15 @@ export function LazyFileTree({
     [],
   )
 
+  React.useEffect(() => {
+    if (!selectedKey) return
+    const frame = window.requestAnimationFrame(() => {
+      const selectedItem = visibleTreeItems().find((item) => item.dataset.treeKey === selectedKey)
+      selectedItem?.scrollIntoView({ block: "nearest" })
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [branchStates, expandedPaths, rootEntries, selectedKey, visibleTreeItems])
+
   const focusTreeItem = React.useCallback((item: HTMLElement | undefined) => {
     if (!item) return
     const key = item.dataset.treeKey
