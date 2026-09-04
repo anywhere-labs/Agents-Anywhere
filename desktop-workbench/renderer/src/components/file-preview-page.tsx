@@ -23,7 +23,7 @@ import { useRouteSearchParams } from "@/components/hash-route-params"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area"
+import { ScrollArea } from "@/components/ui/scroll-area"
 import { Spinner } from "@/components/ui/spinner"
 import { MonacoCodeView, type MonacoCodeViewApi } from "@/components/monaco-code-view"
 import { openNativeFilePreviewWindow } from "@/lib/file-preview-window"
@@ -423,7 +423,7 @@ export function FilePreviewSurface({
       {downloadError ? (
         <div className="border-b px-3 py-2 text-xs text-destructive">{downloadError}</div>
       ) : null}
-      <section className="min-h-0 flex-1 overflow-hidden">
+      <section className="min-h-0 min-w-0 flex-1 overflow-hidden">
         {state.kind === "loading" ? <CenteredStatus label={t("loading")} /> : null}
         {state.kind === "error" ? (
           <div className="mx-auto flex h-full max-w-xl items-center px-6">
@@ -560,22 +560,23 @@ function BinaryPreview({
   const kind = previewKind(file.mediaType, file.name)
   if (objectUrl && kind === "image") {
     return (
-      <ScrollArea className="h-full bg-muted/20" contentWide>
-        <div className="flex min-h-full min-w-full items-center justify-center p-4">
-          <img src={objectUrl} alt={file.name} className="max-h-full max-w-full object-contain" />
-        </div>
-        <ScrollBar orientation="horizontal" />
-      </ScrollArea>
+      <div className="flex size-full min-h-0 min-w-0 items-center justify-center overflow-hidden bg-muted/20 p-4">
+        <img src={objectUrl} alt={file.name} className="block max-h-full max-w-full object-contain" />
+      </div>
     )
   }
   if (objectUrl && kind === "video") {
-    return <div className="flex h-full items-center justify-center bg-black p-4"><video src={objectUrl} controls className="max-h-full max-w-full" /></div>
+    return <div className="flex size-full min-h-0 min-w-0 items-center justify-center overflow-hidden bg-black p-4"><video src={objectUrl} controls className="block max-h-full max-w-full object-contain" /></div>
   }
   if (objectUrl && kind === "audio") {
-    return <div className="flex h-full items-center justify-center p-8"><audio src={objectUrl} controls className="w-full max-w-2xl" /></div>
+    return <div className="flex size-full min-h-0 min-w-0 items-center justify-center overflow-hidden p-8"><audio src={objectUrl} controls className="w-full max-w-2xl" /></div>
   }
   if (objectUrl && kind === "pdf") {
-    return <iframe src={objectUrl} title={file.name} className="h-full w-full border-0" />
+    return (
+      <div className="size-full min-h-0 min-w-0 overflow-hidden">
+        <iframe src={objectUrl} title={file.name} className="block size-full border-0" />
+      </div>
+    )
   }
   return (
     <div className="flex h-full items-center justify-center p-6">
