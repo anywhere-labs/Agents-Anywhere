@@ -177,7 +177,6 @@ type SessionToolSidebarProps = {
   onWidthChange: (width: number) => void
   onWidthChangeEnd: (width: number) => void
   onOpenTool: (kind: SessionToolKind) => void
-  onDetachFiles: () => void
 }
 
 export function SessionToolSidebar({
@@ -194,7 +193,6 @@ export function SessionToolSidebar({
   onWidthChange,
   onWidthChangeEnd,
   onOpenTool,
-  onDetachFiles,
 }: SessionToolSidebarProps) {
   const t = useTranslations("dashboard.session.tools")
   const dashboardSidebarControls = useDashboardSidebarControls()
@@ -499,10 +497,6 @@ export function SessionToolSidebar({
                     connectorDeviceOs={connectorDeviceOs}
                     root={root}
                     variant="tab"
-                    onPopOut={() => {
-                      closeTabAndRestoreFocus(tab.id)
-                      onDetachFiles()
-                    }}
                   />
                 ) : null}
               </section>

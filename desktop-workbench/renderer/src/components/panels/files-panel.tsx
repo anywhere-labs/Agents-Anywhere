@@ -1,13 +1,33 @@
 "use client"
 
 import * as React from "react"
-import { ChevronRight, ChevronUp, Copy, Download, File, Folder, FolderOpen, MessageSquarePlus, RefreshCw, X } from "lucide-react"
+import {
+  ChevronRight,
+  ChevronUp,
+  Copy,
+  Download,
+  File,
+  Folder,
+  FolderOpen,
+  MessageSquarePlus,
+  PanelRightClose,
+  PanelRightOpen,
+  RefreshCw,
+  X,
+} from "lucide-react"
 import { toast } from "sonner"
 
 import "./runtime-panel.css"
 import { ChevronExternal } from "./runtime-icons"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import {
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "@/components/ui/empty"
 import {
   ContextMenu,
   ContextMenuContent,
@@ -17,18 +37,15 @@ import {
 } from "@/components/ui/context-menu"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Separator } from "@/components/ui/separator"
+import { FilePreviewSurface } from "@/components/file-preview-page"
 import { useWorkspace } from "@/components/workspace-context"
 import { dashboardApi } from "@/features/dashboard/api"
 import type { FsEntry } from "@/features/dashboard/types"
 import { copyText } from "@/lib/clipboard"
 import { downloadBlob } from "@/lib/download"
+import { openNativeFilePreviewWindow, type PickedFile } from "@/lib/file-preview-window"
 import { cn } from "@/lib/utils"
 import { useTranslations } from "next-intl"
-
-export type PickedFile = {
-  name: string
-  path: string
-}
 
 type FilesPanelBodyProps = {
   token?: string | null
@@ -60,6 +77,8 @@ export function FilesPanelBody({
   const [loading, setLoading] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
   const [contextEntry, setContextEntry] = React.useState<FsEntry | null>(null)
+  const [selectedFile, setSelectedFile] = React.useState<PickedFile | null>(null)
+  const [treeOpen, setTreeOpen] = React.useState(true)
 
   const canLoad = Boolean(token && connectorId)
   const isWindowsConnector = connectorDeviceOs === "windows"
@@ -95,6 +114,7 @@ export function FilesPanelBody({
     setCurrentPath(initialPath)
     setEntries([])
     setError(null)
+    setSelectedFile(null)
     if (canLoad) void loadDir(initialPath)
   }, [canLoad, connectorId, effectiveRoot, isWindowsConnector, loadDir])
 
@@ -120,19 +140,16 @@ export function FilesPanelBody({
     }
     if (entry.type === "file" || entry.type === "symlink") {
       const file = { name: entry.name, path: entry.path }
+      if (variant === "tab") {
+        setSelectedFile(file)
+        return
+      }
       openNativeFilePreviewWindow({
         token,
         connectorId,
         root: effectiveRoot,
         file,
         onBlocked: onPopupBlocked,
-        labels: {
-          preview: t("preview"),
-          loading: t("previewLoading", { name: file.name }),
-          noConnector: t("noConnector"),
-          binaryUnavailable: (size) => t("binaryUnavailable", { size }),
-          truncated: t("truncated"),
-        },
       })
     }
   }
@@ -193,11 +210,13 @@ export function FilesPanelBody({
               {sortedEntries.map((entry) => (
                 <button
                   key={entry.path}
-                  className="aa-fs-row"
                   type="button"
                   data-fs-entry-path={entry.path}
                   onClick={() => openEntry(entry)}
                   disabled={entry.type !== "directory" && entry.type !== "file" && entry.type !== "symlink"}
+                  aria-current={selectedFile?.path === entry.path ? "page" : undefined}
+                  data-selected={selectedFile?.path === entry.path ? "true" : undefined}
+                  className={cn("aa-fs-row", selectedFile?.path === entry.path && "active")}
                 >
                   {entry.type === "directory" ? <Folder className="size-3.5" /> : <File className="size-3.5" />}
                   <span>{entry.name}</span>
@@ -296,18 +315,102 @@ export function FilesPanelBody({
     )
   }
 
+  if (variant === "tab") {
+    return (
+      <Card size="sm" className="aa-rt-pane aa-rt-pane-tab">
+        <CardContent className="aa-rt-content">
+          <div className="aa-fs-workspace">
+            <section className="aa-fs-preview" aria-label={t("preview")}>
+              {selectedFile ? (
+                <FilePreviewSurface
+                  key={`${connectorId}:${effectiveRoot}:${selectedFile.path}`}
+                  token={token ?? null}
+                  connectorId={connectorId ?? ""}
+                  root={effectiveRoot}
+                  initialPath={selectedFile.path}
+                  initialName={selectedFile.name}
+                  mode="embedded"
+                  onOpenExternal={() => {
+                    openNativeFilePreviewWindow({
+                      token,
+                      connectorId,
+                      root: effectiveRoot,
+                      file: selectedFile,
+                      onBlocked: onPopupBlocked,
+                    })
+                  }}
+                />
+              ) : (
+                <Empty className="h-full rounded-none border-0">
+                  <EmptyHeader>
+                    <EmptyMedia variant="icon">
+                      <FolderOpen />
+                    </EmptyMedia>
+                    <EmptyTitle>{t("openFile")}</EmptyTitle>
+                    <EmptyDescription>{t("openFileDescription")}</EmptyDescription>
+                  </EmptyHeader>
+                </Empty>
+              )}
+            </section>
+
+            <aside className={cn("aa-fs-tree", !treeOpen && "collapsed")} aria-label={t("fileTree")}>
+              <div className="aa-fs-tree-toolbar">
+                {treeOpen ? (
+                  <>
+                    <div className="aa-fs-path-field">
+                      <input
+                        value={path}
+                        onChange={(event) => setPath(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") void loadDir(path)
+                        }}
+                        aria-label={t("directoryPath")}
+                        disabled={!canLoad}
+                      />
+                    </div>
+                    <Button
+                      className="aa-rt-iconbtn"
+                      variant="ghost"
+                      size="icon-sm"
+                      type="button"
+                      title={t("openPath")}
+                      aria-label={t("openPath")}
+                      onClick={() => void loadDir(path)}
+                      disabled={loading || (!isWindowsConnector && !path.trim()) || !canLoad}
+                    >
+                      <ChevronRight className="size-3.5" />
+                    </Button>
+                  </>
+                ) : null}
+                <Button
+                  className="aa-rt-iconbtn shrink-0"
+                  variant="ghost"
+                  size="icon-sm"
+                  type="button"
+                  title={treeOpen ? t("hideTree") : t("showTree")}
+                  aria-label={treeOpen ? t("hideTree") : t("showTree")}
+                  aria-expanded={treeOpen}
+                  onClick={() => setTreeOpen((open) => !open)}
+                >
+                  {treeOpen ? <PanelRightClose className="size-4" /> : <PanelRightOpen className="size-4" />}
+                </Button>
+              </div>
+              {treeOpen ? fileBrowser : null}
+            </aside>
+          </div>
+        </CardContent>
+      </Card>
+    )
+  }
+
   return (
-    <Card size="sm" className={cn("aa-rt-pane", variant === "tab" && "aa-rt-pane-tab")}>
-      <CardHeader className={cn("aa-rt-hd", variant === "tab" && "aa-rt-hd-tab")}>
-        {variant === "tab" ? null : (
-          <>
-            <CardTitle className="aa-rt-title">
-              <FolderOpen className="size-3.5" />
-              {t("title")}
-            </CardTitle>
-            <Separator orientation="vertical" className="aa-rt-sep" />
-          </>
-        )}
+    <Card size="sm" className="aa-rt-pane">
+      <CardHeader className="aa-rt-hd">
+        <CardTitle className="aa-rt-title">
+          <FolderOpen className="size-3.5" />
+          {t("title")}
+        </CardTitle>
+        <Separator orientation="vertical" className="aa-rt-sep" />
         <div className="aa-rt-acts">
           <Button
             className="aa-rt-iconbtn"
@@ -393,39 +496,6 @@ export function FilesPanelBody({
       </CardContent>
     </Card>
   )
-}
-
-export function openNativeFilePreviewWindow({
-  connectorId,
-  root,
-  file,
-  onBlocked,
-}: {
-  token?: string | null
-  connectorId?: string | null
-  root: string
-  file: PickedFile
-  onBlocked?: () => void
-  labels?: {
-    preview: string
-    loading: string
-    noConnector: string
-    binaryUnavailable: (size: string) => string
-    truncated: string
-  }
-}) {
-  const search = new URLSearchParams({
-    connectorId: connectorId ?? "",
-    root,
-    path: file.path,
-    name: file.name,
-  })
-  const child = window.open(`/#/preview?${search.toString()}`, "_blank", "width=980,height=720,resizable=yes,scrollbars=yes")
-  if (!child) {
-    onBlocked?.()
-    return
-  }
-  child.focus()
 }
 
 function parentOf(rawPath: string): string {

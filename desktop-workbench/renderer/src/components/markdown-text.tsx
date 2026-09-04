@@ -9,7 +9,7 @@ import { Badge } from "@/components/ui/badge"
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area"
 import { cn } from "@/lib/utils"
 import { highlightCode } from "@/lib/code-highlight"
-import { openNativeFilePreviewWindow } from "@/components/panels/files-panel"
+import { openNativeFilePreviewWindow } from "@/lib/file-preview-window"
 import type { SessionView } from "@/features/dashboard/types"
 import { useTranslations } from "next-intl"
 

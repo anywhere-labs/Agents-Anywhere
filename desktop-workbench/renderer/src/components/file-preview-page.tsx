@@ -6,6 +6,7 @@ import {
   Copy,
   Download,
   Edit3,
+  ExternalLink,
   File,
   FileWarning,
   Folder,
@@ -25,10 +26,11 @@ import { Button } from "@/components/ui/button"
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area"
 import { Spinner } from "@/components/ui/spinner"
 import { MonacoCodeView, type MonacoCodeViewApi } from "@/components/monaco-code-view"
-import { openNativeFilePreviewWindow } from "@/components/panels/files-panel"
+import { openNativeFilePreviewWindow } from "@/lib/file-preview-window"
 import { dashboardApi } from "@/features/dashboard/api"
 import { loadStoredSession } from "@/features/auth/session"
 import type { FsEntry, FsPreviewSessionResponse, FsReadTextResult } from "@/features/dashboard/types"
+import { cn } from "@/lib/utils"
 
 type PreviewState =
   | { kind: "loading" }
@@ -49,17 +51,55 @@ type BinaryFileInfo = {
 const TEXT_MAX_BYTES = 1_000_000
 
 export function FilePreviewPage() {
-  const t = useTranslations("preview")
   const params = useRouteSearchParams()
   const connectorId = params.get("connectorId") ?? ""
   const root = params.get("root") ?? ""
   const routePath = params.get("path") ?? ""
   const previewToken = params.get("previewToken") ?? ""
+  const routeName = params.get("name") ?? ""
+  const token = React.useMemo(() => loadStoredSession()?.accessToken ?? null, [])
+
+  return (
+    <FilePreviewSurface
+      key={`${connectorId}:${root}:${routePath}:${previewToken}`}
+      token={token}
+      connectorId={connectorId}
+      root={root}
+      initialPath={routePath}
+      initialName={routeName}
+      previewToken={previewToken}
+      mode="window"
+    />
+  )
+}
+
+type FilePreviewSurfaceProps = {
+  token: string | null
+  connectorId: string
+  root: string
+  initialPath: string
+  initialName?: string
+  previewToken?: string
+  mode?: "window" | "embedded"
+  onOpenExternal?: () => void
+}
+
+export function FilePreviewSurface({
+  token,
+  connectorId,
+  root,
+  initialPath,
+  initialName = "",
+  previewToken = "",
+  mode = "embedded",
+  onOpenExternal,
+}: FilePreviewSurfaceProps) {
+  const t = useTranslations("preview")
+  const routePath = initialPath
   const [previewSession, setPreviewSession] = React.useState<FsPreviewSessionResponse | null>(null)
   const [path, setPath] = React.useState(routePath)
   const effectivePath = previewSession?.path ?? path
-  const name = path === routePath ? params.get("name") || fileNameFromPath(effectivePath) : fileNameFromPath(effectivePath)
-  const token = React.useMemo(() => loadStoredSession()?.accessToken ?? null, [])
+  const name = path === routePath ? initialName || fileNameFromPath(effectivePath) : fileNameFromPath(effectivePath)
   const [state, setState] = React.useState<PreviewState>({ kind: "loading" })
   const [editMode, setEditMode] = React.useState(false)
   const [dirty, setDirty] = React.useState(false)
@@ -71,6 +111,7 @@ export function FilePreviewPage() {
   const editorRef = React.useRef<MonacoCodeViewApi | null>(null)
   const editorInitialContentRef = React.useRef("")
   const objectUrlRef = React.useRef<string | null>(null)
+  const containerRef = React.useRef<HTMLElement | null>(null)
 
   const isScopedPreview = Boolean(previewToken)
   const canLoad = isScopedPreview || Boolean(token && connectorId && root && path)
@@ -156,10 +197,11 @@ export function FilePreviewPage() {
   }, [loadFile, revokeObjectUrl])
 
   React.useEffect(() => {
+    if (mode !== "window") return
     if (state.kind === "loading" || state.kind === "error") return
     const stateName = state.kind === "directory" ? fileNameFromPath(state.path) : state.file.name
     document.title = `${stateName || name} - ${t("title")}`
-  }, [name, state, t])
+  }, [mode, name, state, t])
 
   React.useEffect(() => {
     if (state.kind !== "text") return
@@ -233,6 +275,7 @@ export function FilePreviewPage() {
 
   React.useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      if (mode === "embedded" && !containerRef.current?.contains(document.activeElement)) return
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
         event.preventDefault()
         void handleSave()
@@ -246,7 +289,7 @@ export function FilePreviewPage() {
     }
     window.addEventListener("keydown", onKeyDown, true)
     return () => window.removeEventListener("keydown", onKeyDown, true)
-  }, [handleSave])
+  }, [handleSave, mode])
 
   React.useEffect(() => {
     if (!dirty) return
@@ -267,91 +310,115 @@ export function FilePreviewPage() {
   }, [state])
 
   return (
-    <main className="flex h-svh min-h-0 flex-col overflow-hidden bg-background text-foreground">
-      <header className="flex min-h-12 items-center gap-2 border-b bg-sidebar px-3">
-        <div className="min-w-0 flex-1">
+    <main
+      ref={containerRef}
+      className={cn(
+        "flex h-full min-h-0 flex-col overflow-hidden bg-background text-foreground",
+        mode === "window" && "h-svh",
+      )}
+    >
+      <header className="aa-file-preview-header flex min-h-12 shrink-0 items-center gap-2 border-b bg-sidebar px-3">
+        <div className="aa-file-preview-meta min-w-0 flex-1">
           <div className="truncate text-sm font-medium">{name || t("untitled")}</div>
           <div className="truncate code-mono text-xs text-muted-foreground">{effectivePath}</div>
         </div>
-        <PreviewBadges state={state} dirty={dirty} saving={saving} savedFlash={savedFlash} saveError={saveError} />
-        <Button variant="ghost" size="icon-sm" type="button" aria-label={t("refresh")} onClick={() => void loadFile()}>
-          <RotateCw className="size-4" />
-        </Button>
-        <Button
-          variant={editMode ? "secondary" : "ghost"}
-          size="sm"
-          type="button"
-          disabled={state.kind !== "text" || isScopedPreview}
-          onClick={() => {
-            if (editMode) {
-              if (dirty) {
-                setSaveError(t("saveBeforeLeavingEdit"))
+        <div className="aa-file-preview-actions flex shrink-0 items-center gap-1">
+          <PreviewBadges state={state} dirty={dirty} saving={saving} savedFlash={savedFlash} saveError={saveError} />
+          <Button variant="ghost" size="icon-sm" type="button" aria-label={t("refresh")} onClick={() => void loadFile()}>
+            <RotateCw className="size-4" />
+          </Button>
+          <Button
+            className="aa-file-preview-labelled-action"
+            variant={editMode ? "secondary" : "ghost"}
+            size="sm"
+            type="button"
+            disabled={state.kind !== "text" || isScopedPreview}
+            onClick={() => {
+              if (editMode) {
+                if (dirty) {
+                  setSaveError(t("saveBeforeLeavingEdit"))
+                  return
+                }
+                setEditMode(false)
                 return
               }
-              setEditMode(false)
-              return
-            }
-            setEditMode(true)
-            window.setTimeout(() => editorRef.current?.focus(), 0)
-          }}
-        >
-          <Edit3 className="size-3.5" />
-          {t("edit")}
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          type="button"
-          aria-label={t("search")}
-          disabled={state.kind !== "text"}
-          onClick={() => editorRef.current?.openSearch()}
-        >
-          <Search className="size-4" />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          type="button"
-          aria-label={t("copy")}
-          disabled={state.kind !== "text"}
-          onClick={copyText}
-        >
-          {copied ? <Check className="size-4" /> : <Copy className="size-4" />}
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          type="button"
-          aria-label={t("download")}
-          disabled={state.kind !== "text" && state.kind !== "binary"}
-          onClick={() => void handleDownload()}
-        >
-          <Download className="size-4" />
-        </Button>
-        <Button
-          size="sm"
-          type="button"
-          disabled={isScopedPreview || state.kind !== "text" || !dirty || saving || !editMode}
-          onClick={() => void handleSave()}
-        >
-          {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
-          {t("save")}
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          type="button"
-          aria-label={t("close")}
-          onClick={() => {
-            if (dirty) {
-              setSaveError(t("saveBeforeClose"))
-              return
-            }
-            window.close()
-          }}
-        >
-          <X className="size-4" />
-        </Button>
+              setEditMode(true)
+              window.setTimeout(() => editorRef.current?.focus(), 0)
+            }}
+          >
+            <Edit3 className="size-3.5" />
+            <span className="aa-file-preview-action-label">{t("edit")}</span>
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            type="button"
+            aria-label={t("search")}
+            disabled={state.kind !== "text"}
+            onClick={() => editorRef.current?.openSearch()}
+          >
+            <Search className="size-4" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            type="button"
+            aria-label={t("copy")}
+            disabled={state.kind !== "text"}
+            onClick={copyText}
+          >
+            {copied ? <Check className="size-4" /> : <Copy className="size-4" />}
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            type="button"
+            aria-label={t("download")}
+            disabled={state.kind !== "text" && state.kind !== "binary"}
+            onClick={() => void handleDownload()}
+          >
+            <Download className="size-4" />
+          </Button>
+          <Button
+            className="aa-file-preview-labelled-action"
+            size="sm"
+            type="button"
+            disabled={isScopedPreview || state.kind !== "text" || !dirty || saving || !editMode}
+            onClick={() => void handleSave()}
+          >
+            {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
+            <span className="aa-file-preview-action-label">{t("save")}</span>
+          </Button>
+          {mode === "embedded" ? (
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              type="button"
+              title={t("openWindow")}
+              aria-label={t("openWindow")}
+              disabled={!onOpenExternal}
+              onClick={onOpenExternal}
+            >
+              <ExternalLink className="size-4" />
+            </Button>
+          ) : (
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              type="button"
+              aria-label={t("close")}
+              onClick={() => {
+                if (dirty) {
+                  setSaveError(t("saveBeforeClose"))
+                  return
+                }
+                window.close()
+              }}
+            >
+              <X className="size-4" />
+            </Button>
+          )}
+        </div>
       </header>
       {downloadError ? (
         <div className="border-b px-3 py-2 text-xs text-destructive">{downloadError}</div>

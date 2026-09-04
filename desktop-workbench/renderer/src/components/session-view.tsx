@@ -240,7 +240,6 @@ export function SessionView() {
             window.localStorage.setItem(SESSION_TOOL_SIDEBAR_WIDTH_STORAGE_KEY, String(width))
           }}
           onOpenTool={handleOpenTool}
-          onDetachFiles={() => setPanelMode("files", "floating")}
         />
       ) : null}
 
