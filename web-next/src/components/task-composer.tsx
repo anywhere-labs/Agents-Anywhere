@@ -62,6 +62,14 @@ import {
   runtimeTypeName,
   sessionRuntimeRequestIdentity,
 } from "@/features/dashboard/runtime-instances"
+import {
+  availableNewSessionSelectionPreference,
+  newSessionSelectionScope,
+  preferredAvailableOptionId,
+  withNewSessionSelectionPreference,
+  type NewSessionPreference,
+  type NewSessionSelectionPreference,
+} from "@/features/dashboard/new-session-preferences"
 import { watchNewSessionRuntimeInventory } from "@/features/dashboard/new-session-runtime-inventory"
 
 const NEW_SESSION_PREFERENCE_KEY = "aa-new-session-preference-v1"
@@ -131,17 +139,6 @@ async function sha256Hex(value: ArrayBuffer): Promise<string> {
   return Array.from(new Uint8Array(digest))
     .map((byte) => byte.toString(16).padStart(2, "0"))
     .join("")
-}
-
-type NewSessionPreference = {
-  connectorId: string
-  agent: string
-  selections?: Record<string, NewSessionSelectionPreference>
-}
-
-type NewSessionSelectionPreference = {
-  model?: string | null
-  permission?: string | null
 }
 
 type NewSessionTitleKey = (typeof NEW_SESSION_TITLE_KEYS)[number]
@@ -271,9 +268,6 @@ export function TaskComposer() {
   const [preference, setPreference] = React.useState<NewSessionPreference | null>(null)
   const preferenceRef = React.useRef<NewSessionPreference | null>(null)
   const composerRef = React.useRef<HTMLDivElement | null>(null)
-  const devicePreferenceAppliedRef = React.useRef(false)
-  const agentPreferenceAppliedForDeviceRef = React.useRef<string | null>(null)
-  const selectionPreferenceAppliedForScopeRef = React.useRef<string | null>(null)
   const composerWidth = useElementWidth(composerRef)
 
   const { attachments, isDragging, add, remove, clear, onDragEnter, onDragLeave, onDragOver, onDrop } =
@@ -323,26 +317,13 @@ export function TaskComposer() {
   }, [persistPreference, preferenceLoaded])
 
   React.useEffect(() => {
-    if (deviceOptions.length === 0) {
-      if (selectedDevice) setSelectedDevice("")
-      return
-    }
-
-    if (preferenceLoaded && !devicePreferenceAppliedRef.current) {
-      const preferredDevice = preference?.connectorId
-      const fallbackDevice = deviceOptions[0]?.id ?? ""
-      const nextDevice = preferredDevice && deviceOptions.some((option) => option.id === preferredDevice)
-        ? preferredDevice
-        : fallbackDevice
-      devicePreferenceAppliedRef.current = true
-      if (nextDevice !== selectedDevice) {
-        setSelectedDevice(nextDevice)
-      }
-      return
-    }
-
-    if (!deviceOptions.some((option) => option.id === selectedDevice)) {
-      setSelectedDevice(deviceOptions[0]?.id ?? "")
+    const nextDevice = preferredAvailableOptionId(
+      deviceOptions,
+      selectedDevice,
+      preferenceLoaded ? preference?.connectorId : null,
+    )
+    if (nextDevice !== selectedDevice) {
+      setSelectedDevice(nextDevice)
     }
   }, [deviceOptions, preference?.connectorId, preferenceLoaded, selectedDevice])
 
@@ -352,30 +333,16 @@ export function TaskComposer() {
 
   React.useEffect(() => {
     const connectorId = selectedConnectorId
-
-    if (!connectorId || agentOptions.length === 0) {
-      if (selectedAgent) setSelectedAgent("")
-      return
-    }
-
-    if (
-      preferenceLoaded &&
-      preference?.connectorId === connectorId &&
-      agentPreferenceAppliedForDeviceRef.current !== connectorId
-    ) {
-      const preferredAgent = preference.agent
-      if (agentOptions.some((option) => option.id === preferredAgent)) {
-        agentPreferenceAppliedForDeviceRef.current = connectorId
-        if (preferredAgent !== selectedAgent) {
-          setSelectedAgent(preferredAgent)
-        }
-        return
-      }
-      agentPreferenceAppliedForDeviceRef.current = connectorId
-    }
-
-    if (!agentOptions.some((option) => option.id === selectedAgent)) {
-      setSelectedAgent(agentOptions[0]?.id ?? "")
+    const preferredAgent = preferenceLoaded && preference?.connectorId === connectorId
+      ? preference.agent
+      : null
+    const nextAgent = preferredAvailableOptionId(
+      agentOptions,
+      selectedAgent,
+      preferredAgent,
+    )
+    if (nextAgent !== selectedAgent) {
+      setSelectedAgent(nextAgent)
     }
   }, [agentOptions, preference, preferenceLoaded, selectedAgent, selectedConnectorId])
 
@@ -538,23 +505,21 @@ export function TaskComposer() {
     if (!preferenceLoaded || !selectedConnectorId || !selectedAgent) return
     if (catalogsLoading || (!modelCatalog && !permissionCatalog)) return
     const scope = newSessionSelectionScope(selectedConnectorId, selectedAgent)
-    if (selectionPreferenceAppliedForScopeRef.current === scope) return
     const selectionPreference = preference?.selections?.[scope]
-    selectionPreferenceAppliedForScopeRef.current = scope
     if (!selectionPreference) return
 
-    const modelSelection = modelIdsForSelectionId(modelCatalog, selectionPreference.model)
-    if (modelSelection && models.some((option) => option.id === modelSelection.modelId && option.enabled)) {
-      setSelectedModel(modelSelection.modelId)
-      setSelectedReasoning(modelSelection.reasoningId)
-    }
-
-    const permissionSelection = permissionIdForSelectionId(
-      permissionCatalog,
-      selectionPreference.permission,
+    const availablePreference = availableNewSessionSelectionPreference(
+      models,
+      permissionOptions,
+      modelIdsForSelectionId(modelCatalog, selectionPreference.model),
+      permissionIdForSelectionId(permissionCatalog, selectionPreference.permission),
     )
-    if (permissionSelection && permissionOptions.some((option) => option.id === permissionSelection && option.enabled)) {
-      setSelectedPermissionMode(permissionSelection)
+    if (availablePreference.model) {
+      setSelectedModel(availablePreference.model.modelId)
+      setSelectedReasoning(availablePreference.model.reasoningId)
+    }
+    if (availablePreference.permissionId) {
+      setSelectedPermissionMode(availablePreference.permissionId)
     }
   }, [
     modelCatalog,
@@ -1159,30 +1124,6 @@ function readNewSessionSelectionPreferences(value: unknown): Record<string, NewS
     }
   }
   return Object.keys(result).length > 0 ? result : undefined
-}
-
-function withNewSessionSelectionPreference(
-  current: NewSessionPreference | null,
-  connectorId: string,
-  agent: string,
-  selection: NewSessionSelectionPreference,
-): NewSessionPreference {
-  const scope = newSessionSelectionScope(connectorId, agent)
-  return {
-    connectorId,
-    agent,
-    selections: {
-      ...(current?.selections ?? {}),
-      [scope]: {
-        model: selection.model ?? null,
-        permission: selection.permission ?? null,
-      },
-    },
-  }
-}
-
-function newSessionSelectionScope(connectorId: string, agent: string): string {
-  return `${connectorId}:${agent}`
 }
 
 function writeNewSessionPreference(preference: NewSessionPreference) {
