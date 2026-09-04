@@ -306,11 +306,7 @@ function MobileConnectionsTab({ token, userId }: { token: string; userId: string
 
 function DesktopTab() {
   const t = useTranslations("pages.settings")
-  const {
-    connectors,
-    sidebarShowsSessions,
-    setSidebarShowsSessions,
-  } = useWorkspace()
+  const { connectors } = useWorkspace()
   const {
     supported,
     loading,
@@ -517,21 +513,6 @@ function DesktopTab() {
             </div>
           ) : null}
         </div>
-      </section>
-
-      <section className="rounded-xl border border-border bg-card">
-        <div className="px-6 py-5">
-          <h2 className="text-base font-semibold">{t("desktopSidebar")}</h2>
-          <p className="mt-0.5 text-sm text-muted-foreground">{t("desktopSidebarDescription")}</p>
-        </div>
-        <Separator />
-        <DesktopSettingSwitch
-          label={t("desktopSidebarShowSessions")}
-          description={t("desktopSidebarShowSessionsDescription")}
-          checked={sidebarShowsSessions}
-          disabled={false}
-          onCheckedChange={setSidebarShowsSessions}
-        />
       </section>
 
       <section className="rounded-xl border border-border bg-card">
@@ -1363,6 +1344,7 @@ const themes: { id: AppearanceMode; labelKey: string; descKey: string }[] = [
 function AppearanceTab() {
   const t = useTranslations("pages.settings")
   const { theme, setTheme } = useTheme()
+  const { sidebarShowsSessions, setSidebarShowsSessions } = useWorkspace()
   const selected: AppearanceMode = theme === "light" || theme === "dark" ? theme : "auto"
 
   const handleThemeChange = (value: string) => {
@@ -1395,6 +1377,21 @@ function AppearanceTab() {
             </FieldLabel>
           ))}
         </RadioGroup>
+      </section>
+
+      <section className="rounded-xl border border-border bg-card">
+        <div className="px-6 py-5">
+          <h2 className="text-base font-semibold">{t("desktopSidebar")}</h2>
+          <p className="mt-0.5 text-sm text-muted-foreground">{t("desktopSidebarDescription")}</p>
+        </div>
+        <Separator />
+        <DesktopSettingSwitch
+          label={t("desktopSidebarShowSessions")}
+          description={t("desktopSidebarShowSessionsDescription")}
+          checked={sidebarShowsSessions}
+          disabled={false}
+          onCheckedChange={setSidebarShowsSessions}
+        />
       </section>
 
       <section className="rounded-xl border border-border bg-card">
