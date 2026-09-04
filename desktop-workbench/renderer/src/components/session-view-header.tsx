@@ -199,7 +199,7 @@ export function SessionViewHeader({
                   className={cn(
                     "relative z-50 rounded-md hover:bg-muted",
                     toolsOpen
-                      ? "text-white hover:text-white"
+                      ? "text-foreground hover:text-foreground"
                       : "text-muted-foreground/70 hover:text-foreground",
                   )}
                 >

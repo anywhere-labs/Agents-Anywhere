@@ -306,7 +306,11 @@ export function ArchivedSessionsTab({
       ) : (
         <div className="flex flex-col gap-4">
           {groups.map((group) => (
-            <Card key={group.key} size="sm" className="gap-0 py-0">
+            <Card
+              key={group.key}
+              size="sm"
+              className="gap-0 border border-border py-0"
+            >
               <CardHeader className="border-b py-4">
                 <CardTitle className="flex min-w-0 items-start gap-2">
                   <Folder className="mt-0.5 size-4 shrink-0 text-muted-foreground" />

@@ -262,7 +262,7 @@ function MobileConnectionsTab({ token, userId }: { token: string; userId: string
 
   return (
     <div className="flex max-w-3xl flex-col gap-4">
-      <Card>
+      <Card className="border border-border">
         <CardHeader className="border-b">
           <CardTitle>{t("mobileSidebarTitle")}</CardTitle>
           <CardDescription>{t("mobileSidebarDescription")}</CardDescription>
@@ -286,7 +286,7 @@ function MobileConnectionsTab({ token, userId }: { token: string; userId: string
         </CardContent>
       </Card>
 
-      <Card>
+      <Card className="border border-border">
         <CardHeader>
           <CardTitle>{tMobile("onboardingTitle")}</CardTitle>
           <CardDescription>{tMobile("onboardingDescription")}</CardDescription>
