@@ -45,6 +45,8 @@ const DEFAULT_DESKTOP_LAYOUT = {
   "dashboard-sidebar": 256,
   "dashboard-main": 1024,
 }
+const DESKTOP_SIDEBAR_MIN_WIDTH = 224
+const SIDEBAR_MOTION_DURATION_MS = 220
 
 export function Demo() {
   return (
@@ -78,7 +80,10 @@ function DashboardShell() {
 
 function DesktopResizableShell() {
   const { open, setOpen } = useSidebar()
+  const desktopShellRef = React.useRef<HTMLDivElement | null>(null)
   const sidebarPanelRef = React.useRef<PanelImperativeHandle | null>(null)
+  const sidebarMotionActiveRef = React.useRef(false)
+  const sidebarMotionTimerRef = React.useRef<number | null>(null)
   const [sidebarResizeActive, setSidebarResizeActive] = React.useState(false)
   const [defaultLayout] = React.useState(() => {
     if (typeof window === "undefined") return DEFAULT_DESKTOP_LAYOUT
@@ -99,32 +104,57 @@ function DesktopResizableShell() {
     defaultLayout["dashboard-sidebar"] ?? DEFAULT_DESKTOP_LAYOUT["dashboard-sidebar"]
   )
 
+  const beginSidebarMotion = React.useCallback(() => {
+    sidebarMotionActiveRef.current = true
+    if (sidebarMotionTimerRef.current !== null) {
+      window.clearTimeout(sidebarMotionTimerRef.current)
+    }
+    sidebarMotionTimerRef.current = window.setTimeout(() => {
+      sidebarMotionActiveRef.current = false
+      sidebarMotionTimerRef.current = null
+      const panel = sidebarPanelRef.current
+      if (panel && !panel.isCollapsed()) {
+        setSidebarWidth(panel.getSize().inPixels)
+      }
+    }, SIDEBAR_MOTION_DURATION_MS + 40)
+  }, [])
+
+  React.useEffect(() => () => {
+    if (sidebarMotionTimerRef.current !== null) {
+      window.clearTimeout(sidebarMotionTimerRef.current)
+    }
+  }, [])
+
   React.useEffect(() => {
     const panel = sidebarPanelRef.current
     if (!panel) return
 
     if (open && panel.isCollapsed()) {
+      beginSidebarMotion()
       panel.expand()
       return
     }
 
     if (!open && !panel.isCollapsed()) {
+      beginSidebarMotion()
       panel.collapse()
     }
-  }, [open])
+  }, [beginSidebarMotion, open])
 
   const collapseSidebar = React.useCallback(() => {
     const panel = sidebarPanelRef.current
     if (panel && !panel.isCollapsed()) {
+      beginSidebarMotion()
       panel.collapse()
     }
     setOpen(false, { persist: false })
-  }, [setOpen])
+  }, [beginSidebarMotion, setOpen])
 
   const toggleSidebar = React.useCallback(() => {
     const panel = sidebarPanelRef.current
     if (open) {
       if (panel && !panel.isCollapsed()) {
+        beginSidebarMotion()
         panel.collapse()
       }
       setOpen(false, { persist: false })
@@ -132,10 +162,11 @@ function DesktopResizableShell() {
     }
 
     if (panel?.isCollapsed()) {
+      beginSidebarMotion()
       panel.expand()
     }
     setOpen(true, { persist: false })
-  }, [open, setOpen])
+  }, [beginSidebarMotion, open, setOpen])
 
   const sidebarControls = React.useMemo(
     () => ({ open, collapseSidebar, toggleSidebar }),
@@ -147,8 +178,17 @@ function DesktopResizableShell() {
 
   return (
     <DashboardSidebarControlsContext.Provider value={sidebarControls}>
-      <div className="flex h-svh min-h-0 w-full flex-col overflow-hidden overscroll-none bg-background">
-        <DesktopShellHeader sidebarWidth={sidebarWidth} sidebarOpen={open} />
+      <div
+        ref={desktopShellRef}
+        className="flex h-svh min-h-0 w-full flex-col overflow-hidden overscroll-none bg-background"
+        style={{
+          "--desktop-sidebar-width": `${Math.max(sidebarWidth, DESKTOP_SIDEBAR_MIN_WIDTH)}px`,
+        } as React.CSSProperties}
+      >
+        <DesktopShellHeader
+          sidebarOpen={open}
+          sidebarResizing={sidebarResizeActive}
+        />
         <ResizablePanelGroup
           id="agents-anywhere-dashboard-sidebar"
           defaultLayout={defaultLayout}
@@ -169,16 +209,28 @@ function DesktopResizableShell() {
             minSize="14rem"
             maxSize="28rem"
             onResize={(size) => {
-              setSidebarWidth(size.inPixels)
               const isCollapsed = sidebarPanelRef.current?.isCollapsed() ?? size.inPixels <= 1
+              if (!sidebarMotionActiveRef.current && !isCollapsed) {
+                desktopShellRef.current?.style.setProperty(
+                  "--desktop-sidebar-width",
+                  `${Math.max(size.inPixels, DESKTOP_SIDEBAR_MIN_WIDTH)}px`,
+                )
+                setSidebarWidth(size.inPixels)
+              }
               const nextOpen = !isCollapsed
               if (nextOpen !== open) {
                 setOpen(nextOpen, { persist: false })
               }
             }}
-            className="min-w-0 overflow-hidden"
+            className="min-w-0"
+            style={{ overflow: "hidden" }}
           >
-            <AppSidebar contained />
+            <div
+              className="h-full shrink-0 overflow-hidden"
+              style={{ width: Math.max(sidebarWidth, DESKTOP_SIDEBAR_MIN_WIDTH) }}
+            >
+              <AppSidebar contained />
+            </div>
           </ResizablePanel>
           <ResizableHandle
             className="bg-transparent transition-colors hover:bg-border/40 focus-visible:bg-border/60"

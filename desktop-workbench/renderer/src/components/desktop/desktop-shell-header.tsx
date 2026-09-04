@@ -15,11 +15,11 @@ import { useDesktopConnector } from "@/features/desktop/desktop-connector-contex
 const HEADER_SIDEBAR_MIN_WIDTH = 224
 
 export function DesktopShellHeader({
-  sidebarWidth,
   sidebarOpen,
+  sidebarResizing,
 }: {
-  sidebarWidth: number
   sidebarOpen: boolean
+  sidebarResizing: boolean
 }) {
   const t = useTranslations("desktopConnector")
   const tCommon = useTranslations("common")
@@ -33,7 +33,12 @@ export function DesktopShellHeader({
     localConnectorId &&
     (state?.authFailed || state?.manualDisconnected),
   )
-  const headerSidebarWidth = Math.max(sidebarWidth, HEADER_SIDEBAR_MIN_WIDTH)
+  const headerSidebarWidth = sidebarOpen
+    ? "var(--desktop-sidebar-width)"
+    : HEADER_SIDEBAR_MIN_WIDTH
+  const sidebarWidthMotionClassName = sidebarResizing
+    ? "transition-none"
+    : "transition-[width] duration-[220ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none"
   const shellControlClassName = sidebarOpen
     ? "rounded-md text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
     : "rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
@@ -58,9 +63,18 @@ export function DesktopShellHeader({
   return (
     <header className="aa-window-drag relative flex h-11 shrink-0 items-center bg-background text-foreground">
       <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-x-0 bottom-0 h-px bg-border/80"
+      />
+      <div
+        aria-hidden="true"
+        className={`pointer-events-none absolute inset-y-0 left-0 bg-sidebar ${sidebarWidthMotionClassName}`}
+        style={{ width: sidebarOpen ? "var(--desktop-sidebar-width)" : 0 }}
+      />
+      <div
         className={sidebarOpen
-          ? "flex h-full shrink-0 items-center bg-sidebar text-sidebar-foreground transition-colors duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none"
-          : "flex h-full shrink-0 items-center bg-background text-foreground transition-colors duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none"
+          ? `relative flex h-full shrink-0 items-center text-sidebar-foreground ${sidebarWidthMotionClassName}`
+          : `relative flex h-full shrink-0 items-center text-foreground ${sidebarWidthMotionClassName}`
         }
         style={{ width: headerSidebarWidth }}
       >
@@ -144,11 +158,6 @@ export function DesktopShellHeader({
           className="aa-window-no-drag flex shrink-0 items-center"
         />
       </div>
-      <div
-        aria-hidden="true"
-        className="pointer-events-none absolute bottom-0 right-0 h-px bg-border/80"
-        style={{ left: sidebarOpen ? headerSidebarWidth : 0 }}
-      />
       {!sidebarOpen ? (
         <div
           aria-hidden="true"
