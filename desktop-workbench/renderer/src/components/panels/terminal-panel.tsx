@@ -19,7 +19,7 @@ type TerminalPanelBodyProps = {
   token?: string | null
   connectorId?: string | null
   root?: string | null
-  variant?: "desktop" | "mobile"
+  variant?: "desktop" | "mobile" | "tab"
   onClose?: () => void
   onPopOut?: () => void
 }
@@ -305,12 +305,17 @@ export function TerminalPanelBody({ token, connectorId, root, variant = "desktop
   }
 
   return (
-    <Card size="sm" className="aa-rt-pane aa-term">
-      <CardHeader className="aa-rt-hd">
-        <CardTitle className="aa-rt-title">
-          <SquareTerminal className="size-3.5" />
-          {t("title")}
-        </CardTitle>
+    <Card
+      size="sm"
+      className={cn("aa-rt-pane aa-term", variant === "tab" && "aa-rt-pane-tab")}
+    >
+      <CardHeader className={cn("aa-rt-hd", variant === "tab" && "aa-rt-hd-tab")}>
+        {variant === "tab" ? null : (
+          <CardTitle className="aa-rt-title">
+            <SquareTerminal className="size-3.5" />
+            {t("title")}
+          </CardTitle>
+        )}
         {terminalTabs}
         <Separator orientation="vertical" className="aa-rt-sep" />
         <div className="aa-rt-acts">

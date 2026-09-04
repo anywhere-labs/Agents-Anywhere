@@ -78,6 +78,10 @@ export function DesktopShellHeader() {
           </Button>
         </div>
       </div>
+      <div
+        data-slot="desktop-shell-header-session"
+        className="aa-window-no-drag ml-2 flex min-w-0 flex-1 items-center overflow-hidden"
+      />
       {needsReconnect ? (
         <div className="aa-window-no-drag absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 items-center gap-2">
           <span className="flex items-center gap-1.5 text-xs font-medium text-white" role="status" aria-live="polite">
@@ -98,7 +102,7 @@ export function DesktopShellHeader() {
       ) : null}
       <div
         data-slot="desktop-shell-header-actions"
-        className="ml-auto flex h-full min-w-0 flex-1 items-center justify-end px-3"
+        className="ml-auto flex h-full shrink-0 items-center justify-end gap-1 px-3"
       >
         {canClearCache ? (
           <Button
@@ -115,6 +119,10 @@ export function DesktopShellHeader() {
             {clearingCache ? t("clearingCache") : t("clearCache")}
           </Button>
         ) : null}
+        <div
+          data-slot="desktop-shell-header-session-actions"
+          className="aa-window-no-drag flex shrink-0 items-center"
+        />
       </div>
     </header>
   )

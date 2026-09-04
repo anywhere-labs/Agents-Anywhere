@@ -35,7 +35,7 @@ type FilesPanelBodyProps = {
   connectorId?: string | null
   root?: string | null
   connectorDeviceOs?: string | null
-  variant?: "desktop" | "mobile"
+  variant?: "desktop" | "mobile" | "tab"
   onClose?: () => void
   onPopOut?: () => void
   onPopupBlocked?: () => void
@@ -297,13 +297,17 @@ export function FilesPanelBody({
   }
 
   return (
-    <Card size="sm" className="aa-rt-pane">
-      <CardHeader className="aa-rt-hd">
-        <CardTitle className="aa-rt-title">
-          <FolderOpen className="size-3.5" />
-          {t("title")}
-        </CardTitle>
-        <Separator orientation="vertical" className="aa-rt-sep" />
+    <Card size="sm" className={cn("aa-rt-pane", variant === "tab" && "aa-rt-pane-tab")}>
+      <CardHeader className={cn("aa-rt-hd", variant === "tab" && "aa-rt-hd-tab")}>
+        {variant === "tab" ? null : (
+          <>
+            <CardTitle className="aa-rt-title">
+              <FolderOpen className="size-3.5" />
+              {t("title")}
+            </CardTitle>
+            <Separator orientation="vertical" className="aa-rt-sep" />
+          </>
+        )}
         <div className="aa-rt-acts">
           <Button
             className="aa-rt-iconbtn"

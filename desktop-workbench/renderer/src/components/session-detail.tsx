@@ -1464,7 +1464,7 @@ export function SessionDetail({
             ref={timelineContentRef}
             aria-busy={runtimeStatus === "waiting" || runtimeStatus === "pending" || runtimeStatus === "running"}
             className={cn(
-              "mx-auto flex w-full min-w-0 max-w-[calc(48rem+2rem)] flex-col gap-3 overflow-hidden px-4 pb-44 pt-20",
+              "mx-auto flex w-full min-w-0 max-w-[calc(48rem+2rem)] flex-col gap-3 overflow-hidden px-4 pb-44 pt-20 md:pt-6",
             )}
             style={{ paddingBottom: timelineBottomPadding }}
           >

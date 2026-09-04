@@ -1,3 +1,5 @@
+/* Hallmark · macrostructure: embedded-browser-tool-sidebar · theme: existing application system · contrast: pass (40–41) · nav: N/A · footer: N/A · slop: pass (42–45) · honest: pass (46) · chrome: pass (47) · tokens: pass (48) · responsive: pass (49) · icons: pass (30) · mobile: pass (desktop-only change; 34, 49–57) */
+
 .aa-rt-pane {
   --aa-rt-radius: 13px;
   --aa-rt-header-bg: var(--sidebar);
@@ -27,6 +29,14 @@
   --card-spacing: 0px;
 }
 
+.aa-rt-pane.aa-rt-pane-tab {
+  --aa-rt-radius: 0px;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  outline: 0;
+}
+
 .aa-rt-hd {
   display: flex;
   min-height: 42px;
@@ -39,6 +49,19 @@
   background: var(--aa-rt-header-bg);
   color: var(--foreground);
   padding: 0 8px 0 12px;
+}
+
+.aa-rt-hd.aa-rt-hd-tab {
+  min-height: 40px;
+  border-radius: 0;
+}
+
+.aa-rt-pane-tab .aa-term-tabs-scroll {
+  margin-left: 0;
+}
+
+.aa-rt-pane-tab .aa-fs-pathbar {
+  border-top: 0;
 }
 
 .aa-rt-title {

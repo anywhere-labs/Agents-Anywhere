@@ -1,18 +1,18 @@
 "use client"
 
 import * as React from "react"
-import type { Layout } from "react-resizable-panels"
 
-import { ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable"
 import { SessionDetail, type SessionMemorySnapshot } from "@/components/session-detail"
+import {
+  SessionToolSidebar,
+  sessionToolSidebarWidth,
+  useSessionToolSidebar,
+} from "@/components/session-tool-sidebar"
 import { SessionViewHeader } from "@/components/session-view-header"
 import {
   FloatingRuntimePanels,
   MobileRuntimePanelDrawers,
   PopupBlockedDialog,
-  readSavedLayout,
-  SessionRuntimePanels,
-  writeSavedLayout,
 } from "@/components/session-runtime-panels"
 import { useAuth } from "@/components/auth/auth-context"
 import { useWorkspace, type PanelId } from "@/components/workspace-context"
@@ -24,12 +24,12 @@ import type { Notice, SessionView as SessionViewData, TimelineItem } from "@/fea
 import { sortTimelineItems } from "@/components/session/session-utils"
 import { SessionSkeleton } from "@/components/session/session-skeleton"
 
-const HORIZONTAL_LAYOUT_KEY = "aa-session-runtime-horizontal-layout"
-const SESSION_PANEL_ID = "session-main"
-const RUNTIME_PANEL_ID = "runtime-dock"
-const HORIZONTAL_DOCK_LAYOUT: Layout = { [SESSION_PANEL_ID]: 66, [RUNTIME_PANEL_ID]: 34 }
-const HORIZONTAL_FULL_LAYOUT: Layout = { [SESSION_PANEL_ID]: 100 }
 const PANEL_IDS: PanelId[] = ["files", "terminal"]
+
+type ElementBounds = {
+  left: number
+  width: number
+}
 
 export function SessionView() {
   const { session: authSession } = useAuth()
@@ -44,27 +44,25 @@ export function SessionView() {
     activeSessionPending,
     connectors,
     panels,
+    setPanelMode,
     upsertSession,
     reportSessionStreamProgress,
     markSessionRead,
   } = useWorkspace()
   const session = activeSession
   const connector = connectors.find((item) => item.id === session?.connectorId)
+  const viewRef = React.useRef<HTMLDivElement | null>(null)
+  const viewBounds = useElementBounds(viewRef, Boolean(session))
+  const toolSidebar = useSessionToolSidebar()
 
   const token = authSession?.accessToken ?? null
   const connectorId = session?.connectorId ?? null
   const root = session?.cwd ?? "."
   const availablePanelIds = isMobile ? (["files"] satisfies PanelId[]) : PANEL_IDS
-  const dockedPanels = isMobile ? [] : availablePanelIds.filter((id) => panels[id] === "docked")
   const floatingPanels = availablePanelIds.filter((id) => panels[id] === "floating")
-  const hasDock = !isMobile && dockedPanels.length > 0
-  const horizontalDefaultLayout = React.useMemo(
-    () =>
-      hasDock
-        ? readSavedLayout(HORIZONTAL_LAYOUT_KEY, [SESSION_PANEL_ID, RUNTIME_PANEL_ID], HORIZONTAL_DOCK_LAYOUT)
-        : HORIZONTAL_FULL_LAYOUT,
-    [hasDock],
-  )
+  const reservedSidebarWidth = !isMobile && toolSidebar.open && !toolSidebar.expanded
+    ? sessionToolSidebarWidth(viewBounds.width)
+    : 0
 
   React.useEffect(() => {
     setMemorySnapshot(null)
@@ -153,58 +151,56 @@ export function SessionView() {
   return (
     <>
       <div
-        className="h-full min-h-0 overflow-hidden overscroll-none"
+        ref={viewRef}
+        className="h-full min-h-0 overflow-hidden overscroll-none bg-background"
+        style={{ paddingRight: reservedSidebarWidth }}
         onPointerDownCapture={markActiveSessionRead}
         onFocusCapture={markActiveSessionRead}
         onKeyDownCapture={markActiveSessionRead}
       >
-        <ResizablePanelGroup
-          direction="horizontal"
-          defaultLayout={horizontalDefaultLayout}
-          onLayoutChanged={(layout) => {
-            if (hasDock) writeSavedLayout(HORIZONTAL_LAYOUT_KEY, [SESSION_PANEL_ID, RUNTIME_PANEL_ID], layout)
-          }}
-          className="h-full min-h-0 w-full overflow-hidden overscroll-none bg-background"
-        >
-          <ResizablePanel id={SESSION_PANEL_ID} defaultSize={hasDock ? "66%" : "100%"} minSize="30%">
-            <div className="relative flex h-full min-h-0 flex-col overflow-hidden overscroll-none">
-              <SessionViewHeader
-                session={session}
-                connectorName={connector?.name}
-                memorySnapshot={memorySnapshot}
-                onExportMemoryTimeline={handleExportMemoryTimeline}
-                onExportRemoteTimeline={handleExportRemoteTimeline}
-                exporting={exporting}
-              />
-
-              <div className="min-h-0 flex-1 overflow-hidden">
-                {token ? (
-                  <SessionDetail
-                    token={token}
-                    sessionId={activeSessionId ?? session.id}
-                    fallbackSession={activeSessionFallback}
-                    onSessionUpdated={upsertSession}
-                    onMemorySnapshotUpdated={setMemorySnapshot}
-                    onStreamProgress={reportSessionStreamProgress}
-                  />
-                ) : (
-                  <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-                    {t("signInRequired")}
-                  </div>
-                )}
-              </div>
-            </div>
-          </ResizablePanel>
-
-          <SessionRuntimePanels
-            token={token}
-            connectorId={connectorId}
-            connectorDeviceOs={connector?.deviceOs}
-            root={root}
-            dockedPanels={dockedPanels}
+        <div className="relative flex h-full min-h-0 flex-col overflow-hidden overscroll-none">
+          <SessionViewHeader
+            session={session}
+            connectorName={connector?.name}
+            memorySnapshot={memorySnapshot}
+            onExportMemoryTimeline={handleExportMemoryTimeline}
+            onExportRemoteTimeline={handleExportRemoteTimeline}
+            exporting={exporting}
+            toolsOpen={toolSidebar.open}
+            onToggleTools={toolSidebar.toggleSidebar}
           />
-        </ResizablePanelGroup>
+
+          <div className="min-h-0 flex-1 overflow-hidden">
+            {token ? (
+              <SessionDetail
+                token={token}
+                sessionId={activeSessionId ?? session.id}
+                fallbackSession={activeSessionFallback}
+                onSessionUpdated={upsertSession}
+                onMemorySnapshotUpdated={setMemorySnapshot}
+                onStreamProgress={reportSessionStreamProgress}
+              />
+            ) : (
+              <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                {t("signInRequired")}
+              </div>
+            )}
+          </div>
+        </div>
       </div>
+
+      {!isMobile ? (
+        <SessionToolSidebar
+          controller={toolSidebar}
+          hostLeft={viewBounds.left}
+          hostWidth={viewBounds.width}
+          token={token}
+          connectorId={connectorId}
+          connectorDeviceOs={connector?.deviceOs}
+          root={root}
+          onDetachTool={(kind) => setPanelMode(kind, "floating")}
+        />
+      ) : null}
 
       {isMobile ? (
         <MobileRuntimePanelDrawers
@@ -226,6 +222,44 @@ export function SessionView() {
       <PopupBlockedDialog />
     </>
   )
+}
+
+function useElementBounds(
+  ref: React.RefObject<HTMLElement | null>,
+  enabled: boolean,
+): ElementBounds {
+  const [bounds, setBounds] = React.useState<ElementBounds>({ left: 0, width: 0 })
+
+  React.useLayoutEffect(() => {
+    if (!enabled) return
+    const element = ref.current
+    if (!element) return
+
+    let frame: number | null = null
+    const update = () => {
+      if (frame !== null) window.cancelAnimationFrame(frame)
+      frame = window.requestAnimationFrame(() => {
+        const rect = element.getBoundingClientRect()
+        setBounds((current) => {
+          const next = { left: Math.round(rect.left), width: Math.round(rect.width) }
+          return current.left === next.left && current.width === next.width ? current : next
+        })
+        frame = null
+      })
+    }
+
+    update()
+    const observer = new ResizeObserver(update)
+    observer.observe(element)
+    window.addEventListener("resize", update)
+    return () => {
+      if (frame !== null) window.cancelAnimationFrame(frame)
+      observer.disconnect()
+      window.removeEventListener("resize", update)
+    }
+  }, [enabled, ref])
+
+  return bounds
 }
 
 function downloadTimelineJson(
