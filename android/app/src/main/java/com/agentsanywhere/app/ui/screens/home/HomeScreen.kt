@@ -522,7 +522,14 @@ private fun HomeProjectModeList(
                 (fallbackSessions.keys + projectSessionsById.keys).associateWith { projectId ->
                     val cached = projectSessionsById[projectId].orEmpty()
                         .mapNotNull { session ->
-                            activeById[session.id] ?: session.takeIf { it.id !in archivedIds && !it.archived }
+                            val current = activeById[session.id]
+                            when {
+                                current != null -> current.takeIf { it.projectId == projectId }
+                                session.id !in archivedIds && !session.archived -> {
+                                    session.takeIf { it.projectId == projectId }
+                                }
+                                else -> null
+                            }
                         }
                     (cached + fallbackSessions[projectId].orEmpty())
                         .distinctBy(AgentSession::id)

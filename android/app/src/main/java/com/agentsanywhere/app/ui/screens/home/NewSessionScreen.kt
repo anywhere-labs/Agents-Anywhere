@@ -460,8 +460,10 @@ fun NewSessionScreen(
             )
         }
     }
+    val projectDeviceMatches = selectedProject != null &&
+        selectedDevice?.id == selectedProject.connectorId
     val canStart = selectedProject != null &&
-        selectedDevice != null &&
+        projectDeviceMatches &&
         selectedRuntime != null &&
         runtimeSelection.readyForCreate &&
         effectiveWorkspacePath.isNotBlank() &&
@@ -477,7 +479,7 @@ fun NewSessionScreen(
         val project = selectedProject ?: return
         val device = selectedDevice ?: return
         val runtime = selectedRuntime ?: return
-        if (!canStart) return
+        if (!canStart || device.id != project.connectorId) return
         preferenceStore.save(
             connectorId = device.id,
             runtimeId = runtime.id,
