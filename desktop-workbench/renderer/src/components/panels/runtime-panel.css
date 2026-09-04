@@ -223,10 +223,16 @@
   mask-image: linear-gradient(to right, transparent 0, black 24px, black 100%);
 }
 
+.aa-file-preview-breadcrumb-viewport[data-overflowed="true"] .aa-file-preview-breadcrumb {
+  right: 0;
+  left: auto;
+}
+
 .aa-file-preview-breadcrumb {
   position: absolute;
   top: 50%;
-  right: 0;
+  right: auto;
+  left: 0;
   display: inline-flex;
   width: max-content;
   max-width: none;
