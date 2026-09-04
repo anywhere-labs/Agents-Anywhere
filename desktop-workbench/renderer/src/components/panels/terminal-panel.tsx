@@ -1,7 +1,6 @@
 "use client"
 
 import * as React from "react"
-import { createPortal } from "react-dom"
 import { Plus, SquareTerminal, X } from "lucide-react"
 import { useTranslations } from "next-intl"
 
@@ -19,9 +18,8 @@ type TerminalPanelBodyProps = {
   token?: string | null
   connectorId?: string | null
   root?: string | null
-  variant?: "desktop" | "mobile" | "tab"
+  variant?: "desktop" | "mobile"
   onClose?: () => void
-  tabBarTarget?: HTMLElement | null
 }
 
 export function TerminalPanelBody({
@@ -30,7 +28,6 @@ export function TerminalPanelBody({
   root,
   variant = "desktop",
   onClose,
-  tabBarTarget,
 }: TerminalPanelBodyProps) {
   const t = useTranslations("dashboard.panels.terminal")
   const effectiveRoot = root?.trim() || "."
@@ -275,15 +272,7 @@ export function TerminalPanelBody({
     </div>
   )
 
-  const terminalTabs = variant === "tab" ? (
-    <div
-      data-terminal-tabs="true"
-      className="aa-term-tabs-top"
-      onKeyDown={handleTerminalTabKeyDown}
-    >
-      {terminalTabItems}
-    </div>
-  ) : (
+  const terminalTabs = (
     <ScrollArea
       className="aa-term-tabs-scroll"
       contentWide
@@ -352,19 +341,6 @@ export function TerminalPanelBody({
     )
   }
 
-  if (variant === "tab") {
-    return (
-      <>
-        {tabBarTarget ? createPortal(terminalTabs, tabBarTarget) : null}
-        <Card size="sm" className="aa-rt-pane aa-rt-pane-tab aa-term">
-          <CardContent className="aa-rt-content">
-            {terminalHost}
-          </CardContent>
-        </Card>
-      </>
-    )
-  }
-
   return (
     <Card size="sm" className="aa-rt-pane aa-term">
       <CardHeader className="aa-rt-hd">
@@ -392,6 +368,51 @@ export function TerminalPanelBody({
       </CardHeader>
       <CardContent className="aa-rt-content">
         {terminalHost}
+      </CardContent>
+    </Card>
+  )
+}
+
+type TerminalSessionPanelProps = {
+  token: string | null
+  connectorId: string | null
+  terminal: TerminalView | null
+  active: boolean
+  creationError: string | null
+}
+
+export function TerminalSessionPanel({
+  token,
+  connectorId,
+  terminal,
+  active,
+  creationError,
+}: TerminalSessionPanelProps) {
+  const t = useTranslations("dashboard.panels.terminal")
+  const [streamError, setStreamError] = React.useState<string | null>(null)
+  const error = creationError ?? streamError
+
+  return (
+    <Card size="sm" className="aa-rt-pane aa-rt-pane-tab aa-term">
+      <CardContent className="aa-rt-content">
+        <div className="aa-term-host">
+          {error ? <div className="aa-term-status text-destructive">{error}</div> : null}
+          {!token || !connectorId ? <div className="aa-term-status">{t("noConnector")}</div> : null}
+          {terminal && token && connectorId ? (
+            <div className={cn("aa-term-host-layer", active && "active")}>
+              <XtermHost
+                token={token}
+                connectorId={connectorId}
+                terminal={terminal}
+                active={active}
+                onError={setStreamError}
+              />
+            </div>
+          ) : null}
+          {!terminal && token && connectorId && !error ? (
+            <div className="aa-term-status">{t("connecting")}</div>
+          ) : null}
+        </div>
       </CardContent>
     </Card>
   )

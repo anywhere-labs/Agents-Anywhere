@@ -21,7 +21,7 @@ import {
 import { useTranslations } from "next-intl"
 
 import { FilesPanelBody } from "@/components/panels/files-panel"
-import { TerminalPanelBody } from "@/components/panels/terminal-panel"
+import { TerminalSessionPanel } from "@/components/panels/terminal-panel"
 import { DashboardSidebarToggle } from "@/components/dashboard-sidebar-toggle"
 import { useDashboardSidebarControls } from "@/components/dashboard-sidebar-controls"
 import { Button } from "@/components/ui/button"
@@ -39,38 +39,18 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty"
+import {
+  createSessionToolTab,
+  INITIAL_SESSION_TOOL_TABS_STATE,
+  sessionToolTabsReducer,
+  type SessionToolKind,
+  type SessionToolTabsAction,
+  type SessionToolTabsState,
+} from "@/components/session-tool-tabs"
+import { dashboardApi } from "@/features/dashboard/api"
 import { cn } from "@/lib/utils"
 
-export type SessionToolKind = "review" | "terminal" | "files"
-
-type SessionToolTab = {
-  id: SessionToolKind
-  kind: SessionToolKind
-  title: string | null
-}
-
-type SessionToolSidebarState = {
-  open: boolean
-  expanded: boolean
-  tabs: SessionToolTab[]
-  activeTabId: SessionToolKind | null
-}
-
-type SessionToolSidebarAction =
-  | { type: "toggle-sidebar" }
-  | { type: "collapse-sidebar" }
-  | { type: "toggle-expanded" }
-  | { type: "open-tool"; kind: SessionToolKind }
-  | { type: "activate-tab"; id: SessionToolKind }
-  | { type: "close-tab"; id: SessionToolKind }
-  | { type: "set-tab-title"; id: SessionToolKind; title: string | null }
-
-const INITIAL_STATE: SessionToolSidebarState = {
-  open: false,
-  expanded: false,
-  tabs: [],
-  activeTabId: null,
-}
+export type { SessionToolKind } from "@/components/session-tool-tabs"
 
 const TOOL_META: Record<
   SessionToolKind,
@@ -87,38 +67,119 @@ const SESSION_TOOL_SIDEBAR_MAX_WIDTH = 880
 const SESSION_TOOL_MAIN_MIN_WIDTH = 360
 const SESSION_TOOL_SIDEBAR_RESIZE_STEP = 16
 
-export type SessionToolSidebarController = SessionToolSidebarState & {
+export type SessionToolSidebarController = SessionToolTabsState & {
   toggleSidebar: () => void
   collapseSidebar: () => void
   toggleExpanded: () => void
   openTool: (kind: SessionToolKind) => void
-  activateTab: (id: SessionToolKind) => void
-  closeTab: (id: SessionToolKind) => void
-  setTabTitle: (id: SessionToolKind, title: string | null) => void
+  activateTab: (id: string) => void
+  closeTab: (id: string) => void
+  setTabTitle: (id: string, title: string | null) => void
 }
 
-export function useSessionToolSidebar(): SessionToolSidebarController {
-  const [state, dispatch] = React.useReducer(sessionToolSidebarReducer, INITIAL_STATE)
+type SessionToolSidebarOptions = {
+  token: string | null
+  connectorId: string | null
+  root: string
+  terminalLabel: string
+  onTerminalError?: (message: string) => void
+}
 
-  const toggleSidebar = React.useCallback(() => dispatch({ type: "toggle-sidebar" }), [])
-  const collapseSidebar = React.useCallback(() => dispatch({ type: "collapse-sidebar" }), [])
-  const toggleExpanded = React.useCallback(() => dispatch({ type: "toggle-expanded" }), [])
-  const openTool = React.useCallback(
-    (kind: SessionToolKind) => dispatch({ type: "open-tool", kind }),
-    [],
+export function useSessionToolSidebar({
+  token,
+  connectorId,
+  root,
+  terminalLabel,
+  onTerminalError,
+}: SessionToolSidebarOptions): SessionToolSidebarController {
+  const effectiveRoot = root.trim() || "."
+  const [state, reactDispatch] = React.useReducer(
+    sessionToolTabsReducer,
+    INITIAL_SESSION_TOOL_TABS_STATE,
   )
+  const stateRef = React.useRef(state)
+  const terminalTabIdRef = React.useRef(0)
+  const terminalLabelSequenceRef = React.useRef(0)
+  const terminalContextGenerationRef = React.useRef(0)
+  stateRef.current = state
+
+  const dispatch = React.useCallback((action: SessionToolTabsAction) => {
+    stateRef.current = sessionToolTabsReducer(stateRef.current, action)
+    reactDispatch(action)
+  }, [])
+
+  const toggleSidebar = React.useCallback(() => dispatch({ type: "toggle-sidebar" }), [dispatch])
+  const collapseSidebar = React.useCallback(() => dispatch({ type: "collapse-sidebar" }), [dispatch])
+  const toggleExpanded = React.useCallback(() => dispatch({ type: "toggle-expanded" }), [dispatch])
+  const openTool = React.useCallback((kind: SessionToolKind) => {
+    if (kind !== "terminal") {
+      dispatch({ type: "open-tool", tab: createSessionToolTab(kind, kind) })
+      return
+    }
+
+    terminalTabIdRef.current += 1
+    terminalLabelSequenceRef.current += 1
+    const tabId = `terminal:pending:${terminalTabIdRef.current}`
+    const terminalNumber = terminalLabelSequenceRef.current
+    const title = terminalNumber === 1 ? terminalLabel : `${terminalLabel} ${terminalNumber}`
+    const contextGeneration = terminalContextGenerationRef.current
+    dispatch({ type: "open-tool", tab: createSessionToolTab(tabId, "terminal", title) })
+
+    if (!token || !connectorId) return
+    void dashboardApi.connectorTerminalCreateV2(token, connectorId, effectiveRoot, {
+      cols: 80,
+      rows: 24,
+      label: title,
+    }).then((response) => {
+      const terminal = response.result
+      const tabStillExists = stateRef.current.tabs.some((tab) => tab.id === tabId)
+      if (contextGeneration !== terminalContextGenerationRef.current || !tabStillExists) {
+        void dashboardApi.connectorTerminalCloseV2(token, connectorId, terminal.terminalId).catch(() => undefined)
+        return
+      }
+      dispatch({ type: "resolve-terminal", id: tabId, terminal })
+    }).catch((error: unknown) => {
+      if (contextGeneration !== terminalContextGenerationRef.current) return
+      const message = error instanceof Error ? error.message : String(error)
+      dispatch({ type: "fail-terminal", id: tabId, error: message })
+    })
+  }, [connectorId, dispatch, effectiveRoot, terminalLabel, token])
   const activateTab = React.useCallback(
-    (id: SessionToolKind) => dispatch({ type: "activate-tab", id }),
-    [],
+    (id: string) => dispatch({ type: "activate-tab", id }),
+    [dispatch],
   )
-  const closeTab = React.useCallback(
-    (id: SessionToolKind) => dispatch({ type: "close-tab", id }),
-    [],
-  )
+  const closeTab = React.useCallback((id: string) => {
+    const tab = stateRef.current.tabs.find((item) => item.id === id)
+    dispatch({ type: "close-tab", id })
+    if (tab?.kind !== "terminal" || !tab.terminal || !token || !connectorId) return
+    void dashboardApi.connectorTerminalCloseV2(token, connectorId, tab.terminal.terminalId).catch((error: unknown) => {
+      onTerminalError?.(error instanceof Error ? error.message : String(error))
+    })
+  }, [connectorId, dispatch, onTerminalError, token])
   const setTabTitle = React.useCallback(
-    (id: SessionToolKind, title: string | null) => dispatch({ type: "set-tab-title", id, title }),
-    [],
+    (id: string, title: string | null) => dispatch({ type: "set-tab-title", id, title }),
+    [dispatch],
   )
+
+  React.useEffect(() => {
+    terminalContextGenerationRef.current += 1
+    const contextGeneration = terminalContextGenerationRef.current
+    terminalLabelSequenceRef.current = 0
+    dispatch({ type: "reset-terminals" })
+    if (!token || !connectorId) return
+
+    let cancelled = false
+    void dashboardApi.connectorTerminalListV2(token, connectorId).then((response) => {
+      if (cancelled || contextGeneration !== terminalContextGenerationRef.current) return
+      const terminals = response.result.terminals.filter((terminal) => terminal.root === effectiveRoot)
+      terminalLabelSequenceRef.current = Math.max(terminalLabelSequenceRef.current, terminals.length)
+      dispatch({ type: "restore-terminals", terminals })
+    }).catch(() => undefined)
+
+    return () => {
+      cancelled = true
+    }
+  }, [connectorId, dispatch, effectiveRoot, token])
 
   return React.useMemo(
     () => ({
@@ -205,10 +266,9 @@ export function SessionToolSidebar({
 }: SessionToolSidebarProps) {
   const t = useTranslations("dashboard.session.tools")
   const dashboardSidebarControls = useDashboardSidebarControls()
-  const tabButtonRefs = React.useRef(new Map<SessionToolKind, HTMLButtonElement>())
+  const tabButtonRefs = React.useRef(new Map<string, HTMLButtonElement>())
   const newTabButtonRef = React.useRef<HTMLButtonElement | null>(null)
   const launcherButtonRef = React.useRef<HTMLButtonElement | null>(null)
-  const [terminalTabBarTarget, setTerminalTabBarTarget] = React.useState<HTMLElement | null>(null)
   const resizeStateRef = React.useRef<{
     pointerId: number
     startClientX: number
@@ -252,12 +312,12 @@ export function SessionToolSidebar({
         transform: controller.open ? "translateX(0)" : "translateX(100%)",
       }
 
-  const focusTab = (id: SessionToolKind) => {
+  const focusTab = (id: string) => {
     controller.activateTab(id)
     window.requestAnimationFrame(() => tabButtonRefs.current.get(id)?.focus())
   }
 
-  const closeTabAndRestoreFocus = (id: SessionToolKind) => {
+  const closeTabAndRestoreFocus = (id: string) => {
     const closedIndex = controller.tabs.findIndex((tab) => tab.id === id)
     const remainingTabs = controller.tabs.filter((tab) => tab.id !== id)
     const nextTabId = controller.activeTabId === id
@@ -295,7 +355,6 @@ export function SessionToolSidebar({
   }
 
   const handleTabKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
-    if ((event.target as HTMLElement).closest("[data-terminal-tabs]")) return
     if ((event.target as HTMLElement).getAttribute("role") !== "tab") return
     if (!controller.activeTabId || controller.tabs.length === 0) return
 
@@ -396,17 +455,6 @@ export function SessionToolSidebar({
             const active = controller.activeTabId === tab.id
             const label = tab.title || t(meta.labelKey)
 
-            if (tab.kind === "terminal" && active) {
-              return (
-                <div
-                  key={tab.id}
-                  id={`session-tool-tab-${tab.id}`}
-                  ref={setTerminalTabBarTarget}
-                  className="aa-window-no-drag aa-term-tabs-shell min-w-0 flex-1 basis-0 overflow-hidden"
-                />
-              )
-            }
-
             return (
               <div
                 key={tab.id}
@@ -500,12 +548,13 @@ export function SessionToolSidebar({
               >
                 {tab.kind === "review" ? <ReviewPlaceholder /> : null}
                 {tab.kind === "terminal" ? (
-                  <TerminalPanelBody
+                  <TerminalSessionPanel
+                    key={tab.terminal?.terminalId ?? tab.id}
                     token={token}
                     connectorId={connectorId}
-                    root={root}
-                    variant="tab"
-                    tabBarTarget={active ? terminalTabBarTarget : null}
+                    terminal={tab.terminal}
+                    active={active}
+                    creationError={tab.error}
                   />
                 ) : null}
                 {tab.kind === "files" ? (
@@ -619,54 +668,4 @@ function ReviewPlaceholder() {
       </EmptyHeader>
     </Empty>
   )
-}
-
-function sessionToolSidebarReducer(
-  state: SessionToolSidebarState,
-  action: SessionToolSidebarAction,
-): SessionToolSidebarState {
-  if (action.type === "toggle-sidebar") {
-    return state.open
-      ? { ...state, open: false, expanded: false }
-      : { ...state, open: true }
-  }
-  if (action.type === "collapse-sidebar") {
-    return { ...state, open: false, expanded: false }
-  }
-  if (action.type === "toggle-expanded") {
-    return { ...state, expanded: !state.expanded }
-  }
-  if (action.type === "open-tool") {
-    const exists = state.tabs.some((tab) => tab.kind === action.kind)
-    return {
-      ...state,
-      open: true,
-      tabs: exists ? state.tabs : [...state.tabs, { id: action.kind, kind: action.kind, title: null }],
-      activeTabId: action.kind,
-    }
-  }
-  if (action.type === "activate-tab") {
-    if (!state.tabs.some((tab) => tab.id === action.id)) return state
-    return { ...state, activeTabId: action.id }
-  }
-  if (action.type === "close-tab") {
-    const closedIndex = state.tabs.findIndex((tab) => tab.id === action.id)
-    if (closedIndex === -1) return state
-    const tabs = state.tabs.filter((tab) => tab.id !== action.id)
-    const activeTabId = state.activeTabId === action.id
-      ? tabs[Math.min(closedIndex, tabs.length - 1)]?.id ?? null
-      : state.activeTabId
-    return { ...state, tabs, activeTabId }
-  }
-  if (action.type === "set-tab-title") {
-    const tab = state.tabs.find((item) => item.id === action.id)
-    if (!tab || tab.title === action.title) return state
-    return {
-      ...state,
-      tabs: state.tabs.map((item) => (
-        item.id === action.id ? { ...item, title: action.title } : item
-      )),
-    }
-  }
-  return state
 }

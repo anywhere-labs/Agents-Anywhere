@@ -54,9 +54,21 @@ export function SessionView() {
   } = useWorkspace()
   const session = activeSession
   const connector = connectors.find((item) => item.id === session?.connectorId)
+  const token = authSession?.accessToken ?? null
+  const connectorId = session?.connectorId ?? null
+  const root = session?.cwd ?? "."
+  const handleTerminalError = React.useCallback((message: string) => {
+    toast.error(message)
+  }, [])
   const viewRef = React.useRef<HTMLDivElement | null>(null)
   const viewBounds = useElementBounds(viewRef, Boolean(session))
-  const toolSidebar = useSessionToolSidebar()
+  const toolSidebar = useSessionToolSidebar({
+    token,
+    connectorId,
+    root,
+    terminalLabel: t("tools.terminal"),
+    onTerminalError: handleTerminalError,
+  })
   const previousToolSidebarExpanded = usePrevious(toolSidebar.expanded)
   const [toolSidebarResizing, setToolSidebarResizing] = React.useState(false)
   const [preferredToolSidebarWidth, setPreferredToolSidebarWidth] = React.useState<number | null>(() => {
@@ -65,9 +77,6 @@ export function SessionView() {
     return Number.isFinite(stored) && stored > 0 ? stored : null
   })
 
-  const token = authSession?.accessToken ?? null
-  const connectorId = session?.connectorId ?? null
-  const root = session?.cwd ?? "."
   const availablePanelIds = isMobile ? (["files"] satisfies PanelId[]) : PANEL_IDS
   const floatingPanels = availablePanelIds.filter((id) => panels[id] === "floating")
   const defaultToolSidebarWidth = sessionToolSidebarWidth(viewBounds.width)

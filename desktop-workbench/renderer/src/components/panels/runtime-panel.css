@@ -605,30 +605,6 @@
   margin-left: 8px;
 }
 
-.aa-term-tabs-shell {
-  --aa-rt-field-bg: var(--secondary);
-  --aa-rt-row-hover-bg: var(--accent);
-  display: flex;
-}
-
-.aa-term-tabs-top {
-  display: flex;
-  min-width: 0;
-  flex: 1;
-  overflow: hidden;
-}
-
-.aa-term-tabs-top .aa-term-tabs {
-  width: 100%;
-  flex: 1;
-  overflow: hidden;
-}
-
-.aa-term-tabs-top .aa-term-tab {
-  min-width: 0;
-  flex: 1 1 72px;
-}
-
 .aa-term-tabs {
   display: flex;
   min-width: 0;
