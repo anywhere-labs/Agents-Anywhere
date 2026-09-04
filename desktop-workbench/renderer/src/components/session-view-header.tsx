@@ -190,7 +190,7 @@ export function SessionViewHeader({
                   onClick={onToggleTools}
                   data-slot="session-tool-sidebar-toggle"
                   className={cn(
-                    "rounded-md text-muted-foreground hover:bg-muted hover:text-foreground",
+                    "rounded-md text-muted-foreground/70 hover:bg-muted hover:text-foreground",
                     toolsOpen && "bg-muted text-foreground",
                   )}
                 >

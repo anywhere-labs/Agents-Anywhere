@@ -14,7 +14,7 @@ import {
   FolderTree,
   Maximize2,
   Minimize2,
-  PanelRightClose,
+  PanelRight,
   Plus,
   SquareTerminal,
   X,
@@ -23,6 +23,8 @@ import { useTranslations } from "next-intl"
 
 import { FilesPanelBody } from "@/components/panels/files-panel"
 import { TerminalPanelBody } from "@/components/panels/terminal-panel"
+import { DashboardSidebarToggle } from "@/components/dashboard-sidebar-toggle"
+import { useDashboardSidebarControls } from "@/components/dashboard-sidebar-controls"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -166,10 +168,12 @@ export function SessionToolSidebar({
   onDetachTool,
 }: SessionToolSidebarProps) {
   const t = useTranslations("dashboard.session.tools")
+  const dashboardSidebarControls = useDashboardSidebarControls()
   const tabButtonRefs = React.useRef(new Map<SessionToolKind, HTMLButtonElement>())
   const newTabButtonRef = React.useRef<HTMLButtonElement | null>(null)
   const launcherButtonRef = React.useRef<HTMLButtonElement | null>(null)
   const width = sessionToolSidebarWidth(hostWidth)
+  const showDashboardSidebarToggle = controller.expanded && dashboardSidebarControls?.open === false
 
   React.useEffect(() => {
     if (!controller.open || width === 0) return
@@ -245,6 +249,15 @@ export function SessionToolSidebar({
       style={panelStyle}
     >
       <div className="aa-window-drag flex h-11 shrink-0 items-center gap-1 bg-background px-1.5">
+        {showDashboardSidebarToggle ? (
+          <>
+            <div className="w-[6.5rem] shrink-0" aria-hidden="true" />
+            <DashboardSidebarToggle
+              showOnDesktop
+              className="aa-window-no-drag rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+            />
+          </>
+        ) : null}
         <div
           role="tablist"
           aria-label={t("tabsLabel")}
@@ -326,9 +339,9 @@ export function SessionToolSidebar({
                   size="icon-sm"
                   aria-label={t("collapse")}
                   onClick={collapseAndRestoreFocus}
-                  className="rounded-lg"
+                  className="rounded-lg text-white hover:text-white"
                 >
-                  <PanelRightClose />
+                  <PanelRight />
                 </Button>
               </TooltipTrigger>
               <TooltipContent side="bottom" align="end" sideOffset={6}>
