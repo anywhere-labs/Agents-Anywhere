@@ -599,6 +599,8 @@ export type FsListResult = {
   path: string;
   entries: FsEntry[];
   truncated?: boolean;
+  targetPath?: string | null;
+  targetType?: "directory" | "file" | "missing" | "other" | string | null;
 };
 
 export type FsReadTextResult = {

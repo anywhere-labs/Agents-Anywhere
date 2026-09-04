@@ -4,6 +4,7 @@ import test from "node:test"
 import {
   findSessionFileTargetEntry,
   resolveSessionFilePath,
+  resolveSessionFileTargetMetadata,
   sameSessionFilePath,
   sessionFileListRepresentsDirectory,
   sessionFileParentPath,
@@ -102,4 +103,93 @@ test("path comparison tolerates unresolved home roots and Windows casing", () =>
   assert.equal(sameSessionFilePath("/Users/ada/project/main.ts", "~/project/main.ts"), true)
   assert.equal(sameSessionFilePath("C:\\Users\\ADA\\Main.ts", "c:/users/ada/main.ts", true), true)
   assert.equal(sameSessionFilePath("/repo/C:/Temp/a.txt", "/repo/C:/temp/a.txt"), false)
+})
+
+test("connector target metadata preserves canonical directory and file identities", () => {
+  assert.deepEqual(resolveSessionFileTargetMetadata({
+    path: "/private/tmp/project/src",
+    targetPath: "/private/tmp/project/src",
+    targetType: "directory",
+    entries: [{ name: "main.ts", path: "/private/tmp/project/src/main.ts", type: "file" }],
+  }), {
+    kind: "directory",
+    browsePath: "/private/tmp/project/src",
+    targetPath: "/private/tmp/project/src",
+    entry: null,
+  })
+
+  const mainEntry = { name: "main.ts", path: "/private/tmp/project/src/main.ts", type: "file", size: 42 }
+  assert.deepEqual(resolveSessionFileTargetMetadata({
+    path: "/private/tmp/project/src",
+    targetPath: "/private/tmp/project/src/main.ts",
+    targetType: "file",
+    entries: [mainEntry],
+  }), {
+    kind: "file",
+    browsePath: "/private/tmp/project/src",
+    targetPath: "/private/tmp/project/src/main.ts",
+    entry: mainEntry,
+  })
+})
+
+test("connector target metadata follows absolute and final symlink targets", () => {
+  const absoluteEntry = { name: "a.md", path: "/real/docs/a.md", type: "file" }
+  assert.deepEqual(resolveSessionFileTargetMetadata({
+    path: "/real/docs",
+    targetPath: "/real/docs/a.md",
+    targetType: "file",
+    entries: [absoluteEntry],
+  })?.entry, absoluteEntry)
+
+  assert.equal(resolveSessionFileTargetMetadata({
+    path: "/real/dir",
+    targetPath: "/real/dir",
+    targetType: "directory",
+    entries: [],
+  })?.kind, "directory")
+
+  const symlinkFileEntry = { name: "README.md", path: "/real/docs/README.md", type: "file" }
+  const symlinkFile = resolveSessionFileTargetMetadata({
+    path: "/real/docs",
+    targetPath: "/real/docs/README.md",
+    targetType: "file",
+    entries: [symlinkFileEntry],
+  })
+  assert.equal(symlinkFile?.targetPath, "/real/docs/README.md")
+  assert.deepEqual(symlinkFile?.entry, symlinkFileEntry)
+})
+
+test("missing connector targets never select a same-named ancestor entry", () => {
+  assert.deepEqual(resolveSessionFileTargetMetadata({
+    path: "/real/repo",
+    targetPath: "/real/repo/missing/deep/main.ts",
+    targetType: "missing",
+    entries: [{ name: "main.ts", path: "/real/repo/main.ts", type: "file" }],
+  }), {
+    kind: "unresolved",
+    browsePath: "/real/repo",
+    targetPath: "/real/repo/missing/deep/main.ts",
+    entry: null,
+  })
+
+  assert.equal(resolveSessionFileTargetMetadata({
+    path: "/real/repo",
+    targetPath: "/real/repo/missing-target",
+    targetType: "missing",
+    entries: [],
+  })?.kind, "unresolved")
+  assert.equal(resolveSessionFileTargetMetadata({
+    path: "/repo",
+    entries: [],
+  }), null)
+})
+
+test("connector target metadata matches canonical Windows entries case-insensitively", () => {
+  const entry = { name: "Main.ts", path: "C:\\Users\\Ada\\repo\\src\\Main.ts", type: "file" }
+  assert.deepEqual(resolveSessionFileTargetMetadata({
+    path: "C:\\Users\\Ada\\repo\\src",
+    targetPath: "c:\\users\\ada\\repo\\src\\main.ts",
+    targetType: "file",
+    entries: [entry],
+  }, true)?.entry, entry)
 })

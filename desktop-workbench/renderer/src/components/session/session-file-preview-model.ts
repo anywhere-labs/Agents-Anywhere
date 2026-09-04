@@ -1,5 +1,12 @@
 import type { SessionFilePreviewTarget } from "@/components/session/session-file-preview-context"
-import type { FsEntry } from "@/features/dashboard/types"
+import type { FsEntry, FsListResult } from "@/features/dashboard/types"
+
+export type SessionFileTargetMetadataResolution = {
+  kind: "directory" | "file" | "unresolved"
+  browsePath: string
+  targetPath: string
+  entry: FsEntry | null
+}
 
 export function sessionFileTreeAllowed(target: SessionFilePreviewTarget | null | undefined) {
   return target?.source !== "attachment"
@@ -26,6 +33,43 @@ export function sessionFileParentPath(path: string) {
 export function sessionFilePathNeedsCanonicalHome(path: string) {
   const normalized = path.trim().replaceAll("\\", "/")
   return normalized === "~" || normalized.startsWith("~/")
+}
+
+export function resolveSessionFileTargetMetadata(
+  result: FsListResult,
+  caseInsensitive = false,
+): SessionFileTargetMetadataResolution | null {
+  const targetPath = typeof result.targetPath === "string" ? result.targetPath.trim() : ""
+  if (!targetPath && result.targetType !== "directory") return null
+
+  if (result.targetType === "directory") {
+    return {
+      kind: "directory",
+      browsePath: result.path,
+      targetPath,
+      entry: null,
+    }
+  }
+
+  if (result.targetType === "file") {
+    return {
+      kind: "file",
+      browsePath: result.path,
+      targetPath,
+      entry: result.entries.find((entry) => sameSessionFilePath(entry.path, targetPath, caseInsensitive)) ?? null,
+    }
+  }
+
+  if (result.targetType === "missing" || result.targetType === "other") {
+    return {
+      kind: "unresolved",
+      browsePath: result.path,
+      targetPath,
+      entry: null,
+    }
+  }
+
+  return null
 }
 
 export function resolveSessionFilePath(

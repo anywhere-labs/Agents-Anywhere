@@ -116,14 +116,37 @@ class FileOps:
         root = workspace_root(params)
         raw_path = params.get("path")
         if sys.platform == "win32" and raw_path == "":
-            return {"path": "", "entries": self._windows_drive_entries(), "truncated": False}
-        path = root if raw_path is None else resolve_path(root, required_string(params, "path"))
-        path = nearest_existing_dir(path, fallback=root)
+            return {
+                "path": "",
+                "entries": self._windows_drive_entries(),
+                "truncated": False,
+                "targetPath": "",
+                "targetType": "directory",
+            }
+
+        target = root if raw_path is None else resolve_path(root, required_string(params, "path"))
+        if target.is_dir():
+            target_type = "directory"
+        elif target.is_file():
+            target_type = "file"
+        elif target.exists():
+            target_type = "other"
+        else:
+            target_type = "missing"
+        path = nearest_existing_dir(target, fallback=root)
+
+        children = sorted(path.iterdir(), key=lambda item: item.name)
+        visible_children = children[:MAX_DIR_ENTRIES]
+        if (
+            target_type == "file"
+            and target.parent == path
+            and target not in visible_children
+            and visible_children
+        ):
+            visible_children[-1] = target
 
         entries: list[dict[str, Any]] = []
-        for child in sorted(path.iterdir(), key=lambda item: item.name):
-            if len(entries) >= MAX_DIR_ENTRIES:
-                break
+        for child in visible_children:
             try:
                 stat = child.stat()
             except OSError:
@@ -140,5 +163,7 @@ class FileOps:
         return {
             "path": str(path),
             "entries": entries,
-            "truncated": len(entries) >= MAX_DIR_ENTRIES,
+            "truncated": len(children) > MAX_DIR_ENTRIES,
+            "targetPath": str(target),
+            "targetType": target_type,
         }

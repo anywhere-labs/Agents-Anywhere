@@ -55,6 +55,7 @@ import type { SessionFilePreviewTarget } from "@/components/session/session-file
 import {
   findSessionFileTargetEntry,
   resolveSessionFilePath,
+  resolveSessionFileTargetMetadata,
   sessionFileListRepresentsDirectory,
   sessionFileNameFromPath,
   sessionFileParentPath,
@@ -204,11 +205,49 @@ export function FilesPanelBody({
           return
         }
 
+        const targetResponse = await dashboardApi.connectorFsList(token, connectorId, {
+          root: effectiveRoot,
+          path: initialFile.path,
+        })
+        if (requestId !== loadRequestIdRef.current) return
+
+        const targetMetadata = resolveSessionFileTargetMetadata(
+          targetResponse.result,
+          isWindowsConnector,
+        )
+        if (targetMetadata) {
+          const browsePath = targetMetadata.browsePath || effectiveRoot
+          setPath(browsePath)
+          setCurrentPath(browsePath)
+          setEntries(targetResponse.result.entries)
+          setEntriesTruncated(Boolean(targetResponse.result.truncated))
+
+          if (targetMetadata.kind === "directory") {
+            setSelectedFile(null)
+            setPanelTitle(initialFile.name || sessionFileNameFromPath(browsePath))
+            return
+          }
+
+          const resolvedName = targetMetadata.kind === "file"
+            ? targetMetadata.entry?.name || sessionFileNameFromPath(targetMetadata.targetPath)
+            : initialFile.name || sessionFileNameFromPath(targetMetadata.targetPath)
+          setSelectedFile({
+            ...initialFile,
+            name: resolvedName,
+            path: targetMetadata.targetPath,
+          })
+          setPanelTitle(resolvedName)
+          return
+        }
+
+        // Older Connectors do not report the original target before fs.readDir
+        // falls back to a parent directory. Canonicalize the workspace/Home roots
+        // so common symlinked roots (for example macOS /tmp) still resolve safely.
         const needsCanonicalHome = sessionFilePathNeedsCanonicalHome(initialFile.path)
-        const [targetResponse, homeResponse] = await Promise.all([
+        const [rootResponse, homeResponse] = await Promise.all([
           dashboardApi.connectorFsList(token, connectorId, {
             root: effectiveRoot,
-            path: initialFile.path,
+            path: ".",
           }),
           needsCanonicalHome && initialFile.path.trim() !== "~"
             ? dashboardApi.connectorFsList(token, connectorId, {
@@ -219,13 +258,14 @@ export function FilesPanelBody({
         ])
         if (requestId !== loadRequestIdRef.current) return
 
-        const listedPath = targetResponse.result.path || effectiveRoot
+        const canonicalRoot = rootResponse.result.path || effectiveRoot
+        const listedPath = targetResponse.result.path || canonicalRoot
         const canonicalHome = needsCanonicalHome
-          ? homeResponse?.result.path || listedPath
+          ? homeResponse?.result.path || canonicalRoot
           : ""
         if (sessionFileListRepresentsDirectory(
           listedPath,
-          effectiveRoot,
+          canonicalRoot,
           initialFile.path,
           isWindowsConnector,
           canonicalHome,
@@ -246,7 +286,7 @@ export function FilesPanelBody({
 
         const targetEntry = findSessionFileTargetEntry(
           targetResponse.result.entries,
-          effectiveRoot,
+          canonicalRoot,
           initialFile.path,
           isWindowsConnector,
           canonicalHome,
@@ -264,7 +304,7 @@ export function FilesPanelBody({
         setSelectedFile({
           ...initialFile,
           path: resolveSessionFilePath(
-            effectiveRoot,
+            canonicalRoot,
             initialFile.path,
             isWindowsConnector,
             canonicalHome,
