@@ -98,7 +98,7 @@ export function DesktopShellHeader() {
       ) : null}
       <div
         data-slot="desktop-shell-header-actions"
-        className="aa-window-no-drag ml-auto flex h-full min-w-0 flex-1 items-center justify-end px-3"
+        className="ml-auto flex h-full min-w-0 flex-1 items-center justify-end px-3"
       >
         {canClearCache ? (
           <Button
@@ -109,7 +109,7 @@ export function DesktopShellHeader() {
             disabled={clearingCache}
             aria-label={t("clearCache")}
             title={t("clearCache")}
-            className="rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+            className="aa-window-no-drag rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
           >
             {clearingCache ? <Spinner data-icon="inline-start" /> : <Eraser data-icon="inline-start" />}
             {clearingCache ? t("clearingCache") : t("clearCache")}
