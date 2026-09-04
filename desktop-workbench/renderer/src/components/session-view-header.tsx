@@ -138,7 +138,7 @@ export function SessionViewHeader({
         {toolsExpanded ? null : createPortal(
           <div
             className={cn(
-              "flex w-full min-w-0 items-center gap-2 overflow-hidden",
+              "aa-window-drag flex w-full min-w-0 items-center gap-2 overflow-hidden",
               toolsMotionEnabled
                 ? "transition-[padding-right] duration-[220ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none"
                 : "transition-none",
@@ -164,12 +164,12 @@ export function SessionViewHeader({
                 }}
                 disabled={renaming}
                 aria-label={tSession("renameTitle")}
-                className="h-7 w-64 min-w-0 max-w-[28vw] rounded-lg text-sm"
+                className="aa-window-no-drag h-7 w-64 min-w-0 max-w-[28vw] rounded-lg text-sm"
               />
             ) : (
               <button
                 type="button"
-                className="min-w-0 max-w-64 truncate rounded-md px-1 text-left text-sm font-medium hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="aa-window-no-drag min-w-0 max-w-64 truncate rounded-md px-1 text-left text-sm font-medium hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 aria-label={tSession("renameTitle")}
                 title={session.title ?? tSession("renameTitle")}
                 onClick={() => {
@@ -358,7 +358,7 @@ function SessionMetaBadge({
         <button
           type="button"
           aria-label={`${t("overview")}: ${label}`}
-          className="max-w-[min(24rem,40vw)] min-w-0 shrink-0 rounded-2xl text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="aa-window-no-drag max-w-[min(24rem,40vw)] min-w-0 shrink-0 rounded-2xl text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           <Badge
             variant="secondary"

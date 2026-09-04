@@ -114,7 +114,7 @@ export function DesktopShellHeader({
       </div>
       <div
         data-slot="desktop-shell-header-session"
-        className="aa-window-no-drag ml-2 flex min-w-0 flex-1 items-center overflow-hidden"
+        className="ml-2 flex min-w-0 flex-1 items-center overflow-hidden"
       />
       {needsReconnect ? (
         <div className="aa-window-no-drag absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 items-center gap-2">

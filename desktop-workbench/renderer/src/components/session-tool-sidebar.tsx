@@ -374,7 +374,7 @@ export function SessionToolSidebar({
         <div
           role="tablist"
           aria-label={t("tabsLabel")}
-          className="aa-window-no-drag flex min-w-0 flex-1 items-center gap-1 overflow-hidden"
+          className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden"
           onKeyDown={handleTabKeyDown}
         >
           {controller.tabs.map((tab) => {
@@ -389,7 +389,7 @@ export function SessionToolSidebar({
                   key={tab.id}
                   id={`session-tool-tab-${tab.id}`}
                   ref={setTerminalTabBarTarget}
-                  className="aa-term-tabs-shell min-w-0 flex-1 basis-0 overflow-hidden"
+                  className="aa-window-no-drag aa-term-tabs-shell min-w-0 flex-1 basis-0 overflow-hidden"
                 />
               )
             }
@@ -398,7 +398,7 @@ export function SessionToolSidebar({
               <div
                 key={tab.id}
                 className={cn(
-                  "group flex min-w-0 max-w-48 flex-1 basis-0 items-center overflow-hidden rounded-xl transition-colors hover:bg-secondary focus-within:bg-secondary",
+                  "aa-window-no-drag group flex min-w-0 max-w-48 flex-1 basis-0 items-center overflow-hidden rounded-xl transition-colors hover:bg-secondary focus-within:bg-secondary",
                   active && "bg-secondary text-secondary-foreground",
                 )}
               >
