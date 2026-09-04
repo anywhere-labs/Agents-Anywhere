@@ -86,7 +86,38 @@ yarn renderer:typecheck
 ```
 
 `test:main` covers Desktop provisioning, account isolation, local disconnect,
-local-versus-remote reconnect behavior, and credential redaction in logs.
+local-versus-remote reconnect behavior, credential redaction, product-version
+compatibility, update decisions, platform-specific installers, and download
+safety.
+
+### Update-flow testing
+
+The Desktop update service checks backend health during startup, then schedules
+the ordinary release check for 60 seconds after the Electron process started.
+Only development builds accept these test overrides:
+
+```bash
+desktop_update_test_dir="$(mktemp -d)"
+WORKBENCH_PRODUCT_VERSION_OVERRIDE=0.1.7.1 \
+WORKBENCH_VERSION_CODE_OVERRIDE=5 \
+WORKBENCH_UPDATE_DELAY_MS=0 \
+WORKBENCH_UPDATE_STATE_PATH="$desktop_update_test_dir/state.json" \
+WORKBENCH_UPDATE_DOWNLOAD_DIR="$desktop_update_test_dir/downloads" \
+yarn dev
+```
+
+State and download overrides must be strict descendants of Electron's `temp`
+or `userData` directories; packaged builds ignore all five variables. This
+keeps forced-update and defer-flow testing separate from real user choices.
+
+macOS checks the `desktop-macos` release target and Windows checks
+`desktop-windows`; a missing target (`503`) falls back to the legacy `desktop`
+target. Publish a `.dmg` or `.exe` for the matching platform before raising the
+backend version, otherwise an older forced client can only keep retrying the
+release check. HTTPS installers may use a separate download host. An HTTP
+installer is accepted only in an unpackaged development build and must use the
+same hostname as an HTTP API origin (the port may differ), including after
+redirects. Packaged builds require HTTPS installer URLs.
 
 ## Packaging
 

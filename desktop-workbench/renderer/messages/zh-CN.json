@@ -286,6 +286,9 @@
     "account": {
       "menu": "账号菜单"
     },
+    "updates": {
+      "available": "有新版本可用"
+    },
     "empty": {
       "noDevices": "还没有配对设备",
       "noDevicesDescription": "Agents Anywhere 需要一个在线连接器，才能创建或恢复会话。",
@@ -1643,7 +1646,9 @@
         "confirmCreate": "创建发布",
         "platforms": {
           "android": "Android",
-          "desktop": "桌面端"
+          "desktop": "桌面端（兼容回退）",
+          "desktop-macos": "桌面端 · macOS",
+          "desktop-windows": "桌面端 · Windows"
         }
       }
     },
@@ -1702,6 +1707,36 @@
       "updateFailed": "无法更新设置。",
       "oauthUpdateFailed": "无法更新 OAuth 设置。"
     }
+  },
+  "desktopUpdate": {
+    "requiredTitle": "客户端版本过旧",
+    "installerOpenedTitle": "安装程序已打开",
+    "requiredDescription": "当前客户端版本低于后端服务版本。为确保功能兼容和稳定运行，请先更新客户端后再继续使用；继续使用旧版本可能导致功能异常或不可预期的错误。",
+    "installerOpenedDescription": "下载已完成，安装程序已为你打开。请按照系统提示完成安装，然后重新启动 Agents Anywhere。",
+    "availableTitle": "发现新版本",
+    "availableDescription": "Agents Anywhere {version} 已可下载。建议更新至最新版本，以获得更稳定的使用体验。",
+    "currentVersion": "当前版本",
+    "serverVersion": "后端版本",
+    "latestVersion": "最新版本",
+    "errorTitle": "暂时无法完成更新",
+    "errors": {
+      "requiredUnavailable": "后端要求更新，但暂未提供兼容的安装包。请稍后重试或联系管理员。",
+      "checkFailed": "无法获取更新信息，请检查网络连接后重试。",
+      "invalidDownload": "安装包地址或文件类型不符合当前系统的安全要求。",
+      "downloadFailed": "安装包下载未完成，请检查网络连接后重试。",
+      "openFailed": "安装包已下载，但无法自动打开。请重试。"
+    },
+    "openingInstaller": "下载完成，正在打开安装程序…",
+    "later": "暂不更新",
+    "close": "关闭",
+    "checking": "正在检测…",
+    "reopenInstaller": "重新打开安装程序",
+    "checkUpdate": "检测更新",
+    "retry": "重试",
+    "updateNow": "立即更新",
+    "downloading": "正在下载安装包",
+    "downloadedBytes": "已下载 {received}，共 {total}",
+    "downloadSizeUnknown": "正在接收安装包…"
   },
   "preview": {
     "home": "首页",

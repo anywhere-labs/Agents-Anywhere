@@ -3,6 +3,7 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { ThemeProvider } from "@/components/theme-provider";
 import { ToasterProvider } from "@/components/toaster-provider";
+import { DesktopUpdateProvider } from "@/features/desktop/desktop-update-context";
 import { I18nProvider } from "@/i18n/client-provider";
 
 const sans = Geist({
@@ -85,8 +86,10 @@ export default function RootLayout({
       <body className={`${sans.variable} ${mono.variable} ${serif.variable} antialiased`}>
         <I18nProvider>
           <ThemeProvider defaultTheme="dark">
-            {children}
-            <ToasterProvider />
+            <DesktopUpdateProvider>
+              {children}
+              <ToasterProvider />
+            </DesktopUpdateProvider>
           </ThemeProvider>
         </I18nProvider>
       </body>

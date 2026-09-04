@@ -887,6 +887,8 @@ function ReleasesTab() {
                     <SelectGroup>
                       <SelectItem value="android">{t("platforms.android")}</SelectItem>
                       <SelectItem value="desktop">{t("platforms.desktop")}</SelectItem>
+                      <SelectItem value="desktop-macos">{t("platforms.desktop-macos")}</SelectItem>
+                      <SelectItem value="desktop-windows">{t("platforms.desktop-windows")}</SelectItem>
                     </SelectGroup>
                   </SelectContent>
                 </Select>
