@@ -10,8 +10,8 @@ import * as React from "react"
 import { createPortal } from "react-dom"
 import type { LucideIcon } from "lucide-react"
 import {
-  FileSearch,
-  FolderTree,
+  File,
+  FileDiff,
   Maximize2,
   Minimize2,
   Plus,
@@ -74,9 +74,9 @@ const TOOL_META: Record<
   SessionToolKind,
   { icon: LucideIcon; labelKey: "review" | "terminal" | "files" }
 > = {
-  review: { icon: FileSearch, labelKey: "review" },
+  review: { icon: FileDiff, labelKey: "review" },
   terminal: { icon: SquareTerminal, labelKey: "terminal" },
-  files: { icon: FolderTree, labelKey: "files" },
+  files: { icon: File, labelKey: "files" },
 }
 
 const TOOL_KINDS: SessionToolKind[] = ["review", "terminal", "files"]
@@ -588,7 +588,7 @@ function ReviewPlaceholder() {
     <Empty className="h-full rounded-xl border-0">
       <EmptyHeader>
         <EmptyMedia variant="icon">
-          <FileSearch />
+          <FileDiff />
         </EmptyMedia>
         <EmptyTitle>{t("reviewPlaceholderTitle")}</EmptyTitle>
         <EmptyDescription>{t("reviewPlaceholderDescription")}</EmptyDescription>
