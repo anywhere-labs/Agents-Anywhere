@@ -12,7 +12,15 @@ import { useWorkspace } from "@/components/workspace-context"
 import { getDesktopWorkbenchBridge } from "@/features/desktop/bridge"
 import { useDesktopConnector } from "@/features/desktop/desktop-connector-context"
 
-export function DesktopShellHeader() {
+const HEADER_SIDEBAR_MIN_WIDTH = 224
+
+export function DesktopShellHeader({
+  sidebarWidth,
+  sidebarOpen,
+}: {
+  sidebarWidth: number
+  sidebarOpen: boolean
+}) {
   const t = useTranslations("desktopConnector")
   const tCommon = useTranslations("common")
   const { canGoBack, canGoForward, goBack, goForward } = useWorkspace()
@@ -25,6 +33,10 @@ export function DesktopShellHeader() {
     localConnectorId &&
     (state?.authFailed || state?.manualDisconnected),
   )
+  const headerSidebarWidth = Math.max(sidebarWidth, HEADER_SIDEBAR_MIN_WIDTH)
+  const shellControlClassName = sidebarOpen
+    ? "rounded-md text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+    : "rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
 
   React.useEffect(() => {
     if (process.env.NODE_ENV !== "development") return
@@ -44,38 +56,46 @@ export function DesktopShellHeader() {
   }, [t])
 
   return (
-    <header className="aa-window-drag relative flex h-11 shrink-0 items-center border-b border-border/80 bg-background text-foreground">
-      <div className="w-[6.5rem] shrink-0" aria-hidden="true" />
-      <div className="aa-window-no-drag flex min-w-0 items-center gap-2">
-        <DashboardSidebarToggle
-          showOnDesktop
-          className="rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
-        />
-        <div className="flex items-center gap-1">
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            aria-label={tCommon("back")}
-            title={tCommon("back")}
-            onClick={goBack}
-            disabled={!canGoBack}
-            className="rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
-          >
-            <ArrowLeft className="size-4" />
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            aria-label={tCommon("forward")}
-            title={tCommon("forward")}
-            onClick={goForward}
-            disabled={!canGoForward}
-            className="rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
-          >
-            <ArrowRight className="size-4" />
-          </Button>
+    <header className="aa-window-drag relative flex h-11 shrink-0 items-center bg-background text-foreground">
+      <div
+        className={sidebarOpen
+          ? "flex h-full shrink-0 items-center bg-sidebar text-sidebar-foreground transition-colors duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none"
+          : "flex h-full shrink-0 items-center bg-background text-foreground transition-colors duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none"
+        }
+        style={{ width: headerSidebarWidth }}
+      >
+        <div className="w-[6.5rem] shrink-0" aria-hidden="true" />
+        <div className="aa-window-no-drag flex min-w-0 items-center gap-2">
+          <DashboardSidebarToggle
+            showOnDesktop
+            className={shellControlClassName}
+          />
+          <div className="flex items-center gap-1">
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              aria-label={tCommon("back")}
+              title={tCommon("back")}
+              onClick={goBack}
+              disabled={!canGoBack}
+              className={shellControlClassName}
+            >
+              <ArrowLeft className="size-4" />
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              aria-label={tCommon("forward")}
+              title={tCommon("forward")}
+              onClick={goForward}
+              disabled={!canGoForward}
+              className={shellControlClassName}
+            >
+              <ArrowRight className="size-4" />
+            </Button>
+          </div>
         </div>
       </div>
       <div
@@ -124,6 +144,18 @@ export function DesktopShellHeader() {
           className="aa-window-no-drag flex shrink-0 items-center"
         />
       </div>
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute bottom-0 right-0 h-px bg-border/80"
+        style={{ left: sidebarOpen ? headerSidebarWidth : 0 }}
+      />
+      {!sidebarOpen ? (
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute top-1/2 h-5 w-px -translate-y-1/2 bg-border/60"
+          style={{ left: headerSidebarWidth }}
+        />
+      ) : null}
     </header>
   )
 }

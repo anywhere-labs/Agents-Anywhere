@@ -79,6 +79,7 @@ function DashboardShell() {
 function DesktopResizableShell() {
   const { open, setOpen } = useSidebar()
   const sidebarPanelRef = React.useRef<PanelImperativeHandle | null>(null)
+  const [sidebarResizeActive, setSidebarResizeActive] = React.useState(false)
   const [defaultLayout] = React.useState(() => {
     if (typeof window === "undefined") return DEFAULT_DESKTOP_LAYOUT
 
@@ -94,6 +95,9 @@ function DesktopResizableShell() {
       return DEFAULT_DESKTOP_LAYOUT
     }
   })
+  const [sidebarWidth, setSidebarWidth] = React.useState(
+    defaultLayout["dashboard-sidebar"] ?? DEFAULT_DESKTOP_LAYOUT["dashboard-sidebar"]
+  )
 
   React.useEffect(() => {
     const panel = sidebarPanelRef.current
@@ -137,11 +141,14 @@ function DesktopResizableShell() {
     () => ({ open, collapseSidebar, toggleSidebar }),
     [open, collapseSidebar, toggleSidebar]
   )
+  const panelMotionClassName = sidebarResizeActive
+    ? "[&>[data-panel]]:transition-none"
+    : "[&>[data-panel]]:transition-[flex-grow] [&>[data-panel]]:duration-[220ms] [&>[data-panel]]:ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:[&>[data-panel]]:transition-none"
 
   return (
     <DashboardSidebarControlsContext.Provider value={sidebarControls}>
       <div className="flex h-svh min-h-0 w-full flex-col overflow-hidden overscroll-none bg-background">
-        <DesktopShellHeader />
+        <DesktopShellHeader sidebarWidth={sidebarWidth} sidebarOpen={open} />
         <ResizablePanelGroup
           id="agents-anywhere-dashboard-sidebar"
           defaultLayout={defaultLayout}
@@ -151,7 +158,7 @@ function DesktopResizableShell() {
             }
           }}
           direction="horizontal"
-          className="min-h-0 flex-1 overflow-hidden overscroll-none bg-background"
+          className={`min-h-0 flex-1 overflow-hidden overscroll-none bg-background ${panelMotionClassName}`}
         >
           <ResizablePanel
             id="dashboard-sidebar"
@@ -162,7 +169,9 @@ function DesktopResizableShell() {
             minSize="14rem"
             maxSize="28rem"
             onResize={(size) => {
-              const nextOpen = size.inPixels > 1
+              setSidebarWidth(size.inPixels)
+              const isCollapsed = sidebarPanelRef.current?.isCollapsed() ?? size.inPixels <= 1
+              const nextOpen = !isCollapsed
               if (nextOpen !== open) {
                 setOpen(nextOpen, { persist: false })
               }
@@ -171,7 +180,21 @@ function DesktopResizableShell() {
           >
             <AppSidebar contained />
           </ResizablePanel>
-          <ResizableHandle className="bg-transparent transition-colors hover:bg-border/40 focus-visible:bg-border/60" />
+          <ResizableHandle
+            className="bg-transparent transition-colors hover:bg-border/40 focus-visible:bg-border/60"
+            onPointerDown={(event) => {
+              event.currentTarget.setPointerCapture(event.pointerId)
+              setSidebarResizeActive(true)
+            }}
+            onPointerUp={(event) => {
+              if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+                event.currentTarget.releasePointerCapture(event.pointerId)
+              }
+              setSidebarResizeActive(false)
+            }}
+            onPointerCancel={() => setSidebarResizeActive(false)}
+            onLostPointerCapture={() => setSidebarResizeActive(false)}
+          />
           <ResizablePanel id="dashboard-main" minSize={0} className="min-w-0">
             <SidebarInset className="h-full min-h-0 overflow-hidden overscroll-none bg-background">
               <WorkspaceMain />
