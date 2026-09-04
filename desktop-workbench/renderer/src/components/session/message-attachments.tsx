@@ -27,6 +27,10 @@ import {
 } from "@/components/ui/attachment"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
+import {
+  type OpenSessionFilePreview,
+  useSessionFilePreviewOpener,
+} from "@/components/session/session-file-preview-context"
 import type { ReconcileAttachment } from "@/features/dashboard/attachments"
 import { dashboardApi } from "@/features/dashboard/api"
 import type { SessionView } from "@/features/dashboard/types"
@@ -57,6 +61,7 @@ export function MessageAttachments({
   attachmentUrl,
 }: MessageAttachmentsProps) {
   const t = useTranslations("dashboard.new")
+  const openFilePreview = useSessionFilePreviewOpener()
   const [previewImages, setPreviewImages] = useState<Record<string, PreviewImage>>({})
   const [activePreviewId, setActivePreviewId] = useState<string | null>(null)
 
@@ -102,6 +107,7 @@ export function MessageAttachments({
             session={session}
             attachment={attachment}
             attachmentUrl={attachmentUrl}
+            openFilePreview={openFilePreview}
             onImageReady={registerPreviewImage}
             onPreview={openPreview}
           />
@@ -121,6 +127,7 @@ function MessageAttachmentItem({
   session,
   attachment,
   attachmentUrl,
+  openFilePreview,
   onImageReady,
   onPreview,
 }: {
@@ -128,6 +135,7 @@ function MessageAttachmentItem({
   session: SessionView
   attachment: ReconcileAttachment
   attachmentUrl?: (fileId: string) => string
+  openFilePreview: OpenSessionFilePreview | null
   onImageReady: (image: PreviewImage) => void
   onPreview: (image: PreviewImage) => void
 }) {
@@ -152,6 +160,19 @@ function MessageAttachmentItem({
   const resolvedMediaType = deviceFile.mediaType || mediaType
   const resolvedSize = deviceFile.size ?? attachment.size
   const isImage = isImageAttachment(attachment)
+  const previewTarget = attachment.path || openUrl
+    ? {
+        name: resolvedName,
+        path: attachment.path || resolvedName,
+        root: attachment.root || session.cwd || ".",
+        ...(!attachment.path && openUrl ? { sourceUrl: openUrl } : {}),
+        ...(resolvedMediaType ? { mediaType: resolvedMediaType } : {}),
+        ...(typeof resolvedSize === "number" ? { size: resolvedSize } : {}),
+      }
+    : null
+  const openAttachmentPreview = openFilePreview && previewTarget
+    ? () => openFilePreview(previewTarget)
+    : null
 
   if (shouldReadFromDevice && deviceFile.status === "loading") {
     return (
@@ -185,7 +206,7 @@ function MessageAttachmentItem({
           src={openUrl}
           previewUrl={attachment.previewUrl}
           onImageReady={onImageReady}
-          onPreview={onPreview}
+          onPreview={openAttachmentPreview ? () => openAttachmentPreview() : onPreview}
         />
       )
     }
@@ -207,7 +228,7 @@ function MessageAttachmentItem({
         src={openUrl}
         previewUrl={attachment.previewUrl}
         onImageReady={onImageReady}
-        onPreview={onPreview}
+        onPreview={openAttachmentPreview ? () => openAttachmentPreview() : onPreview}
       />
     )
   }
@@ -218,6 +239,7 @@ function MessageAttachmentItem({
       name={resolvedName}
       mediaType={resolvedMediaType}
       openUrl={openUrl}
+      onOpen={openAttachmentPreview ?? undefined}
       size={resolvedSize}
     />
   )
@@ -662,6 +684,7 @@ function FileAttachment({
   name,
   mediaType,
   openUrl,
+  onOpen,
   size,
   state = "done",
   statusText,
@@ -670,6 +693,7 @@ function FileAttachment({
   name: string
   mediaType: string
   openUrl?: string
+  onOpen?: () => void
   size?: number
   state?: "uploading" | "error" | "done"
   statusText?: string
@@ -688,7 +712,16 @@ function FileAttachment({
           {[details, pending ? "Pending" : null, statusText].filter(Boolean).join(" · ")}
         </AttachmentDescription>
       </AttachmentContent>
-      {openUrl ? (
+      {onOpen ? (
+        <>
+          <AttachmentActions>
+            <AttachmentAction aria-label={`Open ${name}`} onClick={onOpen}>
+              <ExternalLink />
+            </AttachmentAction>
+          </AttachmentActions>
+          <AttachmentTrigger aria-label={`Open ${name}`} onClick={onOpen} />
+        </>
+      ) : openUrl ? (
         <>
           <AttachmentActions>
             <AttachmentAction asChild aria-label={`Open ${name}`}>

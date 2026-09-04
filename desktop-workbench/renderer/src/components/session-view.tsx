@@ -12,6 +12,10 @@ import {
 } from "@/components/session-tool-sidebar"
 import { SessionViewHeader } from "@/components/session-view-header"
 import {
+  SessionFilePreviewProvider,
+  type SessionFilePreviewTarget,
+} from "@/components/session/session-file-preview-context"
+import {
   FloatingRuntimePanels,
   MobileRuntimePanelDrawers,
   PopupBlockedDialog,
@@ -96,6 +100,13 @@ export function SessionView() {
     if (kind !== "review") setPanelMode(kind, "closed")
     toolSidebar.openTool(kind)
   }, [setPanelMode, toolSidebar.openTool])
+  const handleOpenFilePreview = React.useCallback(
+    (target: SessionFilePreviewTarget) => {
+      setPanelMode("files", "closed")
+      toolSidebar.openFilePreview(target)
+    },
+    [setPanelMode, toolSidebar.openFilePreview],
+  )
 
   React.useEffect(() => {
     setMemorySnapshot(null)
@@ -213,14 +224,16 @@ export function SessionView() {
 
           <div className="min-h-0 flex-1 overflow-hidden">
             {token ? (
-              <SessionDetail
-                token={token}
-                sessionId={activeSessionId ?? session.id}
-                fallbackSession={activeSessionFallback}
-                onSessionUpdated={upsertSession}
-                onMemorySnapshotUpdated={setMemorySnapshot}
-                onStreamProgress={reportSessionStreamProgress}
-              />
+              <SessionFilePreviewProvider onOpenFilePreview={handleOpenFilePreview}>
+                <SessionDetail
+                  token={token}
+                  sessionId={activeSessionId ?? session.id}
+                  fallbackSession={activeSessionFallback}
+                  onSessionUpdated={upsertSession}
+                  onMemorySnapshotUpdated={setMemorySnapshot}
+                  onStreamProgress={reportSessionStreamProgress}
+                />
+              </SessionFilePreviewProvider>
             ) : (
               <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
                 {t("signInRequired")}

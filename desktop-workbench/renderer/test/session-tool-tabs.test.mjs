@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import test from "node:test"
 
 import {
+  createSessionFilePreviewTab,
   createSessionToolTab,
   INITIAL_SESSION_TOOL_TABS_STATE,
   sessionToolTabsReducer,
@@ -27,7 +28,7 @@ function terminal(terminalId, label) {
   }
 }
 
-test("review and files stay singletons while terminal tabs can have multiple instances", () => {
+test("review and generic files stay singletons while terminal tabs can have multiple instances", () => {
   let state = INITIAL_SESSION_TOOL_TABS_STATE
   state = sessionToolTabsReducer(state, {
     type: "open-tool",
@@ -52,6 +53,40 @@ test("review and files stay singletons while terminal tabs can have multiple ins
     "terminal:pending:2",
   ])
   assert.equal(state.activeTabId, "terminal:pending:2")
+})
+
+test("each direct file preview opens a new tab without replacing the generic files tab", () => {
+  const firstFile = {
+    name: "first.ts",
+    path: "src/first.ts",
+    root: "/repo",
+  }
+  const secondFile = {
+    name: "second.pdf",
+    path: "second.pdf",
+    root: "/repo",
+    sourceUrl: "/api/v2/sessions/session-1/attachments/file_2/open",
+    mediaType: "application/pdf",
+  }
+
+  let state = sessionToolTabsReducer(INITIAL_SESSION_TOOL_TABS_STATE, {
+    type: "open-tool",
+    tab: createSessionToolTab("files", "files"),
+  })
+  state = sessionToolTabsReducer(state, {
+    type: "open-tool",
+    tab: createSessionFilePreviewTab("files:preview:1", firstFile),
+  })
+  state = sessionToolTabsReducer(state, {
+    type: "open-tool",
+    tab: createSessionFilePreviewTab("files:preview:2", secondFile),
+  })
+
+  assert.deepEqual(state.tabs.map((tab) => tab.id), ["files", "files:preview:1", "files:preview:2"])
+  assert.deepEqual(state.tabs.map((tab) => tab.title), [null, "first.ts", "second.pdf"])
+  assert.deepEqual(state.tabs.map((tab) => tab.filePreview), [null, firstFile, secondFile])
+  assert.equal(state.activeTabId, "files:preview:2")
+  assert.equal(state.open, true)
 })
 
 test("restored backend terminals become first-level tabs", () => {

@@ -22,6 +22,7 @@ import { firstTextOf, messageText, recordsOf, textOf } from "@/components/sessio
 import { extractAttachments, stripInjectedAttachmentMentions } from "@/features/dashboard/attachments"
 import { MessageAttachments } from "@/components/session/message-attachments"
 import { CollapsibleUserMessage } from "@/components/session/collapsible-user-message"
+import { useSessionFilePreviewOpener } from "@/components/session/session-file-preview-context"
 
 const MarkdownText = dynamic(() => import("../markdown-text").then((mod) => ({ default: mod.MarkdownText })), { ssr: false })
 const INLINE_REASONING_SUMMARY_MAX_CHARS = 80
@@ -353,6 +354,7 @@ function ArtifactCard({
   item: TimelineItem
   readOnly: boolean
 }) {
+  const openFilePreview = useSessionFilePreviewOpener()
   const kind = textOf(item.content.kind) || "artifact"
   if (kind === "diff") return null
   const path = firstTextOf(item.content.path, item.content.filePath, item.content.file, item.content.uri)
@@ -371,7 +373,7 @@ function ArtifactCard({
           if (!path || readOnly) return
           event.preventDefault()
           event.stopPropagation()
-          openSessionFilePreview(token, session, path)
+          openSessionFilePreview(token, session, path, openFilePreview)
         }}
       >
         {title}

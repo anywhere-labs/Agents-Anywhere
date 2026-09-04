@@ -7,6 +7,10 @@ import { Copy, Check, ExternalLink, GitBranch } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area"
+import {
+  type OpenSessionFilePreview,
+  useSessionFilePreviewOpener,
+} from "@/components/session/session-file-preview-context"
 import { cn } from "@/lib/utils"
 import { highlightCode } from "@/lib/code-highlight"
 import { openNativeFilePreviewWindow } from "@/lib/file-preview-window"
@@ -38,6 +42,8 @@ function MarkdownBody({
   session?: SessionView
   inverted?: boolean
 }) {
+  const openFilePreview = useSessionFilePreviewOpener()
+
   return (
     <div
       className={cn(
@@ -61,9 +67,11 @@ function MarkdownBody({
                     role="button"
                     tabIndex={0}
                     className="inline-flex max-w-full items-baseline gap-0.5 rounded-none bg-transparent p-0 align-baseline text-[1em] text-inherit underline underline-offset-2 hover:text-foreground"
-                    onClick={() => openSessionFilePreview(token, session, previewPath)}
+                    onClick={() => openSessionFilePreview(token, session, previewPath, openFilePreview)}
                     onKeyDown={(event) => {
-                      if (event.key === "Enter" || event.key === " ") openSessionFilePreview(token, session, previewPath)
+                      if (event.key === "Enter" || event.key === " ") {
+                        openSessionFilePreview(token, session, previewPath, openFilePreview)
+                      }
                     }}
                   >
                     <span className="min-w-0 truncate">{children}</span>
@@ -102,9 +110,11 @@ function MarkdownBody({
                 role="button"
                 tabIndex={0}
                 className="inline-flex max-w-full items-baseline gap-0.5 align-baseline text-left underline underline-offset-2 hover:text-foreground"
-                onClick={() => openSessionFilePreview(token, session, path)}
+                onClick={() => openSessionFilePreview(token, session, path, openFilePreview)}
                 onKeyDown={(event) => {
-                  if (event.key === "Enter" || event.key === " ") openSessionFilePreview(token, session, path)
+                  if (event.key === "Enter" || event.key === " ") {
+                    openSessionFilePreview(token, session, path, openFilePreview)
+                  }
                 }}
               >
                 <span className="min-w-0 truncate">{children}</span>
@@ -564,12 +574,25 @@ function isMarkdownFilePath(href: string): boolean {
   return true
 }
 
-export function openSessionFilePreview(token: string, session: SessionView, path: string) {
+export function openSessionFilePreview(
+  token: string,
+  session: SessionView,
+  path: string,
+  openFilePreview?: OpenSessionFilePreview | null,
+) {
+  const file = { name: fileNameFromPath(path), path }
+  if (openFilePreview) {
+    openFilePreview({
+      ...file,
+      root: session.cwd || ".",
+    })
+    return
+  }
   openNativeFilePreviewWindow({
     token,
     connectorId: session.connectorId,
     root: session.cwd || ".",
-    file: { name: fileNameFromPath(path), path },
+    file,
   })
 }
 

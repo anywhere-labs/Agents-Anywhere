@@ -83,6 +83,9 @@ type FilePreviewSurfaceProps = {
   initialPath: string
   initialName?: string
   previewToken?: string
+  sourceUrl?: string
+  sourceMediaType?: string
+  sourceSize?: number
   mode?: "window" | "embedded"
   onOpenExternal?: () => void
 }
@@ -149,6 +152,9 @@ export function FilePreviewSurface({
   initialPath,
   initialName = "",
   previewToken = "",
+  sourceUrl = "",
+  sourceMediaType = "",
+  sourceSize,
   mode = "embedded",
   onOpenExternal,
 }: FilePreviewSurfaceProps) {
@@ -173,7 +179,9 @@ export function FilePreviewSurface({
   const containerRef = React.useRef<HTMLElement | null>(null)
 
   const isScopedPreview = Boolean(previewToken)
-  const canLoad = isScopedPreview || Boolean(token && connectorId && root && path)
+  const isSourcePreview = Boolean(sourceUrl)
+  const readOnlyPreview = isScopedPreview || isSourcePreview
+  const canLoad = readOnlyPreview || Boolean(token && connectorId && root && path)
 
   const revokeObjectUrl = React.useCallback(() => {
     if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current)
@@ -195,6 +203,47 @@ export function FilePreviewSurface({
       return
     }
     try {
+      if (sourceUrl) {
+        const blob = await dashboardApi.downloadBlob(token, sourceUrl)
+        const mediaType = resolvedPreviewMediaType(sourceMediaType, blob.type, name)
+        const size = sourceSize ?? blob.size
+        if (canTextPreview(mediaType, name)) {
+          const truncated = blob.size > TEXT_MAX_BYTES
+          const content = await blob.slice(0, TEXT_MAX_BYTES).text()
+          setState({
+            kind: "text",
+            file: {
+              path,
+              name,
+              size,
+              sha256: `source:${blob.size}:${mediaType}`,
+              encoding: "utf-8",
+              content,
+              truncated,
+              binary: false,
+              serverTime: new Date().toISOString(),
+            },
+          })
+          return
+        }
+        const binary: BinaryFileInfo = {
+          path,
+          name,
+          size,
+          sha256: `source:${blob.size}:${mediaType}`,
+          mediaType,
+          downloadUrl: sourceUrl,
+        }
+        let objectUrl: string | null = null
+        if (canBrowserPreview(mediaType, name)) {
+          objectUrl = URL.createObjectURL(new Blob([blob], {
+            type: mediaType || blob.type || "application/octet-stream",
+          }))
+          objectUrlRef.current = objectUrl
+        }
+        setState({ kind: "binary", file: binary, objectUrl })
+        return
+      }
       let scopedSession = previewSession
       if (previewToken && !scopedSession) {
         scopedSession = await dashboardApi.createConnectorFsPreviewSession(previewToken)
@@ -235,7 +284,7 @@ export function FilePreviewSurface({
       }
       setState({ kind: "binary", file: binary, objectUrl })
     } catch (err) {
-      if (!previewToken && token && connectorId && path) {
+      if (!sourceUrl && !previewToken && token && connectorId && path) {
         try {
           const response = await dashboardApi.connectorFsList(token, connectorId, { root, path })
           if (samePath(response.result.path, path)) {
@@ -248,7 +297,21 @@ export function FilePreviewSurface({
       }
       setState({ kind: "error", message: err instanceof Error ? err.message : String(err) })
     }
-  }, [canLoad, connectorId, name, path, previewSession, previewToken, revokeObjectUrl, root, t, token])
+  }, [
+    canLoad,
+    connectorId,
+    name,
+    path,
+    previewSession,
+    previewToken,
+    revokeObjectUrl,
+    root,
+    sourceMediaType,
+    sourceSize,
+    sourceUrl,
+    t,
+    token,
+  ])
 
   React.useEffect(() => {
     void loadFile()
@@ -278,8 +341,16 @@ export function FilePreviewSurface({
 
   const handleDownload = React.useCallback(async () => {
     setDownloadError(null)
-    if (!token && !isScopedPreview) return
+    if (!token && !readOnlyPreview) return
     try {
+      if (sourceUrl) {
+        const blob = await dashboardApi.downloadBlob(token, sourceUrl)
+        const sourceName = state.kind === "text" || state.kind === "binary"
+          ? state.file.name
+          : name
+        downloadBlob(blob, sourceName || name)
+        return
+      }
       if (state.kind === "text") {
         const content = editorRef.current?.getValue() ?? state.file.content
         downloadBlob(new Blob([content], { type: "text/plain;charset=utf-8" }), state.file.name || name)
@@ -294,10 +365,10 @@ export function FilePreviewSurface({
     } catch (err) {
       setDownloadError(err instanceof Error ? err.message : String(err))
     }
-  }, [isScopedPreview, name, state, token])
+  }, [isScopedPreview, name, readOnlyPreview, sourceUrl, state, token])
 
   const handleSave = React.useCallback(async () => {
-    if (isScopedPreview || !token || state.kind !== "text" || !editorRef.current || !editMode) return false
+    if (readOnlyPreview || !token || state.kind !== "text" || !editorRef.current || !editMode) return false
     const content = editorRef.current.getValue()
     setSaving(true)
     setSaveError(null)
@@ -332,11 +403,11 @@ export function FilePreviewSurface({
     } finally {
       setSaving(false)
     }
-  }, [connectorId, editMode, isScopedPreview, path, root, state, t, token])
+  }, [connectorId, editMode, path, readOnlyPreview, root, state, t, token])
 
   const handleEmbeddedEditModeChange = React.useCallback(
     (checked: boolean) => {
-      if (isScopedPreview || state.kind !== "text" || saving) return
+      if (readOnlyPreview || state.kind !== "text" || saving) return
       if (!checked && dirty) {
         setSaveError(t("saveBeforeLeavingEdit"))
         return
@@ -345,7 +416,7 @@ export function FilePreviewSurface({
       setEditMode(checked)
       if (checked) window.requestAnimationFrame(() => editorRef.current?.focus())
     },
-    [dirty, isScopedPreview, saving, state.kind, t],
+    [dirty, readOnlyPreview, saving, state.kind, t],
   )
 
   React.useEffect(() => {
@@ -422,7 +493,7 @@ export function FilePreviewSurface({
               variant={editMode ? "secondary" : "ghost"}
               size="sm"
               type="button"
-              disabled={state.kind !== "text" || isScopedPreview}
+              disabled={state.kind !== "text" || readOnlyPreview}
               onClick={() => {
                 if (editMode) {
                   if (dirty) {
@@ -476,7 +547,7 @@ export function FilePreviewSurface({
                 className="aa-file-preview-labelled-action"
                 size="sm"
                 type="button"
-                disabled={isScopedPreview || state.kind !== "text" || !dirty || saving || !editMode}
+                disabled={readOnlyPreview || state.kind !== "text" || !dirty || saving || !editMode}
                 onClick={() => void handleSave()}
               >
                 {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
@@ -502,7 +573,7 @@ export function FilePreviewSurface({
                 className={cn(
                   "ml-auto h-8 shrink-0 cursor-pointer gap-2 rounded-md border border-input bg-background px-2.5 text-xs shadow-xs transition-colors hover:bg-accent hover:text-accent-foreground",
                   editMode && "border-primary/30 bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary",
-                  (state.kind !== "text" || isScopedPreview || saving) && "pointer-events-none cursor-not-allowed opacity-50",
+                  (state.kind !== "text" || readOnlyPreview || saving) && "pointer-events-none cursor-not-allowed opacity-50",
                 )}
               >
                 <span>{t("edit")}</span>
@@ -510,7 +581,7 @@ export function FilePreviewSurface({
                   id={embeddedEditModeId}
                   size="sm"
                   checked={editMode}
-                  disabled={state.kind !== "text" || isScopedPreview || saving}
+                  disabled={state.kind !== "text" || readOnlyPreview || saving}
                   aria-label={t("edit")}
                   onCheckedChange={handleEmbeddedEditModeChange}
                 />
@@ -521,7 +592,7 @@ export function FilePreviewSurface({
                 type="button"
                 aria-label={t("save")}
                 title={t("save")}
-                disabled={isScopedPreview || state.kind !== "text" || !dirty || saving || !editMode}
+                disabled={readOnlyPreview || state.kind !== "text" || !dirty || saving || !editMode}
                 onClick={() => void handleSave()}
               >
                 {saving ? t("saving") : t("save")}
@@ -565,7 +636,7 @@ export function FilePreviewSurface({
             key={`${state.file.path}:${state.file.sha256}:${editMode}`}
             fileName={state.file.name || name}
             content={state.file.content}
-            editable={editMode && !isScopedPreview}
+            editable={editMode && !readOnlyPreview}
             onReady={handleEditorReady}
             onChange={handleEditorChange}
             className="h-full min-h-0 overflow-hidden"
@@ -768,6 +839,38 @@ function downloadBlob(blob: Blob, filename: string) {
 function canBrowserPreview(mediaType: string, name: string) {
   const kind = previewKind(mediaType, name)
   return kind === "image" || kind === "video" || kind === "audio" || kind === "pdf"
+}
+
+function canTextPreview(mediaType: string, name: string) {
+  const type = mediaType.toLowerCase().split(";", 1)[0]?.trim() ?? ""
+  if (type.startsWith("text/")) return true
+  if (
+    type === "application/json"
+    || type === "application/ld+json"
+    || type === "application/javascript"
+    || type === "application/xml"
+    || type === "application/x-httpd-php"
+    || type === "application/x-sh"
+    || type === "application/x-yaml"
+  ) return true
+
+  const lowerName = name.toLowerCase()
+  if (
+    [".env", ".gitignore", ".gitattributes", ".npmrc", ".yarnrc", ".zshrc", ".bashrc"]
+      .includes(lowerName)
+  ) {
+    return true
+  }
+  return /\.(?:c|cc|conf|cpp|cs|css|csv|go|h|hpp|html?|ini|java|js|jsx|json|jsonl|kt|kts|log|lua|md|mdx|mjs|mts|php|properties|py|rb|rs|scss|sh|sql|svelte|swift|toml|ts|tsx|txt|vue|xml|ya?ml|zsh)$/
+    .test(lowerName)
+}
+
+function resolvedPreviewMediaType(declaredType: string, responseType: string, name: string) {
+  const declared = declaredType.trim()
+  if (declared && declared !== "application/octet-stream") return declared
+  const response = responseType.trim()
+  if (response && response !== "application/octet-stream") return response
+  return mediaTypeForFile(name)
 }
 
 function previewKind(mediaType: string, name: string): "image" | "video" | "audio" | "pdf" | "binary" {

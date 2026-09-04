@@ -8,6 +8,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { Marker, MarkerContent, MarkerIcon } from "@/components/ui/marker"
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area"
 import { InteractionCard } from "@/components/session/session-approval-card"
+import { useSessionFilePreviewOpener } from "@/components/session/session-file-preview-context"
 import { MonacoCodeView, monacoLanguageForFile } from "@/components/monaco-code-view"
 import { openSessionFilePreview } from "@/components/markdown-text"
 import { cn } from "@/lib/utils"
@@ -415,6 +416,7 @@ function FileChangeRow({
   readOnly: boolean
 }) {
   const tSession = useTranslations("dashboard.session")
+  const openFilePreview = useSessionFilePreviewOpener()
   const path = firstTextOf(change.path, change.filePath, change.file, change.uri) ?? "unknown path"
   const displayPath = displayPathForSession(path, session.cwd) ?? path
   const diff = textOf(change.diff)
@@ -472,7 +474,7 @@ function FileChangeRow({
           className="code-mono min-w-0 truncate rounded-sm text-left text-xs underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
           disabled={!canPreview}
           onClick={() => {
-            if (canPreview) openSessionFilePreview(token, session, path)
+            if (canPreview) openSessionFilePreview(token, session, path, openFilePreview)
           }}
         >
           {displayPath}

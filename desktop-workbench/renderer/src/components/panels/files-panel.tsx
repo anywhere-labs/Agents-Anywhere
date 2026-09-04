@@ -51,12 +51,13 @@ import {
 } from "@/components/ui/resizable"
 import { FilePathBreadcrumb, FilePreviewSurface } from "@/components/file-preview-page"
 import { LazyFileTree } from "@/components/panels/lazy-file-tree"
+import type { SessionFilePreviewTarget } from "@/components/session/session-file-preview-context"
 import { useWorkspace } from "@/components/workspace-context"
 import { dashboardApi } from "@/features/dashboard/api"
 import type { FsEntry } from "@/features/dashboard/types"
 import { copyText } from "@/lib/clipboard"
 import { downloadBlob } from "@/lib/download"
-import { openNativeFilePreviewWindow, type PickedFile } from "@/lib/file-preview-window"
+import { openNativeFilePreviewWindow } from "@/lib/file-preview-window"
 import { cn } from "@/lib/utils"
 import { useTranslations } from "next-intl"
 
@@ -69,6 +70,7 @@ type FilesPanelBodyProps = {
   onClose?: () => void
   onPopOut?: () => void
   onPopupBlocked?: () => void
+  initialFile?: SessionFilePreviewTarget | null
   onSelectedFileNameChange?: (name: string | null) => void
 }
 
@@ -81,6 +83,7 @@ export function FilesPanelBody({
   onClose,
   onPopOut,
   onPopupBlocked,
+  initialFile,
   onSelectedFileNameChange,
 }: FilesPanelBodyProps) {
   const t = useTranslations("dashboard.panels.files")
@@ -93,7 +96,7 @@ export function FilesPanelBody({
   const [loading, setLoading] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
   const [contextEntry, setContextEntry] = React.useState<FsEntry | null>(null)
-  const [selectedFile, setSelectedFile] = React.useState<PickedFile | null>(null)
+  const [selectedFile, setSelectedFile] = React.useState<SessionFilePreviewTarget | null>(initialFile ?? null)
   const [treeOpen, setTreeOpen] = React.useState(true)
   const [treeResizeActive, setTreeResizeActive] = React.useState(false)
   const loadRequestIdRef = React.useRef(0)
@@ -154,9 +157,9 @@ export function FilesPanelBody({
     setEntries([])
     setEntriesTruncated(false)
     setError(null)
-    setSelectedFile(null)
+    setSelectedFile(initialFile ?? null)
     if (canLoad) void loadDir(initialPath)
-  }, [canLoad, connectorId, effectiveRoot, isWindowsConnector, loadDir])
+  }, [canLoad, connectorId, effectiveRoot, initialFile, isWindowsConnector, loadDir])
 
   const parentPath = React.useMemo(() => parentOf(currentPath || path), [currentPath, path])
   const canGoParent = parentPath !== "" || isWindowsDriveRoot(currentPath || path)
@@ -191,7 +194,11 @@ export function FilesPanelBody({
       return
     }
     if (entry.type === "file" || entry.type === "symlink") {
-      const file = { name: entry.name, path: entry.path }
+      const file: SessionFilePreviewTarget = {
+        name: entry.name,
+        path: entry.path,
+        root: effectiveRoot,
+      }
       if (variant === "tab") {
         setSelectedFile(file)
         return
@@ -444,14 +451,23 @@ export function FilesPanelBody({
               <section className="aa-fs-preview" aria-label={t("preview")}>
                 {selectedFile ? (
                   <FilePreviewSurface
-                    key={`${connectorId}:${effectiveRoot}:${selectedFile.path}`}
+                    key={`${connectorId}:${effectiveRoot}:${selectedFile.path}:${selectedFile.sourceUrl ?? ""}`}
                     token={token ?? null}
                     connectorId={connectorId ?? ""}
                     root={effectiveRoot}
                     initialPath={selectedFile.path}
                     initialName={selectedFile.name}
+                    sourceUrl={selectedFile.sourceUrl}
+                    sourceMediaType={selectedFile.mediaType}
+                    sourceSize={selectedFile.size}
                     mode="embedded"
                     onOpenExternal={() => {
+                      if (selectedFile.sourceUrl) {
+                        const child = window.open(selectedFile.sourceUrl, "_blank")
+                        if (!child) onPopupBlocked?.()
+                        else child.focus()
+                        return
+                      }
                       openNativeFilePreviewWindow({
                         token,
                         connectorId,

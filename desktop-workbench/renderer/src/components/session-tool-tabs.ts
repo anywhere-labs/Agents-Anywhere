@@ -1,4 +1,5 @@
 import type { TerminalView } from "@/features/dashboard/types"
+import type { SessionFilePreviewTarget } from "@/components/session/session-file-preview-context"
 
 export type SessionToolKind = "review" | "terminal" | "files"
 
@@ -7,6 +8,7 @@ export type SessionToolTab = {
   kind: SessionToolKind
   title: string | null
   terminal: TerminalView | null
+  filePreview: SessionFilePreviewTarget | null
   error: string | null
 }
 
@@ -42,7 +44,21 @@ export function createSessionToolTab(
   kind: SessionToolKind,
   title: string | null = null,
 ): SessionToolTab {
-  return { id, kind, title, terminal: null, error: null }
+  return { id, kind, title, terminal: null, filePreview: null, error: null }
+}
+
+export function createSessionFilePreviewTab(
+  id: string,
+  filePreview: SessionFilePreviewTarget,
+): SessionToolTab {
+  return {
+    id,
+    kind: "files",
+    title: filePreview.name,
+    terminal: null,
+    filePreview,
+    error: null,
+  }
 }
 
 export function restoredTerminalTab(terminal: TerminalView): SessionToolTab {
@@ -51,6 +67,7 @@ export function restoredTerminalTab(terminal: TerminalView): SessionToolTab {
     kind: "terminal",
     title: terminal.label,
     terminal,
+    filePreview: null,
     error: null,
   }
 }
@@ -75,8 +92,13 @@ export function sessionToolTabsReducer(
     return { ...state, expanded: !state.expanded }
   }
   if (action.type === "open-tool") {
-    if (action.tab.kind !== "terminal") {
-      const existing = state.tabs.find((tab) => tab.kind === action.tab.kind)
+    const singleton = action.tab.kind === "review"
+      || (action.tab.kind === "files" && !action.tab.filePreview)
+    if (singleton) {
+      const existing = state.tabs.find((tab) => (
+        tab.kind === action.tab.kind
+        && (tab.kind !== "files" || !tab.filePreview)
+      ))
       if (existing) return { ...state, open: true, activeTabId: existing.id }
     }
     return {

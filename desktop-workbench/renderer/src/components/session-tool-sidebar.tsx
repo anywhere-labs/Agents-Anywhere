@@ -40,6 +40,7 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty"
 import {
+  createSessionFilePreviewTab,
   createSessionToolTab,
   INITIAL_SESSION_TOOL_TABS_STATE,
   sessionToolTabsReducer,
@@ -47,6 +48,7 @@ import {
   type SessionToolTabsAction,
   type SessionToolTabsState,
 } from "@/components/session-tool-tabs"
+import type { SessionFilePreviewTarget } from "@/components/session/session-file-preview-context"
 import { dashboardApi } from "@/features/dashboard/api"
 import { cn } from "@/lib/utils"
 
@@ -72,6 +74,7 @@ export type SessionToolSidebarController = SessionToolTabsState & {
   collapseSidebar: () => void
   toggleExpanded: () => void
   openTool: (kind: SessionToolKind) => void
+  openFilePreview: (target: SessionFilePreviewTarget) => void
   activateTab: (id: string) => void
   closeTab: (id: string) => void
   setTabTitle: (id: string, title: string | null) => void
@@ -99,6 +102,7 @@ export function useSessionToolSidebar({
   )
   const stateRef = React.useRef(state)
   const terminalTabIdRef = React.useRef(0)
+  const filePreviewTabIdRef = React.useRef(0)
   const terminalLabelSequenceRef = React.useRef(0)
   const terminalContextGenerationRef = React.useRef(0)
   stateRef.current = state
@@ -144,6 +148,11 @@ export function useSessionToolSidebar({
       dispatch({ type: "fail-terminal", id: tabId, error: message })
     })
   }, [connectorId, dispatch, effectiveRoot, terminalLabel, token])
+  const openFilePreview = React.useCallback((target: SessionFilePreviewTarget) => {
+    filePreviewTabIdRef.current += 1
+    const tabId = `files:preview:${filePreviewTabIdRef.current}`
+    dispatch({ type: "open-tool", tab: createSessionFilePreviewTab(tabId, target) })
+  }, [dispatch])
   const activateTab = React.useCallback(
     (id: string) => dispatch({ type: "activate-tab", id }),
     [dispatch],
@@ -188,6 +197,7 @@ export function useSessionToolSidebar({
       collapseSidebar,
       toggleExpanded,
       openTool,
+      openFilePreview,
       activateTab,
       closeTab,
       setTabTitle,
@@ -196,6 +206,7 @@ export function useSessionToolSidebar({
       activateTab,
       closeTab,
       collapseSidebar,
+      openFilePreview,
       openTool,
       setTabTitle,
       state,
@@ -278,11 +289,6 @@ export function SessionToolSidebar({
   const restoreDocumentPointerStylesRef = React.useRef<(() => void) | null>(null)
   const resizeBounds = sessionToolSidebarResizeBounds(hostWidth)
   const showDashboardSidebarToggle = controller.expanded && dashboardSidebarControls?.open === false
-  const setFilesTabTitle = React.useCallback(
-    (title: string | null) => controller.setTabTitle("files", title),
-    [controller.setTabTitle],
-  )
-
   const restoreDocumentPointerStyles = React.useCallback(() => {
     restoreDocumentPointerStylesRef.current?.()
     restoreDocumentPointerStylesRef.current = null
@@ -558,13 +564,14 @@ export function SessionToolSidebar({
                   />
                 ) : null}
                 {tab.kind === "files" ? (
-                  <FilesPanelBody
+                  <SessionFilesToolPanel
+                    tabId={tab.id}
+                    filePreview={tab.filePreview}
                     token={token}
                     connectorId={connectorId}
                     connectorDeviceOs={connectorDeviceOs}
                     root={root}
-                    variant="tab"
-                    onSelectedFileNameChange={setFilesTabTitle}
+                    onTitleChange={controller.setTabTitle}
                   />
                 ) : null}
               </section>
@@ -574,6 +581,41 @@ export function SessionToolSidebar({
       </div>
     </aside>,
     document.body,
+  )
+}
+
+function SessionFilesToolPanel({
+  tabId,
+  filePreview,
+  token,
+  connectorId,
+  connectorDeviceOs,
+  root,
+  onTitleChange,
+}: {
+  tabId: string
+  filePreview: SessionFilePreviewTarget | null
+  token: string | null
+  connectorId: string | null
+  connectorDeviceOs?: string | null
+  root: string
+  onTitleChange: (id: string, title: string | null) => void
+}) {
+  const handleTitleChange = React.useCallback(
+    (title: string | null) => onTitleChange(tabId, title),
+    [onTitleChange, tabId],
+  )
+
+  return (
+    <FilesPanelBody
+      token={token}
+      connectorId={connectorId}
+      connectorDeviceOs={connectorDeviceOs}
+      root={filePreview?.root ?? root}
+      variant="tab"
+      initialFile={filePreview}
+      onSelectedFileNameChange={handleTitleChange}
+    />
   )
 }
 
