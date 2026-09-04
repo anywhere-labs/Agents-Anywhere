@@ -168,6 +168,7 @@
   min-height: 48px;
   flex-shrink: 0;
   align-items: center;
+  justify-content: flex-end;
   gap: 4px;
   border-bottom: 1px solid var(--border);
   background: var(--sidebar);
@@ -254,6 +255,161 @@
 
 .aa-fs-browser-inner {
   padding: 7px;
+}
+
+.aa-file-tree {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  padding: 7px;
+}
+
+.aa-file-tree-row {
+  display: grid;
+  width: 100%;
+  height: 36px;
+  min-width: 0;
+  max-width: 100%;
+  grid-template-columns: 20px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  border: 1px solid transparent;
+  border-radius: calc(var(--radius-xl) - 2px);
+  background: transparent;
+  color: var(--muted-foreground);
+  cursor: pointer;
+  font: inherit;
+  padding: 0 9px 0 calc(7px + var(--aa-tree-indent, 0px));
+  text-align: left;
+}
+
+.aa-file-tree-row:hover,
+.aa-file-tree-row.active {
+  background: var(--aa-rt-row-hover-bg);
+  color: var(--accent-foreground);
+}
+
+.aa-file-tree-row:focus-visible {
+  border-color: color-mix(in oklab, var(--ring) 82%, transparent);
+  outline: none;
+}
+
+.aa-file-tree-row[data-disabled="true"] {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.aa-file-tree-leading {
+  display: flex;
+  width: 20px;
+  min-width: 0;
+  align-items: center;
+  justify-content: center;
+}
+
+.aa-file-tree-chevron {
+  width: 18px;
+  height: 18px;
+  stroke-width: 2.25;
+  transition: transform 140ms cubic-bezier(0.16, 1, 0.3, 1), color 140ms ease;
+}
+
+.aa-file-tree-chevron.expanded {
+  transform: rotate(90deg);
+}
+
+.aa-file-tree-spinner {
+  width: 15px;
+  height: 15px;
+  animation: aa-file-tree-spin 700ms linear infinite;
+}
+
+.aa-file-type-icon {
+  display: block;
+  width: 18px;
+  height: 18px;
+  flex: none;
+}
+
+.aa-file-tree-name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--foreground);
+  font-size: 14px;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.aa-file-tree-group {
+  position: relative;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.aa-file-tree-group::before {
+  position: absolute;
+  top: 0;
+  bottom: 5px;
+  left: var(--aa-tree-guide-offset, 17px);
+  width: 1px;
+  background: color-mix(in oklab, var(--border) 62%, transparent);
+  content: "";
+  pointer-events: none;
+}
+
+.aa-file-tree-status {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  min-height: 28px;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  background: transparent;
+  color: var(--muted-foreground);
+  font: inherit;
+  font-size: 12px;
+  padding: 4px 9px 4px calc(35px + var(--aa-tree-indent, 0px));
+  text-align: left;
+}
+
+.aa-file-tree-status span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.aa-file-tree-retry {
+  cursor: pointer;
+}
+
+.aa-file-tree-retry:hover {
+  color: var(--foreground);
+}
+
+.aa-file-tree-retry svg {
+  width: 13px;
+  height: 13px;
+  flex: none;
+}
+
+@keyframes aa-file-tree-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .aa-file-tree-chevron {
+    transition: none;
+  }
+
+  .aa-file-tree-spinner {
+    animation-duration: 1.5s;
+  }
 }
 
 .aa-fs-row {

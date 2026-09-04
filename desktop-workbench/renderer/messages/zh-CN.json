@@ -680,6 +680,7 @@
         "openPath": "打开路径",
         "noConnector": "这个会话没有在线连接器。",
         "loading": "加载中...",
+        "retry": "重试",
         "empty": "（空）",
         "parent": "上级目录",
         "preview": "预览",

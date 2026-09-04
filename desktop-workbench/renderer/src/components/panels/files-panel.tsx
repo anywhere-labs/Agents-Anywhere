@@ -31,6 +31,7 @@ import {
 import {
   ContextMenu,
   ContextMenuContent,
+  ContextMenuGroup,
   ContextMenuItem,
   ContextMenuSeparator,
   ContextMenuTrigger,
@@ -38,6 +39,7 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Separator } from "@/components/ui/separator"
 import { FilePreviewSurface } from "@/components/file-preview-page"
+import { LazyFileTree } from "@/components/panels/lazy-file-tree"
 import { useWorkspace } from "@/components/workspace-context"
 import { dashboardApi } from "@/features/dashboard/api"
 import type { FsEntry } from "@/features/dashboard/types"
@@ -74,11 +76,13 @@ export function FilesPanelBody({
   const [path, setPath] = React.useState(".")
   const [currentPath, setCurrentPath] = React.useState(".")
   const [entries, setEntries] = React.useState<FsEntry[]>([])
+  const [entriesTruncated, setEntriesTruncated] = React.useState(false)
   const [loading, setLoading] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
   const [contextEntry, setContextEntry] = React.useState<FsEntry | null>(null)
   const [selectedFile, setSelectedFile] = React.useState<PickedFile | null>(null)
   const [treeOpen, setTreeOpen] = React.useState(true)
+  const loadRequestIdRef = React.useRef(0)
 
   const canLoad = Boolean(token && connectorId)
   const isWindowsConnector = connectorDeviceOs === "windows"
@@ -86,6 +90,7 @@ export function FilesPanelBody({
   const loadDir = React.useCallback(
     async (nextPath: string) => {
       if (!token || !connectorId) return
+      const requestId = ++loadRequestIdRef.current
       const trimmedPath = nextPath.trim()
       const target = isWindowsConnector ? trimmedPath : trimmedPath || "/"
       setLoading(true)
@@ -95,24 +100,29 @@ export function FilesPanelBody({
           root: effectiveRoot,
           path: target,
         })
+        if (requestId !== loadRequestIdRef.current) return
         const resolvedPath = response.result.path || target
         setEntries(response.result.entries)
+        setEntriesTruncated(Boolean(response.result.truncated))
         setCurrentPath(resolvedPath)
         setPath(resolvedPath)
       } catch (err) {
+        if (requestId !== loadRequestIdRef.current) return
         setError(err instanceof Error ? err.message : String(err))
       } finally {
-        setLoading(false)
+        if (requestId === loadRequestIdRef.current) setLoading(false)
       }
     },
     [connectorId, effectiveRoot, isWindowsConnector, token],
   )
 
   React.useEffect(() => {
+    loadRequestIdRef.current += 1
     const initialPath = isWindowsConnector ? "" : effectiveRoot
     setPath(initialPath)
     setCurrentPath(initialPath)
     setEntries([])
+    setEntriesTruncated(false)
     setError(null)
     setSelectedFile(null)
     if (canLoad) void loadDir(initialPath)
@@ -132,6 +142,18 @@ export function FilesPanelBody({
   const entriesByPath = React.useMemo(() => new Map(sortedEntries.map((entry) => [entry.path, entry])), [sortedEntries])
   const contextPath = contextEntry?.path ?? currentPath
   const contextIsFile = contextEntry ? isDownloadableEntry(contextEntry) : false
+
+  const loadTreeDirectory = React.useCallback(
+    async (directoryPath: string) => {
+      if (!token || !connectorId) throw new Error(t("noConnector"))
+      const response = await dashboardApi.connectorFsList(token, connectorId, {
+        root: effectiveRoot,
+        path: directoryPath,
+      })
+      return response.result
+    },
+    [connectorId, effectiveRoot, t, token],
+  )
 
   const openEntry = (entry: FsEntry) => {
     if (entry.type === "directory") {
@@ -190,6 +212,28 @@ export function FilesPanelBody({
     setContextEntry(entryPath ? entriesByPath.get(entryPath) ?? null : null)
   }
 
+  const renderContextMenu = () => (
+    <ContextMenuContent className="w-52">
+      <ContextMenuGroup>
+        <ContextMenuItem onSelect={() => void copyPath()}>
+          <Copy />
+          {t("copyPath")}
+        </ContextMenuItem>
+        <ContextMenuItem onSelect={addToComposer}>
+          <MessageSquarePlus />
+          {t("addToComposer")}
+        </ContextMenuItem>
+      </ContextMenuGroup>
+      <ContextMenuSeparator />
+      <ContextMenuGroup>
+        <ContextMenuItem onSelect={() => void downloadEntry()} disabled={!contextIsFile || !canLoad}>
+          <Download />
+          {t("download")}
+        </ContextMenuItem>
+      </ContextMenuGroup>
+    </ContextMenuContent>
+  )
+
   const fileBrowser = (
     <ContextMenu>
       <ContextMenuTrigger asChild>
@@ -227,21 +271,40 @@ export function FilesPanelBody({
           </ScrollArea>
         </div>
       </ContextMenuTrigger>
-      <ContextMenuContent className="w-52">
-        <ContextMenuItem onSelect={() => void copyPath()}>
-          <Copy className="size-4" />
-          {t("copyPath")}
-        </ContextMenuItem>
-        <ContextMenuItem onSelect={addToComposer}>
-          <MessageSquarePlus className="size-4" />
-          {t("addToComposer")}
-        </ContextMenuItem>
-        <ContextMenuSeparator />
-        <ContextMenuItem onSelect={() => void downloadEntry()} disabled={!contextIsFile || !canLoad}>
-          <Download className="size-4" />
-          {t("download")}
-        </ContextMenuItem>
-      </ContextMenuContent>
+      {renderContextMenu()}
+    </ContextMenu>
+  )
+
+  const fileTreeBrowser = (
+    <ContextMenu>
+      <ContextMenuTrigger asChild>
+        <div className="flex min-h-0 flex-1 flex-col">
+          <ScrollArea className="aa-fs-browser">
+            <LazyFileTree
+              identity={`${connectorId ?? ""}:${effectiveRoot}:${connectorDeviceOs ?? ""}`}
+              rootPath={currentPath || effectiveRoot}
+              entries={sortedEntries}
+              rootLoading={loading}
+              rootError={error}
+              rootTruncated={entriesTruncated}
+              canLoad={canLoad}
+              caseInsensitivePaths={isWindowsConnector}
+              selectedPath={selectedFile?.path}
+              labels={{
+                empty: t("empty"),
+                loading: t("loading"),
+                noConnector: t("noConnector"),
+                retry: t("retry"),
+                truncated: t("truncated"),
+              }}
+              loadDirectory={loadTreeDirectory}
+              onOpenFile={openEntry}
+              onContextEntryChange={setContextEntry}
+            />
+          </ScrollArea>
+        </div>
+      </ContextMenuTrigger>
+      {renderContextMenu()}
     </ContextMenu>
   )
 
@@ -355,33 +418,6 @@ export function FilesPanelBody({
 
             <aside className={cn("aa-fs-tree", !treeOpen && "collapsed")} aria-label={t("fileTree")}>
               <div className="aa-fs-tree-toolbar">
-                {treeOpen ? (
-                  <>
-                    <div className="aa-fs-path-field">
-                      <input
-                        value={path}
-                        onChange={(event) => setPath(event.target.value)}
-                        onKeyDown={(event) => {
-                          if (event.key === "Enter") void loadDir(path)
-                        }}
-                        aria-label={t("directoryPath")}
-                        disabled={!canLoad}
-                      />
-                    </div>
-                    <Button
-                      className="aa-rt-iconbtn"
-                      variant="ghost"
-                      size="icon-sm"
-                      type="button"
-                      title={t("openPath")}
-                      aria-label={t("openPath")}
-                      onClick={() => void loadDir(path)}
-                      disabled={loading || (!isWindowsConnector && !path.trim()) || !canLoad}
-                    >
-                      <ChevronRight className="size-3.5" />
-                    </Button>
-                  </>
-                ) : null}
                 <Button
                   className="aa-rt-iconbtn shrink-0"
                   variant="ghost"
@@ -392,10 +428,10 @@ export function FilesPanelBody({
                   aria-expanded={treeOpen}
                   onClick={() => setTreeOpen((open) => !open)}
                 >
-                  {treeOpen ? <PanelRightClose className="size-4" /> : <PanelRightOpen className="size-4" />}
+                  {treeOpen ? <PanelRightClose /> : <PanelRightOpen />}
                 </Button>
               </div>
-              {treeOpen ? fileBrowser : null}
+              {treeOpen ? fileTreeBrowser : null}
             </aside>
           </div>
         </CardContent>

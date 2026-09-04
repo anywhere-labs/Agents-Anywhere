@@ -680,6 +680,7 @@
         "openPath": "Open path",
         "noConnector": "No online connector for this session.",
         "loading": "Loading...",
+        "retry": "Retry",
         "empty": "(empty)",
         "parent": "parent",
         "preview": "Preview",
