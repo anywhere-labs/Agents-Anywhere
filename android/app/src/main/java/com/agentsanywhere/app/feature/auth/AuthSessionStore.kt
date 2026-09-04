@@ -1,9 +1,14 @@
 package com.agentsanywhere.app.feature.auth
 
 import android.content.Context
+import android.content.SharedPreferences
 import com.agentsanywhere.app.api.AuthResponse
 import com.agentsanywhere.app.api.MobileLoginExchangeResponse
 import com.agentsanywhere.app.api.normalizeServerOrigin
+import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
 
 class AuthSessionStore(context: Context) : AuthSessionReader {
     private val preferences = context.applicationContext.getSharedPreferences(
@@ -15,6 +20,15 @@ class AuthSessionStore(context: Context) : AuthSessionReader {
         val stored = preferences.getString(KEY_SERVER_URL, "").orEmpty()
         return normalizeServerOrigin(stored).orEmpty()
     }
+
+    fun observeServerUrl(): Flow<String> = callbackFlow {
+        val listener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+            if (key == KEY_SERVER_URL) trySend(readServerUrl())
+        }
+        preferences.registerOnSharedPreferenceChangeListener(listener)
+        trySend(readServerUrl())
+        awaitClose { preferences.unregisterOnSharedPreferenceChangeListener(listener) }
+    }.distinctUntilChanged()
 
     override fun readAccessToken(): String {
         return preferences.getString(KEY_ACCESS_TOKEN, "").orEmpty()

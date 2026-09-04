@@ -64,6 +64,8 @@ fun AppUpdatePromptDialog(
                     when {
                         state.downloading && release != null -> R.string.update_downloading_title
                         state.preparingInstall && release != null -> R.string.update_preparing_install
+                        state.installing && release != null -> R.string.update_installing_title
+                        state.installFailed && release != null -> R.string.update_install_failed_title
                         forced && release == null -> R.string.update_force_title
                         else -> R.string.update_available_title
                     },
@@ -88,6 +90,14 @@ fun AppUpdatePromptDialog(
                     color = colors.ink,
                     trackColor = colors.subtle,
                 )
+            } else if (state.installing && release != null) {
+                Text(
+                    text = stringResource(R.string.update_installing_message),
+                    color = colors.muted,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Medium,
+                    lineHeight = 20.sp,
+                )
             } else if (forced && release == null) {
                 Text(
                     text = stringResource(R.string.update_force_message),
@@ -96,7 +106,15 @@ fun AppUpdatePromptDialog(
                     fontWeight = FontWeight.Medium,
                     lineHeight = 20.sp,
                 )
-                if (state.checkFailed) {
+                if (state.requiredUpdateUnavailable) {
+                    Text(
+                        text = stringResource(R.string.update_force_unavailable),
+                        color = colors.errorText,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
+                        lineHeight = 18.sp,
+                    )
+                } else if (state.checkFailed) {
                     Text(
                         text = stringResource(R.string.update_force_check_failed),
                         color = colors.errorText,
@@ -123,6 +141,15 @@ fun AppUpdatePromptDialog(
                     lineHeight = 18.sp,
                 )
             }
+            if (state.installFailed) {
+                Text(
+                    text = stringResource(R.string.update_install_failed_message),
+                    color = colors.errorText,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Medium,
+                    lineHeight = 18.sp,
+                )
+            }
             if (state.downloading) {
                 if (!forced) {
                     UpdateDialogButton(
@@ -141,6 +168,14 @@ fun AppUpdatePromptDialog(
                     modifier = Modifier.fillMaxWidth(),
                     onClick = {},
                 )
+            } else if (state.installing) {
+                UpdateDialogButton(
+                    label = stringResource(R.string.update_waiting_install),
+                    primary = true,
+                    enabled = false,
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick = {},
+                )
             } else if (forced && release == null) {
                 UpdateDialogButton(
                     label = stringResource(
@@ -153,7 +188,13 @@ fun AppUpdatePromptDialog(
                 )
             } else if (forced) {
                 UpdateDialogButton(
-                    label = stringResource(if (state.downloadFailed) R.string.update_retry else R.string.update_now),
+                    label = stringResource(
+                        when {
+                            state.installFailed -> R.string.update_retry_install
+                            state.downloadFailed -> R.string.update_retry
+                            else -> R.string.update_now
+                        },
+                    ),
                     primary = true,
                     enabled = true,
                     modifier = Modifier.fillMaxWidth(),
@@ -172,7 +213,13 @@ fun AppUpdatePromptDialog(
                         onClick = onLater,
                     )
                     UpdateDialogButton(
-                        label = stringResource(if (state.downloadFailed) R.string.update_retry else R.string.update_now),
+                        label = stringResource(
+                            when {
+                                state.installFailed -> R.string.update_retry_install
+                                state.downloadFailed -> R.string.update_retry
+                                else -> R.string.update_now
+                            },
+                        ),
                         primary = true,
                         enabled = true,
                         modifier = Modifier.weight(1f),
