@@ -23,6 +23,7 @@ export type SessionReviewTimelineSnapshot = {
   items: TimelineItem[]
   hasMore: boolean
   nextSeq: number
+  resetVersion: number
 }
 
 type Listener = () => void
@@ -263,7 +264,8 @@ function sameReviewTimeline(
       b !== null &&
       a.items === b.items &&
       a.hasMore === b.hasMore &&
-      a.nextSeq === b.nextSeq
+      a.nextSeq === b.nextSeq &&
+      a.resetVersion === b.resetVersion
     )
   )
 }

@@ -57,6 +57,7 @@ import {
   preserveOptimisticItems,
   timelineClientMessageId,
 } from "@/components/session/optimistic-timeline"
+import { nextTimelineResetVersion } from "@/components/session/session-review-history"
 import { isVisibleTimelineItem, messageText, runtimeLabel, textOf } from "@/components/session/session-utils"
 import { stripInjectedAttachmentMentions } from "@/features/dashboard/attachments"
 import { sessionRuntimeId, sessionRuntimeType } from "@/features/dashboard/runtime-instances"
@@ -78,6 +79,7 @@ export type SessionMemorySnapshot = {
   notices: Notice[]
   nextSeq: number
   hasMore: boolean
+  timelineResetVersion: number
   serverTime: string
   pendingInteractionCount: number
 }
@@ -89,6 +91,7 @@ type SessionRemoteState = {
   notices: Notice[]
   nextSeq: number
   hasMore: boolean
+  timelineResetVersion: number
   serverTime: string
   eventCursor: string
   effectiveCapabilities: ProtocolCapabilitySet | null
@@ -103,6 +106,7 @@ function remoteStateFromOptimisticState(optimisticState: SessionLocalTimelineSta
   return {
     ...optimisticState,
     notices: optimisticState.notices ?? [],
+    timelineResetVersion: 0,
     eventCursor: `seq:${optimisticState.nextSeq}`,
     effectiveCapabilities: null,
     catalogs: {},
@@ -162,6 +166,7 @@ function sessionStateFromSnapshot(snapshot: SessionSnapshotResponse): SessionRem
     notices: snapshot.notices,
     nextSeq: snapshot.timeline.nextSeq,
     hasMore: snapshot.timeline.hasMore,
+    timelineResetVersion: 0,
     serverTime: snapshot.serverTime,
     eventCursor: snapshot.eventCursor,
     effectiveCapabilities: snapshot.effectiveCapabilities,
@@ -183,6 +188,7 @@ function mergeSessionSnapshot(
     ...incoming,
     items: timeline.items,
     nextSeq: timeline.nextSeq,
+    timelineResetVersion: nextTimelineResetVersion(current.timelineResetVersion, true),
     eventCursor: incoming.nextSeq >= current.nextSeq
       ? incoming.eventCursor
       : current.eventCursor,
@@ -671,6 +677,7 @@ export function SessionDetail({
       notices: state.notices,
       nextSeq: state.nextSeq,
       hasMore: state.hasMore,
+      timelineResetVersion: state.timelineResetVersion,
       serverTime: state.serverTime,
       pendingInteractionCount: blockingInteractions(state.notices, state.session.id).length,
     })
@@ -2258,6 +2265,10 @@ function mergeSessionEvent(
     : item
       ? mergeTimelineItems(current.items, [item])
       : current.items
+  const timelineResetVersion = nextTimelineResetVersion(
+    current.timelineResetVersion,
+    timelineSnapshot !== null,
+  )
   const acceptsSession = Boolean(session && session.updatedSeq >= current.session.updatedSeq)
   const nextSession = acceptsSession && session && !sessionSemanticallyEqual(current.session, session)
     ? session
@@ -2314,6 +2325,7 @@ function mergeSessionEvent(
     nextEffectiveCapabilities === current.effectiveCapabilities &&
     nextCatalogs === current.catalogs &&
     nextSeq === current.nextSeq &&
+    timelineResetVersion === current.timelineResetVersion &&
     nextEventCursor === current.eventCursor
   ) {
     return current
@@ -2326,6 +2338,7 @@ function mergeSessionEvent(
     items: nextItems,
     notices: nextNotices,
     nextSeq,
+    timelineResetVersion,
     eventCursor: nextEventCursor,
     effectiveCapabilities: nextEffectiveCapabilities,
     catalogs: nextCatalogs,

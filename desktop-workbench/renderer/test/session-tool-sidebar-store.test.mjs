@@ -75,37 +75,42 @@ test("optimistic session state migrates to the canonical session id", () => {
 test("review timeline snapshots are isolated and notify subscribers on meaningful changes", () => {
   const store = createSessionToolSidebarStore()
   const items = [{ id: "change-a" }]
-  const snapshot = { items, hasMore: true, nextSeq: 12 }
+  const snapshot = { items, hasMore: true, nextSeq: 12, resetVersion: 0 }
   let notifications = 0
   const unsubscribe = store.subscribeReviewTimeline("session-a", () => {
     notifications += 1
   })
 
   store.setReviewTimeline("session-a", snapshot)
-  store.setReviewTimeline("session-a", { items, hasMore: true, nextSeq: 12 })
+  store.setReviewTimeline("session-a", { items, hasMore: true, nextSeq: 12, resetVersion: 0 })
 
   assert.equal(store.getReviewTimeline("session-a"), snapshot)
   assert.equal(store.getReviewTimeline("session-b"), null)
   assert.deepEqual(store.getSessionIds(), [])
   assert.equal(notifications, 1)
 
-  const nextSnapshot = { items: [...items], hasMore: false, nextSeq: 13 }
+  const nextSnapshot = { items: [...items], hasMore: false, nextSeq: 13, resetVersion: 0 }
   store.setReviewTimeline("session-a", nextSnapshot)
   assert.equal(store.getReviewTimeline("session-a"), nextSnapshot)
   assert.equal(notifications, 2)
 
+  const resetSnapshot = { ...nextSnapshot, resetVersion: 1 }
+  store.setReviewTimeline("session-a", resetSnapshot)
+  assert.equal(store.getReviewTimeline("session-a"), resetSnapshot)
+  assert.equal(notifications, 3)
+
   store.setReviewTimeline("session-a", null)
   store.setReviewTimeline("session-a", null)
   assert.equal(store.getReviewTimeline("session-a"), null)
-  assert.equal(notifications, 3)
+  assert.equal(notifications, 4)
 
   unsubscribe()
 })
 
 test("review timeline follows optimistic session migration and aliases", () => {
   const store = createSessionToolSidebarStore()
-  const localSnapshot = { items: [{ id: "local-change" }], hasMore: true, nextSeq: 8 }
-  const canonicalSnapshot = { items: [{ id: "remote-change" }], hasMore: false, nextSeq: 7 }
+  const localSnapshot = { items: [{ id: "local-change" }], hasMore: true, nextSeq: 8, resetVersion: 0 }
+  const canonicalSnapshot = { items: [{ id: "remote-change" }], hasMore: false, nextSeq: 7, resetVersion: 0 }
   let canonicalNotifications = 0
 
   store.setContext("session-local", {
@@ -127,7 +132,7 @@ test("review timeline follows optimistic session migration and aliases", () => {
   assert.equal(store.getReviewTimeline("session-local"), localSnapshot)
   assert.equal(canonicalNotifications, 1)
 
-  const nextSnapshot = { items: [{ id: "next-change" }], hasMore: false, nextSeq: 9 }
+  const nextSnapshot = { items: [{ id: "next-change" }], hasMore: false, nextSeq: 9, resetVersion: 0 }
   store.setReviewTimeline("session-local", nextSnapshot)
   assert.equal(store.getReviewTimeline("session-real"), nextSnapshot)
   assert.equal(canonicalNotifications, 2)

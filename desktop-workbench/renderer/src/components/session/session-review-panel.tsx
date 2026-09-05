@@ -27,6 +27,12 @@ import {
   type ChangedTurnReview,
   type ReviewFileChange,
 } from "@/components/session/session-review-model"
+import {
+  combineReviewTimeline,
+  emptyReviewHistory,
+  reviewHistoryForResetVersion,
+  updateReviewHistoryForResetVersion,
+} from "@/components/session/session-review-history"
 import { isVisibleTimelineItem } from "@/components/session/session-utils"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
@@ -63,12 +69,6 @@ import { cn } from "@/lib/utils"
 
 const REVIEW_HISTORY_PAGE_SIZE = 500
 
-type ReviewHistoryState = {
-  items: TimelineItem[]
-  hasMore: boolean | null
-  error: string | null
-}
-
 type ReviewTree = {
   entries: FsEntry[]
   childrenByPath: Map<string, FsEntry[]>
@@ -94,11 +94,7 @@ export function SessionReviewPanel({
 }) {
   const t = useTranslations("dashboard.session.tools")
   const timeline = useStoredSessionReviewTimeline(sessionId)
-  const [history, setHistory] = React.useState<ReviewHistoryState>({
-    items: [],
-    hasMore: null,
-    error: null,
-  })
+  const [history, setHistory] = React.useState(() => emptyReviewHistory<TimelineItem>())
   const [loadingHistory, setLoadingHistory] = React.useState(false)
   const loadingHistoryRef = React.useRef(false)
   const requestGenerationRef = React.useRef(0)
@@ -108,13 +104,22 @@ export function SessionReviewPanel({
     requestGenerationRef.current += 1
     loadingHistoryRef.current = false
     setLoadingHistory(false)
-    setHistory({ items: [], hasMore: null, error: null })
+    setHistory(emptyReviewHistory<TimelineItem>())
   }, [sessionId])
 
-  const allItems = React.useMemo(() => {
-    if (!timeline) return history.items
-    return mergeTimelineItems(history.items, timeline.items)
-  }, [history.items, timeline])
+  React.useEffect(() => {
+    if (!timeline) return
+    requestGenerationRef.current += 1
+    loadingHistoryRef.current = false
+    setLoadingHistory(false)
+    setHistory((current) => reviewHistoryForResetVersion(current, timeline.resetVersion))
+  }, [sessionId, timeline?.resetVersion])
+
+  const combinedTimeline = React.useMemo(
+    () => timeline ? combineReviewTimeline(history, timeline, mergeTimelineItems) : null,
+    [history, timeline],
+  )
+  const allItems = combinedTimeline?.items ?? []
   const visibleItems = React.useMemo(
     () => allItems.filter(isVisibleTimelineItem),
     [allItems],
@@ -123,7 +128,8 @@ export function SessionReviewPanel({
     () => buildLatestChangedTurnReview(visibleItems, { root, caseInsensitivePaths }),
     [caseInsensitivePaths, root, visibleItems],
   )
-  const historyHasMore = history.hasMore ?? timeline?.hasMore ?? false
+  const historyHasMore = combinedTimeline?.hasMore ?? false
+  const historyError = combinedTimeline?.error ?? null
   const needsOlderTimeline = historyHasMore && (!review || review.key === "prelude")
   const needsOlderTimelineRef = React.useRef(needsOlderTimeline)
   needsOlderTimelineRef.current = needsOlderTimeline
@@ -139,6 +145,8 @@ export function SessionReviewPanel({
     if (!oldestItem) return
 
     const generation = requestGenerationRef.current
+    const resetVersion = timeline.resetVersion
+    setHistory((current) => reviewHistoryForResetVersion(current, resetVersion))
     loadingHistoryRef.current = true
     setLoadingHistory(true)
     try {
@@ -150,17 +158,26 @@ export function SessionReviewPanel({
       )
       if (generation !== requestGenerationRef.current) return
       const madeProgress = older.items.some((item) => item.orderSeq < oldestItem.orderSeq)
-      setHistory((current) => ({
-        items: mergeTimelineItems(older.items, current.items),
-        hasMore: older.hasMore && madeProgress,
-        error: null,
-      }))
+      setHistory((current) => updateReviewHistoryForResetVersion(
+        current,
+        resetVersion,
+        (activeHistory) => ({
+          items: mergeTimelineItems(older.items, activeHistory.items),
+          hasMore: older.hasMore && madeProgress,
+          error: null,
+          resetVersion,
+        }),
+      ))
     } catch (error) {
       if (generation !== requestGenerationRef.current || !needsOlderTimelineRef.current) return
-      setHistory((current) => ({
-        ...current,
-        error: error instanceof Error ? error.message : String(error),
-      }))
+      setHistory((current) => updateReviewHistoryForResetVersion(
+        current,
+        resetVersion,
+        (activeHistory) => ({
+          ...activeHistory,
+          error: error instanceof Error ? error.message : String(error),
+        }),
+      ))
     } finally {
       if (generation === requestGenerationRef.current) {
         loadingHistoryRef.current = false
@@ -170,9 +187,9 @@ export function SessionReviewPanel({
   }, [active, allItems, needsOlderTimeline, sessionId, timeline, token])
 
   React.useEffect(() => {
-    if (history.error) return
+    if (historyError) return
     void loadOlderTimeline()
-  }, [history.error, loadOlderTimeline])
+  }, [historyError, loadOlderTimeline])
 
   if (!timeline) return <ReviewPanelSkeleton />
 
@@ -193,9 +210,9 @@ export function SessionReviewPanel({
 
   return (
     <div className="relative h-full min-h-0">
-      {history.error ? (
+      {historyError ? (
         <div className="absolute inset-x-3 top-3 z-20 flex items-center gap-2 rounded-xl border border-destructive/30 bg-background/95 px-3 py-2 text-xs text-destructive shadow-sm backdrop-blur">
-          <span className="min-w-0 flex-1 truncate" title={history.error}>
+          <span className="min-w-0 flex-1 truncate" title={historyError}>
             {t("reviewHistoryFailed")}
           </span>
           <Button
@@ -204,7 +221,10 @@ export function SessionReviewPanel({
             size="xs"
             className="shrink-0"
             onClick={() => {
-              setHistory((current) => ({ ...current, error: null }))
+              setHistory((current) => ({
+                ...reviewHistoryForResetVersion(current, timeline.resetVersion),
+                error: null,
+              }))
             }}
           >
             <RotateCcw />

@@ -115,6 +115,7 @@ export function SessionView() {
             items: currentSnapshot.items,
             hasMore: currentSnapshot.hasMore,
             nextSeq: currentSnapshot.nextSeq,
+            resetVersion: currentSnapshot.timelineResetVersion,
           }
         : null,
     )
