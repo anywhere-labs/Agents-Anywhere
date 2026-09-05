@@ -1018,6 +1018,7 @@
       "email": "邮箱",
       "adminEmail": "管理员邮箱",
       "displayName": "昵称",
+      "displayNamePlaceholder": "该如何称呼您",
       "displayNameDescription": "用于展示，支持 1–64 个字符，可随时修改。"
     },
     "login": {

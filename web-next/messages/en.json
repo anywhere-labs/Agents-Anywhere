@@ -1018,6 +1018,7 @@
       "email": "Email",
       "adminEmail": "Admin email",
       "displayName": "Nickname",
+      "displayNamePlaceholder": "How should we address you?",
       "displayNameDescription": "Your display name, 1–64 characters. You can change it later."
     },
     "login": {

@@ -63,6 +63,7 @@ export function DisplayNameField({
         value={value}
         onChange={(event) => onChange(event.currentTarget.value)}
         autoComplete="nickname"
+        placeholder={t("fields.displayNamePlaceholder")}
         maxLength={64}
         required
         disabled={disabled}
