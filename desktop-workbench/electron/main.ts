@@ -45,7 +45,7 @@ import type {
   DesktopSettingsPatch,
 } from "./connector-types";
 
-const APP_NAME = "Agents Anywhere Workbench";
+const APP_NAME = "Agents Anywhere";
 const APP_ID = "dev.agentsanywhere.workbench";
 const WEB_PROTOCOL = "aa-workbench";
 const WEB_HOST = "web";
@@ -163,14 +163,7 @@ function desktopOAuthWebOrigin(): string {
 }
 
 function registerDesktopOAuthProtocol(): void {
-  if (!app.isPackaged && process.argv[1]) {
-    app.setAsDefaultProtocolClient(
-      DESKTOP_OAUTH_PROTOCOL,
-      process.execPath,
-      [path.resolve(process.argv[1])],
-    );
-    return;
-  }
+  if (!app.isPackaged) return;
   app.setAsDefaultProtocolClient(DESKTOP_OAUTH_PROTOCOL);
 }
 
@@ -547,9 +540,20 @@ function registerIpcHandlers(): void {
   });
   ipcMain.handle("workbench:auth:startOAuth", async (event) => {
     assertTrustedRenderer(event);
+    desktopOAuthResult = null;
+    if (!app.isPackaged) {
+      const { openDevelopmentLoginWindow } = await import("./development-login.js");
+      const loginUrl = await openDevelopmentLoginWindow({
+        parent: mainWindow,
+        webOrigin: desktopOAuthWebOrigin(),
+        onAccessToken: (accessToken) => {
+          publishDesktopOAuthResult({ status: "success", accessToken });
+        },
+      });
+      return { authorizeUrl: loginUrl };
+    }
     const request = createDesktopOAuthRequest(desktopOAuthWebOrigin());
     pendingDesktopOAuth = request.pending;
-    desktopOAuthResult = null;
     await shell.openExternal(request.authorizeUrl);
     return { authorizeUrl: request.authorizeUrl };
   });
@@ -1020,12 +1024,14 @@ function errorMessage(error: unknown): string {
 
 if (hasSingleInstanceLock) {
   registerIpcHandlers();
-  const initialDesktopOAuthUrl = desktopOAuthUrlFromArgv(process.argv);
-  if (initialDesktopOAuthUrl) queueDesktopOAuthCallback(initialDesktopOAuthUrl);
-  app.on("open-url", (event, rawUrl) => {
-    event.preventDefault();
-    queueDesktopOAuthCallback(rawUrl);
-  });
+  if (app.isPackaged) {
+    const initialDesktopOAuthUrl = desktopOAuthUrlFromArgv(process.argv);
+    if (initialDesktopOAuthUrl) queueDesktopOAuthCallback(initialDesktopOAuthUrl);
+    app.on("open-url", (event, rawUrl) => {
+      event.preventDefault();
+      queueDesktopOAuthCallback(rawUrl);
+    });
+  }
   app.whenReady().then(async () => {
     Menu.setApplicationMenu(null);
     registerStaticWebProtocol();
@@ -1033,7 +1039,7 @@ if (hasSingleInstanceLock) {
     const settings = requireSettings().get();
     const showOnLaunch = !settings.silentLaunch || !launchedAsLoginItem() || Boolean(process.env.WORKBENCH_WEB_URL);
     createMainWindow(showOnLaunch);
-    await drainDesktopOAuthCallbacks();
+    if (app.isPackaged) await drainDesktopOAuthCallbacks();
     if (process.platform === "darwin" && app.dock) app.dock.setIcon(appWindowIcon());
     if (!showOnLaunch) hideDockIfIdle();
 
@@ -1048,8 +1054,10 @@ if (hasSingleInstanceLock) {
 
   app.on("activate", () => showMainWindow());
   app.on("second-instance", (_event, argv) => {
-    const rawUrl = desktopOAuthUrlFromArgv(argv);
-    if (rawUrl) queueDesktopOAuthCallback(rawUrl);
+    if (app.isPackaged) {
+      const rawUrl = desktopOAuthUrlFromArgv(argv);
+      if (rawUrl) queueDesktopOAuthCallback(rawUrl);
+    }
     showMainWindow();
   });
   app.on("window-all-closed", () => {

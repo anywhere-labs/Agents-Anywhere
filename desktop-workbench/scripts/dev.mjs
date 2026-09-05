@@ -29,6 +29,7 @@ if (!explicitWebUrl) {
       ...process.env,
       AGENTS_ANYWHERE_API: apiOrigin,
       AGENTS_ANYWHERE_API_NAMESPACE: apiNamespace,
+      NEXT_PUBLIC_WORKBENCH_DEV_LOGIN: "1",
     },
     shell: usesShell,
   });
@@ -44,6 +45,7 @@ try {
     env: {
       ...process.env,
       WORKBENCH_WEB_URL: devUrl,
+      NEXT_PUBLIC_WORKBENCH_DEV_LOGIN: "1",
     },
     shell: usesShell,
   });

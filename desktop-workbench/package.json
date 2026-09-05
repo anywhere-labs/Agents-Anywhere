@@ -1,5 +1,6 @@
 {
   "name": "agents-anywhere-desktop-workbench",
+  "productName": "Agents Anywhere",
   "private": true,
   "version": "0.1.0",
   "description": "Electron shell for the Agents Anywhere web workbench",
@@ -36,6 +37,9 @@
     "productName": "Agents Anywhere",
     "files": [
       "dist/electron/**",
+      "!dist/electron/development-login.js",
+      "!dist/electron/*.test.js",
+      "!node_modules/agents-anywhere-desktop-renderer/**",
       "renderer/out/**",
       "package.json"
     ],

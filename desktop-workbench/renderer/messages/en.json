@@ -1209,6 +1209,7 @@
       "forgot": "Forgot your password? Ask your instance admin to reset it.",
       "newHere": "New here?",
       "oauth": "Sign in with {provider}",
+      "oauthDescription": "Securely sign in to your Agents Anywhere account through the browser.",
       "passwordPlaceholder": "••••••••",
       "passwordDivider": "or use your account password",
       "submit": "Sign in",

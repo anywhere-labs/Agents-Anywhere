@@ -1209,6 +1209,7 @@
       "forgot": "忘记密码？请联系实例管理员重置。",
       "newHere": "第一次使用？",
       "oauth": "使用 {provider} 登录",
+      "oauthDescription": "通过浏览器安全登录你的 Agents Anywhere 账号。",
       "passwordPlaceholder": "••••••••",
       "passwordDivider": "或使用账号密码",
       "submit": "登录",
