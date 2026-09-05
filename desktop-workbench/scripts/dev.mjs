@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const rendererPackage = "agents-anywhere-desktop-renderer";
 const explicitWebUrl = process.env.WORKBENCH_WEB_URL?.trim();
+const explicitWebPort = parsePort(process.env.WORKBENCH_WEB_PORT);
 const apiOrigin = process.env.WORKBENCH_API_ORIGIN?.trim() || process.env.AGENTS_ANYWHERE_API?.trim() || "https://web.agents-anywhere.com";
 const apiNamespace = process.env.WORKBENCH_API_NAMESPACE ?? process.env.AGENTS_ANYWHERE_API_NAMESPACE ?? "/api/v2";
 const usesShell = process.platform === "win32";
@@ -17,7 +18,7 @@ let webProcess = null;
 let devUrl = explicitWebUrl;
 
 if (!explicitWebUrl) {
-  const port = await findAvailablePort(5184);
+  const port = explicitWebPort ?? await findAvailablePort(5184);
   devUrl = `http://${host}:${port}`;
   console.log(`Starting desktop renderer at ${devUrl}`);
   console.log(`Using Agents Anywhere API at ${apiOrigin}${apiNamespace || ""}`);
@@ -62,6 +63,15 @@ try {
   console.error(error);
   webProcess?.kill();
   process.exit(1);
+}
+
+function parsePort(value) {
+  if (value == null || value.trim() === "") return null;
+  const port = Number(value);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error(`Invalid WORKBENCH_WEB_PORT: ${value}`);
+  }
+  return port;
 }
 
 function findAvailablePort(startPort) {

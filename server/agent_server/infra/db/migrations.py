@@ -22,8 +22,8 @@ from agent_server.infra.db.engine import POSTGRES_BACKEND, resolve_db_url
 
 LEGACY_V1_REVISION = "v1_legacy"
 BASELINE_V2_REVISION = "v2_0"
-CURRENT_SCHEMA_REVISION = "v2_25"
-CURRENT_SCHEMA_VERSION = "2.25"
+CURRENT_SCHEMA_REVISION = "v2_30"
+CURRENT_SCHEMA_VERSION = "2.30"
 POSTGRES_MIGRATION_LOCK_ID = 0x414147454E545332
 DEFAULT_MIGRATION_LOCK_TIMEOUT_SECONDS = 120.0
 
@@ -303,16 +303,99 @@ def _classify_sync(connection) -> UnversionedDatabase:
             if runtime_instance_layout:
                 if "app_releases" in tables:
                     release_columns = _column_names(inspector, "app_releases")
-                    if (
-                        "seq_allocated_high" in session_columns
-                        and "session_shares" in tables
-                    ):
-                        email_layout = (
-                            {"email", "email_verified_at", "display_name"}.issubset(_column_names(inspector, "users"))
-                            and {"email_verification_codes", "email_verification_limits"}.issubset(tables)
+                    session_share_layout = "session_shares" in tables
+                    sequence_column_layout = "seq_allocated_high" in session_columns
+                    sequence_layout = session_share_layout and sequence_column_layout
+                    user_columns = _column_names(inspector, "users")
+                    email_columns = {"email", "email_verified_at", "display_name"}
+                    email_tables = {
+                        "email_verification_codes",
+                        "email_verification_limits",
+                    }
+                    email_artifacts = bool(email_columns & user_columns) or bool(
+                        email_tables & tables
+                    )
+                    email_layout = email_columns.issubset(
+                        user_columns
+                    ) and email_tables.issubset(tables)
+                    connector_kind_layout = "connector_kind" in connector_columns
+                    projects_table_layout = "projects" in tables
+                    project_id_layout = "project_id" in session_columns
+                    project_artifacts = projects_table_layout or project_id_layout
+                    if project_artifacts:
+                        if not (
+                            projects_table_layout
+                            and project_id_layout
+                            and connector_kind_layout
+                            and sequence_layout
+                            and email_layout
+                        ):
+                            return UnversionedDatabase("unknown")
+                        project_unique_constraints = {
+                            constraint["name"]
+                            for constraint in inspector.get_unique_constraints(
+                                "projects"
+                            )
+                        }
+                        workspace_unique = (
+                            "uq_projects_user_connector_workspace"
+                            in project_unique_constraints
                         )
-                        revision = "v2_25" if email_layout else "v2_24"
-                    elif "session_shares" in tables:
+                        name_unique = (
+                            "uq_projects_user_name" in project_unique_constraints
+                        )
+                        project_foreign_key = next(
+                            (
+                                foreign_key
+                                for foreign_key in inspector.get_foreign_keys(
+                                    "sessions"
+                                )
+                                if foreign_key.get("referred_table") == "projects"
+                            ),
+                            None,
+                        )
+                        ondelete = str(
+                            (project_foreign_key or {})
+                            .get("options", {})
+                            .get("ondelete", "")
+                        ).upper()
+                        if (
+                            ondelete == "SET NULL"
+                            and workspace_unique
+                            and not name_unique
+                        ):
+                            revision = "v2_27"
+                        elif (
+                            ondelete == "SET NULL"
+                            and not workspace_unique
+                            and not name_unique
+                        ):
+                            revision = "v2_28"
+                        elif (
+                            ondelete == "RESTRICT"
+                            and not workspace_unique
+                            and not name_unique
+                        ):
+                            revision = "v2_29"
+                        elif (
+                            ondelete == "RESTRICT" and workspace_unique and name_unique
+                        ):
+                            revision = "v2_30"
+                        else:
+                            return UnversionedDatabase("unknown")
+                    elif connector_kind_layout:
+                        if not (sequence_layout and email_layout):
+                            return UnversionedDatabase("unknown")
+                        revision = "v2_26"
+                    elif email_artifacts:
+                        if not (sequence_layout and email_layout):
+                            return UnversionedDatabase("unknown")
+                        revision = "v2_25"
+                    elif sequence_column_layout:
+                        if not session_share_layout:
+                            return UnversionedDatabase("unknown")
+                        revision = "v2_24"
+                    elif session_share_layout:
                         revision = "v2_23"
                     elif (
                         "session_message_queue" in tables

@@ -926,6 +926,18 @@
           "default": null,
           "title": "Pinnedat"
         },
+        "projectId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Projectid"
+        },
         "runtime": {
           "enum": [
             "codex",

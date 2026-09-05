@@ -57,6 +57,7 @@ import type { ConnectorRevokeResponse } from "@/features/dashboard/types"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { useTranslations } from "next-intl"
 import { toast } from "sonner"
+import { useDesktopConnector } from "@/features/desktop/desktop-connector-context"
 import { RuntimeConfigDialog } from "@/components/runtime-config-dialog"
 import { RuntimeInstanceNameDialog } from "@/components/runtime-instance-name-dialog"
 import {
@@ -334,6 +335,17 @@ export function DevicePage() {
     refreshData,
   } = useWorkspace()
   const { session: authSession } = useAuth()
+  const {
+    busy: desktopActionBusy,
+    connectionStatus: desktopConnectionStatus,
+    state: desktopConnectorState,
+    isLocalConnector,
+    reconnect: reconnectLocalDesktop,
+    disconnect: disconnectLocalDesktop,
+    start: startLocalDesktop,
+    updateLocalName,
+    explainRemoteReconnect,
+  } = useDesktopConnector()
   const isMobile = useIsMobile()
 
   const [connector, setConnector] = React.useState<(typeof connectors)[number] | null>(null)
@@ -447,6 +459,19 @@ export function DevicePage() {
     )
   }
 
+  const isDesktopConnector = connector.connectorKind === "desktop" || isLocalConnector(connector.id)
+  const isLocalDesktop = isDesktopConnector && isLocalConnector(connector.id)
+  const localDesktopNeedsReconnect = Boolean(
+    isLocalDesktop && (desktopConnectorState?.authFailed || desktopConnectorState?.manualDisconnected),
+  )
+  const localDesktopIsConnecting = Boolean(
+    isLocalDesktop &&
+    connector.status === "offline" &&
+    !localDesktopNeedsReconnect &&
+    (desktopActionBusy || desktopConnectorState?.running || desktopConnectionStatus === "connecting"),
+  )
+  const connectorActionBusy = tokenActionBusy || desktopActionBusy
+
   const handleRevoke = async () => {
     if (!authSession?.accessToken) return
     setTokenActionBusy(true)
@@ -466,6 +491,49 @@ export function DevicePage() {
     }
   }
 
+  const handleDesktopDisconnect = async () => {
+    if (!authSession?.accessToken) return
+    if (isLocalConnector(connector.id)) {
+      if (await disconnectLocalDesktop()) {
+        setConnector((previous) => previous ? { ...previous, status: "offline" } : previous)
+        setRevokeOpen(false)
+      }
+      return
+    }
+
+    setTokenActionBusy(true)
+    try {
+      await dashboardApi.revokeConnector(authSession.accessToken, connector.id)
+      setConnector((previous) => previous ? { ...previous, status: "offline" } : previous)
+      setRevokeOpen(false)
+      refreshData()
+      toast.success(t("disconnectSucceeded"))
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t("disconnectFailed"))
+    } finally {
+      setTokenActionBusy(false)
+    }
+  }
+
+  const handleDesktopReconnect = async () => {
+    if (isLocalDesktop) {
+      await reconnectLocalDesktop()
+      return
+    }
+    explainRemoteReconnect(connector.name)
+  }
+
+  const handleDesktopStart = async () => {
+    if (!isLocalDesktop) return
+    await startLocalDesktop()
+  }
+
+  const desktopActionLabel = (() => {
+    if (localDesktopIsConnecting) return t("desktopConnecting")
+    if (connector.status === "offline") return t("connect")
+    return isDesktopConnector ? t("disconnect") : t("revoke")
+  })()
+
   const submitName = async () => {
     if (!authSession?.accessToken) return
     const nextName = nameDraft.trim()
@@ -477,6 +545,9 @@ export function DevicePage() {
 
     try {
       const result = await dashboardApi.updateConnector(authSession.accessToken, connector.id, { name: nextName })
+      if (isLocalConnector(connector.id)) {
+        await updateLocalName(result.connector.name)
+      }
       setConnector(result.connector)
       setNameDraft(result.connector.name)
       setEditingName(false)
@@ -739,36 +810,43 @@ export function DevicePage() {
         {/* Header */}
         <div className="flex items-center gap-3">
           <DashboardSidebarToggle className="-ml-2" />
-          {editingName ? (
-            <Input
-              value={nameDraft}
-              onChange={(event) => setNameDraft(event.currentTarget.value)}
-              onBlur={() => void submitName()}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") void submitName()
-                if (event.key === "Escape") {
+          <div className="flex min-w-0 items-baseline">
+            {editingName ? (
+              <Input
+                value={nameDraft}
+                onChange={(event) => setNameDraft(event.currentTarget.value)}
+                onBlur={() => void submitName()}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") void submitName()
+                  if (event.key === "Escape") {
+                    setNameDraft(connector.name)
+                    setEditingName(false)
+                  }
+                }}
+                className="h-9 max-w-xs rounded-lg px-2 text-2xl font-semibold tracking-tight"
+                aria-label={t("deviceName")}
+                autoFocus
+              />
+            ) : (
+              <button
+                type="button"
+                onClick={() => {
                   setNameDraft(connector.name)
-                  setEditingName(false)
-                }
-              }}
-              className="h-9 max-w-xs rounded-lg px-2 text-2xl font-semibold tracking-tight"
-              aria-label={t("deviceName")}
-              autoFocus
-            />
-          ) : (
-            <button
-              type="button"
-              onClick={() => {
-                setNameDraft(connector.name)
-                setEditingName(true)
-              }}
-              className="truncate text-left text-2xl font-semibold tracking-tight underline-offset-4 hover:underline"
-              title={t("clickToRename")}
-            >
-              {connector.name}
-            </button>
-          )}
-          <div className="flex items-center gap-1.5 text-sm">
+                  setEditingName(true)
+                }}
+                className="min-w-0 truncate text-left text-2xl font-semibold tracking-tight underline-offset-4 hover:underline"
+                title={t("clickToRename")}
+              >
+                {connector.name}
+              </button>
+            )}
+            {isLocalDesktop ? (
+              <span className="shrink-0 text-2xl font-semibold tracking-tight">
+                {tCommon("localDeviceSuffix")}
+              </span>
+            ) : null}
+          </div>
+          <div className="flex shrink-0 items-center gap-1.5 text-sm">
             {connector.status === "online" ? (
               <CheckCircle2 className="size-4 text-emerald-500" />
             ) : (
@@ -790,18 +868,30 @@ export function DevicePage() {
               size="sm"
               className="max-sm:size-8 max-sm:px-0"
               onClick={() => {
+                if (isDesktopConnector) {
+                  if (!isLocalDesktop && connector.status === "offline") {
+                    void handleDesktopReconnect()
+                  } else if (isLocalDesktop && localDesktopNeedsReconnect) {
+                    void handleDesktopReconnect()
+                  } else if (isLocalDesktop && connector.status === "offline") {
+                    void handleDesktopStart()
+                  } else {
+                    setRevokeOpen(true)
+                  }
+                  return
+                }
                 if (connector.status === "offline") {
                   void handleRevoke()
                 } else {
                   setRevokeOpen(true)
                 }
               }}
-              disabled={tokenActionBusy}
-              aria-label={tokenActionBusy ? t("preparing") : connector.status === "offline" ? t("setup") : t("revoke")}
+              disabled={connectorActionBusy || localDesktopIsConnecting}
+              aria-label={connectorActionBusy ? t("preparing") : desktopActionLabel}
             >
-              <KeyRound />
+              {localDesktopIsConnecting ? <Loader2 className="animate-spin" /> : <KeyRound />}
               <span className="max-sm:sr-only">
-                {tokenActionBusy ? t("preparing") : connector.status === "offline" ? t("setup") : t("revoke")}
+                {connectorActionBusy ? t("preparing") : desktopActionLabel}
               </span>
             </Button>
             <Button
@@ -1190,15 +1280,27 @@ export function DevicePage() {
       <AlertDialog open={revokeOpen} onOpenChange={setRevokeOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>{t("revokeTitle")}</AlertDialogTitle>
+            <AlertDialogTitle>{t(isDesktopConnector ? "disconnectTitle" : "revokeTitle")}</AlertDialogTitle>
             <AlertDialogDescription>
-              {t("revokeDescription", { name: connector.name })}
+              {t(
+                isDesktopConnector
+                  ? isLocalDesktop
+                    ? "localDisconnectDescription"
+                    : "remoteDisconnectDescription"
+                  : "revokeDescription",
+                { name: connector.name },
+              )}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>{tCommon("cancel")}</AlertDialogCancel>
-            <AlertDialogAction onClick={handleRevoke} disabled={tokenActionBusy}>
-              {tokenActionBusy ? t("revoking") : t("revoke")}
+            <AlertDialogAction
+              onClick={() => void (isDesktopConnector ? handleDesktopDisconnect() : handleRevoke())}
+              disabled={connectorActionBusy}
+            >
+              {connectorActionBusy
+                ? t(isDesktopConnector ? "disconnecting" : "revoking")
+                : t(isDesktopConnector ? "disconnect" : "revoke")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

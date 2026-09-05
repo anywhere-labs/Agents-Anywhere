@@ -30,15 +30,19 @@ LOCAL_UP_PID_FILE = LOCAL_DIR / "run" / "local-up.pid"
 CONNECTOR_CONFIG = LOCAL_DIR / "connector-source.json"
 COMPOSE_FILE = ROOT / "docker" / "docker-compose.local.yml"
 HTML_FILE = Path(__file__).with_name("index.html")
+DESKTOP_DIR = ROOT / "desktop-workbench"
+DESKTOP_RENDERER_DIR = DESKTOP_DIR / "renderer"
 
 LEGACY_STACK_SESSION = "aa-local-stack"
 LEGACY_CONNECTOR_SESSION = "aa-source-connector"
 SERVER_SESSION = "aa-dev-server"
 WEB_SESSION = "aa-dev-web"
 CONNECTOR_SESSION = "aa-dev-connector"
+DESKTOP_SESSION = "aa-desktop-workbench"
 
 SERVER_PORT = 8000
 WEB_PORT = 5174
+DESKTOP_PORT = 5184
 POSTGRES_PORT = 55432
 REDIS_PORT = 56379
 CONTROL_PORT = 8765
@@ -46,6 +50,8 @@ LISTEN_HOST = os.environ.get("AGENTS_ANYWHERE_LISTEN_HOST", "0.0.0.0")
 
 SERVER_URL = f"http://127.0.0.1:{SERVER_PORT}"
 WEB_URL = f"http://127.0.0.1:{WEB_PORT}"
+DESKTOP_URL = f"http://127.0.0.1:{DESKTOP_PORT}"
+API_NAMESPACE = "/api/v2"
 POSTGRES_PASSWORD = os.environ.get(
     "POSTGRES_PASSWORD", "agents_anywhere_dev_password"
 )
@@ -373,6 +379,43 @@ def connector_process_running() -> bool:
     return bool(_connector_process_pids())
 
 
+def _desktop_process_pids() -> set[int]:
+    candidates: set[int] = set()
+    for pattern in (
+        "[d]esktop-workbench",
+        "[s]cripts/dev\\.mjs",
+        "[y]arn dev",
+    ):
+        candidates.update(_matching_process_pids(pattern))
+
+    desktop_directories = {
+        DESKTOP_DIR.resolve(),
+        DESKTOP_RENDERER_DIR.resolve(),
+    }
+    command_markers = (
+        "yarn dev",
+        "scripts/dev.mjs",
+        "next dev",
+        "next-server",
+        "electron",
+    )
+    return {
+        pid
+        for pid in candidates
+        if _process_cwd(pid) in desktop_directories
+        and any(marker in _process_command(pid).lower() for marker in command_markers)
+    }
+
+
+def desktop_process_running() -> bool:
+    if not port_open(DESKTOP_PORT):
+        return False
+    return any(
+        "electron" in _process_command(pid).lower()
+        for pid in _desktop_process_pids()
+    )
+
+
 def _health_ok() -> bool:
     try:
         with urlopen(f"{SERVER_URL}/api/v2/health", timeout=0.5) as response:
@@ -436,6 +479,28 @@ def stop_connector() -> None:
     )
 
 
+def stop_desktop() -> None:
+    stop_screen(DESKTOP_SESSION)
+
+    candidates = _desktop_process_pids()
+    if candidates:
+        _terminate_process_groups(candidates, name="Desktop")
+
+    if port_open(DESKTOP_PORT):
+        _stop_port_processes(
+            name="Desktop renderer",
+            port=DESKTOP_PORT,
+            cwd=DESKTOP_RENDERER_DIR,
+            command_markers=("next",),
+        )
+
+    _wait_until(
+        lambda: not port_open(DESKTOP_PORT) and not _desktop_process_pids(),
+        timeout=10,
+        message="Desktop process was not released",
+    )
+
+
 def _screen_command(cwd: Path, command: list[str], log_path: Path) -> str:
     return (
         f"cd {shlex.quote(str(cwd))} && exec {shlex.join(command)} "
@@ -486,7 +551,14 @@ def _server_environment() -> dict[str, str]:
         "AGENT_SERVER_REDIS_URL": REDIS_URL,
         "AGENT_SERVER_FILES_LOCAL_ROOT": str(LOCAL_DIR / "files"),
         "AGENT_SERVER_PUBLIC_ORIGIN": WEB_URL,
-        "AGENT_SERVER_CORS_ORIGINS": f"{WEB_URL},http://localhost:{WEB_PORT}",
+        "AGENT_SERVER_CORS_ORIGINS": ",".join(
+            (
+                WEB_URL,
+                f"http://localhost:{WEB_PORT}",
+                DESKTOP_URL,
+                f"http://localhost:{DESKTOP_PORT}",
+            )
+        ),
     }
 
 
@@ -592,6 +664,66 @@ def start_connector() -> None:
     )
 
 
+def _desktop_runtime_command() -> list[str]:
+    version_text = (DESKTOP_DIR / ".nvmrc").read_text(encoding="utf-8").strip()
+    version_match = re.fullmatch(r"v?(\d+)", version_text)
+    if version_match is None:
+        raise DevControlError(f"Invalid Desktop Node version: {version_text}")
+    expected_major = version_match.group(1)
+
+    current_version = _run(
+        ["node", "-p", 'process.versions.node.split(".")[0]'],
+        check=False,
+    )
+    if current_version.returncode == 0 and current_version.stdout.strip() == expected_major:
+        return ["corepack", "yarn", "dev"]
+
+    nvm_script = Path(os.environ.get("NVM_DIR", Path.home() / ".nvm")) / "nvm.sh"
+    if not nvm_script.is_file():
+        raise DevControlError(
+            f"Desktop requires Node {expected_major}; nvm was not found at {nvm_script}"
+        )
+    return [
+        "bash",
+        "-c",
+        (
+            f"source {shlex.quote(str(nvm_script))} && "
+            "nvm use >/dev/null && exec corepack yarn dev"
+        ),
+    ]
+
+
+def start_desktop() -> None:
+    if not _health_ok():
+        raise DevControlError(
+            f"Local Server must be running at {SERVER_URL} before starting Desktop"
+        )
+    if port_open(DESKTOP_PORT):
+        raise DevControlError(f"Desktop port {DESKTOP_PORT} is already in use")
+    if _desktop_process_pids():
+        raise DevControlError("A Desktop development process is already running")
+
+    start_screen(
+        DESKTOP_SESSION,
+        cwd=DESKTOP_DIR,
+        command=[
+            "env",
+            f"WORKBENCH_API_ORIGIN={SERVER_URL}",
+            f"AGENTS_ANYWHERE_API={SERVER_URL}",
+            f"WORKBENCH_API_NAMESPACE={API_NAMESPACE}",
+            f"AGENTS_ANYWHERE_API_NAMESPACE={API_NAMESPACE}",
+            f"WORKBENCH_WEB_PORT={DESKTOP_PORT}",
+            *_desktop_runtime_command(),
+        ],
+        log_name="desktop.log",
+    )
+    _wait_until(
+        desktop_process_running,
+        timeout=60,
+        message="Desktop did not become ready; check desktop.log",
+    )
+
+
 def ensure_split_layout() -> bool:
     _ensure_stack_not_owned_by_local_up("asking Dev Control to manage local services")
     sessions = screen_sessions()
@@ -639,10 +771,16 @@ def restart_connector(credential: str | None = None) -> None:
     start_connector()
 
 
+def restart_desktop() -> None:
+    stop_desktop()
+    start_desktop()
+
+
 def restart_all(credential: str | None = None) -> None:
     restart_server()
     if credential or CONNECTOR_CONFIG.is_file():
         restart_connector(credential)
+    restart_desktop()
 
 
 def bootstrap() -> None:
@@ -658,6 +796,7 @@ def bootstrap() -> None:
 
 def stop_all() -> None:
     _ensure_stack_not_owned_by_local_up("stopping local services")
+    stop_desktop()
     stop_connector()
     stop_web()
     stop_server()
@@ -671,12 +810,15 @@ def status_payload() -> dict[str, Any]:
         "server": _health_ok(),
         "web": port_open(WEB_PORT),
         "connector": connector_process_running(),
+        "desktop": desktop_process_running(),
         "postgres": port_open(POSTGRES_PORT),
         "redis": port_open(REDIS_PORT),
         "legacy": LEGACY_STACK_SESSION in sessions,
         "localUp": local_up,
         "serverUrl": SERVER_URL,
         "webUrl": WEB_URL,
+        "desktopUrl": DESKTOP_URL,
+        "desktopBackendUrl": f"{SERVER_URL}{API_NAMESPACE}",
         "androidOauthLoginUrl": (
             f"http://{lan_ipv4}:{WEB_PORT}" if lan_ipv4 is not None else None
         ),
@@ -746,6 +888,8 @@ def perform_restart(target: str, credential: str | None = None) -> None:
             restart_web()
         elif target == "connector":
             restart_connector(credential)
+        elif target == "desktop":
+            restart_desktop()
         elif target == "all":
             restart_all(credential)
         else:
@@ -860,10 +1004,12 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("bootstrap")
     restart_parser = subparsers.add_parser("restart")
     restart_parser.add_argument(
-        "target", choices=("server", "web", "connector", "all")
+        "target", choices=("server", "web", "connector", "desktop", "all")
     )
     stop_parser = subparsers.add_parser("stop")
-    stop_parser.add_argument("target", choices=("server", "web", "connector", "all"))
+    stop_parser.add_argument(
+        "target", choices=("server", "web", "connector", "desktop", "all")
+    )
     subparsers.add_parser("status")
     return parser
 
@@ -887,6 +1033,8 @@ def main() -> None:
             stop_web()
         elif args.target == "connector":
             stop_connector()
+        elif args.target == "desktop":
+            stop_desktop()
         else:
             stop_all()
     elif args.command == "status":

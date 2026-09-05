@@ -29,8 +29,13 @@ import {
   useAttachments,
 } from "@/components/attachment-input"
 import { buildOptimisticUserMessage } from "@/components/session/optimistic-timeline"
+import {
+  ProjectEditorDialog,
+  type ProjectEditorState,
+} from "@/components/sidebar/project-editor-dialog"
 import { WorkspacePicker, type WorkspaceSelection } from "@/components/workspace-picker"
 import { useWorkspace } from "@/components/workspace-context"
+import { useSessionToolSidebarStore } from "@/components/session-tool-sidebar-state"
 import { useAuth } from "@/components/auth/auth-context"
 import { dashboardApi } from "@/features/dashboard/api"
 import { createClientId } from "@/lib/id"
@@ -40,6 +45,7 @@ import { useIsMobile } from "@/hooks/use-mobile"
 import type {
   DeviceRuntimeView,
   InlineAttachmentRef,
+  ProjectCreateRequest,
   ProtocolCapabilitySet,
   ProtocolModelCatalog,
   ProtocolPermissionCatalog,
@@ -148,12 +154,17 @@ type MobileNewSessionTitleKey = (typeof MOBILE_NEW_SESSION_TITLE_KEYS)[number]
 
 export function TaskComposer() {
   const { session: authSession } = useAuth()
+  const sessionToolSidebarStore = useSessionToolSidebarStore()
   const {
     addOptimisticMessage,
     bindOptimisticSession,
     connectors,
+    createProject,
     markOptimisticMessageFailed,
+    newSessionProject,
     openSession,
+    projects,
+    updateProject,
   } = useWorkspace()
   const isMobile = useIsMobile()
   const t = useTranslations("dashboard.new")
@@ -253,6 +264,7 @@ export function TaskComposer() {
   const [selectedReasoning, setSelectedReasoning] = React.useState("")
   const [selectedPermissionMode, setSelectedPermissionMode] = React.useState("")
   const [workspace, setWorkspace] = React.useState<WorkspaceSelection | null>(null)
+  const [projectEditor, setProjectEditor] = React.useState<ProjectEditorState>(null)
   const [prompt, setPrompt] = React.useState("")
   const [modelCatalog, setModelCatalog] = React.useState<ProtocolModelCatalog | null>(null)
   const [permissionCatalog, setPermissionCatalog] = React.useState<ProtocolPermissionCatalog | null>(null)
@@ -264,6 +276,7 @@ export function TaskComposer() {
   const [preference, setPreference] = React.useState<NewSessionPreference | null>(null)
   const composerRef = React.useRef<HTMLDivElement | null>(null)
   const devicePreferenceAppliedRef = React.useRef(false)
+  const projectPrefillAppliedRef = React.useRef<string | null>(null)
   const agentPreferenceAppliedForDeviceRef = React.useRef<string | null>(null)
   const selectionPreferenceAppliedForScopeRef = React.useRef<string | null>(null)
   const composerWidth = useElementWidth(composerRef)
@@ -271,6 +284,19 @@ export function TaskComposer() {
   const { attachments, isDragging, add, remove, clear, onDragEnter, onDragLeave, onDragOver, onDrop } =
     useAttachments()
   const typedTitle = useTypewriterTitle(typewriterTitles, creating)
+
+  const createAndSelectProject = React.useCallback(async (payload: ProjectCreateRequest) => {
+    const project = await createProject(payload)
+    if (!project) return null
+    setSelectedDevice(project.connectorId)
+    setWorkspace({
+      label: project.name,
+      path: project.workspacePath,
+      connectorId: project.connectorId,
+      projectId: project.id,
+    })
+    return project
+  }, [createProject])
 
   React.useEffect(() => {
     if (!creating) {
@@ -288,6 +314,38 @@ export function TaskComposer() {
   }, [])
 
   React.useEffect(() => {
+    if (!newSessionProject) {
+      if (projectPrefillAppliedRef.current !== null) {
+        projectPrefillAppliedRef.current = null
+        devicePreferenceAppliedRef.current = false
+        setWorkspace(null)
+      }
+      return
+    }
+
+    if (projectPrefillAppliedRef.current === newSessionProject.id) return
+    if (!deviceOptions.some((option) => option.id === newSessionProject.connectorId)) return
+
+    projectPrefillAppliedRef.current = newSessionProject.id
+    setSelectedDevice(newSessionProject.connectorId)
+    setWorkspace({
+      label: newSessionProject.name,
+      path: newSessionProject.workspacePath,
+      connectorId: newSessionProject.connectorId,
+      projectId: newSessionProject.id,
+    })
+  }, [deviceOptions, newSessionProject])
+
+  React.useEffect(() => {
+    if (newSessionProject) {
+      if (deviceOptions.length === 0) {
+        if (selectedDevice) setSelectedDevice("")
+      } else if (!deviceOptions.some((option) => option.id === selectedDevice)) {
+        setSelectedDevice(deviceOptions[0]?.id ?? "")
+      }
+      return
+    }
+
     if (deviceOptions.length === 0) {
       if (selectedDevice) setSelectedDevice("")
       return
@@ -309,11 +367,18 @@ export function TaskComposer() {
     if (!deviceOptions.some((option) => option.id === selectedDevice)) {
       setSelectedDevice(deviceOptions[0]?.id ?? "")
     }
-  }, [deviceOptions, preference?.connectorId, preferenceLoaded, selectedDevice])
+  }, [deviceOptions, newSessionProject, preference?.connectorId, preferenceLoaded, selectedDevice])
 
   React.useEffect(() => {
-    setWorkspace(null)
-  }, [selectedConnector?.id])
+    setWorkspace((current) => {
+      if (!current) return current
+      if (current.connectorId && current.connectorId !== selectedConnectorId) return null
+      if (current.projectId && !projects.some((project) => (
+        project.id === current.projectId && project.connectorId === selectedConnectorId
+      ))) return null
+      return current
+    })
+  }, [projects, selectedConnectorId])
 
   React.useEffect(() => {
     const connectorId = selectedConnectorId
@@ -545,7 +610,7 @@ export function TaskComposer() {
   const requiresPermissionSelection = canUsePermissionCatalog && permissionOptions.length > 0
   const hasSelectionSettings = models.length > 0 || permissionOptions.length > 0
   const canCreate =
-    Boolean(authSession?.accessToken && selectedConnector && selectedRuntime) &&
+    Boolean(authSession?.accessToken && selectedConnector && selectedRuntime && workspace?.projectId) &&
     !creating &&
     !catalogsLoading &&
     (!requiresModelSelection || Boolean(selectedModelSelection)) &&
@@ -559,7 +624,7 @@ export function TaskComposer() {
   const compactSelectors = composerWidth > 0 && composerWidth < 640
 
   const handleCreate = async () => {
-    if (!authSession?.accessToken || !selectedConnector || !selectedRuntime || creating) return
+    if (!authSession?.accessToken || !selectedConnector || !selectedRuntime || !workspace?.projectId || !workspace.path || creating) return
     if (!prompt.trim() && attachments.length === 0) return
     if (catalogsLoading) return
     if (requiresModelSelection && !selectedModelSelection) return
@@ -573,6 +638,7 @@ export function TaskComposer() {
     const optimisticSession: RealSessionView = {
       id: localSessionId,
       connectorId: selectedConnector.id,
+      projectId: workspace.projectId,
       connectorStatus: selectedConnector.status,
       runtime: selectedRuntime?.runtimeType ?? selectedAgent,
       runtimeId: selectedRuntime?.runtimeId ?? selectedAgent,
@@ -581,7 +647,7 @@ export function TaskComposer() {
       runtimeTypeDisplayName: selectedRuntime ? runtimeTypeName(selectedRuntime) : null,
       externalSessionId: null,
       title: prompt.trim() || null,
-      cwd: workspace?.path || null,
+      cwd: workspace.path,
       status: "waiting",
       takeover: true,
       pinned: false,
@@ -644,12 +710,13 @@ export function TaskComposer() {
       }
       const createBody = {
         connectorId: selectedConnector.id,
+        projectId: workspace.projectId,
         ...sessionRuntimeRequestIdentity(
           selectedRuntime?.runtimeType ?? selectedAgent,
           selectedRuntime?.runtimeId ?? selectedAgent,
         ),
         title: prompt.trim() || undefined,
-        cwd: workspace?.path || undefined,
+        cwd: workspace.path,
       }
       const nextPreference = withNewSessionSelectionPreference(
         preference,
@@ -671,6 +738,7 @@ export function TaskComposer() {
           : undefined,
         clientMessageId,
       })
+      sessionToolSidebarStore.migrateSession(localSessionId, created.session.id)
       bindOptimisticSession(localSessionId, created.session, created.attachments)
     } catch (err) {
       const message = err instanceof Error ? err.message : t("createFailed")
@@ -926,9 +994,22 @@ export function TaskComposer() {
             connectorId={selectedConnectorId}
             value={workspace}
             onChange={setWorkspace}
+            includeProjects
+            onCreateProject={() => setProjectEditor({ mode: "create" })}
           />
         </div>
       </div>
+
+      <ProjectEditorDialog
+        editor={projectEditor}
+        connectors={connectors}
+        projects={projects}
+        onOpenChange={(open) => {
+          if (!open) setProjectEditor(null)
+        }}
+        onCreate={createAndSelectProject}
+        onUpdate={updateProject}
+      />
     </div>
   )
 }

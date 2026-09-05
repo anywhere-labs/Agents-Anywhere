@@ -1321,6 +1321,7 @@ class FakeLocalRpc:
                 "label": params.get("label") or "Shell",
                 "cols": params.get("cols") or 80,
                 "rows": params.get("rows") or 24,
+                "persistent": params.get("persistent", False),
                 "status": "running",
                 "pid": 123,
                 "closed": False,
@@ -1761,12 +1762,42 @@ def test_connectors_can_be_listed_without_sessions(tmp_path):
     response = client.post("/connectors", headers=headers, json={"name": "dev"})
     assert response.status_code == 200
     connector = response.json()["connector"]
+    assert connector["connectorKind"] == "cli"
 
     listed = client.get("/connectors", headers=headers)
     assert listed.status_code == 200
     body = listed.json()
     assert body["connectors"] == [connector]
     assert body["serverTime"]
+
+
+def test_connector_create_accepts_desktop_kind_and_rejects_unknown_kind(tmp_path):
+    client = make_client(tmp_path)
+    headers = auth_headers(client)
+
+    created = client.post(
+        "/connectors",
+        headers=headers,
+        json={"name": "This Mac", "connectorKind": "desktop"},
+    )
+    assert created.status_code == 200
+    connector = created.json()["connector"]
+    assert connector["connectorKind"] == "desktop"
+
+    fetched = client.get(f"/connectors/{connector['id']}", headers=headers)
+    assert fetched.status_code == 200
+    assert fetched.json()["connector"]["connectorKind"] == "desktop"
+
+    revoked = client.post(f"/connectors/{connector['id']}/revoke", headers=headers)
+    assert revoked.status_code == 200
+    assert revoked.json()["connector"]["connectorKind"] == "desktop"
+
+    invalid = client.post(
+        "/connectors",
+        headers=headers,
+        json={"name": "Unknown", "connectorKind": "browser"},
+    )
+    assert invalid.status_code == 422
 
 
 def test_dashboard_ws_returns_connector_and_session_snapshot(tmp_path):
@@ -6349,6 +6380,7 @@ def test_connector_terminal_v2_forwards_lifecycle_to_connector(tmp_path):
             "rows": 24,
             "env": {},
             "label": "Shell",
+            "persistent": False,
         },
         15,
     )
@@ -6774,6 +6806,25 @@ def test_pairing_flow_returns_one_time_connector_credentials(tmp_path):
     assert consumed.status_code == 200
     assert consumed.json()["status"] == "consumed"
     assert consumed.json()["config"] is None
+
+
+def test_pairing_created_connector_defaults_to_cli_kind(tmp_path):
+    client = make_client(tmp_path)
+    headers = auth_headers(client)
+
+    started = client.post(
+        "/pairing/start",
+        json={"serverUrl": "http://127.0.0.1:8000", "ttlSeconds": 600},
+    )
+    pairing = started.json()
+    claimed = client.post(
+        "/pairing/claim",
+        headers=headers,
+        json={"code": pairing["code"], "name": "CLI paired"},
+    )
+
+    assert claimed.status_code == 200
+    assert claimed.json()["connector"]["connectorKind"] == "cli"
 
 
 def test_connector_can_upsert_discovered_codex_session(tmp_path):
@@ -11213,17 +11264,23 @@ def _create_extra_session(
     connector_id: str,
     external_id: str,
     title: str = "Extra",
+    *,
+    project_id: str | None = None,
+    cwd: str = "/repo",
 ) -> str:
+    payload = {
+        "connectorId": connector_id,
+        "runtime": "codex",
+        "externalSessionId": external_id,
+        "title": title,
+        "cwd": cwd,
+    }
+    if project_id is not None:
+        payload["projectId"] = project_id
     response = client.post(
         "/sessions",
         headers=headers,
-        json={
-            "connectorId": connector_id,
-            "runtime": "codex",
-            "externalSessionId": external_id,
-            "title": title,
-            "cwd": "/repo",
-        },
+        json=payload,
     )
     assert response.status_code == 200, response.text
     return response.json()["session"]["id"]
@@ -11680,3 +11737,321 @@ class FakeWebSocket:
 
     async def send_json(self, message: dict[str, Any]) -> None:
         await self.sent.put(message)
+
+
+def test_project_crud_allows_shared_workspaces_without_attaching_sessions_and_enforces_ownership(
+    tmp_path,
+):
+    client = make_client(tmp_path)
+    connector_id, _, session_id, headers = create_connector_and_session(client)
+
+    created = client.post(
+        "/projects",
+        headers=headers,
+        json={
+            "name": "  Agents Anywhere  ",
+            "connectorId": connector_id,
+            "workspacePath": "/repo/",
+            "attachMatchingSessions": True,
+        },
+    )
+    assert created.status_code == 200, created.text
+    body = created.json()
+    project = body["project"]
+    project_id = project["id"]
+    assert project == {
+        "id": project_id,
+        "userId": ADMIN_USER,
+        "connectorId": connector_id,
+        "name": "Agents Anywhere",
+        "workspacePath": "/repo",
+        "pinned": False,
+        "pinnedAt": None,
+        "activeSessionCount": 0,
+        "lastActivityAt": None,
+        "createdAt": project["createdAt"],
+        "updatedAt": project["updatedAt"],
+    }
+    assert body["attachedSessions"] == 0
+
+    session = client.get(
+        f"/sessions/{session_id}/meta",
+        headers=headers,
+    ).json()["session"]
+    assert session["projectId"] is None
+
+    listed = client.get("/projects", headers=headers)
+    assert listed.status_code == 200, listed.text
+    assert [item["id"] for item in listed.json()["projects"]] == [project_id]
+
+    patched = client.patch(
+        f"/projects/{project_id}",
+        headers=headers,
+        json={"name": "Renamed", "pinned": True},
+    )
+    assert patched.status_code == 200, patched.text
+    assert patched.json()["project"]["name"] == "Renamed"
+    assert patched.json()["project"]["pinned"] is True
+    assert patched.json()["project"]["pinnedAt"] is not None
+
+    immutable = client.patch(
+        f"/projects/{project_id}",
+        headers=headers,
+        json={"workspacePath": "/somewhere-else"},
+    )
+    assert immutable.status_code == 422
+
+    same_workspace = client.post(
+        "/projects",
+        headers=headers,
+        json={
+            "name": "Second project",
+            "connectorId": connector_id,
+            "workspacePath": "/repo",
+        },
+    )
+    assert same_workspace.status_code == 200, same_workspace.text
+    second_project = same_workspace.json()["project"]
+    assert second_project["id"] != project_id
+    assert second_project["workspacePath"] == project["workspacePath"]
+    assert same_workspace.json()["attachedSessions"] == 0
+
+    session = client.get(
+        f"/sessions/{session_id}/meta",
+        headers=headers,
+    ).json()["session"]
+    assert session["projectId"] is None
+    projects = client.get("/projects", headers=headers).json()["projects"]
+    assert {item["id"] for item in projects} == {project_id, second_project["id"]}
+
+    other_headers = auth_headers(client, user_id="user2")
+    assert client.get("/projects", headers=other_headers).json()["projects"] == []
+    assert (
+        client.patch(
+            f"/projects/{project_id}",
+            headers=other_headers,
+            json={"name": "Not Mine"},
+        ).status_code
+        == 404
+    )
+    assert client.delete(f"/projects/{project_id}", headers=other_headers).status_code == 404
+
+
+def test_project_delete_unbinds_sessions_without_deleting_them(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, _, session_id, headers = create_connector_and_session(client)
+    created = client.post(
+        "/projects",
+        headers=headers,
+        json={
+            "name": "Project",
+            "connectorId": connector_id,
+            "workspacePath": "/repo",
+        },
+    )
+    project_id = created.json()["project"]["id"]
+    bound_session_id = _create_extra_session(
+        client,
+        headers,
+        connector_id,
+        "thr_project_bound_for_delete",
+        project_id=project_id,
+    )
+
+    deleted = client.delete(f"/projects/{project_id}", headers=headers)
+    assert deleted.status_code == 200, deleted.text
+    assert deleted.json()["detachedSessions"] == 1
+    assert deleted.json()["projectId"] == project_id
+    bound_session = client.get(
+        f"/sessions/{bound_session_id}/meta",
+        headers=headers,
+    )
+    assert bound_session.status_code == 200
+    assert bound_session.json()["session"]["projectId"] is None
+    standalone_session = client.get(
+        f"/sessions/{session_id}/meta",
+        headers=headers,
+    )
+    assert standalone_session.status_code == 200
+    assert standalone_session.json()["session"]["projectId"] is None
+    assert client.get("/projects", headers=headers).json()["projects"] == []
+
+
+def test_project_sessions_list_and_archive_all_are_scoped_to_project(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, _, existing_session, headers = create_connector_and_session(client)
+    unmatched = client.post(
+        "/sessions",
+        headers=headers,
+        json={
+            "connectorId": connector_id,
+            "runtime": "codex",
+            "externalSessionId": "thr_other_workspace",
+            "title": "Other",
+            "cwd": "/other",
+        },
+    ).json()["session"]["id"]
+    created = client.post(
+        "/projects",
+        headers=headers,
+        json={
+            "name": "Project",
+            "connectorId": connector_id,
+            "workspacePath": "/repo",
+        },
+    )
+    project_id = created.json()["project"]["id"]
+    session_a = _create_extra_session(
+        client,
+        headers,
+        connector_id,
+        "thr_project_a",
+        project_id=project_id,
+    )
+    session_b = _create_extra_session(
+        client,
+        headers,
+        connector_id,
+        "thr_project_b",
+        project_id=project_id,
+    )
+
+    listed = client.get(
+        f"/projects/{project_id}/sessions",
+        headers=headers,
+    )
+    assert listed.status_code == 200, listed.text
+    assert {session["id"] for session in listed.json()["sessions"]} == {
+        session_a,
+        session_b,
+    }
+    assert all(
+        session["projectId"] == project_id
+        for session in listed.json()["sessions"]
+    )
+
+    archived = client.post(
+        f"/projects/{project_id}/sessions/archive-all",
+        headers=headers,
+        json={"archived": True, "scope": "active"},
+    )
+    assert archived.status_code == 200, archived.text
+    assert archived.json()["affected"] == 2
+    assert {session["id"] for session in archived.json()["sessions"]} == {
+        session_a,
+        session_b,
+    }
+    assert all(session["archived"] is True for session in archived.json()["sessions"])
+
+    archived_page = client.get(
+        f"/projects/{project_id}/sessions",
+        headers=headers,
+        params={"archived": True},
+    )
+    assert {session["id"] for session in archived_page.json()["sessions"]} == {
+        session_a,
+        session_b,
+    }
+    assert client.get(
+        f"/sessions/{unmatched}/meta",
+        headers=headers,
+    ).json()["session"]["archived"] is False
+    existing = client.get(
+        f"/sessions/{existing_session}/meta",
+        headers=headers,
+    ).json()["session"]
+    assert existing["projectId"] is None
+    assert existing["archived"] is False
+
+
+def test_session_create_validates_and_persists_project_binding(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, _, _, headers = create_connector_and_session(client)
+    created = client.post(
+        "/projects",
+        headers=headers,
+        json={
+            "name": "Other Workspace",
+            "connectorId": connector_id,
+            "workspacePath": "/project",
+        },
+    )
+    project_id = created.json()["project"]["id"]
+
+    matching = client.post(
+        "/sessions",
+        headers=headers,
+        json={
+            "connectorId": connector_id,
+            "projectId": project_id,
+            "runtime": "codex",
+            "externalSessionId": "thr_project_bound",
+            "title": "Bound",
+            "cwd": "/project",
+        },
+    )
+    assert matching.status_code == 200, matching.text
+    assert matching.json()["session"]["projectId"] == project_id
+
+    mismatch = client.post(
+        "/sessions",
+        headers=headers,
+        json={
+            "connectorId": connector_id,
+            "projectId": project_id,
+            "runtime": "codex",
+            "externalSessionId": "thr_project_mismatch",
+            "title": "Mismatch",
+            "cwd": "/wrong",
+        },
+    )
+    assert mismatch.status_code == 422
+    assert mismatch.json()["detail"]["code"] == "project_workspace_mismatch"
+
+    user_two_connector, _, _, user_two_headers = create_connector_and_session(
+        client,
+        user_id="user2",
+    )
+    unowned = client.post(
+        "/sessions",
+        headers=user_two_headers,
+        json={
+            "connectorId": user_two_connector,
+            "projectId": project_id,
+            "runtime": "codex",
+            "externalSessionId": "thr_unowned_project",
+            "title": "Unowned",
+            "cwd": "/project",
+        },
+    )
+    assert unowned.status_code == 404
+    assert unowned.json()["detail"] == "project not found"
+
+
+def test_dashboard_snapshot_includes_projects_and_refreshes_after_create(tmp_path):
+    client = make_client(tmp_path)
+    connector_id, _, session_id, headers = create_connector_and_session(client)
+    ticket = dashboard_ws_ticket(client, headers)
+
+    with client.websocket_connect(f"/dashboard/ws?ticket={ticket}") as ws:
+        initial = ws.receive_json()
+        assert initial["projects"] == []
+
+        created = client.post(
+            "/projects",
+            headers=headers,
+            json={
+                "name": "Live Project",
+                "connectorId": connector_id,
+                "workspacePath": "/repo",
+            },
+        )
+        assert created.status_code == 200, created.text
+        project_id = created.json()["project"]["id"]
+        refreshed = ws.receive_json()
+
+    assert [project["id"] for project in refreshed["projects"]] == [project_id]
+    refreshed_session = next(
+        session for session in refreshed["sessions"] if session["id"] == session_id
+    )
+    assert refreshed_session["projectId"] is None

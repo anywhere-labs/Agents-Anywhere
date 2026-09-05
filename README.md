@@ -230,7 +230,16 @@ Connector 默认不随主栈启动；需要同时调试本地 Connector 时，�
 `./dev-control.sh start` 打开状态页面；前台 `local-up.sh` 运行期间页面只提供状态，
 不会接管或重启这些进程。要停止前台栈，请回到它的终端按 `Ctrl-C`；不要用
 `./dev-control.sh down` 代替。`./dev-control.sh bootstrap` 适用于没有前台
-`local-up.sh` 时单独启动一套 screen 后台栈。
+`local-up.sh` 时单独启动一套 screen 后台栈。随后可在管理页按需启动或重启
+Desktop，并将其后端固定为本地 `http://127.0.0.1:8000/api/v2`；也可以粘贴 Web
+配对流程复制的凭据来启动或重启 Connector。管理页默认会在系统浏览器中打开；
+无图形界面的环境会安全跳过，也可设置 `AGENTS_ANYWHERE_NO_BROWSER=1` 主动关闭。
+
+只调试 Desktop 时可以运行 `./desktop-local-up.sh`。它会启动 PostgreSQL/Redis、
+执行数据库迁移，然后以 screen 后台会话启动本地 Server 和 Desktop；固定地址为
+Server `http://127.0.0.1:8000`、Desktop `http://127.0.0.1:5184`，Desktop 始终连接
+本地 `/api/v2`。使用 `./desktop-local-up.sh down` 会停止 Server 和 Desktop，
+PostgreSQL/Redis 会继续运行。
 
 ## 首次使用流程
 

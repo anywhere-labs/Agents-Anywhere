@@ -374,6 +374,11 @@ def test_v2_0_database_upgrades_through_current_revision(tmp_path) -> None:
         ("v2_22", "v2_23"),
         ("v2_23", "v2_24"),
         ("v2_24", "v2_25"),
+        ("v2_25", "v2_26"),
+        ("v2_26", "v2_27"),
+        ("v2_27", "v2_28"),
+        ("v2_28", "v2_29"),
+        ("v2_29", "v2_30"),
     ],
 )
 def test_every_adjacent_schema_upgrade(
@@ -1015,6 +1020,11 @@ def test_v2_14_downgrade_rejects_instance_specific_data(
         "v2_23",
         "v2_24",
         "v2_25",
+        "v2_26",
+        "v2_27",
+        "v2_28",
+        "v2_29",
+        "v2_30",
     ],
 )
 def test_unversioned_runtime_schema_is_classified_by_actual_columns(
@@ -1052,9 +1062,9 @@ def test_unversioned_runtime_schema_is_classified_by_actual_columns(
     )
 
 
-def test_current_schema_version_is_v2_25() -> None:
-    assert CURRENT_SCHEMA_REVISION == "v2_25"
-    assert CURRENT_SCHEMA_VERSION == "2.25"
+def test_current_schema_version_is_v2_30() -> None:
+    assert CURRENT_SCHEMA_REVISION == "v2_30"
+    assert CURRENT_SCHEMA_VERSION == "2.30"
 
 
 def test_v2_20_adds_session_source_observation_details(tmp_path) -> None:
@@ -1291,7 +1301,10 @@ def test_v2_24_rejects_negative_sequence_clocks(
     tmp_path,
     negative_target: str,
 ) -> None:
-    path = tmp_path / f"session-negative-sequence-{negative_target.replace('.', '-')}.sqlite3"
+    path = (
+        tmp_path
+        / f"session-negative-sequence-{negative_target.replace('.', '-')}.sqlite3"
+    )
     url = _sqlite_url(path)
     upgrade_database(db_url=url, revision="v2_23")
 
@@ -1342,6 +1355,448 @@ def test_v2_24_rejects_negative_sequence_clocks(
 
     with pytest.raises(RuntimeError, match="outside the protocol range"):
         upgrade_database(db_url=url, revision="v2_24")
+
+
+def test_v2_26_adds_connector_kind_and_backfills_cli(tmp_path) -> None:
+    path = tmp_path / "connector-kind.sqlite3"
+    url = _sqlite_url(path)
+    upgrade_database(db_url=url, revision="v2_23")
+
+    engine = create_engine(f"sqlite:///{path}")
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO connectors "
+                    "(id, user_id, name, status, token_hash, token_prefix, revoked, "
+                    "created_at, updated_at) "
+                    "VALUES ('conn_existing', 'user_existing', 'Existing CLI', "
+                    "'offline', 'hash', 'prefix', 0, :now, :now)"
+                ),
+                {"now": "2026-09-02T00:00:00Z"},
+            )
+        assert "connector_kind" not in {
+            column["name"] for column in inspect(engine).get_columns("connectors")
+        }
+    finally:
+        engine.dispose()
+
+    upgrade_database(db_url=url, revision="v2_26")
+
+    engine = create_engine(f"sqlite:///{path}")
+    try:
+        columns = {
+            column["name"]: column
+            for column in inspect(engine).get_columns("connectors")
+        }
+        assert columns["connector_kind"]["nullable"] is False
+        with engine.connect() as connection:
+            assert (
+                connection.execute(
+                    text(
+                        "SELECT connector_kind FROM connectors "
+                        "WHERE id = 'conn_existing'"
+                    )
+                ).scalar_one()
+                == "cli"
+            )
+            assert (
+                connection.execute(
+                    text("SELECT version_num FROM alembic_version")
+                ).scalar_one()
+                == "v2_26"
+            )
+    finally:
+        engine.dispose()
+
+
+def test_v2_27_adds_projects_and_session_binding(tmp_path) -> None:
+    path = tmp_path / "projects.sqlite3"
+    url = _sqlite_url(path)
+    upgrade_database(db_url=url, revision="v2_26")
+
+    upgrade_database(db_url=url, revision="v2_27")
+
+    engine = create_engine(f"sqlite:///{path}")
+    try:
+        inspector = inspect(engine)
+        assert "projects" in inspector.get_table_names()
+        project_columns = {
+            column["name"] for column in inspector.get_columns("projects")
+        }
+        assert {
+            "id",
+            "user_id",
+            "connector_id",
+            "name",
+            "workspace_path",
+            "workspace_key",
+            "pinned",
+            "pinned_at",
+            "created_at",
+            "updated_at",
+        }.issubset(project_columns)
+        session_columns = {
+            column["name"] for column in inspector.get_columns("sessions")
+        }
+        assert "project_id" in session_columns
+        project_indexes = {index["name"] for index in inspector.get_indexes("projects")}
+        assert {
+            "idx_projects_user_pinned_updated",
+            "idx_projects_connector_workspace",
+        }.issubset(project_indexes)
+        assert "uq_projects_user_connector_workspace" in {
+            constraint["name"]
+            for constraint in inspector.get_unique_constraints("projects")
+        }
+        session_indexes = {index["name"] for index in inspector.get_indexes("sessions")}
+        assert "idx_sessions_project_archived_sort" in session_indexes
+        project_foreign_keys = inspector.get_foreign_keys("projects")
+        assert any(
+            foreign_key["referred_table"] == "users"
+            for foreign_key in project_foreign_keys
+        )
+        assert any(
+            foreign_key["referred_table"] == "connectors"
+            for foreign_key in project_foreign_keys
+        )
+        session_foreign_keys = inspector.get_foreign_keys("sessions")
+        project_fk = next(
+            foreign_key
+            for foreign_key in session_foreign_keys
+            if foreign_key["referred_table"] == "projects"
+        )
+        assert project_fk["options"].get("ondelete") == "SET NULL"
+        with engine.connect() as connection:
+            assert (
+                connection.execute(
+                    text("SELECT version_num FROM alembic_version")
+                ).scalar_one()
+                == "v2_27"
+            )
+    finally:
+        engine.dispose()
+
+
+def test_v2_28_allows_projects_to_share_a_workspace(tmp_path) -> None:
+    path = tmp_path / "shared-project-workspace.sqlite3"
+    url = _sqlite_url(path)
+    upgrade_database(db_url=url, revision="v2_27")
+
+    upgrade_database(db_url=url, revision="v2_28")
+
+    engine = create_engine(f"sqlite:///{path}")
+    try:
+        inspector = inspect(engine)
+        assert "uq_projects_user_connector_workspace" not in {
+            constraint["name"]
+            for constraint in inspector.get_unique_constraints("projects")
+        }
+        assert "idx_projects_connector_workspace" in {
+            index["name"] for index in inspector.get_indexes("projects")
+        }
+        now = "2026-09-03T00:00:00Z"
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO users "
+                    "(id, password_hash, role, disabled, created_at, updated_at) "
+                    "VALUES ('user_shared_workspace', 'hash', 'member', 0, :now, :now)"
+                ),
+                {"now": now},
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO connectors "
+                    "(id, user_id, name, connector_kind, status, token_hash, "
+                    "token_prefix, revoked, created_at, updated_at) "
+                    "VALUES ('conn_shared_workspace', 'user_shared_workspace', "
+                    "'Device', 'desktop', 'online', 'hash', 'prefix', 0, :now, :now)"
+                ),
+                {"now": now},
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO projects "
+                    "(id, user_id, connector_id, name, workspace_path, workspace_key, "
+                    "pinned, created_at, updated_at) "
+                    "VALUES (:id, 'user_shared_workspace', 'conn_shared_workspace', "
+                    ":name, '/repo', '/repo', 0, :now, :now)"
+                ),
+                [
+                    {"id": "proj_shared_a", "name": "Project A", "now": now},
+                    {"id": "proj_shared_b", "name": "Project B", "now": now},
+                ],
+            )
+            count = connection.execute(
+                text(
+                    "SELECT COUNT(*) FROM projects "
+                    "WHERE connector_id = 'conn_shared_workspace' "
+                    "AND workspace_key = '/repo'"
+                )
+            ).scalar_one()
+            revision = connection.execute(
+                text("SELECT version_num FROM alembic_version")
+            ).scalar_one()
+        assert count == 2
+        assert revision == "v2_28"
+    finally:
+        engine.dispose()
+
+
+def test_v2_29_backfills_projects_and_restricts_project_deletion(tmp_path) -> None:
+    path = tmp_path / "required-session-projects.sqlite3"
+    url = _sqlite_url(path)
+    upgrade_database(db_url=url, revision="v2_28")
+
+    engine = create_engine(f"sqlite:///{path}")
+    try:
+        now = "2026-09-03T00:00:00Z"
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO users "
+                    "(id, password_hash, role, disabled, created_at, updated_at) "
+                    "VALUES ('user_project_backfill', 'hash', 'member', 0, :now, :now)"
+                ),
+                {"now": now},
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO connectors "
+                    "(id, user_id, name, connector_kind, status, token_hash, "
+                    "token_prefix, revoked, created_at, updated_at) "
+                    "VALUES ('conn_project_backfill', 'user_project_backfill', "
+                    "'Device', 'desktop', 'online', 'hash', 'prefix', 0, :now, :now)"
+                ),
+                {"now": now},
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO projects "
+                    "(id, user_id, connector_id, name, workspace_path, workspace_key, "
+                    "pinned, created_at, updated_at) VALUES "
+                    "('proj_existing', 'user_project_backfill', "
+                    "'conn_project_backfill', 'Existing', '/repo', '/repo', "
+                    "0, :now, :now)"
+                ),
+                {"now": now},
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO sessions "
+                    "(id, connector_id, runtime, runtime_id, origin, status, takeover, "
+                    "pinned, archived, cwd, last_read_seq, latest_turn_end_seq, "
+                    "timeline_reset_seq, seq, updated_seq, created_at, updated_at) "
+                    "VALUES (:id, 'conn_project_backfill', 'codex', 'codex', "
+                    "'connector_import', 'idle', 0, 0, 0, :cwd, 0, 0, 0, 0, 0, "
+                    ":now, :now)"
+                ),
+                [
+                    {"id": "sess_valid_workspace", "cwd": "/repo", "now": now},
+                    {
+                        "id": "sess_invalid_workspace",
+                        "cwd": "relative/path",
+                        "now": now,
+                    },
+                ],
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO timeline_items "
+                    "(session_id, id, type, status, order_seq, updated_seq, payload_json) "
+                    "VALUES ('sess_invalid_workspace', 'item_invalid_workspace', "
+                    "'message', 'completed', 1, 0, '{}')"
+                )
+            )
+    finally:
+        engine.dispose()
+
+    upgrade_database(db_url=url, revision="v2_29")
+
+    engine = create_engine(f"sqlite:///{path}")
+    try:
+        inspector = inspect(engine)
+        project_fk = next(
+            foreign_key
+            for foreign_key in inspector.get_foreign_keys("sessions")
+            if foreign_key["referred_table"] == "projects"
+        )
+        assert project_fk["options"].get("ondelete") == "RESTRICT"
+        with engine.connect() as connection:
+            assert (
+                connection.execute(
+                    text(
+                        "SELECT project_id FROM sessions "
+                        "WHERE id = 'sess_valid_workspace'"
+                    )
+                ).scalar_one()
+                == "proj_existing"
+            )
+            assert (
+                connection.execute(
+                    text(
+                        "SELECT COUNT(*) FROM sessions "
+                        "WHERE id = 'sess_invalid_workspace'"
+                    )
+                ).scalar_one()
+                == 0
+            )
+            assert (
+                connection.execute(
+                    text(
+                        "SELECT COUNT(*) FROM timeline_items "
+                        "WHERE session_id = 'sess_invalid_workspace'"
+                    )
+                ).scalar_one()
+                == 0
+            )
+            assert (
+                connection.execute(
+                    text(
+                        "SELECT COUNT(*) FROM projects "
+                        "WHERE connector_id = 'conn_project_backfill' "
+                        "AND workspace_key = '/repo'"
+                    )
+                ).scalar_one()
+                == 1
+            )
+            assert (
+                connection.execute(
+                    text("SELECT version_num FROM alembic_version")
+                ).scalar_one()
+                == "v2_29"
+            )
+    finally:
+        engine.dispose()
+
+
+def test_v2_30_consolidates_workspaces_and_deduplicates_names(tmp_path) -> None:
+    path = tmp_path / "unique-project-workspaces.sqlite3"
+    url = _sqlite_url(path)
+    upgrade_database(db_url=url, revision="v2_29")
+
+    engine = create_engine(f"sqlite:///{path}")
+    try:
+        now = "2026-09-03T00:00:00Z"
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO users "
+                    "(id, password_hash, role, disabled, created_at, updated_at) "
+                    "VALUES ('user_unique_projects', 'hash', 'member', 0, :now, :now)"
+                ),
+                {"now": now},
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO connectors "
+                    "(id, user_id, name, connector_kind, status, token_hash, "
+                    "token_prefix, revoked, created_at, updated_at) "
+                    "VALUES ('conn_unique_projects', 'user_unique_projects', "
+                    "'Device', 'desktop', 'online', 'hash', 'prefix', 0, :now, :now)"
+                ),
+                {"now": now},
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO projects "
+                    "(id, user_id, connector_id, name, workspace_path, workspace_key, "
+                    "pinned, created_at, updated_at) VALUES "
+                    "(:id, 'user_unique_projects', 'conn_unique_projects', :name, "
+                    ":path, :path, 0, :created_at, :updated_at)"
+                ),
+                [
+                    {
+                        "id": "proj_workspace_keeper",
+                        "name": "Shared",
+                        "path": "/repo",
+                        "created_at": now,
+                        "updated_at": now,
+                    },
+                    {
+                        "id": "proj_workspace_duplicate",
+                        "name": "Second",
+                        "path": "/repo",
+                        "created_at": "2026-09-03T00:00:01Z",
+                        "updated_at": "2026-09-03T00:00:01Z",
+                    },
+                    {
+                        "id": "proj_name_duplicate",
+                        "name": "Shared",
+                        "path": "/other",
+                        "created_at": "2026-09-03T00:00:02Z",
+                        "updated_at": "2026-09-03T00:00:02Z",
+                    },
+                ],
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO sessions "
+                    "(id, connector_id, project_id, runtime, runtime_id, origin, "
+                    "status, takeover, pinned, archived, cwd, last_read_seq, "
+                    "latest_turn_end_seq, timeline_reset_seq, seq, updated_seq, "
+                    "created_at, updated_at) VALUES "
+                    "('sess_duplicate_project', 'conn_unique_projects', "
+                    "'proj_workspace_duplicate', 'codex', 'codex', "
+                    "'connector_import', 'idle', 0, 0, 0, '/repo', 0, 0, 0, "
+                    "0, 0, :now, :now)"
+                ),
+                {"now": now},
+            )
+    finally:
+        engine.dispose()
+
+    upgrade_database(db_url=url, revision="v2_30")
+
+    engine = create_engine(f"sqlite:///{path}")
+    try:
+        inspector = inspect(engine)
+        assert {
+            "uq_projects_user_connector_workspace",
+            "uq_projects_user_name",
+        }.issubset(
+            {
+                constraint["name"]
+                for constraint in inspector.get_unique_constraints("projects")
+            }
+        )
+        with engine.connect() as connection:
+            projects = (
+                connection.execute(
+                    text(
+                        "SELECT id, name, workspace_key FROM projects "
+                        "WHERE user_id = 'user_unique_projects' ORDER BY id"
+                    )
+                )
+                .mappings()
+                .all()
+            )
+            revision = connection.execute(
+                text("SELECT version_num FROM alembic_version")
+            ).scalar_one()
+            session_project_id = connection.execute(
+                text(
+                    "SELECT project_id FROM sessions "
+                    "WHERE id = 'sess_duplicate_project'"
+                )
+            ).scalar_one()
+        assert [dict(project) for project in projects] == [
+            {
+                "id": "proj_name_duplicate",
+                "name": "Shared (1)",
+                "workspace_key": "/other",
+            },
+            {
+                "id": "proj_workspace_keeper",
+                "name": "Shared",
+                "workspace_key": "/repo",
+            },
+        ]
+        assert session_project_id == "proj_workspace_keeper"
+        assert revision == "v2_30"
+    finally:
+        engine.dispose()
 
 
 def test_current_schema_drops_legacy_approval_notice_storage(tmp_path) -> None:
@@ -1656,6 +2111,7 @@ def _create_legacy_v1_database(path) -> None:
         connection.execute(
             text("ALTER TABLE connectors DROP COLUMN runtime_control_version")
         )
+        connection.execute(text("ALTER TABLE connectors DROP COLUMN connector_kind"))
         connection.execute(
             text(
                 "CREATE TABLE device_agent_settings ("
@@ -1705,10 +2161,11 @@ def _create_legacy_v1_database(path) -> None:
         connection.execute(
             text(
                 "INSERT INTO sessions "
-                "(id, connector_id, runtime, origin, external_session_id, status, takeover, pinned, "
+                "(id, connector_id, runtime, origin, external_session_id, cwd, "
+                "status, takeover, pinned, "
                 "archived, last_read_seq, seq, updated_seq, created_at, updated_at, runtime_settings_override) "
                 "VALUES ('sess_legacy', 'conn_legacy', 'codex', 'connector_import', 'thread_legacy', "
-                "'waiting_approval', 0, 0, 0, 0, 1, 1, :now, :now, :settings)"
+                "'/legacy', 'waiting_approval', 0, 0, 0, 0, 1, 1, :now, :now, :settings)"
             ),
             {
                 "now": "2026-07-20T00:00:00Z",

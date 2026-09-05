@@ -1,15 +1,22 @@
 "use client"
 
 import * as React from "react"
-import { Download, FolderOpen, Loader2, SquareTerminal } from "lucide-react"
+import { createPortal } from "react-dom"
+import { Download, FolderOpen, Loader2, PanelRight } from "lucide-react"
 import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card"
 import { Input } from "@/components/ui/input"
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
 import { DashboardSidebarToggle } from "@/components/dashboard-sidebar-toggle"
-import { useWorkspace, type PanelId } from "@/components/workspace-context"
+import { useWorkspace } from "@/components/workspace-context"
 import { useIsMobile } from "@/hooks/use-mobile"
 import type { SessionMemorySnapshot } from "@/components/session-detail"
 import { cn } from "@/lib/utils"
@@ -17,13 +24,6 @@ import { useTranslations } from "next-intl"
 import type { SessionView as SessionViewModel } from "@/lib/demo-api"
 import { runtimeLabel } from "@/components/session/session-utils"
 import { sessionRuntimeType } from "@/features/dashboard/runtime-instances"
-
-type PanelIcon = React.ComponentType<React.SVGProps<SVGSVGElement>>
-
-const PANEL_META: Record<PanelId, { titleKey: "panelFiles" | "panelShell"; icon: PanelIcon }> = {
-  files: { titleKey: "panelFiles", icon: FolderOpen },
-  terminal: { titleKey: "panelShell", icon: SquareTerminal },
-}
 
 const HEADER_BLUR_LAYERS = buildBlurGradientLayers({
   height: 56,
@@ -46,6 +46,11 @@ type SessionViewHeaderProps = {
   onExportMemoryTimeline?: () => void
   onExportRemoteTimeline?: () => void
   exporting?: boolean
+  toolsOpen: boolean
+  toolsExpanded: boolean
+  toolsOverlayWidth: number
+  toolsMotionEnabled: boolean
+  onToggleTools: () => void
 }
 
 export function SessionViewHeader({
@@ -55,6 +60,11 @@ export function SessionViewHeader({
   onExportMemoryTimeline,
   onExportRemoteTimeline,
   exporting,
+  toolsOpen,
+  toolsExpanded,
+  toolsOverlayWidth,
+  toolsMotionEnabled,
+  onToggleTools,
 }: SessionViewHeaderProps) {
   const { renameSession } = useWorkspace()
   const tSession = useTranslations("dashboard.session")
@@ -62,6 +72,22 @@ export function SessionViewHeader({
   const [editingTitle, setEditingTitle] = React.useState(false)
   const [titleDraft, setTitleDraft] = React.useState(session.title ?? "")
   const [renaming, setRenaming] = React.useState(false)
+  const [desktopPortalTargets, setDesktopPortalTargets] = React.useState<{
+    session: HTMLElement
+    actions: HTMLElement
+  } | null>(null)
+
+  React.useEffect(() => {
+    const sessionTarget = document.querySelector<HTMLElement>(
+      '[data-slot="desktop-shell-header-session"]',
+    )
+    const actionsTarget = document.querySelector<HTMLElement>(
+      '[data-slot="desktop-shell-header-session-actions"]',
+    )
+    if (sessionTarget && actionsTarget) {
+      setDesktopPortalTargets({ session: sessionTarget, actions: actionsTarget })
+    }
+  }, [])
 
   React.useEffect(() => {
     if (!editingTitle) setTitleDraft(session.title ?? "")
@@ -92,6 +118,104 @@ export function SessionViewHeader({
       setRenaming(false)
     }
   }, [cancelRename, renameSession, renaming, session.id, session.title, tSession, titleDraft])
+
+  const metaBadge = (
+    <SessionMetaBadge
+      session={session}
+      connectorName={connectorName}
+      memorySnapshot={memorySnapshot}
+      onExportMemoryTimeline={onExportMemoryTimeline}
+      onExportRemoteTimeline={onExportRemoteTimeline}
+      exporting={exporting}
+    />
+  )
+
+  if (!isMobile) {
+    if (!desktopPortalTargets) return null
+
+    return (
+      <>
+        {toolsExpanded ? null : createPortal(
+          <div
+            className={cn(
+              "aa-window-drag flex w-full min-w-0 items-center gap-2 overflow-hidden",
+              toolsMotionEnabled
+                ? "transition-[padding-right] duration-[220ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none"
+                : "transition-none",
+            )}
+            style={{ paddingRight: toolsOverlayWidth }}
+          >
+            {editingTitle ? (
+              <Input
+                autoFocus
+                value={titleDraft}
+                onChange={(event) => setTitleDraft(event.currentTarget.value)}
+                onBlur={cancelRename}
+                onKeyDown={(event) => {
+                  if (event.nativeEvent.isComposing) return
+                  if (event.key === "Enter") {
+                    event.preventDefault()
+                    void submitRename()
+                  }
+                  if (event.key === "Escape") {
+                    event.preventDefault()
+                    cancelRename()
+                  }
+                }}
+                disabled={renaming}
+                aria-label={tSession("renameTitle")}
+                className="aa-window-no-drag h-7 w-64 min-w-0 max-w-[28vw] rounded-lg text-sm"
+              />
+            ) : (
+              <button
+                type="button"
+                className="aa-window-no-drag min-w-0 max-w-64 truncate rounded-md px-1 text-left text-sm font-medium hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                aria-label={tSession("renameTitle")}
+                title={session.title ?? tSession("renameTitle")}
+                onClick={() => {
+                  setTitleDraft(session.title ?? "")
+                  setEditingTitle(true)
+                }}
+              >
+                {session.title}
+              </button>
+            )}
+            {metaBadge}
+          </div>,
+          desktopPortalTargets.session,
+        )}
+        {createPortal(
+          <TooltipProvider delayDuration={800}>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label={tSession(toolsOpen ? "tools.collapse" : "tools.toggle")}
+                  aria-pressed={toolsOpen}
+                  onClick={onToggleTools}
+                  data-slot="session-tool-sidebar-toggle"
+                  className={cn(
+                    "relative z-50 rounded-md hover:bg-muted",
+                    toolsOpen
+                      ? "text-foreground hover:text-foreground"
+                      : "text-muted-foreground/70 hover:text-foreground",
+                  )}
+                >
+                  <PanelRight />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" align="end" sideOffset={6}>
+                {tSession("tools.visibilityToggle")}
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>,
+          desktopPortalTargets.actions,
+        )}
+      </>
+    )
+  }
 
   return (
     <header className="pointer-events-none absolute inset-x-0 top-0 z-10 h-14 overflow-hidden">
@@ -135,17 +259,9 @@ export function SessionViewHeader({
             {session.title}
           </button>
         )}
-        <SessionMetaBadge
-          session={session}
-          connectorName={connectorName}
-          memorySnapshot={memorySnapshot}
-          onExportMemoryTimeline={onExportMemoryTimeline}
-          onExportRemoteTimeline={onExportRemoteTimeline}
-          exporting={exporting}
-        />
+        {metaBadge}
         <div className="ml-auto flex items-center gap-1">
-          <TogglePanelButton id="files" icon={PANEL_META.files.icon} />
-          {isMobile ? null : <TogglePanelButton id="terminal" icon={PANEL_META.terminal.icon} />}
+          <MobileFilesButton />
         </div>
       </div>
     </header>
@@ -239,15 +355,24 @@ function SessionMetaBadge({
   return (
     <HoverCard openDelay={120} closeDelay={80}>
       <HoverCardTrigger asChild>
-        <Badge variant="secondary" className="shrink-0 cursor-default gap-1.5 font-normal">
-          <span
-            className={cn(
-              "size-1.5 rounded-full",
-              session.connectorStatus === "online" ? "bg-emerald-500" : "bg-muted-foreground/40",
-            )}
-          />
-          {label}
-        </Badge>
+        <button
+          type="button"
+          aria-label={`${t("overview")}: ${label}`}
+          className="aa-window-no-drag max-w-[min(24rem,40vw)] min-w-0 shrink-0 rounded-2xl text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <Badge
+            variant="secondary"
+            className="max-w-full cursor-default gap-1.5 font-normal"
+          >
+            <span
+              className={cn(
+                "size-1.5 rounded-full",
+                session.connectorStatus === "online" ? "bg-emerald-500" : "bg-muted-foreground/40",
+              )}
+            />
+            <span className="min-w-0 truncate">{label}</span>
+          </Badge>
+        </button>
       </HoverCardTrigger>
       <HoverCardContent align="end" sideOffset={10} className="w-[420px] rounded-xl p-4">
         <div className="space-y-4">
@@ -288,22 +413,21 @@ function SessionMetaBadge({
   )
 }
 
-function TogglePanelButton({ id, icon: Icon }: { id: PanelId; icon: PanelIcon }) {
+function MobileFilesButton() {
   const { panels, setPanelMode } = useWorkspace()
-  const isMobile = useIsMobile()
   const t = useTranslations("dashboard.session")
-  const active = isMobile ? panels[id] === "floating" : panels[id] !== "closed"
+  const active = panels.files === "floating"
   return (
     <button
       type="button"
-      aria-label={t(PANEL_META[id].titleKey)}
-      onClick={() => setPanelMode(id, active ? "closed" : isMobile ? "floating" : "docked")}
+      aria-label={t("panelFiles")}
+      onClick={() => setPanelMode("files", active ? "closed" : "floating")}
       className={cn(
         "rounded-md p-2 transition-colors hover:bg-accent hover:text-foreground",
         active ? "text-foreground" : "text-muted-foreground",
       )}
     >
-      <Icon className="size-4" />
+      <FolderOpen className="size-4" />
     </button>
   )
 }

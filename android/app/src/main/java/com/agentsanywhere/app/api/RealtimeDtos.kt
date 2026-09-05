@@ -8,6 +8,7 @@ data class RemoteWsTicket(
 
 data class RemoteDashboardSnapshot(
     val devices: List<RemoteDevice>,
+    val projects: List<RemoteProject>,
     val sessions: List<RemoteSession>,
     val activePage: RemoteSessionPageInfo,
     val archivedPage: RemoteSessionPageInfo,

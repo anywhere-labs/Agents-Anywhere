@@ -5,6 +5,7 @@ import org.json.JSONObject
 data class RemoteSession(
     val id: String,
     val connectorId: String,
+    val projectId: String?,
     val connectorStatus: String,
     val runtime: String,
     val externalSessionId: String?,
@@ -50,6 +51,7 @@ data class RemoteSessionsMutationResponse(
 
 data class RemoteSessionCreateAndStartRequest(
     val connectorId: String,
+    val projectId: String,
     val runtime: String,
     val title: String?,
     val cwd: String?,

@@ -65,6 +65,7 @@ class Terminal:
     purpose: str = "user"
     launch_signature: str | None = None
     ephemeral_group_id: str | None = None
+    persistent: bool = False
     pid: int | None = None
     status: str = "starting"
     exit_code: int | None = None
@@ -100,6 +101,7 @@ class Terminal:
             "scrollbackBytes": self.scrollback_bytes,
             "scrollbackSeq": self.last_seq,
             "ephemeralGroupId": self.ephemeral_group_id,
+            "persistent": self.persistent,
             "createdAt": _iso(self.created_at),
         }
 
@@ -123,6 +125,7 @@ class Terminal:
             "purpose": self.purpose,
             "launch_signature": self.launch_signature,
             "ephemeral_group_id": self.ephemeral_group_id,
+            "persistent": self.persistent,
             "pid": self.pid,
             "status": self.status,
             "exit_code": self.exit_code,
@@ -152,6 +155,7 @@ class Terminal:
             purpose=str(payload.get("purpose") or "user"),
             launch_signature=payload.get("launch_signature"),
             ephemeral_group_id=payload.get("ephemeral_group_id"),
+            persistent=payload.get("persistent") is True,
             pid=payload.get("pid"),
             status=str(payload.get("status") or "starting"),
             exit_code=payload.get("exit_code"),
@@ -266,6 +270,7 @@ class TerminalBroker:
         purpose: str = "user",
         launch_signature: str | None = None,
         ephemeral_group_id: str | None = None,
+        persistent: bool = False,
     ) -> Terminal:
         term = Terminal(
             id=f"trm_{secrets.token_urlsafe(10)}",
@@ -285,6 +290,7 @@ class TerminalBroker:
             purpose=purpose,
             launch_signature=launch_signature,
             ephemeral_group_id=ephemeral_group_id,
+            persistent=persistent,
         )
         if self._coordinator.distributed:
             async with self._coordinator.client.pipeline(transaction=True) as pipeline:

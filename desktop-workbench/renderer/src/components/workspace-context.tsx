@@ -8,13 +8,16 @@ import {
   patchSession as patchMockSession,
   type ConnectorView,
   type FilterValue,
-  type SessionView,
+  type SessionView as DemoSessionView,
 } from "@/lib/demo-api"
 import { useAuth } from "@/components/auth/auth-context"
 import { dashboardApi } from "@/features/dashboard/api"
 import type {
   ConnectorView as RealConnectorView,
   DashboardSnapshotMessage,
+  ProjectCreateRequest,
+  ProjectPatchRequest,
+  ProjectView,
   SessionLocalTimelineState,
   SessionPageInfo,
   SessionRuntimeState,
@@ -29,6 +32,8 @@ import {
   timelineClientMessageId,
   withServerAttachments,
 } from "@/components/session/optimistic-timeline"
+import { hasDesktopConnectorBridge } from "@/features/desktop/bridge"
+import { isApiError } from "@/lib/api/errors"
 
 // ─── Panel / page types ───────────────────────────────────────
 
@@ -43,10 +48,18 @@ export type PanelMode = "docked" | "floating" | "closed"
  *   dashboard                    →  #/dashboard
  *   team                         →  #/team
  *   service                      →  #/service
+ *   mobile-connections           →  #/mobile-connections
+ *   home + project prefill       →  #/new-session/proj-1
  *   device/:id                   →  #/device/conn-3
  *   device/:id/workspace/:path   →  #/device/conn-3/workspace/~path~
  */
-export type AppPage = "home" | "session" | "settings" | "dashboard" | "team" | "service" | "device" | "device-workspace"
+export type AppPage = "home" | "session" | "settings" | "dashboard" | "team" | "service" | "mobile-connections" | "device" | "device-workspace"
+
+export type WorkspaceSessionView = DemoSessionView & {
+  projectId?: string | null
+}
+
+type SessionView = WorkspaceSessionView
 
 export type ComposerInsertion = {
   id: number
@@ -66,14 +79,22 @@ export type OptimisticSessionMessage = {
 // ─── Hash routing helpers ─────────────────────────────────────
 
 type ParsedRoute =
-  | { page: "home" }
+  | { page: "home"; projectId?: string }
   | { page: "session"; sessionId: string }
   | { page: "settings"; tab: string }
   | { page: "dashboard" }
   | { page: "team" }
   | { page: "service" }
+  | { page: "mobile-connections" }
   | { page: "device"; connectorId: string }
   | { page: "device-workspace"; connectorId: string; workspacePath: string }
+
+type WorkspaceHistoryMeta = {
+  index: number
+  maxIndex: number
+}
+
+const WORKSPACE_HISTORY_STATE_KEY = "__agents_anywhere_workspace_history"
 
 /** Encode a file path for use in a URL hash segment */
 function encodePath(p: string) { return encodeURIComponent(p) }
@@ -85,6 +106,10 @@ function parseHash(hash: string): ParsedRoute {
 
   const parts = path.split("/")
   switch (parts[0]) {
+    case "new-session":
+      return parts[1]
+        ? { page: "home", projectId: decodeURIComponent(parts[1]) }
+        : { page: "home" }
     case "session":
       return parts[1] ? { page: "session", sessionId: parts[1] } : { page: "home" }
     case "settings":
@@ -95,6 +120,8 @@ function parseHash(hash: string): ParsedRoute {
       return { page: "team" }
     case "service":
       return { page: "service" }
+    case "mobile-connections":
+      return { page: "mobile-connections" }
     case "device": {
       const connectorId = parts[1]
       if (!connectorId) return { page: "home" }
@@ -110,16 +137,64 @@ function parseHash(hash: string): ParsedRoute {
 
 function buildHash(route: ParsedRoute): string {
   switch (route.page) {
-    case "home":      return "#/"
+    case "home":      return route.projectId ? `#/new-session/${encodeURIComponent(route.projectId)}` : "#/"
     case "session":   return `#/session/${route.sessionId}`
     case "settings":  return `#/settings/${route.tab}`
     case "dashboard": return "#/dashboard"
     case "team":      return "#/team"
     case "service":   return "#/service"
+    case "mobile-connections": return "#/mobile-connections"
     case "device":    return `#/device/${route.connectorId}`
     case "device-workspace":
       return `#/device/${route.connectorId}/workspace/${encodePath(route.workspacePath)}`
   }
+}
+
+function readWorkspaceHistoryMeta(state: unknown): WorkspaceHistoryMeta | null {
+  if (!state || typeof state !== "object") return null
+  const value = (state as Record<string, unknown>)[WORKSPACE_HISTORY_STATE_KEY]
+  if (!value || typeof value !== "object") return null
+  const meta = value as Partial<WorkspaceHistoryMeta>
+  const index = meta.index
+  const maxIndex = meta.maxIndex
+  if (typeof index !== "number" || typeof maxIndex !== "number") return null
+  if (!Number.isInteger(index) || !Number.isInteger(maxIndex)) return null
+  if (index < 0 || maxIndex < index) return null
+  return { index, maxIndex }
+}
+
+function historyStateWithMeta(state: unknown, meta: WorkspaceHistoryMeta): Record<string, unknown> {
+  const base = state && typeof state === "object" && !Array.isArray(state)
+    ? state as Record<string, unknown>
+    : {}
+  return { ...base, [WORKSPACE_HISTORY_STATE_KEY]: meta }
+}
+
+function replaceCurrentHistoryMeta(meta: WorkspaceHistoryMeta) {
+  window.history.replaceState(
+    historyStateWithMeta(window.history.state, meta),
+    "",
+    window.location.href,
+  )
+}
+
+function isWorkspaceRouteHash(hash: string): boolean {
+  const path = hash.replace(/^#\/?/, "").split("?")[0] ?? ""
+  return (
+    path === "" ||
+    path === "/" ||
+    path === "app" ||
+    path.startsWith("session/") ||
+    path.startsWith("new-session/") ||
+    path === "settings" ||
+    path.startsWith("settings/") ||
+    path === "dashboard" ||
+    path === "team" ||
+    path === "service" ||
+    path === "mobile-connections" ||
+    path === "device" ||
+    path.startsWith("device/")
+  )
 }
 
 function mapConnector(connector: RealConnectorView): ConnectorView {
@@ -128,6 +203,7 @@ function mapConnector(connector: RealConnectorView): ConnectorView {
     userId: connector.userId,
     name: connector.name,
     deviceOs: connector.deviceOs,
+    connectorKind: connector.connectorKind,
     status: connector.status,
     lastSeenAt: connector.lastSeenAt,
   }
@@ -137,6 +213,7 @@ function mapSession(session: RealSessionView): SessionView {
   return {
     id: session.id,
     connectorId: session.connectorId,
+    projectId: session.projectId ?? null,
     connectorStatus: session.connectorStatus,
     runtime: session.runtime,
     runtimeId: session.runtimeId,
@@ -187,6 +264,43 @@ function sortSessionViews(sessions: SessionView[]): SessionView[] {
   )
 }
 
+function projectSortMillis(project: ProjectView): number {
+  const raw = project.pinnedAt || project.lastActivityAt || project.updatedAt
+  const value = Date.parse(raw)
+  return Number.isFinite(value) ? value : 0
+}
+
+function sortProjectViews(projects: ProjectView[]): ProjectView[] {
+  return [...projects].sort((a, b) =>
+    Number(b.pinned) - Number(a.pinned) ||
+    projectSortMillis(b) - projectSortMillis(a) ||
+    a.name.localeCompare(b.name) ||
+    a.id.localeCompare(b.id),
+  )
+}
+
+function mergeProjectSessions(
+  current: Record<string, SessionView[]>,
+  incoming: SessionView[],
+): Record<string, SessionView[]> {
+  const mergedById = new Map<string, SessionView>()
+  for (const sessions of Object.values(current)) {
+    for (const session of sessions) mergedById.set(session.id, session)
+  }
+  for (const session of incoming) mergedById.set(session.id, session)
+  const next: Record<string, SessionView[]> = {}
+  for (const session of mergedById.values()) {
+    if (!session.projectId) continue
+    const group = next[session.projectId] ?? []
+    group.push(session)
+    next[session.projectId] = group
+  }
+  for (const [projectId, sessions] of Object.entries(next)) {
+    next[projectId] = sortSessionViews(sessions)
+  }
+  return sameStableValue(current, next) ? current : next
+}
+
 function resolveSessionAlias(sessionId: string, aliases: Record<string, string>): string {
   let current = sessionId
   const seen = new Set<string>()
@@ -215,16 +329,21 @@ function optimisticMessageMatchesSession(
   )
 }
 
-function isDashboardSnapshotMessage(value: unknown): value is DashboardSnapshotMessage {
-  if (!value || typeof value !== "object") return false
+function parseDashboardSnapshotMessage(value: unknown): DashboardSnapshotMessage | null {
+  if (!value || typeof value !== "object") return null
   const message = value as Partial<DashboardSnapshotMessage>
-  return (
-    message.type === "dashboard.snapshot" &&
-    Array.isArray(message.connectors) &&
-    Array.isArray(message.sessions) &&
-    isSessionPageInfo(message.sessionPages?.active) &&
-    isSessionPageInfo(message.sessionPages?.archived)
-  )
+  if (
+    message.type !== "dashboard.snapshot" ||
+    !Array.isArray(message.connectors) ||
+    !Array.isArray(message.sessions) ||
+    !isSessionPageInfo(message.sessionPages?.active) ||
+    !isSessionPageInfo(message.sessionPages?.archived)
+  ) return null
+
+  return {
+    ...(message as DashboardSnapshotMessage),
+    projects: Array.isArray(message.projects) ? message.projects : [],
+  }
 }
 
 function isSessionPageInfo(value: unknown): value is SessionPageInfo {
@@ -255,16 +374,21 @@ function relativeSessionTime(session: RealSessionView): string {
 
 // ─── Context shape ────────────────────────────────────────────
 
-type WorkspaceState = {
+export type WorkspaceState = {
   // Data from API
   connectors: ConnectorView[]
   sessions: SessionView[]
+  projects: ProjectView[]
+  projectSessionsById: Record<string, SessionView[]>
+  loadingProjectSessionIds: string[]
   isLoading: boolean
   hasMoreSessions: boolean
   isLoadingMoreSessions: boolean
   routeReady: boolean
 
   // Navigation
+  canGoBack: boolean
+  canGoForward: boolean
   page: AppPage
   activeSessionId: string | null
   activeSession: SessionView | null
@@ -272,11 +396,14 @@ type WorkspaceState = {
   activeSessionPending: boolean
   activeConnectorId: string | null
   activeWorkspacePath: string | null
+  newSessionProjectId: string | null
+  newSessionProject: ProjectView | null
   settingsTab: string
 
   // Sidebar filter/search
   filter: FilterValue
   search: string
+  sidebarShowsSessions: boolean
 
   // Panels
   panels: Record<PanelId, PanelMode>
@@ -289,13 +416,17 @@ type WorkspaceState = {
 
   // Actions
   openSession: (id: string) => void
+  goBack: () => void
+  goForward: () => void
   goHome: () => void
   replaceHome: () => void
   navigate: (page: AppPage, sub?: string) => void
   navigateToDevice: (connectorId: string) => void
   navigateToWorkspace: (connectorId: string, workspacePath: string) => void
+  startProjectSession: (projectId: string) => void
   setFilter: (f: FilterValue) => void
   setSearch: (q: string) => void
+  setSidebarShowsSessions: (show: boolean) => void
   setPanelMode: (id: PanelId, mode: PanelMode) => void
   toggleCollapse: (id: PanelId) => void
   dismissPopupBlocked: () => void
@@ -303,8 +434,12 @@ type WorkspaceState = {
   closePairDeviceDialog: () => void
   closeFirstDevicePrompt: () => void
   togglePinSession: (id: string) => void
-  toggleArchiveSession: (id: string) => void
+  toggleArchiveSession: (id: string, archived?: boolean) => Promise<SessionView | null>
   renameSession: (id: string, title: string) => Promise<boolean>
+  loadProjectSessions: (projectId: string) => Promise<boolean>
+  createProject: (payload: ProjectCreateRequest) => Promise<ProjectView | null>
+  updateProject: (projectId: string, patch: ProjectPatchRequest) => Promise<ProjectView | null>
+  archiveProjectSessions: (projectId: string) => Promise<boolean>
   markSessionRead: (id: string) => void
   upsertSession: (session: RealSessionView) => void
   reportSessionStreamProgress: (sessionId: string, nextSeq: number | null) => void
@@ -325,6 +460,7 @@ const WorkspaceContext = React.createContext<WorkspaceState | null>(null)
 
 const FIRST_DEVICE_WIZARD_DISMISSED_KEY = "aa-first-device-wizard-dismissed-v1"
 const PANEL_MODE_STORAGE_KEY = "aa-session-runtime-panel-modes-v1"
+const SIDEBAR_SHOW_SESSIONS_STORAGE_KEY = "aa-sidebar-show-sessions-v1"
 const DEFAULT_PANEL_MODES: Record<PanelId, PanelMode> = {
   files: "docked",
   terminal: "docked",
@@ -367,6 +503,24 @@ function writeStoredPanelModes(panels: Record<PanelId, PanelMode>) {
   }
 }
 
+function readStoredSidebarShowsSessions(): boolean {
+  if (typeof window === "undefined") return false
+  try {
+    return window.localStorage.getItem(SIDEBAR_SHOW_SESSIONS_STORAGE_KEY) === "1"
+  } catch {
+    return false
+  }
+}
+
+function writeStoredSidebarShowsSessions(show: boolean) {
+  if (typeof window === "undefined") return
+  try {
+    window.localStorage.setItem(SIDEBAR_SHOW_SESSIONS_STORAGE_KEY, show ? "1" : "0")
+  } catch {
+    // Persisting the sidebar preference is best-effort.
+  }
+}
+
 export function useWorkspace() {
   const ctx = React.useContext(WorkspaceContext)
   if (!ctx) throw new Error("useWorkspace must be used within WorkspaceProvider")
@@ -379,6 +533,9 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   const { session: authSession } = useAuth()
   const [connectors, setConnectors] = React.useState<ConnectorView[]>([])
   const [sessions, setSessions] = React.useState<SessionView[]>([])
+  const [projects, setProjects] = React.useState<ProjectView[]>([])
+  const [projectSessionsById, setProjectSessionsById] = React.useState<Record<string, SessionView[]>>({})
+  const [loadingProjectSessionIds, setLoadingProjectSessionIds] = React.useState<string[]>([])
   const [isLoading, setIsLoading] = React.useState(true)
   const [sessionPages, setSessionPages] = React.useState<DashboardSnapshotMessage["sessionPages"]>({
     active: { hasMore: false, nextCursor: null },
@@ -396,6 +553,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   const loadedBeyondFirstPageRef = React.useRef({ active: false, archived: false })
   const sessionStreamSeqRef = React.useRef(new Map<string, number>())
   const pendingSessionIndicatorRef = React.useRef(new Map<string, SessionView>())
+  const loadingProjectSessionIdsRef = React.useRef(new Set<string>())
   const sortSessions = React.useCallback(sortSessionViews, [])
 
   const reconcileSessionIndicator = React.useCallback((
@@ -425,9 +583,14 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   // Derive page state from hash — start at "home" for safe SSR, correct on mount.
   const [route, setRoute] = React.useState<ParsedRoute>({ page: "home" })
   const [routeReady, setRouteReady] = React.useState(false)
+  const [canGoBack, setCanGoBack] = React.useState(false)
+  const [canGoForward, setCanGoForward] = React.useState(false)
 
   const [filter, setFilter] = React.useState<FilterValue>(defaultFilter)
   const [search, setSearch] = React.useState("")
+  const [sidebarShowsSessions, setSidebarShowsSessionsState] = React.useState(
+    readStoredSidebarShowsSessions,
+  )
   const [panels, setPanels] = React.useState<Record<PanelId, PanelMode>>(readStoredPanelModes)
   const [collapsed, setCollapsed] = React.useState<Record<PanelId, boolean>>({
     files: false,
@@ -444,6 +607,8 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   const firstDeviceWizardCheckedRef = React.useRef(false)
   const composerInsertionSeqRef = React.useRef(0)
   const routeRef = React.useRef<ParsedRoute>({ page: "home" })
+  const historyIndexRef = React.useRef(0)
+  const historyMaxIndexRef = React.useRef(0)
 
   optimisticMessagesRef.current = optimisticMessages
   sessionAliasesRef.current = sessionAliases
@@ -455,6 +620,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   const applyDashboardSnapshot = React.useCallback((message: DashboardSnapshotMessage) => {
     const snapshotKey = stableJson({
       connectors: message.connectors,
+      projects: message.projects,
       sessions: message.sessions,
       sessionPages: message.sessionPages,
     })
@@ -462,6 +628,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     lastDashboardSnapshotKeyRef.current = snapshotKey
 
     const nextConnectors = message.connectors.map(mapConnector)
+    const nextProjects = sortProjectViews(message.projects)
     const nextSessions = message.sessions.map(mapSession)
     const previousFirstPageIds = new Set([
       ...firstPageSessionIdsRef.current.active,
@@ -472,6 +639,8 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       archived: new Set(nextSessions.filter((session) => session.archived).map((session) => session.id)),
     }
     setConnectors((current) => sameStableValue(current, nextConnectors) ? current : nextConnectors)
+    setProjects((current) => sameStableValue(current, nextProjects) ? current : nextProjects)
+    setProjectSessionsById((current) => mergeProjectSessions(current, nextSessions))
     setSessions((current) => {
       const currentById = new Map(current.map((session) => [session.id, session]))
       const merged = new Map(
@@ -505,12 +674,19 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     }
     try {
       if (authSession?.accessToken) {
-        const [connRes, activeRes, archivedRes] = await Promise.all([
+        const [connRes, projectRes, activeRes, archivedRes] = await Promise.all([
           dashboardApi.listConnectors(authSession.accessToken),
+          sidebarShowsSessions
+            ? Promise.resolve({ projects: [], serverTime: new Date().toISOString() })
+            : dashboardApi.listProjects(authSession.accessToken).catch(() => ({
+                projects: [],
+                serverTime: new Date().toISOString(),
+              })),
           dashboardApi.listSessions(authSession.accessToken, { archived: false, limit: 100 }),
           dashboardApi.listSessions(authSession.accessToken, { archived: true, limit: 100 }),
         ])
         const nextConnectors = connRes.connectors.map(mapConnector)
+        const nextProjects = sidebarShowsSessions ? null : sortProjectViews(projectRes.projects)
         const nextSessions = sortSessions(
           [...activeRes.sessions, ...archivedRes.sessions].map(mapSession),
         )
@@ -520,6 +696,10 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
         }
         loadedBeyondFirstPageRef.current = { active: false, archived: false }
         setConnectors((current) => sameStableValue(current, nextConnectors) ? current : nextConnectors)
+        if (nextProjects) {
+          setProjects((current) => sameStableValue(current, nextProjects) ? current : nextProjects)
+        }
+        setProjectSessionsById((current) => mergeProjectSessions(current, nextSessions))
         setSessions((current) => sameStableValue(current, nextSessions) ? current : nextSessions)
         setSessionPages({
           active: { hasMore: activeRes.hasMore, nextCursor: activeRes.nextCursor },
@@ -533,6 +713,8 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       ])
       const nextSessions = sortSessions(sessRes.sessions)
       setConnectors((current) => sameStableValue(current, connRes.connectors) ? current : connRes.connectors)
+      setProjects([])
+      setProjectSessionsById({})
       setSessions((current) => sameStableValue(current, nextSessions) ? current : nextSessions)
       setSessionPages({
         active: { hasMore: false, nextCursor: null },
@@ -542,18 +724,23 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       setIsLoading(false)
       initialLoadDoneRef.current = true
     }
-  }, [authSession?.accessToken, sortSessions])
+  }, [authSession?.accessToken, sidebarShowsSessions, sortSessions])
+
+  const setSidebarShowsSessions = React.useCallback((show: boolean) => {
+    setSidebarShowsSessionsState(show)
+    writeStoredSidebarShowsSessions(show)
+  }, [])
 
   const loadMoreSessions = React.useCallback(async () => {
     const token = authSession?.accessToken
-    const pageKind = filter.status === "archived" ? "archived" : "active"
+    const pageKind = "active" as const
     const page = sessionPages[pageKind]
     if (!token || !page.hasMore || !page.nextCursor || loadingSessionPagesRef.current[pageKind]) return
     loadingSessionPagesRef.current[pageKind] = true
     setLoadingSessionPages((current) => ({ ...current, [pageKind]: true }))
     try {
       const response = await dashboardApi.listSessions(token, {
-        archived: pageKind === "archived",
+        archived: false,
         limit: 100,
         cursor: page.nextCursor,
       })
@@ -563,6 +750,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
         incoming.forEach((session) => merged.set(session.id, session))
         return sortSessions(Array.from(merged.values()))
       })
+      setProjectSessionsById((current) => mergeProjectSessions(current, incoming))
       loadedBeyondFirstPageRef.current[pageKind] = true
       setSessionPages((current) => ({
         ...current,
@@ -574,7 +762,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       loadingSessionPagesRef.current[pageKind] = false
       setLoadingSessionPages((current) => ({ ...current, [pageKind]: false }))
     }
-  }, [authSession?.accessToken, filter.status, sessionPages, sortSessions])
+  }, [authSession?.accessToken, sessionPages, sortSessions])
 
   React.useEffect(() => {
     initialLoadDoneRef.current = false
@@ -584,6 +772,10 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     loadedBeyondFirstPageRef.current = { active: false, archived: false }
     sessionStreamSeqRef.current = new Map()
     pendingSessionIndicatorRef.current = new Map()
+    loadingProjectSessionIdsRef.current = new Set()
+    setLoadingProjectSessionIds([])
+    setProjectSessionsById({})
+    setProjects([])
     setSessionPages({
       active: { hasMore: false, nextCursor: null },
       archived: { hasMore: false, nextCursor: null },
@@ -594,6 +786,11 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   React.useEffect(() => {
     if (authSession?.accessToken) return
     fetchData()
+  }, [authSession?.accessToken, fetchData])
+
+  React.useEffect(() => {
+    if (!authSession?.accessToken || !initialLoadDoneRef.current) return
+    void fetchData()
   }, [authSession?.accessToken, fetchData])
 
   // ── Dashboard WebSocket ────────────────────────────────────
@@ -643,12 +840,13 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
           if (cancelled || typeof event.data !== "string") return
           try {
             const message = JSON.parse(event.data) as unknown
-            if (!isDashboardSnapshotMessage(message)) return
+            const snapshot = parseDashboardSnapshotMessage(message)
+            if (!snapshot) return
             if (fallbackTimer !== null) {
               window.clearTimeout(fallbackTimer)
               fallbackTimer = null
             }
-            scheduleDashboardSnapshot(message)
+            scheduleDashboardSnapshot(snapshot)
           } catch { /* ignore malformed */ }
         }
         socket.onclose = () => {
@@ -685,32 +883,108 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     }
   }, [applyDashboardSnapshot, authSession?.accessToken, fetchData])
 
+  const syncHistoryAvailability = React.useCallback(() => {
+    const index = historyIndexRef.current
+    const maxIndex = historyMaxIndexRef.current
+    setCanGoBack(index > 0)
+    setCanGoForward(index < maxIndex)
+  }, [])
+
   // ── Hash routing ──────────────────────────────────────────
   React.useEffect(() => {
+    const initialHash = window.location.hash || "#/"
+    const existingMeta = readWorkspaceHistoryMeta(window.history.state)
+    const initialIndex = existingMeta?.index ?? 0
+    const initialMaxIndex = Math.max(existingMeta?.maxIndex ?? initialIndex, initialIndex)
+    historyIndexRef.current = initialIndex
+    historyMaxIndexRef.current = initialMaxIndex
+    replaceCurrentHistoryMeta({ index: initialIndex, maxIndex: initialMaxIndex })
+    syncHistoryAvailability()
+
     // Correct from hash immediately on mount, then keep in sync.
-    const initialRoute = parseHash(window.location.hash)
+    const initialRoute = parseHash(initialHash)
     routeRef.current = initialRoute
     setRoute(initialRoute)
     setRouteReady(true)
     const handler = () => {
-      const nextRoute = parseHash(window.location.hash)
+      const nextHash = window.location.hash || "#/"
+      if (!isWorkspaceRouteHash(nextHash)) return
+
+      const nextRoute = parseHash(nextHash)
+      const existing = readWorkspaceHistoryMeta(window.history.state)
+      if (existing) {
+        const nextIndex = existing.index
+        const nextMaxIndex = Math.max(
+          historyMaxIndexRef.current,
+          existing.maxIndex,
+          nextIndex,
+        )
+        historyIndexRef.current = nextIndex
+        historyMaxIndexRef.current = nextMaxIndex
+        if (nextMaxIndex !== existing.maxIndex) {
+          replaceCurrentHistoryMeta({ index: nextIndex, maxIndex: nextMaxIndex })
+        }
+      } else {
+        // A direct hash change outside the workspace starts a fresh app history.
+        historyIndexRef.current = 0
+        historyMaxIndexRef.current = 0
+        replaceCurrentHistoryMeta({ index: 0, maxIndex: 0 })
+      }
+      syncHistoryAvailability()
       routeRef.current = nextRoute
       React.startTransition(() => setRoute(nextRoute))
     }
     window.addEventListener("hashchange", handler)
-    return () => window.removeEventListener("hashchange", handler)
-  }, [])
+    window.addEventListener("popstate", handler)
+    return () => {
+      window.removeEventListener("hashchange", handler)
+      window.removeEventListener("popstate", handler)
+    }
+  }, [syncHistoryAvailability])
 
   const pushRoute = React.useCallback((r: ParsedRoute) => {
+    const nextHash = buildHash(r)
+    const currentHash = window.location.hash || "#/"
+    if (nextHash === currentHash) {
+      routeRef.current = r
+      React.startTransition(() => setRoute(r))
+      return
+    }
+
+    const nextIndex = historyIndexRef.current + 1
+    historyIndexRef.current = nextIndex
+    historyMaxIndexRef.current = nextIndex
+    window.location.hash = nextHash
+    replaceCurrentHistoryMeta({ index: nextIndex, maxIndex: nextIndex })
+    syncHistoryAvailability()
     routeRef.current = r
-    window.location.hash = buildHash(r)
+    React.startTransition(() => setRoute(r))
+  }, [syncHistoryAvailability])
+
+  const replaceRoute = React.useCallback((r: ParsedRoute) => {
+    const nextHash = buildHash(r)
+    const currentMeta = readWorkspaceHistoryMeta(window.history.state)
+    const meta = currentMeta ?? {
+      index: historyIndexRef.current,
+      maxIndex: historyMaxIndexRef.current,
+    }
+    routeRef.current = r
+    window.history.replaceState(
+      historyStateWithMeta(window.history.state, meta),
+      "",
+      nextHash,
+    )
     React.startTransition(() => setRoute(r))
   }, [])
 
-  const replaceRoute = React.useCallback((r: ParsedRoute) => {
-    routeRef.current = r
-    window.history.replaceState(null, "", buildHash(r))
-    React.startTransition(() => setRoute(r))
+  const goBack = React.useCallback(() => {
+    if (historyIndexRef.current <= 0) return
+    window.history.back()
+  }, [])
+
+  const goForward = React.useCallback(() => {
+    if (historyIndexRef.current >= historyMaxIndexRef.current) return
+    window.history.forward()
   }, [])
 
   // ── Navigation helpers ────────────────────────────────────
@@ -768,6 +1042,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       else if (page === "dashboard") pushRoute({ page: "dashboard" })
       else if (page === "team") pushRoute({ page: "team" })
       else if (page === "service") pushRoute({ page: "service" })
+      else if (page === "mobile-connections") pushRoute({ page: "mobile-connections" })
     },
     [pushRoute],
   )
@@ -780,6 +1055,11 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   const navigateToWorkspace = React.useCallback(
     (connectorId: string, workspacePath: string) =>
       pushRoute({ page: "device-workspace", connectorId, workspacePath }),
+    [pushRoute],
+  )
+
+  const startProjectSession = React.useCallback(
+    (projectId: string) => pushRoute({ page: "home", projectId }),
     [pushRoute],
   )
 
@@ -818,6 +1098,10 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
 
   React.useEffect(() => {
     if (!routeReady || isLoading || route.page !== "home" || firstDeviceWizardCheckedRef.current) return
+    if (hasDesktopConnectorBridge()) {
+      firstDeviceWizardCheckedRef.current = true
+      return
+    }
     if (connectors.length > 0) {
       firstDeviceWizardCheckedRef.current = true
       return
@@ -829,6 +1113,77 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     setFirstDevicePromptOpen(true)
   }, [connectors.length, isLoading, route.page, routeReady])
 
+  // ── Project mutation helpers ─────────────────────────────
+
+  const upsertProject = React.useCallback((project: ProjectView) => {
+    setProjects((current) => {
+      const index = current.findIndex((item) => item.id === project.id)
+      if (index === -1) return sortProjectViews([project, ...current])
+      const next = [...current]
+      next[index] = project
+      return sortProjectViews(next)
+    })
+  }, [])
+
+  const loadProjectSessions = React.useCallback(async (projectId: string): Promise<boolean> => {
+    if (!projects.some((project) => project.id === projectId)) return false
+    setProjectSessionsById((current) => mergeProjectSessions(current, sessions))
+    return true
+  }, [projects, sessions])
+
+
+  const createProject = React.useCallback(async (
+    payload: ProjectCreateRequest,
+  ): Promise<ProjectView | null> => {
+    const token = authSession?.accessToken
+    if (!token) return null
+    const response = await dashboardApi.createProject(token, payload)
+    upsertProject(response.project)
+    return response.project
+  }, [authSession?.accessToken, upsertProject])
+
+  const updateProject = React.useCallback(async (
+    projectId: string,
+    patch: ProjectPatchRequest,
+  ): Promise<ProjectView | null> => {
+    const token = authSession?.accessToken
+    if (!token) return null
+    try {
+      const response = await dashboardApi.updateProject(token, projectId, patch)
+      upsertProject(response.project)
+      return response.project
+    } catch (error) {
+      if (isApiError(error) && error.code === "project_name_conflict") {
+        throw error
+      }
+      return null
+    }
+  }, [authSession?.accessToken, upsertProject])
+
+  const archiveProjectSessions = React.useCallback(async (projectId: string): Promise<boolean> => {
+    const token = authSession?.accessToken
+    if (!token) return false
+    try {
+      const response = await dashboardApi.archiveProjectSessions(token, projectId, {
+        archived: true,
+        scope: "all",
+      })
+      const archivedSessions = response.sessions.map(mapSession)
+      setSessions((current) => {
+        const merged = new Map(current.map((session) => [session.id, session]))
+        archivedSessions.forEach((session) => merged.set(session.id, session))
+        return sortSessions(Array.from(merged.values()))
+      })
+      setProjectSessionsById((current) => mergeProjectSessions(current, archivedSessions))
+      setProjects((current) => sortProjectViews(current.map((project) =>
+        project.id === projectId ? { ...project, activeSessionCount: 0 } : project,
+      )))
+      return true
+    } catch {
+      return false
+    }
+  }, [authSession?.accessToken, sortSessions])
+
   const upsertSession = React.useCallback((session: RealSessionView) => {
     const mapped = mapSession(session)
     setSessions((prev) => {
@@ -838,6 +1193,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       next[index] = reconcileSessionIndicator(prev[index], mapped)
       return sortSessions(next)
     })
+    setProjectSessionsById((current) => mergeProjectSessions(current, [mapped]))
   }, [reconcileSessionIndicator, sortSessions])
 
   const reportSessionStreamProgress = React.useCallback((
@@ -881,18 +1237,26 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     }
   }, [authSession?.accessToken, sessions, sortSessions, upsertSession])
 
-  const toggleArchiveSession = React.useCallback(async (id: string) => {
-    const targetSession = sessions.find((s) => s.id === id)
-    if (!targetSession) return
+  const toggleArchiveSession = React.useCallback(async (
+    id: string,
+    archived?: boolean,
+  ): Promise<SessionView | null> => {
+    const targetSession = sessionsRef.current.find((session) => session.id === id)
+    if (!targetSession) return null
+    const nextArchived = archived ?? !targetSession.archived
 
     if (authSession?.accessToken) {
-      const response = await dashboardApi.patchSession(authSession.accessToken, id, { archived: !targetSession.archived })
+      const response = await dashboardApi.patchSession(authSession.accessToken, id, { archived: nextArchived })
       upsertSession(response.session)
-    } else {
-      const response = await patchMockSession("mock-token", id, { archived: !targetSession.archived })
-      setSessions((prev) => sortSessions(prev.map((s) => (s.id === id ? response.session : s))))
+      return mapSession(response.session)
     }
-  }, [authSession?.accessToken, sessions, sortSessions, upsertSession])
+
+    const response = await patchMockSession("mock-token", id, { archived: nextArchived })
+    setSessions((prev) => sortSessions(prev.map((session) => (
+      session.id === id ? response.session : session
+    ))))
+    return response.session
+  }, [authSession?.accessToken, sortSessions, upsertSession])
 
   const renameSession = React.useCallback(async (id: string, title: string) => {
     const nextTitle = title.trim()
@@ -973,6 +1337,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       next[index] = mapped
       return sortSessions(next)
     })
+    setProjectSessionsById((current) => mergeProjectSessions(current, [mapped]))
     const currentRoute = routeRef.current
     if (currentRoute.page === "session" && currentRoute.sessionId === localSessionId) {
       replaceRoute({ page: "session", sessionId: session.id })
@@ -1066,7 +1431,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
 
   // ── Derived route fields ──────────────────────────────────
 
-  const validPages: AppPage[] = ["home", "session", "settings", "dashboard", "team", "service", "device", "device-workspace"]
+  const validPages: AppPage[] = ["home", "session", "settings", "dashboard", "team", "service", "mobile-connections", "device", "device-workspace"]
   const page: AppPage = validPages.includes(route.page as AppPage) ? (route.page as AppPage) : "home"
 
   const routeSessionId = route.page === "session" ? route.sessionId : null
@@ -1083,14 +1448,21 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   )
   const activeConnectorId = (route.page === "device" || route.page === "device-workspace") ? route.connectorId : null
   const activeWorkspacePath = route.page === "device-workspace" ? route.workspacePath : null
+  const newSessionProjectId = route.page === "home" ? route.projectId ?? null : null
+  const newSessionProject = newSessionProjectId
+    ? projects.find((project) => project.id === newSessionProjectId) ?? null
+    : null
   const settingsTab = route.page === "settings" ? route.tab : "account"
 
   const value: WorkspaceState = {
     connectors,
     sessions,
+    projects,
+    projectSessionsById,
+    loadingProjectSessionIds,
     isLoading,
-    hasMoreSessions: sessionPages[filter.status === "archived" ? "archived" : "active"].hasMore,
-    isLoadingMoreSessions: loadingSessionPages[filter.status === "archived" ? "archived" : "active"],
+    hasMoreSessions: sessionPages.active.hasMore,
+    isLoadingMoreSessions: loadingSessionPages.active,
     routeReady,
     page,
     activeSessionId,
@@ -1099,9 +1471,12 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     activeSessionPending,
     activeConnectorId,
     activeWorkspacePath,
+    newSessionProjectId,
+    newSessionProject,
     settingsTab,
     filter,
     search,
+    sidebarShowsSessions,
     panels,
     collapsed,
     popupBlocked,
@@ -1109,14 +1484,20 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     pairDeviceDialogOpen,
     composerInsertion,
     optimisticMessages,
+    canGoBack,
+    canGoForward,
     openSession,
+    goBack,
+    goForward,
     goHome,
     replaceHome,
     navigate,
     navigateToDevice,
     navigateToWorkspace,
+    startProjectSession,
     setFilter,
     setSearch,
+    setSidebarShowsSessions,
     setPanelMode,
     toggleCollapse,
     dismissPopupBlocked,
@@ -1126,6 +1507,10 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     togglePinSession,
     toggleArchiveSession,
     renameSession,
+    loadProjectSessions,
+    createProject,
+    updateProject,
+    archiveProjectSessions,
     markSessionRead,
     upsertSession,
     reportSessionStreamProgress,

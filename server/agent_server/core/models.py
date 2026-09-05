@@ -43,6 +43,7 @@ RuntimeName = Annotated[
 ]
 ConnectorStatus = Literal["offline", "online"]
 ConnectorDeviceOs = Literal["macos", "windows", "linux"]
+ConnectorKind = Literal["desktop", "cli"]
 SessionStatus = Literal[
     "idle",
     "waiting",
@@ -92,6 +93,7 @@ class ConnectorView(BaseModel):
     id: str
     userId: str
     name: str
+    connectorKind: ConnectorKind
     deviceOs: ConnectorDeviceOs | None = None
     status: ConnectorStatus
     lastSeenAt: str | None = None
@@ -101,6 +103,7 @@ class ConnectorView(BaseModel):
 
 class ConnectorCreateRequest(BaseModel):
     name: str = "Codex Connector"
+    connectorKind: ConnectorKind = "cli"
 
 
 class ConnectorUpdateRequest(BaseModel):
@@ -127,6 +130,64 @@ class ConnectorRevokeResponse(BaseModel):
 
 class ConnectorListResponse(BaseModel):
     connectors: list[ConnectorView]
+    serverTime: str
+
+
+class ProjectView(BaseModel):
+    id: str
+    userId: str
+    connectorId: str
+    name: str
+    workspacePath: str
+    pinned: bool = False
+    pinnedAt: str | None = None
+    activeSessionCount: int = 0
+    lastActivityAt: str | None = None
+    createdAt: str
+    updatedAt: str
+
+
+class ProjectCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    name: str = Field(min_length=1, max_length=255)
+    connectorId: str = Field(min_length=1)
+    workspacePath: str = Field(min_length=1, max_length=4096)
+    # Retained for compatibility with older clients. Project creation never
+    # binds existing sessions, even when this legacy flag is true.
+    attachMatchingSessions: bool = False
+
+
+class ProjectPatchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    pinned: bool | None = None
+
+    @model_validator(mode="after")
+    def _require_change(self) -> ProjectPatchRequest:
+        if self.name is None and self.pinned is None:
+            raise ValueError("at least one project field is required")
+        return self
+
+
+class ProjectResponse(BaseModel):
+    project: ProjectView
+    serverTime: str
+
+
+class ProjectCreateResponse(ProjectResponse):
+    attachedSessions: int = 0
+
+
+class ProjectListResponse(BaseModel):
+    projects: list[ProjectView]
+    serverTime: str
+
+
+class ProjectDeleteResponse(BaseModel):
+    projectId: str
+    detachedSessions: int
     serverTime: str
 
 
@@ -608,6 +669,7 @@ class SessionCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     connectorId: str
+    projectId: str = Field(min_length=1)
     runtime: RuntimeName = "codex"
     runtimeId: str | None = None
     externalSessionId: str | None = None
@@ -642,6 +704,7 @@ class SessionCreateAndStartRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     connectorId: str
+    projectId: str = Field(min_length=1)
     runtime: RuntimeName = "codex"
     runtimeId: str | None = None
     title: str | None = None
@@ -664,6 +727,7 @@ class SessionCreateAndStartRequest(BaseModel):
 class SessionView(BaseModel):
     id: str
     connectorId: str
+    projectId: str | None = None
     connectorStatus: ConnectorStatus
     runtime: RuntimeName
     runtimeId: str | None = None
@@ -786,6 +850,13 @@ class ArchiveAllRequest(BaseModel):
 class ArchiveAllResponse(BaseModel):
     sessions: list[SessionView]
     affected: int
+    serverTime: str
+
+
+class ProjectSessionListResponse(BaseModel):
+    sessions: list[SessionView]
+    hasMore: bool
+    nextCursor: str | None = None
     serverTime: str
 
 
@@ -1199,6 +1270,10 @@ class TerminalView(BaseModel):
     scrollbackBytes: int = 0
     scrollbackSeq: int = 0
     ephemeralGroupId: str | None = None
+    persistent: bool = Field(
+        default=False,
+        description="Keep the terminal alive through a renewable lease instead of the ordinary Connector idle TTL.",
+    )
     createdAt: str
 
 
@@ -1212,11 +1287,19 @@ class TerminalCreateRequest(BaseModel):
     rows: int = Field(default=24, ge=1, le=200)
     label: str | None = Field(default=None, max_length=64)
     ephemeralGroupId: str | None = Field(default=None, min_length=1, max_length=96)
+    persistent: bool = Field(
+        default=False,
+        description="Keep the terminal alive through a renewable lease instead of the ordinary Connector idle TTL.",
+    )
     env: dict[str, str] | None = None
 
 
 class TerminalPatchRequest(BaseModel):
     label: str = Field(min_length=1, max_length=64)
+
+
+class TerminalPersistenceRequest(BaseModel):
+    persistent: bool
 
 
 class TerminalResizeRequest(BaseModel):

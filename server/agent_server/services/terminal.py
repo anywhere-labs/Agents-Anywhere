@@ -96,6 +96,7 @@ class TerminalService:
                 profile=payload.profile,
                 env=payload.env,
                 ephemeral_group_id=payload.ephemeralGroupId,
+                persistent=payload.persistent,
             )
             try:
                 result, connection_id = await request_connector_bound(
@@ -114,6 +115,7 @@ class TerminalService:
                         "cols": payload.cols,
                         "rows": payload.rows,
                         "env": payload.env or {},
+                        "persistent": payload.persistent,
                     },
                     timeout=15,
                 )
@@ -162,6 +164,7 @@ class TerminalService:
                 profile=payload.profile,
                 env=payload.env,
                 ephemeral_group_id=payload.ephemeralGroupId,
+                persistent=payload.persistent,
             )
             try:
                 _, connection_id = await request_connector_bound(

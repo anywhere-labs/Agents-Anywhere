@@ -47,6 +47,7 @@ connectors = Table(
     Column("id", Text, primary_key=True),
     Column("user_id", Text, nullable=False),
     Column("name", Text, nullable=False),
+    Column("connector_kind", Text, nullable=False, server_default="cli"),
     Column("device_os", Text),
     Column("status", Text, nullable=False),
     Column("presence_instance_id", Text),
@@ -351,11 +352,69 @@ legacy_import_archive = Table(
 )
 
 
+projects = Table(
+    "projects",
+    metadata,
+    Column("id", Text, primary_key=True),
+    Column(
+        "user_id",
+        Text,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
+    Column(
+        "connector_id",
+        Text,
+        ForeignKey("connectors.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
+    Column("name", Text, nullable=False),
+    Column("workspace_path", Text, nullable=False),
+    Column("workspace_key", Text, nullable=False),
+    Column("pinned", Integer, nullable=False, server_default="0"),
+    Column("pinned_at", Text),
+    Column("created_at", Text, nullable=False),
+    Column("updated_at", Text, nullable=False),
+    Index(
+        "idx_projects_user_pinned_updated",
+        "user_id",
+        "pinned",
+        "pinned_at",
+        "updated_at",
+    ),
+    Index(
+        "idx_projects_connector_workspace",
+        "connector_id",
+        "workspace_key",
+    ),
+    UniqueConstraint(
+        "user_id",
+        "connector_id",
+        "workspace_key",
+        name="uq_projects_user_connector_workspace",
+    ),
+    UniqueConstraint(
+        "user_id",
+        "name",
+        name="uq_projects_user_name",
+    ),
+)
+
+
 sessions = Table(
     "sessions",
     metadata,
     Column("id", Text, primary_key=True),
     Column("connector_id", Text, ForeignKey("connectors.id"), nullable=False),
+    Column(
+        "project_id",
+        Text,
+        ForeignKey(
+            "projects.id",
+            name="fk_sessions_project_id_projects",
+            ondelete="RESTRICT",
+        ),
+    ),
     Column("runtime", Text, nullable=False),
     Column(
         "runtime_id",
@@ -398,6 +457,13 @@ sessions = Table(
         "connector_id",
         "runtime",
         "source_state",
+    ),
+    Index(
+        "idx_sessions_project_archived_sort",
+        "project_id",
+        "archived",
+        "pinned",
+        "sort_at",
     ),
 )
 
@@ -455,7 +521,12 @@ session_shares = Table(
     metadata,
     Column("id", Text, primary_key=True),
     Column("user_id", Text, ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
-    Column("session_id", Text, ForeignKey("sessions.id", ondelete="CASCADE"), nullable=False),
+    Column(
+        "session_id",
+        Text,
+        ForeignKey("sessions.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
     Column("scope", Text, nullable=False),
     Column("snapshot_json", Text, nullable=False),
     Column("allowed_file_ids_json", Text, nullable=False, server_default="[]"),
