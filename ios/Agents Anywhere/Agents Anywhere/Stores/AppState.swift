@@ -124,13 +124,13 @@ final class AppState: ObservableObject {
         }
     }
 
-    func login(serverURL: URL, userId: String, password: String) async {
+    func login(serverURL: URL, email: String, password: String) async {
         authError = nil
         isWorking = true
         defer { isWorking = false }
         do {
             let client = APIClient(serverURL: serverURL)
-            let auth = try await client.login(userId: userId, password: password)
+            let auth = try await client.login(email: email, password: password)
             try saveSession(serverURL: serverURL, token: auth.accessToken)
             self.serverURL = serverURL
             me = try await client.me(token: auth.accessToken)
@@ -142,13 +142,13 @@ final class AppState: ObservableObject {
         }
     }
 
-    func verifyPasswordLogin(serverURL: URL, userId: String, password: String) async -> AuthResponse? {
+    func verifyPasswordLogin(serverURL: URL, email: String, password: String) async -> AuthResponse? {
         authError = nil
         isWorking = true
         defer { isWorking = false }
         do {
             let client = APIClient(serverURL: serverURL)
-            return try await client.login(userId: userId, password: password)
+            return try await client.login(email: email, password: password)
         } catch {
             authError = error.localizedDescription
             return nil
@@ -431,6 +431,34 @@ final class AppState: ObservableObject {
             accountError = error.localizedDescription
             return false
         }
+    }
+
+    func accountAuthConfig() async throws -> AuthConfig {
+        guard let services = makeV2Services() else {
+            throw APIClientError.invalidServerURL
+        }
+        return try await services.account.authConfig()
+    }
+
+    func updateAccountProfile(displayName: String) async throws {
+        guard let services = makeV2Services() else {
+            throw APIClientError.invalidServerURL
+        }
+        me = try await services.account.updateProfile(displayName: displayName)
+    }
+
+    func sendAccountEmailCode(email: String) async throws -> V2EmailCodeResponse {
+        guard let services = makeV2Services() else {
+            throw APIClientError.invalidServerURL
+        }
+        return try await services.account.sendEmailCode(email: email)
+    }
+
+    func bindAccountEmail(email: String, code: String?) async throws {
+        guard let services = makeV2Services() else {
+            throw APIClientError.invalidServerURL
+        }
+        me = try await services.account.bindEmail(email: email, code: code)
     }
 
     func dismissAccountError() {

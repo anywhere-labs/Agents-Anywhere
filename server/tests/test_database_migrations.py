@@ -5,11 +5,6 @@ import hashlib
 import json
 
 import pytest
-from alembic import command
-from sqlalchemy import BigInteger, create_engine, inspect, text
-from sqlalchemy.dialects.postgresql import asyncpg as postgresql_asyncpg
-from sqlalchemy.ext.asyncio import create_async_engine
-
 from agent_server.infra.db.engine import build_engine, resolve_db_url
 from agent_server.infra.db.legacy_import import rehearse_v1_import
 from agent_server.infra.db.migrations import (
@@ -31,7 +26,11 @@ from agent_server.infra.db.schema import (
     sessions,
     timeline_items,
 )
+from alembic import command
 from migrations.versions import v2_24
+from sqlalchemy import BigInteger, create_engine, inspect, text
+from sqlalchemy.dialects.postgresql import asyncpg as postgresql_asyncpg
+from sqlalchemy.ext.asyncio import create_async_engine
 
 
 def _sqlite_url(path) -> str:
@@ -374,6 +373,7 @@ def test_v2_0_database_upgrades_through_current_revision(tmp_path) -> None:
         ("v2_21", "v2_22"),
         ("v2_22", "v2_23"),
         ("v2_23", "v2_24"),
+        ("v2_24", "v2_25"),
     ],
 )
 def test_every_adjacent_schema_upgrade(
@@ -1014,6 +1014,7 @@ def test_v2_14_downgrade_rejects_instance_specific_data(
         "v2_21",
         "v2_23",
         "v2_24",
+        "v2_25",
     ],
 )
 def test_unversioned_runtime_schema_is_classified_by_actual_columns(
@@ -1051,9 +1052,9 @@ def test_unversioned_runtime_schema_is_classified_by_actual_columns(
     )
 
 
-def test_current_schema_version_is_v2_24() -> None:
-    assert CURRENT_SCHEMA_REVISION == "v2_24"
-    assert CURRENT_SCHEMA_VERSION == "2.24"
+def test_current_schema_version_is_v2_25() -> None:
+    assert CURRENT_SCHEMA_REVISION == "v2_25"
+    assert CURRENT_SCHEMA_VERSION == "2.25"
 
 
 def test_v2_20_adds_session_source_observation_details(tmp_path) -> None:
@@ -1609,6 +1610,12 @@ def _create_legacy_v1_database(path) -> None:
         # Current metadata contains tables and columns introduced after v1.
         # Remove them before constructing the historical legacy fixture so
         # their real Alembic revisions can create them during the upgrade.
+        connection.execute(text("DROP TABLE email_verification_codes"))
+        connection.execute(text("DROP TABLE email_verification_limits"))
+        connection.execute(text("DROP INDEX idx_users_email"))
+        connection.execute(text("ALTER TABLE users DROP COLUMN email"))
+        connection.execute(text("ALTER TABLE users DROP COLUMN email_verified_at"))
+        connection.execute(text("ALTER TABLE users DROP COLUMN display_name"))
         connection.execute(text("DROP TABLE session_shares"))
         connection.execute(text("ALTER TABLE sessions DROP COLUMN seq_allocated_high"))
         connection.execute(

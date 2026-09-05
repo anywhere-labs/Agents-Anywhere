@@ -3,7 +3,8 @@
 import { useState } from "react"
 import { Globe, User, Lock, Eye, EyeOff } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { Label } from "@/components/ui/label"
+import { Field, FieldGroup, FieldLabel as Label } from "@/components/ui/field"
+import { isValidEmail } from "@/features/auth/account-profile"
 import { InputGroup, InputGroupAddon, InputGroupInput, InputGroupButton } from "@/components/ui/input-group"
 import { AuthShell } from "./auth-shell"
 import { useAuth } from "./auth-context"
@@ -13,12 +14,12 @@ export function LoginScreen() {
   const { navigate, login, loading, error, oauthEnabled, oauthProviderLabel, registrationOpen, startOAuth } = useAuth()
   const t = useTranslations("auth")
   const [showPassword, setShowPassword] = useState(false)
-  const [userId, setUserId] = useState("")
+  const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
 
   const submit = async () => {
-    if (!userId.trim() || !password) return
-    await login({ userId, password }).catch(() => undefined)
+    if (!isValidEmail(email) || !password) return
+    await login({ email, password }).catch(() => undefined)
   }
 
   return (
@@ -33,24 +34,25 @@ export function LoginScreen() {
         </p>
       </div>
 
-      <div className="flex flex-col gap-5">
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="login-userid">{t("fields.userId")}</Label>
+      <FieldGroup>
+        <Field>
+          <Label htmlFor="login-email">{t("fields.email")}</Label>
           <InputGroup className="h-11 rounded-lg">
             <InputGroupAddon><User className="size-4" /></InputGroupAddon>
             <InputGroupInput
-              id="login-userid"
-              value={userId}
-              onChange={(event) => setUserId(event.currentTarget.value)}
+              id="login-email"
+              value={email}
+              onChange={(event) => setEmail(event.currentTarget.value)}
               placeholder={t("login.userPlaceholder")}
-              autoComplete="username"
+              type="email"
+              autoComplete="email"
               spellCheck={false}
               className="code-mono"
             />
           </InputGroup>
-        </div>
+        </Field>
 
-        <div className="flex flex-col gap-1.5">
+        <Field>
           <Label htmlFor="login-password">{t("fields.password")}</Label>
           <InputGroup className="h-11 rounded-lg">
             <InputGroupAddon><Lock className="size-4" /></InputGroupAddon>
@@ -73,11 +75,11 @@ export function LoginScreen() {
               </InputGroupButton>
             </InputGroupAddon>
           </InputGroup>
-        </div>
+        </Field>
 
         <Button
           className="h-11 w-full font-medium"
-          disabled={loading || !userId.trim() || !password}
+          disabled={loading || !isValidEmail(email) || !password}
           onClick={() => void submit()}
         >
           {loading ? t("login.signingIn") : t("login.submitWithEnter")}
@@ -112,7 +114,7 @@ export function LoginScreen() {
             <p>{t("login.forgot")}</p>
           </div>
         ) : null}
-      </div>
+      </FieldGroup>
     </AuthShell>
   )
 }

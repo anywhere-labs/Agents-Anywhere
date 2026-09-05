@@ -47,6 +47,8 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { Separator } from "@/components/ui/separator"
 import { Slider } from "@/components/ui/slider"
 import { Spinner } from "@/components/ui/spinner"
+import { AccountProfileCard } from "@/components/pages/account-profile-card"
+import { accountDisplayName } from "@/features/auth/account-profile"
 import { MobileSignInPanel } from "@/components/pages/mobile-signin-panel"
 import { DashboardSidebarToggle } from "@/components/dashboard-sidebar-toggle"
 import { useAuth } from "@/components/auth/auth-context"
@@ -103,13 +105,13 @@ function AccountTab({
         <div className="flex flex-wrap items-center justify-between gap-4 px-6 py-5">
           <div className="flex min-w-0 items-center gap-4">
             <Avatar className="size-16 rounded-full">
-              {me.avatar && <AvatarImage src={me.avatar} alt={me.userId} />}
+              {me.avatar && <AvatarImage src={me.avatar} alt={accountDisplayName(me)} />}
               <AvatarFallback className="rounded-full bg-primary text-xl text-primary-foreground">
-                {me.userId.slice(0, 2).toUpperCase()}
+                {accountDisplayName(me).slice(0, 2).toUpperCase()}
               </AvatarFallback>
             </Avatar>
             <div className="min-w-0">
-              <p className="truncate text-base font-semibold">{me.userId}</p>
+              <p className="truncate text-base font-semibold">{accountDisplayName(me)}</p>
               <p className="text-sm capitalize text-muted-foreground">{me.role}</p>
             </div>
           </div>
@@ -129,8 +131,8 @@ function AccountTab({
         <Separator />
         <div className="divide-y divide-border">
           <div className="flex items-center px-6 py-4">
-            <span className="w-36 shrink-0 text-sm text-muted-foreground">{t("userId")}</span>
-            <span className="code-mono text-sm">{me.userId}</span>
+            <span className="w-36 shrink-0 text-sm text-muted-foreground">{t("profile.email")}</span>
+            <span className="code-mono text-sm">{me.email ?? "—"}</span>
           </div>
           <div className="flex items-center px-6 py-4">
             <span className="w-36 shrink-0 text-sm text-muted-foreground">{t("role")}</span>
@@ -164,13 +166,15 @@ function AccountTab({
         </div>
       </section>
 
-      <MobileSignInPanel token={token} userId={me.userId} />
+      <AccountProfileCard me={me} token={token} onMeChange={onMeChange} />
+
+      <MobileSignInPanel token={token} userId={accountDisplayName(me)} />
 
       <ResetPasswordDialog open={passwordOpen} token={token} onOpenChange={setPasswordOpen} />
       <AvatarCropDialog
         open={avatarOpen}
         token={token}
-        userId={me.userId}
+        userId={accountDisplayName(me)}
         onMeChange={onMeChange}
         onOpenChange={setAvatarOpen}
       />

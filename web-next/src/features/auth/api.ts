@@ -1,3 +1,4 @@
+import { normalizeEmail } from "./account-profile";
 import { ApiClient, apiClient } from "@/lib/api";
 import {
   createPasswordVerifier,
@@ -13,6 +14,7 @@ import type {
   AuthPasswordSaltResponse,
   AuthResponse,
   InstanceSettings,
+  EmailSettingsUpdate,
   OAuthProviderConfigUpdate,
   OAuthAuthorizePayload,
   OAuthAuthorizeResponse,
@@ -32,26 +34,26 @@ export class AuthApi {
     return this.client.get<AuthConfig>("/auth/config", { auth: false });
   }
 
-  passwordSalt(userId: string): Promise<AuthPasswordSaltResponse> {
+  passwordSalt(email: string): Promise<AuthPasswordSaltResponse> {
     return this.client.post<AuthPasswordSaltResponse>(
       "/auth/password-salt",
-      { userId },
+      { email: normalizeEmail(email) },
       { auth: false },
     );
   }
 
   async login(credentials: AuthCredentials): Promise<AuthResponse> {
-    const userId = normalizeUserId(credentials.userId);
+    const email = normalizeEmail(credentials.email);
     const passwordVerifier =
       credentials.passwordVerifier ??
       (credentials.password
-        ? await this.loginPasswordVerifier(userId, credentials.password)
+        ? await this.loginPasswordVerifier(email, credentials.password)
         : undefined);
 
     return this.client.post<AuthResponse>(
       "/auth/login",
       {
-        userId,
+        email,
         passwordVerifier
       },
       { auth: false },
@@ -59,7 +61,7 @@ export class AuthApi {
   }
 
   async register(credentials: AuthCredentials): Promise<AuthResponse> {
-    const userId = normalizeUserId(credentials.userId);
+    const email = normalizeEmail(credentials.email);
     const verifier =
       credentials.passwordVerifier && credentials.passwordSalt
         ? {
@@ -73,7 +75,9 @@ export class AuthApi {
     return this.client.post<AuthResponse>(
       "/auth/register",
       {
-        userId,
+        email,
+        displayName: credentials.displayName?.trim(),
+        ...(credentials.code ? { code: credentials.code } : {}),
         ...(verifier ?? {}),
         ...(credentials.setupToken ? { setupToken: credentials.setupToken } : {})
       },
@@ -97,22 +101,22 @@ export class AuthApi {
   }
 
   async finalizeOAuth(payload: OAuthFinalizePayload): Promise<OAuthFinalizeResponse> {
-    let body = payload;
+    let body = { ...payload, ...(payload.email ? { email: normalizeEmail(payload.email) } : {}), ...(payload.displayName ? { displayName: payload.displayName.trim() } : {}) };
     if (payload.password) {
-      const { password: _password, ...rest } = payload;
+      const { password: _password, ...rest } = body;
       if (payload.setPassword) {
         body = {
           ...rest,
           ...(await createPasswordVerifier(payload.password))
         };
       } else {
-        const userId = payload.userId;
-        if (!userId) {
-          throw new Error("OAuth password confirmation requires a user ID.");
+        const email = payload.email;
+        if (!email) {
+          throw new Error("OAuth password confirmation requires an email address.");
         }
         body = {
           ...rest,
-          passwordVerifier: await this.loginPasswordVerifier(userId, payload.password)
+          passwordVerifier: await this.loginPasswordVerifier(email, payload.password)
         };
       }
     }
@@ -149,6 +153,18 @@ export class AuthApi {
     );
   }
 
+  sendEmailCode(email: string, purpose: "register" | "bind", token?: string, pendingToken?: string, setupToken?: string): Promise<{ expiresIn: number; retryAfter: number }> {
+    return this.client.post("/auth/email-code", { email: normalizeEmail(email), purpose, ...(pendingToken ? { pendingToken } : {}), ...(setupToken ? { setupToken } : {}) }, { auth: false, token });
+  }
+
+  updateEmail(token: string, email: string, code?: string): Promise<AuthMe> {
+    return this.client.put("/auth/me/email", { email: normalizeEmail(email), ...(code ? { code } : {}) }, { token });
+  }
+
+  updateProfile(token: string, displayName: string): Promise<AuthMe> {
+    return this.client.put("/auth/me/profile", { displayName: displayName.trim() }, { token });
+  }
+
   updateAvatar(token: string, avatar: string): Promise<AuthMe> {
     return this.client.put<AuthMe>("/auth/me/avatar", { avatar }, { token });
   }
@@ -164,7 +180,9 @@ export class AuthApi {
   async createUser(
     token: string,
     body: {
-      userId: string;
+      email: string;
+      displayName: string;
+      code?: string;
       role: UserRole;
       password?: string;
       passwordVerifier?: string;
@@ -180,7 +198,9 @@ export class AuthApi {
     return this.client.post<AdminUser>(
       "/admin/users",
       {
-        userId: normalizeUserId(body.userId),
+        email: normalizeEmail(body.email),
+        displayName: body.displayName.trim(),
+        ...(body.code ? { code: body.code } : {}),
         role: body.role,
         ...verifier,
       },
@@ -192,6 +212,7 @@ export class AuthApi {
     token: string,
     userId: string,
     body: {
+      displayName?: string;
       role?: UserRole;
       disabled?: boolean;
       password?: string;
@@ -208,6 +229,7 @@ export class AuthApi {
     return this.client.patch<AdminUser>(
       `/admin/users/${encodeURIComponent(userId)}`,
       {
+        ...(body.displayName !== undefined ? { displayName: body.displayName.trim() } : {}),
         ...(body.role ? { role: body.role } : {}),
         ...(typeof body.disabled === "boolean" ? { disabled: body.disabled } : {}),
         ...verifier,
@@ -230,6 +252,7 @@ export class AuthApi {
       registrationOpen?: boolean;
       oauthRegistrationOpen?: boolean;
       oauth?: OAuthProviderConfigUpdate;
+      email?: EmailSettingsUpdate;
     },
   ): Promise<InstanceSettings> {
     return this.client.patch<InstanceSettings>("/admin/settings", body, { token });
@@ -239,8 +262,8 @@ export class AuthApi {
     return this.client.get<ServiceInfo>("/admin/service", { token });
   }
 
-  private async loginPasswordVerifier(userId: string, password: string): Promise<string> {
-    const { salt } = await this.passwordSalt(userId);
+  private async loginPasswordVerifier(email: string, password: string): Promise<string> {
+    const { salt } = await this.passwordSalt(email);
     return derivePasswordVerifier(password, salt);
   }
 
@@ -258,6 +281,4 @@ export class AuthApi {
 }
 export const authApi = new AuthApi();
 
-export function normalizeUserId(userId: string): string {
-  return userId.trim().toLowerCase();
-}
+export { normalizeEmail } from "./account-profile";

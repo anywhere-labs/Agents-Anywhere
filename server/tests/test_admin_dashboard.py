@@ -24,7 +24,7 @@ def bearer(token: str) -> dict[str, str]:
 
 def register_admin(client: TestClient) -> dict[str, str]:
     cfg = client.get("/auth/config").json()
-    body: dict[str, Any] = {"userId": "admin", "password": "secret"}
+    body: dict[str, Any] = {"email": "admin@example.com", "displayName": "Admin", "password": "secret"}
     if cfg["needsBootstrap"]:
         body["setupToken"] = client.app.state.setup_token.peek()
     response = client.post("/auth/register", json=body)
@@ -36,10 +36,10 @@ def create_member(client: TestClient, admin_headers: dict[str, str], user_id: st
     response = client.post(
         "/admin/users",
         headers=admin_headers,
-        json={"userId": user_id, "password": "secret", "role": "member"},
+        json={"email": f"{user_id}@example.com", "displayName": user_id, "password": "secret", "role": "member"},
     )
     assert response.status_code == 201, response.text
-    login = client.post("/auth/login", json={"userId": user_id, "password": "secret"})
+    login = client.post("/auth/login", json={"email": f"{user_id}@example.com", "password": "secret"})
     assert login.status_code == 200, login.text
     return bearer(login.json()["accessToken"])
 

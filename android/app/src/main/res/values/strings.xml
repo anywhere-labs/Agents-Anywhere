@@ -584,4 +584,21 @@
     <string name="profile_account_load_failed">Could not load account.</string>
     <string name="profile_sign_out_title">Sign out?</string>
     <string name="profile_sign_out_body">You will need to sign in again to use this server.</string>
+    <string name="profile_nickname">Nickname</string>
+    <string name="profile_email">Email</string>
+    <string name="profile_email_unbound">Not linked</string>
+    <string name="profile_updated">Account updated.</string>
+    <string name="profile_update_failed">Could not update account.</string>
+    <string name="profile_edit_nickname">Edit nickname</string>
+    <string name="profile_bind_email">Link or change email</string>
+    <string name="profile_loading_email_policy">Loading email settings…</string>
+    <string name="profile_retry">Retry</string>
+    <string name="profile_email_code">Email verification code</string>
+    <string name="profile_send_code">Send verification code</string>
+    <string name="profile_resend_in">Resend in %1$d s</string>
+    <string name="profile_code_sent">Code sent. Check your inbox.</string>
+    <string name="profile_email_verification_disabled">This service accepts email without a verification code.</string>
+    <string name="profile_email_status">Email status</string>
+    <string name="profile_email_verified">Verified</string>
+    <string name="profile_email_unverified">Not verified</string>
 </resources>

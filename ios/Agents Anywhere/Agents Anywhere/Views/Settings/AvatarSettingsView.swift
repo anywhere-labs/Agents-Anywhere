@@ -15,7 +15,7 @@ struct AvatarSettingsView: View {
         Form {
             Section {
                 AvatarEditorPreview(
-                    userId: appState.me?.userId ?? "?",
+                    displayName: appState.me?.accountLabel ?? "?",
                     currentSource: appState.accountAvatarSource,
                     selectedImage: selectedImage,
                     zoom: $zoom,
@@ -132,7 +132,7 @@ struct AvatarSettingsView: View {
 }
 
 private struct AvatarEditorPreview: View {
-    let userId: String
+    let displayName: String
     let currentSource: AccountAvatarImageSource?
     let selectedImage: UIImage?
     @Binding var zoom: CGFloat
@@ -164,7 +164,7 @@ private struct AvatarEditorPreview: View {
                 .gesture(dragGesture(image: selectedImage))
         } else {
             AccountAvatarView(
-                userId: userId,
+                displayName: displayName,
                 source: currentSource,
                 size: AccountAvatarProcessor.outputSize
             )

@@ -3,24 +3,28 @@
 import { useState } from "react"
 import { User, Lock, Eye, EyeOff } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { Label } from "@/components/ui/label"
+import { Field, FieldGroup, FieldLabel as Label } from "@/components/ui/field"
+import { isValidEmail, isValidDisplayName } from "@/features/auth/account-profile"
 import { InputGroup, InputGroupAddon, InputGroupInput, InputGroupButton } from "@/components/ui/input-group"
+import { EmailCodeField, DisplayNameField } from "./account-identity-fields"
 import { AuthShell } from "./auth-shell"
 import { useAuth } from "./auth-context"
 import { useTranslations } from "next-intl"
 
 export function RegisterScreen() {
-  const { navigate, register, loading, error } = useAuth()
+  const { navigate, register, loading, error, emailVerificationRequired } = useAuth()
   const t = useTranslations("auth")
   const [showPassword, setShowPassword] = useState(false)
-  const [userId, setUserId] = useState("")
+  const [displayName, setDisplayName] = useState("")
+  const [code, setCode] = useState("")
+  const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [confirm, setConfirm] = useState("")
   const localError = password && confirm && password !== confirm ? t("register.passwordMismatch") : null
 
   const submit = async () => {
-    if (!userId.trim() || !password || password !== confirm) return
-    await register({ userId, password }).catch(() => undefined)
+    if (!isValidEmail(email) || !isValidDisplayName(displayName) || (emailVerificationRequired && code.length !== 6) || !password || password !== confirm) return
+    await register({ email, displayName, code, password }).catch(() => undefined)
   }
 
   return (
@@ -34,24 +38,28 @@ export function RegisterScreen() {
         </p>
       </div>
 
-      <div className="flex flex-col gap-5">
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="reg-userid">{t("fields.userId")}</Label>
+      <FieldGroup>
+        <Field>
+          <Label htmlFor="reg-email">{t("fields.email")}</Label>
           <InputGroup className="h-11 rounded-lg">
             <InputGroupAddon><User className="size-4" /></InputGroupAddon>
             <InputGroupInput
-              id="reg-userid"
-              value={userId}
-              onChange={(event) => setUserId(event.currentTarget.value)}
+              id="reg-email"
+              value={email}
+              onChange={(event) => { setEmail(event.currentTarget.value); setCode("") }}
               placeholder={t("login.userPlaceholder")}
-              autoComplete="username"
+              type="email"
+              autoComplete="email"
               spellCheck={false}
               className="code-mono"
             />
           </InputGroup>
-        </div>
+        </Field>
 
-        <div className="flex flex-col gap-1.5">
+        <DisplayNameField value={displayName} onChange={setDisplayName} />
+        {emailVerificationRequired ? <EmailCodeField email={email} value={code} onChange={setCode} disabled={loading} /> : null}
+
+        <Field>
           <Label htmlFor="reg-password">{t("fields.password")}</Label>
           <InputGroup className="h-11 rounded-lg">
             <InputGroupAddon><Lock className="size-4" /></InputGroupAddon>
@@ -71,9 +79,9 @@ export function RegisterScreen() {
               </InputGroupButton>
             </InputGroupAddon>
           </InputGroup>
-        </div>
+        </Field>
 
-        <div className="flex flex-col gap-1.5">
+        <Field>
           <Label htmlFor="reg-confirm">{t("fields.confirmPassword")}</Label>
           <InputGroup className="h-11 rounded-lg">
             <InputGroupAddon><Lock className="size-4" /></InputGroupAddon>
@@ -91,12 +99,12 @@ export function RegisterScreen() {
               className="code-mono"
             />
           </InputGroup>
-        </div>
+        </Field>
 
         <Button
           variant="outline"
           className="h-11 w-full font-medium"
-          disabled={loading || !userId.trim() || !password || password !== confirm}
+          disabled={loading || !isValidEmail(email) || !isValidDisplayName(displayName) || (emailVerificationRequired && code.length !== 6) || !password || password !== confirm}
           onClick={() => void submit()}
         >
           {loading ? t("register.creating") : t("register.submitWithEnter")}
@@ -116,7 +124,7 @@ export function RegisterScreen() {
             {t("register.signIn")}
           </button>
         </p>
-      </div>
+      </FieldGroup>
     </AuthShell>
   )
 }

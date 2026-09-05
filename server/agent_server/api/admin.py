@@ -3,7 +3,6 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 
 from agent_server.core.auth import hash_password_verifier
-from agent_server.deps import get_store, require_admin
 from agent_server.core.models import (
     AdminUserCreateRequest,
     AdminUserListResponse,
@@ -15,9 +14,14 @@ from agent_server.core.models import (
     InstanceSettingsView,
     UserView,
 )
-from agent_server.infra.repositories.facade import Store
 from agent_server.core.utc import utc_now
-
+from agent_server.deps import get_store, require_admin
+from agent_server.infra.repositories.facade import Store
+from agent_server.services.email_delivery import (
+    get_email_settings,
+    public_email_settings,
+    update_email_settings,
+)
 
 router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(require_admin)])
 
@@ -73,6 +77,7 @@ async def get_settings(db: Store = Depends(get_store)) -> InstanceSettingsView:
         registrationOpen=await db.is_registration_open(),
         oauthRegistrationOpen=await db.is_oauth_registration_open(),
         oauth=await db.get_oauth_provider_public_config(),
+        email=public_email_settings(await get_email_settings(db)),
     )
 
 
@@ -81,6 +86,11 @@ async def update_settings(
     payload: InstanceSettingsUpdateRequest,
     db: Store = Depends(get_store),
 ) -> InstanceSettingsView:
+    if payload.email is not None:
+        try:
+            await update_email_settings(db, payload.email)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
     if payload.registrationOpen is not None:
         await db.set_registration_open(payload.registrationOpen)
     if payload.oauthRegistrationOpen is not None:
@@ -91,6 +101,7 @@ async def update_settings(
         registrationOpen=await db.is_registration_open(),
         oauthRegistrationOpen=await db.is_oauth_registration_open(),
         oauth=await db.get_oauth_provider_public_config(),
+        email=public_email_settings(await get_email_settings(db)),
     )
 
 
@@ -108,15 +119,19 @@ async def create_user(
     db: Store = Depends(get_store),
 ) -> UserView:
     try:
-        return await db.create_user(
-            user_id=payload.userId,
+        email_settings = await get_email_settings(db)
+        return await db.create_email_user(
+            email=payload.email,
+            display_name=payload.displayName,
             password=payload.password,
             password_hash=_password_hash_from_create(payload),
             role=payload.role,
+            verification_code=payload.code,
+            require_verification=email_settings["enabled"],
         )
     except ValueError as exc:
         detail = str(exc)
-        if detail == "user already exists":
+        if detail in {"user already exists", "email already exists", "email is already in use"}:
             raise HTTPException(status_code=409, detail=detail) from exc
         raise HTTPException(status_code=422, detail=detail) from exc
 
@@ -141,6 +156,8 @@ async def update_user(
 
     updated: UserView | None = None
     try:
+        if payload.displayName is not None:
+            updated = await db.update_user_display_name(target, payload.displayName)
         if payload.role is not None:
             updated = await db.update_user_role(target, payload.role)
         if payload.disabled is not None:

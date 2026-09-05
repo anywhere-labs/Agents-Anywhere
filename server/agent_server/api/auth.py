@@ -9,14 +9,13 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
 
+from agent_server.core.api_namespace import api_v2_path
 from agent_server.core.auth import (
     create_signed_token,
     create_user_access_token,
     hash_password_verifier,
     verify_signed_token,
 )
-from agent_server.core.api_namespace import api_v2_path
-from agent_server.deps import current_user, get_store
 from agent_server.core.models import (
     AuthConfigResponse,
     AuthMeResponse,
@@ -24,7 +23,10 @@ from agent_server.core.models import (
     AuthPasswordSaltResponse,
     AuthRequest,
     AuthResponse,
+    BindEmailRequest,
     ChangePasswordRequest,
+    EmailCodeRequest,
+    EmailCodeResponse,
     MobileLoginConfirmRequest,
     MobileLoginExchangeRequest,
     MobileLoginExchangeResponse,
@@ -36,11 +38,23 @@ from agent_server.core.models import (
     OAuthFinalizeResponse,
     OAuthStartResponse,
     UpdateAvatarRequest,
+    UpdateProfileRequest,
     UserView,
 )
 from agent_server.core.setup_token import SetupToken
-from agent_server.infra.repositories.facade import Store
 from agent_server.core.utc import utc_now
+from agent_server.deps import current_user, current_user_id, get_store
+from agent_server.infra.repositories.email_accounts import (
+    EmailRateLimitError,
+    EmailVerificationError,
+    normalize_email,
+)
+from agent_server.infra.repositories.facade import Store
+from agent_server.services.email_delivery import (
+    EmailDeliveryError,
+    get_email_settings,
+    send_verification_email,
+)
 from agent_server.services.oauth import (
     OAuthConfigError,
     build_authorize_url,
@@ -48,7 +62,6 @@ from agent_server.services.oauth import (
     exchange_code_for_identity,
     oauth_enabled,
     return_to_from_state,
-    unique_user_id,
     verify_pending_token,
 )
 
@@ -84,6 +97,7 @@ async def auth_config(
         expires_at = _setup_token(request).current_expires_at_iso()
     oauth_config = await db.get_oauth_provider_config()
     return AuthConfigResponse(
+        emailVerificationRequired=bool((await get_email_settings(db)).get("enabled")),
         needsBootstrap=needs_bootstrap,
         registrationOpen=await db.is_registration_open(),
         oauthRegistrationOpen=await db.is_oauth_registration_open(),
@@ -99,7 +113,10 @@ async def auth_password_salt(
     payload: AuthPasswordSaltRequest,
     db: Store = Depends(get_store),
 ) -> AuthPasswordSaltResponse:
-    salt = await db.password_salt_for_user(payload.userId)
+    try:
+        salt = await db.password_salt_for_email(payload.email)
+    except ValueError as exc:
+        raise _value_error_to_http(exc) from exc
     return AuthPasswordSaltResponse(salt=salt or secrets.token_urlsafe(16), serverTime=utc_now())
 
 
@@ -123,15 +140,19 @@ async def auth_register(
                 detail="invalid or expired setup token — find the current token in the server log",
             )
 
+    require_verification = bool((await get_email_settings(db)).get("enabled"))
     try:
         password_hash = _password_hash_from_payload(payload)
-        bootstrap_user = await db.bootstrap_first_admin(
-            user_id=payload.userId,
+        bootstrap_user = await db.bootstrap_email_admin(
+            email=payload.email,
+            display_name=payload.displayName,
             password=payload.password,
             password_hash=password_hash,
+            verification_code=payload.code,
+            require_verification=require_verification,
         )
     except ValueError as exc:
-        raise _value_error_to_http(exc)
+        raise _value_error_to_http(exc) from exc
 
     if bootstrap_user is not None:
         _setup_token(request).consume()
@@ -141,29 +162,95 @@ async def auth_register(
         raise HTTPException(status_code=403, detail="registration is closed")
 
     try:
-        password_hash = _password_hash_from_payload(payload)
-        user = await db.create_user(
-            user_id=payload.userId,
+        user = await db.create_email_user(
+            email=payload.email,
+            display_name=payload.displayName,
             password=payload.password,
             password_hash=password_hash,
             role="member",
+            verification_code=payload.code,
+            require_verification=require_verification,
         )
     except ValueError as exc:
-        raise _value_error_to_http(exc)
+        raise _value_error_to_http(exc) from exc
     return _auth_response(user)
 
 
 @router.post("/auth/login", response_model=AuthResponse)
 async def auth_login(payload: AuthRequest, db: Store = Depends(get_store)) -> AuthResponse:
-    if payload.passwordVerifier is not None:
-        user = await db.verify_user_verifier(user_id=payload.userId, verifier=payload.passwordVerifier)
-    elif payload.password is not None:
-        user = await db.verify_user(user_id=payload.userId, password=payload.password)
-    else:
-        user = None
+    try:
+        user = await db.verify_email_user(
+            email=payload.email, password=payload.password, verifier=payload.passwordVerifier,
+        )
+    except ValueError as exc:
+        raise _value_error_to_http(exc) from exc
     if user is None:
         raise HTTPException(status_code=401, detail="invalid credentials")
     return _auth_response(user)
+
+
+@router.post("/auth/email-code", response_model=EmailCodeResponse)
+async def send_email_code(
+    payload: EmailCodeRequest, request: Request, db: Store = Depends(get_store),
+) -> EmailCodeResponse:
+    user = None
+    if request.headers.get("authorization"):
+        user = await current_user(current_user_id(request.headers.get("authorization")), db)
+    if payload.purpose == "bind" and user is None:
+        raise HTTPException(status_code=401, detail="authentication required")
+    if payload.purpose == "register":
+        oauth_allowed = bool(
+            payload.pendingToken and verify_pending_token(payload.pendingToken)
+            and await db.is_oauth_registration_open()
+        )
+        bootstrap_allowed = await db.count_users() == 0 and _setup_token(request).verify(payload.setupToken)
+        if not (await db.is_registration_open() or (user and user.role == "admin") or oauth_allowed or bootstrap_allowed):
+            raise HTTPException(status_code=403, detail="registration is closed")
+    if not (await get_email_settings(db)).get("enabled"):
+        raise HTTPException(status_code=409, detail="email verification is disabled")
+    try:
+        email = normalize_email(payload.email)
+        existing = await db.user_for_email(email)
+        if existing and (payload.purpose != "bind" or existing.userId != user.userId):
+            raise ValueError("email is already in use")
+        user_id = user.userId if payload.purpose == "bind" else ""
+        code = await db.issue_email_code(
+            email=email, purpose=payload.purpose, user_id=user_id,
+            ip=request.client.host if request.client else "unknown",
+        )
+    except ValueError as exc:
+        raise _value_error_to_http(exc) from exc
+    try:
+        await send_verification_email(db, email, code)
+    except EmailDeliveryError as exc:
+        await db.invalidate_email_code(email=email, purpose=payload.purpose, user_id=user_id, code=code)
+        raise HTTPException(status_code=502, detail="verification email could not be sent") from exc
+    return EmailCodeResponse(serverTime=utc_now())
+
+
+@router.put("/auth/me/email", response_model=AuthMeResponse)
+async def bind_email(
+    payload: BindEmailRequest, user: UserView = Depends(current_user), db: Store = Depends(get_store),
+) -> AuthMeResponse:
+    try:
+        updated = await db.bind_user_email(
+            user.userId, email=payload.email, verification_code=payload.code,
+            require_verification=bool((await get_email_settings(db)).get("enabled")),
+        )
+    except ValueError as exc:
+        raise _value_error_to_http(exc) from exc
+    return _me_response(updated)
+
+
+@router.put("/auth/me/profile", response_model=AuthMeResponse)
+async def update_profile(
+    payload: UpdateProfileRequest, user: UserView = Depends(current_user), db: Store = Depends(get_store),
+) -> AuthMeResponse:
+    try:
+        updated = await db.update_user_display_name(user.userId, payload.displayName)
+    except ValueError as exc:
+        raise _value_error_to_http(exc) from exc
+    return _me_response(updated)
 
 
 @router.get("/auth/oauth/start", response_model=OAuthStartResponse)
@@ -219,23 +306,25 @@ async def oauth_callback(
             {
                 "oauth_status": "authenticated",
                 "oauth_pending": create_pending_token(identity),
-                "oauth_user": bound.userId,
+                "oauth_email": bound.email or "",
+                "oauth_display_name": bound.displayName,
             },
             return_to=return_to,
         )
 
-    suggested = identity.suggested_user_id
-    if await db.user_exists(suggested):
-        status = "needs_password"
-    else:
-        suggested = await unique_user_id(db, suggested)
-        status = "needs_registration"
+    existing = None
+    if identity.email:
+        try:
+            existing = await db.user_for_email(identity.email)
+        except ValueError:
+            pass
     return _oauth_frontend_redirect(
         request,
         {
-            "oauth_status": status,
+            "oauth_status": "needs_password" if existing else "needs_registration",
             "oauth_pending": create_pending_token(identity),
-            "oauth_user": suggested,
+            "oauth_email": identity.email or "",
+            "oauth_display_name": identity.display_name or "",
         },
         return_to=return_to,
     )
@@ -252,47 +341,41 @@ async def oauth_finalize(
     existing = await db.oauth_user_for_subject(provider=identity.provider, subject=identity.subject)
     if existing is not None:
         return OAuthFinalizeResponse(auth=_auth_response(existing), serverTime=utc_now())
-    target_user_id = payload.userId or identity.suggested_user_id
-    if await db.user_exists(target_user_id):
-        verified = await _verify_oauth_bind_password(db, target_user_id, payload)
-        if verified is None:
-            raise HTTPException(status_code=401, detail="password is required to link this account")
-        user = await db.bind_oauth_account(
-            user_id=verified.userId,
-            provider=identity.provider,
-            subject=identity.subject,
-            email=identity.email,
-            display_name=identity.display_name,
-        )
-        return OAuthFinalizeResponse(auth=_auth_response(user), serverTime=utc_now())
-    password_hash = _password_hash_from_oauth_finalize(payload)
-    if not await db.is_oauth_registration_open():
-        raise HTTPException(status_code=403, detail="oauth registration is closed")
     try:
-        user = await db.create_user_with_oauth(
-            user_id=target_user_id,
-            provider=identity.provider,
-            subject=identity.subject,
-            password=payload.password if payload.setPassword else None,
-            password_hash=password_hash,
-            email=identity.email,
-            display_name=identity.display_name,
-            role="member",
+        email = normalize_email(payload.email or "")
+        target = await db.user_for_email(email)
+        if target is not None:
+            verified = await db.verify_email_user(
+                email=email, password=payload.password, verifier=payload.passwordVerifier,
+            )
+            if verified is None:
+                raise HTTPException(status_code=401, detail="password is required to link this account")
+            user = await db.bind_oauth_account(
+                user_id=verified.userId, provider=identity.provider, subject=identity.subject,
+                email=identity.email, display_name=identity.display_name,
+            )
+            return OAuthFinalizeResponse(auth=_auth_response(user), serverTime=utc_now())
+        if not await db.is_oauth_registration_open():
+            raise HTTPException(status_code=403, detail="oauth registration is closed")
+        password_hash = _password_hash_from_oauth_finalize(payload)
+        user = await db.create_email_user(
+            email=email, display_name=payload.displayName,
+            password=(payload.password if payload.setPassword else None) or secrets.token_urlsafe(32),
+            password_hash=password_hash, verification_code=payload.code,
+            require_verification=bool((await get_email_settings(db)).get("enabled")),
+            oauth_account={
+                "provider": identity.provider, "subject": identity.subject,
+                "email": identity.email, "display_name": identity.display_name,
+            },
         )
     except ValueError as exc:
-        raise _value_error_to_http(exc)
+        raise _value_error_to_http(exc) from exc
     return OAuthFinalizeResponse(auth=_auth_response(user), serverTime=utc_now())
 
 
 @router.get("/auth/me", response_model=AuthMeResponse)
 async def auth_me(user: UserView = Depends(current_user)) -> AuthMeResponse:
-    return AuthMeResponse(
-        userId=user.userId,
-        role=user.role,
-        disabled=user.disabled,
-        avatar=user.avatar,
-        serverTime=utc_now(),
-    )
+    return _me_response(user)
 
 
 # Cap stored avatar payload at ~256 KB. The data URL prefix + 256 KB of base64
@@ -316,13 +399,7 @@ async def update_avatar(
             detail="avatar must be a data:image/{png,jpeg,webp,gif};base64,... URL",
         )
     updated = await db.set_user_avatar(user.userId, avatar)
-    return AuthMeResponse(
-        userId=updated.userId,
-        role=updated.role,
-        disabled=updated.disabled,
-        avatar=updated.avatar,
-        serverTime=utc_now(),
-    )
+    return _me_response(updated)
 
 
 @router.delete("/auth/me/avatar", response_model=AuthMeResponse)
@@ -331,13 +408,7 @@ async def clear_avatar(
     db: Store = Depends(get_store),
 ) -> AuthMeResponse:
     updated = await db.set_user_avatar(user.userId, None)
-    return AuthMeResponse(
-        userId=updated.userId,
-        role=updated.role,
-        disabled=updated.disabled,
-        avatar=updated.avatar,
-        serverTime=utc_now(),
-    )
+    return _me_response(updated)
 
 
 @router.post("/auth/change-password", status_code=204)
@@ -466,10 +537,19 @@ async def confirm_mobile_login(
     return _mobile_login_status_response(row)
 
 
+def _me_response(user: UserView) -> AuthMeResponse:
+    return AuthMeResponse(
+        userId=user.userId, email=user.email, emailVerified=user.emailVerified,
+        displayName=user.displayName, role=user.role, disabled=user.disabled,
+        avatar=user.avatar, serverTime=utc_now(),
+    )
+
+
 def _auth_response(user: UserView) -> AuthResponse:
     return AuthResponse(
         userId=user.userId,
         role=user.role,
+        email=user.email, emailVerified=user.emailVerified, displayName=user.displayName,
         accessToken=create_user_access_token(user.userId),
         serverTime=utc_now(),
     )
@@ -508,7 +588,11 @@ def _mobile_login_status_response(row: dict[str, object]) -> MobileLoginStatusRe
 
 def _value_error_to_http(exc: ValueError) -> HTTPException:
     detail = str(exc)
-    if detail == "user already exists":
+    if isinstance(exc, EmailRateLimitError):
+        return HTTPException(status_code=429, detail=detail, headers={"Retry-After": "60"})
+    if isinstance(exc, EmailVerificationError):
+        return HTTPException(status_code=422, detail=detail)
+    if detail in {"user already exists", "email is already in use"}:
         return HTTPException(status_code=409, detail=detail)
     return HTTPException(status_code=422, detail=detail)
 
@@ -527,18 +611,6 @@ def _password_hash_from_change(payload: ChangePasswordRequest) -> str | None:
     if not payload.newPasswordSalt:
         raise HTTPException(status_code=422, detail="new password salt is required")
     return hash_password_verifier(payload.newPasswordVerifier, salt=payload.newPasswordSalt)
-
-
-async def _verify_oauth_bind_password(
-    db: Store,
-    user_id: str,
-    payload: OAuthFinalizeRequest,
-) -> UserView | None:
-    if payload.passwordVerifier is not None:
-        return await db.verify_user_verifier(user_id=user_id, verifier=payload.passwordVerifier)
-    if payload.password is not None:
-        return await db.verify_user(user_id=user_id, password=payload.password)
-    return None
 
 
 def _password_hash_from_oauth_finalize(payload: OAuthFinalizeRequest) -> str | None:

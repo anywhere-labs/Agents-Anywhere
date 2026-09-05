@@ -2,17 +2,17 @@
 
 from __future__ import annotations
 
-import datetime as dt
+import asyncio
 import base64
+import datetime as dt
 import hashlib
 from urllib.parse import parse_qs, urlparse
-
-from conftest import ApiV2TestClient as TestClient
 
 from agent_server.app import create_app
 from agent_server.core.auth import hash_password
 from agent_server.core.setup_token import SetupToken
 from agent_server.services.oauth import OAuthIdentity, create_pending_token
+from conftest import ApiV2TestClient as TestClient
 
 
 def make_client(tmp_path) -> TestClient:
@@ -30,7 +30,7 @@ def register(client: TestClient, user_id: str, password: str = "secret"):
     generated to surface in its log) on the request. Once bootstrap is done
     the token field is omitted, matching what the frontend sends.
     """
-    body: dict[str, object] = {"userId": user_id, "password": password}
+    body: dict[str, object] = {"email": user_id if "@" in user_id else f"{user_id}@example.test", "displayName": user_id, "password": password}
     cfg = client.get("/auth/config").json()
     if cfg["needsBootstrap"]:
         token = client.app.state.setup_token.peek()
@@ -40,7 +40,13 @@ def register(client: TestClient, user_id: str, password: str = "secret"):
 
 
 def login(client: TestClient, user_id: str, password: str = "secret"):
-    return client.post("/auth/login", json={"userId": user_id, "password": password})
+    return client.post("/auth/login", json={"email": user_id if "@" in user_id else f"{user_id}@example.test", "password": password})
+
+
+def user_id(client: TestClient, name: str) -> str:
+    user = asyncio.run(client.app.state.store.user_for_email(f"{name}@example.test"))
+    assert user is not None
+    return user.userId
 
 
 def password_verifier(password: str, salt: str) -> str:
@@ -98,7 +104,8 @@ def test_register_first_user_becomes_admin_and_closes_registration(tmp_path):
     response = register(client, "user1")
     assert response.status_code == 200
     body = response.json()
-    assert body["userId"] == "user1"
+    assert body["email"] == "user1@example.test"
+    assert body["userId"].startswith("usr_")
     assert body["role"] == "admin"
     assert body["accessToken"]
     # second register attempt must hit the 403 gate
@@ -123,7 +130,7 @@ def test_register_accepts_password_verifier(tmp_path):
     response = client.post(
         "/auth/register",
         json={
-            "userId": "user1",
+            "email": "user1@example.test", "displayName": "user1",
             "passwordSalt": salt,
             "passwordVerifier": password_verifier("secret", salt),
             "setupToken": client.app.state.setup_token.peek(),
@@ -133,7 +140,7 @@ def test_register_accepts_password_verifier(tmp_path):
     assert login(client, "user1").status_code == 200
 
 
-def test_register_rejects_duplicate_username(tmp_path):
+def test_register_rejects_duplicate_email(tmp_path):
     client = make_client(tmp_path)
     token = admin_token(client)
     client.patch("/admin/settings", headers=bearer(token), json={"registrationOpen": True})
@@ -142,21 +149,22 @@ def test_register_rejects_duplicate_username(tmp_path):
     assert duplicate.status_code == 409
 
 
-def test_register_normalizes_username_to_lowercase(tmp_path):
+def test_register_normalizes_email_to_lowercase(tmp_path):
     client = make_client(tmp_path)
     response = register(client, "ADMIN_User")
     assert response.status_code == 200
-    assert response.json()["userId"] == "admin_user"
+    assert response.json()["email"] == "admin_user@example.test"
     # login with mixed case still works
     assert login(client, "Admin_USER").status_code == 200
 
 
-def test_register_rejects_invalid_usernames(tmp_path):
+def test_register_rejects_invalid_emails(tmp_path):
     # Bootstrap path returns 422 when the username is invalid *before* any user
     # is created, so the same client (empty DB) can reject every bad value.
     client = make_client(tmp_path)
-    for bad in ("ab", "with space", "UPPER!", "x" * 33, "用户"):
-        response = register(client, bad)
+    for bad in ("ab", "with space@example.test", "a@@example.test", "x" * 65 + "@example.test", "用户@example.test"):
+        client.get("/auth/config")
+        response = client.post("/auth/register", json={"email": bad, "displayName": "Example", "password": "secret", "setupToken": client.app.state.setup_token.peek()})
         assert response.status_code == 422, f"expected 422 for {bad!r}, got {response.status_code}"
 
 
@@ -174,10 +182,10 @@ def test_login_returns_role_in_response(tmp_path):
 def test_login_accepts_password_verifier(tmp_path):
     client = make_client(tmp_path)
     admin_token(client)
-    salt = client.post("/auth/password-salt", json={"userId": "user1"}).json()["salt"]
+    salt = client.post("/auth/password-salt", json={"email": "user1@example.test", "displayName": "user1"}).json()["salt"]
     response = client.post(
         "/auth/login",
-        json={"userId": "user1", "passwordVerifier": password_verifier("secret", salt)},
+        json={"email": "user1@example.test", "displayName": "user1", "passwordVerifier": password_verifier("secret", salt)},
     )
     assert response.status_code == 200, response.text
 
@@ -185,10 +193,10 @@ def test_login_accepts_password_verifier(tmp_path):
 def test_login_rejects_wrong_password_verifier(tmp_path):
     client = make_client(tmp_path)
     admin_token(client)
-    salt = client.post("/auth/password-salt", json={"userId": "user1"}).json()["salt"]
+    salt = client.post("/auth/password-salt", json={"email": "user1@example.test", "displayName": "user1"}).json()["salt"]
     response = client.post(
         "/auth/login",
-        json={"userId": "user1", "passwordVerifier": password_verifier("wrong", salt)},
+        json={"email": "user1@example.test", "displayName": "user1", "passwordVerifier": password_verifier("wrong", salt)},
     )
     assert response.status_code == 401
 
@@ -196,8 +204,8 @@ def test_login_rejects_wrong_password_verifier(tmp_path):
 def test_password_salt_does_not_reveal_unknown_user(tmp_path):
     client = make_client(tmp_path)
     admin_token(client)
-    known = client.post("/auth/password-salt", json={"userId": "user1"}).json()["salt"]
-    unknown = client.post("/auth/password-salt", json={"userId": "missing"}).json()["salt"]
+    known = client.post("/auth/password-salt", json={"email": "user1@example.test", "displayName": "user1"}).json()["salt"]
+    unknown = client.post("/auth/password-salt", json={"email": "missing@example.test", "displayName": "missing"}).json()["salt"]
     assert known
     assert unknown
     assert unknown != known
@@ -210,10 +218,10 @@ def test_login_rejects_disabled_account(tmp_path):
     created = client.post(
         "/admin/users",
         headers=bearer(admin),
-        json={"userId": "victim", "password": "secret", "role": "member"},
+        json={"email": "victim@example.test", "displayName": "victim", "password": "secret", "role": "member"},
     )
     assert created.status_code == 201
-    client.patch("/admin/users/victim", headers=bearer(admin), json={"disabled": True})
+    client.patch(f"/admin/users/{user_id(client, 'victim')}", headers=bearer(admin), json={"disabled": True})
     response = login(client, "victim")
     assert response.status_code == 401
 
@@ -233,7 +241,8 @@ def test_auth_me_returns_role_and_disabled(tmp_path):
     token = admin_token(client)
     body = client.get("/auth/me", headers=bearer(token)).json()
     assert body == {
-        "userId": "user1",
+        "userId": user_id(client, "user1"),
+        "email": "user1@example.test", "displayName": "user1", "emailVerified": True,
         "role": "admin",
         "disabled": False,
         "avatar": None,
@@ -353,11 +362,11 @@ def test_admin_create_user(tmp_path):
     response = client.post(
         "/admin/users",
         headers=bearer(admin),
-        json={"userId": "carol", "password": "secret", "role": "member"},
+        json={"email": "carol@example.test", "displayName": "carol", "password": "secret", "role": "member"},
     )
     assert response.status_code == 201
     body = response.json()
-    assert body["userId"] == "carol"
+    assert body["email"] == "carol@example.test"
     assert body["role"] == "member"
     assert body["disabled"] is False
     # And carol can login
@@ -370,7 +379,7 @@ def test_admin_can_create_another_admin(tmp_path):
     response = client.post(
         "/admin/users",
         headers=bearer(admin),
-        json={"userId": "alice", "password": "secret", "role": "admin"},
+        json={"email": "alice@example.test", "displayName": "alice", "password": "secret", "role": "admin"},
     )
     assert response.status_code == 201
     assert response.json()["role"] == "admin"
@@ -382,11 +391,11 @@ def test_admin_list_users_returns_all(tmp_path):
     client.post(
         "/admin/users",
         headers=bearer(admin),
-        json={"userId": "dave", "password": "secret", "role": "member"},
+        json={"email": "dave@example.test", "displayName": "dave", "password": "secret", "role": "member"},
     )
     body = client.get("/admin/users", headers=bearer(admin)).json()
-    user_ids = {u["userId"] for u in body["users"]}
-    assert user_ids == {"user1", "dave"}
+    emails = {u["email"] for u in body["users"]}
+    assert emails == {"user1@example.test", "dave@example.test"}
 
 
 def test_admin_change_user_role_and_reset_password(tmp_path):
@@ -395,17 +404,17 @@ def test_admin_change_user_role_and_reset_password(tmp_path):
     client.post(
         "/admin/users",
         headers=bearer(admin),
-        json={"userId": "eve", "password": "secret", "role": "member"},
+        json={"email": "eve@example.test", "displayName": "eve", "password": "secret", "role": "member"},
     )
     # promote to admin
     promoted = client.patch(
-        "/admin/users/eve", headers=bearer(admin), json={"role": "admin"}
+        f"/admin/users/{user_id(client, 'eve')}", headers=bearer(admin), json={"role": "admin"}
     )
     assert promoted.status_code == 200
     assert promoted.json()["role"] == "admin"
     # reset password (admin path, no old password required)
     reset = client.patch(
-        "/admin/users/eve", headers=bearer(admin), json={"password": "newer-secret"}
+        f"/admin/users/{user_id(client, 'eve')}", headers=bearer(admin), json={"password": "newer-secret"}
     )
     assert reset.status_code == 200
     assert login(client, "eve", password="secret").status_code == 401
@@ -418,11 +427,11 @@ def test_admin_can_disable_and_reenable_user(tmp_path):
     client.post(
         "/admin/users",
         headers=bearer(admin),
-        json={"userId": "frank", "password": "secret", "role": "member"},
+        json={"email": "frank@example.test", "displayName": "frank", "password": "secret", "role": "member"},
     )
-    client.patch("/admin/users/frank", headers=bearer(admin), json={"disabled": True})
+    client.patch(f"/admin/users/{user_id(client, 'frank')}", headers=bearer(admin), json={"disabled": True})
     assert login(client, "frank").status_code == 401
-    client.patch("/admin/users/frank", headers=bearer(admin), json={"disabled": False})
+    client.patch(f"/admin/users/{user_id(client, 'frank')}", headers=bearer(admin), json={"disabled": False})
     assert login(client, "frank").status_code == 200
 
 
@@ -432,9 +441,9 @@ def test_admin_delete_user(tmp_path):
     client.post(
         "/admin/users",
         headers=bearer(admin),
-        json={"userId": "grace", "password": "secret", "role": "member"},
+        json={"email": "grace@example.test", "displayName": "grace", "password": "secret", "role": "member"},
     )
-    response = client.delete("/admin/users/grace", headers=bearer(admin))
+    response = client.delete(f"/admin/users/{user_id(client, 'grace')}", headers=bearer(admin))
     assert response.status_code == 204
     assert login(client, "grace").status_code == 401
 
@@ -446,7 +455,7 @@ def test_cannot_demote_last_admin(tmp_path):
     client = make_client(tmp_path)
     admin = admin_token(client)
     response = client.patch(
-        "/admin/users/user1", headers=bearer(admin), json={"role": "member"}
+        f"/admin/users/{user_id(client, 'user1')}", headers=bearer(admin), json={"role": "member"}
     )
     # self-role-change guard fires first
     assert response.status_code == 409
@@ -462,16 +471,16 @@ def test_cannot_demote_last_admin_via_other_admin_account(tmp_path):
     client.post(
         "/admin/users",
         headers=bearer(admin),
-        json={"userId": "alice", "password": "secret", "role": "admin"},
+        json={"email": "alice@example.test", "displayName": "alice", "password": "secret", "role": "admin"},
     )
     # Admin demotes the other admin -> OK (still one admin left: user1)
     demoted = client.patch(
-        "/admin/users/alice", headers=bearer(admin), json={"role": "member"}
+        f"/admin/users/{user_id(client, 'alice')}", headers=bearer(admin), json={"role": "member"}
     )
     assert demoted.status_code == 200
     # Now only user1 is admin. user1 demoting themselves -> blocked.
     response = client.patch(
-        "/admin/users/user1", headers=bearer(admin), json={"role": "member"}
+        f"/admin/users/{user_id(client, 'user1')}", headers=bearer(admin), json={"role": "member"}
     )
     assert response.status_code == 409
 
@@ -480,7 +489,7 @@ def test_cannot_disable_self(tmp_path):
     client = make_client(tmp_path)
     admin = admin_token(client)
     response = client.patch(
-        "/admin/users/user1", headers=bearer(admin), json={"disabled": True}
+        f"/admin/users/{user_id(client, 'user1')}", headers=bearer(admin), json={"disabled": True}
     )
     assert response.status_code == 409
 
@@ -488,7 +497,7 @@ def test_cannot_disable_self(tmp_path):
 def test_cannot_delete_self(tmp_path):
     client = make_client(tmp_path)
     admin = admin_token(client)
-    response = client.delete("/admin/users/user1", headers=bearer(admin))
+    response = client.delete(f"/admin/users/{user_id(client, 'user1')}", headers=bearer(admin))
     assert response.status_code == 409
 
 
@@ -498,28 +507,28 @@ def test_cannot_disable_last_admin_when_two_admins_then_one(tmp_path):
     client.post(
         "/admin/users",
         headers=bearer(admin),
-        json={"userId": "alice", "password": "secret", "role": "admin"},
+        json={"email": "alice@example.test", "displayName": "alice", "password": "secret", "role": "admin"},
     )
     # Disable alice -> OK (user1 still active)
     response = client.patch(
-        "/admin/users/alice", headers=bearer(admin), json={"disabled": True}
+        f"/admin/users/{user_id(client, 'alice')}", headers=bearer(admin), json={"disabled": True}
     )
     assert response.status_code == 200
     # Try to disable user1 -> blocked (self-guard kicks in first, but the store guard
     # would also catch it). Verify the response.
     response = client.patch(
-        "/admin/users/user1", headers=bearer(admin), json={"disabled": True}
+        f"/admin/users/{user_id(client, 'user1')}", headers=bearer(admin), json={"disabled": True}
     )
     assert response.status_code == 409
 
 
-def test_admin_create_user_rejects_invalid_username(tmp_path):
+def test_admin_create_user_rejects_invalid_email(tmp_path):
     client = make_client(tmp_path)
     admin = admin_token(client)
     response = client.post(
         "/admin/users",
         headers=bearer(admin),
-        json={"userId": "ab", "password": "secret", "role": "member"},
+        json={"email": "ab", "displayName": "ab", "password": "secret", "role": "member"},
     )
     assert response.status_code == 422
 
@@ -530,12 +539,12 @@ def test_admin_create_user_rejects_duplicate(tmp_path):
     client.post(
         "/admin/users",
         headers=bearer(admin),
-        json={"userId": "alice", "password": "secret", "role": "member"},
+        json={"email": "alice@example.test", "displayName": "alice", "password": "secret", "role": "member"},
     )
     response = client.post(
         "/admin/users",
         headers=bearer(admin),
-        json={"userId": "alice", "password": "secret", "role": "member"},
+        json={"email": "alice@example.test", "displayName": "alice", "password": "secret", "role": "member"},
     )
     assert response.status_code == 409
 
@@ -548,7 +557,7 @@ def test_admin_create_and_reset_user_accepts_password_verifier(tmp_path):
         "/admin/users",
         headers=bearer(admin),
         json={
-            "userId": "alice",
+            "email": "alice@example.test", "displayName": "alice",
             "role": "member",
             "passwordSalt": create_salt,
             "passwordVerifier": password_verifier("secret", create_salt),
@@ -559,7 +568,7 @@ def test_admin_create_and_reset_user_accepts_password_verifier(tmp_path):
 
     reset_salt = "reset-salt"
     reset = client.patch(
-        "/admin/users/alice",
+        f"/admin/users/{user_id(client, 'alice')}",
         headers=bearer(admin),
         json={
             "passwordSalt": reset_salt,
@@ -618,7 +627,7 @@ def test_bootstrap_rejects_missing_setup_token(tmp_path):
     # Surface the token in app.state by hitting /auth/config first.
     client.get("/auth/config")
     response = client.post(
-        "/auth/register", json={"userId": "user1", "password": "secret"}
+        "/auth/register", json={"email": "user1@example.test", "displayName": "user1", "password": "secret"}
     )
     assert response.status_code == 401
     assert "setup token" in response.json()["detail"].lower()
@@ -629,7 +638,7 @@ def test_bootstrap_rejects_wrong_setup_token(tmp_path):
     client.get("/auth/config")
     response = client.post(
         "/auth/register",
-        json={"userId": "user1", "password": "secret", "setupToken": "not-the-token"},
+        json={"email": "user1@example.test", "displayName": "user1", "password": "secret", "setupToken": "not-the-token"},
     )
     assert response.status_code == 401
 
@@ -641,7 +650,7 @@ def test_bootstrap_accepts_correct_setup_token(tmp_path):
     assert token is not None
     response = client.post(
         "/auth/register",
-        json={"userId": "user1", "password": "secret", "setupToken": token},
+        json={"email": "user1@example.test", "displayName": "user1", "password": "secret", "setupToken": token},
     )
     assert response.status_code == 200
     assert response.json()["role"] == "admin"
@@ -679,14 +688,14 @@ def test_setup_token_auto_regenerates_after_expiry(tmp_path):
     # Expired token no longer works.
     expired = client.post(
         "/auth/register",
-        json={"userId": "user1", "password": "secret", "setupToken": first_token},
+        json={"email": "user1@example.test", "displayName": "user1", "password": "secret", "setupToken": first_token},
     )
     assert expired.status_code == 401
 
     # Fresh token works.
     accepted = client.post(
         "/auth/register",
-        json={"userId": "user1", "password": "secret", "setupToken": second_token},
+        json={"email": "user1@example.test", "displayName": "user1", "password": "secret", "setupToken": second_token},
     )
     assert accepted.status_code == 200
     assert accepted.json()["role"] == "admin"
@@ -719,16 +728,16 @@ def test_oauth_finalize_requires_oauth_registration_for_new_user(tmp_path):
     )
     closed = client.post(
         "/auth/oauth/finalize",
-        json={"pendingToken": pending, "userId": "oauthuser"},
+        json={"pendingToken": pending, "email": "oauthuser@example.test", "displayName": "oauthuser"},
     )
     assert closed.status_code == 403
     client.patch("/admin/settings", headers=bearer(admin), json={"oauthRegistrationOpen": True})
     opened = client.post(
         "/auth/oauth/finalize",
-        json={"pendingToken": pending, "userId": "oauthuser"},
+        json={"pendingToken": pending, "email": "oauthuser@example.test", "displayName": "oauthuser"},
     )
     assert opened.status_code == 200, opened.text
-    assert opened.json()["auth"]["userId"] == "oauthuser"
+    assert opened.json()["auth"]["email"] == "oauthuser@example.test"
 
 
 def test_oauth_start_uses_return_to_origin_for_redirect_uri(tmp_path):
@@ -829,7 +838,7 @@ def test_first_party_oauth_authorization_code_pkce_round_trip(tmp_path):
     assert token_body["access_token"]
     assert token_body["token_type"] == "Bearer"
     assert token_body["scope"] == "profile"
-    assert client.get("/auth/me", headers=bearer(token_body["access_token"])).json()["userId"] == "user1"
+    assert client.get("/auth/me", headers=bearer(token_body["access_token"])).json()["userId"] == user_id(client, "user1")
 
     reused = client.post(
         "/oauth/token",
@@ -918,7 +927,7 @@ def test_mobile_login_qr_requires_phone_request_and_web_confirm(tmp_path):
     qr = client.post("/auth/mobile-login/qr", headers=bearer(token))
     assert qr.status_code == 200, qr.text
     qr_body = qr.json()
-    assert qr_body["userId"] == "user1"
+    assert qr_body["userId"] == user_id(client, "user1")
     assert qr_body["loginToken"]
     assert qr_body["expiresAt"]
     assert "payload" not in qr_body
@@ -926,13 +935,13 @@ def test_mobile_login_qr_requires_phone_request_and_web_confirm(tmp_path):
 
     premature = client.post(
         "/auth/mobile-login/exchange",
-        json={"userId": "user1", "loginToken": qr_body["loginToken"]},
+        json={"userId": user_id(client, "user1"), "loginToken": qr_body["loginToken"]},
     )
     assert premature.status_code == 401
 
     requested = client.post(
         "/auth/mobile-login/request",
-        json={"userId": "user1", "loginToken": qr_body["loginToken"], "deviceName": "iPhone"},
+        json={"userId": user_id(client, "user1"), "loginToken": qr_body["loginToken"], "deviceName": "iPhone"},
     )
     assert requested.status_code == 200, requested.text
     assert requested.json()["status"] == "pending_web_confirm"
@@ -948,7 +957,7 @@ def test_mobile_login_qr_requires_phone_request_and_web_confirm(tmp_path):
 
     still_blocked = client.post(
         "/auth/mobile-login/exchange",
-        json={"userId": "user1", "loginToken": qr_body["loginToken"]},
+        json={"userId": user_id(client, "user1"), "loginToken": qr_body["loginToken"]},
     )
     assert still_blocked.status_code == 401
 
@@ -962,18 +971,18 @@ def test_mobile_login_qr_requires_phone_request_and_web_confirm(tmp_path):
 
     exchanged = client.post(
         "/auth/mobile-login/exchange",
-        json={"userId": "user1", "loginToken": qr_body["loginToken"]},
+        json={"userId": user_id(client, "user1"), "loginToken": qr_body["loginToken"]},
     )
     assert exchanged.status_code == 200, exchanged.text
     body = exchanged.json()
-    assert body["auth"]["userId"] == "user1"
+    assert body["auth"]["userId"] == user_id(client, "user1")
     assert body["auth"]["accessToken"]
     assert body["refreshToken"]
-    assert client.get("/auth/me", headers=bearer(body["auth"]["accessToken"])).json()["userId"] == "user1"
+    assert client.get("/auth/me", headers=bearer(body["auth"]["accessToken"])).json()["userId"] == user_id(client, "user1")
 
     replay = client.post(
         "/auth/mobile-login/exchange",
-        json={"userId": "user1", "loginToken": qr_body["loginToken"]},
+        json={"userId": user_id(client, "user1"), "loginToken": qr_body["loginToken"]},
     )
     assert replay.status_code == 401
 
@@ -984,7 +993,7 @@ def test_mobile_login_reject_flow_blocks_exchange(tmp_path):
     qr_body = client.post("/auth/mobile-login/qr", headers=bearer(token)).json()
     client.post(
         "/auth/mobile-login/request",
-        json={"userId": "user1", "loginToken": qr_body["loginToken"], "deviceName": "iPhone"},
+        json={"userId": user_id(client, "user1"), "loginToken": qr_body["loginToken"], "deviceName": "iPhone"},
     )
     rejected = client.post(
         "/auth/mobile-login/confirm",
@@ -995,7 +1004,7 @@ def test_mobile_login_reject_flow_blocks_exchange(tmp_path):
     assert rejected.json()["status"] == "rejected"
     exchanged = client.post(
         "/auth/mobile-login/exchange",
-        json={"userId": "user1", "loginToken": qr_body["loginToken"]},
+        json={"userId": user_id(client, "user1"), "loginToken": qr_body["loginToken"]},
     )
     assert exchanged.status_code == 401
 

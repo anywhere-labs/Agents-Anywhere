@@ -80,7 +80,7 @@ export function MobileOAuthFlow() {
   if (isAuthenticated && accessToken) {
     return (
       <MobileOAuthConsent
-        userId={me?.userId ?? ""}
+        userId={me?.displayName || me?.email || ""}
         onCancel={cancel}
         onContinue={() => void authorize()}
         onSwitchAccount={switchAccount}

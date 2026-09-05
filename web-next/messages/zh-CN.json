@@ -1007,27 +1007,29 @@
       "submitting": "正在创建管理员…",
       "titlePrefix": "欢迎使用",
       "tokenPlaceholder": "粘贴服务器日志里的 token",
-      "userPlaceholder": "例如 admin"
+      "userPlaceholder": "admin@example.com"
     },
     "fields": {
       "adminPassword": "管理员密码",
-      "adminUserId": "管理员用户 ID",
       "confirm": "确认",
       "confirmPassword": "确认密码",
       "password": "密码",
       "setupToken": "Setup token",
-      "userId": "用户 ID"
+      "email": "邮箱",
+      "adminEmail": "管理员邮箱",
+      "displayName": "昵称",
+      "displayNameDescription": "用于展示，支持 1–64 个字符，可随时修改。"
     },
     "login": {
       "createAccount": "创建账号",
-      "description": "使用实例管理员提供给你的凭据登录。",
+      "description": "使用邮箱和密码登录。",
       "forgot": "忘记密码？请联系实例管理员重置。",
       "newHere": "第一次使用？",
       "oauth": "使用 {provider} 登录",
       "passwordPlaceholder": "••••••••",
       "submit": "登录",
       "titlePrefix": "登录",
-      "userPlaceholder": "输入用户名",
+      "userPlaceholder": "name@example.com",
       "signingIn": "正在登录...",
       "submitWithEnter": "登录 ↵"
     },
@@ -1061,7 +1063,7 @@
       "confirmTitle": "确认密码",
       "createDescription": "为这个 OAuth 身份创建一个本地账号。",
       "createSubmit": "创建并登录",
-      "createTitle": "选择用户 ID",
+      "createTitle": "设置邮箱和昵称",
       "matchDescriptionPrefix": "OAuth 匹配到了本地账号",
       "matchTitle": "这是你的账号吗？",
       "linkSubmit": "绑定并登录",
@@ -1089,7 +1091,7 @@
       "signIn": "登录",
       "submit": "创建账号",
       "title": "创建账号",
-      "userHint": "3-32 个字符 · a-z 0-9 _ -",
+      "userHint": "使用邮箱登录，昵称用于展示。",
       "userOk": "可用",
       "creating": "正在创建账号...",
       "submitWithEnter": "创建账号 ↵"
@@ -1101,12 +1103,20 @@
     },
     "status": {
       "connecting": "连接中"
+    },
+    "emailCode": {
+      "label": "邮箱验证码",
+      "description": "输入发送到此邮箱的 6 位验证码。",
+      "send": "发送验证码",
+      "retry": "{seconds} 秒后重发",
+      "sent": "验证码已发送，请查看邮箱。",
+      "failed": "验证码发送失败。"
     }
   },
   "pages": {
     "settings": {
       "title": "设置",
-      "description": "此浏览器的账号访问和偏好设置。",
+      "description": "描述",
       "account": "账号",
       "agent": "Agent 设置",
       "appearance": "外观",
@@ -1153,7 +1163,6 @@
       "editModel": "编辑模型",
       "modelId": "模型 ID",
       "displayName": "显示名称",
-      "description": "描述",
       "noModels": "暂无模型。",
       "reasoningEffort": "推理强度",
       "defaultEffort": "默认推理强度",
@@ -1199,12 +1208,27 @@
         "approved": "移动端登录已批准",
         "rejected": "移动端登录已拒绝",
         "expired": "二维码已过期"
+      },
+      "profile": {
+        "title": "昵称与邮箱",
+        "description": "昵称用于展示，邮箱用于登录。",
+        "email": "登录邮箱",
+        "emailDescription": "修改后请使用新邮箱登录。",
+        "verified": "已验证",
+        "unverified": "未验证",
+        "verificationDisabled": "管理员未开启邮箱验证码，保存后邮箱直接标记为已验证。",
+        "saveDisplayName": "保存昵称",
+        "changeEmail": "更换邮箱",
+        "bindEmail": "绑定邮箱",
+        "displayNameSaved": "昵称已更新。",
+        "emailSaved": "邮箱已更新。",
+        "failed": "账号信息更新失败。"
       }
     },
     "team": {
       "title": "团队",
       "description": "管理谁可以登录这个实例，以及他们能做什么。",
-      "searchPlaceholder": "按用户 ID 搜索",
+      "searchPlaceholder": "按昵称或邮箱搜索",
       "newUser": "新用户",
       "newUserDescription": "为这个实例创建本地账号。",
       "all": "全部",
@@ -1212,7 +1236,6 @@
       "members": "成员",
       "user": "用户",
       "userId": "用户 ID",
-      "userIdDescription": "支持小写字母、数字、下划线和短横线，长度 3-64。",
       "role": "角色",
       "status": "状态",
       "created": "创建时间",
@@ -1245,7 +1268,6 @@
       "disabledDescription": "此用户已被禁止登录。",
       "adminDescription": "可以管理用户和服务设置。",
       "memberDescription": "可以登录并使用已连接设备。",
-      "invalidUserId": "请输入有效的用户 ID。",
       "passwordTooShort": "密码至少需要 8 个字符。",
       "passwordMismatch": "两次输入的密码不一致。",
       "loadFailed": "无法加载用户。",
@@ -1262,7 +1284,12 @@
       "today": "今天",
       "oneDayAgo": "1 天前",
       "daysAgo": "{count} 天前",
-      "weeksAgo": "{count} 周前"
+      "weeksAgo": "{count} 周前",
+      "email": "邮箱",
+      "emailDescription": "用户将使用此邮箱登录。",
+      "invalidEmail": "请输入有效邮箱。",
+      "invalidDisplayName": "昵称需要 1–64 个字符。",
+      "typeEmail": "输入账号邮箱以确认"
     },
     "opsDashboard": {
       "title": "看板",
@@ -1405,7 +1432,23 @@
       "unavailable": "服务设置不可用。",
       "loadFailed": "无法加载服务设置。",
       "updateFailed": "无法更新设置。",
-      "oauthUpdateFailed": "无法更新 OAuth 设置。"
+      "oauthUpdateFailed": "无法更新 OAuth 设置。",
+      "email": {
+        "title": "邮箱验证 · Resend",
+        "description": "配置 Resend 发件服务和邮箱验证码要求。",
+        "enabled": "要求邮箱验证码",
+        "enabledDescription": "开启后，注册（含管理员创建用户）与绑定或更换邮箱必须提供验证码。关闭时直接标记邮箱为已验证。",
+        "fromAddress": "发件地址",
+        "fromDescription": "使用已在 Resend 验证的发件域名，可填写名称 <邮箱>。",
+        "apiKey": "Resend API Key",
+        "apiKeyDescription": "留空保留已保存的密钥。服务端不会返回密钥内容。",
+        "configured": "已配置密钥",
+        "notConfigured": "未配置密钥",
+        "clearKey": "移除已保存的密钥",
+        "save": "保存邮箱设置",
+        "saved": "邮箱设置已保存。",
+        "failed": "邮箱设置保存失败。"
+      }
     }
   },
   "preview": {

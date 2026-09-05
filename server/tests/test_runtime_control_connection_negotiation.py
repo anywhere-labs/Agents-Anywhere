@@ -66,7 +66,8 @@ def _make_connector(
     client = TestClient(app)
     config = client.get("/auth/config").json()
     registration: dict[str, Any] = {
-        "userId": ADMIN_USER,
+        "email": f"{ADMIN_USER}@example.com",
+        "displayName": ADMIN_USER,
         "password": ADMIN_PASSWORD,
     }
     if config["needsBootstrap"]:
@@ -1019,7 +1020,7 @@ def test_explicit_discovery_does_not_block_inventory_before_response(
         discovery_task = asyncio.create_task(
             service.discover_runtime_types(
                 connector_id,
-                user_id=ADMIN_USER,
+                user_id=(await client.app.state.store.user_for_email(f"{ADMIN_USER}@example.com")).userId,
             )
         )
         request = await _wait_for_request(websocket)

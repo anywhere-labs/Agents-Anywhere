@@ -46,11 +46,11 @@ struct APIClient {
         try await request("/auth/config")
     }
 
-    func login(userId: String, password: String) async throws -> AuthResponse {
+    func login(email: String, password: String) async throws -> AuthResponse {
         try await request(
             "/auth/login",
             method: "POST",
-            body: ["userId": userId, "password": password],
+            body: ["email": email.trimmingCharacters(in: .whitespacesAndNewlines), "password": password],
         )
     }
 

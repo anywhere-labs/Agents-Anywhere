@@ -48,7 +48,7 @@ def auth_headers(client: TestClient, user_id: str = ADMIN_USER, password: str = 
     - if registration is closed (403), ask admin to create the user via /admin/users,
       then /auth/login.
     """
-    login = client.post("/auth/login", json={"userId": user_id, "password": password})
+    login = client.post("/auth/login", json={"email": f"{user_id}@example.com", "displayName": user_id, "password": password})
     if login.status_code == 200:
         token = login.json()["accessToken"]
         return {"Authorization": f"Bearer {token}"}
@@ -58,7 +58,7 @@ def auth_headers(client: TestClient, user_id: str = ADMIN_USER, password: str = 
     # generation on the server side; peek() reads the value without further
     # side effects.
     cfg = client.get("/auth/config").json()
-    register_body: dict[str, Any] = {"userId": user_id, "password": password}
+    register_body: dict[str, Any] = {"email": f"{user_id}@example.com", "displayName": user_id, "password": password}
     if cfg["needsBootstrap"]:
         register_body["setupToken"] = client.app.state.setup_token.peek()
     register = client.post("/auth/register", json=register_body)
@@ -71,12 +71,17 @@ def auth_headers(client: TestClient, user_id: str = ADMIN_USER, password: str = 
     create = client.post(
         "/admin/users",
         headers=admin,
-        json={"userId": user_id, "password": password, "role": "member"},
+        json={"email": f"{user_id}@example.com", "displayName": user_id, "password": password, "role": "member"},
     )
     assert create.status_code == 201, create.text
-    login = client.post("/auth/login", json={"userId": user_id, "password": password})
+    login = client.post("/auth/login", json={"email": f"{user_id}@example.com", "displayName": user_id, "password": password})
     assert login.status_code == 200, login.text
     return {"Authorization": f"Bearer {login.json()['accessToken']}"}
+
+
+def account_user_id(client: TestClient, name: str = ADMIN_USER) -> str:
+    headers = auth_headers(client, user_id=name)
+    return client.get("/auth/me", headers=headers).json()["userId"]
 
 
 def seed_codex_model_catalog(app: Any, connector_id: str) -> str:
@@ -176,7 +181,7 @@ def create_connector_and_session(
     connector_body = connector_response.json()
     connector_id = connector_body["connector"]["id"]
     connector_token = connector_body["connectorToken"]
-    assert connector_body["connector"]["userId"] == user_id
+    assert connector_body["connector"]["userId"] == client.get("/auth/me", headers=headers).json()["userId"]
 
     auth_response = client.post(
         "/connector/auth",
@@ -2600,7 +2605,7 @@ def test_connector_crud_updates_and_revokes_devices(tmp_path):
     updated = client.patch(f"/connectors/{connector_id}", headers=headers, json={"name": "studio"})
     assert updated.status_code == 200
     assert updated.json()["connector"]["name"] == "studio"
-    assert updated.json()["connector"]["userId"] == ADMIN_USER
+    assert updated.json()["connector"]["userId"] == account_user_id(client)
 
     deleted = client.delete(f"/connectors/{connector_id}", headers=headers)
     assert deleted.status_code == 204
@@ -7141,7 +7146,7 @@ def test_connector_ingest_dsh_hidden_state_is_reversible_without_archiving(tmp_p
         session.id
         for session in asyncio.run(
             client.app.state.store.list_sessions(
-                user_id=ADMIN_USER,
+                user_id=account_user_id(client),
             )
         )
     }
@@ -7175,7 +7180,7 @@ def test_connector_ingest_dsh_hidden_state_is_reversible_without_archiving(tmp_p
         session.id
         for session in asyncio.run(
             client.app.state.store.list_sessions(
-                user_id=ADMIN_USER,
+                user_id=account_user_id(client),
             )
         )
     }
@@ -7251,7 +7256,7 @@ def test_connector_ingest_prefers_explicit_platform_session_over_external_match(
     async def _seed_sessions() -> tuple[str, str]:
         platform = await client.app.state.store.create_session(
             connector_id=connector_id,
-            user_id=ADMIN_USER,
+            user_id=account_user_id(client),
             runtime="claude",
             external_session_id=None,
             title="Platform Claude",
@@ -7418,7 +7423,7 @@ def test_dsh_complete_inventory_tracks_missing_without_changing_user_archive(tmp
         session.id
         for session in asyncio.run(
             client.app.state.store.list_sessions(
-                user_id=ADMIN_USER,
+                user_id=account_user_id(client),
                 archived=True,
             )
         )
@@ -7469,13 +7474,13 @@ def test_dsh_complete_inventory_tracks_missing_without_changing_user_archive(tmp
 
     active_ids = {
         session.id
-        for session in asyncio.run(client.app.state.store.list_sessions(user_id=ADMIN_USER))
+        for session in asyncio.run(client.app.state.store.list_sessions(user_id=account_user_id(client)))
     }
     archived_ids = {
         session.id
         for session in asyncio.run(
             client.app.state.store.list_sessions(
-                user_id=ADMIN_USER,
+                user_id=account_user_id(client),
                 archived=True,
             )
         )

@@ -22,8 +22,8 @@ from agent_server.infra.db.engine import POSTGRES_BACKEND, resolve_db_url
 
 LEGACY_V1_REVISION = "v1_legacy"
 BASELINE_V2_REVISION = "v2_0"
-CURRENT_SCHEMA_REVISION = "v2_24"
-CURRENT_SCHEMA_VERSION = "2.24"
+CURRENT_SCHEMA_REVISION = "v2_25"
+CURRENT_SCHEMA_VERSION = "2.25"
 POSTGRES_MIGRATION_LOCK_ID = 0x414147454E545332
 DEFAULT_MIGRATION_LOCK_TIMEOUT_SECONDS = 120.0
 
@@ -307,7 +307,11 @@ def _classify_sync(connection) -> UnversionedDatabase:
                         "seq_allocated_high" in session_columns
                         and "session_shares" in tables
                     ):
-                        revision = "v2_24"
+                        email_layout = (
+                            {"email", "email_verified_at", "display_name"}.issubset(_column_names(inspector, "users"))
+                            and {"email_verification_codes", "email_verification_limits"}.issubset(tables)
+                        )
+                        revision = "v2_25" if email_layout else "v2_24"
                     elif "session_shares" in tables:
                         revision = "v2_23"
                     elif (

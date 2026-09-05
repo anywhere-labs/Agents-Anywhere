@@ -3,6 +3,29 @@ import Foundation
 struct V2AccountService {
     let accountAPI: any V2AccountAPIProtocol
 
+    func authConfig() async throws -> AuthConfig {
+        try await accountAPI.authConfig()
+    }
+
+    func updateProfile(displayName: String) async throws -> AuthMe {
+        try await accountAPI.updateProfile(request: V2ProfileUpdateRequest(
+            displayName: displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        ))
+    }
+
+    func sendEmailCode(email: String) async throws -> V2EmailCodeResponse {
+        try await accountAPI.sendEmailCode(request: V2EmailCodeRequest(
+            email: email.trimmingCharacters(in: .whitespacesAndNewlines)
+        ))
+    }
+
+    func bindEmail(email: String, code: String?) async throws -> AuthMe {
+        try await accountAPI.bindEmail(request: V2EmailBindingRequest(
+            email: email.trimmingCharacters(in: .whitespacesAndNewlines),
+            code: code?.trimmingCharacters(in: .whitespacesAndNewlines)
+        ))
+    }
+
     func profile() async throws -> AuthMe {
         try await accountAPI.profile()
     }

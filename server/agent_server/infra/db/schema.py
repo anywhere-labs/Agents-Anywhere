@@ -183,11 +183,42 @@ users = Table(
     Column("password_hash", Text, nullable=False),
     Column("role", Text, nullable=False, server_default="member"),
     Column("disabled", Integer, nullable=False, server_default="0"),
+    Column("email", Text),
+    Column("email_verified_at", Text),
+    Column("display_name", Text, nullable=False, server_default=""),
+    Index("idx_users_email", "email", unique=True),
     # Optional avatar stored inline as a data URL (image/png base64). Capped at
     # ~256 KB by the upload endpoint; small enough to keep in the row.
     Column("avatar", Text),
     Column("created_at", Text, nullable=False),
     Column("updated_at", Text, nullable=False),
+)
+
+
+email_verification_codes = Table(
+    "email_verification_codes",
+    metadata,
+    Column("scope", Text, primary_key=True),
+    Column("email", Text, nullable=False),
+    Column("purpose", Text, nullable=False),
+    Column("user_id", Text, nullable=False),
+    Column("code_hash", Text, nullable=False),
+    Column("nonce", Text, nullable=False),
+    Column("sent_at", BigInteger, nullable=False),
+    Column("expires_at", BigInteger, nullable=False),
+    Column("failed_attempts", Integer, nullable=False, server_default="0"),
+    Column("attempt_window", BigInteger, nullable=False),
+    Column("consumed_at", BigInteger),
+    Index("idx_email_codes_sent_at", "sent_at"),
+)
+
+email_verification_limits = Table(
+    "email_verification_limits",
+    metadata,
+    Column("key", Text, primary_key=True),
+    Column("window_start", BigInteger, nullable=False),
+    Column("count", Integer, nullable=False),
+    Index("idx_email_limits_window", "window_start"),
 )
 
 

@@ -84,7 +84,8 @@ class FakeRuntimeRpc:
 def _auth_headers(client: TestClient) -> dict[str, str]:
     config = client.get("/auth/config").json()
     payload: dict[str, Any] = {
-        "userId": ADMIN_USER,
+        "email": f"{ADMIN_USER}@example.com",
+        "displayName": ADMIN_USER,
         "password": ADMIN_PASSWORD,
     }
     if config["needsBootstrap"]:
