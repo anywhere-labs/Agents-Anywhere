@@ -1,4 +1,5 @@
 import type { WorkspaceSessionView } from "@/components/workspace-context"
+import { compareSessionListOrder } from "@/components/session/session-list-order"
 import type { ProjectView } from "@/features/dashboard/types"
 import { filterSessions, type FilterValue } from "@/lib/demo-api"
 
@@ -31,58 +32,29 @@ export function sortProjectsByCreatedAt(items: ProjectView[]): ProjectView[] {
 }
 
 export function sortSidebarSessions(items: WorkspaceSessionView[]): WorkspaceSessionView[] {
-  return [...items].sort((left, right) => {
-    if (left.pinned !== right.pinned) return left.pinned ? -1 : 1
-    return timestamp(right.sortAt ?? right.updatedAt) - timestamp(left.sortAt ?? left.updatedAt)
-  })
-}
-
-function projectIdsForStatus(
-  sessions: WorkspaceSessionView[],
-  status: ProjectSessionStatusFilter,
-): Set<string> {
-  return new Set(
-    sessions
-      .filter((session) => session.projectId && (
-        status === "all" || session.archived === (status === "archived")
-      ))
-      .map((session) => session.projectId as string),
-  )
-}
-
-function projectMatchesStatus(
-  project: ProjectView,
-  matchingProjectIds: Set<string>,
-  status: ProjectSessionStatusFilter,
-): boolean {
-  if (status === "active") return project.activeSessionCount > 0
-  if (status === "archived") return matchingProjectIds.has(project.id)
-  return project.activeSessionCount > 0 || matchingProjectIds.has(project.id)
+  // WorkspaceContext already owns the presentation order, including the
+  // one-second optimistic placement after a local send. Filtering must keep
+  // that order instead of sorting a second time without its optimistic state.
+  return [...items]
 }
 
 export function selectPinnedProjects(
   projects: ProjectView[],
-  sessions: WorkspaceSessionView[],
-  status: ProjectSessionStatusFilter,
+  _sessions: WorkspaceSessionView[],
+  _status: ProjectSessionStatusFilter,
 ): ProjectView[] {
-  const matchingProjectIds = projectIdsForStatus(sessions, status)
   return sortProjects(
-    projects.filter((project) =>
-      project.pinned && projectMatchesStatus(project, matchingProjectIds, status),
-    ),
+    projects.filter((project) => project.pinned),
   )
 }
 
 export function selectRegularProjects(
   projects: ProjectView[],
-  sessions: WorkspaceSessionView[],
-  status: ProjectSessionStatusFilter,
+  _sessions: WorkspaceSessionView[],
+  _status: ProjectSessionStatusFilter,
 ): ProjectView[] {
-  const matchingProjectIds = projectIdsForStatus(sessions, status)
   return sortProjectsByCreatedAt(
-    projects.filter((project) =>
-      !project.pinned && projectMatchesStatus(project, matchingProjectIds, status),
-    ),
+    projects.filter((project) => !project.pinned),
   )
 }
 
@@ -114,7 +86,7 @@ export function selectAllSessions(
   search: string,
 ): WorkspaceSessionView[] {
   return sortSidebarSessions(
-    filterSessions(sessions, filter, search).filter((session) => !session.pinned),
+    filterSessions(sessions, filter, search).filter((session) => session.archived || !session.pinned),
   )
 }
 
@@ -127,11 +99,21 @@ export function selectProjectSessions(
     (session) => currentSessionsById.get(session.id) ?? session,
   )
 
-  return sortSidebarSessions(
-    currentSessions.filter((session) => {
+  const filtered = currentSessions.filter((session) => {
       if (status === "archived") return session.archived
       if (status === "all") return session.archived || !session.pinned
       return !session.archived && !session.pinned
-    }),
+    })
+  const currentOrder = new Map(
+    Array.from(currentSessionsById.keys()).map((id, index) => [id, index]),
   )
+
+  return [...filtered].sort((left, right) => {
+    const leftIndex = currentOrder.get(left.id)
+    const rightIndex = currentOrder.get(right.id)
+    if (leftIndex !== undefined && rightIndex !== undefined) return leftIndex - rightIndex
+    if (leftIndex !== undefined) return -1
+    if (rightIndex !== undefined) return 1
+    return compareSessionListOrder(left, right)
+  })
 }

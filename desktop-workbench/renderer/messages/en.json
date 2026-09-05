@@ -420,11 +420,11 @@
         "startWhere": "Where should the agent start?",
         "workOn": "What should we work on?",
         "giveTask": "Give the agent a task.",
-        "startWorkspace": "Start from a workspace.",
+        "startWorkspace": "Start from a project.",
         "needsAttention": "What needs attention?",
         "happenHere": "What should happen here?",
         "rightDevice": "Send work to the right device.",
-        "pickWorkspace": "Pick a workspace and begin.",
+        "pickWorkspace": "Pick a project and begin.",
         "nextChange": "Describe the next change.",
         "investigate": "What should be investigated?",
         "focusedSession": "Start a focused session.",
@@ -460,7 +460,7 @@
       "noProjects": "No projects yet",
       "loadFailed": "Failed to load directory.",
       "noOnlineDeviceTitle": "No device is online",
-      "noOnlineDeviceDescription": "Add a device before choosing a workspace or starting a session.",
+      "noOnlineDeviceDescription": "Add a device before choosing a project or starting a session.",
       "addDevice": "Add device"
     },
     "device": {
@@ -624,6 +624,8 @@
       "deleteRuntimeConfigTitle": "Delete runtime configuration?",
       "deleteRuntimeConfigDescription": "{name} will be stopped and removed from the configured list. You can add it again later; its instance identity, sessions, and timeline history are kept, and the local installation is not deleted.",
       "deleteRuntimeConfigAction": "Delete configuration",
+      "projects": "Projects",
+      "noProjects": "No projects yet.",
       "workspaces": "Workspaces",
       "noWorkspaces": "No workspaces yet.",
       "showAllMore": "Show all {count} more",
@@ -654,11 +656,6 @@
       "archiveAllDescription": "Archive all sessions in the current {name} view.",
       "unarchiveAllDescription": "Unarchive all sessions in the current {name} view.",
       "bulkArchiveFailed": "Failed to update sessions."
-    },
-    "deviceWorkspace": {
-      "sessionCount": "{count, plural, one {# session} other {# sessions}}",
-      "backToDevice": "Back to device",
-      "addWorkspace": "Add workspace"
     },
     "panels": {
       "files": {
@@ -1130,7 +1127,7 @@
     },
     "firstDevice": {
       "title": "Add your first device?",
-      "description": "Agents Anywhere needs a paired online device before it can choose a workspace or start sessions.",
+      "description": "Agents Anywhere needs a paired online device before you can choose a project or start sessions.",
       "later": "Maybe later",
       "addDevice": "Add device"
     }

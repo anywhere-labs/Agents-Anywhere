@@ -68,10 +68,7 @@ export function DevicesSection({
                     key={connector.id}
                     connector={connector}
                     isLocal={isLocalConnector(connector.id)}
-                    isActive={
-                      (page === "device" || page === "device-workspace") &&
-                      activeConnectorId === connector.id
-                    }
+                    isActive={page === "device" && activeConnectorId === connector.id}
                     onOpen={() => onOpenDevice(connector.id)}
                   />
                 ))

@@ -420,11 +420,11 @@
         "startWhere": "Agent 应该从哪里开始？",
         "workOn": "我们要处理什么？",
         "giveTask": "给 Agent 一个任务。",
-        "startWorkspace": "从一个工作目录开始。",
+        "startWorkspace": "从一个项目开始。",
         "needsAttention": "哪里需要关注？",
         "happenHere": "这里应该发生什么？",
         "rightDevice": "把任务发送到合适的设备。",
-        "pickWorkspace": "选择工作目录并开始。",
+        "pickWorkspace": "选择项目并开始。",
         "nextChange": "描述下一处改动。",
         "investigate": "需要调查什么？",
         "focusedSession": "开始一个专注会话。",
@@ -460,7 +460,7 @@
       "noProjects": "暂无项目",
       "loadFailed": "无法加载目录。",
       "noOnlineDeviceTitle": "当前没有在线设备",
-      "noOnlineDeviceDescription": "添加设备后才能选择工作区或开始会话。",
+      "noOnlineDeviceDescription": "添加设备后才能选择项目或开始会话。",
       "addDevice": "添加设备"
     },
     "device": {
@@ -624,6 +624,8 @@
       "deleteRuntimeConfigTitle": "删除 Runtime 配置？",
       "deleteRuntimeConfigDescription": "{name} 会停止并从已配置列表移除，之后仍可重新添加。实例身份、已有会话和 Timeline 历史都会保留，本机安装也不会被删除。",
       "deleteRuntimeConfigAction": "删除配置",
+      "projects": "项目",
+      "noProjects": "暂无项目。",
       "workspaces": "工作目录",
       "noWorkspaces": "还没有工作目录。",
       "showAllMore": "显示全部，另有 {count} 个",
@@ -654,11 +656,6 @@
       "archiveAllDescription": "归档当前 {name} 视图中的全部会话。",
       "unarchiveAllDescription": "取消归档当前 {name} 视图中的全部会话。",
       "bulkArchiveFailed": "无法更新会话。"
-    },
-    "deviceWorkspace": {
-      "sessionCount": "{count, plural, one {# 个会话} other {# 个会话}}",
-      "backToDevice": "返回设备",
-      "addWorkspace": "添加工作目录"
     },
     "panels": {
       "files": {
@@ -1130,7 +1127,7 @@
     },
     "firstDevice": {
       "title": "要添加你的第一台设备吗？",
-      "description": "Agents Anywhere 需要一台已配对且在线的设备，才能选择工作区或开始会话。",
+      "description": "Agents Anywhere 需要一台已配对且在线的设备，才能选择项目或开始会话。",
       "later": "稍后再说",
       "addDevice": "添加设备"
     }

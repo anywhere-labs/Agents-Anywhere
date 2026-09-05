@@ -73,6 +73,7 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
     renameSession,
     refreshData,
     loadMoreSessions,
+    loadProjectSessions,
   } = useWorkspace()
   const { signOut, me, session: authSession } = useAuth()
   const { isLocalConnector } = useDesktopConnector()
@@ -129,7 +130,8 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
       if (open) return current.includes(projectId) ? current : [...current, projectId]
       return current.filter((id) => id !== projectId)
     })
-  }, [])
+    if (open) void loadProjectSessions(projectId)
+  }, [loadProjectSessions])
 
   const toggleProjectPin = React.useCallback(async (project: ProjectView) => {
     const updated = await updateProject(project.id, { pinned: !project.pinned })

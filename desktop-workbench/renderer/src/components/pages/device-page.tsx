@@ -46,6 +46,7 @@ import { cn } from "@/lib/utils"
 import type {
   DeviceRuntimeStatus,
   DeviceRuntimeView,
+  ProjectView,
   RuntimeTypeView,
   SessionView as RealSessionView,
 } from "@/features/dashboard/types"
@@ -97,13 +98,6 @@ const RUNTIME_STATUS_LABEL_KEYS = {
 
 const NEW_RUNTIME_SAVING_ID = "@new-runtime"
 
-type ConnectorWorkspace = {
-  path: string
-  name: string
-  sessionCount: number
-  lastActiveAt: string | null
-}
-
 type DeviceSession = {
   id: string
   connectorId: string
@@ -126,40 +120,34 @@ type DeviceSession = {
   lastItemAt?: string | null
 }
 
-// ── WorkspaceCard ──────────────────────────────────────────────
+// ── ProjectCard ────────────────────────────────────────────────
 
-function WorkspaceCard({
-  workspace,
-  onOpen,
+function ProjectCard({
+  project,
   onNewSession,
 }: {
-  workspace: ConnectorWorkspace
-  onOpen: () => void
+  project: ProjectView
   onNewSession: () => void
 }) {
   const t = useTranslations("dashboard.device")
   return (
     <div className="group grid grid-cols-[1fr_auto] items-stretch rounded-lg border border-border bg-card transition-colors hover:bg-accent/40">
-      <button
-        type="button"
-        onClick={onOpen}
-        className="flex min-w-0 items-center gap-3 px-4 py-3 text-left"
-      >
+      <div className="flex min-w-0 items-center gap-3 px-4 py-3">
         <FolderOpen className="size-4 shrink-0 text-muted-foreground" />
         <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-medium">{workspace.name}</p>
-          <p className="text-xs text-muted-foreground">
-            {t("sessionCount", { count: workspace.sessionCount })}
+          <p className="truncate text-sm font-medium">{project.name}</p>
+          <p className="truncate text-xs text-muted-foreground" title={project.workspacePath}>
+            {project.workspacePath}
           </p>
         </div>
-      </button>
+      </div>
       <Button
         type="button"
         variant="ghost"
         size="icon"
         onClick={onNewSession}
         aria-label={t("newSession")}
-        className="m-2 self-center opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"
+        className="m-2 self-center"
       >
         <Plus />
       </Button>
@@ -227,12 +215,8 @@ function SessionRow({
 
 // ── DevicePage ─────────────────────────────────────────────────
 
-const DESKTOP_WORKSPACE_PAGE_SIZE = 6
-const MOBILE_WORKSPACE_PAGE_SIZE = 4
-
-function timeValue(value: string | null | undefined) {
-  return value ? new Date(value).getTime() : 0
-}
+const DESKTOP_PROJECT_PAGE_SIZE = 6
+const MOBILE_PROJECT_PAGE_SIZE = 4
 
 function sessionActivityAt(session: DeviceSession) {
   return session.sortAt ?? session.lastActivityAt ?? session.lastItemAt ?? session.updatedAt ?? null
@@ -283,27 +267,6 @@ function mergeRealSessions(prev: DeviceSession[], updates: RealSessionView[]) {
   return prev.map((session) => updated.get(session.id) ?? session)
 }
 
-function workspacesFromSessions(sessions: DeviceSession[]): ConnectorWorkspace[] {
-  const byPath = new Map<string, ConnectorWorkspace>()
-  for (const session of sessions) {
-    const path = session.cwd || "~"
-    const activeAt = sessionActivityAt(session)
-    const existing = byPath.get(path)
-    if (existing) {
-      existing.sessionCount += 1
-      if (timeValue(activeAt) > timeValue(existing.lastActiveAt)) existing.lastActiveAt = activeAt
-      continue
-    }
-    byPath.set(path, {
-      path,
-      name: path.split(/[\\/]/).filter(Boolean).at(-1) ?? path,
-      sessionCount: 1,
-      lastActiveAt: activeAt,
-    })
-  }
-  return Array.from(byPath.values()).sort((a, b) => timeValue(b.lastActiveAt) - timeValue(a.lastActiveAt))
-}
-
 function runtimeStatusDot(runtime: DeviceRuntimeView) {
   if (runtime.status === "running") return "bg-emerald-500"
   if (runtime.status === "error") return "bg-destructive"
@@ -328,8 +291,9 @@ export function DevicePage() {
   const {
     activeConnectorId,
     connectors,
+    projects,
     sessions: allSessions,
-    navigateToWorkspace,
+    startProjectSession,
     openSession,
     goHome,
     refreshData,
@@ -349,7 +313,6 @@ export function DevicePage() {
   const isMobile = useIsMobile()
 
   const [connector, setConnector] = React.useState<(typeof connectors)[number] | null>(null)
-  const [workspaces, setWorkspaces] = React.useState<ConnectorWorkspace[]>([])
   const [runtimes, setRuntimes] = React.useState<DeviceRuntimeView[]>([])
   const [runtimeTypes, setRuntimeTypes] = React.useState<RuntimeTypeView[]>([])
   const [runtimesLoading, setRuntimesLoading] = React.useState(false)
@@ -357,7 +320,7 @@ export function DevicePage() {
   const [sessions, setSessions] = React.useState<DeviceSession[]>([])
   const [loading, setLoading] = React.useState(true)
 
-  const [showAllWorkspaces, setShowAllWorkspaces] = React.useState(false)
+  const [showAllProjects, setShowAllProjects] = React.useState(false)
   const [sessionTab, setSessionTab] = React.useState<SessionTabId>("active")
   const [configRuntime, setConfigRuntime] = React.useState<DeviceRuntimeView | null>(null)
   const [savingRuntimeId, setSavingRuntimeId] = React.useState<string | null>(null)
@@ -393,7 +356,7 @@ export function DevicePage() {
     previousConnectorIdRef.current = activeConnectorId
     if (connectorChanged) {
       setLoading(true)
-      setShowAllWorkspaces(false)
+      setShowAllProjects(false)
       setSessionTab("active")
       setRuntimes([])
       setRuntimeTypes([])
@@ -412,7 +375,6 @@ export function DevicePage() {
     setNameDraft(currentConnector?.name ?? "")
     setEditingName(false)
     setSessions(connectorSessions)
-    setWorkspaces(workspacesFromSessions(connectorSessions))
     setLoading(false)
   }, [activeConnectorId, connectors, allSessions])
 
@@ -438,9 +400,10 @@ export function DevicePage() {
     }
   }, [activeConnectorId, authSession?.accessToken, t])
 
-  const workspacePageSize = isMobile ? MOBILE_WORKSPACE_PAGE_SIZE : DESKTOP_WORKSPACE_PAGE_SIZE
-  const visibleWorkspaces = showAllWorkspaces ? workspaces : workspaces.slice(0, workspacePageSize)
-  const hiddenCount = workspaces.length - workspacePageSize
+  const connectorProjects = projects.filter((project) => project.connectorId === activeConnectorId)
+  const projectPageSize = isMobile ? MOBILE_PROJECT_PAGE_SIZE : DESKTOP_PROJECT_PAGE_SIZE
+  const visibleProjects = showAllProjects ? connectorProjects : connectorProjects.slice(0, projectPageSize)
+  const hiddenProjectCount = connectorProjects.length - projectPageSize
 
   const filteredSessions = sessions.filter((s) => {
     if (sessionTab === "active") return !s.archived
@@ -1051,48 +1014,37 @@ export function DevicePage() {
           )}
         </section>
 
-        {/* Workspaces */}
+        {/* Projects */}
         <section className="mb-8">
-          <div className="mb-3 flex items-center justify-between">
+          <div className="mb-3 flex items-center">
             <h2 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
-              {t("workspaces")}
+              {t("projects")}
             </h2>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              onClick={() => navigateToWorkspace(connector.id, "~")}
-              aria-label={t("newSession")}
-            >
-              <Plus />
-            </Button>
           </div>
 
-          {workspaces.length === 0 ? (
-            <p className="text-sm text-muted-foreground">{t("noWorkspaces")}</p>
+          {connectorProjects.length === 0 ? (
+            <p className="text-sm text-muted-foreground">{t("noProjects")}</p>
           ) : (
             <>
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                {visibleWorkspaces.map((ws) => (
-                  <WorkspaceCard
-                    key={ws.path}
-                    workspace={ws}
-                    onOpen={() => navigateToWorkspace(connector.id, ws.path)}
-                    onNewSession={() => navigateToWorkspace(connector.id, ws.path)}
+                {visibleProjects.map((project) => (
+                  <ProjectCard
+                    key={project.id}
+                    project={project}
+                    onNewSession={() => startProjectSession(project.id)}
                   />
                 ))}
               </div>
 
               {(() => {
-                const nextWorkspace = workspaces[workspacePageSize]
-                if (showAllWorkspaces || hiddenCount <= 0 || !nextWorkspace) return null
+                if (showAllProjects || hiddenProjectCount <= 0) return null
                 return (
                   <button
                     type="button"
-                    onClick={() => navigateToWorkspace(connector.id, nextWorkspace.path)}
+                    onClick={() => setShowAllProjects(true)}
                     className="mt-3 flex items-center gap-1 text-sm text-muted-foreground transition-colors hover:text-foreground"
                   >
-                    <span className="mx-0.5 text-foreground">{t("showAllMore", { count: hiddenCount })}</span>
+                    <span className="mx-0.5 text-foreground">{t("showAllMore", { count: hiddenProjectCount })}</span>
                     <ChevronRight className="size-3.5" />
                   </button>
                 )

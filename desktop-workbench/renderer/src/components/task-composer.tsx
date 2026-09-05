@@ -324,7 +324,10 @@ export function TaskComposer() {
     }
 
     if (projectPrefillAppliedRef.current === newSessionProject.id) return
-    if (!deviceOptions.some((option) => option.id === newSessionProject.connectorId)) return
+    if (!deviceOptions.some((option) => option.id === newSessionProject.connectorId)) {
+      setWorkspace(null)
+      return
+    }
 
     projectPrefillAppliedRef.current = newSessionProject.id
     setSelectedDevice(newSessionProject.connectorId)
