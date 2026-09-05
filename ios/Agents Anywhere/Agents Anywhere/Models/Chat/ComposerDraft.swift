@@ -21,6 +21,7 @@ struct ChatAttachment: Identifiable, Equatable {
 /// The editor owns marked-text state; the account/session owns the draft lifetime.
 @MainActor @Observable
 final class ComposerDraft {
+    private(set) var isValid = true
     var text = ""
     var attachments: [ChatAttachment] = []
     var isFocused = false
@@ -31,4 +32,5 @@ final class ComposerDraft {
     var canAttemptSend: Bool { !isComposing && hasSendableContent }
 
     func clear() { text = ""; attachments = []; isComposing = false }
+    func invalidate() { clear(); isFocused = false; isValid = false }
 }

@@ -84,7 +84,7 @@ struct ComposerOptionsSheet: View {
     private func attachmentTile(_ title: String, icon: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             VStack(spacing: 12) {
-                Image(systemName: icon).font(.system(size: 27, weight: .regular)).foregroundStyle(.blue)
+                Image(systemName: icon).font(.system(size: 27, weight: .regular)).foregroundStyle(.primary)
                 Text(title).font(.subheadline.weight(.medium)).foregroundStyle(.primary)
             }
             .frame(maxWidth: .infinity)
@@ -177,7 +177,7 @@ struct ComposerOptionsSheet: View {
                 if !detail.isEmpty { Text(detail).font(.footnote).foregroundStyle(.secondary) }
             }
             Spacer(minLength: 8)
-            if selected { Image(systemName: "checkmark").fontWeight(.semibold).foregroundStyle(.blue) }
+            if selected { Image(systemName: "checkmark").fontWeight(.semibold).foregroundStyle(.primary) }
         }
         .padding(.vertical, 7)
         .opacity(option.isEnabled ? 1 : 0.5)

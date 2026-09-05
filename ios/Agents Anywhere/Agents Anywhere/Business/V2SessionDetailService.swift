@@ -87,6 +87,10 @@ struct V2SessionDetailService {
             sessionId: sessionId,
             request: V2RuntimeSelectionUpdateRequest(selections: [scope: selectionId])
         )
+        guard response.ok else {
+            throw V2RuntimeError(code: response.connectorResult?["error"]?["code"]?.stringValue,
+                message: response.connectorResult?["error"]?["message"]?.stringValue ?? "The runtime did not accept this selection.")
+        }
         return response.state
     }
 
@@ -124,10 +128,14 @@ struct V2SessionDetailService {
         )
     }
 
-    func catalogs(sessionId: V2SessionID) async throws -> V2SessionCatalogs {
-        async let model = runtimeAPI.modelCatalog(sessionId: sessionId)
-        async let permission = runtimeAPI.permissionCatalog(sessionId: sessionId)
-        return try await V2SessionCatalogs(model: model.catalog, permission: permission.catalog)
+    func catalogs(sessionId: V2SessionID, scopes: Set<String>? = nil) async throws -> V2SessionCatalogs {
+        async let model = scopes?.contains("model") != false
+            ? runtimeAPI.modelCatalog(sessionId: sessionId).catalog
+            : V2ModelCatalog(runtime: "", revision: 0, models: [])
+        async let permission = scopes?.contains("permission") != false
+            ? runtimeAPI.permissionCatalog(sessionId: sessionId).catalog
+            : V2PermissionCatalog(runtime: "", revision: 0, permissions: [])
+        return try await V2SessionCatalogs(model: model, permission: permission)
     }
 
     private func validatePageSize(_ limit: Int) throws {

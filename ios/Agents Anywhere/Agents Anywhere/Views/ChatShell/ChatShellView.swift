@@ -147,7 +147,7 @@ struct ChatShellView: View {
                         appState.updateSession(session)
                         if case .newSession = selection { openSession(session.id) }
                     },
-                    onRefresh: appState.refreshDashboard)
+                    onRefresh: { await appState.refreshDashboard(); return appState.connectors })
             }
         } else {
             ChatShellPlaceholderPage(

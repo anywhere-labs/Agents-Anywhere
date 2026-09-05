@@ -131,8 +131,13 @@ final class V2SessionRepository {
         return entry.projection!.data
     }
 
-    func catalogs(sessionId: V2SessionID, force: Bool = false) async throws -> V2SessionCatalogs {
+    func catalogs(sessionId: V2SessionID, force: Bool = false, capabilities: V2RuntimeCapabilitySnapshot? = nil) async throws -> V2SessionCatalogs {
         let entry = entry(for: sessionId)
+        let scopes = capabilities.map { value in Set(["model", "permission"].filter { value.allows("catalog.\($0)") }) }
+        if entry.catalogScopes != scopes {
+            invalidateCatalogs(entry)
+            entry.catalogScopes = scopes
+        }
         if !force, let cached = entry.catalogs, let readAt = entry.catalogReadAt,
            now().timeIntervalSince(readAt) < policy.catalogLifetime { return cached }
         try requireNetwork()
@@ -143,7 +148,7 @@ final class V2SessionRepository {
                 if entry.catalogVersion == version { entry.catalogTask = nil }
                 evict()
             }
-            let catalogs = try await detail.catalogs(sessionId: sessionId)
+            let catalogs = try await detail.catalogs(sessionId: sessionId, scopes: scopes)
             try requireCurrent(entry)
             guard version == entry.catalogVersion else { throw CacheError.invalidated }
             entry.catalogs = catalogs
@@ -153,6 +158,10 @@ final class V2SessionRepository {
         }
         entry.catalogTask = task
         return try await task.value
+    }
+
+    func localWorkDidChange(sessionID: V2SessionID) {
+        if let entry = entries[sessionID] { emit(entry) }
     }
 
     func send(sessionId: V2SessionID, content: String, attachmentIDs: [V2AttachmentID] = [], clientMessageID: String) async throws -> V2RuntimeActionResponse {
@@ -208,7 +217,12 @@ final class V2SessionRepository {
         // Response acceptance is not notice resolution; wait for authoritative live facts.
         entry.projection?.markStale()
         emit(entry)
-        try await reconcile(entry)
+        do { try await reconcile(entry) }
+        catch {
+            // The action already succeeded. A failed read must not turn an
+            // accepted approval into a retryable write failure in the UI.
+            if isCurrent(entry) { entry.error = V2ClientFailure(error); emit(entry) }
+        }
     }
 
     func sync(sessionId: V2SessionID) async throws {
@@ -535,6 +549,7 @@ private final class Entry {
     var recoveryTask: Task<Void, Error>?
     var connectionTask: Task<Void, Never>?
     var catalogs: V2SessionCatalogs?
+    var catalogScopes: Set<String>?
     var catalogReadAt: Date?
 
     init(id: V2SessionID, model: V2SessionModel) { self.id = id; self.model = model }

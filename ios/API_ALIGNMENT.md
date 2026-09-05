@@ -2,9 +2,9 @@
 
 Backend baseline: `origin/v2` at `c1913284` (2026-09-05).
 
-This change aligns the native client's transport, typed resources, and business
-services before the next UI implementation. The existing navigation and pages
-remain the presentation baseline.
+This document records the transport, typed-resource and business-service
+alignment baseline. The subsequent native chat, New Session and interaction
+integration is documented in [NATIVE_CHAT.md](NATIVE_CHAT.md).
 
 ## Contract boundaries
 
@@ -22,8 +22,8 @@ remain the presentation baseline.
   alongside the existing web preview flow.
 - Retired session/runtime calls belong in `_deprecated`, outside the app target.
 
-Terminal, Connector execution, server administration, and a new presentation
-implementation are outside this client-core alignment.
+Terminal, Connector execution and server administration are outside this
+client-core alignment. The native presentation is documented separately.
 
 ## Native data ownership
 
@@ -45,14 +45,15 @@ Runtime facts are a separate observable object; streaming only changes the
 affected timeline row's value, leaving other row references intact.
 
 Obtain a model from `AppState.sessionModel(id:)` (or the scoped repository) and
-pass it to the future session view. A view can use `@Bindable var session:
+pass it to the session view. A view can use `@Bindable var session:
 V2SessionModel`, `.task { await session.connect() }`, `session.timeline` in a
 `ForEach`, `session.draft` as a binding and `session.sendDraft()` as an explicit
 button action. The `.task` lasts for the observation lifetime; cancellation
 removes that observer. Multiple views share one session socket. Use
 `session.runtime.isFresh`/`session.canSend` for controls, not cached status alone.
 History/refresh actions are on the model; other typed operations remain on the
-scoped repository and services for the next presentation implementation.
+scoped repository and services. The native chat receives these observations
+through a separate 30 Hz presentation model rather than rendering every frame.
 
 Each `V2ClientServices` instance belongs to a normalized server origin, account
 and credential lifetime. Replacing credentials or signing out shuts down the
@@ -117,7 +118,7 @@ route decorators without constructing the application or contacting storage.
 On backend contract changes, regenerate the fixture and review the resulting
 diff before adjusting the client tests.
 
-Current validation: 31 headless Swift tests pass, including real URLSession
+API-alignment baseline validation: 31 headless Swift tests passed, including real URLSession
 interception, backend request/route matching, nullable selections, same-sequence
 live transitions, cache invalidation, timeline reset/history races, network
 loss, socket cancellation/overflow/silence, and uncertain message delivery.
@@ -125,5 +126,7 @@ The test target compiles production client-core sources, not a copied model set.
 The complete iOS Debug target also builds for `generic/platform=iOS` with code
 signing disabled, including the existing AppState and SwiftUI pages. This uses
 the checked-in Swift package resolutions and does not start a simulator.
-Live device rendering and real mobile-network behavior still require device
-validation when implementing the next UI.
+The subsequent native integration passes 54 tests across seven suites, and its
+complete unsigned iOS build and backend fixture check pass. Live device rendering
+and real mobile-network behavior still require the manual validation described
+in [NATIVE_CHAT.md](NATIVE_CHAT.md).

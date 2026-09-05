@@ -15,14 +15,14 @@ struct SessionTargetSheet: View {
                         NavigationLink(value: device.id) {
                             HStack(spacing: 14) {
                                 Image(systemName: device.deviceOs?.lowercased().contains("linux") == true ? "server.rack" : "desktopcomputer")
-                                    .font(.title3).foregroundStyle(.blue).frame(width: 30)
+                                    .font(.title3).foregroundStyle(.primary).frame(width: 30)
                                 VStack(alignment: .leading, spacing: 5) {
                                     Text(device.name).font(.headline)
                                     Text(device.status == .online ? "在线 · 选择此设备上的 Agent" : "离线 · 可查看上次的实例")
                                         .font(.footnote).foregroundStyle(.secondary)
                                 }
                                 Spacer(minLength: 4)
-                                if device.id == model.connectorID { Image(systemName: "checkmark").foregroundStyle(.blue) }
+                                if device.id == model.connectorID { Image(systemName: "checkmark").foregroundStyle(.primary) }
                             }
                             .padding(.vertical, 8)
                         }
@@ -72,7 +72,7 @@ struct SessionTargetSheet: View {
                         }
                     } label: {
                         HStack(spacing: 14) {
-                            Image(systemName: "sparkle").font(.title3).foregroundStyle(.blue).frame(width: 30)
+                            Image(systemName: "sparkle").font(.title3).foregroundStyle(.primary).frame(width: 30)
                             VStack(alignment: .leading, spacing: 6) {
                                 Text(runtime.sessionDisplayName).font(.headline).foregroundStyle(.primary)
                                 Text(runtime.typeDisplayName).font(.subheadline).foregroundStyle(.secondary)
@@ -82,7 +82,7 @@ struct SessionTargetSheet: View {
                             }
                             Spacer(minLength: 8)
                             if deviceID == model.connectorID && runtime.id == model.runtimeID {
-                                Image(systemName: "checkmark").foregroundStyle(.blue)
+                                Image(systemName: "checkmark").foregroundStyle(.primary)
                             }
                         }
                         .padding(.vertical, 9)

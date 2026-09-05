@@ -10,10 +10,11 @@ struct NewSessionView: View {
     let onMenu: () -> Void
     let onManageDevice: (String) -> Void
     let onCreated: (V2SessionMeta) -> Void
-    let onRefresh: () async -> Void
+    let onRefresh: () async -> [V2Connector]
     @State private var showsTarget = false
     @State private var showsWorkspace = false
     @State private var confirmsRetry = false
+    @Environment(\.colorScheme) private var colorScheme
     @ScaledMetric(relativeTo: .body) private var bodyLineHeight: CGFloat = 22
 
     private var controls: ChatControlMetrics { .init(bodyLineHeight: bodyLineHeight) }
@@ -23,7 +24,7 @@ struct NewSessionView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 28) {
                     VStack(alignment: .leading, spacing: 12) {
-                        Image(systemName: "sparkles").font(.system(size: 28)).foregroundStyle(.blue)
+                        Image(systemName: "sparkles").font(.system(size: 28)).foregroundStyle(.primary)
                         Text("从这里开始").font(.largeTitle.bold())
                         Text("选择运行任务的设备和 Agent，\n把想做的事交给它。")
                             .font(.body).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
@@ -35,7 +36,7 @@ struct NewSessionView: View {
                         targetCard
                         Button { showsWorkspace = true } label: {
                             HStack(spacing: 14) {
-                                Image(systemName: "folder").font(.title3).foregroundStyle(.blue).frame(width: 24)
+                                Image(systemName: "folder").font(.title3).foregroundStyle(.primary).frame(width: 24)
                                 VStack(alignment: .leading, spacing: 5) {
                                     Text("工作目录").font(.subheadline.weight(.medium)).foregroundStyle(.primary)
                                     Text(model.workspace.isEmpty ? "使用 Agent 的默认目录" : model.workspace)
@@ -70,6 +71,7 @@ struct NewSessionView: View {
                 .frame(maxWidth: .infinity, alignment: .center)
             }
             .scrollDismissesKeyboard(.interactively)
+            .refreshable { await refresh() }
             .safeAreaInset(edge: .top, spacing: 0) {
                 ChatPageHeader(title: "Agents Anywhere", controls: controls, onMenu: onMenu,
                     onNewSession: { model.draft.isFocused = true })
@@ -104,7 +106,7 @@ struct NewSessionView: View {
         Button { showsTarget = true } label: {
             VStack(alignment: .leading, spacing: 16) {
                 HStack(spacing: 14) {
-                    Image(systemName: "desktopcomputer").font(.system(size: 24)).foregroundStyle(.blue).frame(width: 32)
+                    Image(systemName: "desktopcomputer").font(.system(size: 24)).foregroundStyle(.primary).frame(width: 32)
                     VStack(alignment: .leading, spacing: 5) {
                         Text(model.connector?.name ?? "选择设备").font(.headline).foregroundStyle(.primary)
                         Text(model.connector?.status == .online ? "在线" : model.connector == nil ? "你的任务将在所选设备上运行" : "设备离线")
@@ -115,7 +117,7 @@ struct NewSessionView: View {
                 }
                 Divider()
                 HStack(spacing: 14) {
-                    Image(systemName: "sparkle").font(.system(size: 23)).foregroundStyle(.blue).frame(width: 32)
+                    Image(systemName: "sparkle").font(.system(size: 23)).foregroundStyle(.primary).frame(width: 32)
                     VStack(alignment: .leading, spacing: 5) {
                         Text(model.runtime?.sessionDisplayName ?? "选择 Agent").font(.headline).foregroundStyle(.primary)
                         Text(model.runtime?.typeDisplayName ?? "从这台设备已配置的实例中选择")
@@ -126,7 +128,7 @@ struct NewSessionView: View {
                 }
             }
             .padding(20)
-            .background(Color.blue.opacity(0.07), in: .rect(cornerRadius: 26))
+            .background(AppTheme.groupedFill(colorScheme), in: .rect(cornerRadius: 26))
         }
         .buttonStyle(.plain)
         .disabled(model.isCreating)
@@ -157,7 +159,10 @@ struct NewSessionView: View {
             Text(detail).font(.footnote).foregroundStyle(.secondary)
         }
     }
-    private func refresh() async { await onRefresh(); await model.refresh(connectors: connectors) }
+    private func refresh() async {
+        let current = await onRefresh()
+        await model.refresh(connectors: current)
+    }
 }
 
 private struct TargetRefreshKey: Equatable {

@@ -39,11 +39,13 @@ struct ChatPageHeader: View {
 /// area (including keyboard avoidance). The native iPad split already owns it.
 struct ChatPageSafeArea: ViewModifier {
     let insets: EdgeInsets
+    @Environment(\.colorScheme) private var colorScheme
     @Environment(\.sidebarDrawerPresentation) private var presentation
     func body(content: Content) -> some View {
         content
             .padding(presentation == .drawer ? insets : EdgeInsets())
             .background(Color(uiColor: .systemBackground))
-            .tint(.blue)
+            .tint(AppTheme.primaryControlBackground(colorScheme))
+            .accentColor(AppTheme.primaryControlBackground(colorScheme))
     }
 }

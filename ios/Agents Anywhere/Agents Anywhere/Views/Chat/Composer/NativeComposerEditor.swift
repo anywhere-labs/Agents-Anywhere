@@ -28,7 +28,7 @@ final class ComposerEditorController {
     }
 
     func synchronize() {
-        guard let textView, let draft else { return }
+        guard let textView, let draft, draft.isValid else { return }
         if draft.text != textView.text { draft.text = textView.text ?? "" }
         draft.isComposing = textView.markedTextRange != nil
         draft.isFocused = textView.isFirstResponder
@@ -57,6 +57,7 @@ struct NativeComposerEditor: UIViewRepresentable {
     let controller: ComposerEditorController
     let maximumHeight: CGFloat
     let onCommandSend: () -> Void
+    var onTextChange: ((String, Bool) -> Void)? = nil
 
     func makeUIView(context: Context) -> ComposerTextView {
         let view = ComposerTextView()
@@ -65,7 +66,7 @@ struct NativeComposerEditor: UIViewRepresentable {
         view.font = .preferredFont(forTextStyle: .body)
         view.adjustsFontForContentSizeCategory = true
         view.textColor = .label
-        view.tintColor = .systemBlue
+        view.tintColor = .label
         view.returnKeyType = .default
         view.enablesReturnKeyAutomatically = false
         view.textContainerInset = .zero
@@ -116,12 +117,16 @@ struct NativeComposerEditor: UIViewRepresentable {
         var parent: NativeComposerEditor
         init(_ parent: NativeComposerEditor) { self.parent = parent }
         func textViewDidChange(_ textView: UITextView) {
-            parent.controller.synchronize()
+            synchronize()
             textView.invalidateIntrinsicContentSize()
         }
-        func textViewDidChangeSelection(_ textView: UITextView) { parent.controller.synchronize() }
-        func textViewDidBeginEditing(_ textView: UITextView) { parent.controller.synchronize() }
-        func textViewDidEndEditing(_ textView: UITextView) { parent.controller.synchronize() }
+        func textViewDidChangeSelection(_ textView: UITextView) { synchronize() }
+        func textViewDidBeginEditing(_ textView: UITextView) { synchronize() }
+        func textViewDidEndEditing(_ textView: UITextView) { synchronize() }
+        private func synchronize() {
+            parent.controller.synchronize()
+            parent.onTextChange?(parent.draft.text, parent.draft.isComposing)
+        }
         func textView(_ textView: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
             // UIKit owns IME candidate confirmation. A plain Return is always
             // accepted as text input, never interpreted as a send gesture.

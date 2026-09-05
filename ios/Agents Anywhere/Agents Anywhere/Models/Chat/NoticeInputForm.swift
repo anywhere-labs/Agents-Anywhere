@@ -1,15 +1,16 @@
 import Foundation
 
-struct NoticeInputQuestion: Identifiable {
-    struct Option: Identifiable { let id: String; let label: String; let detail: String? }
+struct NoticeInputQuestion: Identifiable, Hashable {
+    struct Option: Identifiable, Hashable { let id: String; let label: String; let detail: String? }
     let id: String
     let prompt: String
+    let header: String?
     let multiple: Bool
     let allowCustom: Bool
     let options: [Option]
 }
 
-struct NoticeInputForm {
+struct NoticeInputForm: Hashable {
     let actionID: String
     let questions: [NoticeInputQuestion]
 
@@ -31,7 +32,7 @@ struct NoticeInputForm {
                 parsed.append(.init(id: id, label: label, detail: option["description"]?.stringValue))
             }
             guard Set(parsed.map(\.id)).count == parsed.count else { return nil }
-            questions.append(.init(id: id, prompt: prompt, multiple: item["multiple"]?.boolValue == true,
+            questions.append(.init(id: id, prompt: prompt, header: item["header"]?.stringValue, multiple: item["multiple"]?.boolValue == true,
                 allowCustom: item["allowCustom"]?.boolValue != false, options: parsed))
         }
         guard Set(questions.map(\.id)).count == questions.count else { return nil }
@@ -44,6 +45,7 @@ struct NoticeInputForm {
             let selected = choices[question.id] ?? []
             guard selected.isSubset(of: Set(question.options.map(\.id))), question.multiple || selected.count <= 1 else { return nil }
             let text = question.allowCustom ? (custom[question.id] ?? "").trimmingCharacters(in: .whitespacesAndNewlines) : ""
+            guard question.multiple || selected.isEmpty || text.isEmpty else { return nil }
             guard !selected.isEmpty || !text.isEmpty else { return nil }
             var answer: [String: JSONValue] = ["optionIds": .array(question.options.filter { selected.contains($0.id) }.map { .string($0.id) })]
             if !text.isEmpty { answer["customText"] = .string(text) }

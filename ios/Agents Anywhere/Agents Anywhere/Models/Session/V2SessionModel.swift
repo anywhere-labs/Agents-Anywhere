@@ -65,6 +65,7 @@ final class V2SessionModel: Identifiable {
     let id: V2SessionID
     let scope: V2ClientScope
     let runtime = V2SessionRuntimeModel()
+    let notices = SessionNoticeStore()
     private(set) var metadata: V2SessionMeta?
     private(set) var timeline: [V2TimelineItemModel] = []
     private(set) var connection = V2SessionConnectionState.inactive
@@ -75,6 +76,7 @@ final class V2SessionModel: Identifiable {
     private(set) var isLoading = false
     private(set) var isLoadingHistory = false
     private(set) var isValid = true
+    var isPerformingAction = false
     private(set) var pendingMessages: [V2PendingMessage] = []
     let composer = ComposerDraft()
     var draft: String {
@@ -88,8 +90,8 @@ final class V2SessionModel: Identifiable {
         self.id = id; self.scope = scope; self.repository = repository
     }
 
-    var canSend: Bool { isValid && runtime.allows("session.send_message") }
-    var hasLocalWork: Bool { !draft.isEmpty || !composer.attachments.isEmpty || !draftAttachmentIDs.isEmpty || !pendingMessages.isEmpty }
+    var canSend: Bool { isValid && runtime.allows("session.send_message") && !notices.notices.contains { $0.blocks(id) } }
+    var hasLocalWork: Bool { !draft.isEmpty || !composer.attachments.isEmpty || !draftAttachmentIDs.isEmpty || !pendingMessages.isEmpty || notices.hasDraft }
 
     func connect() async {
         guard let repository, isValid else { return }
@@ -152,6 +154,7 @@ final class V2SessionModel: Identifiable {
         let pending = V2PendingMessage(id: UUID().uuidString, content: content, attachmentIDs: attachments,
                                       localAttachmentIDs: composer.attachments.map(\.id))
         pendingMessages.append(pending)
+        repository.localWorkDidChange(sessionID: id)
         do {
             _ = try await repository.send(sessionId: id, content: content, attachmentIDs: attachments, clientMessageID: pending.id)
             guard isValid else { return pending }
@@ -170,6 +173,7 @@ final class V2SessionModel: Identifiable {
     /// An explicit UI action may dismiss a reviewed outcome; it never resends it.
     func dismissPendingMessage(id: String) {
         pendingMessages.removeAll { $0.id == id && $0.delivery != .sending }
+        repository?.localWorkDidChange(sessionID: self.id)
     }
 
     func update(_ observation: V2SessionObservation, network: V2NetworkStatus) {
@@ -180,6 +184,7 @@ final class V2SessionModel: Identifiable {
         if self.network != network { self.network = network }
         if failure != observation.error { failure = observation.error }
         runtime.update(data, connected: connection == .connected)
+        notices.update(runtime.notices, sessionID: id)
         if hasOlderItems != (data?.hasOlderItems ?? false) { hasOlderItems = data?.hasOlderItems ?? false }
         if hasNewerItems != (data?.hasNewerItems ?? false) { hasNewerItems = data?.hasNewerItems ?? false }
         let existing = Dictionary(uniqueKeysWithValues: timeline.map { ($0.id, $0) })
@@ -204,7 +209,8 @@ final class V2SessionModel: Identifiable {
     func invalidate() {
         runtime.update(nil, connected: false)
         metadata = nil; timeline = []; pendingMessages = []; draft = ""; draftAttachmentIDs = []
-        composer.clear()
+        composer.invalidate()
+        notices.clear()
         connection = .inactive; isValid = false; repository = nil
     }
 

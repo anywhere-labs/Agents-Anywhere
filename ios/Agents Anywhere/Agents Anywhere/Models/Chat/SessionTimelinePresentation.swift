@@ -42,10 +42,12 @@ final class ChatTimelineRowModel: Identifiable {
 @MainActor @Observable
 final class SessionTimelinePresentation {
     private(set) var rows: [ChatTimelineRowModel] = []
+    private(set) var pendingMessages: [V2PendingMessage] = []
     @ObservationIgnored private var pending: [V2TimelineItem]?
     @ObservationIgnored private var animatePending = false
     @ObservationIgnored private var initialized = false
     @ObservationIgnored private var lastConnection: V2SessionConnectionState = .inactive
+    @ObservationIgnored private var wake: AsyncStream<Void>.Continuation?
 
     func receive(_ observation: V2SessionObservation) {
         defer { lastConnection = observation.connection }
@@ -60,6 +62,7 @@ final class SessionTimelinePresentation {
         // that tick even if a live event arrives immediately afterwards.
         animatePending = pendingWasStaged ? animatePending && animate : animate
         pendingWasStaged = true
+        wake?.yield(())
     }
     @ObservationIgnored private var pendingWasStaged = false
 
@@ -69,7 +72,7 @@ final class SessionTimelinePresentation {
             let previousTail = rows.last?.value.orderSeq ?? Int.min
             let updated = pending.map { value in
                 let animate = animatePending && (existing[value.id] != nil || value.orderSeq > previousTail)
-                let row = existing[value.id] ?? ChatTimelineRowModel(value, animate: animate && value.isStreamingText)
+                let row = existing[value.id] ?? ChatTimelineRowModel(value, animate: animate && value.isAssistantText)
                 row.flush(value, animate: animate, now: now)
                 return row
             }
@@ -80,8 +83,13 @@ final class SessionTimelinePresentation {
     }
 
     func run(sessionID: V2SessionID, repository: V2SessionRepository) async {
+        let session = repository.session(id: sessionID)
+        let signal = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
+        wake = signal.continuation
+        defer { signal.continuation.finish(); wake = nil }
         await withTaskGroup(of: Void.self) { group in
             group.addTask { @MainActor [weak self] in
+                defer { signal.continuation.finish() }
                 for await value in repository.observe(sessionId: sessionID) {
                     guard !Task.isCancelled, let self else { return }
                     self.receive(value)
@@ -90,27 +98,46 @@ final class SessionTimelinePresentation {
             group.addTask { @MainActor [weak self] in
                 let clock = ContinuousClock()
                 var schedule = ReplyFlushSchedule(start: clock.now)
-                while !Task.isCancelled {
-                    do { try await clock.sleep(until: schedule.deadline) } catch { return }
-                    guard let self else { return }
-                    self.flush()
-                    schedule.advance(after: clock.now)
+                for await _ in signal.stream {
+                    guard !Task.isCancelled, let self else { return }
+                    if schedule.deadline < clock.now { schedule = ReplyFlushSchedule(start: clock.now) }
+                    repeat {
+                        do { try await clock.sleep(until: schedule.deadline) } catch { return }
+                        self.flush()
+                        self.synchronizePending(session.pendingMessages)
+                        schedule.advance(after: clock.now)
+                    } while !Task.isCancelled && (self.pending != nil || self.rows.contains { $0.isRevealing })
                 }
             }
             await group.waitForAll()
         }
     }
+
+    func synchronizePending(_ messages: [V2PendingMessage]) {
+        // Change optimistic membership in the same tick that publishes echoes,
+        // avoiding a blank first user row between HTTP/realtime and UI clocks.
+        let visible = messages.filter { message in
+            !rows.contains { $0.value.role == .user && $0.value.source["clientMessageId"]?.stringValue == message.id }
+        }
+        if pendingMessages.map(\.id) != visible.map(\.id) { pendingMessages = visible }
+    }
 }
 
 extension V2TimelineItem {
+    var isAssistantText: Bool {
+        if type == .reasoning || (type == .message && role == .assistant) { return true }
+        if case let .marker(value) = content { return type == .system && value.raw["kind"] == .string("reasoning") }
+        return false
+    }
     var isStreamingText: Bool {
         (status == .pending || status == .running)
-            && (type == .reasoning || (type == .message && role == .assistant))
+            && isAssistantText
     }
     var displayText: String {
         switch content {
         case let .message(value): value.text
         case let .reasoning(value): value.text.isEmpty ? value.summary ?? "" : value.text
+        case let .marker(value): isAssistantText ? value.title : ""
         default: ""
         }
     }

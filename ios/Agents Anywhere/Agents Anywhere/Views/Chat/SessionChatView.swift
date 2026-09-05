@@ -10,6 +10,7 @@ struct SessionChatView: View {
     @State private var previewURL: URL?
     @State private var previewDirectory: URL?
     @State private var isDownloading = false
+    @Environment(\.colorScheme) private var colorScheme
     @ScaledMetric(relativeTo: .body) private var bodyLineHeight: CGFloat = 22
 
     init(session: V2SessionModel, services: V2ClientServices, safeAreaInsets: EdgeInsets,
@@ -19,15 +20,11 @@ struct SessionChatView: View {
     }
     private var controls: ChatControlMetrics { .init(bodyLineHeight: bodyLineHeight) }
     private var session: V2SessionModel { model.session }
-    private var activeNotices: [V2RuntimeNotice] {
-        session.runtime.notices.filter { [.open, .responding, .responseAccepted, .resolving].contains($0.status) }
-    }
-
     var body: some View {
         GeometryReader { geometry in
             ChatTimelineView(model: model, onAttachment: openAttachment)
                 .overlay {
-                    if model.timeline.rows.isEmpty && session.pendingMessages.isEmpty {
+                    if model.timeline.rows.isEmpty && model.timeline.pendingMessages.isEmpty {
                         VStack(spacing: 12) {
                             if session.connection == .connecting { ProgressView("加载会话…") }
                             else { Text("在这里继续你的任务").foregroundStyle(.secondary) }
@@ -44,19 +41,8 @@ struct SessionChatView: View {
                 }
                 .safeAreaInset(edge: .bottom, spacing: 0) {
                     VStack(spacing: 0) {
-                        if !activeNotices.isEmpty {
-                            Button { showsNotices = true } label: {
-                                HStack {
-                                    Image(systemName: "hand.raised")
-                                    Text(activeNotices.first?.title ?? "需要你的回应").lineLimit(1)
-                                    Spacer()
-                                    Text("\(activeNotices.count)").font(.caption)
-                                    Image(systemName: "chevron.right").font(.caption)
-                                }
-                                .font(.subheadline).padding(14)
-                                .background(Color.blue.opacity(0.08), in: .rect(cornerRadius: 18))
-                            }.buttonStyle(.plain).padding(.horizontal, 16).padding(.top, 6)
-                        }
+                        SessionInteractionDock(chat: model, maximumHeight: min(360, geometry.size.height * 0.38),
+                            onShowAll: { showsNotices = true })
                         ChatComposerDock(draft: session.composer, settings: model.settings,
                             maximumEditorHeight: min(160, max(72, geometry.size.height * 0.30)), controls: controls,
                             canSend: session.canSend, canAttach: model.canAttach,
@@ -64,8 +50,9 @@ struct SessionChatView: View {
                             canSelectPermission: session.runtime.allows("catalog.permission"),
                             isStreaming: model.isRunning, canStop: session.runtime.allows("session.interrupt"),
                             isBusy: model.isWorking, isLoadingSettings: model.isLoadingSettings,
+                            settingsError: model.settingsError,
                             onSend: model.send, onStop: model.interrupt, onLoadSettings: model.loadSettings,
-                            onApplySettings: model.applySettings, applyError: { model.error })
+                            onApplySettings: model.applySettings, applyError: { model.settingsError })
                     }
                     .frame(maxWidth: 780).frame(maxWidth: .infinity)
                 }

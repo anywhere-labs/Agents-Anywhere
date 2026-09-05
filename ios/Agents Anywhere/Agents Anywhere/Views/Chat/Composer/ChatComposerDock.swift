@@ -58,7 +58,7 @@ struct ChatComposerDock: View {
                 canSelectModel: canSelectModel, canSelectPermission: canSelectPermission,
                 isLoading: isLoadingSettings, loadingError: settingsError,
                 onReload: onLoadSettings, onApply: onApplySettings, applyError: applyError)
-                .task { await onLoadSettings() }
+                .task(id: "\(canSelectModel):\(canSelectPermission)") { await onLoadSettings() }
         }
         .onChange(of: photos) { _, items in importPhotos(items) }
         .onDisappear {
@@ -90,6 +90,7 @@ struct ChatComposerDock: View {
     }
 
     private func append(name: String, data: Data, mediaType: String) {
+        guard draft.isValid else { return }
         guard draft.attachments.count < 5 else { attachmentError = "每条消息最多添加 5 个附件。"; return }
         guard !data.isEmpty else { attachmentError = "文件为空。"; return }
         guard data.count <= 25 * 1024 * 1024 else { attachmentError = "单个附件请控制在 25 MiB 以内。"; return }

@@ -34,6 +34,7 @@ final class NewSessionModel {
     @ObservationIgnored private let preferenceKey: String
     @ObservationIgnored private var preference: NewSessionPreference
     @ObservationIgnored private var preparationVersion = 0
+    @ObservationIgnored private var inventoryTasks: [String: Task<[V2DeviceRuntime], Error>] = [:]
 
     init(scope: V2ClientScope, devices: V2DeviceManagementService,
          preparation: V2SessionPreparationService, creation: V2SessionCreationService,
@@ -96,19 +97,25 @@ final class NewSessionModel {
 
     func loadInventory(_ deviceID: String) async {
         guard isValid, network.availability != .offline,
-              connectors.contains(where: { $0.id == deviceID && $0.status == .online }),
-              !loadingDevices.contains(deviceID) else { return }
+              connectors.contains(where: { $0.id == deviceID && $0.status == .online }) else { return }
+        if let existing = inventoryTasks[deviceID] {
+            if let result = try? await existing.value, isValid { inventories[deviceID] = result.filter(\.configured) }
+            return
+        }
         loadingDevices.insert(deviceID); inventoryErrors[deviceID] = nil
-        defer { loadingDevices.remove(deviceID) }
+        let task = Task { try await devices.runtimes(connectorId: deviceID) }
+        inventoryTasks[deviceID] = task
+        defer { loadingDevices.remove(deviceID); inventoryTasks[deviceID] = nil }
         do {
-            let runtimes = try await devices.runtimes(connectorId: deviceID)
-            guard isValid, !Task.isCancelled else { return }
+            let runtimes = try await task.value
+            guard isValid else { return }
             inventories[deviceID] = runtimes.filter(\.configured)
         } catch { if isValid { inventoryErrors[deviceID] = error.localizedDescription } }
     }
 
     @discardableResult func selectTarget(connectorID: String, runtimeID: String) async -> Bool {
-        guard !isCreating, isValid, connectors.contains(where: { $0.id == connectorID && $0.status == .online }),
+        guard !isCreating, isValid, network.availability != .offline,
+              connectors.contains(where: { $0.id == connectorID && $0.status == .online }),
               inventories[connectorID]?.contains(where: { $0.id == runtimeID && $0.isReadyForSession }) == true else { return false }
         saveSelections()
         self.connectorID = connectorID; self.runtimeID = runtimeID
@@ -121,7 +128,8 @@ final class NewSessionModel {
     func prepareTarget() async {
         preparationVersion += 1
         let version = preparationVersion
-        prepared = nil; error = nil
+        prepared = nil
+        if !creationUncertain { error = nil }
         guard isValid, connector?.status == .online, runtime?.isReadyForSession == true,
               network.availability != .offline else { isPreparing = false; return }
         isPreparing = true
@@ -161,6 +169,15 @@ final class NewSessionModel {
         isCreating = true; error = nil
         saveSelections()
         defer { isCreating = false }
+        let target = (connectorID, runtimeID)
+        let chosenSelections = settings.selections
+        await prepareTarget()
+        guard isValid, !Task.isCancelled, prepared != nil, connectorID == target.0, runtimeID == target.1,
+              connector?.status == .online, network.availability != .offline else { return nil }
+        guard settings.hasValidSelections, chosenSelections == settings.selections else {
+            error = "可用选项已变化，请检查模型和权限后再次发送。"
+            return nil
+        }
         do {
             let response = try await creation.createAndStart(connectorId: connectorID, runtime: runtime.runtimeType,
                 runtimeId: runtime.id, title: nil, cwd: workspace.isEmpty ? nil : workspace,
@@ -184,7 +201,8 @@ final class NewSessionModel {
 
     func invalidate() {
         isValid = false; preparationVersion += 1; prepared = nil
-        draft.clear(); inventories = [:]; settings.replace(.init()); error = nil
+        inventoryTasks.values.forEach { $0.cancel() }; inventoryTasks = [:]
+        draft.invalidate(); inventories = [:]; settings.replace(.init()); error = nil
     }
 
     private var targetKey: String { connectorID + "\u{1f}" + runtimeID }

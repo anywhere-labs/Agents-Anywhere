@@ -12,6 +12,7 @@ struct ChatComposer: View {
     let onSend: () -> Void
     let onStop: () -> Void
     let onOptions: () -> Void
+    @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Namespace private var glass
 
@@ -45,9 +46,9 @@ struct ChatComposer: View {
                         Image(systemName: isStreaming ? "stop.fill" : "arrow.up")
                             .font(.system(size: isStreaming ? 15 : 22, weight: .semibold))
                             .contentTransition(.symbolEffect(.replace))
-                            .foregroundStyle(.white)
+                            .foregroundStyle(AppTheme.primaryControlForeground(colorScheme))
                             .frame(width: controls.sendDiameter, height: controls.sendDiameter)
-                            .background(Color.accentColor.opacity((isStreaming ? canStop : canSend && draft.canAttemptSend) && !isBusy ? 1 : 0.42), in: Circle())
+                            .background(AppTheme.primaryControlBackground(colorScheme).opacity((isStreaming ? canStop : canSend && draft.canAttemptSend) && !isBusy ? 1 : 0.42), in: Circle())
                             .frame(width: controls.touchTarget, height: controls.touchTarget)
                             .contentShape(Circle())
                     }
@@ -74,7 +75,7 @@ struct ChatComposer: View {
                 ForEach(draft.attachments) { attachment in
                     HStack(spacing: 8) {
                         Image(systemName: attachment.isImage ? "photo" : "doc.text")
-                            .foregroundStyle(.blue)
+                            .foregroundStyle(.primary)
                         Text(attachment.name).font(.caption).lineLimit(1)
                         Button {
                             draft.attachments.removeAll { $0.id == attachment.id }

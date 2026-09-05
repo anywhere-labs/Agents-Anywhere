@@ -28,8 +28,19 @@ struct ChatTimelineView: View {
                     }
                     ForEach(model.timeline.rows) { row in
                         SessionTimelineRow(row: row, onAttachment: onAttachment).id(row.id)
+                        ForEach(model.session.notices.notices.filter {
+                            $0.isVisible && !$0.blocks(model.session.id) && $0.timelineTargetID == row.id
+                        }) { item in
+                            SessionInteractionCard(item: item, chat: model)
+                        }
                     }
-                    ForEach(model.session.pendingMessages) { pending in
+                    ForEach(model.session.notices.notices.filter { notice in
+                        notice.isVisible && !notice.blocks(model.session.id)
+                            && !model.timeline.rows.contains(where: { $0.id == notice.timelineTargetID })
+                    }) { item in
+                        SessionInteractionCard(item: item, chat: model)
+                    }
+                    ForEach(model.timeline.pendingMessages) { pending in
                         PendingMessageRow(pending: pending, onDismiss: {
                             model.session.dismissPendingMessage(id: pending.id)
                         })
@@ -74,7 +85,8 @@ struct ChatTimelineView: View {
                 if id != nil { followsTail = true }
             }
             .onChange(of: model.timeline.rows.map(\.id)) {
-                if let anchor = historyAnchor {
+                if let anchor = historyAnchor, model.timeline.rows.first?.id != anchor,
+                   model.timeline.rows.contains(where: { $0.id == anchor }) {
                     proxy.scrollTo(anchor, anchor: .top)
                     historyAnchor = nil
                 }

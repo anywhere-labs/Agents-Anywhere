@@ -6,9 +6,13 @@ final class SessionChatModel {
     let session: V2SessionModel
     let timeline = SessionTimelinePresentation()
     let settings = ConversationSettings()
-    private(set) var isWorking = false
+    private(set) var isWorking: Bool {
+        get { session.isPerformingAction }
+        set { session.isPerformingAction = newValue }
+    }
     private(set) var isLoadingSettings = false
     var error: String?
+    var settingsError: String?
     @ObservationIgnored let repository: V2SessionRepository
     @ObservationIgnored private let attachments: V2AttachmentService
 
@@ -18,19 +22,21 @@ final class SessionChatModel {
 
     var isRunning: Bool {
         guard let status = session.runtime.state?.status else { return false }
-        return [.running, .pending, .waiting, .stopping].contains(status)
+        return [.running, .pending, .waiting, .stopping, .blocked].contains(status)
     }
     var canAttach: Bool { session.runtime.allows("runtime.attachment") }
 
     func loadSettings() async {
         guard !isLoadingSettings, session.isValid else { return }
+        guard session.runtime.isFresh else { settingsError = "连接恢复后可更改对话选项。"; return }
         isLoadingSettings = true
+        settingsError = nil
         defer { isLoadingSettings = false }
         do {
-            let catalogs = try await repository.catalogs(sessionId: session.id)
+            let catalogs = try await repository.catalogs(sessionId: session.id, capabilities: session.runtime.capabilities)
             guard session.isValid, !Task.isCancelled else { return }
             settings.replace(ChatSettingsCatalog(catalogs), selections: currentSelections, defaults: false)
-        } catch { if session.isValid { self.error = error.localizedDescription } }
+        } catch { if session.isValid { self.settingsError = error.localizedDescription } }
     }
 
     private var currentSelections: [V2RuntimeSelectionScope: V2SelectionID] {
@@ -50,7 +56,7 @@ final class SessionChatModel {
             }
             return session.isValid
         } catch {
-            self.error = error.localizedDescription
+            self.settingsError = error.localizedDescription
             settings.replace(settings.catalog, selections: currentSelections, defaults: false)
             return false
         }
@@ -88,11 +94,17 @@ final class SessionChatModel {
         await perform { try await self.repository.interrupt(sessionId: self.session.id) }
     }
 
-    func respond(notice: V2RuntimeNotice, action: V2RuntimeNoticeAction, input: JSONValue?) async -> Bool {
-        guard session.runtime.isFresh, !isWorking, notice.status == .open else { return false }
-        return await perform {
-            try await self.repository.respond(sessionId: self.session.id, noticeId: notice.id, actionId: action.id, input: input)
-        }
+    func respond(notice: SessionNoticeModel, action: V2RuntimeNoticeAction) async {
+        guard !isWorking, notice.canRespond(fresh: session.runtime.isFresh),
+              notice.notice.actions.contains(action), notice.hasValidInput(for: action) else { return }
+        let input = notice.payload(for: action)
+        notice.begin(actionID: action.id)
+        isWorking = true
+        defer { isWorking = false }
+        do {
+            try await repository.respond(sessionId: session.id, noticeId: notice.id, actionId: action.id, input: input)
+            notice.accepted()
+        } catch { notice.fail(error) }
     }
 
     @discardableResult func perform(_ operation: () async throws -> Void) async -> Bool {

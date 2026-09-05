@@ -61,9 +61,16 @@ struct SessionTimelineRow: View {
                 } label: { eventLabel(artifact.title ?? "产物", icon: "doc.richtext") }
                 .modifier(TimelineEventSurface())
             case let .marker(marker):
-                VStack(alignment: .leading, spacing: 6) {
-                    Label(marker.title, systemImage: "info.circle").font(.subheadline).foregroundStyle(.secondary)
-                    if let subtitle = marker.subtitle { Text(subtitle).font(.footnote).foregroundStyle(.secondary) }
+                if row.value.isAssistantText {
+                    DisclosureGroup { markdown.padding(.top, 8) } label: {
+                        Label(row.value.isStreamingText ? "正在思考" : "思考过程", systemImage: "brain")
+                            .font(.subheadline).foregroundStyle(.secondary)
+                    }
+                } else {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Label(marker.title, systemImage: "info.circle").font(.subheadline).foregroundStyle(.secondary)
+                        if let subtitle = marker.subtitle { Text(subtitle).font(.footnote).foregroundStyle(.secondary) }
+                    }
                 }
             case let .unknown(value):
                 DisclosureGroup("事件详情") { jsonBlock(value, title: "") }.modifier(TimelineEventSurface())
