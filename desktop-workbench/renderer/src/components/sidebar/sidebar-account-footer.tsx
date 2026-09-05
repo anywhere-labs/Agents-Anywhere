@@ -51,20 +51,20 @@ export function SidebarAccountFooter({
 
   return (
     <>
-      <SidebarFooter className="px-3 py-3">
+      <SidebarFooter className="min-w-0 px-3 py-3">
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <button
               type="button"
-              className="flex w-full items-center gap-3 rounded-lg px-1 py-1.5 transition-colors hover:bg-sidebar-accent"
+              className="flex w-full min-w-0 max-w-full items-center gap-3 rounded-lg px-1 py-1.5 transition-colors hover:bg-sidebar-accent"
             >
               <Avatar className="size-9 rounded-full">
                 {me?.avatar && <AvatarImage src={me.avatar} alt={userId} />}
                 <AvatarFallback className="rounded-full bg-primary text-primary-foreground">{userInitials}</AvatarFallback>
               </Avatar>
-              <div className="flex flex-col leading-tight text-left">
-                <span className="text-sm font-medium">{userId}</span>
-                <span className="text-xs text-muted-foreground">{userRole}</span>
+              <div className="flex min-w-0 flex-1 flex-col text-left leading-tight">
+                <span className="truncate text-sm font-medium" title={userId}>{userId}</span>
+                <span className="truncate text-xs text-muted-foreground">{userRole}</span>
               </div>
             </button>
           </DropdownMenuTrigger>
@@ -74,9 +74,9 @@ export function SidebarAccountFooter({
                 {me?.avatar && <AvatarImage src={me.avatar} alt={userId} />}
                 <AvatarFallback className="rounded-full bg-primary text-primary-foreground">{userInitials}</AvatarFallback>
               </Avatar>
-              <div className="flex flex-col leading-tight">
-                <span className="text-sm font-semibold">{userId}</span>
-                <span className="text-xs text-muted-foreground">{userRole}</span>
+              <div className="flex min-w-0 flex-1 flex-col leading-tight">
+                <span className="truncate text-sm font-semibold" title={userId}>{userId}</span>
+                <span className="truncate text-xs text-muted-foreground">{userRole}</span>
               </div>
             </div>
             <DropdownMenuSeparator />

@@ -8,7 +8,6 @@ import {
   ChevronDown,
   ChevronLeft,
   RotateCw,
-  Settings,
   Smartphone,
   Sun,
   Trash2,
@@ -74,13 +73,11 @@ import { cn } from "@/lib/utils"
 
 type SettingsTab =
   | "account"
-  | "agent"
   | "appearance"
   | "mobile-connections"
   | "archived-sessions"
 type SettingsLabelKey =
   | "account"
-  | "agent"
   | "appearance"
   | "mobileConnections"
   | "archivedSessions"
@@ -91,7 +88,6 @@ const AVATAR_MAX_FILE_SIZE = 8 * 1024 * 1024
 
 const navItems: { id: SettingsTab; labelKey: SettingsLabelKey; icon: typeof User }[] = [
   { id: "account", labelKey: "account", icon: User },
-  { id: "agent", labelKey: "agent", icon: Settings },
   { id: "appearance", labelKey: "appearance", icon: Sun },
   { id: "mobile-connections", labelKey: "mobileConnections", icon: Smartphone },
   { id: "archived-sessions", labelKey: "archivedSessions", icon: Archive },
@@ -519,31 +515,6 @@ function AvatarCropDialog({
   )
 }
 
-function AgentTab({ token: _token }: { token: string }) {
-  const t = useTranslations("pages.settings")
-
-  return (
-    <div className="flex flex-col gap-4">
-      <section className="rounded-xl border border-border bg-card">
-        <div className="px-6 py-5">
-          <div className="min-w-0">
-            <h2 className="text-base font-semibold">{t("modelCatalog")}</h2>
-            <p className="mt-0.5 text-sm text-muted-foreground">
-              Runtime catalogs are now provided by the connected local runtime through the connector.
-              Model and permission selections are managed in the New Session composer and session
-              snapshot, not as server-side user overrides.
-            </p>
-          </div>
-        </div>
-        <Separator />
-        <div className="px-6 py-6 text-sm text-muted-foreground">
-          Server-side static model lists and per-user model overrides have been removed.
-        </div>
-      </section>
-    </div>
-  )
-}
-
 const themes: { id: AppearanceMode; labelKey: string; descKey: string }[] = [
   { id: "light", labelKey: "light", descKey: "lightDescription" },
   { id: "dark", labelKey: "dark", descKey: "darkDescription" },
@@ -760,7 +731,6 @@ export function SettingsPage() {
               </div>
             )
           )}
-          {tab === "agent" && <AgentTab token={session?.accessToken ?? ""} />}
           {tab === "appearance" && <AppearanceTab />}
           {tab === "mobile-connections" && (
             <MobileConnectionsTab
