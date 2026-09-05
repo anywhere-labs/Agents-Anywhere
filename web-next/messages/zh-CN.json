@@ -707,6 +707,7 @@
       "workspaces": "工作目录",
       "noWorkspaces": "还没有工作目录。",
       "showAllMore": "显示全部，另有 {count} 个",
+      "showLess": "收起",
       "sessions": "会话",
       "select": "选择",
       "archiveAll": "全部归档",

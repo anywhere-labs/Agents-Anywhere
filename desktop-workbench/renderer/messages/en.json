@@ -629,6 +629,7 @@
       "workspaces": "Workspaces",
       "noWorkspaces": "No workspaces yet.",
       "showAllMore": "Show all {count} more",
+      "showLess": "Show less",
       "sessions": "Sessions",
       "select": "Select",
       "archiveAll": "Archive all",

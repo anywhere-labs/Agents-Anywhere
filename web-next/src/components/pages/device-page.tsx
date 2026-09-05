@@ -946,19 +946,19 @@ export function DevicePage() {
                 ))}
               </div>
 
-              {(() => {
-                if (showAllProjects || hiddenProjectCount <= 0) return null
-                return (
-                  <button
-                    type="button"
-                    onClick={() => setShowAllProjects(true)}
-                    className="mt-3 flex items-center gap-1 text-sm text-muted-foreground transition-colors hover:text-foreground"
-                  >
-                    <span className="mx-0.5 text-foreground">{t("showAllMore", { count: hiddenProjectCount })}</span>
-                    <ChevronRight className="size-3.5" />
-                  </button>
-                )
-              })()}
+              {hiddenProjectCount > 0 && (
+                <button
+                  type="button"
+                  aria-expanded={showAllProjects}
+                  onClick={() => setShowAllProjects((current) => !current)}
+                  className="mt-3 flex items-center gap-1 text-sm text-muted-foreground transition-colors hover:text-foreground"
+                >
+                  <span className="mx-0.5 text-foreground">
+                    {showAllProjects ? t("showLess") : t("showAllMore", { count: hiddenProjectCount })}
+                  </span>
+                  <ChevronRight className={cn("size-3.5", showAllProjects && "-rotate-90")} />
+                </button>
+              )}
             </>
           )}
         </section>
