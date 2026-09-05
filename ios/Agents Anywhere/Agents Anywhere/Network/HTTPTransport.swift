@@ -11,33 +11,56 @@ struct URLSessionHTTPTransport: HTTPTransport {
     private let tokenProvider: AuthTokenProvider
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
+    private let retryPolicy: HTTPReadRetryPolicy
+    private let sleep: (Duration) async throws -> Void
 
     init(
         serverURL: URL,
         urlSession: URLSession = .shared,
         tokenProvider: AuthTokenProvider,
         encoder: JSONEncoder = JSONEncoder(),
-        decoder: JSONDecoder = JSONDecoder()
+        decoder: JSONDecoder = JSONDecoder(),
+        retryPolicy: HTTPReadRetryPolicy = HTTPReadRetryPolicy(),
+        sleep: @escaping (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
     ) {
         self.serverURL = serverURL.normalizedV2ServerURL()
         self.urlSession = urlSession
         self.tokenProvider = tokenProvider
         self.encoder = encoder
         self.decoder = decoder
+        self.retryPolicy = retryPolicy
+        self.sleep = sleep
     }
 
     /// Performs network I/O, injects auth when requested, and decodes the response body.
     func send<Body: Encodable, Response: Decodable>(_ request: HTTPRequest<Body, Response>) async throws -> Response {
         let urlRequest = try await makeURLRequest(request)
-        let (data, response) = try await urlSession.data(for: urlRequest)
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw HTTPError.invalidResponse
+        var attempt = 0
+        while true {
+            try Task.checkCancellation()
+            var retryAfter: TimeInterval?
+            do {
+                let (data, response) = try await urlSession.data(for: urlRequest)
+                guard let http = response as? HTTPURLResponse else { throw HTTPError.invalidResponse }
+                guard 200..<300 ~= http.statusCode else {
+                    retryAfter = http.value(forHTTPHeaderField: "Retry-After").flatMap(TimeInterval.init)
+                    throw HTTPError.server(statusCode: http.statusCode,
+                                           message: decodeServerErrorMessage(data: data, statusCode: http.statusCode),
+                                           detail: try? decoder.decode(HTTPServerErrorEnvelope.self, from: data).detail)
+                }
+                return try decodeResponse(Response.self, from: data)
+            } catch {
+                try Task.checkCancellation()
+                guard request.method == .get, attempt < retryPolicy.maximumRetries,
+                      retryPolicy.permitsRetry(error) else { throw error }
+                // Long rate-limit waits are surfaced to the caller; never retry earlier
+                // than the server asks, or hold a foreground request indefinitely.
+                if let retryAfter, retryAfter > 30 { throw error }
+                let delay = max(0.5 * pow(2, Double(attempt)), retryAfter ?? 0)
+                attempt += 1
+                try await sleep(.seconds(delay))
+            }
         }
-        guard 200..<300 ~= httpResponse.statusCode else {
-            let message = decodeServerErrorMessage(data: data, statusCode: httpResponse.statusCode)
-            throw HTTPError.server(statusCode: httpResponse.statusCode, message: message)
-        }
-        return try decodeResponse(Response.self, from: data)
     }
 
     /// Performs multipart upload I/O and decodes the JSON response.
@@ -51,7 +74,8 @@ struct URLSessionHTTPTransport: HTTPTransport {
         guard 200..<300 ~= httpResponse.statusCode else {
             throw HTTPError.server(
                 statusCode: httpResponse.statusCode,
-                message: decodeServerErrorMessage(data: data, statusCode: httpResponse.statusCode)
+                message: decodeServerErrorMessage(data: data, statusCode: httpResponse.statusCode),
+                detail: try? decoder.decode(HTTPServerErrorEnvelope.self, from: data).detail
             )
         }
         return try decodeResponse(Response.self, from: data)

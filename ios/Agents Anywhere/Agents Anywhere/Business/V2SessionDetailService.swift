@@ -23,6 +23,11 @@ struct V2SessionDetailService {
         )
     }
 
+    func latestItems(sessionId: V2SessionID, limit: Int = 100) async throws -> V2SessionTimelinePage {
+        try validatePageSize(limit)
+        return try await sessionAPI.latestTimeline(sessionId: sessionId, limit: limit)
+    }
+
     func refreshRuntimeState(sessionId: V2SessionID) async throws -> V2RuntimeState {
         try await runtimeAPI.state(sessionId: sessionId).state
     }

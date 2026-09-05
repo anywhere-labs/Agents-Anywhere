@@ -17,6 +17,7 @@ enum V2SessionConnectionState: Hashable {
     case connecting
     case connected
     case reconnecting
+    case offline
     case failed(String)
 }
 
@@ -24,13 +25,13 @@ struct V2SessionData: Hashable {
     var session: V2SessionMeta
     var items: [V2TimelineItem]
     var hasOlderItems: Bool
+    var hasNewerItems = false
     var state: V2RuntimeState?
     var capabilities: V2RuntimeCapabilitySnapshot
     var notices: [V2RuntimeNotice]
     var cursor: String
-    var connection: V2SessionConnectionState = .inactive
     var liveStateIsFresh = false
-    var error: String?
+    var lastExtensionEvent: V2SessionEvent?
 
     init(snapshot: V2SessionSnapshot) {
         session = snapshot.session
@@ -41,4 +42,11 @@ struct V2SessionData: Hashable {
         notices = snapshot.notices
         cursor = snapshot.eventCursor
     }
+}
+
+struct V2SessionObservation: Hashable {
+    let sessionId: V2SessionID
+    let data: V2SessionData?
+    let connection: V2SessionConnectionState
+    let error: V2ClientFailure?
 }
