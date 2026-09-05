@@ -17,6 +17,7 @@ import { MobileConnectionsPage } from "@/components/pages/mobile-connections-pag
 import { WorkspaceProvider, useWorkspace } from "@/components/workspace-context"
 import { LoadingState } from "@/components/loading-state"
 import { PairDeviceDialog } from "@/components/pair-device-dialog"
+import { AgentSetupProvider } from "@/components/agent-setup-provider"
 import { useAuth } from "@/components/auth/auth-context"
 import { useIsMobile } from "@/hooks/use-mobile"
 import {
@@ -45,9 +46,11 @@ const DEFAULT_DESKTOP_LAYOUT = {
 export function Demo() {
   return (
     <WorkspaceProvider>
-      <SidebarProvider>
-        <DashboardShell />
-      </SidebarProvider>
+      <AgentSetupProvider>
+        <SidebarProvider>
+          <DashboardShell />
+        </SidebarProvider>
+      </AgentSetupProvider>
     </WorkspaceProvider>
   )
 }

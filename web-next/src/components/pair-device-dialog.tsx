@@ -15,6 +15,7 @@ import { useTranslations } from "next-intl"
 import { toast } from "sonner"
 
 import { useAuth } from "@/components/auth/auth-context"
+import { useAgentSetup, type AgentSetupConnector } from "@/components/agent-setup-provider"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -182,6 +183,7 @@ export function PairDeviceDialog({
   title,
 }: Props) {
   const { session } = useAuth()
+  const requestAgentSetup = useAgentSetup()
   const t = useTranslations("dashboard.pairDevice")
   const tCommon = useTranslations("common")
   const [step, setStep] = React.useState<Step>(setupCredential ? "linux-method" : "platform")
@@ -197,12 +199,14 @@ export function PairDeviceDialog({
   const [createdThisFlow, setCreatedThisFlow] = React.useState(false)
   const [exitGuardOpen, setExitGuardOpen] = React.useState(false)
   const pollingRef = React.useRef<number | null>(null)
+  const pairingVersionRef = React.useRef(0)
   const suppressCloseGuardRef = React.useRef(false)
   const serverUrl = React.useMemo(resolvePairingServerUrl, [])
 
   const shouldConfirmExit = connectorId !== null && createdThisFlow
 
   const stopPolling = React.useCallback(() => {
+    pairingVersionRef.current += 1
     if (pollingRef.current) window.clearTimeout(pollingRef.current)
     pollingRef.current = null
     setPolling(false)
@@ -233,29 +237,34 @@ export function PairDeviceDialog({
 
   React.useEffect(() => () => stopPolling(), [stopPolling])
 
-  const completePairing = React.useCallback(() => {
+  const completePairing = React.useCallback((pairedConnector?: AgentSetupConnector) => {
+    if (pairedConnector) requestAgentSetup(pairedConnector)
     reset()
     onConnectorCreated?.()
     onOpenChange(false)
-  }, [onConnectorCreated, onOpenChange, reset])
+  }, [onConnectorCreated, onOpenChange, requestAgentSetup, reset])
 
   const startConnectorPolling = React.useCallback((id: string) => {
     if (!session?.accessToken) return
+    stopPolling()
+    const version = pairingVersionRef.current
     setPolling(true)
     const tick = async () => {
       try {
         const { connector } = await dashboardApi.getConnector(session.accessToken, id)
+        if (version !== pairingVersionRef.current) return
         if (connector.status === "online") {
-          completePairing()
+          completePairing(connector)
           return
         }
         pollingRef.current = window.setTimeout(tick, 2000)
       } catch {
+        if (version !== pairingVersionRef.current) return
         pollingRef.current = window.setTimeout(tick, 3000)
       }
     }
     pollingRef.current = window.setTimeout(tick, 1500)
-  }, [completePairing, session?.accessToken])
+  }, [completePairing, session?.accessToken, stopPolling])
 
   const handleOpenChange = (nextOpen: boolean) => {
     if (!nextOpen && suppressCloseGuardRef.current) return
@@ -311,6 +320,7 @@ export function PairDeviceDialog({
 
   const handleClaim = async () => {
     if (pairCode.length < 6 || !session?.accessToken || !connectorId || !connectorToken) return
+    const version = pairingVersionRef.current
     setClaiming(true)
     try {
       await dashboardApi.claimPairing(session.accessToken, {
@@ -320,11 +330,13 @@ export function PairDeviceDialog({
         connectorId,
         connectorToken,
       })
-      completePairing()
+      if (version !== pairingVersionRef.current) return
+      completePairing({ id: connectorId, name: name.trim() })
     } catch (error) {
+      if (version !== pairingVersionRef.current) return
       toast.error(error instanceof Error ? error.message : t("errors.claimFailed"))
     } finally {
-      setClaiming(false)
+      if (version === pairingVersionRef.current) setClaiming(false)
     }
   }
 
@@ -417,7 +429,7 @@ export function PairDeviceDialog({
                         <ExternalLink className="size-3.5" />
                       </a>
                     </Button>
-                    <Button type="button" onClick={completePairing}>{tCommon("done")}</Button>
+                    <Button type="button" onClick={() => completePairing()}>{tCommon("done")}</Button>
                   </div>
                 </DialogFooter>
               </>

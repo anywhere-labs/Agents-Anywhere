@@ -39,19 +39,20 @@ test("Linux supports both CLI command and pair-code setup", () => {
   assert.match(source, /dashboardApi\.claimPairing/)
 })
 
-test("an online Linux connector completes the dialog and refreshes once", () => {
+test("an online Linux connector requests agent setup and refreshes once", () => {
   const polling = sourceBetween("const startConnectorPolling", "const handleOpenChange")
   assert.match(polling, /connector\.status === "online"/)
-  assert.match(polling, /completePairing\(\)/)
+  assert.match(polling, /completePairing\(connector\)/)
 
   const complete = sourceBetween("const completePairing", "const startConnectorPolling")
+  assert.match(complete, /requestAgentSetup\(pairedConnector\)/)
   assert.match(complete, /reset\(\)/)
   assert.match(complete, /onConnectorCreated\?\.\(\)/)
   assert.match(complete, /onOpenChange\(false\)/)
   assert.equal(source.match(/onConnectorCreated\?\.\(\)/g)?.length, 1)
 })
 
-test("the Web flow no longer embeds connector runtime setup", () => {
+test("pairing keeps runtime requests in the shared Agent setup flow", () => {
   assert.doesNotMatch(source, /type Step =[^;]*\| "agents"/)
   assert.doesNotMatch(source, /discoverConnectorRuntimeOverview/)
   assert.doesNotMatch(source, /createConnectorRuntime/)

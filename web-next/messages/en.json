@@ -1079,7 +1079,7 @@
       "successDescription": "{name} is online. Choose which agents to configure and start, or finish without adding one.",
       "waitingReconnectHeader": "{name} is paired but currently offline or unreachable. Agent setup will resume when it reconnects.",
       "agentsTitle": "Choose agents for this device",
-      "agentsDescription": "Agents are only created and started after you add one and confirm its configuration.",
+      "agentsDescription": "Quick add generates a name and uses the default configuration. You can adjust it on the device page later.",
       "discoveringAgents": "Discovering agents on this device...",
       "waitingReconnectTitle": "Waiting for the device to reconnect",
       "waitingReconnectDescription": "Agent configuration is paused. This page will refresh automatically when the device is online again.",
@@ -1100,7 +1100,8 @@
         "claimFailed": "Failed to claim pairing.",
         "discoverRuntimesFailed": "Failed to discover agents on this device.",
         "configureAndStartFailed": "Failed to configure and start the agent."
-      }
+      },
+      "quickAdd": "Quick add"
     },
     "firstDevice": {
       "title": "Add your first device?",
