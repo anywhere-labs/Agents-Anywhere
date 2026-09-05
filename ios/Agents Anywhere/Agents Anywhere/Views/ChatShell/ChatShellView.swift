@@ -4,15 +4,16 @@ import UIKit
 struct ChatShellView: View {
     @EnvironmentObject private var appState: AppState
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
-    @State private var isSidebarOpen = false
+    @State private var sidebar = ChatSidebarState()
     @State private var isSearching = false
     @State private var searchText = ""
     @State private var selection = ChatShellSelection.newSession
 
     var body: some View {
         SidebarDrawer(
-            isOpen: $isSidebarOpen,
+            isOpen: $sidebar.isOpen,
             configuration: .chat
         ) { _ in
             ChatSidebarHeaderView(
@@ -52,6 +53,7 @@ struct ChatShellView: View {
         .onChange(of: visibleSessionID, initial: true) { _, id in
             appState.setVisibleSession(id)
         }
+        .onChange(of: sidebarLayout, initial: true) { _, layout in sidebar.setLayout(layout) }
         .onDisappear { appState.setVisibleSession(nil) }
     }
 
@@ -80,7 +82,12 @@ struct ChatShellView: View {
     }
 
     private var visibleSessionID: V2SessionID? {
-        scenePhase == .active && !isSidebarOpen ? selectedSessionId : nil
+        scenePhase == .active && !sidebar.obscuresDetail ? selectedSessionId : nil
+    }
+
+    private var sidebarLayout: ChatSidebarState.Layout {
+        guard UIDevice.current.userInterfaceIdiom == .pad else { return .drawer }
+        return horizontalSizeClass == .compact ? .compactSplit : .regularSplit
     }
 
     private var selectedDeviceId: V2ConnectorID? {
@@ -147,6 +154,7 @@ struct ChatShellView: View {
             if case let .session(id) = selection {
                 SessionChatView(session: services.sessionRepository.session(id: id), services: services,
                     safeAreaInsets: safeAreaInsets, onMenu: toggleSidebar, onNewSession: startNewSession)
+                    .equatable()
                     .id(id)
             } else {
                 NewSessionView(model: services.newSession, connectors: appState.connectors, sessions: appState.sessions,
@@ -158,6 +166,7 @@ struct ChatShellView: View {
                         if case .newSession = selection { openSession(session.id) }
                     },
                     onRefresh: { await appState.refreshDashboard(); return appState.connectors })
+                    .equatable()
             }
         } else {
             ChatShellPlaceholderPage(
@@ -169,17 +178,17 @@ struct ChatShellView: View {
 
     private func startNewSession() {
         selection = .newSession
-        isSidebarOpen = false
+        sidebar.selectDestination()
     }
 
     private func openDevice(_ id: V2ConnectorID) {
         selection = .device(id)
-        isSidebarOpen = false
+        sidebar.selectDestination()
     }
 
     private func openSession(_ id: V2SessionID) {
         selection = .session(id)
-        isSidebarOpen = false
+        sidebar.selectDestination()
     }
 
     private func removeConnector(_ id: V2ConnectorID) {
@@ -217,11 +226,11 @@ struct ChatShellView: View {
     }
 
     private func toggleSidebar() {
-        isSidebarOpen.toggle()
+        sidebar.isOpen.toggle()
     }
 
     private func openSidebar() {
-        isSidebarOpen = true
+        sidebar.isOpen = true
     }
 }
 

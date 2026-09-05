@@ -1,6 +1,6 @@
 import SwiftUI
 
-struct NewSessionView: View {
+struct NewSessionView: View, Equatable {
     @Bindable var model: NewSessionModel
     let connectors: [V2Connector]
     let sessions: [V2SessionMeta]
@@ -18,6 +18,12 @@ struct NewSessionView: View {
     @ScaledMetric(relativeTo: .body) private var bodyLineHeight: CGFloat = 22
 
     private var controls: ChatControlMetrics { .init(bodyLineHeight: bodyLineHeight) }
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.model === rhs.model && lhs.connectors == rhs.connectors && lhs.sessions == rhs.sessions
+            && lhs.safeAreaInsets == rhs.safeAreaInsets && lhs.dashboardLoading == rhs.dashboardLoading
+            && lhs.dashboardError == rhs.dashboardError
+    }
 
     var body: some View {
         GeometryReader { geometry in

@@ -1,8 +1,9 @@
 import SwiftUI
 import QuickLook
 
-struct SessionChatView: View {
+struct SessionChatView: View, Equatable {
     @State private var model: SessionChatModel
+    private let sessionIdentity: V2SessionModel
     let safeAreaInsets: EdgeInsets
     let onMenu: () -> Void
     let onNewSession: () -> Void
@@ -27,12 +28,18 @@ struct SessionChatView: View {
     init(session: V2SessionModel, services: V2ClientServices, safeAreaInsets: EdgeInsets,
          onMenu: @escaping () -> Void, onNewSession: @escaping () -> Void) {
         _model = State(initialValue: SessionChatModel(session: session, repository: services.sessionRepository, attachments: services.attachments))
+        sessionIdentity = session
         fileService = services.workspaceFiles; detailService = services.sessionDetail
         self.safeAreaInsets = safeAreaInsets; self.onMenu = onMenu; self.onNewSession = onNewSession
     }
     private var controls: ChatControlMetrics { .init(bodyLineHeight: bodyLineHeight) }
     private var session: V2SessionModel { model.session }
     private var requiresTakeover: Bool { session.metadata?.takeover == false }
+    // Sidebar motion changes the containing card, not the session. Observable
+    // model changes and real size/environment changes still update this subtree.
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.sessionIdentity === rhs.sessionIdentity && lhs.safeAreaInsets == rhs.safeAreaInsets
+    }
     var body: some View {
         GeometryReader { geometry in
             ChatTimelineView(model: model, onAttachment: openAttachment, onFile: openFile)

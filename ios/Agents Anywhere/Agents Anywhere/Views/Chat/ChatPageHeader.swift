@@ -55,6 +55,9 @@ struct ChatPageSafeArea: ViewModifier {
     @Environment(\.sidebarDrawerPresentation) private var presentation
     func body(content: Content) -> some View {
         content
+            // These pages supply their own safe-area header. Suppress the
+            // NavigationSplitView column's otherwise empty navigation bar.
+            .toolbar(.hidden, for: .navigationBar)
             .padding(presentation == .drawer ? insets : EdgeInsets())
             .background(Color(uiColor: .systemBackground))
             .tint(AppTheme.primaryControlBackground(colorScheme))

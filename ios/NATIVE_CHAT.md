@@ -81,6 +81,10 @@ Semantic error and availability colors remain separate from the primary color.
   updates are isolated from the content subtree, and a separate observable
   structural projection keeps token/tool-output appends from regrouping every
   historical row. Only status, membership and grouping changes invalidate it.
+  Looking up an existing repository model only touches its cache entry; it does
+  not re-project historical payloads or subscribe the shell to every row's
+  observable fields. Session/New Session pages have equality boundaries that
+  isolate sidebar movement while allowing their own observed state to update.
 - Consecutive tools/reasoning/artifacts, child Agent calls and reconnect attempts
   are grouped. Groups retain the first item's identity while growing, and
   disclosure state survives streaming updates. Items targeted by active notices
@@ -96,6 +100,14 @@ Semantic error and availability colors remain separate from the primary color.
   A right-hand glass button group contains New Session and a details menu. The
   phone's left-edge drawer gesture starts within 44 points and still requires
   horizontal intent so vertical timeline scrolling is not intercepted.
+- At regular iPad widths, the native split opens with both columns and keeps the
+  sidebar visible when selecting a session, device or New Session. The detail
+  remains an active read target while the sidebar sits beside it. Narrow iPad
+  windows use `preferredCompactColumn` to show the selected detail; widening
+  restores both columns. The balanced style reserves room for the sidebar.
+  Explicit split toggles avoid animated intermediate text widths. The custom
+  sidebar and chat headers suppress empty native navigation bars, retaining the
+  system safe area without an additional blank bar above the glass controls.
 - Sidebar indicators follow Web's priority and position, on the title's trailing
   side: a green waiting-approval capsule, a native spinner for running/waiting/
   pending, or a green unread dot for an idle session. Opening an unread session
@@ -249,9 +261,9 @@ than a “server unavailable” alert.
 
 ## Verified checks
 
-Verified on 2026-09-05, without starting a server or simulator:
+Verified on 2026-09-06, without starting a server or simulator:
 
-- 106 headless Swift tests across fifteen suites pass against production client-core
+- 110 headless Swift tests across sixteen suites pass against production client-core
   sources. They cover API contracts, recovery/cache races, uncertain delivery,
   30 Hz presentation, echo handoff, target preparation, preference scope, schema
   payloads and interaction lifecycle/IME guards. Session-detail checks cover
@@ -264,6 +276,8 @@ Verified on 2026-09-05, without starting a server or simulator:
   exercise the production API, immediate local read state, rapid navigation,
   equal-revision snapshots, delayed acknowledgements, per-turn coalescing,
   connectivity/lifecycle recovery and account invalidation.
+  Sidebar tests cover regular/compact selection and resize behavior, and confirm
+  cached model lookup does not subscribe its caller to historical row payloads.
 - The Python backend contract fixture exporter reports that fixtures are current.
 - The complete unsigned iOS Debug target builds for `generic/platform=iOS`, using
   the checked-in package resolutions and the Xcode beta toolchain. The app's
@@ -334,3 +348,9 @@ keyboard layout and real mobile-network behavior still need manual validation:
     and dashboard update. New turns received while away should become unread.
     Switch apps and return, and reconnect after going offline; verify read
     synchronization and live status changes without reopening the app.
+13. On iPad, start at regular width and select several sessions, devices and New
+    Session; the sidebar should remain alongside the detail. Check both custom
+    headers against the status bar without an empty navigation bar. Resize to a
+    narrow window, select a session, reopen the sidebar and widen again. With a
+    long Markdown history, toggle the sidebar and check responsiveness, retained
+    reading position and continued streaming while the detail remains visible.

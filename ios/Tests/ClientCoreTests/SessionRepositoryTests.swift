@@ -1,8 +1,32 @@
 import Foundation
+import Observation
+import Synchronization
 import Testing
 @testable import ClientCore
 
 @Suite @MainActor struct SessionRepositoryTests {
+    @Test func cachedModelLookupDoesNotSubscribeItsCallerToHistoricalRows() async throws {
+        let http = TestHTTPTransport(), realtime = TestRealtimeAPI()
+        let repo = repository(transport: http, realtime: realtime)
+        defer { repo.reset() }
+        let model = repo.session(id: "session")
+        let connection = Task { await model.connect() }
+        defer { connection.cancel() }
+        try await eventually { model.connection == .connected }
+        let row = try #require(model.timeline.first)
+        let invalidated = Mutex(false)
+        let same = withObservationTracking {
+            repo.session(id: "session")
+        } onChange: { invalidated.withLock { $0 = true } }
+        #expect(same === model)
+        realtime.yield(try event("timeline.item_updated", seq: 11,
+            payload: ["item": itemObject(revision: 2, seq: 11, text: String(repeating: "Long reply. ", count: 2000))]))
+        try await eventually { row.value.revision == 2 }
+        #expect(!invalidated.withLock { $0 }, "Sidebar model lookup must not observe every message payload")
+        #expect(model.timeline.first === row)
+        #expect(repo.session(id: "session") === model)
+    }
+
     @Test func concurrentLoadsShareRequestAndSessionIdentity() async throws {
         let http = TestHTTPTransport(); let gate = TestGate()
         http.respond = { call in await gate.wait(); return try http.defaultResponse(call) }

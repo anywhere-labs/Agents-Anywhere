@@ -439,6 +439,8 @@ private struct SidebarDrawerNativeSplitView<
     private let sidebarHeaderEdgeEffectStyle: ScrollEdgeEffectStyle
 
     @State private var columnVisibility: NavigationSplitViewVisibility
+    @State private var preferredCompactColumn: NavigationSplitViewColumn
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     init(
         isOpen: Binding<Bool>,
@@ -449,6 +451,7 @@ private struct SidebarDrawerNativeSplitView<
     ) {
         _isOpen = isOpen
         _columnVisibility = State(initialValue: isOpen.wrappedValue ? .all : .detailOnly)
+        _preferredCompactColumn = State(initialValue: isOpen.wrappedValue ? .sidebar : .detail)
         self.sidebarHeaderEdgeEffectStyle = sidebarHeaderEdgeEffectStyle
         self.sidebarHeader = sidebarHeader
         self.sidebarContent = sidebarContent
@@ -456,7 +459,7 @@ private struct SidebarDrawerNativeSplitView<
     }
 
     var body: some View {
-        NavigationSplitView(columnVisibility: $columnVisibility) {
+        NavigationSplitView(columnVisibility: $columnVisibility, preferredCompactColumn: $preferredCompactColumn) {
             GeometryReader { geometry in
                 let safeAreaInsets = geometry.safeAreaInsets
 
@@ -467,6 +470,8 @@ private struct SidebarDrawerNativeSplitView<
                 )
                 .toolbar(removing: .sidebarToggle)
             }
+            .toolbar(.hidden, for: .navigationBar)
+            .navigationSplitViewColumnWidth(min: 240, ideal: 300, max: 360)
         } detail: {
             GeometryReader { geometry in
                 let safeAreaInsets = geometry.safeAreaInsets
@@ -475,14 +480,13 @@ private struct SidebarDrawerNativeSplitView<
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
+        .navigationSplitViewStyle(.balanced)
         .environment(\.sidebarDrawerPresentation, .nativeSidebar)
         .onChange(of: isOpen) { _, newValue in
-            let target: NavigationSplitViewVisibility = newValue ? .all : .detailOnly
-            if columnVisibility != target {
-                columnVisibility = target
-            }
+            updateColumns(open: newValue)
         }
         .onChange(of: columnVisibility) { _, newValue in
+            guard horizontalSizeClass != .compact else { return }
             switch newValue {
             case .all, .doubleColumn:
                 if !isOpen {
@@ -497,6 +501,22 @@ private struct SidebarDrawerNativeSplitView<
             default:
                 break
             }
+        }
+        .onChange(of: preferredCompactColumn) { _, column in
+            guard horizontalSizeClass == .compact else { return }
+            isOpen = column == .sidebar
+        }
+        .onChange(of: horizontalSizeClass) { _, _ in updateColumns(open: isOpen) }
+    }
+
+    private func updateColumns(open: Bool) {
+        // Reflow Markdown once at the final column width, rather than inheriting
+        // a sidebar animation that repeatedly lays out the entire eager timeline.
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            columnVisibility = open ? .all : .detailOnly
+            preferredCompactColumn = open ? .sidebar : .detail
         }
     }
 }

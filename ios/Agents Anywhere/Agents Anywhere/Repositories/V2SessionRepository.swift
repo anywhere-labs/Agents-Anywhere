@@ -457,7 +457,11 @@ final class V2SessionRepository {
     }
 
     private func entry(for id: V2SessionID) -> Entry {
-        let entry = entries[id] ?? Entry(id: id, model: V2SessionModel(id: id, scope: scope, repository: self))
+        // A view may look up its stable model while a containing sidebar moves.
+        // Re-projecting here walks every historical item and also registers all
+        // of those observable values as dependencies of the caller's view body.
+        if let entry = entries[id] { touch(entry); return entry }
+        let entry = Entry(id: id, model: V2SessionModel(id: id, scope: scope, repository: self))
         entries[id] = entry
         touch(entry)
         if network.availability == .offline { entry.connection = .offline }
