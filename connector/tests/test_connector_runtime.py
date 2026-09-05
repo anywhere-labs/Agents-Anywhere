@@ -2507,8 +2507,6 @@ async def wait_for_ws_response(
 async def _exercise_websocket_close_reconnect(monkeypatch) -> None:
     client = _client(reconnect_seconds=0)
     calls = 0
-    local_ops_close_calls = 0
-    timeline_close_calls = 0
     sleeps: list[float] = []
 
     async def fake_run_once() -> None:
@@ -2517,25 +2515,13 @@ async def _exercise_websocket_close_reconnect(monkeypatch) -> None:
         if calls == 1:
             close = Close(1012, "service restart")
             raise ConnectionClosedError(close, close, None)
-        assert local_ops_close_calls == 0
         raise asyncio.CancelledError
 
     async def fake_sleep(seconds: float) -> None:
         sleeps.append(seconds)
 
-    async def fake_local_ops_aclose() -> None:
-        nonlocal local_ops_close_calls
-        local_ops_close_calls += 1
-
-    async def failing_timeline_close() -> None:
-        nonlocal timeline_close_calls
-        timeline_close_calls += 1
-        raise RuntimeError("timeline cleanup failed")
-
     monkeypatch.setattr(client, "run_once", fake_run_once)
     monkeypatch.setattr(asyncio, "sleep", fake_sleep)
-    monkeypatch.setattr(client.local_ops, "aclose", fake_local_ops_aclose)
-    monkeypatch.setattr(client._timeline_notifications, "close", failing_timeline_close)
 
     try:
         await client.run_forever()
@@ -2544,8 +2530,6 @@ async def _exercise_websocket_close_reconnect(monkeypatch) -> None:
 
     assert calls == 2
     assert sleeps == [0]
-    assert local_ops_close_calls == 1
-    assert timeline_close_calls == 1
 
 
 async def _exercise_runtime_sync_task_survives_websocket_reconnect(monkeypatch) -> None:

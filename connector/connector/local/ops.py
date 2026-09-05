@@ -81,9 +81,6 @@ class LocalOps:
     async def terminal_snapshot(self, params: dict[str, Any]) -> dict[str, Any]:
         return await self.terminal.snapshot(params)
 
-    async def aclose(self) -> None:
-        await self.terminal.aclose()
-
 
 def create_local_ops(
     notify: Notify | None = None,

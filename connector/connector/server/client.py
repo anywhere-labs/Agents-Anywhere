@@ -180,14 +180,7 @@ class BackendRpcClient:
                     )
                     await asyncio.sleep(self.config.reconnect_seconds)
         finally:
-            try:
-                await self.local_ops.aclose()
-            except Exception:  # noqa: BLE001
-                logger.exception("local operations cleanup failed")
-            try:
-                await self._timeline_notifications.close()
-            except Exception:  # noqa: BLE001
-                logger.exception("timeline notification cleanup failed")
+            await self._timeline_notifications.close()
             ingest_flush_task.cancel()
             sync_state_flush_task.cancel()
             if self._runtime_sync_task is not None:
