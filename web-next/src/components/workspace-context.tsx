@@ -1252,7 +1252,12 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       })
       setProjectSessionsById((current) => mergeProjectSessions(current, archivedSessions))
       setProjects((current) => sortProjectViews(current.map((project) =>
-        project.id === projectId ? { ...project, activeSessionCount: 0 } : project,
+        project.id === projectId ? {
+          ...project,
+          manuallyCreated: false,
+          activeSessionCount: 0,
+          sidebarSessionCounts: { active: 0, archived: archivedSessions.length },
+        } : project,
       )))
       return true
     } catch {

@@ -11,15 +11,14 @@ def _authenticated_client(tmp_path) -> tuple[TestClient, dict[str, str]]:
     registered = client.post(
         "/auth/register",
         json={
-            "userId": "project-owner",
+            "email": "project-owner@example.com",
+            "displayName": "Project Owner",
             "password": "secret",
             "setupToken": client.app.state.setup_token.peek(),
         },
     )
     assert registered.status_code == 200, registered.text
-    return client, {
-        "Authorization": f"Bearer {registered.json()['accessToken']}"
-    }
+    return client, {"Authorization": f"Bearer {registered.json()['accessToken']}"}
 
 
 def test_project_create_reuses_workspace_and_rejects_duplicate_name(tmp_path) -> None:
@@ -43,6 +42,7 @@ def test_project_create_reuses_workspace_and_rejects_duplicate_name(tmp_path) ->
     )
     assert first.status_code == 200, first.text
     project_id = first.json()["project"]["id"]
+    assert first.json()["project"]["manuallyCreated"] is True
 
     replacement = client.post(
         "/projects",
@@ -56,6 +56,7 @@ def test_project_create_reuses_workspace_and_rejects_duplicate_name(tmp_path) ->
     assert replacement.status_code == 200, replacement.text
     assert replacement.json()["project"]["id"] == project_id
     assert replacement.json()["project"]["name"] == "Renamed"
+    assert replacement.json()["project"]["manuallyCreated"] is True
 
     other = client.post(
         "/projects",
@@ -82,6 +83,22 @@ def test_project_create_reuses_workspace_and_rejects_duplicate_name(tmp_path) ->
 
     projects = client.get("/projects", headers=headers).json()["projects"]
     assert len(projects) == 2
-    assert next(project for project in projects if project["id"] == project_id)[
-        "name"
-    ] == "Renamed"
+    assert (
+        next(project for project in projects if project["id"] == project_id)["name"]
+        == "Renamed"
+    )
+
+    archived = client.post(
+        f"/projects/{project_id}/sessions/archive-all",
+        headers=headers,
+        json={"archived": True, "scope": "all"},
+    )
+    assert archived.status_code == 200, archived.text
+    assert archived.json()["affected"] == 0
+    projects = client.get("/projects", headers=headers).json()["projects"]
+    assert (
+        next(project for project in projects if project["id"] == project_id)[
+            "manuallyCreated"
+        ]
+        is False
+    )

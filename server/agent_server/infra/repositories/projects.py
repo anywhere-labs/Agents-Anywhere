@@ -73,9 +73,14 @@ def _project_from_row(row: Any) -> ProjectView:
         connectorId=row["connector_id"],
         name=row["name"],
         workspacePath=row["workspace_path"],
+        manuallyCreated=bool(row["manually_created"]),
         pinned=bool(row["pinned"]),
         pinnedAt=row["pinned_at"],
         activeSessionCount=int(row.get("active_session_count") or 0),
+        sidebarSessionCounts={
+            "active": int(row.get("sidebar_active_session_count") or 0),
+            "archived": int(row.get("sidebar_archived_session_count") or 0),
+        },
         lastActivityAt=row.get("last_activity_at"),
         createdAt=row["created_at"],
         updatedAt=row["updated_at"],
@@ -92,6 +97,25 @@ def _project_view_query() -> Any:
             ),
         ),
     )
+    # Match project session pagination and the sidebar's separate pinned section.
+    visible_session = and_(
+        sessions_t.c.id.is_not(None),
+        connectors_t.c.revoked == 0,
+        or_(
+            sessions_t.c.runtime != "dsh",
+            sessions_t.c.source_state.in_(("visible", "available")),
+            sessions_t.c.archived == 1,
+        ),
+    )
+    sidebar_active_count = func.sum(
+        case(
+            (and_(visible_session, ~effective_archived, sessions_t.c.pinned == 0), 1),
+            else_=0,
+        )
+    ).label("sidebar_active_session_count")
+    sidebar_archived_count = func.sum(
+        case((and_(visible_session, effective_archived), 1), else_=0)
+    ).label("sidebar_archived_session_count")
     active_count = func.sum(
         case(
             (
@@ -109,9 +133,18 @@ def _project_view_query() -> Any:
         )
     ).label("last_activity_at")
     return (
-        select(projects_t, active_count, last_activity)
+        select(
+            projects_t,
+            active_count,
+            sidebar_active_count,
+            sidebar_archived_count,
+            last_activity,
+        )
         .select_from(
-            projects_t.outerjoin(
+            projects_t.join(
+                connectors_t,
+                connectors_t.c.id == projects_t.c.connector_id,
+            ).outerjoin(
                 sessions_t,
                 sessions_t.c.project_id == projects_t.c.id,
             )
@@ -324,6 +357,7 @@ class ProjectRepositoryMixin:
                         .values(
                             name=cleaned_name,
                             workspace_path=cleaned_path,
+                            manually_created=True,
                             updated_at=now,
                         )
                     )
@@ -336,6 +370,7 @@ class ProjectRepositoryMixin:
                             name=cleaned_name,
                             workspace_path=cleaned_path,
                             workspace_key=workspace_key,
+                            manually_created=True,
                             pinned=0,
                             created_at=now,
                             updated_at=now,
@@ -461,7 +496,8 @@ class ProjectRepositoryMixin:
         scope: str,
         user_id: str,
     ) -> list[SessionView]:
-        await self.get_project(project_id, user_id=user_id)
+        from agent_server.infra.repositories.sessions import _session_view_query
+
         if scope == "active":
             scope_filter = sessions_t.c.archived == 0
         elif scope == "archived":
@@ -475,13 +511,46 @@ class ProjectRepositoryMixin:
         )
         if scope_filter is not None:
             query = query.where(scope_filter)
-        async with self._engine.connect() as conn:
+        now = utc_now()
+        async with self._engine.begin() as conn:
+            owned = (
+                await conn.execute(
+                    select(projects_t.c.id).where(
+                        projects_t.c.id == project_id,
+                        projects_t.c.user_id == user_id,
+                    )
+                )
+            ).first()
+            if owned is None:
+                raise KeyError(project_id)
             session_ids = [str(row.id) for row in (await conn.execute(query)).all()]
+            if session_ids:
+                await conn.execute(
+                    update(sessions_t)
+                    .where(sessions_t.c.id.in_(session_ids))
+                    .values(
+                        archived=int(archived),
+                        archived_at=now if archived else None,
+                        dsh_archive_legacy=0,
+                        updated_at=now,
+                    )
+                )
+            if archived:
+                await conn.execute(
+                    update(projects_t)
+                    .where(projects_t.c.id == project_id)
+                    .values(manually_created=False, updated_at=now)
+                )
         if not session_ids:
             return []
-        changed, _ = await self.bulk_set_session_archived(
-            session_ids,
-            archived,
-            user_id=user_id,
-        )
-        return changed
+        async with self._engine.connect() as conn:
+            rows = (
+                (
+                    await conn.execute(
+                        _session_view_query().where(sessions_t.c.id.in_(session_ids))
+                    )
+                )
+                .mappings()
+                .all()
+            )
+        return [await self._session_from_row(row) for row in rows]

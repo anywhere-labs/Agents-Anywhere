@@ -4,6 +4,7 @@ from typing import Any
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     Column,
     Float,
     ForeignKey,
@@ -15,6 +16,7 @@ from sqlalchemy import (
     Table,
     Text,
     UniqueConstraint,
+    false,
 )
 
 metadata = MetaData()
@@ -371,6 +373,7 @@ projects = Table(
     Column("name", Text, nullable=False),
     Column("workspace_path", Text, nullable=False),
     Column("workspace_key", Text, nullable=False),
+    Column("manually_created", Boolean, nullable=False, server_default=false()),
     Column("pinned", Integer, nullable=False, server_default="0"),
     Column("pinned_at", Text),
     Column("created_at", Text, nullable=False),

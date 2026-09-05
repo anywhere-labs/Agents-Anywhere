@@ -3,7 +3,13 @@ import { compareSessionListOrder } from "@/components/session/session-list-order
 import type { ProjectView } from "@/features/dashboard/types"
 import { filterSessions, type FilterValue } from "@/lib/demo-api"
 
-export type ProjectSessionStatusFilter = "active" | "archived" | "all"
+import {
+  projectHasVisibleSessions,
+  projectSessionMatchesStatus,
+  type ProjectSessionStatusFilter,
+} from "./project-visibility"
+
+export type { ProjectSessionStatusFilter } from "./project-visibility"
 
 function timestamp(value: string | null | undefined): number {
   if (!value) return 0
@@ -38,21 +44,21 @@ export function sortSidebarSessions(items: WorkspaceSessionView[]): WorkspaceSes
 
 export function selectPinnedProjects(
   projects: ProjectView[],
-  _sessions: WorkspaceSessionView[],
-  _status: ProjectSessionStatusFilter,
+  sessions: WorkspaceSessionView[],
+  status: ProjectSessionStatusFilter,
 ): ProjectView[] {
   return sortProjects(
-    projects.filter((project) => project.pinned),
+    projects.filter((project) => project.pinned && projectHasVisibleSessions(project, sessions, status)),
   )
 }
 
 export function selectRegularProjects(
   projects: ProjectView[],
-  _sessions: WorkspaceSessionView[],
-  _status: ProjectSessionStatusFilter,
+  sessions: WorkspaceSessionView[],
+  status: ProjectSessionStatusFilter,
 ): ProjectView[] {
   return sortProjectsByCreatedAt(
-    projects.filter((project) => !project.pinned),
+    projects.filter((project) => !project.pinned && projectHasVisibleSessions(project, sessions, status)),
   )
 }
 
@@ -96,11 +102,7 @@ export function selectProjectSessions(
   const currentSessions = sessions.map(
     (session) => currentSessionsById.get(session.id) ?? session,
   )
-  const filtered = currentSessions.filter((session) => {
-    if (status === "archived") return session.archived
-    if (status === "all") return session.archived || !session.pinned
-    return !session.archived && !session.pinned
-  })
+  const filtered = currentSessions.filter((session) => projectSessionMatchesStatus(session, status))
   const currentOrder = new Map(
     Array.from(currentSessionsById.keys()).map((id, index) => [id, index]),
   )

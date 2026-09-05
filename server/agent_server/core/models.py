@@ -133,15 +133,24 @@ class ConnectorListResponse(BaseModel):
     serverTime: str
 
 
+class ProjectSidebarSessionCounts(BaseModel):
+    active: int = 0
+    archived: int = 0
+
+
 class ProjectView(BaseModel):
     id: str
     userId: str
     connectorId: str
     name: str
     workspacePath: str
+    manuallyCreated: bool = False
     pinned: bool = False
     pinnedAt: str | None = None
     activeSessionCount: int = 0
+    sidebarSessionCounts: ProjectSidebarSessionCounts = Field(
+        default_factory=ProjectSidebarSessionCounts
+    )
     lastActivityAt: str | None = None
     createdAt: str
     updatedAt: str

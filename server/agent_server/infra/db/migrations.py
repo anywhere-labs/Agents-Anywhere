@@ -22,8 +22,8 @@ from agent_server.infra.db.engine import POSTGRES_BACKEND, resolve_db_url
 
 LEGACY_V1_REVISION = "v1_legacy"
 BASELINE_V2_REVISION = "v2_0"
-CURRENT_SCHEMA_REVISION = "v2_30"
-CURRENT_SCHEMA_VERSION = "2.30"
+CURRENT_SCHEMA_REVISION = "v2_31"
+CURRENT_SCHEMA_VERSION = "2.31"
 POSTGRES_MIGRATION_LOCK_ID = 0x414147454E545332
 DEFAULT_MIGRATION_LOCK_TIMEOUT_SECONDS = 120.0
 
@@ -380,7 +380,12 @@ def _classify_sync(connection) -> UnversionedDatabase:
                         elif (
                             ondelete == "RESTRICT" and workspace_unique and name_unique
                         ):
-                            revision = "v2_30"
+                            revision = (
+                                "v2_31"
+                                if "manually_created"
+                                in _column_names(inspector, "projects")
+                                else "v2_30"
+                            )
                         else:
                             return UnversionedDatabase("unknown")
                     elif connector_kind_layout:

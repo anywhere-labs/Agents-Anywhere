@@ -285,6 +285,8 @@ export type ProjectView = {
   connectorId: string;
   name: string;
   workspacePath: string;
+  manuallyCreated?: boolean;
+  sidebarSessionCounts?: { active: number; archived: number };
   pinned: boolean;
   pinnedAt: string | null;
   activeSessionCount: number;
