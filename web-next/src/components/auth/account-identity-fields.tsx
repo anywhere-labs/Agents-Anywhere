@@ -1,6 +1,7 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useRef, useState, type ComponentProps } from "react"
+import { MailCheck, UserRound, type LucideIcon } from "lucide-react"
 import { useTranslations } from "next-intl"
 import { authApi } from "@/features/auth/api"
 import {
@@ -11,26 +12,53 @@ import {
 import { Button } from "@/components/ui/button"
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
+import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Spinner } from "@/components/ui/spinner"
+import { cn } from "@/lib/utils"
+
+type IdentityFieldVariant = "default" | "auth"
+
+function IdentityInput({
+  variant,
+  icon: Icon,
+  className,
+  ...props
+}: ComponentProps<"input"> & {
+  variant: IdentityFieldVariant
+  icon: LucideIcon
+}) {
+  if (variant === "default") return <Input className={className} {...props} />
+
+  return (
+    <InputGroup className={cn("h-11 rounded-lg", className)} data-disabled={props.disabled}>
+      <InputGroupAddon><Icon aria-hidden="true" /></InputGroupAddon>
+      <InputGroupInput {...props} />
+    </InputGroup>
+  )
+}
 
 export function DisplayNameField({
   value,
   onChange,
   id = "account-displayName",
   disabled = false,
+  variant = "default",
 }: {
   value: string
   onChange: (value: string) => void
   id?: string
   disabled?: boolean
+  variant?: IdentityFieldVariant
 }) {
   const t = useTranslations("auth")
   const invalid = Boolean(value && !isValidDisplayName(value))
   return (
     <Field data-invalid={invalid} data-disabled={disabled}>
       <FieldLabel htmlFor={id}>{t("fields.displayName")}</FieldLabel>
-      <Input
+      <IdentityInput
+        variant={variant}
+        icon={UserRound}
         id={id}
         value={value}
         onChange={(event) => onChange(event.currentTarget.value)}
@@ -55,6 +83,7 @@ export function EmailCodeField({
   setupToken,
   disabled = false,
   id = "email-code",
+  variant = "default",
 }: {
   email: string
   value: string
@@ -65,6 +94,7 @@ export function EmailCodeField({
   setupToken?: string
   disabled?: boolean
   id?: string
+  variant?: IdentityFieldVariant
 }) {
   const t = useTranslations("auth.emailCode")
   const currentEmail = useRef(normalizeEmail(email))
@@ -111,7 +141,9 @@ export function EmailCodeField({
     <Field>
       <FieldLabel htmlFor={id}>{t("label")}</FieldLabel>
       <div className="flex flex-wrap gap-2">
-        <Input
+        <IdentityInput
+          variant={variant}
+          icon={MailCheck}
           id={id}
           value={value}
           onChange={(event) =>
@@ -128,6 +160,7 @@ export function EmailCodeField({
         <Button
           type="button"
           variant="outline"
+          className={cn(variant === "auth" && "h-11 rounded-lg")}
           disabled={
             disabled || sending || retryAfter > 0 || !isValidEmail(email)
           }

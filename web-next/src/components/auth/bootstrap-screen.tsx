@@ -74,8 +74,8 @@ export function BootstrapScreen() {
           </InputGroup>
         </Field>
 
-        <DisplayNameField value={displayName} onChange={setDisplayName} />
-        {emailVerificationRequired ? <EmailCodeField email={email} value={code} onChange={setCode} setupToken={setupToken} disabled={loading} /> : null}
+        <DisplayNameField variant="auth" value={displayName} onChange={setDisplayName} />
+        {emailVerificationRequired ? <EmailCodeField variant="auth" email={email} value={code} onChange={setCode} setupToken={setupToken} disabled={loading} /> : null}
 
         <Field>
           <Label htmlFor="bs-password">{t("fields.adminPassword")}</Label>

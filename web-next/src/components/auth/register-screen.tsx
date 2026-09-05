@@ -56,8 +56,8 @@ export function RegisterScreen() {
           </InputGroup>
         </Field>
 
-        <DisplayNameField value={displayName} onChange={setDisplayName} />
-        {emailVerificationRequired ? <EmailCodeField email={email} value={code} onChange={setCode} disabled={loading} /> : null}
+        <DisplayNameField variant="auth" value={displayName} onChange={setDisplayName} />
+        {emailVerificationRequired ? <EmailCodeField variant="auth" email={email} value={code} onChange={setCode} disabled={loading} /> : null}
 
         <Field>
           <Label htmlFor="reg-password">{t("fields.password")}</Label>

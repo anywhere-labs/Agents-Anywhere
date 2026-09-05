@@ -70,8 +70,8 @@ export function OAuthNewUserScreen() {
           </InputGroup>
         </Field>
 
-        <DisplayNameField value={displayName} onChange={setDisplayName} />
-        {emailVerificationRequired ? <EmailCodeField email={email} value={code} onChange={setCode} pendingToken={oauthPending.pendingToken} disabled={loading} /> : null}
+        <DisplayNameField variant="auth" value={displayName} onChange={setDisplayName} />
+        {emailVerificationRequired ? <EmailCodeField variant="auth" email={email} value={code} onChange={setCode} pendingToken={oauthPending.pendingToken} disabled={loading} /> : null}
 
         <div className="flex items-center gap-2.5">
           <Checkbox
