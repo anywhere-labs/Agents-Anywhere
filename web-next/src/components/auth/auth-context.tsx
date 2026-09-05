@@ -19,6 +19,7 @@ export type AuthScreen =
   | "oauth-new-user"
   | "oauth-link-existing"
   | "mobile-oauth"
+  | "desktop-oauth"
   | "preview"
   | "app"
 
@@ -70,6 +71,7 @@ function hashToScreen(hash: string): AuthScreen {
     "oauth/new": "oauth-new-user",
     "oauth/link": "oauth-link-existing",
     "mobile-oauth": "mobile-oauth",
+    "desktop-oauth": "desktop-oauth",
     preview: "preview",
   }
   if (exactMap[path]) return exactMap[path]
@@ -99,6 +101,7 @@ function screenToHash(s: AuthScreen): string {
     "oauth-new-user": "#/oauth/new",
     "oauth-link-existing": "#/oauth/link",
     "mobile-oauth": "#/mobile-oauth",
+    "desktop-oauth": "#/desktop-oauth",
     preview: "#/preview",
     app: "#/",
   }
@@ -248,8 +251,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setError(null)
     setOauthPending(null)
     const postAuthScreen = hashToScreen(window.location.hash)
-    if (postAuthScreen === "mobile-oauth") {
-      setScreenState("mobile-oauth")
+    if (postAuthScreen === "mobile-oauth" || postAuthScreen === "desktop-oauth") {
+      setScreenState(postAuthScreen)
       return
     }
     window.location.hash = "#/"

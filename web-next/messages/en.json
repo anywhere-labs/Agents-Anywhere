@@ -1171,6 +1171,18 @@
       "title": "Continue to the app?",
       "unknownAccount": "Signed-in account"
     },
+    "desktopOAuth": {
+      "cancel": "Cancel",
+      "continue": "Continue",
+      "currentAccount": "Current account",
+      "description": "Agents Anywhere Desktop wants to sign in with this server account.",
+      "eyebrow": "Desktop sign-in",
+      "invalid": "Invalid desktop login request.",
+      "opening": "Opening Agents Anywhere Desktop...",
+      "switchAccount": "Use another account",
+      "title": "Continue to Desktop?",
+      "unknownAccount": "Signed-in account"
+    },
     "passwordStrength": {
       "0": "Too short",
       "1": "Weak",

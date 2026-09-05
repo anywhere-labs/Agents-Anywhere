@@ -1171,6 +1171,18 @@
       "title": "继续打开 App？",
       "unknownAccount": "已登录账号"
     },
+    "desktopOAuth": {
+      "cancel": "取消",
+      "continue": "继续",
+      "currentAccount": "当前账号",
+      "description": "Agents Anywhere Desktop 将使用这个服务器账号登录。",
+      "eyebrow": "桌面端登录",
+      "invalid": "桌面端登录请求无效。",
+      "opening": "正在打开 Agents Anywhere Desktop...",
+      "switchAccount": "使用其他账号",
+      "title": "继续打开 Desktop？",
+      "unknownAccount": "已登录账号"
+    },
     "passwordStrength": {
       "0": "太短",
       "1": "较弱",
