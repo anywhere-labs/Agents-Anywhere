@@ -40,6 +40,6 @@ struct HTTPServerErrorEnvelope: Decodable {
     let detail: JSONValue
 
     var message: String {
-        detail.displayString
+        detail["message"]?.stringValue ?? detail.displayString
     }
 }

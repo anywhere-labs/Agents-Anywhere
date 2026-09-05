@@ -78,7 +78,7 @@ func event(_ type: String, seq: Int = 10, id: String? = nil, sessionID: String =
     func defaultResponse(_ call: Call) throws -> Data {
         let fixtures = ["snapshot": "snapshot", "timeline": "timeline", "state": "state",
                         "capabilities": "capabilities", "notices": "notices", "catalogs/model": "modelCatalog",
-                        "catalogs/permission": "permissionCatalog", "selections": "state", "takeover": "takeover",
+                        "catalogs/permission": "permissionCatalog", "selections": "selectionResponse", "takeover": "takeover",
                         "runtime-types": "runtimeTypes", "runtimes": "runtimes", "preferences": "preferences",
                         "commands": "commands", "readText": "text", "ws-ticket": "ticket", "events": "recovery"]
         if let pair = fixtures.first(where: { call.path.hasSuffix("/" + $0.key) }) { return try fixtureData(pair.value) }

@@ -217,4 +217,77 @@ import Testing
         #expect(realtime.tickets == 1)
         #expect(model.connection == .failed("Expired"))
     }
+
+    @Test func catalogInvalidationRejectsLateInflightResponse() async throws {
+        let http = TestHTTPTransport(); let gate = TestGate()
+        http.respond = { call in await gate.wait(); return try http.defaultResponse(call) }
+        let repo = repository(transport: http)
+        defer { repo.reset() }
+        let old = Task { try await repo.catalogs(sessionId: "session") }
+        try await eventually { http.count("catalogs/model") == 1 }
+        repo.updateConnectivity(V2NetworkStatus(availability: .offline))
+        gate.release()
+        if case .success = await old.result { Issue.record("An invalidated catalog read succeeded") }
+        repo.updateConnectivity(V2NetworkStatus(availability: .online))
+        _ = try await repo.catalogs(sessionId: "session")
+        #expect(http.count("catalogs/model") == 2)
+    }
+
+    @Test func metadataBufferedBeforeLiveReadStillApplies() async throws {
+        let http = TestHTTPTransport(); let realtime = TestRealtimeAPI(); let gate = TestGate()
+        realtime.onRecover = {
+            await gate.wait()
+            return V2EventRecoveryResponse(events: [], nextCursor: "seq:10", snapshotRequired: false, serverTime: "")
+        }
+        let repo = repository(transport: http, realtime: realtime)
+        defer { repo.reset() }
+        let model = repo.session(id: "session"); let task = Task { await model.connect() }
+        defer { task.cancel() }
+        try await eventually { realtime.recoveries.count == 1 }
+        var meta = try fixtureObject("session")["session"] as! [String: Any]
+        meta["title"] = "Renamed during recovery"
+        realtime.yield(try event("session.meta.updated", payload: ["session": meta]))
+        gate.release()
+        try await eventually { model.metadata?.title == "Renamed during recovery" }
+        #expect(model.canSend)
+    }
+
+    @Test func historyRequestCannotOverwriteANewerTimelineReset() async throws {
+        let http = TestHTTPTransport(); let realtime = TestRealtimeAPI(); let gate = TestGate()
+        http.respond = { call in
+            if call.path.hasSuffix("snapshot") {
+                var value = try fixtureObject("snapshot")
+                var timeline = value["timeline"] as! [String: Any]; timeline["hasMore"] = true; value["timeline"] = timeline
+                return try JSONSerialization.data(withJSONObject: value)
+            }
+            if call.path.hasSuffix("timeline") { await gate.wait() }
+            return try http.defaultResponse(call)
+        }
+        let repo = repository(transport: http, realtime: realtime)
+        defer { repo.reset() }
+        let model = repo.session(id: "session"); let task = Task { await model.connect() }
+        defer { task.cancel() }
+        try await eventually { model.canSend }
+        let history = Task { try await repo.loadOlder(sessionId: "session") }
+        try await eventually { http.count("timeline") == 1 }
+        realtime.yield(try event("timeline.snapshot", seq: 11, payload: ["items": []]))
+        try await eventually { model.timeline.isEmpty }
+        gate.release()
+        if case .success = await history.result { Issue.record("An older history page survived timeline reset") }
+        #expect(model.timeline.isEmpty)
+        #expect(repo.cached(sessionId: "session")?.cursor == "seq:11")
+    }
+
+    @Test func rejectedRuntimeActionDoesNotLookLikeSuccessfulSend() async throws {
+        let http = TestHTTPTransport()
+        http.respond = { _ in try fixtureData("rpcError") }
+        let repo = repository(transport: http)
+        defer { repo.reset() }
+        do {
+            _ = try await repo.send(sessionId: "session", content: "Hello", clientMessageID: "client")
+            Issue.record("RPC ok:false was ignored")
+        } catch { #expect((error as? V2RuntimeError)?.code == "notice_not_found") }
+        #expect(http.count("messages") == 1)
+        #expect(http.count("snapshot") == 0)
+    }
 }

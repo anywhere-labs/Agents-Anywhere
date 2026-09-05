@@ -228,6 +228,13 @@ final class V2SessionRepository {
                 invalidateCatalogs(entry)
             }
             emit(entry)
+            if session.connectorStatus == .online,
+               previous?.connectorStatus != .online || previous?.effectiveRuntimeId != session.effectiveRuntimeId {
+                // A dashboard projection can arrive before the session socket frame.
+                // Restart observed sessions so their runtime facts match the new binding.
+                stop(entry)
+                start(entry)
+            }
         }
     }
 
@@ -370,6 +377,7 @@ final class V2SessionRepository {
         let readTypes = ["runtime.state.updated", "runtime.capability.updated", "runtime.notice.snapshot", "runtime.notice.updated"]
         if readTypes.contains(event.type), event.receivedAt < entry.projectionBarrier { return }
         let wasOnline = entry.projection?.data.session.connectorStatus == .online
+        let previousRuntime = entry.projection?.data.session.effectiveRuntimeId
         if event.type == "timeline.snapshot", event.sequence >= (entry.projection?.sequence ?? 0) {
             entry.readVersion += 1
             entry.historyTask?.cancel()
@@ -381,7 +389,10 @@ final class V2SessionRepository {
             invalidateCatalogs(entry)
         }
         emit(entry)
-        if !wasOnline, entry.projection?.data.session.connectorStatus == .online { try await reconcile(entry) }
+        if entry.projection?.data.session.connectorStatus == .online,
+           !wasOnline || previousRuntime != entry.projection?.data.session.effectiveRuntimeId {
+            try await reconcile(entry)
+        }
     }
 
     private func reconcile(_ entry: Entry) async throws {

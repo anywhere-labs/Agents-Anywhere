@@ -266,18 +266,22 @@ final class AppState: ObservableObject {
         connectorsError = nil
         isDashboardLoading = true
         defer {
-            isDashboardLoading = false
-            lastDashboardRefreshAt = Date()
+            if cachedServices === services {
+                isDashboardLoading = false
+                lastDashboardRefreshAt = Date()
+            }
         }
 
         do {
             let dashboard = try await services.dashboard.load()
+            guard cachedServices === services, !Task.isCancelled else { return }
             connectors = dashboard.connectors
             sessions = dashboard.sessions
             cachedServices?.sessionRepository.applyMetadata(dashboard.sessions)
             hasLoadedConnectors = true
             hasLoadedSessions = true
         } catch {
+            guard cachedServices === services, !Task.isCancelled else { return }
             let message = error.localizedDescription
             sessionsError = message
             connectorsError = message
@@ -734,6 +738,9 @@ final class AppState: ObservableObject {
         if let cachedServices, cachedServices.scope == scope, cachedServicesToken == token {
             return cachedServices
         }
+        dashboardUpdatesTask?.cancel()
+        dashboardUpdatesTask = nil
+        isDashboardLoading = false
         cachedServices?.shutdown()
         let api = V2APIClient(
             serverURL: serverURL,

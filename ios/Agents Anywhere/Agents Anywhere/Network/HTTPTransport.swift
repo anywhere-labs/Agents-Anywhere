@@ -43,7 +43,7 @@ struct URLSessionHTTPTransport: HTTPTransport {
                 let (data, response) = try await urlSession.data(for: urlRequest)
                 guard let http = response as? HTTPURLResponse else { throw HTTPError.invalidResponse }
                 guard 200..<300 ~= http.statusCode else {
-                    retryAfter = http.value(forHTTPHeaderField: "Retry-After").flatMap(TimeInterval.init)
+                    retryAfter = retryPolicy.delay(from: http.value(forHTTPHeaderField: "Retry-After"))
                     throw HTTPError.server(statusCode: http.statusCode,
                                            message: decodeServerErrorMessage(data: data, statusCode: http.statusCode),
                                            detail: try? decoder.decode(HTTPServerErrorEnvelope.self, from: data).detail)

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import sys
 from pathlib import Path
@@ -12,8 +13,32 @@ sys.path.insert(0, str(ROOT / "server"))
 from agent_server.core import device_runtime as d
 from agent_server.core import models as m
 from agent_server.core import protocol as p
+from agent_server.core.api_namespace import API_V2_PREFIX
 
 NOW = "2026-09-05T12:00:00Z"
+
+
+def routes() -> list[dict[str, str]]:
+    """Read real FastAPI decorators without constructing the app or connecting to storage."""
+    result = []
+    for module in ("auth", "connectors", "connector_runtimes", "connector_files", "sessions", "sessions_fs", "client_ws", "dashboard_stream"):
+        tree = ast.parse((ROOT / f"server/agent_server/api/{module}.py").read_text())
+        prefix = ""
+        for node in tree.body:
+            if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == "router" for target in node.targets):
+                prefix = next((ast.literal_eval(k.value) for k in node.value.keywords if k.arg == "prefix"), "")
+        for node in tree.body:
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            for decorator in node.decorator_list:
+                if not isinstance(decorator, ast.Call) or not isinstance(decorator.func, ast.Attribute):
+                    continue
+                if not isinstance(decorator.func.value, ast.Name) or decorator.func.value.id != "router":
+                    continue
+                method = decorator.func.attr.upper()
+                if method in {"GET", "POST", "PUT", "PATCH", "DELETE", "WEBSOCKET"}:
+                    result.append({"method": method, "path": API_V2_PREFIX + prefix + ast.literal_eval(decorator.args[0])})
+    return sorted(result, key=lambda route: (route["path"], route["method"]))
 
 
 def fixtures() -> dict:
@@ -41,6 +66,8 @@ def fixtures() -> dict:
         "takeover": m.TakeoverResponse(session=session),
         "snapshot": snapshot,
         "state": m.SessionRuntimeStateResponse(state=state, serverTime=NOW),
+        "selectionResponse": m.SessionSelectionPatchResponse(ok=True, state=state, connectorResult={"ok": True}, serverTime=NOW),
+        "bulk": m.BulkArchiveResponse(sessions=[session], notFound=[], serverTime=NOW),
         "capabilities": p.ProtocolCapabilitiesResponse(connectorId="device", capabilitySet=capabilities, serverTime=NOW),
         "modelCatalog": p.ProtocolModelCatalogResponse(catalog=model, serverTime=NOW),
         "permissionCatalog": p.ProtocolPermissionCatalogResponse(catalog=permission, serverTime=NOW),
@@ -75,6 +102,7 @@ def fixtures() -> dict:
         "readText": m.FsReadTextRequest(path="test.txt"),
     }
     result["requests"] = {key: value.model_dump(mode="json", by_alias=True, exclude_none=True) for key, value in requests.items()}
+    result["routes"] = routes()
     return result
 
 

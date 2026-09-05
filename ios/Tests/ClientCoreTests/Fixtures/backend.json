@@ -9,6 +9,47 @@
     "serverTime": "2026-09-05T12:00:00Z",
     "setupTokenExpiresAt": null
   },
+  "bulk": {
+    "notFound": [],
+    "serverTime": "2026-09-05T12:00:00Z",
+    "sessions": [
+      {
+        "archiveSource": null,
+        "archived": false,
+        "archivedAt": null,
+        "connectorId": "device",
+        "connectorStatus": "online",
+        "cwd": "/workspace",
+        "externalSessionId": null,
+        "id": "session",
+        "lastActivityAt": null,
+        "lastItemAt": null,
+        "lastItemOrderSeq": null,
+        "lastReadSeq": 0,
+        "lastSyncedAt": null,
+        "latestTurnEndSeq": 0,
+        "pinned": false,
+        "pinnedAt": null,
+        "runtime": "claude",
+        "runtimeId": "rti_work",
+        "runtimeName": "Work",
+        "runtimeType": "claude",
+        "runtimeTypeDisplayName": null,
+        "sortAt": null,
+        "sourceAvailability": "available",
+        "sourceAvailabilityReason": null,
+        "sourceAvailabilityUpdatedAt": null,
+        "sourceObservationOrigin": null,
+        "sourceObservedAt": null,
+        "status": "idle",
+        "takeover": true,
+        "title": "Task",
+        "unread": false,
+        "updatedSeq": 10,
+        "userArchived": false
+      }
+    ]
+  },
   "capabilities": {
     "capabilitySet": {
       "capabilities": [
@@ -411,6 +452,344 @@
       }
     }
   },
+  "routes": [
+    {
+      "method": "POST",
+      "path": "/api/v2/auth/change-password"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v2/auth/config"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/auth/email-code"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/auth/login"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v2/auth/me"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v2/auth/me/avatar"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v2/auth/me/avatar"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v2/auth/me/email"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v2/auth/me/profile"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/auth/mobile-login/confirm"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/auth/mobile-login/exchange"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/auth/mobile-login/qr"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/auth/mobile-login/request"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/auth/mobile-login/status"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v2/auth/oauth/callback"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/auth/oauth/finalize"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v2/auth/oauth/start"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/auth/password-salt"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/auth/register"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v2/connectors"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/connectors"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/connectors/fs/preview-session"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/connectors/fs/preview/read"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/connectors/fs/preview/readText"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v2/connectors/{connector_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v2/connectors/{connector_id}"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/v2/connectors/{connector_id}"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/connectors/{connector_id}/fs/list"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/connectors/{connector_id}/fs/preview-token"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/connectors/{connector_id}/fs/read"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/connectors/{connector_id}/fs/readText"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v2/connectors/{connector_id}/fs/transfers/{transfer_id}"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/connectors/{connector_id}/fs/write"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v2/connectors/{connector_id}/preferences"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v2/connectors/{connector_id}/protocol/capabilities"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/connectors/{connector_id}/revoke"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v2/connectors/{connector_id}/runtime-types"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/connectors/{connector_id}/runtime-types/discover"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v2/connectors/{connector_id}/runtimes"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/connectors/{connector_id}/runtimes"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/connectors/{connector_id}/runtimes/discover"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v2/connectors/{connector_id}/runtimes/{runtime_id}"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/v2/connectors/{connector_id}/runtimes/{runtime_id}"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v2/connectors/{connector_id}/runtimes/{runtime_id}/active"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v2/connectors/{connector_id}/runtimes/{runtime_id}/capabilities"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v2/connectors/{connector_id}/runtimes/{runtime_id}/catalogs/model"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v2/connectors/{connector_id}/runtimes/{runtime_id}/catalogs/permission"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v2/connectors/{connector_id}/runtimes/{runtime_id}/commands"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v2/connectors/{connector_id}/runtimes/{runtime_id}/config"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v2/connectors/{connector_id}/runtimes/{runtime_id}/config"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/connectors/{connector_id}/sessions/archive-all"
+    },
+    {
+      "method": "WEBSOCKET",
+      "path": "/api/v2/dashboard/ws"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v2/sessions"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/sessions"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/sessions/archive"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/sessions/create-and-start"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v2/sessions/local/{session_id}/{file_id}"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/sessions/read"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/sessions/unarchive"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/sessions/{session_id}/attachments"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v2/sessions/{session_id}/attachments/{file_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v2/sessions/{session_id}/attachments/{file_id}/open"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v2/sessions/{session_id}/events"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v2/sessions/{session_id}/meta"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/v2/sessions/{session_id}/meta"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v2/sessions/{session_id}/runtime/capabilities"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v2/sessions/{session_id}/runtime/catalogs/model"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v2/sessions/{session_id}/runtime/catalogs/permission"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v2/sessions/{session_id}/runtime/commands"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/sessions/{session_id}/runtime/commands"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/sessions/{session_id}/runtime/interrupt"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/sessions/{session_id}/runtime/messages"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v2/sessions/{session_id}/runtime/notices"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/sessions/{session_id}/runtime/notices/{notice_id}/respond"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/v2/sessions/{session_id}/runtime/selections"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v2/sessions/{session_id}/runtime/state"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/sessions/{session_id}/runtime/steer"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v2/sessions/{session_id}/snapshot"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/sessions/{session_id}/sync"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v2/sessions/{session_id}/takeover"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/sessions/{session_id}/takeover"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v2/sessions/{session_id}/timeline"
+    },
+    {
+      "method": "WEBSOCKET",
+      "path": "/api/v2/sessions/{session_id}/ws"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/ws-ticket"
+    }
+  ],
   "rpc": {
     "error": null,
     "ok": true,
@@ -520,6 +899,31 @@
       }
     ],
     "serverTime": "2026-09-05T12:00:00Z"
+  },
+  "selectionResponse": {
+    "connectorResult": {
+      "ok": true
+    },
+    "ok": true,
+    "serverTime": "2026-09-05T12:00:00Z",
+    "state": {
+      "createdAt": "2026-09-05T12:00:00Z",
+      "error": null,
+      "externalSessionId": null,
+      "metadata": {},
+      "runtime": "claude",
+      "runtimeId": "rti_work",
+      "runtimeType": "claude",
+      "selections": {
+        "effort": null,
+        "model": "sel_model"
+      },
+      "sessionId": "session",
+      "status": "idle",
+      "statusReason": null,
+      "updatedAt": "2026-09-05T12:00:00Z",
+      "updatedSeq": 10
+    }
   },
   "session": {
     "serverTime": "2026-09-05T12:00:00Z",
