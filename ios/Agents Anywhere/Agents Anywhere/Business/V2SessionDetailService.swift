@@ -23,6 +23,11 @@ struct V2SessionDetailService {
         )
     }
 
+    func latestItems(sessionId: V2SessionID, limit: Int = 100) async throws -> V2SessionTimelinePage {
+        try validatePageSize(limit)
+        return try await sessionAPI.latestTimeline(sessionId: sessionId, limit: limit)
+    }
+
     func refreshRuntimeState(sessionId: V2SessionID) async throws -> V2RuntimeState {
         try await runtimeAPI.state(sessionId: sessionId).state
     }
@@ -34,6 +39,7 @@ struct V2SessionDetailService {
         clientMessageId: String
     ) async throws -> V2RuntimeActionResponse {
         let normalizedContent = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        if attachmentIds.count > 10 { throw V2BusinessError.tooManyAttachments(maximum: 10) }
         if normalizedContent.isEmpty, attachmentIds.isEmpty {
             throw V2BusinessError.emptyMessage
         }
@@ -44,7 +50,7 @@ struct V2SessionDetailService {
                 attachments: attachmentIds.map { V2AttachmentSendReference(fileId: $0) },
                 clientMessageId: clientMessageId
             )
-        )
+        ).requireSuccess()
     }
 
     func steer(
@@ -54,6 +60,7 @@ struct V2SessionDetailService {
         clientMessageId: String
     ) async throws -> V2RuntimeActionResponse {
         let normalizedContent = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        if attachmentIds.count > 10 { throw V2BusinessError.tooManyAttachments(maximum: 10) }
         if normalizedContent.isEmpty, attachmentIds.isEmpty {
             throw V2BusinessError.emptyMessage
         }
@@ -64,22 +71,26 @@ struct V2SessionDetailService {
                 attachments: attachmentIds.map { V2AttachmentSendReference(fileId: $0) },
                 clientMessageId: clientMessageId
             )
-        )
+        ).requireSuccess()
     }
 
     func interrupt(sessionId: V2SessionID) async throws -> V2RuntimeActionResponse {
-        try await runtimeAPI.interrupt(sessionId: sessionId)
+        try await runtimeAPI.interrupt(sessionId: sessionId).requireSuccess()
     }
 
     func updateSelection(
         sessionId: V2SessionID,
         scope: V2RuntimeSelectionScope,
-        selectionId: V2SelectionID
+        selectionId: V2SelectionID?
     ) async throws -> V2RuntimeState? {
         let response = try await runtimeAPI.updateSelections(
             sessionId: sessionId,
             request: V2RuntimeSelectionUpdateRequest(selections: [scope: selectionId])
         )
+        guard response.ok else {
+            throw V2RuntimeError(code: response.connectorResult?["error"]?["code"]?.stringValue,
+                message: response.connectorResult?["error"]?["message"]?.stringValue ?? "The runtime did not accept this selection.")
+        }
         return response.state
     }
 
@@ -97,6 +108,34 @@ struct V2SessionDetailService {
         after cursor: String
     ) async throws -> V2EventRecoveryResponse {
         try await realtimeAPI.recover(sessionId: sessionId, after: cursor)
+    }
+
+    func setTakeover(sessionId: V2SessionID, enabled: Bool) async throws -> V2SessionMeta {
+        try await sessionAPI.setTakeover(sessionId: sessionId, enabled: enabled).session
+    }
+
+    func sync(sessionId: V2SessionID) async throws -> V2RuntimeActionResponse {
+        try await sessionAPI.sync(sessionId: sessionId).requireSuccess()
+    }
+
+    /// Recovery replays durable data only. Refresh ephemeral runtime facts separately.
+    func liveState(sessionId: V2SessionID) async throws -> V2SessionLiveState {
+        async let state = runtimeAPI.state(sessionId: sessionId)
+        async let capabilities = runtimeAPI.capabilities(sessionId: sessionId)
+        async let notices = runtimeAPI.notices(sessionId: sessionId)
+        return try await V2SessionLiveState(
+            state: state.state, capabilities: capabilities.capabilitySet, notices: notices.notices
+        )
+    }
+
+    func catalogs(sessionId: V2SessionID, scopes: Set<String>? = nil) async throws -> V2SessionCatalogs {
+        async let model = scopes?.contains("model") != false
+            ? runtimeAPI.modelCatalog(sessionId: sessionId).catalog
+            : V2ModelCatalog(runtime: "", revision: 0, models: [])
+        async let permission = scopes?.contains("permission") != false
+            ? runtimeAPI.permissionCatalog(sessionId: sessionId).catalog
+            : V2PermissionCatalog(runtime: "", revision: 0, permissions: [])
+        return try await V2SessionCatalogs(model: model, permission: permission)
     }
 
     private func validatePageSize(_ limit: Int) throws {

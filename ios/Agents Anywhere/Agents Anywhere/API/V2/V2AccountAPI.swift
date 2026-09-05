@@ -17,7 +17,8 @@ struct V2AccountAPI: V2AccountAPIProtocol {
     func authConfig() async throws -> AuthConfig {
         try await transport.send(HTTPRequest<EmptyRequestBody, AuthConfig>(
             method: .get,
-            path: "/auth/config"
+            path: "/auth/config",
+            requiresAuth: false
         ))
     }
 

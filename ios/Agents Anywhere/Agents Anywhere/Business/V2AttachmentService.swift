@@ -8,6 +8,7 @@ struct V2AttachmentService {
         sessionId: V2SessionID,
         attachments: [V2LocalAttachment]
     ) async throws -> [V2AttachmentReference] {
+        if attachments.isEmpty { throw V2BusinessError.emptyAttachmentSelection }
         if attachments.count > 5 {
             throw V2BusinessError.tooManyAttachments(maximum: 5)
         }
@@ -15,6 +16,7 @@ struct V2AttachmentService {
             if attachment.data.isEmpty {
                 throw V2BusinessError.emptyAttachment(name: attachment.name)
             }
+            if attachment.data.count > 25 * 1024 * 1024 { throw V2BusinessError.attachmentTooLarge(name: attachment.name) }
             return HTTPUploadFile(
                 fieldName: "files",
                 fileName: attachment.name,

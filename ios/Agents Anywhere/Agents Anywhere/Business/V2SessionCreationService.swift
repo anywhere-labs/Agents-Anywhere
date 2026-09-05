@@ -7,6 +7,7 @@ struct V2SessionCreationService {
     func createAndStart(
         connectorId: V2ConnectorID,
         runtime: V2RuntimeID,
+        runtimeId: V2RuntimeID? = nil,
         title: String?,
         cwd: String?,
         content: String,
@@ -38,6 +39,7 @@ struct V2SessionCreationService {
             request: V2SessionCreateAndStartRequest(
                 connectorId: connectorId,
                 runtime: runtime,
+                runtimeId: runtimeId,
                 title: title,
                 cwd: cwd,
                 content: normalizedContent,
@@ -51,6 +53,7 @@ struct V2SessionCreationService {
     func bindExisting(
         connectorId: V2ConnectorID,
         runtime: V2RuntimeID,
+        runtimeId: V2RuntimeID? = nil,
         externalSessionId: String,
         title: String?,
         cwd: String?,
@@ -60,6 +63,7 @@ struct V2SessionCreationService {
             request: V2SessionCreateRequest(
                 connectorId: connectorId,
                 runtime: runtime,
+                runtimeId: runtimeId,
                 externalSessionId: externalSessionId,
                 title: title,
                 cwd: cwd,

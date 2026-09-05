@@ -14,6 +14,14 @@ struct V2RuntimeActionResponse: Decodable, Hashable {
     let ok: Bool
     let result: JSONValue?
     let error: V2RuntimeError?
+
+    @discardableResult
+    func requireSuccess() throws -> Self {
+        guard ok else {
+            throw error ?? V2RuntimeError(code: nil, message: "The runtime did not accept this operation.")
+        }
+        return self
+    }
 }
 
 struct V2RuntimeCommand: Decodable, Identifiable, Hashable {
@@ -26,6 +34,7 @@ struct V2RuntimeCommand: Decodable, Identifiable, Hashable {
     let enabled: Bool
     let disabledReason: String?
     let acceptsArgs: Bool?
+    let argsSchema: JSONValue?
     let metadata: JSONValue?
 }
 

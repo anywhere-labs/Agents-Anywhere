@@ -12,6 +12,8 @@ struct V2ModelCatalog: Decodable, Hashable {
 }
 
 struct V2ModelCatalogItem: Decodable, Identifiable, Hashable {
+    let enabled: Bool?
+    let disabledReason: String?
     let displayName: String
     let id: String
     let selectionId: V2SelectionID?
@@ -22,6 +24,8 @@ struct V2ModelCatalogItem: Decodable, Identifiable, Hashable {
 }
 
 struct V2ReasoningCatalogItem: Decodable, Identifiable, Hashable {
+    let enabled: Bool?
+    let disabledReason: String?
     let displayName: String
     let id: String
     let fullModelId: String?
@@ -43,6 +47,8 @@ struct V2PermissionCatalog: Decodable, Hashable {
 }
 
 struct V2PermissionCatalogItem: Decodable, Identifiable, Hashable {
+    let enabled: Bool?
+    let disabledReason: String?
     let displayName: String
     let id: String
     let selectionId: V2SelectionID

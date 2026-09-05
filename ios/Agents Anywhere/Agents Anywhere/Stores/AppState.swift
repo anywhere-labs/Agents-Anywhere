@@ -48,6 +48,9 @@ final class AppState: ObservableObject {
     private let dashboardClientId = "ios-dashboard-\(UUID().uuidString)"
     private var lastDashboardRefreshAt: Date?
     private var dashboardUpdatesTask: Task<Void, Never>?
+    private var cachedServices: V2ClientServices?
+    private var cachedServicesToken: String?
+    private var isInBackground = false
 
     init() {
         Task { await restoreSession() }
@@ -263,17 +266,22 @@ final class AppState: ObservableObject {
         connectorsError = nil
         isDashboardLoading = true
         defer {
-            isDashboardLoading = false
-            lastDashboardRefreshAt = Date()
+            if cachedServices === services {
+                isDashboardLoading = false
+                lastDashboardRefreshAt = Date()
+            }
         }
 
         do {
             let dashboard = try await services.dashboard.load()
+            guard cachedServices === services, !Task.isCancelled else { return }
             connectors = dashboard.connectors
             sessions = dashboard.sessions
+            cachedServices?.sessionRepository.applyMetadata(dashboard.sessions)
             hasLoadedConnectors = true
             hasLoadedSessions = true
         } catch {
+            guard cachedServices === services, !Task.isCancelled else { return }
             let message = error.localizedDescription
             sessionsError = message
             connectorsError = message
@@ -283,8 +291,9 @@ final class AppState: ObservableObject {
 
     /// Opens the dashboard WebSocket and continuously replaces the global Connector and Session projections.
     func startDashboardUpdates() {
-        guard dashboardUpdatesTask == nil else { return }
+        guard dashboardUpdatesTask == nil, !isInBackground, route == .signedIn else { return }
         guard let services = makeV2Services() else { return }
+        guard services.connectivity.status.availability != .offline else { return }
 
         dashboardUpdatesTask = Task { [weak self] in
             guard let self else { return }
@@ -546,6 +555,7 @@ final class AppState: ObservableObject {
     }
 
     func updateSession(_ updated: V2SessionMeta) {
+        cachedServices?.sessionRepository.applyMetadata([updated])
         if let index = sessions.firstIndex(where: { $0.id == updated.id }) {
             sessions[index] = updated
         } else {
@@ -562,6 +572,7 @@ final class AppState: ObservableObject {
     }
 
     func removeConnector(connectorId: V2ConnectorID) {
+        cachedServices?.sessionRepository.remove(sessionIds: sessions.filter { $0.connectorId == connectorId }.map(\.id))
         connectors.removeAll { $0.id == connectorId }
         sessions.removeAll { $0.connectorId == connectorId }
     }
@@ -585,6 +596,9 @@ final class AppState: ObservableObject {
         dashboardUpdatesTask?.cancel()
         dashboardUpdatesTask = nil
         try keychain.delete(account: tokenAccount)
+        cachedServices?.shutdown()
+        cachedServices = nil
+        cachedServicesToken = nil
         me = nil
         serverURL = nil
         connectors = []
@@ -637,19 +651,26 @@ final class AppState: ObservableObject {
 
     /// Receives server-pushed dashboard snapshots and reconnects after transient failures.
     private func receiveDashboardUpdates(services: V2ClientServices) async {
+        var attempt = 0
         while !Task.isCancelled {
             do {
                 let updates = try await services.dashboard.updates(clientId: dashboardClientId)
                 for try await snapshot in updates {
-                    if Task.isCancelled { return }
+                    if Task.isCancelled || cachedServices !== services { return }
+                    attempt = 0
                     applyDashboardSnapshot(snapshot)
                 }
             } catch {
                 if Task.isCancelled { return }
+                let failure = V2ClientFailure(error)
+                guard cachedServices === services else { return }
+                dashboardError = failure.message
+                if !failure.permitsAutomaticReconnect { return }
             }
 
             do {
-                try await Task.sleep(for: .seconds(2))
+                try await Task.sleep(for: .seconds(min(1 << min(attempt, 4), 15)))
+                attempt += 1
             } catch {
                 return
             }
@@ -658,6 +679,7 @@ final class AppState: ObservableObject {
 
     private func applyDashboardSnapshot(_ snapshot: V2DashboardSnapshot) {
         guard snapshot.type == "dashboard.snapshot" else { return }
+        cachedServices?.sessionRepository.applyMetadata(snapshot.sessions)
         if connectors != snapshot.connectors {
             connectors = snapshot.connectors
         }
@@ -687,19 +709,58 @@ final class AppState: ObservableObject {
         return status == 401 || status == 403
     }
 
+    var sessionRepository: V2SessionRepository? { makeV2Services()?.sessionRepository }
+    var nativeChatServices: V2ClientServices? { makeV2Services() }
+
+    func sessionModel(id: V2SessionID) -> V2SessionModel? { sessionRepository?.session(id: id) }
+
+    func setAppInBackground(_ background: Bool) {
+        isInBackground = background
+        if background {
+            dashboardUpdatesTask?.cancel()
+            dashboardUpdatesTask = nil
+            cachedServices?.sessionRepository.suspend()
+        } else {
+            cachedServices?.sessionRepository.resume()
+            startDashboardUpdates()
+        }
+    }
+
     private func makeV2Services() -> V2ClientServices? {
         guard
             let serverURL,
+            let accountID = me?.userId,
             let token = try? keychain.readString(account: tokenAccount),
             !token.isEmpty
         else {
             return nil
         }
+        let scope = V2ClientScope(serverURL: serverURL, accountID: accountID)
+        if let cachedServices, cachedServices.scope == scope, cachedServicesToken == token {
+            return cachedServices
+        }
+        dashboardUpdatesTask?.cancel()
+        dashboardUpdatesTask = nil
+        isDashboardLoading = false
+        cachedServices?.shutdown()
         let api = V2APIClient(
             serverURL: serverURL,
             tokenProvider: StaticAuthTokenProvider(token: token)
         )
-        return V2ClientServices(api: api)
+        let services = V2ClientServices(api: api, accountID: accountID)
+        cachedServices = services
+        cachedServicesToken = token
+        if isInBackground { services.sessionRepository.suspend() }
+        services.onConnectivityChange = { [weak self, weak services] status in
+            guard let self, let services, self.cachedServices === services else { return }
+            if status.availability == .offline {
+                self.dashboardUpdatesTask?.cancel()
+                self.dashboardUpdatesTask = nil
+            } else {
+                self.startDashboardUpdates()
+            }
+        }
+        return services
     }
 
     private func saveSession(serverURL: URL, token: String) throws {

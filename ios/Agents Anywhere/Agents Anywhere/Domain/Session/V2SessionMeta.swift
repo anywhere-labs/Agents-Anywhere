@@ -10,6 +10,10 @@ struct V2SessionMeta: Codable, Identifiable, Hashable {
     let id: V2SessionID
     let connectorId: V2ConnectorID
     let runtime: V2RuntimeID
+    var runtimeId: V2RuntimeID? = nil
+    var runtimeType: String? = nil
+    var runtimeName: String? = nil
+    var runtimeTypeDisplayName: String? = nil
     let externalSessionId: String?
     let title: String?
     let cwd: String?
@@ -20,8 +24,15 @@ struct V2SessionMeta: Codable, Identifiable, Hashable {
     let pinnedAt: String?
     let archived: Bool
     let archivedAt: String?
+    let userArchived: Bool
+    let sourceAvailability: String
+    let sourceAvailabilityReason: String?
+    let sourceAvailabilityUpdatedAt: String?
+    let sourceObservationOrigin: String?
+    let archiveSource: String?
     let unread: Bool
     let lastReadSeq: Int
+    let latestTurnEndSeq: Int
     let lastSyncedAt: String?
     let sourceObservedAt: String?
     let lastActivityAt: String?
@@ -29,6 +40,8 @@ struct V2SessionMeta: Codable, Identifiable, Hashable {
     let lastItemOrderSeq: Int?
     let sortAt: String?
     let updatedSeq: Int
+
+    var effectiveRuntimeId: V2RuntimeID { runtimeId ?? runtime }
 }
 
 struct V2SessionListResponse: Decodable, Hashable {
@@ -50,6 +63,7 @@ struct V2SessionMetaPatchRequest: Encodable, Hashable {
 struct V2SessionCreateRequest: Encodable, Hashable {
     let connectorId: V2ConnectorID
     let runtime: V2RuntimeID
+    var runtimeId: V2RuntimeID? = nil
     let externalSessionId: String?
     let title: String?
     let cwd: String?
@@ -58,6 +72,7 @@ struct V2SessionCreateRequest: Encodable, Hashable {
     enum CodingKeys: String, CodingKey {
         case connectorId
         case runtime
+        case runtimeId
         case externalSessionId
         case title
         case cwd
@@ -68,6 +83,7 @@ struct V2SessionCreateRequest: Encodable, Hashable {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(connectorId, forKey: .connectorId)
         try container.encode(runtime, forKey: .runtime)
+        try container.encodeIfPresent(runtimeId, forKey: .runtimeId)
         try container.encodeIfPresent(externalSessionId, forKey: .externalSessionId)
         try container.encodeIfPresent(title, forKey: .title)
         try container.encodeIfPresent(cwd, forKey: .cwd)
@@ -90,6 +106,7 @@ struct V2InlineAttachment: Encodable, Hashable {
 struct V2SessionCreateAndStartRequest: Encodable, Hashable {
     let connectorId: V2ConnectorID
     let runtime: V2RuntimeID
+    var runtimeId: V2RuntimeID? = nil
     let title: String?
     let cwd: String?
     let content: String
@@ -100,6 +117,7 @@ struct V2SessionCreateAndStartRequest: Encodable, Hashable {
     enum CodingKeys: String, CodingKey {
         case connectorId
         case runtime
+        case runtimeId
         case title
         case cwd
         case content
@@ -112,6 +130,7 @@ struct V2SessionCreateAndStartRequest: Encodable, Hashable {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(connectorId, forKey: .connectorId)
         try container.encode(runtime, forKey: .runtime)
+        try container.encodeIfPresent(runtimeId, forKey: .runtimeId)
         try container.encodeIfPresent(title, forKey: .title)
         try container.encodeIfPresent(cwd, forKey: .cwd)
         try container.encode(content, forKey: .content)
@@ -134,4 +153,8 @@ struct V2SessionBulkActionResponse: Decodable, Hashable {
     let sessions: [V2SessionMeta]
     let notFound: [V2SessionID]
     let serverTime: String
+}
+
+struct V2SessionTakeoverResponse: Decodable, Hashable {
+    let session: V2SessionMeta
 }

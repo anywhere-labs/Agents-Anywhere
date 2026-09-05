@@ -4,6 +4,7 @@ struct V2Connector: Decodable, Identifiable, Hashable {
     let id: V2ConnectorID
     let userId: String
     let name: String
+    let deviceOs: String?
     let status: V2ConnectorPresence
     let lastSeenAt: String?
     let createdAt: String

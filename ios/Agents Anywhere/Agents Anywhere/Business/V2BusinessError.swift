@@ -3,6 +3,7 @@ import Foundation
 enum V2BusinessError: LocalizedError {
     case emptyMessage
     case emptySessionSelection
+    case tooManySessions
     case emptySessionTitle
     case emptyAvatar
     case passwordTooShort
@@ -15,6 +16,8 @@ enum V2BusinessError: LocalizedError {
     case invalidRuntimeConfigField(title: String)
     case tooManyAttachments(maximum: Int)
     case emptyAttachment(name: String)
+    case emptyAttachmentSelection
+    case attachmentTooLarge(name: String)
     case invalidPageSize
     case workspaceFilesUnavailable(message: String)
     case workspaceEntryNotPreviewable
@@ -26,6 +29,8 @@ enum V2BusinessError: LocalizedError {
             return String(localized: "Enter a message before sending.")
         case .emptySessionSelection:
             return String(localized: "Select at least one session.")
+        case .tooManySessions:
+            return "Select no more than 200 sessions at once."
         case .emptySessionTitle:
             return String(localized: "Enter a session title.")
         case .emptyAvatar:
@@ -50,6 +55,10 @@ enum V2BusinessError: LocalizedError {
             return "Attach no more than \(maximum) files."
         case let .emptyAttachment(name):
             return "The attachment '\(name)' is empty."
+        case .emptyAttachmentSelection:
+            return "Choose at least one file to upload."
+        case let .attachmentTooLarge(name):
+            return "The attachment '\(name)' exceeds the 25 MiB file limit."
         case .invalidPageSize:
             return String(localized: "The requested page size is outside the supported range.")
         case let .workspaceFilesUnavailable(message):

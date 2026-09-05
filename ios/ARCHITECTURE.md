@@ -1,9 +1,15 @@
 # iOS v2 Client Architecture
 
-The iOS v2 client uses one-way dependencies:
+The iOS v2 client separates wire values, account-scoped state and presentation:
 
 ```text
-SwiftUI / AppState
+SwiftUI views
+        |
+        v
+Observable session / chat / New Session models
+        |
+        v
+Session repository and projection (session workflows)
         |
         v
 Business use-case services
@@ -52,10 +58,44 @@ The initial resource clients are:
 Business services return domain values or throw explicit errors. They do not
 own SwiftUI state, caching, navigation, or optimistic timeline reduction.
 
-## Migration rule
+## State and presentation
 
-The existing `APIClient` remains only while current views are migrated. New v2
-features must depend on `V2ClientServices`; they must not add more session or
-runtime methods to the old client. Once all call sites use the new services,
-the legacy session/runtime models and methods can move to `_deprecated` and be
-removed.
+`V2ClientServices` owns one normalized server/account/credential lifetime. It
+constructs the services, session repository, connectivity monitor and
+`NewSessionModel`. `AppState` routes authentication, dashboard updates and app
+lifecycle changes into that scope. Signing out invalidates retained observable
+models and cancels their outstanding work.
+
+`Repositories` owns coalesced reads, subscriptions, in-memory caches, authoritative
+session projections and event recovery. `Models/Session` exposes stable
+`@MainActor @Observable` session, runtime and timeline references for SwiftUI.
+The repository publishes local pending sends through the same observation stream
+as network updates. Views never own a second session socket or network reducer.
+
+`Models/Chat` adds UI-specific ownership without changing wire DTOs:
+
+- `ComposerDraft` owns text, attachments and composition state. Session and New
+  Session drafts remain scoped independently from transient view instances.
+- `SessionChatModel` coordinates actual message, attachment, selection and notice
+  actions through the existing repository and services.
+- `SessionTimelinePresentation` receives repository projections and publishes
+  stable rendered rows at 30 Hz. Its idle clock sleeps. Initial/recovered history
+  and live token appends have distinct presentation semantics.
+- `SessionNoticeStore` owns stable form drafts and response submission state;
+  authoritative runtime notices determine blocking and completion.
+- `NewSessionModel` calls device/preparation/creation services directly and owns
+  the selected device/Agent pair, account-scoped preferences, preflight checks
+  and uncertain-creation protection.
+
+`Views/Chat` contains native SwiftUI layouts, the persistent UIKit text editor
+bridge, sheet/picker presentation and Textual Markdown rendering. Theme colors
+come from the existing `AppTheme`. See [NATIVE_CHAT.md](NATIVE_CHAT.md) for UI
+behavior, protocol support, verified checks and manual device validation.
+
+## Migration boundary
+
+Retired session/runtime API methods, models and the chat placeholder live in
+`ios/_deprecated`, outside the application target. The remaining `APIClient`
+facade supports the existing shell through `V2ClientServices`; new session and
+runtime features use the typed resources and scoped services directly. Do not
+restore legacy routes or introduce view-owned transport/cache implementations.

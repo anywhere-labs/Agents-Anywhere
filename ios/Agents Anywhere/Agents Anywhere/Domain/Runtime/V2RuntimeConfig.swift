@@ -2,8 +2,10 @@ import Foundation
 
 struct V2RuntimeConfigSchema: Hashable {
     let fields: [V2RuntimeConfigField]
+    let defaults: [String: JSONValue]
 
-    init(schema: JSONValue, uiSchema: JSONValue) throws {
+    init(schema: JSONValue, uiSchema: JSONValue, defaults: [String: JSONValue] = [:]) throws {
+        self.defaults = defaults
         guard case let .object(root) = schema else {
             throw V2BusinessError.invalidRuntimeConfigSchema
         }
@@ -33,7 +35,7 @@ struct V2RuntimeConfigSchema: Hashable {
     }
 
     func initialValues(config: JSONValue?) -> [String: JSONValue] {
-        var values = config?.objectValue ?? [:]
+        var values = defaults.merging(config?.objectValue ?? [:]) { _, configured in configured }
         for field in fields where values[field.id] == nil {
             if let defaultValue = field.defaultValue {
                 values[field.id] = defaultValue

@@ -12,17 +12,23 @@ struct V2RealtimeAPI: V2RealtimeAPIProtocol {
     let transport: any HTTPTransport
     let webSocketTransport: any WebSocketTransport
     let decoder: JSONDecoder
+    let heartbeatTimeout: Duration
+    let heartbeatCheckInterval: Duration
 
     init(
         serverURL: URL,
         transport: any HTTPTransport,
         webSocketTransport: any WebSocketTransport,
-        decoder: JSONDecoder = JSONDecoder()
+        decoder: JSONDecoder = JSONDecoder(),
+        heartbeatTimeout: Duration = .seconds(45),
+        heartbeatCheckInterval: Duration = .seconds(15)
     ) {
         self.serverURL = serverURL.normalizedV2ServerURL()
         self.transport = transport
         self.webSocketTransport = webSocketTransport
         self.decoder = decoder
+        self.heartbeatTimeout = heartbeatTimeout
+        self.heartbeatCheckInterval = heartbeatCheckInterval
     }
 
     func ticket(clientId: String, scope: V2RealtimeScope) async throws -> V2WebSocketTicket {
@@ -65,14 +71,32 @@ struct V2RealtimeAPI: V2RealtimeAPIProtocol {
         as valueType: Value.Type
     ) throws -> AsyncThrowingStream<Value, Error> {
         let connection = webSocketTransport.connect(url: try webSocketURL(path: path, ticket: ticket))
-        return AsyncThrowingStream { continuation in
+        return AsyncThrowingStream(bufferingPolicy: .bufferingOldest(2048)) { continuation in
+            var lastFrame = ContinuousClock.now
+            // Both session and dashboard endpoints send a frame/keepalive every 15s.
+            // Path monitoring alone cannot detect a silent server or broken VPN route.
+            let watchdog = Task {
+                do {
+                    while !Task.isCancelled {
+                        try await Task.sleep(for: heartbeatCheckInterval)
+                        if lastFrame.duration(to: .now) >= heartbeatTimeout {
+                            continuation.finish(throwing: URLError(.timedOut))
+                            connection.close()
+                            return
+                        }
+                    }
+                } catch { /* Consumer cancellation stops the watchdog. */ }
+            }
             let task = Task {
                 do {
                     for try await data in connection.messages() {
+                        lastFrame = .now
                         if isKeepalive(data) {
                             continue
                         }
-                        continuation.yield(try decoder.decode(valueType, from: data))
+                        if case .dropped = continuation.yield(try decoder.decode(valueType, from: data)) {
+                            throw HTTPError.streamOverflow
+                        }
                     }
                     continuation.finish()
                 } catch {
@@ -80,6 +104,7 @@ struct V2RealtimeAPI: V2RealtimeAPIProtocol {
                 }
             }
             continuation.onTermination = { _ in
+                watchdog.cancel()
                 task.cancel()
                 connection.close()
             }
