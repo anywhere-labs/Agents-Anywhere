@@ -170,6 +170,20 @@ def seed_runtime_capabilities(
     )
 
 
+def _create_test_project(client, headers, connector_id, cwd="/repo") -> str:
+    response = client.post(
+        "/projects",
+        headers=headers,
+        json={
+            "name": f"Project {connector_id} {cwd}",
+            "connectorId": connector_id,
+            "workspacePath": cwd,
+        },
+    )
+    assert response.status_code == 200, response.text
+    return response.json()["project"]["id"]
+
+
 def create_connector_and_session(
     client: TestClient,
     user_id: str = ADMIN_USER,
@@ -204,11 +218,13 @@ def create_connector_and_session(
         *([] if runtime == "dsh" else ["runtime.attachment"]),
     )
 
+    project_id = _create_test_project(client, headers, connector_id)
     session_response = client.post(
         "/sessions",
         headers=headers,
         json={
             "connectorId": connector_id,
+            "projectId": project_id,
             "runtime": runtime,
             "externalSessionId": (
                 f"thr_{connector_id}_demo"
@@ -219,7 +235,7 @@ def create_connector_and_session(
             "cwd": "/repo",
         },
     )
-    assert session_response.status_code == 200
+    assert session_response.status_code == 200, session_response.text
     session_id = session_response.json()["session"]["id"]
     return connector_id, access_token, session_id, headers
 
@@ -1821,19 +1837,9 @@ def test_sessions_list_uses_cursor_pages_and_archive_filter(tmp_path):
     connector_id, _access_token, first_session_id, headers = create_connector_and_session(client)
     session_ids = [first_session_id]
     for index in range(4):
-        response = client.post(
-            "/sessions",
-            headers=headers,
-            json={
-                "connectorId": connector_id,
-                "runtime": "codex",
-                "externalSessionId": f"thr_page_{index}",
-                "title": f"Page {index}",
-                "cwd": "/repo",
-            },
-        )
-        assert response.status_code == 200, response.text
-        session_ids.append(response.json()["session"]["id"])
+        session_ids.append(_create_extra_session(
+            client, headers, connector_id, f"thr_page_{index}", title=f"Page {index}"
+        ))
 
     seen: list[str] = []
     cursor = None
@@ -7047,9 +7053,9 @@ def test_connector_ingest_archives_local_hidden_session_meta(tmp_path):
     assert state.json()["session"]["archivedAt"] is not None
 
 
-def test_connector_source_event_archives_and_restores_codex_session(tmp_path):
+def test_connector_source_event_archives_without_restoring_aa_archive(tmp_path):
     client = make_client(tmp_path)
-    session_id, access_token, _, headers = create_connector_and_session(client)
+    _, access_token, session_id, headers = create_connector_and_session(client)
     connector_headers = {"Authorization": f"Bearer {access_token}"}
 
     archived = client.post(
@@ -7076,8 +7082,8 @@ def test_connector_source_event_archives_and_restores_codex_session(tmp_path):
     assert archived.status_code == 200, archived.text
     session = session_view_for_assertions(client, session_id, headers)["session"]
     assert session["archived"] is True
-    assert session["userArchived"] is False
-    assert session["archiveSource"] == "runtime"
+    assert session["userArchived"] is True
+    assert session["archiveSource"] == "user"
     assert session["sourceAvailability"] == "archived"
     assert session["sourceObservationOrigin"] == "event"
 
@@ -7104,13 +7110,13 @@ def test_connector_source_event_archives_and_restores_codex_session(tmp_path):
 
     assert restored.status_code == 200, restored.text
     session = session_view_for_assertions(client, session_id, headers)["session"]
-    assert session["archived"] is False
+    assert session["archived"] is True
     assert session["sourceAvailability"] == "available"
 
 
 def test_session_inventory_does_not_overwrite_newer_source_event(tmp_path):
     client = make_client(tmp_path)
-    session_id, access_token, _, headers = create_connector_and_session(client)
+    _, access_token, session_id, headers = create_connector_and_session(client)
     connector_headers = {"Authorization": f"Bearer {access_token}"}
     scan_token = "codex-inventory-scan-token-0001"
 
@@ -7201,7 +7207,7 @@ def test_connector_ingest_dsh_hidden_state_is_reversible_without_archiving(tmp_p
             )
         )
     }
-    assert "sess_dsh_hidden" not in listed_ids
+    assert "sess_dsh_hidden" in listed_ids
 
     visible = client.post(
         "/connector/ingest",
@@ -7542,7 +7548,7 @@ def test_dsh_complete_inventory_tracks_missing_without_changing_user_archive(tmp
     assert kept.json()["session"]["archived"] is True
 
 
-def test_dsh_visible_inventory_recovers_legacy_archive_but_preserves_user_archive(tmp_path):
+def test_dsh_visible_inventory_preserves_all_aa_archives(tmp_path):
     client = make_client(tmp_path)
     _, access_token, _, headers = create_connector_and_session(client)
     connector_headers = {"Authorization": f"Bearer {access_token}"}
@@ -7559,6 +7565,7 @@ def test_dsh_visible_inventory_recovers_legacy_archive_but_preserves_user_archiv
                         "runtime": "dsh",
                         "externalSessionId": external_id,
                         "title": session_id,
+                        "cwd": "/repo",
                     },
                 }
                 for session_id, external_id in (
@@ -7627,7 +7634,7 @@ def test_dsh_visible_inventory_recovers_legacy_archive_but_preserves_user_archiv
     user = client.get("/sessions/sess_dsh_user_archive/snapshot", headers=headers)
     assert legacy.status_code == 200, legacy.text
     assert user.status_code == 200, user.text
-    assert legacy.json()["session"]["archived"] is False
+    assert legacy.json()["session"]["archived"] is True
     assert user.json()["session"]["archived"] is True
 
 
@@ -11268,15 +11275,16 @@ def _create_extra_session(
     project_id: str | None = None,
     cwd: str = "/repo",
 ) -> str:
+    if project_id is None:
+        project_id = _create_test_project(client, headers, connector_id, cwd)
     payload = {
         "connectorId": connector_id,
+        "projectId": project_id,
         "runtime": "codex",
         "externalSessionId": external_id,
         "title": title,
         "cwd": cwd,
     }
-    if project_id is not None:
-        payload["projectId"] = project_id
     response = client.post(
         "/sessions",
         headers=headers,
@@ -11880,24 +11888,16 @@ def test_project_delete_unbinds_sessions_without_deleting_them(tmp_path):
 def test_project_sessions_list_and_archive_all_are_scoped_to_project(tmp_path):
     client = make_client(tmp_path)
     connector_id, _, existing_session, headers = create_connector_and_session(client)
-    unmatched = client.post(
-        "/sessions",
-        headers=headers,
-        json={
-            "connectorId": connector_id,
-            "runtime": "codex",
-            "externalSessionId": "thr_other_workspace",
-            "title": "Other",
-            "cwd": "/other",
-        },
-    ).json()["session"]["id"]
+    unmatched = _create_extra_session(
+        client, headers, connector_id, "thr_other_workspace", title="Other", cwd="/other"
+    )
     created = client.post(
         "/projects",
         headers=headers,
         json={
             "name": "Project",
             "connectorId": connector_id,
-            "workspacePath": "/repo",
+            "workspacePath": "/project-repo",
         },
     )
     project_id = created.json()["project"]["id"]
@@ -11907,6 +11907,7 @@ def test_project_sessions_list_and_archive_all_are_scoped_to_project(tmp_path):
         connector_id,
         "thr_project_a",
         project_id=project_id,
+        cwd="/project-repo",
     )
     session_b = _create_extra_session(
         client,
@@ -11914,6 +11915,7 @@ def test_project_sessions_list_and_archive_all_are_scoped_to_project(tmp_path):
         connector_id,
         "thr_project_b",
         project_id=project_id,
+        cwd="/project-repo",
     )
 
     listed = client.get(
@@ -11960,7 +11962,7 @@ def test_project_sessions_list_and_archive_all_are_scoped_to_project(tmp_path):
         f"/sessions/{existing_session}/meta",
         headers=headers,
     ).json()["session"]
-    assert existing["projectId"] is None
+    assert existing["projectId"] != project_id
     assert existing["archived"] is False
 
 

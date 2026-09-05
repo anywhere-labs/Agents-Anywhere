@@ -186,8 +186,8 @@ def test_sidebar_counts_match_session_visibility_across_all_pages(store):
         )
         result = await store.get_project(project.id, user_id="owner")
         assert result.sidebarSessionCounts.model_dump() == {
-            "active": 105,
-            "archived": 2,
+            "active": 107,
+            "archived": 1,
         }
         async with store.engine.begin() as connection:
             await connection.execute(update(connectors).values(revoked=1))

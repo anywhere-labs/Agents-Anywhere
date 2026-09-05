@@ -236,7 +236,7 @@ export function ArchivedSessionsTab({
     try {
       const response = await dashboardApi.bulkArchiveSessions(token, [sessionId], false)
       const unarchivedSession = response.sessions.find((session) => session.id === sessionId)
-      if (!unarchivedSession) {
+      if (!unarchivedSession || unarchivedSession.archived) {
         toast.error(t("archivedUnarchiveFailed"))
         return
       }
@@ -260,11 +260,17 @@ export function ArchivedSessionsTab({
     if (!token || unarchivingProjectId) return
     setUnarchivingProjectId(projectId)
     try {
-      await dashboardApi.archiveProjectSessions(token, projectId, {
+      const response = await dashboardApi.archiveProjectSessions(token, projectId, {
         archived: false,
         scope: "archived",
       })
-      setSessions((current) => current.filter((session) => session.projectId !== projectId))
+      if (response.affected === 0 || response.sessions.some((session) => session.archived)) {
+        toast.error(t("archivedUnarchiveAllFailed"))
+        return
+      }
+      response.sessions.forEach(onSessionUpdated)
+      const restoredIds = new Set(response.sessions.map((session) => session.id))
+      setSessions((current) => current.filter((session) => !restoredIds.has(session.id)))
       onWorkspaceRefresh()
       toast.success(t("archivedUnarchiveAllSuccess"))
     } catch (err) {

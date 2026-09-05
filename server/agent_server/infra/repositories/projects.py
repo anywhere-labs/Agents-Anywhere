@@ -88,38 +88,25 @@ def _project_from_row(row: Any) -> ProjectView:
 
 
 def _project_view_query() -> Any:
-    effective_archived = or_(
-        sessions_t.c.archived == 1,
-        and_(
-            sessions_t.c.runtime != "dsh",
-            sessions_t.c.source_state.in_(
-                ("archived", "unavailable", "deleted", "missing")
-            ),
-        ),
-    )
+    aa_archived = sessions_t.c.archived == 1
     # Match project session pagination and the sidebar's separate pinned section.
     visible_session = and_(
         sessions_t.c.id.is_not(None),
         connectors_t.c.revoked == 0,
-        or_(
-            sessions_t.c.runtime != "dsh",
-            sessions_t.c.source_state.in_(("visible", "available")),
-            sessions_t.c.archived == 1,
-        ),
     )
     sidebar_active_count = func.sum(
         case(
-            (and_(visible_session, ~effective_archived, sessions_t.c.pinned == 0), 1),
+            (and_(visible_session, ~aa_archived, sessions_t.c.pinned == 0), 1),
             else_=0,
         )
     ).label("sidebar_active_session_count")
     sidebar_archived_count = func.sum(
-        case((and_(visible_session, effective_archived), 1), else_=0)
+        case((and_(visible_session, aa_archived), 1), else_=0)
     ).label("sidebar_archived_session_count")
     active_count = func.sum(
         case(
             (
-                and_(sessions_t.c.id.is_not(None), ~effective_archived),
+                and_(sessions_t.c.id.is_not(None), ~aa_archived),
                 1,
             ),
             else_=0,
