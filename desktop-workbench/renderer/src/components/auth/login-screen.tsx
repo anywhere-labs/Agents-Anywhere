@@ -10,7 +10,18 @@ import { useAuth } from "./auth-context"
 import { useTranslations } from "next-intl"
 
 export function LoginScreen() {
-  const { navigate, login, loading, error, oauthEnabled, oauthProviderLabel, registrationOpen, startOAuth } = useAuth()
+  const {
+    navigate,
+    login,
+    loading,
+    error,
+    oauthEnabled,
+    oauthProviderLabel,
+    registrationOpen,
+    desktopOAuthAvailable,
+    startOAuth,
+    startDesktopOAuth,
+  } = useAuth()
   const t = useTranslations("auth")
   const [showPassword, setShowPassword] = useState(false)
   const [userId, setUserId] = useState("")
@@ -34,6 +45,23 @@ export function LoginScreen() {
       </div>
 
       <div className="flex flex-col gap-5">
+        {desktopOAuthAvailable ? (
+          <>
+            <Button
+              className="h-11 w-full gap-2 font-medium"
+              disabled={loading}
+              onClick={() => void startDesktopOAuth().catch(() => undefined)}
+            >
+              <Globe className="size-4" />
+              {t("login.desktopOAuth")}
+            </Button>
+            <div className="flex items-center gap-3 text-xs text-muted-foreground">
+              <span className="h-px flex-1 bg-border" />
+              <span>{t("login.passwordDivider")}</span>
+              <span className="h-px flex-1 bg-border" />
+            </div>
+          </>
+        ) : null}
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="login-userid">{t("fields.userId")}</Label>
           <InputGroup className="h-11 rounded-lg">
@@ -85,7 +113,7 @@ export function LoginScreen() {
 
         {error ? <p className="text-center text-sm text-destructive">{error}</p> : null}
 
-        {oauthEnabled && oauthProviderLabel ? (
+        {!desktopOAuthAvailable && oauthEnabled && oauthProviderLabel ? (
           <Button
             variant="outline"
             className="h-11 w-full gap-2"

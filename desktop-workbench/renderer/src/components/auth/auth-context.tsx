@@ -9,6 +9,7 @@ import {
   saveStoredSession,
 } from "@/features/auth/session"
 import type { AuthMe, OAuthFinalizePayload, StoredSession } from "@/features/auth/types"
+import { getDesktopWorkbenchBridge } from "@/features/desktop/bridge"
 import { useTranslations } from "next-intl"
 
 export type AuthScreen =
@@ -39,11 +40,13 @@ type AuthState = {
   oauthEnabled: boolean
   oauthProviderLabel: string | null
   oauthPending: OAuthPending | null
+  desktopOAuthAvailable: boolean
   registrationOpen: boolean
   navigate: (screen: AuthScreen) => void
   login: (input: { userId: string; password: string }) => Promise<void>
   register: (input: { userId: string; password: string; setupToken?: string }) => Promise<void>
   startOAuth: () => Promise<void>
+  startDesktopOAuth: () => Promise<void>
   finalizeOAuth: (input: { userId?: string; password?: string; setPassword?: boolean }) => Promise<void>
   cancelOAuth: () => void
   refreshMe: () => Promise<AuthMe | null>
@@ -148,6 +151,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [oauthProviderLabel, setOauthProviderLabel] = React.useState<string | null>(null)
   const [oauthPending, setOauthPending] = React.useState<OAuthPending | null>(null)
   const [registrationOpen, setRegistrationOpen] = React.useState(false)
+  const desktopAuthBridge = getDesktopWorkbenchBridge()?.auth ?? null
 
   // On mount: set screen from the current hash, then listen for changes.
   React.useEffect(() => {
@@ -242,6 +246,55 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   React.useEffect(() => {
+    if (!desktopAuthBridge) return
+    let cancelled = false
+    let consuming = false
+
+    const consumeResult = async () => {
+      if (consuming) return
+      consuming = true
+      try {
+        const result = await desktopAuthBridge.consumeOAuthResult()
+        if (!result || cancelled) return
+        if (result.status === "error") {
+          setError(result.error)
+          setScreenState("login")
+          return
+        }
+
+        setLoading(true)
+        setError(null)
+        const currentUser = await authApi.me(result.accessToken)
+        if (!currentUser.userId || (currentUser.role !== "admin" && currentUser.role !== "member")) {
+          throw new Error("Desktop OAuth returned an invalid account.")
+        }
+        await finishAuth({
+          userId: currentUser.userId,
+          role: currentUser.role,
+          accessToken: result.accessToken,
+          tokenType: "bearer",
+          serverTime: currentUser.serverTime,
+        })
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : t("errors.oauth"))
+          setScreenState("login")
+        }
+      } finally {
+        consuming = false
+        if (!cancelled) setLoading(false)
+      }
+    }
+
+    const unsubscribe = desktopAuthBridge.onOAuthResult(() => void consumeResult())
+    void consumeResult()
+    return () => {
+      cancelled = true
+      if (typeof unsubscribe === "function") unsubscribe()
+    }
+  }, [desktopAuthBridge, finishAuth, t])
+
+  React.useEffect(() => {
     if (!oauthPending || oauthPending.status !== "authenticated") return
     let cancelled = false
     const pendingToken = oauthPending.pendingToken
@@ -312,6 +365,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, [t])
 
+  const startDesktopOAuth = React.useCallback(async () => {
+    if (!desktopAuthBridge) return
+    setLoading(true)
+    setError(null)
+    try {
+      await desktopAuthBridge.startOAuth()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t("errors.oauth"))
+      throw err
+    } finally {
+      setLoading(false)
+    }
+  }, [desktopAuthBridge, t])
+
   const finalizeOAuth = React.useCallback(
     async (input: { userId?: string; password?: string; setPassword?: boolean }) => {
       if (!oauthPending) return
@@ -375,12 +442,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         oauthEnabled,
         oauthProviderLabel,
         oauthPending,
+        desktopOAuthAvailable: Boolean(desktopAuthBridge),
         registrationOpen,
         navigate,
 
         login,
         register,
         startOAuth,
+        startDesktopOAuth,
         finalizeOAuth,
         cancelOAuth,
         refreshMe,

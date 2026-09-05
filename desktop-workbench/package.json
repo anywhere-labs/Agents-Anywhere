@@ -72,6 +72,14 @@
     "directories": {
       "output": "release"
     },
+    "protocols": [
+      {
+        "name": "Agents Anywhere Desktop OAuth",
+        "schemes": [
+          "agents-anywhere-desktop"
+        ]
+      }
+    ],
     "win": {
       "icon": "build/icon.ico",
       "target": "nsis"

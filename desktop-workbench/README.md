@@ -50,11 +50,13 @@ yarn build:web
 yarn start
 ```
 
-To use a different backend with the default `/api/v2` namespace:
+To use a different backend with the default `/api/v2` namespace, provide the
+matching Web origin used for browser-based Desktop OAuth. Local development
+defaults an API on port `8000` to the Web app on port `5174`:
 
 ```bash
 cd desktop-workbench
-WORKBENCH_API_ORIGIN=http://127.0.0.1:8000 yarn dev
+WORKBENCH_API_ORIGIN=http://127.0.0.1:8000 WORKBENCH_OAUTH_WEB_ORIGIN=http://127.0.0.1:5174 yarn dev
 ```
 
 To use a backend with root API paths, explicitly provide an empty namespace:

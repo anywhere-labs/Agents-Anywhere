@@ -16,6 +16,16 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { ConnectorSupervisor } from "./connector-supervisor";
+import {
+  DESKTOP_OAUTH_CLIENT_ID,
+  DESKTOP_OAUTH_PROTOCOL,
+  DESKTOP_OAUTH_REDIRECT_URI,
+  createDesktopOAuthRequest,
+  desktopOAuthCodeFromCallback,
+  desktopOAuthUrlFromArgv,
+  type DesktopOAuthPending,
+  type DesktopOAuthResult,
+} from "./desktop-oauth";
 import { DesktopBindingStore } from "./desktop-binding";
 import { DesktopDeviceService } from "./desktop-device-service";
 import { DesktopSettingsStore } from "./desktop-settings";
@@ -75,6 +85,10 @@ let terminalLeaseRenewTimer: NodeJS.Timeout | null = null;
 const trackedTerminals = new Map<string, TrackedTerminal>();
 const latestTerminalTokensByUser = new Map<string, string>();
 const activeNotifications = new Set<Notification>();
+let pendingDesktopOAuth: DesktopOAuthPending | null = null;
+let desktopOAuthResult: DesktopOAuthResult | null = null;
+const pendingDesktopOAuthCallbacks: string[] = [];
+let desktopOAuthDrainPromise: Promise<void> | null = null;
 
 type TrackedTerminal = {
   connectorId: string;
@@ -89,6 +103,7 @@ app.setName(APP_NAME);
 if (process.platform === "win32") {
   app.setAppUserModelId(app.isPackaged ? APP_ID : process.execPath);
 }
+registerDesktopOAuthProtocol();
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -130,6 +145,100 @@ function apiNamespace(): string {
       process.env.AGENTS_ANYWHERE_API_NAMESPACE ??
       DEFAULT_API_NAMESPACE,
   );
+}
+
+function desktopOAuthWebOrigin(): string {
+  const explicit = process.env.WORKBENCH_OAUTH_WEB_ORIGIN?.trim();
+  if (explicit) return explicit.replace(/\/+$/, "");
+
+  const apiUrl = new URL(apiOrigin());
+  if (
+    !app.isPackaged &&
+    (apiUrl.hostname === "127.0.0.1" || apiUrl.hostname === "localhost") &&
+    apiUrl.port === "8000"
+  ) {
+    apiUrl.port = "5174";
+  }
+  return apiUrl.origin;
+}
+
+function registerDesktopOAuthProtocol(): void {
+  if (!app.isPackaged && process.argv[1]) {
+    app.setAsDefaultProtocolClient(
+      DESKTOP_OAUTH_PROTOCOL,
+      process.execPath,
+      [path.resolve(process.argv[1])],
+    );
+    return;
+  }
+  app.setAsDefaultProtocolClient(DESKTOP_OAUTH_PROTOCOL);
+}
+
+function queueDesktopOAuthCallback(rawUrl: string): void {
+  if (!rawUrl.startsWith(`${DESKTOP_OAUTH_PROTOCOL}:`)) return;
+  pendingDesktopOAuthCallbacks.push(rawUrl);
+  if (app.isReady()) void drainDesktopOAuthCallbacks();
+}
+
+function drainDesktopOAuthCallbacks(): Promise<void> {
+  if (desktopOAuthDrainPromise) return desktopOAuthDrainPromise;
+  desktopOAuthDrainPromise = (async () => {
+    while (pendingDesktopOAuthCallbacks.length > 0) {
+      const rawUrl = pendingDesktopOAuthCallbacks.shift();
+      if (rawUrl) await handleDesktopOAuthCallback(rawUrl);
+    }
+  })().finally(() => {
+    desktopOAuthDrainPromise = null;
+  });
+  return desktopOAuthDrainPromise;
+}
+
+async function handleDesktopOAuthCallback(rawUrl: string): Promise<void> {
+  showMainWindow();
+  try {
+    const pending = pendingDesktopOAuth;
+    const code = desktopOAuthCodeFromCallback(rawUrl, pending);
+    if (!pending) throw new Error("Desktop login request expired. Start sign-in again.");
+    pendingDesktopOAuth = null;
+    const accessToken = await exchangeDesktopOAuthCode(code, pending.verifier);
+    publishDesktopOAuthResult({ status: "success", accessToken });
+  } catch (error) {
+    publishDesktopOAuthResult({ status: "error", error: errorMessage(error) });
+  }
+}
+
+async function exchangeDesktopOAuthCode(code: string, verifier: string): Promise<string> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15_000);
+  try {
+    const response = await net.fetch(`${apiOrigin()}${apiNamespace()}/oauth/token`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "authorization_code",
+        code,
+        client_id: DESKTOP_OAUTH_CLIENT_ID,
+        redirect_uri: DESKTOP_OAUTH_REDIRECT_URI,
+        code_verifier: verifier,
+      }).toString(),
+      signal: controller.signal,
+    });
+    const payload = await response.json() as { access_token?: unknown; detail?: unknown };
+    if (!response.ok) {
+      throw new Error(typeof payload.detail === "string" ? payload.detail : `Desktop login failed (${response.status}).`);
+    }
+    if (typeof payload.access_token !== "string" || !payload.access_token) {
+      throw new Error("Desktop login token response was invalid.");
+    }
+    return payload.access_token;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function publishDesktopOAuthResult(result: DesktopOAuthResult): void {
+  desktopOAuthResult = result;
+  sendToRenderer("workbench:auth:oauthResultReady");
 }
 
 function normalizeApiNamespace(value: string): string {
@@ -435,6 +544,20 @@ function registerIpcHandlers(): void {
     assertTrustedRenderer(event);
     if (!/^https?:\/\//i.test(url)) throw new Error("Only http(s) URLs can be opened externally.");
     await shell.openExternal(url);
+  });
+  ipcMain.handle("workbench:auth:startOAuth", async (event) => {
+    assertTrustedRenderer(event);
+    const request = createDesktopOAuthRequest(desktopOAuthWebOrigin());
+    pendingDesktopOAuth = request.pending;
+    desktopOAuthResult = null;
+    await shell.openExternal(request.authorizeUrl);
+    return { authorizeUrl: request.authorizeUrl };
+  });
+  ipcMain.handle("workbench:auth:consumeOAuthResult", (event): DesktopOAuthResult | null => {
+    assertTrustedRenderer(event);
+    const result = desktopOAuthResult;
+    desktopOAuthResult = null;
+    return result;
   });
   ipcMain.handle("workbench:development:clearCache", async (event) => {
     assertTrustedRenderer(event);
@@ -897,6 +1020,12 @@ function errorMessage(error: unknown): string {
 
 if (hasSingleInstanceLock) {
   registerIpcHandlers();
+  const initialDesktopOAuthUrl = desktopOAuthUrlFromArgv(process.argv);
+  if (initialDesktopOAuthUrl) queueDesktopOAuthCallback(initialDesktopOAuthUrl);
+  app.on("open-url", (event, rawUrl) => {
+    event.preventDefault();
+    queueDesktopOAuthCallback(rawUrl);
+  });
   app.whenReady().then(async () => {
     Menu.setApplicationMenu(null);
     registerStaticWebProtocol();
@@ -904,6 +1033,7 @@ if (hasSingleInstanceLock) {
     const settings = requireSettings().get();
     const showOnLaunch = !settings.silentLaunch || !launchedAsLoginItem() || Boolean(process.env.WORKBENCH_WEB_URL);
     createMainWindow(showOnLaunch);
+    await drainDesktopOAuthCallbacks();
     if (process.platform === "darwin" && app.dock) app.dock.setIcon(appWindowIcon());
     if (!showOnLaunch) hideDockIfIdle();
 
@@ -917,7 +1047,11 @@ if (hasSingleInstanceLock) {
   });
 
   app.on("activate", () => showMainWindow());
-  app.on("second-instance", () => showMainWindow());
+  app.on("second-instance", (_event, argv) => {
+    const rawUrl = desktopOAuthUrlFromArgv(argv);
+    if (rawUrl) queueDesktopOAuthCallback(rawUrl);
+    showMainWindow();
+  });
   app.on("window-all-closed", () => {
     // Connector cleanup is handled by the explicit quit flow.
   });

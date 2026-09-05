@@ -62,10 +62,19 @@ type OAuthTemplate = {
   apply: (baseUrl: string) => Partial<OAuthProviderConfigUpdate>
 }
 
-type CopyKey = "endpoint" | "database" | "webCallback" | "callback" | "mobileClient"
+type CopyKey =
+  | "endpoint"
+  | "database"
+  | "webCallback"
+  | "mobileCallback"
+  | "mobileClient"
+  | "desktopCallback"
+  | "desktopClient"
 
 const MOBILE_CLIENT_ID = "agents-anywhere-mobile"
 const MOBILE_CALLBACK = "agents-anywhere://oauth/callback"
+const DESKTOP_CLIENT_ID = "agents-anywhere-desktop"
+const DESKTOP_CALLBACK = "agents-anywhere-desktop://oauth/callback"
 
 function formatUptime(seconds: number) {
   if (seconds < 60) return `${seconds}s`
@@ -834,7 +843,7 @@ function FirstPartyClientsCard({
           value={<span className="rounded-full bg-muted px-2 py-0.5 text-xs">{t("locked")}</span>}
         />
         <InfoRow
-          label={t("clientId")}
+          label={t("mobileClientId")}
           value={<code className="code-mono text-sm">{MOBILE_CLIENT_ID}</code>}
           action={
             <CopyButton
@@ -856,13 +865,35 @@ function FirstPartyClientsCard({
           }
         />
         <InfoRow
-          label={t("nativeCallback")}
+          label={t("mobileCallback")}
           value={<code className="code-mono text-sm">{MOBILE_CALLBACK}</code>}
           action={
             <CopyButton
-              copied={copied === "callback"}
+              copied={copied === "mobileCallback"}
               label={tCommon("copy")}
-              onClick={() => onCopy("callback", MOBILE_CALLBACK)}
+              onClick={() => onCopy("mobileCallback", MOBILE_CALLBACK)}
+            />
+          }
+        />
+        <InfoRow
+          label={t("desktopClientId")}
+          value={<code className="code-mono text-sm">{DESKTOP_CLIENT_ID}</code>}
+          action={
+            <CopyButton
+              copied={copied === "desktopClient"}
+              label={tCommon("copy")}
+              onClick={() => onCopy("desktopClient", DESKTOP_CLIENT_ID)}
+            />
+          }
+        />
+        <InfoRow
+          label={t("desktopCallback")}
+          value={<code className="code-mono text-sm">{DESKTOP_CALLBACK}</code>}
+          action={
+            <CopyButton
+              copied={copied === "desktopCallback"}
+              label={tCommon("copy")}
+              onClick={() => onCopy("desktopCallback", DESKTOP_CALLBACK)}
             />
           }
           last

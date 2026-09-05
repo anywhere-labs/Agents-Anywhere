@@ -105,6 +105,15 @@ export type DesktopWorkbenchBridge = {
     node: string
   }
   openExternal: (url: string) => Promise<void>
+  auth?: {
+    startOAuth: () => Promise<{ authorizeUrl: string }>
+    consumeOAuthResult: () => Promise<
+      | { status: "success"; accessToken: string }
+      | { status: "error"; error: string }
+      | null
+    >
+    onOAuthResult: (listener: () => void) => void | (() => void)
+  }
   lifecycle?: {
     onBeforeQuit: (listener: () => void | Promise<void>) => () => void
     trackTerminal?: (input: { connectorId: string; terminalId: string; userId: string; token: string }) => Promise<void>

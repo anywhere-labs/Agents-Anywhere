@@ -712,6 +712,7 @@ def start_desktop() -> None:
             f"AGENTS_ANYWHERE_API={SERVER_URL}",
             f"WORKBENCH_API_NAMESPACE={API_NAMESPACE}",
             f"AGENTS_ANYWHERE_API_NAMESPACE={API_NAMESPACE}",
+            f"WORKBENCH_OAUTH_WEB_ORIGIN={WEB_URL}",
             f"WORKBENCH_WEB_PORT={DESKTOP_PORT}",
             *_desktop_runtime_command(),
         ],
