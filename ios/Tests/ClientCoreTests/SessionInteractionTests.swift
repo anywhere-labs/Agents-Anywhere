@@ -140,6 +140,27 @@ import Testing
         #expect(http.count("respond") == 1)
     }
 
+    @Test func waitingApprovalMetadataKeepsLiveConnectionAndApprovalActionUsable() async throws {
+        let http = TestHTTPTransport(); let realtime = TestRealtimeAPI()
+        let repo = repository(transport: http, realtime: realtime)
+        defer { repo.reset() }
+        let session = repo.session(id: "session")
+        let observation = Task { await session.connect() }; defer { observation.cancel() }
+        try await eventually { session.runtime.isFresh }
+        var meta = try fixtureObject("session")["session"] as! [String: Any]
+        meta["status"] = "waiting_approval"; meta["updatedSeq"] = 11
+        // This is the real backend status used when an Agent requests approval.
+        realtime.yield(try event("session.meta.updated", seq: 11, payload: ["session": meta]))
+        try await eventually { session.metadata?.status.rawValue == "waiting_approval" }
+        #expect(session.connection == .connected && session.failure == nil)
+        let item = try #require(session.notices.notices.first)
+        #expect(item.canRespond(fresh: session.runtime.isFresh))
+        let chat = SessionChatModel(session: session, repository: repo, attachments: .init(attachmentAPI: V2AttachmentAPI(transport: http)))
+        await chat.respond(notice: item, action: item.notice.actions[0])
+        #expect(http.count("respond") == 1 && item.submission == .accepted)
+        #expect(realtime.tickets == 1)
+    }
+
     @Test func genericActionSchemaBuildsTypedNestedInputsAndRejectsUnknownConstraints() throws {
         let schema: JSONValue = .object([
             "type": .string("object"), "required": .array([.string("reason"), .string("options")]),

@@ -227,6 +227,7 @@ private extension V2RuntimeStatus {
         switch self {
         case .idle: "Idle"
         case .waiting: "Waiting"
+        case .waitingApproval: "Awaiting Approval"
         case .pending: "Pending"
         case .running: "Running"
         case .stopping: "Stopping"

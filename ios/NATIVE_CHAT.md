@@ -41,6 +41,44 @@ Semantic error and availability colors remain separate from the primary color.
 - Tail following uses a continuous spring. Scrolling away suspends it, and a
   small borderless “到底部” pill sits centered above the composer. There is no
   animated streaming dot or cursor.
+- An explicit return-to-bottom request survives the previous drag's deceleration
+  callbacks. The pill is a sibling of the scroll view, and native `ScrollPosition`
+  owns navigation; starting another drag cancels that return intent.
+
+## Session presentation and files
+
+- Tools use a single-line, monospaced marker with a disclosure chevron. Commands,
+  MCP calls, web searches, Agent calls and file changes follow Web's payload
+  parsing. Expanded commands/outputs have bounded scrolling and copying; unified
+  diffs include action colors and old/new line numbers. These panels render
+  timeline payloads, without fetching file contents.
+- Consecutive tools/reasoning/artifacts, child Agent calls and reconnect attempts
+  are grouped. Groups retain the first item's identity while growing, and
+  disclosure state survives streaming updates. Items targeted by active notices
+  remain individually visible. Hidden items, turn markers, duplicate diff
+  artifacts and Claude's interruption/no-response sentinels are filtered like Web.
+- The session header uses `safeAreaBar` with the scroll view's native soft edge
+  effect. The sidebar icon has three left-aligned strokes, the last shorter.
+  A right-hand glass button group contains New Session and a details menu.
+- The plus sheet includes takeover, its consequences and an explicit confirmation.
+  Ambiguous writes require refreshing; a successful takeover followed by a failed
+  read retains the confirmed write result.
+- Details expose session/device/Agent metadata and JSON export. The server export
+  paginates independently of the visible history cache, deduplicates revisions,
+  and rejects stalled cursors, cancellation and mismatched sessions. Both exports
+  preserve original timeline/notice payloads and identify their source/window.
+- Workspace file paths in markers, Markdown links and inline code open a **sheet
+  containing the Web preview**. Workspace images also open Web on demand. The
+  native directory browser and session links share a scoped, one-use preview
+  token flow; native code does not fetch `fs/readText` to render previews. Each
+  sheet uses an ephemeral WebKit data store and obtains a fresh token on retry.
+  Already displayed content remains visible offline, with device/network status.
+  Uploaded session attachments retain their separate attachment download flow.
+- Non-inline session/action errors appear below the header in borderless glass
+  toasts with horizontal paging, dismissal and explicit refresh where applicable.
+  Toasts overlay content without changing the timeline's height. Dismissing one
+  never changes connection facts or replays an action. Inline form errors remain
+  with their forms.
 
 ## New Session and connectivity
 
@@ -76,9 +114,11 @@ separate from authoritative runtime state. Approval, confirmation, execution-err
 and input-request interactions share the same action path. Action IDs, labels,
 styles, blocking scope, status and expiry come from the protocol.
 
-- An active interaction blocking this session stays in a bounded, internally
-  scrolling card above the composer. The dock shows the first pending card and
-  a count; it can expand into a page containing all pending cards.
+- Active interactions blocking this session form a vertically paged stack above
+  the composer, with the same horizontal inset as the collapsed composer. The
+  selected item survives new arrivals; removing it selects an adjacent item.
+  Short cards pass vertical drags to the pager. Long forms scroll internally;
+  swiping the dock header still changes pages, and Expand opens all interactions.
 - Nonblocking interactions are associated with their source/context timeline
   item when present. Unanchored notices appear in the timeline. Ordinary
   notifications do not gain action buttons or block sending.
@@ -96,15 +136,39 @@ styles, blocking scope, status and expiry come from the protocol.
   A later refresh failure cannot turn an accepted action into a retryable write.
   Ambiguous writes require review; drafts survive disconnection and status
   revisions, and reset when the form definition changes.
+- `waiting_approval` is a runtime/session state, as well as a timeline status.
+  Metadata decoding accepts it and preserves unknown future state values as
+  `.unknown`. A decoding failure is an invalid response, never a network outage;
+  errors identify the event and field without exposing payload contents. Cards
+  distinguish phone offline, device offline and state validation errors.
+
+## Login lifecycle
+
+After the user selects a local server (address entry or QR confirmation), a real
+native connection to that target requests local-network access before the OAuth
+browser opens. It waits through the system prompt, supports cancellation, and
+offers Settings when access is denied. It does not broadcast discovery traffic.
+Authentication URL sessions wait for connectivity. `Info.plist` registers the
+OAuth callback as a URL-types array and declares scoped local-network ATS rules.
+
+OAuth attempts own their presentation window and continuation. Browser dismissal,
+failure to start, task cancellation and late duplicate callbacks settle the
+attempt exactly once. The redirect target, state and authorization-code fields
+are validated before token exchange, and the profile is verified before saving
+credentials. Cancelling the browser remains a retryable login outcome rather
+than a “server unavailable” alert.
 
 ## Verified checks
 
 Verified on 2026-09-05, without starting a server or simulator:
 
-- 54 headless Swift tests across seven suites pass against production client-core
+- 73 headless Swift tests across ten suites pass against production client-core
   sources. They cover API contracts, recovery/cache races, uncertain delivery,
   30 Hz presentation, echo handoff, target preparation, preference scope, schema
-  payloads and interaction lifecycle/IME guards.
+  payloads and interaction lifecycle/IME guards. Session-detail checks cover
+  tool/diff parsing, grouping identity, file routing, export pagination/cancellation,
+  OAuth callback validation, local-server classification and waiting-approval
+  metadata through an actual repository connection and response.
 - The Python backend contract fixture exporter reports that fixtures are current.
 - The complete unsigned iOS Debug target builds for `generic/platform=iOS`, using
   the checked-in package resolutions and the Xcode beta toolchain. The app's
@@ -155,3 +219,12 @@ keyboard layout and real mobile-network behavior still need manual validation:
 7. Exercise approval, confirmation, execution-error and multi-question input
    requests, including concurrent notices, IME input, expiry, failures and an
    accepted response followed by temporary disconnection.
+8. Check single-line markers, nested Agent groups, command/output copying and
+   file-change diffs. Open workspace paths and images from Markdown and the file
+   browser; refresh previews after disconnection and close/reopen a sheet.
+9. Swipe approval cards vertically, including long forms; verify their width
+   against the collapsed composer. Swipe multiple top errors horizontally and
+   dismiss them without changing the conversation's scroll position.
+10. Test first-use local-network permission (allow and deny), cancelling OAuth,
+    an invalid/expired callback and starting login again. Inspect the native
+    header edge effect over long titles and bright content in both appearances.

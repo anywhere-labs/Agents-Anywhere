@@ -274,7 +274,7 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleURLTypes = "{\n    CFBundleURLName = \"com.t4wefan.agents-anywhere\";\n    CFBundleURLSchemes =     (\n        \"agents-anywhere\"\n    );\n}";
+				INFOPLIST_FILE = "$(SRCROOT)/Info.plist";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Scan login QR codes and attach camera photos to sessions.";
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Connect to your self-hosted Agents Anywhere server on the local network.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
@@ -320,7 +320,7 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleURLTypes = "{\n    CFBundleURLName = \"com.t4wefan.agents-anywhere\";\n    CFBundleURLSchemes =     (\n        \"agents-anywhere\"\n    );\n}";
+				INFOPLIST_FILE = "$(SRCROOT)/Info.plist";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Scan login QR codes and attach camera photos to sessions.";
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Connect to your self-hosted Agents Anywhere server on the local network.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;

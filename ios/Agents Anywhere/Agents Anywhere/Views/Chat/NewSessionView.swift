@@ -73,8 +73,12 @@ struct NewSessionView: View {
             .scrollDismissesKeyboard(.interactively)
             .refreshable { await refresh() }
             .safeAreaInset(edge: .top, spacing: 0) {
-                ChatPageHeader(title: "Agents Anywhere", controls: controls, onMenu: onMenu,
-                    onNewSession: { model.draft.isFocused = true })
+                ChatPageHeader(title: "Agents Anywhere", controls: controls, onMenu: onMenu) {
+                    Button { model.draft.isFocused = true } label: {
+                        ChatHeaderActionLabel(symbol: "square.and.pencil", controls: controls)
+                            .glassEffect(.regular.interactive(), in: .circle)
+                    }.accessibilityLabel("开始新会话")
+                }
             }
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 ChatComposerDock(draft: model.draft, settings: model.settings,

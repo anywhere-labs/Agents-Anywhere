@@ -3,6 +3,7 @@ import Foundation
 enum V2RuntimeStatus: String, Codable, Hashable {
     case idle
     case waiting
+    case waitingApproval = "waiting_approval"
     case pending
     case running
     case stopping
@@ -10,6 +11,11 @@ enum V2RuntimeStatus: String, Codable, Hashable {
     case error
     case disconnected
     case unknown
+
+    init(from decoder: Decoder) throws {
+        let value = try decoder.singleValueContainer().decode(String.self)
+        self = Self(rawValue: value) ?? .unknown
+    }
 }
 
 struct V2RuntimeSelectionScope: RawRepresentable, Codable, Hashable, ExpressibleByStringLiteral {

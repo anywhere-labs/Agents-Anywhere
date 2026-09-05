@@ -145,6 +145,7 @@ private struct QRConfirmStepView: View {
 
     @State private var isRequesting = false
     @State private var alertMessage: String?
+    @State private var requestTask: Task<Void, Never>?
 
     var body: some View {
         AuthScreen(
@@ -171,14 +172,20 @@ private struct QRConfirmStepView: View {
                     title: "Log In",
                     isLoading: isRequesting,
                 ) {
-                    Task { await requestWebConfirmation() }
+                    requestTask = Task { await requestWebConfirmation() }
                 }
             }
         }
+        .onDisappear { requestTask?.cancel(); requestTask = nil }
         .alert("Login Request Failed", isPresented: Binding(
             get: { alertMessage != nil },
             set: { if !$0 { alertMessage = nil } },
         )) {
+            if appState.authNeedsLocalNetworkSettings {
+                Button("Open Settings") {
+                    if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
+                }
+            }
             Button("OK", role: .cancel) {}
         } message: {
             Text(alertMessage ?? "The login request could not be started.")
@@ -186,11 +193,12 @@ private struct QRConfirmStepView: View {
     }
 
     private func requestWebConfirmation() async {
+        guard !isRequesting else { return }
         isRequesting = true
         defer { isRequesting = false }
         if await appState.requestMobileLogin(payload: payload) {
-            onWaiting()
-        } else {
+            if !Task.isCancelled { onWaiting() }
+        } else if !Task.isCancelled {
             alertMessage = appState.authError ?? "The login request could not be started."
         }
     }

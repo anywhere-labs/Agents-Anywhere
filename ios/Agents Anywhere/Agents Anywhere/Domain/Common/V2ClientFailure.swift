@@ -15,7 +15,7 @@ struct V2ClientFailure: Error, Hashable, LocalizedError {
 
     init(_ error: Error) {
         if let failure = error as? Self { self = failure; return }
-        message = error.localizedDescription
+        message = (error as? DecodingError)?.v2Description ?? error.localizedDescription
         code = (error as? HTTPError)?.serverCode ?? (error as? V2RuntimeError)?.code
         if error is CancellationError || (error as? URLError)?.code == .cancelled {
             kind = .cancelled
@@ -34,7 +34,8 @@ struct V2ClientFailure: Error, Hashable, LocalizedError {
             case .streamOverflow: kind = .transient
             default: kind = .invalidResponse
             }
-        } else if error is V2BusinessError { kind = .rejected }
+        } else if error is DecodingError { kind = .invalidResponse }
+        else if error is V2BusinessError { kind = .rejected }
         else { kind = .transient }
     }
 

@@ -1,37 +1,47 @@
 import SwiftUI
 
-struct ChatPageHeader: View {
+struct ChatPageHeader<Actions: View>: View {
     let title: String
     var subtitle: String?
     let controls: ChatControlMetrics
     let onMenu: () -> Void
-    let onNewSession: () -> Void
+    @ViewBuilder var actions: () -> Actions
 
     var body: some View {
         GlassEffectContainer(spacing: 8) {
             HStack(spacing: 12) {
-                circle("line.3.horizontal.decrease", label: "打开侧栏", action: onMenu)
-                VStack(spacing: 3) {
+                Button(action: onMenu) {
+                    SidebarMenuIcon()
+                        .frame(width: controls.diameter, height: controls.diameter)
+                        .glassEffect(.regular.interactive(), in: .circle)
+                }.accessibilityLabel("打开侧栏")
+                VStack(alignment: .leading, spacing: 3) {
                     Text(title).font(.headline).lineLimit(1)
                     if let subtitle { Text(subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
-                }
-                .frame(maxWidth: .infinity)
-                circle("square.and.pencil", label: "新建会话", action: onNewSession)
-            }
-            .buttonStyle(.plain)
+                }.frame(maxWidth: .infinity, alignment: .leading)
+                actions()
+            }.buttonStyle(.plain)
         }
-        .padding(.horizontal, 16)
-        .padding(.top, 8)
-        .padding(.bottom, 10)
+        .padding(.horizontal, 16).padding(.top, 8).padding(.bottom, 10)
     }
+}
 
-    private func circle(_ icon: String, label: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: icon).font(.system(size: 20, weight: .medium))
-                .frame(width: controls.diameter, height: controls.diameter)
-                .glassEffect(.regular.interactive(), in: .circle)
-        }
-        .accessibilityLabel(label)
+private struct SidebarMenuIcon: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4.5) {
+            Capsule().frame(width: 21, height: 2)
+            Capsule().frame(width: 21, height: 2)
+            Capsule().frame(width: 13, height: 2)
+        }.frame(width: 24, height: 24).accessibilityHidden(true)
+    }
+}
+
+struct ChatHeaderActionLabel: View {
+    let symbol: String
+    let controls: ChatControlMetrics
+    var body: some View {
+        Image(systemName: symbol).font(.system(size: 19, weight: .regular))
+            .frame(width: controls.diameter, height: controls.diameter).contentShape(Rectangle())
     }
 }
 

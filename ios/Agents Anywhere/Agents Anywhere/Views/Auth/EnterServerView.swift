@@ -55,6 +55,9 @@ private struct ServerAddressView: View {
     @State private var isChecking = false
     @State private var isSigningIn = false
     @State private var alertMessage: String?
+    @State private var loginRequest: UUID?
+    @State private var statusMessage: String?
+    @State private var alertTitle = "Sign In Failed"
 
     var body: some View {
         AuthScreen(
@@ -71,7 +74,7 @@ private struct ServerAddressView: View {
                     submitLabel: .continue,
                     onSubmit: {
                         guard canContinue else { return }
-                        Task { await startWebSignIn() }
+                        loginRequest = UUID()
                     },
                 )
 
@@ -80,19 +83,33 @@ private struct ServerAddressView: View {
                     isLoading: isChecking || isSigningIn,
                     disabled: !canContinue,
                 ) {
-                    Task { await startWebSignIn() }
+                    loginRequest = UUID()
                 }
 
+                if isChecking || isSigningIn {
+                    Button("Cancel Sign In") { loginRequest = nil; oauthLogin.cancel() }
+                        .font(.subheadline)
+                }
+                if let statusMessage { Text(statusMessage).font(.footnote).foregroundStyle(.secondary) }
                 Text("The server login opens in a secure web session. You can use password login or any OAuth provider configured on that server.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .alert("Server Unavailable", isPresented: Binding(
+        .task(id: loginRequest) {
+            if loginRequest != nil { await startWebSignIn() }
+        }
+        .onDisappear { oauthLogin.cancel() }
+        .alert(alertTitle, isPresented: Binding(
             get: { alertMessage != nil },
             set: { if !$0 { alertMessage = nil } },
         )) {
+            if appState.authNeedsLocalNetworkSettings {
+                Button("Open Settings") {
+                    if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
+                }
+            }
             Button("OK", role: .cancel) {}
         } message: {
             Text(alertMessage ?? "The server could not be reached.")
@@ -104,25 +121,29 @@ private struct ServerAddressView: View {
     }
 
     private func startWebSignIn() async {
-        isChecking = true
+        guard !isChecking && !isSigningIn else { return }
+        isChecking = true; statusMessage = nil; alertMessage = nil
+        defer { isChecking = false; isSigningIn = false }
         guard let url = await appState.checkServer(serverText) else {
-            isChecking = false
+            guard !Task.isCancelled else { return }
+            alertTitle = appState.authNeedsLocalNetworkSettings ? "Local Network Access" : "Server Unavailable"
             alertMessage = appState.authError ?? "The server could not be reached."
             return
         }
-        isChecking = false
-        isSigningIn = true
-        defer { isSigningIn = false }
+        guard !Task.isCancelled else { return }
+        isChecking = false; isSigningIn = true
         do {
             let token = try await oauthLogin.authenticate(serverURL: url)
+            try Task.checkCancellation()
             await appState.completeOAuthLogin(serverURL: url, token: token, showSignedInRoute: false)
-            if appState.me != nil {
-                onSignedIn()
-            } else {
-                alertMessage = appState.authError ?? "The login could not be completed."
-            }
-        } catch {
-            alertMessage = error.localizedDescription
+            try Task.checkCancellation()
+            if appState.authError == nil, appState.me != nil { onSignedIn() }
+            else { alertTitle = "Sign In Failed"; alertMessage = appState.authError ?? "The login could not be completed." }
+        } catch is CancellationError { }
+        catch OAuthLoginError.cancelled { statusMessage = OAuthLoginError.cancelled.localizedDescription }
+        catch {
+            guard !Task.isCancelled else { return }
+            alertTitle = "Sign In Failed"; alertMessage = error.localizedDescription
         }
     }
 }

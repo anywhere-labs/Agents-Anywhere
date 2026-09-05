@@ -3,6 +3,19 @@ import Testing
 @testable import ClientCore
 
 @Suite @MainActor struct SessionProjectionTests {
+    @Test func allBackendSessionStatusesAndFutureStatesDecodeInMetadata() throws {
+        for status in ["idle", "waiting", "pending", "running", "stopping", "waiting_approval", "error", "blocked"] {
+            var raw = try fixtureObject("session")["session"] as! [String: Any]
+            raw["status"] = status
+            let meta: V2SessionMeta = try decode(raw)
+            #expect(meta.status.rawValue == status)
+        }
+        var raw = try fixtureObject("session")["session"] as! [String: Any]
+        raw["status"] = "future_status"; raw["connectorStatus"] = "future_presence"
+        let meta: V2SessionMeta = try decode(raw)
+        #expect(meta.status == .unknown && meta.connectorStatus == .unknown)
+    }
+
     @Test func sameSequenceLiveTransitionsAreNotDeduplicated() throws {
         var projection = V2SessionProjection(snapshot: try snapshot(), maximumItems: 100)
         var state = try fixtureObject("state")["state"] as! [String: Any]

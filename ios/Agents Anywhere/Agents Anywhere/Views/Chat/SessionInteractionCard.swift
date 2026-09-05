@@ -49,6 +49,7 @@ struct SessionInteractionCard: View {
                 submissionStatus(at: timeline.date)
                 if let error = item.error { Text(error).font(.footnote).foregroundStyle(.secondary) }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(16)
             .background(Color(uiColor: .secondarySystemBackground), in: .rect(cornerRadius: 22))
         }
@@ -119,12 +120,20 @@ struct SessionInteractionCard: View {
     }
 
     @ViewBuilder private func submissionStatus(at now: Date) -> some View {
-        if item.isExpired(at: now) {
+        if item.submission == .accepted {
+            Text("回应已提交，等待 Agent 确认").font(.footnote).foregroundStyle(.secondary)
+        } else if case .sending = item.submission {
+            Text("正在提交回应…").font(.footnote).foregroundStyle(.secondary)
+        } else if item.isExpired(at: now) {
             Text("此交互已过期，等待 Agent 更新状态。")
                 .font(.footnote).foregroundStyle(.secondary)
-        } else if !chat.session.runtime.isFresh {
-            Text("连接恢复后才能回应；已填写的内容会保留。")
+        } else if let reason = chat.responseUnavailableReason {
+            Text(reason)
                 .font(.footnote).foregroundStyle(.secondary)
+            if chat.session.network.availability != .offline && chat.session.metadata?.connectorStatus == .online {
+                Button("刷新状态") { Task { await chat.session.refresh() } }
+                    .font(.footnote).disabled(chat.session.isLoading || chat.isWorking)
+            }
         } else {
             switch item.submission {
             case .sending: Text("正在提交回应…").font(.footnote).foregroundStyle(.secondary)
@@ -234,28 +243,77 @@ struct SessionInteractionDock: View {
     let chat: SessionChatModel
     let maximumHeight: CGFloat
     let onShowAll: () -> Void
-    @State private var contentHeight: CGFloat = 0
+    @State private var selectedID: String?
+    @State private var contentHeights: [String: CGFloat] = [:]
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var items: [SessionNoticeModel] { chat.session.notices.notices.filter { $0.blocks(chat.session.id) } }
+    private var selectedIndex: Int { items.firstIndex { $0.id == selectedID } ?? 0 }
+    private var peek: CGFloat { items.count > 1 ? 16 : 0 }
+    private var pageHeight: CGFloat {
+        let measured = items.compactMap { contentHeights[$0.id] }.max() ?? maximumHeight
+        return max(72, min(maximumHeight - peek * 2, max(120, measured)))
+    }
 
     var body: some View {
-        if let first = items.first {
+        let motionReduced = reduceMotion
+        if !items.isEmpty {
             VStack(spacing: 6) {
-                HStack {
-                    Text(items.count > 1 ? "\(items.count) 项待回应" : "需要你的回应").font(.caption.weight(.medium)).foregroundStyle(.secondary)
-                    Spacer()
-                    Button("展开", action: onShowAll).font(.caption)
+                HStack(spacing: 8) {
+                    Text(items.count > 1 ? "需要回应 · \(selectedIndex + 1)/\(items.count)" : "需要你的回应")
+                        .font(.caption.weight(.medium)).foregroundStyle(.secondary)
+                    if items.count > 1 { Text("上下滑动切换").font(.caption2).foregroundStyle(.tertiary) }
+                    Spacer(minLength: 0)
+                    Button("展开", action: onShowAll).font(.caption).frame(minHeight: 32)
                 }
-                .padding(.horizontal, 6)
-                ScrollView {
-                    SessionInteractionCard(item: first, chat: chat)
-                        .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { contentHeight = $0 }
+                .padding(.horizontal, 6).contentShape(Rectangle())
+                // Long forms retain their inner scrolling; this header always
+                // provides the same page gesture without stealing text selection.
+                .gesture(DragGesture(minimumDistance: 16).onEnded { value in
+                    guard abs(value.translation.height) > abs(value.translation.width) else { return }
+                    step(value.translation.height < 0 ? 1 : -1)
+                })
+                .accessibilityAction(named: "下一项") { step(1) }
+                .accessibilityAction(named: "上一项") { step(-1) }
+
+                ScrollView(.vertical) {
+                    VStack(spacing: 8) {
+                        ForEach(items) { item in
+                            ScrollView(.vertical) {
+                                SessionInteractionCard(item: item, chat: chat)
+                                    .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { contentHeights[item.id] = $0 }
+                            }
+                            .scrollDisabled((contentHeights[item.id] ?? 0) <= pageHeight + 1)
+                            .scrollBounceBehavior(.basedOnSize)
+                            .frame(height: pageHeight)
+                            .background(Color(uiColor: .secondarySystemBackground), in: .rect(cornerRadius: 22))
+                            .clipShape(.rect(cornerRadius: 22))
+                            .scrollTransition(.interactive, axis: .vertical) { content, phase in
+                                content.scaleEffect(motionReduced ? 1 : 1 - min(abs(phase.value), 1) * 0.04)
+                                    .opacity(1 - min(abs(phase.value), 1) * 0.3)
+                            }
+                            .id(item.id)
+                        }
+                    }.scrollTargetLayout()
                 }
-                .frame(height: min(maximumHeight, contentHeight > 0 ? contentHeight : maximumHeight))
-                .scrollBounceBehavior(.basedOnSize)
-                .clipShape(.rect(cornerRadius: 22))
+                .contentMargins(.vertical, peek, for: .scrollContent)
+                .scrollTargetBehavior(.viewAligned(limitBehavior: .alwaysByOne))
+                .scrollPosition(id: $selectedID, anchor: .center)
+                .scrollIndicators(.hidden).scrollBounceBehavior(.basedOnSize)
+                .frame(height: pageHeight + peek * 2).clipped()
+                .onChange(of: items.map(\.id), initial: true) { old, next in
+                    contentHeights = contentHeights.filter { next.contains($0.key) }
+                    if let selectedID, next.contains(selectedID) { return }
+                    let index = old.firstIndex(of: selectedID ?? "") ?? 0
+                    selectedID = next.isEmpty ? nil : next[min(index, next.count - 1)]
+                }
             }
-            .padding(.horizontal, 16).padding(.top, 6)
+            .padding(.horizontal, ChatControlMetrics.collapsedHorizontalInset).padding(.top, 6)
         }
+    }
+    private func step(_ delta: Int) {
+        let index = selectedIndex + delta
+        guard items.indices.contains(index) else { return }
+        withAnimation(reduceMotion ? nil : .smooth(duration: 0.25)) { selectedID = items[index].id }
     }
 }

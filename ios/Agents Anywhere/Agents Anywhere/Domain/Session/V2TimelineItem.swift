@@ -35,6 +35,8 @@ enum V2MessageRole: String, Codable, Hashable {
 }
 
 struct V2TimelineItem: Decodable, Identifiable, Hashable {
+    /// Preserve extension fields and unknown wire kinds for diagnostic exports.
+    let raw: JSONValue
     let id: V2TimelineItemID
     let sessionId: V2SessionID
     let turnId: V2TurnID?
@@ -70,6 +72,7 @@ struct V2TimelineItem: Decodable, Identifiable, Hashable {
     }
 
     init(from decoder: Decoder) throws {
+        raw = try JSONValue(from: decoder)
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(V2TimelineItemID.self, forKey: .id)
         sessionId = try container.decode(V2SessionID.self, forKey: .sessionId)
@@ -139,7 +142,7 @@ struct V2MessageContent: Hashable {
     let raw: JSONValue
 
     init(rawContent: JSONValue) {
-        text = rawContent["text"]?.stringValue ?? rawContent["content"]?.stringValue ?? ""
+        text = ["text", "content", "message", "rawText"].compactMap { rawContent[$0]?.stringValue }.first { !$0.isEmpty } ?? ""
         format = rawContent["format"]?.stringValue
         attachments = rawContent["attachments"]?.arrayValue?.map(V2AttachmentContent.init(rawContent:)) ?? []
         raw = rawContent
@@ -217,7 +220,7 @@ struct V2ArtifactContent: Hashable {
 }
 
 extension JSONValue {
-    var arrayValue: [JSONValue]? {
+    nonisolated var arrayValue: [JSONValue]? {
         if case let .array(value) = self {
             return value
         }

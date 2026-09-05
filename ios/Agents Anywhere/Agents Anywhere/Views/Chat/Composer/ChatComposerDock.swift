@@ -18,6 +18,7 @@ struct ChatComposerDock: View {
     var isBusy = false
     var isLoadingSettings = false
     var settingsError: String?
+    var sessionChat: SessionChatModel?
     let onSend: (String) async -> Void
     var onStop: () async -> Void = {}
     var onLoadSettings: () async -> Void = {}
@@ -41,7 +42,7 @@ struct ChatComposerDock: View {
             maximumEditorHeight: maximumEditorHeight, controls: controls,
             onSend: send, onStop: { Task { await onStop() } },
             onOptions: { showsOptions = true })
-        .frame(maxWidth: 780)
+        .frame(maxWidth: ChatControlMetrics.maximumContentWidth)
         .frame(maxWidth: .infinity)
         .background {
             ZStack {
@@ -57,7 +58,7 @@ struct ChatComposerDock: View {
                 canAttach: canAttach && draft.attachments.count < 5 && importCount == 0,
                 canSelectModel: canSelectModel, canSelectPermission: canSelectPermission,
                 isLoading: isLoadingSettings, loadingError: settingsError,
-                onReload: onLoadSettings, onApply: onApplySettings, applyError: applyError)
+                onReload: onLoadSettings, onApply: onApplySettings, applyError: applyError, sessionChat: sessionChat)
                 .task(id: "\(canSelectModel):\(canSelectPermission)") { await onLoadSettings() }
         }
         .onChange(of: photos) { _, items in importPhotos(items) }

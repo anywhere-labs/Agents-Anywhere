@@ -1,5 +1,4 @@
 import SwiftUI
-import WebKit
 
 struct WorkspaceFilesSheet: View {
     @Environment(\.dismiss) private var dismiss
@@ -8,8 +7,8 @@ struct WorkspaceFilesSheet: View {
     let workspace: V2DeviceWorkspace
     let service: V2WorkspaceFilesService
 
-    @State private var preview: WorkspaceWebPreview?
-    @State private var previewingPath: String?
+    var session: V2SessionModel?
+    @State private var preview: V2WorkspaceEntry?
     @State private var previewErrorMessage: String?
 
     var body: some View {
@@ -20,8 +19,7 @@ struct WorkspaceFilesSheet: View {
                 path: ".",
                 title: workspace.name,
                 service: service,
-                previewingPath: previewingPath,
-                onOpenFile: openFile
+                onOpenFile: openFile, canRead: canRead
             )
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -37,15 +35,13 @@ struct WorkspaceFilesSheet: View {
                     path: route.path,
                     title: route.title,
                     service: service,
-                    previewingPath: previewingPath,
-                    onOpenFile: openFile
+                    onOpenFile: openFile, canRead: canRead
                 )
             }
         }
         .sheet(item: $preview) { preview in
-            WorkspaceWebPreviewSheet(url: preview.url)
-                .presentationDetents([.large])
-                .presentationDragIndicator(.visible)
+            WorkspaceFilePreviewSheet(connectorId: connectorId, root: workspace.path,
+                path: preview.path, service: service, session: session)
         }
         .alert("Unable to preview file", isPresented: previewErrorBinding) {
             Button("OK", role: .cancel) {
@@ -65,22 +61,13 @@ struct WorkspaceFilesSheet: View {
         )
     }
 
+    private var canRead: Bool {
+        guard let session else { return true }
+        return session.isValid && session.network.availability != .offline && session.metadata?.connectorStatus == .online
+    }
     private func openFile(_ entry: V2WorkspaceEntry) {
-        guard previewingPath == nil else { return }
-        previewingPath = entry.path
-        Task {
-            defer { previewingPath = nil }
-            do {
-                let url = try await service.previewURL(
-                    connectorId: connectorId,
-                    root: workspace.path,
-                    entry: entry
-                )
-                preview = WorkspaceWebPreview(url: url)
-            } catch {
-                previewErrorMessage = error.localizedDescription
-            }
-        }
+        guard canRead else { previewErrorMessage = "设备或网络已离线，请恢复连接后重试。"; return }
+        preview = entry
     }
 }
 
@@ -89,25 +76,26 @@ private struct WorkspaceDirectoryRoute: Hashable {
     let title: String
 }
 
-private struct WorkspaceWebPreview: Identifiable {
-    let url: URL
-
-    var id: String { url.absoluteString }
-}
-
 private struct WorkspaceDirectoryView: View {
     let connectorId: V2ConnectorID
     let root: String
     let path: String
     let title: String
     let service: V2WorkspaceFilesService
-    let previewingPath: String?
     let onOpenFile: (V2WorkspaceEntry) -> Void
+    let canRead: Bool
 
     @State private var model = WorkspaceDirectoryModel()
 
     var body: some View {
         List {
+            if !canRead {
+                Label("设备或网络已离线，已加载的目录仍可查看。", systemImage: "wifi.slash")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+            if let error = model.errorMessage, !model.entries.isEmpty {
+                Text(error).font(.footnote).foregroundStyle(.secondary)
+            }
             if model.isLoading && model.entries.isEmpty {
                 HStack(spacing: 12) {
                     ProgressView()
@@ -123,7 +111,7 @@ private struct WorkspaceDirectoryView: View {
                     Button("Retry") {
                         Task { await loadDirectory() }
                     }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.borderedProminent).disabled(!canRead)
                 }
             } else if model.entries.isEmpty {
                 ContentUnavailableView(
@@ -135,9 +123,8 @@ private struct WorkspaceDirectoryView: View {
                 ForEach(model.entries) { entry in
                     WorkspaceEntryRow(
                         entry: entry,
-                        isPreviewing: previewingPath == entry.path,
                         onOpenFile: onOpenFile
-                    )
+                    ).disabled(!canRead && !entry.isDirectory)
                 }
             }
 
@@ -152,12 +139,13 @@ private struct WorkspaceDirectoryView: View {
         .refreshable {
             await loadDirectory()
         }
-        .task(id: path) {
+        .task(id: "\(path):\(canRead)") {
             await loadDirectory()
         }
     }
 
     private func loadDirectory() async {
+        guard canRead else { return }
         await model.load(
             connectorId: connectorId,
             root: root,
@@ -169,7 +157,6 @@ private struct WorkspaceDirectoryView: View {
 
 private struct WorkspaceEntryRow: View {
     let entry: V2WorkspaceEntry
-    let isPreviewing: Bool
     let onOpenFile: (V2WorkspaceEntry) -> Void
 
     var body: some View {
@@ -183,7 +170,7 @@ private struct WorkspaceEntryRow: View {
             } label: {
                 label
             }
-            .disabled(!entry.isFile || isPreviewing)
+            .disabled(!entry.isFile)
         }
     }
 
@@ -206,19 +193,7 @@ private struct WorkspaceEntryRow: View {
 
             Spacer(minLength: 8)
 
-            if isPreviewing {
-                ProgressView()
-                    .controlSize(.small)
-            }
         }
         .contentShape(Rectangle())
-    }
-}
-
-private struct WorkspaceWebPreviewSheet: View {
-    let url: URL
-
-    var body: some View {
-        WebView(url: url)
     }
 }

@@ -4,6 +4,9 @@ import UIKit
 struct SessionTimelineRow: View {
     let row: ChatTimelineRowModel
     let onAttachment: (V2AttachmentContent) -> Void
+    var cwd: String?
+    let disclosures: TimelineDisclosureState
+    let onFile: (String) -> Void
     @State private var copied = false
     @ScaledMetric(relativeTo: .body) private var lineHeight: CGFloat = 22
 
@@ -31,56 +34,23 @@ struct SessionTimelineRow: View {
                         }
                     }
                 }
-            case .reasoning:
-                DisclosureGroup {
-                    markdown.padding(.top, 8)
-                } label: {
-                    Label(row.value.isStreamingText ? "正在思考" : "思考过程", systemImage: "brain")
-                        .font(.subheadline).foregroundStyle(.secondary)
-                }
-            case let .tool(tool):
-                DisclosureGroup {
-                    if let input = tool.input { jsonBlock(input, title: "输入") }
-                    if let output = tool.output { jsonBlock(output, title: "输出") }
-                } label: {
-                    eventLabel(tool.name ?? "工具调用", icon: "wrench.and.screwdriver")
-                }.modifier(TimelineEventSurface())
-            case let .fileChange(change):
-                DisclosureGroup {
-                    if let patch = change.patch { Text(patch).font(.system(.footnote, design: .monospaced)).textSelection(.enabled) }
-                    ForEach(Array(change.changes.enumerated()), id: \.offset) { _, value in jsonBlock(value, title: "变更") }
-                } label: { eventLabel(change.path ?? "文件变更", icon: "doc.badge.gearshape") }
-                .modifier(TimelineEventSurface())
-            case let .attachment(file): attachment(file)
-            case let .artifact(artifact):
-                DisclosureGroup {
-                    if let raw = artifact.url, let url = URL(string: raw), ["https", "http"].contains(url.scheme ?? "") {
-                        Link("打开产物", destination: url)
-                    }
-                    jsonBlock(artifact.raw, title: "详情")
-                } label: { eventLabel(artifact.title ?? "产物", icon: "doc.richtext") }
-                .modifier(TimelineEventSurface())
-            case let .marker(marker):
-                if row.value.isAssistantText {
-                    DisclosureGroup { markdown.padding(.top, 8) } label: {
-                        Label(row.value.isStreamingText ? "正在思考" : "思考过程", systemImage: "brain")
-                            .font(.subheadline).foregroundStyle(.secondary)
-                    }
-                } else {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Label(marker.title, systemImage: "info.circle").font(.subheadline).foregroundStyle(.secondary)
-                        if let subtitle = marker.subtitle { Text(subtitle).font(.footnote).foregroundStyle(.secondary) }
-                    }
-                }
-            case let .unknown(value):
-                DisclosureGroup("事件详情") { jsonBlock(value, title: "") }.modifier(TimelineEventSurface())
+            default:
+                SessionTimelineEventView(row: row, cwd: cwd, disclosures: disclosures, onFile: onFile)
+
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .contextMenu {
+            Button("复制内容", systemImage: "document.on.document") {
+                UIPasteboard.general.string = row.text.isEmpty ? row.value.raw["content"]?.formattedJSON : row.text
+            }
+            Button("复制条目 ID", systemImage: "number") { UIPasteboard.general.string = row.id }
+            Button("复制原始 JSON", systemImage: "curlybraces") { UIPasteboard.general.string = row.value.raw.formattedJSON }
+        }
     }
 
     private var markdown: some View {
-        ChatMarkdownView(text: row.text, isStreaming: row.isRevealing)
+        ChatMarkdownView(text: row.text, isStreaming: row.isRevealing, resolvesFileReferences: true)
             .id(row.layoutGeneration)
             .frame(minHeight: row.value.isStreamingText ? lineHeight : nil, alignment: .topLeading)
     }
@@ -100,28 +70,9 @@ struct SessionTimelineRow: View {
         .disabled(row.text.isEmpty)
         .buttonStyle(.plain).font(.system(size: 15)).foregroundStyle(.secondary).padding(.leading, -10)
     }
-    private func eventLabel(_ title: String, icon: String) -> some View {
-        HStack {
-            Label(title, systemImage: icon).lineLimit(2)
-            Spacer()
-            Text(row.value.status.rawValue).font(.caption).foregroundStyle(.secondary)
-        }.font(.subheadline)
-    }
-    private func jsonBlock(_ value: JSONValue, title: String) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            if !title.isEmpty { Text(title).font(.caption).foregroundStyle(.secondary) }
-            Text(value.readableText).font(.system(.footnote, design: .monospaced)).textSelection(.enabled)
-        }.padding(.vertical, 6)
-    }
     private func attachment(_ file: V2AttachmentContent) -> some View {
         Button { onAttachment(file) } label: { Label(file.name ?? "附件", systemImage: "doc") }
             .disabled(file.fileId == nil)
-    }
-}
-
-private struct TimelineEventSurface: ViewModifier {
-    func body(content: Content) -> some View {
-        content.padding(16).background(.quaternary.opacity(0.5), in: .rect(cornerRadius: 18))
     }
 }
 

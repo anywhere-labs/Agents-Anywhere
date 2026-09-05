@@ -12,6 +12,8 @@ struct ComposerOptionsSheet: View {
     var onReload: () async -> Void = {}
     var onApply: () async -> Bool = { true }
     var applyError: () -> String? = { nil }
+    var sessionChat: SessionChatModel?
+    @State private var pendingTakeover: Bool?
     @State private var isApplying = false
     @State private var showsApplyError = false
     @State private var path: [Page] = []
@@ -50,6 +52,23 @@ struct ComposerOptionsSheet: View {
                         .disabled(isLoading || !canSelectPermission || settings.catalog.permissions.isEmpty)
                     }
                     .background { ComposerOptionSurface() }
+                    if let chat = sessionChat, let meta = chat.session.metadata {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Toggle(isOn: Binding(get: { meta.takeover }, set: { pendingTakeover = $0 })) {
+                                Label("接管会话", systemImage: "hand.raised")
+                            }
+                            .disabled(!chat.canChangeTakeover)
+                            Text(meta.takeover ? "已开启，可从 Agents Anywhere 继续操作。" : "只读模式，开启接管后可以继续发送消息。")
+                                .font(.footnote).foregroundStyle(.secondary)
+                            if let error = chat.takeoverError {
+                                Text(error).font(.footnote).foregroundStyle(.secondary)
+                            }
+                            if chat.takeoverUncertain || !chat.session.runtime.isFresh {
+                                Button("刷新接管状态") { Task { await chat.refreshTakeover() } }
+                                    .font(.footnote).disabled(chat.isWorking || chat.session.network.availability == .offline)
+                            }
+                        }.padding(16).background { ComposerOptionSurface() }
+                    }
                 }
                 .padding(20)
             }
@@ -73,6 +92,18 @@ struct ComposerOptionsSheet: View {
         .presentationDragIndicator(.visible)
         .disabled(isApplying)
         .interactiveDismissDisabled(isApplying)
+        .confirmationDialog(pendingTakeover == true ? "开启接管？" : "关闭接管？", isPresented: Binding(
+            get: { pendingTakeover != nil }, set: { if !$0 { pendingTakeover = nil } }), titleVisibility: .visible,
+            presenting: pendingTakeover) { enabled in
+                Button(enabled ? "开启接管" : "关闭接管") {
+                    Task { if let chat = sessionChat { _ = await chat.setTakeover(enabled) } }
+                }
+                Button("取消", role: .cancel) {}
+            } message: { enabled in
+                Text(enabled
+                    ? "开启后可在 Agents Anywhere 中操作。记录可能需要重启 Agent 客户端才能同步；请避免同时在两个客户端操作此会话。"
+                    : "关闭后会话回到只读模式。这里产生的记录可能需要重启 Agent 客户端才能同步。")
+            }
         .alert("无法更改设置", isPresented: $showsApplyError) {
             Button("好", role: .cancel) {}
         } message: { Text(applyError() ?? "当前设置未保存，请稍后重试。") }

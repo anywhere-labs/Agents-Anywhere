@@ -4,6 +4,7 @@ import Textual
 struct ChatMarkdownView: View {
     let text: String
     var isStreaming = false
+    var resolvesFileReferences = false
     @State private var blocks: [MarkdownBlockSnapshot] = []
 
     var body: some View {
@@ -16,7 +17,17 @@ struct ChatMarkdownView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .onChange(of: text, initial: true) { _, source in
             let parser = AttributedStringMarkdownParser(baseURL: nil, syntaxExtensions: [.math])
-            guard let document = try? parser.attributedString(for: source) else { return }
+            guard var document = try? parser.attributedString(for: source) else { return }
+            if resolvesFileReferences {
+                // Web also makes inline code such as src/main.swift:42 a file
+                // reference. Preserve code styling while adding its scoped link.
+                for run in document.runs {
+                    if run.link == nil, run.inlinePresentationIntent?.contains(.code) == true,
+                       let path = SessionFileReference.inlinePath(String(document[run.range].characters)) {
+                        document[run.range].link = SessionFileReference.link(path)
+                    }
+                }
+            }
             blocks = MarkdownBlockSnapshot.split(document)
         }
     }
@@ -183,14 +194,31 @@ private struct CodeBlockCard: View {
 
 nonisolated private struct ChatImageLoader: AttachmentLoader {
     func attachment(for url: URL, text: String, environment: ColorEnvironmentValues) async throws -> ChatImageAttachment {
-        let loader: any AttachmentLoader = url.scheme == nil || url.scheme == "resource"
-            ? ResourceAttachmentLoader.image(named: { @Sendable in $0.lastPathComponent })
-            : URLAttachmentLoader.image()
+        if let path = SessionFileReference.path(from: url), let link = SessionFileReference.link(path) {
+            return ChatImageAttachment(base: WorkspaceImageAttachment(url: link, description: text.isEmpty ? (path as NSString).lastPathComponent : text))
+        }
+        let loader = URLAttachmentLoader.image()
         return ChatImageAttachment(base: try await loader.attachment(for: url, text: text, environment: environment))
     }
 }
 
-/// A small adapter lets bundled demo images and URL images share the same loader.
+/// Device images open the scoped Web preview on demand; URL images render inline.
+nonisolated private struct WorkspaceImageAttachment: Attachment {
+    let url: URL
+    let description: String
+    @MainActor var body: some View {
+        Link(destination: url) {
+            Label(description.isEmpty ? "查看图片" : description, systemImage: "photo")
+                .font(.subheadline).lineLimit(2).padding(12).frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Color(uiColor: .secondarySystemBackground), in: .rect(cornerRadius: 14))
+        }.buttonStyle(.plain)
+    }
+    func sizeThatFits(_ proposal: ProposedViewSize, in environment: TextEnvironmentValues) -> CGSize {
+        CGSize(width: min(300, proposal.width ?? 300), height: 68)
+    }
+}
+
+/// A small adapter lets Web-preview links and URL images share the same loader.
 /// The labeled initializer avoids Textual 0.5's overlapping eraser overloads.
 nonisolated private struct ChatImageAttachment: Attachment {
     let base: any Attachment

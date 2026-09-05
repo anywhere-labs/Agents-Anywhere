@@ -6,6 +6,9 @@ final class SessionChatModel {
     let session: V2SessionModel
     let timeline = SessionTimelinePresentation()
     let settings = ConversationSettings()
+    let disclosures = TimelineDisclosureState()
+    var takeoverError: String?
+    private(set) var takeoverUncertain = false
     private(set) var isWorking: Bool {
         get { session.isPerformingAction }
         set { session.isPerformingAction = newValue }
@@ -22,9 +25,44 @@ final class SessionChatModel {
 
     var isRunning: Bool {
         guard let status = session.runtime.state?.status else { return false }
-        return [.running, .pending, .waiting, .stopping, .blocked].contains(status)
+        return [.running, .pending, .waiting, .waitingApproval, .stopping, .blocked].contains(status)
+    }
+    var responseUnavailableReason: String? {
+        if !session.isValid { return "会话已关闭。" }
+        if session.network.availability == .offline || session.connection == .offline { return "网络已断开，已填写的内容会保留。" }
+        if session.metadata?.connectorStatus == .offline { return "设备已离线，已填写的内容会保留。" }
+        if session.runtime.isFresh { return nil }
+        if session.failure?.kind == .invalidResponse { return "会话数据暂时无法解析，请刷新状态后回应。已填写的内容会保留。" }
+        if session.failure?.kind == .authentication { return "登录状态需要重新验证，已填写的内容会保留。" }
+        return "正在确认 Agent 的最新状态，已填写的内容会保留。"
     }
     var canAttach: Bool { session.runtime.allows("runtime.attachment") }
+    var canChangeTakeover: Bool {
+        session.isValid && session.connection == .connected && session.metadata?.connectorStatus == .online
+            && session.network.availability != .offline && !isWorking && !takeoverUncertain
+    }
+    var canBrowseFiles: Bool {
+        session.isValid && session.metadata?.connectorStatus == .online && session.network.availability != .offline
+            && session.metadata?.cwd?.isEmpty == false
+    }
+
+    func setTakeover(_ enabled: Bool) async -> Bool {
+        guard canChangeTakeover, session.metadata?.takeover != enabled else { return false }
+        isWorking = true; takeoverError = nil
+        defer { isWorking = false }
+        do { try await repository.setTakeover(sessionId: session.id, enabled: enabled); return session.isValid }
+        catch {
+            guard session.isValid else { return false }
+            takeoverUncertain = !V2ClientFailure.isDefiniteWriteRejection(error)
+            takeoverError = takeoverUncertain ? "接管状态尚未确认，请先刷新状态，避免重复操作。" : error.localizedDescription
+            return false
+        }
+    }
+
+    func refreshTakeover() async {
+        await session.refresh()
+        if session.runtime.isFresh { takeoverUncertain = false; takeoverError = nil }
+    }
 
     func loadSettings() async {
         guard !isLoadingSettings, session.isValid else { return }
@@ -69,6 +107,7 @@ final class SessionChatModel {
         let selected = draft.attachments
         guard selected.isEmpty || canAttach else { return }
         isWorking = true
+        error = nil
         defer { isWorking = false }
         do {
             // Retain successful uploads on the draft; retrying a definite send
@@ -110,6 +149,7 @@ final class SessionChatModel {
     @discardableResult func perform(_ operation: () async throws -> Void) async -> Bool {
         guard !isWorking else { return false }
         isWorking = true
+        error = nil
         defer { isWorking = false }
         do { try await operation(); return session.isValid }
         catch { if session.isValid { self.error = error.localizedDescription }; return false }

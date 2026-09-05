@@ -4,6 +4,11 @@ enum V2ConnectorPresence: String, Codable, Hashable {
     case online
     case offline
     case unknown
+
+    init(from decoder: Decoder) throws {
+        let value = try decoder.singleValueContainer().decode(String.self)
+        self = Self(rawValue: value) ?? .unknown
+    }
 }
 
 struct V2SessionMeta: Codable, Identifiable, Hashable {

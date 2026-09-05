@@ -44,7 +44,7 @@ struct ChatComposer: View {
 
                     Button(action: isStreaming ? onStop : onSend) {
                         Image(systemName: isStreaming ? "stop.fill" : "arrow.up")
-                            .font(.system(size: isStreaming ? 15 : 22, weight: .semibold))
+                            .font(.system(size: isStreaming ? 13 : 18, weight: .regular))
                             .contentTransition(.symbolEffect(.replace))
                             .foregroundStyle(AppTheme.primaryControlForeground(colorScheme))
                             .frame(width: controls.sendDiameter, height: controls.sendDiameter)
@@ -62,7 +62,7 @@ struct ChatComposer: View {
             .glassEffect(.regular.interactive(), in: .rect(cornerRadius: draft.isExpanded ? controls.expandedCornerRadius : controls.collapsedCornerRadius))
             .glassEffectID("composer", in: glass)
         }
-        .padding(.horizontal, draft.isExpanded ? 12 : 24)
+        .padding(.horizontal, draft.isExpanded ? ChatControlMetrics.expandedHorizontalInset : ChatControlMetrics.collapsedHorizontalInset)
         .padding(.top, 8)
         .padding(.bottom, 10)
         .animation(reduceMotion ? nil : .smooth(duration: 0.24), value: draft.isExpanded)

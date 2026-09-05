@@ -22,7 +22,14 @@ enum APIClientError: LocalizedError {
 
 struct APIClient {
     let serverURL: URL
-    var session: URLSession = .shared
+    var session: URLSession = Self.authenticationSession
+    private static let authenticationSession: URLSession = {
+        let config = URLSessionConfiguration.ephemeral
+        config.waitsForConnectivity = true
+        config.timeoutIntervalForRequest = 30
+        config.timeoutIntervalForResource = 90
+        return URLSession(configuration: config)
+    }()
 
     init(serverURL: URL) {
         self.serverURL = serverURL.normalizedServerURL()

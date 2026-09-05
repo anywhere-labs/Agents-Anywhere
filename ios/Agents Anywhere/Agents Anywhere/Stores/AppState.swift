@@ -32,6 +32,7 @@ final class AppState: ObservableObject {
     @Published private(set) var hasLoadedConnectors = false
     @Published private(set) var hasLoadedSessions = false
     @Published var authError: String?
+    @Published private(set) var authNeedsLocalNetworkSettings = false
     @Published var dashboardError: String?
     @Published var sessionsError: String?
     @Published var connectorsError: String?
@@ -112,16 +113,21 @@ final class AppState: ObservableObject {
     }
 
     func checkServer(_ value: String) async -> URL? {
-        authError = nil
+        authError = nil; authNeedsLocalNetworkSettings = false
         isWorking = true
         defer { isWorking = false }
         do {
             let url = try URL.agentsServer(from: value)
+            try await LocalNetworkAccess.prepare(for: url)
+            try Task.checkCancellation()
             let client = APIClient(serverURL: url)
             _ = try await client.health()
             _ = try await client.authConfig()
+            try Task.checkCancellation()
             return url
         } catch {
+            if Task.isCancelled { return nil }
+            authNeedsLocalNetworkSettings = error is LocalNetworkAccessError
             authError = error.localizedDescription
             return nil
         }
@@ -183,33 +189,40 @@ final class AppState: ObservableObject {
         defer { isWorking = false }
         do {
             let client = APIClient(serverURL: serverURL)
+            let profile = try await client.me(token: token.accessToken)
+            try Task.checkCancellation()
             try saveSession(serverURL: serverURL, token: token.accessToken)
             self.serverURL = serverURL
-            me = try await client.me(token: token.accessToken)
+            me = profile
             if showSignedInRoute {
                 route = .signedIn
                 await refreshDashboard()
                 startDashboardUpdates()
             }
         } catch {
-            authError = error.localizedDescription
+            if !Task.isCancelled { authError = error.localizedDescription }
         }
     }
 
     func requestMobileLogin(payload: MobileLoginPayload) async -> Bool {
-        authError = nil
+        authError = nil; authNeedsLocalNetworkSettings = false
         isWorking = true
         defer { isWorking = false }
         do {
             let serverURL = try URL.agentsServer(from: payload.webUrl)
+            try await LocalNetworkAccess.prepare(for: serverURL)
+            try Task.checkCancellation()
             let client = APIClient(serverURL: serverURL)
             _ = try await client.requestMobileLogin(
                 payload: payload,
                 deviceName: currentDeviceName(),
             )
+            try Task.checkCancellation()
             self.serverURL = serverURL
             return true
         } catch {
+            if Task.isCancelled { return false }
+            authNeedsLocalNetworkSettings = error is LocalNetworkAccessError
             authError = error.localizedDescription
             return false
         }

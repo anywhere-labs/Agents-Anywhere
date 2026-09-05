@@ -290,4 +290,21 @@ import Testing
         #expect(http.count("messages") == 1)
         #expect(http.count("snapshot") == 0)
     }
+
+    @Test func confirmedTakeoverSurvivesAFailedFollowupReadWithoutReplaying() async throws {
+        let http = TestHTTPTransport(); let realtime = TestRealtimeAPI()
+        let repo = repository(transport: http, realtime: realtime)
+        defer { repo.reset() }
+        let model = repo.session(id: "session"); let task = Task { await model.connect() }
+        defer { task.cancel() }
+        try await eventually { model.canSend }
+        http.respond = { call in
+            if call.path.hasSuffix("/state") { throw URLError(.networkConnectionLost) }
+            return try http.defaultResponse(call)
+        }
+        try await repo.setTakeover(sessionId: "session", enabled: true)
+        #expect(model.metadata?.takeover == true)
+        #expect(!model.runtime.isFresh && !model.canSend)
+        #expect(model.failure != nil && http.count("takeover") == 1)
+    }
 }

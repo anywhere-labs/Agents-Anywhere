@@ -3,6 +3,9 @@ import SwiftUI
 /// One scale for the header circles and the collapsed composer. The visible
 /// send circle is inset inside a full-size touch target, never the other way round.
 struct ChatControlMetrics {
+    static let collapsedHorizontalInset: CGFloat = 24
+    static let expandedHorizontalInset: CGFloat = 12
+    static let maximumContentWidth: CGFloat = 780
     let diameter: CGFloat
 
     init(bodyLineHeight: CGFloat) {

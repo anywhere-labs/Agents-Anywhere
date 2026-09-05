@@ -57,7 +57,7 @@ final class SessionTimelinePresentation {
     }
 
     func stage(_ items: [V2TimelineItem], animate: Bool) {
-        pending = items.filter { $0.status != .hidden && $0.type != .turnStart && $0.type != .turnEnd }
+        pending = items.filter(\.isVisibleInChat)
         // Once a recovery snapshot is staged, preserve its snap semantics until
         // that tick even if a live event arrives immediately afterwards.
         animatePending = pendingWasStaged ? animatePending && animate : animate
@@ -125,9 +125,7 @@ final class SessionTimelinePresentation {
 
 extension V2TimelineItem {
     var isAssistantText: Bool {
-        if type == .reasoning || (type == .message && role == .assistant) { return true }
-        if case let .marker(value) = content { return type == .system && value.raw["kind"] == .string("reasoning") }
-        return false
+        isReasoning || type == .message && role == .assistant
     }
     var isStreamingText: Bool {
         (status == .pending || status == .running)
@@ -135,9 +133,9 @@ extension V2TimelineItem {
     }
     var displayText: String {
         switch content {
-        case let .message(value): value.text
-        case let .reasoning(value): value.text.isEmpty ? value.summary ?? "" : value.text
-        case let .marker(value): isAssistantText ? value.title : ""
+        case let .message(value): TimelineText.message(value.text)
+        case let .reasoning(value): TimelineText.reasoning(value.raw)
+        case let .marker(value): isReasoning ? TimelineText.reasoning(value.raw) : ""
         default: ""
         }
     }

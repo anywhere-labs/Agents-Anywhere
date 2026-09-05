@@ -196,7 +196,10 @@ final class V2SessionRepository {
         entry.projection?.applyMeta(session)
         entry.projection?.markStale()
         emit(entry)
-        try await reconcile(entry)
+        // Takeover was confirmed by the write response. A failed following read
+        // must not invite a duplicate toggle or claim the write was rejected.
+        do { try await reconcile(entry) }
+        catch { if isCurrent(entry) { entry.error = V2ClientFailure(error); emit(entry) } }
     }
 
     func setSelection(sessionId: V2SessionID, scope: V2RuntimeSelectionScope, selectionId: V2SelectionID?) async throws {

@@ -370,7 +370,7 @@ private struct ChatSidebarSessionStatusDot: View {
         switch status {
         case .running:
             return .green
-        case .blocked:
+        case .blocked, .waitingApproval:
             return .orange.opacity(0.8)
         case .waiting, .pending, .stopping:
             return .blue.opacity(0.8)
