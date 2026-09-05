@@ -103,7 +103,7 @@ import Testing
         tail(&state, near: false, end: false)
         #expect(!state.shouldFollow())
         state.setInteractionPresented(false)
-        #expect(!state.shouldFollow())
+        #expect(state.shouldFollow() && state.returningToBottom)
     }
 
     @Test func newGestureInvalidatesHistoryRestorationAndPendingSettlements() {

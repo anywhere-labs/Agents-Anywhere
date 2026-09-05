@@ -45,7 +45,7 @@ struct SessionInteractionDock: View {
                 let index = old.firstIndex(of: selectedID ?? "") ?? 0
                 selectedID = next.isEmpty ? nil : next[min(index, next.count - 1)]
             }
-            .padding(.horizontal, ChatControlMetrics.collapsedHorizontalInset)
+            .padding(.horizontal, 24)
         }
     }
     private func step(_ delta: Int) {

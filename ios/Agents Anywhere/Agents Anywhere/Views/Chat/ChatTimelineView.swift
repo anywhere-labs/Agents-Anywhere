@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ChatTimelineView: View {
     let model: SessionChatModel
+    @Binding var isInitialPositioned: Bool
     let onAttachment: (V2AttachmentContent) -> Void
     let onFile: (String) -> Void
     @State private var historyLayout: TimelineHistoryLayout?
@@ -16,11 +17,24 @@ struct ChatTimelineView: View {
     @State private var olderLoadRequest: Int?
     @State private var latestPromptVisible = false
     @State private var latestLoadRequest: Int?
+    @State private var openingLayout: TimelineOpeningLayout?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ScaledMetric(relativeTo: .caption) private var returnPillHeight: CGFloat = 32
 
     private var hasInteractions: Bool {
         model.session.notices.notices.contains { $0.isVisible && $0.notice.type == "interaction" }
+    }
+    private var openingTargetID: String? {
+        guard !isInitialPositioned, let target = model.openingTargetID else { return nil }
+        return model.timeline.rows.first { $0.id == target || $0.value.source["clientMessageId"]?.stringValue == target }?.id
+            ?? target
+    }
+    private var openingRequest: OpeningRequest {
+        let layout = openingLayout.flatMap { $0.id == openingTargetID ? $0 : nil }
+        let offset = layout.map { TimelineOpeningPosition.offset(for: $0, viewport: viewport) }
+        return OpeningRequest(prepared: model.isOpeningPrepared, presented: model.timeline.hasPresentedSnapshot,
+            target: openingTargetID, offset: offset, arrived: offset.map { TimelineOpeningPosition.hasArrived(at: $0, viewport: viewport) } ?? false,
+            idle: scrolling.phase == .idle, completed: isInitialPositioned)
     }
     var body: some View {
         // A sibling overlay receives taps independently of the scroll view's
@@ -31,8 +45,10 @@ struct ChatTimelineView: View {
                     latestPullReady: latestPull.isReady, isLoadingLatest: latestLoadRequest != nil,
                     olderPullReady: olderPull.isReady, isLoadingOlder: olderLoadRequest != nil,
                     keepsOlderPrompt: hasRequestedOlder, historyAnchor: historyPosition?.origin,
+                    openingTargetID: openingTargetID,
                     onLoadOlder: loadOlder, onLoadLatest: loadLatest,
                     onHistoryLayout: historyDidLayOut,
+                    onOpeningLayout: { openingLayout = $0 },
                     onPromptVisibility: { latestPromptVisible = $0 },
                     onOlderPromptVisibility: { olderPromptVisible = $0 },
                     onTailVisibility: { region, visible in scrolling.tailVisibilityChanged(region, visible: visible) })
@@ -46,6 +62,8 @@ struct ChatTimelineView: View {
             .defaultScrollAnchor(.top, for: .initialOffset)
             .defaultScrollAnchor(.top, for: .alignment)
             .defaultScrollAnchor(.top, for: .sizeChanges)
+            .opacity(isInitialPositioned ? 1 : 0)
+            .allowsHitTesting(isInitialPositioned)
             .onScrollPhaseChange { _, phase, context in
                 let mapped: TimelineScrollState.Phase
                 switch phase {
@@ -85,7 +103,10 @@ struct ChatTimelineView: View {
                 if scrolling.phase == .interacting { latestPull.update(value); olderPull.update(value) }
             }
             .onChange(of: model.session.pendingMessages.last?.id) { _, id in
-                if id != nil && !hasInteractions { scrolling.requestBottom() }
+                if isInitialPositioned, id != nil && !hasInteractions { scrolling.requestBottom() }
+            }
+            .onChange(of: model.responseRevision) { _, _ in
+                if isInitialPositioned { scrolling.requestBottom() }
             }
             .onChange(of: hasInteractions, initial: true) { _, presented in
                 scrolling.setInteractionPresented(presented)
@@ -97,10 +118,30 @@ struct ChatTimelineView: View {
             .task(id: FollowRequest(contentHeight: viewport.contentHeight, visibleHeight: viewport.visibleHeight,
                 followsTail: scrolling.followsTail, userIsScrolling: scrolling.userIsScrolling,
                 navigationGeneration: scrolling.navigationGeneration, interactionIsPresented: hasInteractions, tail: scrolling.tail)) {
-                guard (!hasInteractions || scrolling.returningToBottom), scrolling.shouldFollow() else { return }
+                guard isInitialPositioned, (!hasInteractions || scrolling.returningToBottom), scrolling.shouldFollow() else { return }
                 do { try await Task.sleep(for: .milliseconds(24)) } catch { return }
-                guard !Task.isCancelled, (!hasInteractions || scrolling.returningToBottom), scrolling.shouldFollow() else { return }
+                guard !Task.isCancelled, isInitialPositioned, (!hasInteractions || scrolling.returningToBottom), scrolling.shouldFollow() else { return }
                 scrollToBottom()
+            }
+            .task(id: openingRequest) {
+                let request = openingRequest
+                guard !request.completed, request.prepared, request.presented else { return }
+                if request.target == nil {
+                    isInitialPositioned = true; scrolling.browseHistory(); return
+                }
+                guard let offset = request.offset else { return }
+                if !request.arrived {
+                    var transaction = Transaction(animation: nil)
+                    transaction.disablesAnimations = true
+                    withTransaction(transaction) { position.scrollTo(y: offset) }
+                    return
+                }
+                guard request.idle else { return }
+                do { try await Task.sleep(for: .milliseconds(64)) } catch { return }
+                guard !Task.isCancelled, openingRequest == request else { return }
+                position.isPositionedByUser = true
+                scrolling.browseHistory()
+                isInitialPositioned = true
             }
             .task(id: ScrollSettlement(phase: scrolling.phase, tail: scrolling.tail, generation: scrolling.navigationGeneration)) {
                 guard scrolling.needsScrollSettlement else { return }
@@ -135,7 +176,7 @@ struct ChatTimelineView: View {
                 if scrolling.navigationGeneration == generation { scrolling.requestBottom() }
                 latestLoadRequest = nil
             }
-            if scrolling.showsBottomButton() {
+            if isInitialPositioned && scrolling.showsBottomButton() {
                 Button {
                     latestPull.cancel(); olderPull.cancel()
                     historyPosition?.cancelRestoration()
@@ -149,6 +190,21 @@ struct ChatTimelineView: View {
                 }
                 .buttonStyle(.plain).accessibilityIdentifier("chat.timeline.bottom")
                 .padding(.bottom, 2)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .overlay {
+            if !isInitialPositioned {
+                VStack(spacing: 12) {
+                    if let error = model.openingError, !model.timeline.hasPresentedSnapshot {
+                        Text(error).font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                        Button("重试") { Task { await model.prepareOpening() } }
+                    } else {
+                        ProgressView().progressViewStyle(.circular)
+                    }
+                }
+                .padding(24).frame(maxWidth: 320)
+                .accessibilityLabel("正在加载并定位会话")
             }
         }
     }
@@ -203,6 +259,15 @@ struct ChatTimelineView: View {
         let ready: Bool
         let offset: CGFloat?
     }
+    private struct OpeningRequest: Equatable {
+        let prepared: Bool
+        let presented: Bool
+        let target: String?
+        let offset: CGFloat?
+        let arrived: Bool
+        let idle: Bool
+        let completed: Bool
+    }
 }
 
 private struct ChatTimelineContent: View, Equatable {
@@ -215,9 +280,11 @@ private struct ChatTimelineContent: View, Equatable {
     let isLoadingOlder: Bool
     let keepsOlderPrompt: Bool
     let historyAnchor: TimelineHistoryLayout?
+    let openingTargetID: String?
     let onLoadOlder: () -> Void
     let onLoadLatest: () -> Void
     let onHistoryLayout: (TimelineHistoryLayout) -> Void
+    let onOpeningLayout: (TimelineOpeningLayout) -> Void
     let onPromptVisibility: (Bool) -> Void
     let onOlderPromptVisibility: (Bool) -> Void
     let onTailVisibility: (TimelineTailVisibility.Region, Bool) -> Void
@@ -226,11 +293,13 @@ private struct ChatTimelineContent: View, Equatable {
         lhs.model === rhs.model && lhs.latestPullReady == rhs.latestPullReady && lhs.isLoadingLatest == rhs.isLoadingLatest
             && lhs.olderPullReady == rhs.olderPullReady && lhs.isLoadingOlder == rhs.isLoadingOlder
             && lhs.keepsOlderPrompt == rhs.keepsOlderPrompt && lhs.historyAnchor == rhs.historyAnchor
+            && lhs.openingTargetID == rhs.openingTargetID
     }
     var body: some View {
         let groups = TimelineGrouping.groups(model.timeline.rows, interactionTargets: Set(model.session.notices.notices
             .filter(\.isVisible).compactMap(\.timelineTargetID)))
-        let actions = TimelineTurnActions.build(groups: groups, suppressLatest: model.isRunning || model.session.hasNewerItems)
+        let actions = TimelineTurnActions.build(groups: groups, suppressLatest: model.isRunning || model.session.hasNewerItems,
+            hasPendingUserMessage: !model.session.hasNewerItems && (!model.timeline.pendingMessages.isEmpty || !model.session.pendingMessages.isEmpty))
         // Prefer a message whose start cannot move into a prefixed tool group.
         // For an all-tools page, retain the existing group's trailing edge.
         let anchorGroup = historyAnchor.flatMap { anchor in groups.first { $0.rows.contains { $0.id == anchor.anchorRowID } } }
@@ -266,6 +335,11 @@ private struct ChatTimelineContent: View, Equatable {
                     turnAction: actions[group.id])
                     .id(group.id)
                     .background {
+                        if let openingTargetID, group.rows.contains(where: { $0.id == openingTargetID }) {
+                            Color.clear.onGeometryChange(for: TimelineOpeningLayout.self) { geometry in
+                                TimelineOpeningLayout(id: openingTargetID, y: geometry.frame(in: .named("chat.timeline.content")).minY)
+                            } action: { onOpeningLayout($0) }
+                        }
                         if group.id == anchorGroup?.id, let firstRowID = model.timeline.rows.first?.id {
                             Color.clear.onGeometryChange(for: TimelineHistoryLayout.self) { geometry in
                                 let frame = geometry.frame(in: .named("chat.timeline.content"))
@@ -281,7 +355,16 @@ private struct ChatTimelineContent: View, Equatable {
                     && !model.timeline.rows.contains(where: { $0.id == notice.timelineTargetID })
             }) { item in SessionInteractionCard(item: item, chat: model) }
             ForEach(model.timeline.pendingMessages) { pending in
-                PendingMessageRow(pending: pending, onDismiss: { model.session.dismissPendingMessage(id: pending.id) })
+                PendingMessageRow(pending: pending, chat: model, onAttachment: onAttachment,
+                    onDismiss: { model.session.dismissPendingMessage(id: pending.id) })
+                    .id(pending.id)
+                    .background {
+                        if openingTargetID == pending.id {
+                            Color.clear.onGeometryChange(for: TimelineOpeningLayout.self) { geometry in
+                                TimelineOpeningLayout(id: pending.id, y: geometry.frame(in: .named("chat.timeline.content")).minY)
+                            } action: { onOpeningLayout($0) }
+                        }
+                    }
             }
             if model.isRunning && !model.timeline.rows.contains(where: { $0.structure.isStreamingText }) {
                 Text("正在处理任务").font(.subheadline).foregroundStyle(.secondary).frame(height: 40, alignment: .leading)

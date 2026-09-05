@@ -25,7 +25,8 @@ nonisolated struct TimelineScrollState: Equatable {
     mutating func setInteractionPresented(_ presented: Bool) {
         guard interactionIsPresented != presented else { return }
         interactionIsPresented = presented
-        browseHistory()
+        if presented { browseHistory() }
+        else { requestBottom() }
     }
 
     @discardableResult mutating func phaseChanged(_ next: Phase) -> Bool {

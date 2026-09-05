@@ -92,12 +92,15 @@ struct ChatComposerDock: View {
         Binding(get: { picker == value }, set: { if $0 { picker = value } else if picker == value { picker = nil } })
     }
 
-    private func append(name: String, data: Data, mediaType: String) {
+    private func append(name: String, data: Data, mediaType: String) async {
         guard draft.isValid else { return }
         guard draft.attachments.count < 5 else { attachmentError = "每条消息最多添加 5 个附件。"; return }
         guard !data.isEmpty else { attachmentError = "文件为空。"; return }
         guard data.count <= 25 * 1024 * 1024 else { attachmentError = "单个附件请控制在 25 MiB 以内。"; return }
-        draft.attachments.append(ChatAttachment(name: name, data: data, mediaType: mediaType))
+        let preview = mediaType.hasPrefix("image/")
+            ? await Task.detached(priority: .utility) { ChatImageThumbnail.make(data: data) }.value : nil
+        guard draft.isValid, draft.attachments.count < 5 else { return }
+        draft.attachments.append(ChatAttachment(name: name, data: data, mediaType: mediaType, previewData: preview))
     }
 
     private func importPhotos(_ items: [PhotosPickerItem]) {
@@ -109,7 +112,7 @@ struct ChatComposerDock: View {
                 do {
                     guard let data = try await item.loadTransferable(type: Data.self) else { continue }
                     let type = item.supportedContentTypes.first ?? .jpeg
-                    append(name: "Photo-\(UUID().uuidString.prefix(8)).\(type.preferredFilenameExtension ?? "jpg")",
+                    await append(name: "Photo-\(UUID().uuidString.prefix(8)).\(type.preferredFilenameExtension ?? "jpg")",
                            data: data, mediaType: type.preferredMIMEType ?? "image/jpeg")
                 } catch { attachmentError = error.localizedDescription }
             }
@@ -125,7 +128,7 @@ struct ChatComposerDock: View {
                 for url in urls.prefix(5) {
                     do {
                         let file = try await Task.detached(priority: .userInitiated) { try ImportedChatFile.read(url) }.value
-                        append(name: file.name, data: file.data, mediaType: file.mediaType)
+                        await append(name: file.name, data: file.data, mediaType: file.mediaType)
                     } catch { attachmentError = error.localizedDescription }
                 }
                 if urls.count > 5 { attachmentError = "每条消息最多添加 5 个附件。" }

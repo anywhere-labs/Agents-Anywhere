@@ -74,20 +74,9 @@ struct ChatComposer: View {
         ScrollView(.horizontal) {
             HStack(spacing: 8) {
                 ForEach(draft.attachments) { attachment in
-                    HStack(spacing: 8) {
-                        Image(systemName: attachment.isImage ? "photo" : "doc.text")
-                            .foregroundStyle(.primary)
-                        Text(attachment.name).font(.caption).lineLimit(1)
-                        Button {
-                            draft.attachments.removeAll { $0.id == attachment.id }
-                        } label: {
-                            Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("移除 \(attachment.name)")
+                    ChatComposerAttachment(attachment: attachment) {
+                        draft.attachments.removeAll { $0.id == attachment.id }
                     }
-                    .padding(10)
-                    .background(.primary.opacity(0.07), in: .rect(cornerRadius: 14))
                 }
             }
         }

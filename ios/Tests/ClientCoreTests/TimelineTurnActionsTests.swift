@@ -34,4 +34,14 @@ import Testing
         let other = TimelineGrouping.groups(try [row("system", role: "system", text: "Notice"), row("user", role: "user", text: "Question")], interactionTargets: [])
         #expect(TimelineTurnActions.build(groups: other, suppressLatest: false).isEmpty)
     }
+
+    @Test func pendingUserMessageKeepsThePreviousReplyActionsThroughItsEcho() throws {
+        let rows = try [row("user", role: "user"), row("reply", text: "Completed answer")]
+        let before = TimelineGrouping.groups(rows, interactionTargets: [])
+        let pending = TimelineTurnActions.build(groups: before, suppressLatest: true, hasPendingUserMessage: true)
+        #expect(pending["reply"]?.copyText == "Completed answer")
+        let echoed = TimelineGrouping.groups(rows + [try row("echo", role: "user")], interactionTargets: [])
+        let after = TimelineTurnActions.build(groups: echoed, suppressLatest: true)
+        #expect(after["reply"]?.copyText == pending["reply"]?.copyText)
+    }
 }

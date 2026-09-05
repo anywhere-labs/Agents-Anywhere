@@ -44,11 +44,14 @@ final class V2PendingMessage: Identifiable {
     let content: String
     let attachmentIDs: [V2AttachmentID]
     let localAttachmentIDs: [String]
+    let attachments: [ChatAttachment]
     private(set) var delivery: Delivery = .sending
+    var didRestoreDraft = false
 
-    init(id: String, content: String, attachmentIDs: [V2AttachmentID], localAttachmentIDs: [String] = []) {
+    init(id: String, content: String, attachmentIDs: [V2AttachmentID], localAttachmentIDs: [String] = [], attachments: [ChatAttachment] = []) {
         self.id = id; self.content = content; self.attachmentIDs = attachmentIDs
         self.localAttachmentIDs = localAttachmentIDs
+        self.attachments = attachments
     }
 
     func update(_ delivery: Delivery) {
@@ -79,6 +82,7 @@ final class V2SessionModel: Identifiable {
     var isPerformingAction = false
     private(set) var pendingMessages: [V2PendingMessage] = []
     let composer = ComposerDraft()
+    let attachmentPreviews = ChatAttachmentStore()
     var draft: String {
         get { composer.text }
         set { composer.text = newValue }
@@ -152,8 +156,12 @@ final class V2SessionModel: Identifiable {
             return true
         }) else { return nil }
         let pending = V2PendingMessage(id: UUID().uuidString, content: content, attachmentIDs: attachments,
-                                      localAttachmentIDs: composer.attachments.map(\.id))
+                                      localAttachmentIDs: composer.attachments.map(\.id), attachments: composer.attachments)
+        attachmentPreviews.remember(pending.attachments, clientID: pending.id)
         pendingMessages.append(pending)
+        // Commit the local bubble and release the editor immediately. A failed
+        // write restores this snapshot only if the user has not started a new draft.
+        composer.clear(); draftAttachmentIDs = []
         repository.localWorkDidChange(sessionID: id)
         do {
             _ = try await repository.send(sessionId: id, content: content, attachmentIDs: attachments, clientMessageID: pending.id)
@@ -165,7 +173,13 @@ final class V2SessionModel: Identifiable {
             let failure = V2ClientFailure(error)
             pending.update(V2ClientFailure.isDefiniteWriteRejection(error) ? .rejected(failure) : .uncertain(failure))
             if pending.delivery == .confirmed { clearDraft(ifMatching: pending) }
-            else { self.failure = failure }
+            else {
+                self.failure = failure
+                if draft.isEmpty && composer.attachments.isEmpty && !composer.isComposing {
+                    draft = pending.content; composer.attachments = pending.attachments; draftAttachmentIDs = pending.attachmentIDs
+                    pending.didRestoreDraft = true
+                }
+            }
         }
         return pending
     }
@@ -210,12 +224,13 @@ final class V2SessionModel: Identifiable {
         runtime.update(nil, connected: false)
         metadata = nil; timeline = []; pendingMessages = []; draft = ""; draftAttachmentIDs = []
         composer.invalidate()
+        attachmentPreviews.clear()
         notices.clear()
         connection = .inactive; isValid = false; repository = nil
     }
 
     private func clearDraft(ifMatching pending: V2PendingMessage) {
-        if draft == pending.content && draftAttachmentIDs == pending.attachmentIDs,
+        if pending.didRestoreDraft, draft == pending.content && draftAttachmentIDs == pending.attachmentIDs,
            composer.attachments.map(\.id) == pending.localAttachmentIDs {
             composer.clear(); draftAttachmentIDs = []
         }

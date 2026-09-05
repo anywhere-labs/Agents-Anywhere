@@ -27,7 +27,7 @@ struct SessionTimelineGroupView: View {
     private var rows: some View {
         VStack(alignment: .leading, spacing: 8) {
             ForEach(group.rows) { row in
-                SessionTimelineRow(row: row, onAttachment: onAttachment, cwd: chat.session.metadata?.cwd,
+                SessionTimelineRow(row: row, chat: chat, onAttachment: onAttachment, cwd: chat.session.metadata?.cwd,
                     disclosures: chat.disclosures, onFile: onFile)
                 ForEach(chat.session.notices.notices.filter {
                     $0.isVisible && !$0.blocks(chat.session.id) && $0.timelineTargetID == row.id

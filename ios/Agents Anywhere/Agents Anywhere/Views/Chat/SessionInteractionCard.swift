@@ -23,6 +23,8 @@ struct SessionInteractionCard: View {
                         .font(.subheadline)
                     Text(title).font(.subheadline.weight(.semibold))
                         .lineLimit(2).frame(maxWidth: .infinity, alignment: .leading)
+                    Button("操作详情") { destination = .details }
+                        .font(.caption).fixedSize().frame(minHeight: 44)
                     Button {
                         if let onExpand { onExpand() } else { destination = .expanded }
                     } label: {
@@ -35,17 +37,14 @@ struct SessionInteractionCard: View {
                 .foregroundStyle(item.notice.severity == "error" ? Color.red : Color.primary)
                 .frame(height: metrics.titleHeight, alignment: .center)
 
-                Text(summary).font(.system(.subheadline, design: item.notice.interactionType == "approval" ? .monospaced : .default))
-                    .foregroundStyle(.secondary).lineLimit(2)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .frame(height: metrics.lineHeight * 2, alignment: .topLeading).clipped()
-
-                HStack(spacing: 8) {
-                    Text(status(at: timeline.date)).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                    Spacer(minLength: 0)
-                    Button("操作详情", systemImage: "arrow.up.right.square") { destination = .details }
-                        .font(.caption).fixedSize().frame(minHeight: 28)
-                }.frame(height: 28)
+                let status = status(at: timeline.date)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(summary).font(.system(.subheadline, design: item.notice.interactionType == "approval" ? .monospaced : .default))
+                        .lineLimit(status.isEmpty ? 2 : 1)
+                    if !status.isEmpty { Text(status).font(.caption).lineLimit(1) }
+                }
+                .foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
+                .frame(height: metrics.lineHeight * 2, alignment: .topLeading).clipped()
 
                 if item.notice.type == "interaction" {
                     SessionInteractionActions(item: item, chat: chat, now: timeline.date, compact: true,
@@ -53,7 +52,7 @@ struct SessionInteractionCard: View {
                         .frame(height: metrics.actionHeight)
                 }
             }
-            .padding(.horizontal, 14).padding(.vertical, 12)
+            .padding(.horizontal, 12).padding(.vertical, 10)
             .frame(height: height ?? metrics.compactHeight)
             .frame(maxWidth: .infinity, alignment: .leading)
             .glassEffect(.regular, in: .rect(cornerRadius: 24))
@@ -163,9 +162,9 @@ struct SessionInteractionActions: View {
 
 /// Shared scaled slots keep every page aligned, including during loading.
 struct SessionInteractionMetrics: DynamicProperty {
-    @ScaledMetric(relativeTo: .subheadline) var lineHeight: CGFloat = 18
+    @ScaledMetric(relativeTo: .subheadline) var lineHeight: CGFloat = 20
     @ScaledMetric(relativeTo: .body) var actionHeight: CGFloat = 50
     var titleHeight: CGFloat { max(44, lineHeight * 2) }
-    var minimumHeight: CGFloat { titleHeight + 28 + actionHeight + 42 }
+    var minimumHeight: CGFloat { titleHeight + actionHeight + 32 }
     var compactHeight: CGFloat { minimumHeight + lineHeight * 2 }
 }

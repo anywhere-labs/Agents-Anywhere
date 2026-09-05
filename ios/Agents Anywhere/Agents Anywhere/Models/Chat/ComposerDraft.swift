@@ -6,10 +6,12 @@ struct ChatAttachment: Identifiable, Equatable {
     let name: String
     let data: Data
     let mediaType: String
+    let previewData: Data?
     var uploaded: V2AttachmentReference?
 
-    init(id: String = UUID().uuidString, name: String, data: Data, mediaType: String) {
+    init(id: String = UUID().uuidString, name: String, data: Data, mediaType: String, previewData: Data? = nil) {
         self.id = id; self.name = name; self.data = data; self.mediaType = mediaType
+        self.previewData = previewData
     }
 
     var isImage: Bool { mediaType.hasPrefix("image/") }

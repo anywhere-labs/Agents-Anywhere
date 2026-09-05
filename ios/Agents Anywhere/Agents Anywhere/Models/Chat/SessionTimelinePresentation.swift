@@ -50,6 +50,7 @@ final class ChatTimelineRowModel: Identifiable {
 final class SessionTimelinePresentation {
     private(set) var rows: [ChatTimelineRowModel] = []
     private(set) var pendingMessages: [V2PendingMessage] = []
+    private(set) var hasPresentedSnapshot = false
     @ObservationIgnored private var pending: [V2TimelineItem]?
     @ObservationIgnored private var animatePending = false
     @ObservationIgnored private var initialized = false
@@ -84,6 +85,7 @@ final class SessionTimelinePresentation {
                 return row
             }
             if rows.map(\.id) != updated.map(\.id) { rows = updated }
+            if !hasPresentedSnapshot { hasPresentedSnapshot = true }
             self.pending = nil; pendingWasStaged = false
         }
         for row in rows where row.isRevealing { row.settle(now: now) }

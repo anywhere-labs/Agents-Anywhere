@@ -39,6 +39,12 @@ Semantic error and availability colors remain separate from the primary color.
   same presentation tick. A per-width/Dynamic-Type height floor and stable blocks
   reduce Markdown height churn during streaming. Authoritative replacements
   reset the layout generation.
+- Opening a session prepares the latest window and, when a tool-heavy page has
+  no user message, reads back until it finds one. The detail column keeps its
+  centered loading indicator while the hidden timeline lays out and positions
+  that latest user message without animation. It reveals content only after
+  native offset/phase measurements confirm arrival and settle; short histories
+  use the scroll view's reachable range. An initial network failure offers Retry.
 - Tail following uses a continuous spring. Scrolling away suspends it, and a
   small borderless “到底部” pill sits centered above the composer. There is no
   animated streaming dot or cursor.
@@ -55,7 +61,8 @@ Semantic error and availability colors remain separate from the primary color.
   nearby cannot do so. The probes overlay existing space without adding height.
   Active interactions cancel queued auto-follow and release the native edge
   target. Explicit return remains available, but ends on arrival while an
-  interaction is present. Removing the card preserves the reading position.
+  interaction is present. Accepted responses request a return; removing the last
+  interaction returns to the new bottom after the dock's inset disappears.
   A constant 32-point tail spacer provides breathing room without status-driven
   padding changes.
 - Both history prompts support a fresh 24-point outward pull and release when
@@ -99,7 +106,9 @@ Semantic error and availability colors remain separate from the primary color.
   and Share appear once after each completed reply turn, following Web's grouping
   between user messages. Copy/Share collect that turn's assistant text fragments;
   reasoning, tools and system text stay out. Active/incomplete latest turns have
-  no footer; individual entries remain copyable from their context menus.
+  no footer; individual entries remain copyable from their context menus. A local
+  pending user message already marks the next turn, so its predecessor's footer
+  stays visible through HTTP acceptance and the authoritative echo.
 - The session header uses `safeAreaBar` with the scroll view's native soft edge
   effect. The sidebar icon has three left-aligned strokes, the last shorter.
   A right-hand glass button group contains New Session and a details menu. The
@@ -110,7 +119,10 @@ Semantic error and availability colors remain separate from the primary color.
   remains an active read target while the sidebar sits beside it. Narrow iPad
   windows use `preferredCompactColumn` to show the selected detail; widening
   restores both columns. The balanced style reserves room for the sidebar.
-  Explicit split toggles retain smooth animation and respect Reduce Motion. The custom
+  Explicit split toggles retain smooth animation and respect Reduce Motion.
+  Detail text retains its settled width during changing column proposals and
+  reflows once the width becomes quiet. The phone drawer shadows only its card
+  shape, avoiding an animated compositing layer around the whole conversation. The custom
   sidebar and chat headers suppress empty native navigation bars, retaining the
   system safe area without an additional blank bar above the glass controls.
 - Sidebar indicators follow Web's priority and position, on the title's trailing
@@ -151,6 +163,22 @@ Semantic error and availability colors remain separate from the primary color.
   sheet uses an ephemeral WebKit data store and obtains a fresh token on retry.
   Already displayed content remains visible offline, with device/network status.
   Uploaded session attachments retain their separate attachment download flow.
+- Composer image selections use background-downsampled thumbnails. User-message
+  attachments appear above the text bubble, with image previews or filename/type/
+  size tiles, matching Web's arrangement. Only visible remote images request
+  thumbnails: uploaded files use the session attachment API; device paths use
+  `fs/read` and its binary transfer, honoring the attachment root. Tapping device
+  files/images still opens the scoped Web preview sheet. Image frames retain the
+  same size while decoding or switching from a local preview to server content.
+  The session owns a 16 MiB preview cache and bounded attachment metadata; cached
+  previews work offline and account invalidation clears them.
+- Sending moves the committed draft into a local bubble immediately after uploads
+  are ready. Its only pending indicator is a spinner in the bubble's left gutter;
+  delivery status never changes text width. Metadata and thumbnails survive
+  `clientMessageId` reconciliation, including reordered/sparse server attachments.
+  Failed or uncertain writes restore the draft only if the editor is still empty,
+  never overwrite a newer draft, and never replay automatically. A compact issue
+  icon opens the existing explicit failure/uncertain-delivery actions.
 - File management opens at the medium detent and can expand to large; individual
   Web previews open large. Long-pressing any directory entry copies its path.
   Files also offer Download (the system export picker) and Open In (the system
@@ -201,12 +229,13 @@ blocking scope, status and expiry come from the protocol. Known action labels
 are localized like Web; extension actions retain their protocol labels.
 
 - Active interactions blocking this session form a vertically paged stack above
-  the composer, with the same horizontal inset as the collapsed composer. The
+  the composer, with a 24-point inset, slightly wider than the collapsed composer. The
   selected item survives new arrivals; removing it selects an adjacent item.
-  The collapsed surface is a glass card with fixed title, summary, status and
-  action slots; there is no external response prompt. Expand and the optional
-  page count live inside its aligned header. At default text size the preview is
-  200 points tall, with a two-line command summary and a compact details row.
+  The collapsed surface is a glass card with fixed title, summary and action
+  slots; there is no external response prompt. Details sits to the left of Expand
+  and the optional page count inside its aligned header. At default text size the
+  preview is 166 points tall. Status uses the summary's second line when needed,
+  rather than reserving a separate empty row.
   The stack retains its height across notice
   counts and submission/network hints. Vertical swipes change the selected card.
   Expand opens the selected notice in the full interaction sheet. Operation
@@ -268,7 +297,7 @@ than a “server unavailable” alert.
 
 Verified on 2026-09-06, without starting a server or simulator:
 
-- 110 headless Swift tests across sixteen suites pass against production client-core
+- 127 headless Swift tests across eighteen suites pass against production client-core
   sources. They cover API contracts, recovery/cache races, uncertain delivery,
   30 Hz presentation, echo handoff, target preparation, preference scope, schema
   payloads and interaction lifecycle/IME guards. Session-detail checks cover
@@ -283,6 +312,10 @@ Verified on 2026-09-06, without starting a server or simulator:
   connectivity/lifecycle recovery and account invalidation.
   Sidebar tests cover regular/compact selection and resize behavior, and confirm
   cached model lookup does not subscribe its caller to historical row payloads.
+  Opening/history tests cover delayed presentation, measured offset retention,
+  long-message alignment, pulls, cancellation and loading back to a user message.
+  Attachment/delivery tests cover sparse/reordered echoes, bounded caches, FS
+  thumbnail reads, offline preview reuse and preserving a newer identical draft.
 - The Python backend contract fixture exporter reports that fixtures are current.
 - The complete unsigned iOS Debug target builds for `generic/platform=iOS`, using
   the checked-in package resolutions and the Xcode beta toolchain. The app's
@@ -336,8 +369,10 @@ keyboard layout and real mobile-network behavior still need manual validation:
 8. Check single-line markers, nested Agent groups, command/output copying and
    file-change diffs. Open workspace paths and images from Markdown and the file
    browser; refresh previews after disconnection and close/reopen a sheet.
-9. Swipe approval cards vertically, including long forms; verify their width
-   against the collapsed composer. Swipe multiple top errors horizontally and
+9. Swipe approval cards vertically, including long forms; cards should be slightly
+   wider than the collapsed composer, with Details to the left of Expand on the
+   same line. Accept the final request and check the return after the dock closes.
+   Swipe multiple top errors horizontally and
    dismiss them without changing the conversation's scroll position. Check
    Approve/Reject, the native More menu, and a runtime offering only Approve/Cancel.
 10. Test first-use local-network permission (allow and deny), cancelling OAuth,
@@ -359,3 +394,10 @@ keyboard layout and real mobile-network behavior still need manual validation:
     narrow window, select a session, reopen the sidebar and widen again. With a
     long Markdown history, toggle the sidebar and check responsiveness, retained
     reading position and continued streaming while the detail remains visible.
+14. Open a long session and verify that loading stays centered inside the detail
+    column until the latest user message is positioned, with no visible scroll
+    from the top. Load older pages by tap/pull and check the spinner, retained
+    reading offset and the final-page marker. Send images and documents, check
+    composer thumbnails, the bubble's left spinner and unchanged preview/text
+    geometry after echoes. Read a device-path image online, then reopen it offline
+    from cache. Verify the previous completed reply's Copy/Share stays available.

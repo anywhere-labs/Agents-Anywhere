@@ -12,8 +12,8 @@ struct SessionChatView: View, Equatable {
     private let fileService: V2WorkspaceFilesService
     private let detailService: V2SessionDetailService
     private enum SessionSheet: Identifiable {
-        case notices, details, files, preview(String)
-        var id: String { switch self { case .notices: "notices"; case .details: "details"; case .files: "files"; case .preview(let path): "file:" + path } }
+        case notices, details, files, preview(String, root: String? = nil)
+        var id: String { switch self { case .notices: "notices"; case .details: "details"; case .files: "files"; case .preview(let path, let root): "file:\(root ?? ""):\(path)" } }
     }
     @State private var previewURL: URL?
     @State private var previewDirectory: URL?
@@ -21,13 +21,15 @@ struct SessionChatView: View, Equatable {
     @State private var toasts = ChatToastStore()
     @State private var headerHeight: CGFloat = 66
     @State private var pendingTakeover: Bool?
+    @State private var isInitialPositioned = false
     @Environment(\.colorScheme) private var colorScheme
     @ScaledMetric(relativeTo: .body) private var bodyLineHeight: CGFloat = 22
     @ScaledMetric(relativeTo: .footnote) private var takeoverPillHeight: CGFloat = 32
 
     init(session: V2SessionModel, services: V2ClientServices, safeAreaInsets: EdgeInsets,
          onMenu: @escaping () -> Void, onNewSession: @escaping () -> Void) {
-        _model = State(initialValue: SessionChatModel(session: session, repository: services.sessionRepository, attachments: services.attachments))
+        _model = State(initialValue: SessionChatModel(session: session, repository: services.sessionRepository, attachments: services.attachments,
+            files: services.workspaceFiles))
         sessionIdentity = session
         fileService = services.workspaceFiles; detailService = services.sessionDetail
         self.safeAreaInsets = safeAreaInsets; self.onMenu = onMenu; self.onNewSession = onNewSession
@@ -42,12 +44,11 @@ struct SessionChatView: View, Equatable {
     }
     var body: some View {
         GeometryReader { geometry in
-            ChatTimelineView(model: model, onAttachment: openAttachment, onFile: openFile)
+            ChatTimelineView(model: model, isInitialPositioned: $isInitialPositioned, onAttachment: openAttachment, onFile: openFile)
                 .overlay {
-                    if model.timeline.rows.isEmpty && model.timeline.pendingMessages.isEmpty {
+                    if isInitialPositioned && model.timeline.rows.isEmpty && model.timeline.pendingMessages.isEmpty {
                         VStack(spacing: 12) {
-                            if session.connection == .connecting { ProgressView("加载会话…") }
-                            else { Text("在这里继续你的任务").foregroundStyle(.secondary) }
+                            Text("在这里继续你的任务").foregroundStyle(.secondary)
                         }.allowsHitTesting(false)
                     }
                 }
@@ -83,7 +84,7 @@ struct SessionChatView: View, Equatable {
                             canSelectModel: session.runtime.allows("catalog.model"),
                             canSelectPermission: session.runtime.allows("catalog.permission"),
                             isStreaming: model.isRunning, canStop: session.runtime.allows("session.interrupt"),
-                            isBusy: model.isWorking, placeholder: requiresTakeover ? "请先接管" : "询问 Agents",
+                            isBusy: model.isWorking || !isInitialPositioned, placeholder: requiresTakeover ? "请先接管" : "询问 Agents",
                             isLoadingSettings: model.isLoadingSettings,
                             settingsError: model.settingsError, sessionChat: model,
                             onSend: model.send, onStop: model.interrupt, onLoadSettings: model.loadSettings,
@@ -102,6 +103,7 @@ struct SessionChatView: View, Equatable {
             if !(await model.setTakeover(enabled)), let error = model.takeoverError { model.error = error }
         })
         .task { await model.timeline.run(sessionID: session.id, repository: model.repository) }
+        .task { await model.prepareOpening() }
         .sheet(item: $sheet) { destination in
             switch destination {
             case .notices: SessionNoticesSheet(model: model, initialNoticeID: expandedNoticeID)
@@ -112,9 +114,9 @@ struct SessionChatView: View, Equatable {
                         workspace: V2DeviceWorkspace(path: cwd, name: "会话文件", sessionCount: 1, lastActiveAt: nil),
                         service: fileService, session: session)
                 }
-            case .preview(let path):
+            case .preview(let path, let root):
                 if let meta = session.metadata {
-                    WorkspaceFilePreviewSheet(connectorId: meta.connectorId, root: meta.cwd ?? ".", path: path,
+                    WorkspaceFilePreviewSheet(connectorId: meta.connectorId, root: root ?? meta.cwd ?? ".", path: path,
                         service: fileService, session: session)
                 }
             }
@@ -131,6 +133,9 @@ struct SessionChatView: View, Equatable {
         }
         .onChange(of: model.error, initial: true) { _, message in
             toasts.update(source: "operation", failure: message.map { V2ClientFailure(kind: .rejected, message: $0) })
+        }
+        .onChange(of: model.openingError, initial: true) { _, message in
+            toasts.update(source: "opening", failure: message.map { V2ClientFailure(kind: .unavailable, message: $0) })
         }
     }
 
@@ -174,6 +179,7 @@ struct SessionChatView: View, Equatable {
     }
 
     private func openAttachment(_ file: V2AttachmentContent) {
+        if file.readsFromDevice, let path = file.devicePath { sheet = .preview(path, root: file.root); return }
         guard !isDownloading, let fileID = file.fileId else { return }
         isDownloading = true
         model.error = nil

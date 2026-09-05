@@ -474,12 +474,7 @@ private struct SidebarDrawerNativeSplitView<
             .toolbar(.hidden, for: .navigationBar)
             .navigationSplitViewColumnWidth(min: 240, ideal: 300, max: 360)
         } detail: {
-            GeometryReader { geometry in
-                let safeAreaInsets = geometry.safeAreaInsets
-
-                mainContent(safeAreaInsets)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
+            SidebarDrawerStableDetail(content: mainContent)
         }
         .navigationSplitViewStyle(.balanced)
         .environment(\.sidebarDrawerPresentation, .nativeSidebar)
@@ -514,6 +509,32 @@ private struct SidebarDrawerNativeSplitView<
         withAnimation(reduceMotion ? nil : .smooth(duration: 0.3)) {
             columnVisibility = open ? .all : .detailOnly
             preferredCompactColumn = open ? .sidebar : .detail
+        }
+    }
+}
+
+/// NavigationSplitView may propose a different detail width on every pan frame.
+/// Keep the reading surface at its settled width while the native column slides,
+/// then perform one nonanimated text reflow when the column stops resizing.
+private struct SidebarDrawerStableDetail<Content: View>: View {
+    let content: (EdgeInsets) -> Content
+    @State private var settledWidth: CGFloat?
+    var body: some View {
+        GeometryReader { geometry in
+            content(geometry.safeAreaInsets)
+                .frame(width: settledWidth ?? geometry.size.width, height: geometry.size.height)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+                .clipped()
+                .onAppear { if settledWidth == nil { settledWidth = geometry.size.width } }
+                .task(id: geometry.size.width) {
+                    let width = geometry.size.width
+                    guard width > 0, settledWidth != nil, settledWidth != width else { return }
+                    do { try await Task.sleep(for: .milliseconds(100)) } catch { return }
+                    guard !Task.isCancelled else { return }
+                    var transaction = Transaction(animation: nil)
+                    transaction.disablesAnimations = true
+                    withTransaction(transaction) { settledWidth = width }
+                }
         }
     }
 }
@@ -610,6 +631,12 @@ private struct SidebarDrawerMainCard<Content: View>: View {
             .frame(width: size.width, height: size.height)
             .background(drawerSystemBackground, in: screenShape)
             .clipShape(screenShape)
+            .background {
+                // Shadow only the card shape. Compositing the entire conversation
+                // into an animated shadow layer repaints its text during a pan.
+                screenShape.fill(drawerSystemBackground)
+                    .shadow(color: .black.opacity(0.28 * progress), radius: 18 * progress, x: -3 * progress, y: 0)
+            }
             .contentShape(screenShape)
             .overlay {
                 screenShape
@@ -626,13 +653,6 @@ private struct SidebarDrawerMainCard<Content: View>: View {
                     )
                     .allowsHitTesting(false)
             }
-            .compositingGroup()
-            .shadow(
-                color: .black.opacity(0.28 * progress),
-                radius: 18 * progress,
-                x: -3 * progress,
-                y: 0
-            )
             .offset(x: offset)
     }
 }

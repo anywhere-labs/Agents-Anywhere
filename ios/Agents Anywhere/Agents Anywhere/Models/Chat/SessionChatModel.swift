@@ -16,11 +16,17 @@ final class SessionChatModel {
     private(set) var isLoadingSettings = false
     var error: String?
     var settingsError: String?
+    private(set) var isOpeningPrepared = false
+    private(set) var openingTargetID: String?
+    private(set) var openingError: String?
+    private(set) var responseRevision = 0
     @ObservationIgnored let repository: V2SessionRepository
     @ObservationIgnored private let attachments: V2AttachmentService
+    @ObservationIgnored private let files: V2WorkspaceFilesService?
 
-    init(session: V2SessionModel, repository: V2SessionRepository, attachments: V2AttachmentService) {
+    init(session: V2SessionModel, repository: V2SessionRepository, attachments: V2AttachmentService, files: V2WorkspaceFilesService? = nil) {
         self.session = session; self.repository = repository; self.attachments = attachments
+        self.files = files
     }
 
     var isRunning: Bool {
@@ -44,6 +50,29 @@ final class SessionChatModel {
     var canBrowseFiles: Bool {
         session.isValid && session.metadata?.connectorStatus == .online && session.network.availability != .offline
             && session.metadata?.cwd?.isEmpty == false
+    }
+
+    func prepareOpening() async {
+        isOpeningPrepared = false; openingError = nil
+        do {
+            var data = try await repository.load(sessionId: session.id)
+            if data.hasNewerItems { data = try await repository.loadLatest(sessionId: session.id) }
+            // A tool-heavy latest page may not contain its user's message yet.
+            while !data.items.contains(where: { $0.type == .message && $0.role == .user && $0.isVisibleInChat }), data.hasOlderItems {
+                try Task.checkCancellation()
+                let first = data.items.first?.id
+                data = try await repository.loadOlder(sessionId: session.id)
+                if data.items.first?.id == first { break }
+            }
+        } catch {
+            guard !Task.isCancelled else { return }
+            openingError = error.localizedDescription
+        }
+        guard session.isValid, !Task.isCancelled else { return }
+        openingTargetID = session.pendingMessages.last?.id
+            ?? session.timeline.last(where: { $0.value.type == .message && $0.value.role == .user && $0.value.isVisibleInChat })?.id
+            ?? session.timeline.last(where: { $0.value.isVisibleInChat })?.id
+        isOpeningPrepared = true
     }
 
     func setTakeover(_ enabled: Bool) async -> Bool {
@@ -143,6 +172,7 @@ final class SessionChatModel {
         do {
             try await repository.respond(sessionId: session.id, noticeId: notice.id, actionId: action.id, input: input)
             notice.accepted()
+            if notice.submission == .accepted { responseRevision += 1 }
         } catch { notice.fail(error) }
     }
 
@@ -157,5 +187,26 @@ final class SessionChatModel {
 
     func download(_ fileID: String) async throws -> Data {
         try await attachments.download(sessionId: session.id, fileId: fileID)
+    }
+
+    func thumbnail(for file: V2AttachmentContent) async throws -> Data? {
+        if let cached = session.attachmentPreviews.preview(for: file) { return cached }
+        guard session.isValid, file.isImage, (file.size ?? 0) <= 25 * 1024 * 1024 else { return nil }
+        let preview: Data?
+        if file.readsFromDevice, let path = file.devicePath, let files, let meta = session.metadata {
+            guard meta.connectorStatus == .online, session.network.availability != .offline else {
+                throw V2ClientFailure(kind: .offline, message: "设备或网络已离线")
+            }
+            let downloaded = try await files.download(connectorId: meta.connectorId, root: file.root ?? meta.cwd ?? ".",
+                entry: V2WorkspaceEntry(name: file.name ?? (path as NSString).lastPathComponent, path: path, type: "file", size: file.size, modifiedAt: nil))
+            preview = await Task.detached(priority: .utility) { ChatImageThumbnail.make(url: downloaded.url) }.value
+        } else if let id = file.fileId, !id.hasPrefix("local:") {
+            let data = try await download(id)
+            preview = await Task.detached(priority: .utility) { ChatImageThumbnail.make(data: data) }.value
+        } else { return nil }
+        try Task.checkCancellation()
+        guard session.isValid else { return nil }
+        if let preview { session.attachmentPreviews.cache(preview, for: file) }
+        return preview
     }
 }
