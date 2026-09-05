@@ -1,6 +1,10 @@
 import Foundation
 
 protocol V2AccountAPIProtocol {
+    func authConfig() async throws -> AuthConfig
+    func updateProfile(request: V2ProfileUpdateRequest) async throws -> AuthMe
+    func sendEmailCode(request: V2EmailCodeRequest) async throws -> V2EmailCodeResponse
+    func bindEmail(request: V2EmailBindingRequest) async throws -> AuthMe
     func profile() async throws -> AuthMe
     func updateAvatar(request: V2AvatarUpdateRequest) async throws -> AuthMe
     func clearAvatar() async throws -> AuthMe
@@ -9,6 +13,37 @@ protocol V2AccountAPIProtocol {
 
 struct V2AccountAPI: V2AccountAPIProtocol {
     let transport: any HTTPTransport
+
+    func authConfig() async throws -> AuthConfig {
+        try await transport.send(HTTPRequest<EmptyRequestBody, AuthConfig>(
+            method: .get,
+            path: "/auth/config"
+        ))
+    }
+
+    func updateProfile(request body: V2ProfileUpdateRequest) async throws -> AuthMe {
+        try await transport.send(HTTPRequest<V2ProfileUpdateRequest, AuthMe>(
+            method: .put,
+            path: "/auth/me/profile",
+            body: body
+        ))
+    }
+
+    func sendEmailCode(request body: V2EmailCodeRequest) async throws -> V2EmailCodeResponse {
+        try await transport.send(HTTPRequest<V2EmailCodeRequest, V2EmailCodeResponse>(
+            method: .post,
+            path: "/auth/email-code",
+            body: body
+        ))
+    }
+
+    func bindEmail(request body: V2EmailBindingRequest) async throws -> AuthMe {
+        try await transport.send(HTTPRequest<V2EmailBindingRequest, AuthMe>(
+            method: .put,
+            path: "/auth/me/email",
+            body: body
+        ))
+    }
 
     func profile() async throws -> AuthMe {
         let request = HTTPRequest<EmptyRequestBody, AuthMe>(

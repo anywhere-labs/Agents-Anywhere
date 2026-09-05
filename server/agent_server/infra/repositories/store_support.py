@@ -173,6 +173,9 @@ def _default_files_root(engine: AsyncEngine, path: str | Path | None) -> Path:
 def _user_from_row(row: Any) -> UserView:
     return UserView(
         userId=row["id"],
+        email=row.get("email"),
+        emailVerified=bool(row.get("email_verified_at")),
+        displayName=row.get("display_name") or "",
         role=row["role"],
         disabled=bool(row["disabled"]),
         avatar=row.get("avatar"),

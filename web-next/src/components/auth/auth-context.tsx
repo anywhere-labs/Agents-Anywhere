@@ -25,7 +25,8 @@ export type AuthScreen =
 export type OAuthPending = {
   status: "authenticated" | "needs_password" | "needs_registration"
   pendingToken: string
-  userId: string
+  email: string
+  displayName: string
 }
 
 type AuthState = {
@@ -39,12 +40,14 @@ type AuthState = {
   oauthEnabled: boolean
   oauthProviderLabel: string | null
   oauthPending: OAuthPending | null
+  emailVerificationRequired: boolean
+  refreshConfig: () => Promise<void>
   registrationOpen: boolean
   navigate: (screen: AuthScreen) => void
-  login: (input: { userId: string; password: string }) => Promise<void>
-  register: (input: { userId: string; password: string; setupToken?: string }) => Promise<void>
+  login: (input: { email: string; password: string }) => Promise<void>
+  register: (input: { email: string; displayName: string; password: string; code?: string; setupToken?: string }) => Promise<void>
   startOAuth: () => Promise<void>
-  finalizeOAuth: (input: { userId?: string; password?: string; setPassword?: boolean }) => Promise<void>
+  finalizeOAuth: (input: { email?: string; displayName?: string; code?: string; password?: string; setPassword?: boolean }) => Promise<void>
   cancelOAuth: () => void
   refreshMe: () => Promise<AuthMe | null>
   signOut: () => void
@@ -111,7 +114,8 @@ function readOAuthPendingFromUrl(): OAuthPending | null {
   return {
     status,
     pendingToken,
-    userId: params.get("oauth_user") ?? "",
+    email: params.get("oauth_email") ?? "",
+    displayName: params.get("oauth_display_name") ?? "",
   }
 }
 
@@ -125,11 +129,15 @@ function clearOAuthQueryParams() {
     url.searchParams.has("oauth_pending") ||
     url.searchParams.has("oauth_status") ||
     url.searchParams.has("oauth_user") ||
+    url.searchParams.has("oauth_email") ||
+    url.searchParams.has("oauth_display_name") ||
     url.searchParams.has("oauth_error")
   if (!hadOAuthParams) return
   url.searchParams.delete("oauth_pending")
   url.searchParams.delete("oauth_status")
   url.searchParams.delete("oauth_user")
+  url.searchParams.delete("oauth_email")
+  url.searchParams.delete("oauth_display_name")
   url.searchParams.delete("oauth_error")
   window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`)
 }
@@ -145,6 +153,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [oauthEnabled, setOauthEnabled] = React.useState(false)
   const [oauthProviderLabel, setOauthProviderLabel] = React.useState<string | null>(null)
   const [oauthPending, setOauthPending] = React.useState<OAuthPending | null>(null)
+  const [emailVerificationRequired, setEmailVerificationRequired] = React.useState(false)
+  const refreshConfig = React.useCallback(async () => {
+    const config = await authApi.config()
+    setEmailVerificationRequired(config.emailVerificationRequired)
+    setRegistrationOpen(config.registrationOpen)
+    setOauthEnabled(config.oauthEnabled)
+    setOauthProviderLabel(config.oauthProviderLabel)
+  }, [])
   const [registrationOpen, setRegistrationOpen] = React.useState(false)
 
   // On mount: set screen from the current hash, then listen for changes.
@@ -166,6 +182,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setOauthEnabled(config.oauthEnabled)
           setOauthProviderLabel(config.oauthProviderLabel)
           setRegistrationOpen(config.registrationOpen)
+          setEmailVerificationRequired(config.emailVerificationRequired)
         }
         if (config.needsBootstrap && !cancelled) {
           setScreenState("bootstrap")
@@ -266,7 +283,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [finishAuth, oauthPending, t])
 
   const login = React.useCallback(
-    async (input: { userId: string; password: string }) => {
+    async (input: { email: string; password: string }) => {
       setLoading(true)
       setError(null)
       try {
@@ -282,7 +299,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   )
 
   const register = React.useCallback(
-    async (input: { userId: string; password: string; setupToken?: string }) => {
+    async (input: { email: string; displayName: string; password: string; code?: string; setupToken?: string }) => {
       setLoading(true)
       setError(null)
       try {
@@ -311,14 +328,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [t])
 
   const finalizeOAuth = React.useCallback(
-    async (input: { userId?: string; password?: string; setPassword?: boolean }) => {
+    async (input: { email?: string; displayName?: string; code?: string; password?: string; setPassword?: boolean }) => {
       if (!oauthPending) return
       setLoading(true)
       setError(null)
       try {
         const payload: OAuthFinalizePayload = {
           pendingToken: oauthPending.pendingToken,
-          userId: input.userId?.trim().toLowerCase() || undefined,
+          email: input.email?.trim().toLowerCase() || undefined,
+          displayName: input.displayName?.trim() || undefined,
+          code: input.code || undefined,
           password: input.password || undefined,
           setPassword: Boolean(input.setPassword),
         }
@@ -374,6 +393,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         oauthProviderLabel,
         oauthPending,
         registrationOpen,
+        emailVerificationRequired,
+        refreshConfig,
         navigate,
 
         login,

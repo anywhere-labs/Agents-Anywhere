@@ -120,6 +120,10 @@ fun ProfileSettingsDrawer(
     onAppearanceModeChange: (String) -> Unit,
     onLanguageModeChange: (String) -> Unit,
     onLoadAccount: suspend () -> Result<AuthMeResponse>,
+    onLoadAccountAuthConfig: suspend () -> Result<com.agentsanywhere.app.api.AuthConfigResponse>,
+    onUpdateDisplayName: suspend (String) -> Result<com.agentsanywhere.app.api.AuthMeResponse>,
+    onSendEmailCode: suspend (String) -> Result<com.agentsanywhere.app.api.EmailCodeResponse>,
+    onBindEmail: suspend (String, String?) -> Result<com.agentsanywhere.app.api.AuthMeResponse>,
     onUpdateAvatar: suspend (String) -> Result<AuthMeResponse>,
     onClearAvatar: suspend () -> Result<AuthMeResponse>,
     onChangePassword: suspend (String) -> Result<Unit>,
@@ -144,6 +148,8 @@ fun ProfileSettingsDrawer(
     var avatarBusy by remember { mutableStateOf(false) }
     var detailPage by remember { mutableStateOf(ProfileDetailPage.None) }
     var appearanceMenuOpen by remember { mutableStateOf(false) }
+    var nicknameOpen by remember { mutableStateOf(false) }
+    var emailOpen by remember { mutableStateOf(false) }
     var passwordOpen by remember { mutableStateOf(false) }
     var signOutOpen by remember { mutableStateOf(false) }
     val picker = rememberLauncherForActivityResult(
@@ -215,6 +221,8 @@ fun ProfileSettingsDrawer(
                                 onChangeAvatar = {
                                     picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
                                 },
+                                onChangeNickname = { nicknameOpen = true },
+                                onChangeEmail = { emailOpen = true },
                                 onChangePassword = { passwordOpen = true },
                                 onSignOut = { signOutOpen = true },
                             )
@@ -312,6 +320,36 @@ fun ProfileSettingsDrawer(
         }
     }
 
+    if (nicknameOpen) {
+        NicknameDialog(
+            displayName = account.displayName,
+            onDismiss = { nicknameOpen = false },
+            onSave = { displayName ->
+                onUpdateDisplayName(displayName).onSuccess {
+                    account = it
+                    nicknameOpen = false
+                    onNotice(context.getString(R.string.profile_updated), false)
+                }
+            },
+        )
+    }
+
+    if (emailOpen) {
+        EmailBindingDialog(
+            currentEmail = account.email.orEmpty(),
+            onDismiss = { emailOpen = false },
+            onLoadConfig = onLoadAccountAuthConfig,
+            onSendCode = onSendEmailCode,
+            onSave = { email, code ->
+                onBindEmail(email, code).onSuccess {
+                    account = it
+                    emailOpen = false
+                    onNotice(context.getString(R.string.profile_updated), false)
+                }
+            },
+        )
+    }
+
     if (passwordOpen) {
         ChangePasswordDialog(
             onDismiss = { passwordOpen = false },
@@ -397,7 +435,7 @@ private fun IdentityCard(
             ProfileAvatar(account = account, size = 42)
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
                 Text(
-                    text = account.userId.ifBlank { stringResource(R.string.profile_account_fallback) },
+                    text = account.accountLabel.ifBlank { stringResource(R.string.profile_account_fallback) },
                     color = colors.ink,
                     fontSize = 17.sp,
                     fontWeight = FontWeight.SemiBold,
@@ -431,6 +469,8 @@ private fun AccountDetailPage(
     account: AuthMeResponse,
     avatarBusy: Boolean,
     onChangeAvatar: () -> Unit,
+    onChangeNickname: () -> Unit,
+    onChangeEmail: () -> Unit,
     onChangePassword: () -> Unit,
     onSignOut: () -> Unit,
 ) {
@@ -459,6 +499,23 @@ private fun AccountDetailPage(
         Spacer(Modifier.height(28.dp))
         ProfileCard {
             AccountInfoRow(
+                label = stringResource(R.string.profile_nickname),
+                value = account.displayName.ifBlank { stringResource(R.string.profile_account_fallback) },
+            )
+            ProfileDivider(start = 12.dp, end = 12.dp)
+            AccountInfoRow(
+                label = stringResource(R.string.profile_email),
+                value = account.email ?: stringResource(R.string.profile_email_unbound),
+            )
+            if (account.email != null) {
+                ProfileDivider(start = 12.dp, end = 12.dp)
+                AccountInfoRow(
+                    label = stringResource(R.string.profile_email_status),
+                    value = stringResource(if (account.emailVerified) R.string.profile_email_verified else R.string.profile_email_unverified),
+                )
+            }
+            ProfileDivider(start = 12.dp, end = 12.dp)
+            AccountInfoRow(
                 label = stringResource(R.string.profile_account_id),
                 value = account.userId.ifBlank { stringResource(R.string.profile_account_fallback) },
             )
@@ -467,6 +524,10 @@ private fun AccountDetailPage(
         }
         Spacer(Modifier.height(24.dp))
         ProfileCard {
+            AccountActionRow(icon = Lucide.Circle, text = stringResource(R.string.profile_edit_nickname), onClick = onChangeNickname)
+            ProfileDivider(start = 12.dp, end = 12.dp)
+            AccountActionRow(icon = Lucide.Globe, text = stringResource(R.string.profile_bind_email), onClick = onChangeEmail)
+            ProfileDivider(start = 12.dp, end = 12.dp)
             AccountActionRow(icon = Lucide.KeyRound, text = stringResource(R.string.profile_change_password), onClick = onChangePassword)
         }
         Spacer(Modifier.height(18.dp))
@@ -712,7 +773,7 @@ private fun AccountActionRow(
 @Composable
 private fun ProfileAvatar(account: AuthMeResponse, size: Int) {
     val colors = LocalAAColors.current
-    val letter = account.userId.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "A"
+    val letter = account.accountLabel.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "A"
     Box(
         modifier = Modifier
             .size(size.dp)
@@ -1016,8 +1077,8 @@ private fun ChangePasswordDialog(
     val scope = rememberCoroutineScope()
     val canSave = password.length >= 8 && password == confirm && !saving
     ProfileDialog(title = stringResource(R.string.profile_change_password), onDismiss = onDismiss) {
-        ProfilePasswordField(value = password, placeholder = stringResource(R.string.profile_new_password), onValueChange = { password = it })
-        ProfilePasswordField(value = confirm, placeholder = stringResource(R.string.profile_confirm_password), onValueChange = { confirm = it })
+        ProfileTextField(password = true, value = password, placeholder = stringResource(R.string.profile_new_password), onValueChange = { password = it })
+        ProfileTextField(password = true, value = confirm, placeholder = stringResource(R.string.profile_confirm_password), onValueChange = { confirm = it })
         if (password.isNotEmpty() && password.length < 8) {
             ProfileDialogHint(stringResource(R.string.profile_password_min_length))
         } else if (confirm.isNotEmpty() && password != confirm) {
@@ -1060,7 +1121,7 @@ private fun ConfirmSignOutDialog(onDismiss: () -> Unit, onConfirm: () -> Unit) {
 }
 
 @Composable
-private fun ProfileDialog(
+internal fun ProfileDialog(
     title: String,
     onDismiss: () -> Unit,
     content: @Composable ColumnScope.() -> Unit,
@@ -1093,7 +1154,7 @@ private fun ProfileDialog(
 }
 
 @Composable
-private fun ProfilePasswordField(value: String, placeholder: String, onValueChange: (String) -> Unit) {
+internal fun ProfileTextField(value: String, placeholder: String, password: Boolean = false, onValueChange: (String) -> Unit) {
     val colors = LocalAAColors.current
     Box(
         modifier = Modifier
@@ -1114,14 +1175,14 @@ private fun ProfilePasswordField(value: String, placeholder: String, onValueChan
             modifier = Modifier.fillMaxWidth(),
             singleLine = true,
             textStyle = TextStyle(color = colors.ink, fontSize = 15.sp, fontWeight = FontWeight.Medium),
-            visualTransformation = PasswordVisualTransformation(),
+            visualTransformation = if (password) PasswordVisualTransformation() else androidx.compose.ui.text.input.VisualTransformation.None,
             cursorBrush = SolidColor(colors.ink),
         )
     }
 }
 
 @Composable
-private fun ProfileDialogHint(text: String) {
+internal fun ProfileDialogHint(text: String) {
     Text(
         text = text,
         color = LocalAAColors.current.errorText,
@@ -1131,7 +1192,7 @@ private fun ProfileDialogHint(text: String) {
 }
 
 @Composable
-private fun ProfileDialogButton(
+internal fun ProfileDialogButton(
     label: String,
     primary: Boolean = false,
     enabled: Boolean = true,

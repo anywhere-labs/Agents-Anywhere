@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+from agent_server.infra.repositories.email_accounts import EmailAccountRepositoryMixin
 from agent_server.infra.repositories.store_support import *
 
 
-class UserRepositoryMixin:
+class UserRepositoryMixin(EmailAccountRepositoryMixin):
     @staticmethod
     def normalize_user_id(user_id: str) -> str:
         """Trim and lowercase; raise ValueError if format invalid."""

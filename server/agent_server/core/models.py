@@ -11,6 +11,7 @@ from pydantic import (
     model_validator,
 )
 
+from agent_server.core.email_settings import EmailSettingsUpdate, EmailSettingsView
 from agent_server.core.runtime_identity import (
     RuntimeIdentity,
     RuntimeIdentityError,
@@ -133,7 +134,9 @@ UserRoleName = Literal["admin", "member"]
 
 
 class AuthRequest(BaseModel):
-    userId: str
+    email: str = Field(max_length=320)
+    displayName: str | None = Field(default=None, max_length=64)
+    code: str | None = Field(default=None, max_length=6)
     password: str | None = None
     passwordVerifier: str | None = None
     passwordSalt: str | None = None
@@ -143,7 +146,7 @@ class AuthRequest(BaseModel):
 
 
 class AuthPasswordSaltRequest(BaseModel):
-    userId: str
+    email: str = Field(max_length=320)
 
 
 class AuthPasswordSaltResponse(BaseModel):
@@ -153,6 +156,9 @@ class AuthPasswordSaltResponse(BaseModel):
 
 class UserView(BaseModel):
     userId: str
+    email: str | None = None
+    emailVerified: bool = False
+    displayName: str = ""
     role: UserRoleName
     disabled: bool
     avatar: str | None = None
@@ -162,6 +168,9 @@ class UserView(BaseModel):
 
 class AuthResponse(BaseModel):
     userId: str
+    email: str | None = None
+    emailVerified: bool = False
+    displayName: str = ""
     role: UserRoleName
     accessToken: str
     tokenType: str = "bearer"
@@ -170,6 +179,9 @@ class AuthResponse(BaseModel):
 
 class AuthMeResponse(BaseModel):
     userId: str
+    email: str | None = None
+    emailVerified: bool = False
+    displayName: str = ""
     role: UserRoleName
     disabled: bool
     avatar: str | None = None
@@ -177,6 +189,7 @@ class AuthMeResponse(BaseModel):
 
 
 class AuthConfigResponse(BaseModel):
+    emailVerificationRequired: bool = False
     needsBootstrap: bool
     registrationOpen: bool
     oauthRegistrationOpen: bool = False
@@ -187,6 +200,28 @@ class AuthConfigResponse(BaseModel):
     # the token value itself.
     setupTokenExpiresAt: str | None = None
     serverTime: str
+
+
+class EmailCodeRequest(BaseModel):
+    email: str = Field(max_length=320)
+    purpose: Literal["register", "bind"]
+    setupToken: str | None = None
+    pendingToken: str | None = None
+
+
+class EmailCodeResponse(BaseModel):
+    expiresIn: int = 600
+    retryAfter: int = 60
+    serverTime: str
+
+
+class BindEmailRequest(BaseModel):
+    email: str = Field(max_length=320)
+    code: str | None = Field(default=None, max_length=6)
+
+
+class UpdateProfileRequest(BaseModel):
+    displayName: str = Field(min_length=1, max_length=64)
 
 
 class ChangePasswordRequest(BaseModel):
@@ -215,7 +250,9 @@ class ServiceInfoResponse(BaseModel):
 
 
 class AdminUserCreateRequest(BaseModel):
-    userId: str
+    email: str = Field(max_length=320)
+    displayName: str = Field(min_length=1, max_length=64)
+    code: str | None = Field(default=None, max_length=6)
     password: str | None = None
     passwordVerifier: str | None = None
     passwordSalt: str | None = None
@@ -223,6 +260,7 @@ class AdminUserCreateRequest(BaseModel):
 
 
 class AdminUserUpdateRequest(BaseModel):
+    displayName: str | None = Field(default=None, max_length=64)
     role: UserRoleName | None = None
     disabled: bool | None = None
     password: str | None = None
@@ -360,12 +398,14 @@ class InstanceSettingsView(BaseModel):
     registrationOpen: bool
     oauthRegistrationOpen: bool = False
     oauth: OAuthProviderPublicConfig | None = None
+    email: EmailSettingsView = Field(default_factory=EmailSettingsView)
 
 
 class InstanceSettingsUpdateRequest(BaseModel):
     registrationOpen: bool | None = None
     oauthRegistrationOpen: bool | None = None
     oauth: OAuthProviderConfigUpdate | None = None
+    email: EmailSettingsUpdate | None = None
 
 
 class OAuthStartResponse(BaseModel):
@@ -387,7 +427,9 @@ class OAuthCallbackResponse(BaseModel):
 
 class OAuthFinalizeRequest(BaseModel):
     pendingToken: str
-    userId: str | None = None
+    email: str | None = Field(default=None, max_length=320)
+    displayName: str | None = Field(default=None, max_length=64)
+    code: str | None = Field(default=None, max_length=6)
     password: str | None = None
     passwordVerifier: str | None = None
     passwordSalt: str | None = None

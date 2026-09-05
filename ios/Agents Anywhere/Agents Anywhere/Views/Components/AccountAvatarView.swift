@@ -2,7 +2,7 @@ import SwiftUI
 import UIKit
 
 struct AccountAvatarView: View {
-    let userId: String
+    let displayName: String
     let source: AccountAvatarImageSource?
     let size: CGFloat
 
@@ -39,7 +39,7 @@ struct AccountAvatarView: View {
     }
 
     private var fallbackCharacter: String {
-        guard let firstCharacter = userId.first else { return "?" }
+        guard let firstCharacter = displayName.first else { return "?" }
         return String(firstCharacter).uppercased()
     }
 }

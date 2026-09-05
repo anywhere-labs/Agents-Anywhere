@@ -17,6 +17,7 @@ import { toast } from "sonner"
 
 import { useAuth } from "@/components/auth/auth-context"
 import { DashboardSidebarToggle } from "@/components/dashboard-sidebar-toggle"
+import { ServiceEmailCard } from "@/components/pages/service-email-card"
 import { LoadingState } from "@/components/loading-state"
 import { Button } from "@/components/ui/button"
 import {
@@ -390,6 +391,8 @@ export function ServicePage() {
             </FieldGroup>
           </CardContent>
         </Card>
+
+        <ServiceEmailCard settings={settings.email} token={session?.accessToken ?? ""} isAdmin={isAdmin} onSaved={setSettings} />
 
         <OAuthProviderCard
           draft={oauthDraft}

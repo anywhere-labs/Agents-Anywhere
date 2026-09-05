@@ -12,7 +12,8 @@ struct AccountSettingsSheet: View {
             List {
                 if let me = appState.me {
                     AccountSettingsProfileSection(
-                        userId: me.userId,
+                        displayName: me.accountLabel,
+                        email: me.email,
                         role: me.role,
                         disabled: me.disabled,
                         avatarSource: appState.accountAvatarSource
@@ -145,7 +146,8 @@ private struct SignOutConfirmationSheet: View {
 }
 
 private struct AccountSettingsProfileSection: View {
-    let userId: String
+    let displayName: String
+    let email: String?
     let role: UserRole
     let disabled: Bool
     let avatarSource: AccountAvatarImageSource?
@@ -153,11 +155,16 @@ private struct AccountSettingsProfileSection: View {
     var body: some View {
         Section {
             HStack(spacing: 16) {
-                AccountAvatarView(userId: userId, source: avatarSource, size: 64)
+                AccountAvatarView(displayName: displayName, source: avatarSource, size: 64)
 
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(userId)
+                    Text(displayName)
                         .font(.headline)
+                    if let email {
+                        Text(email)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
                     if role == .admin {
                         Text("Administrator")
                             .font(.subheadline)
@@ -186,6 +193,12 @@ private struct AccountSettingsProfileSection: View {
 private struct AccountSettingsNavigationSection: View {
     var body: some View {
         Section("Account") {
+            NavigationLink {
+                AccountIdentitySettingsView()
+            } label: {
+                Label("Nickname and email", systemImage: "person.text.rectangle")
+            }
+
             NavigationLink {
                 AvatarSettingsView()
             } label: {

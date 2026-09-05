@@ -447,7 +447,7 @@ private struct ChatSidebarAvatar: View {
 
     var body: some View {
         AccountAvatarView(
-            userId: account.userId,
+            displayName: account.displayName,
             source: account.avatarSource,
             size: 38
         )

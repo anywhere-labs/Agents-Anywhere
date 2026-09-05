@@ -583,4 +583,21 @@
     <string name="profile_account_load_failed">账号信息加载失败。</string>
     <string name="profile_sign_out_title">退出登录？</string>
     <string name="profile_sign_out_body">退出后需要重新登录才能继续使用此服务器。</string>
+    <string name="profile_nickname">昵称</string>
+    <string name="profile_email">邮箱</string>
+    <string name="profile_email_unbound">未绑定</string>
+    <string name="profile_updated">账号已更新。</string>
+    <string name="profile_update_failed">无法更新账号。</string>
+    <string name="profile_edit_nickname">修改昵称</string>
+    <string name="profile_bind_email">绑定或修改邮箱</string>
+    <string name="profile_loading_email_policy">正在加载邮箱设置…</string>
+    <string name="profile_retry">重试</string>
+    <string name="profile_email_code">邮箱验证码</string>
+    <string name="profile_send_code">发送验证码</string>
+    <string name="profile_resend_in">%1$d 秒后重新发送</string>
+    <string name="profile_code_sent">验证码已发送，请检查收件箱。</string>
+    <string name="profile_email_verification_disabled">此服务无需验证码即可绑定邮箱。</string>
+    <string name="profile_email_status">邮箱状态</string>
+    <string name="profile_email_verified">已验证</string>
+    <string name="profile_email_unverified">未验证</string>
 </resources>

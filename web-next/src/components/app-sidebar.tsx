@@ -86,7 +86,7 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
   const [signOutOpen, setSignOutOpen] = React.useState(false)
   const [pairOpen, setPairOpen] = React.useState(false)
 
-  const userId = me?.userId ?? "Unknown"
+  const userId = me?.displayName || me?.email || "—"
   const userRole = me?.role ? me.role.replace(/^\w/, (char) => char.toUpperCase()) : ""
   const userInitials = userId.slice(0, 2).toUpperCase()
   const isAdmin = me?.role === "admin"

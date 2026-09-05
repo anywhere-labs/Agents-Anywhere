@@ -75,6 +75,8 @@ import {
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { DashboardSidebarToggle } from "@/components/dashboard-sidebar-toggle"
 import { useAuth } from "@/components/auth/auth-context"
+import { EmailCodeField, DisplayNameField } from "@/components/auth/account-identity-fields"
+import { accountDisplayName, isValidEmail, isValidDisplayName } from "@/features/auth/account-profile"
 import { LoadingState } from "@/components/loading-state"
 import { useWorkspace } from "@/components/workspace-context"
 import { authApi } from "@/features/auth/api"
@@ -83,17 +85,19 @@ import { cn } from "@/lib/utils"
 
 type FilterTab = "all" | "admins" | "members"
 type UserDraft = {
-  userId: string
+  email: string
+  displayName: string
+  code: string
   role: UserRole
   password: string
   confirmPassword: string
 }
 
-const USER_ID_RE = /^[a-z0-9_-]{3,64}$/
-
 function initialDraft(): UserDraft {
   return {
-    userId: "",
+    email: "",
+    displayName: "",
+    code: "",
     role: "member",
     password: "",
     confirmPassword: "",
@@ -150,7 +154,7 @@ export function TeamPage() {
     return users.filter((user) => {
       if (filterTab === "admins" && user.role !== "admin") return false
       if (filterTab === "members" && user.role !== "member") return false
-      if (query && !user.userId.toLowerCase().includes(query)) return false
+      if (query && !`${accountDisplayName(user)} ${user.email ?? ""}`.toLowerCase().includes(query)) return false
       return true
     })
   }, [filterTab, search, users])
@@ -324,18 +328,18 @@ export function TeamPage() {
                       <TableCell className="px-4">
                         <div className="flex min-w-56 items-center gap-3">
                           <Avatar className="size-8 rounded-full">
-                            {user.avatar ? <AvatarImage src={user.avatar} alt={user.userId} /> : null}
+                            {user.avatar ? <AvatarImage src={user.avatar} alt={accountDisplayName(user)} /> : null}
                             <AvatarFallback className="rounded-full bg-primary/15 text-xs font-semibold text-primary">
-                              {user.userId.slice(0, 2).toUpperCase()}
+                              {accountDisplayName(user).slice(0, 2).toUpperCase()}
                             </AvatarFallback>
                           </Avatar>
                           <div className="min-w-0">
                             <div className="flex items-center gap-2">
-                              <span className="truncate font-medium">{user.userId}</span>
+                              <span className="truncate font-medium">{accountDisplayName(user)}</span>
                               {isYou ? <Badge variant="secondary">{t("you")}</Badge> : null}
                             </div>
                             <div className="code-mono mt-0.5 truncate text-xs text-muted-foreground">
-                              {user.userId}
+                              {user.email ?? "—"}
                             </div>
                           </div>
                         </div>
@@ -469,7 +473,9 @@ function CreateUserDialog({
   onCreated: (user: AdminUser) => void
 }) {
   const t = useTranslations("pages.team")
+  const { emailVerificationRequired, refreshConfig } = useAuth()
   const [draft, setDraft] = React.useState<UserDraft>(() => initialDraft())
+  React.useEffect(() => { if (open) void refreshConfig().catch(() => undefined) }, [open, refreshConfig])
   const [saving, setSaving] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
 
@@ -484,7 +490,7 @@ function CreateUserDialog({
   const validation = validateUserDraft(draft, true)
   const submit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    if (!token || saving || validation) {
+    if (!token || saving || validation || (emailVerificationRequired && draft.code.length !== 6)) {
       if (validation) setError(t(validation))
       return
     }
@@ -492,7 +498,9 @@ function CreateUserDialog({
     setError(null)
     try {
       const created = await authApi.createUser(token, {
-        userId: draft.userId,
+        email: draft.email,
+        displayName: draft.displayName,
+        code: draft.code || undefined,
         role: draft.role,
         password: draft.password,
       })
@@ -514,12 +522,13 @@ function CreateUserDialog({
         </DialogHeader>
         <form onSubmit={submit} className="flex flex-col gap-6">
           <UserFormFields draft={draft} onDraftChange={setDraft} requirePassword />
+          {emailVerificationRequired ? <EmailCodeField email={draft.email} value={draft.code} onChange={(code) => setDraft((current) => ({ ...current, code }))} token={token} disabled={saving} id="team-email-code" /> : null}
           {error ? <p className="text-sm text-destructive">{error}</p> : null}
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               {t("cancel")}
             </Button>
-            <Button type="submit" disabled={saving || Boolean(validation)}>
+            <Button type="submit" disabled={saving || Boolean(validation) || (emailVerificationRequired && draft.code.length !== 6)}>
               {saving ? <Spinner /> : <Plus data-icon="inline-start" />}
               {t("createUser")}
             </Button>
@@ -546,6 +555,7 @@ function EditUserDialog({
   onDelete: (user: AdminUser) => void
 }) {
   const t = useTranslations("pages.team")
+  const [displayName, setDisplayName] = React.useState("")
   const [role, setRole] = React.useState<UserRole>("member")
   const [active, setActive] = React.useState(true)
   const [passwordOpen, setPasswordOpen] = React.useState(false)
@@ -556,6 +566,7 @@ function EditUserDialog({
 
   React.useEffect(() => {
     if (user) {
+      setDisplayName(user.displayName)
       setRole(user.role)
       setActive(!user.disabled)
     }
@@ -569,17 +580,18 @@ function EditUserDialog({
   if (!user) return null
 
   const isSelf = user.userId === currentUserId
-  const dirty = role !== user.role || active === user.disabled
+  const dirty = displayName.trim() !== user.displayName || role !== user.role || active === user.disabled
   const passwordValidation = passwordOpen
     ? validatePasswordPair(password, confirmPassword)
     : null
 
   const saveChanges = async () => {
-    if (!token || saving || !dirty) return
+    if (!token || saving || !dirty || !isValidDisplayName(displayName)) return
     setSaving(true)
     setError(null)
     try {
       const updated = await authApi.updateUser(token, user.userId, {
+        ...(displayName.trim() !== user.displayName ? { displayName } : {}),
         ...(role !== user.role ? { role } : {}),
         ...(active === user.disabled ? { disabled: !active } : {}),
       })
@@ -616,26 +628,27 @@ function EditUserDialog({
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>{t("editUser")}</DialogTitle>
-          <DialogDescription>{t("editUserDescription", { userId: user.userId })}</DialogDescription>
+          <DialogDescription>{t("editUserDescription", { userId: accountDisplayName(user) })}</DialogDescription>
         </DialogHeader>
         <div className="flex flex-col gap-6">
           <div className="flex items-center gap-3 rounded-xl border border-border bg-muted/20 p-3">
             <Avatar className="size-10 rounded-full">
-              {user.avatar ? <AvatarImage src={user.avatar} alt={user.userId} /> : null}
+              {user.avatar ? <AvatarImage src={user.avatar} alt={accountDisplayName(user)} /> : null}
               <AvatarFallback className="rounded-full bg-primary/15 text-sm font-semibold text-primary">
-                {user.userId.slice(0, 2).toUpperCase()}
+                {accountDisplayName(user).slice(0, 2).toUpperCase()}
               </AvatarFallback>
             </Avatar>
             <div className="min-w-0">
               <div className="flex items-center gap-2">
-                <p className="truncate text-sm font-medium">{user.userId}</p>
+                <p className="truncate text-sm font-medium">{accountDisplayName(user)}</p>
                 {isSelf ? <Badge variant="secondary">{t("you")}</Badge> : null}
               </div>
-              <p className="code-mono mt-0.5 truncate text-xs text-muted-foreground">{user.userId}</p>
+              <p className="code-mono mt-0.5 truncate text-xs text-muted-foreground">{user.email ?? "—"}</p>
             </div>
           </div>
 
           <FieldGroup>
+            <DisplayNameField id="team-edit-displayName" value={displayName} onChange={setDisplayName} disabled={saving} />
             <Field data-disabled={isSelf}>
               <FieldLabel>{t("role")}</FieldLabel>
               <ToggleGroup
@@ -718,7 +731,7 @@ function EditUserDialog({
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               {t("cancel")}
             </Button>
-            <Button type="button" disabled={saving || !dirty} onClick={() => void saveChanges()}>
+            <Button type="button" disabled={saving || !dirty || !isValidDisplayName(displayName)} onClick={() => void saveChanges()}>
               {saving ? <Spinner /> : null}
               {t("saveChanges")}
             </Button>
@@ -751,7 +764,7 @@ function DeleteUserDialog({
 
   if (!user) return null
 
-  const confirmed = confirmation === user.userId
+  const confirmed = confirmation === (user.email || user.userId)
   const deleteUser = async () => {
     if (!token || saving || !confirmed) return
     setSaving(true)
@@ -770,11 +783,11 @@ function DeleteUserDialog({
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>{t("deleteUser")}</AlertDialogTitle>
-          <AlertDialogDescription>{t("deleteDescription", { userId: user.userId })}</AlertDialogDescription>
+          <AlertDialogDescription>{t("deleteDescription", { userId: user.email || user.userId })}</AlertDialogDescription>
         </AlertDialogHeader>
         <FieldGroup>
           <Field>
-            <FieldLabel htmlFor="team-delete-confirm">{t("typeUserId")}</FieldLabel>
+            <FieldLabel htmlFor="team-delete-confirm">{t(user.email ? "typeEmail" : "typeUserId")}</FieldLabel>
             <Input
               id="team-delete-confirm"
               value={confirmation}
@@ -812,24 +825,12 @@ function UserFormFields({
   const passwordError = validatePasswordPair(draft.password, draft.confirmPassword)
   return (
     <FieldGroup>
-      <Field data-invalid={Boolean(draft.userId && !USER_ID_RE.test(draft.userId))}>
-        <FieldLabel htmlFor="team-user-id">{t("userId")}</FieldLabel>
-        <Input
-          id="team-user-id"
-          value={draft.userId}
-          onChange={(event) =>
-            onDraftChange({
-              ...draft,
-              userId: event.currentTarget.value.replace(/[^a-zA-Z0-9_-]/g, "").toLowerCase(),
-            })
-          }
-          className="code-mono"
-          autoComplete="username"
-          autoFocus
-          aria-invalid={Boolean(draft.userId && !USER_ID_RE.test(draft.userId))}
-        />
-        <FieldDescription>{t("userIdDescription")}</FieldDescription>
+      <Field data-invalid={Boolean(draft.email && !isValidEmail(draft.email))}>
+        <FieldLabel htmlFor="team-email">{t("email")}</FieldLabel>
+        <Input id="team-email" type="email" value={draft.email} onChange={(event) => onDraftChange({ ...draft, email: event.currentTarget.value, code: "" })} autoComplete="email" autoFocus required aria-invalid={Boolean(draft.email && !isValidEmail(draft.email))} />
+        <FieldDescription>{t("emailDescription")}</FieldDescription>
       </Field>
+      <DisplayNameField id="team-displayName" value={draft.displayName} onChange={(displayName) => onDraftChange({ ...draft, displayName })} />
 
       <Field>
         <FieldLabel>{t("role")}</FieldLabel>
@@ -897,7 +898,8 @@ function StatusBadge({ disabled }: { disabled: boolean }) {
 }
 
 function validateUserDraft(draft: UserDraft, requirePassword: boolean): string | null {
-  if (!USER_ID_RE.test(draft.userId)) return "invalidUserId"
+  if (!isValidEmail(draft.email)) return "invalidEmail"
+  if (!isValidDisplayName(draft.displayName)) return "invalidDisplayName"
   if (!requirePassword && !draft.password && !draft.confirmPassword) return null
   return validatePasswordPair(draft.password, draft.confirmPassword)
 }

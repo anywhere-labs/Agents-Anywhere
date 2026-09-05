@@ -5,7 +5,7 @@ import { Eye, EyeOff, Lock } from "lucide-react"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "@/components/ui/input-group"
-import { Label } from "@/components/ui/label"
+import { Field, FieldGroup, FieldLabel as Label } from "@/components/ui/field"
 import { AuthShell } from "./auth-shell"
 import { useAuth } from "./auth-context"
 import { useTranslations } from "next-intl"
@@ -30,9 +30,9 @@ export function OAuthLinkExistingScreen() {
     )
   }
 
-  const userId = oauthPending.userId
+  const email = oauthPending.email
   const provider = oauthProviderLabel ?? "OAuth"
-  const fallback = userId.slice(0, 2).toUpperCase() || "AA"
+  const fallback = email.slice(0, 2).toUpperCase() || "AA"
 
   if (!confirmed) {
     return (
@@ -45,7 +45,7 @@ export function OAuthLinkExistingScreen() {
             <h1 className="text-2xl font-bold tracking-tight">{t("oauth.matchTitle")}</h1>
             <p className="text-sm text-muted-foreground leading-relaxed">
               {t("oauth.matchDescriptionPrefix")}{" "}
-              <span className="code-mono font-medium text-foreground">{userId}</span>.
+              <span className="code-mono font-medium text-foreground">{email}</span>.
             </p>
           </div>
         </div>
@@ -81,8 +81,8 @@ export function OAuthLinkExistingScreen() {
         </div>
       </div>
 
-      <div className="flex flex-col gap-5">
-        <div className="flex flex-col gap-1.5">
+      <FieldGroup>
+        <Field>
           <Label htmlFor="oauth-link-password">{t("fields.password")}</Label>
           <InputGroup className="h-11 rounded-lg">
             <InputGroupAddon><Lock className="size-4" /></InputGroupAddon>
@@ -94,7 +94,7 @@ export function OAuthLinkExistingScreen() {
               onChange={(event) => setPassword(event.currentTarget.value)}
               onKeyDown={(event) => {
                 if (event.key === "Enter" && password) {
-                  void finalizeOAuth({ userId, password })
+                  void finalizeOAuth({ email, password }).catch(() => undefined)
                 }
               }}
               className="code-mono"
@@ -106,14 +106,14 @@ export function OAuthLinkExistingScreen() {
               </InputGroupButton>
             </InputGroupAddon>
           </InputGroup>
-        </div>
+        </Field>
 
         {error ? <p className="text-center text-sm text-destructive">{error}</p> : null}
 
         <Button
           className="h-11 w-full font-medium"
           disabled={loading || !password}
-          onClick={() => void finalizeOAuth({ userId, password })}
+          onClick={() => void finalizeOAuth({ email, password }).catch(() => undefined)}
         >
           {loading ? t("login.signingIn") : t("oauth.linkSubmit")}
         </Button>
@@ -123,7 +123,7 @@ export function OAuthLinkExistingScreen() {
         <Button variant="ghost" className="h-11 w-full text-muted-foreground" onClick={cancelOAuth}>
           {t("oauth.back")}
         </Button>
-      </div>
+      </FieldGroup>
     </AuthShell>
   )
 }

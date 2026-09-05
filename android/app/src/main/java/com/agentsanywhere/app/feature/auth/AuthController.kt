@@ -86,6 +86,35 @@ class AuthController(
         }
     }
 
+    suspend fun accountAuthConfig(): Result<com.agentsanywhere.app.api.AuthConfigResponse> =
+        withAccountCredentials { serverUrl, _ -> api.authConfig(serverUrl) }
+
+    suspend fun updateDisplayName(displayName: String): Result<AuthMeResponse> =
+        withAccountCredentials { serverUrl, token -> api.updateDisplayName(serverUrl, token, displayName) }
+
+    suspend fun sendEmailCode(email: String): Result<com.agentsanywhere.app.api.EmailCodeResponse> =
+        withAccountCredentials { serverUrl, token -> api.sendEmailCode(serverUrl, token, email) }
+
+    suspend fun bindEmail(email: String, code: String?): Result<AuthMeResponse> =
+        withAccountCredentials { serverUrl, token -> api.bindEmail(serverUrl, token, email, code) }
+
+    private suspend fun <T> withAccountCredentials(action: (String, String) -> T): Result<T> {
+        val serverUrl = sessionStore.readServerUrl()
+        val token = sessionStore.readAccessToken()
+        if (serverUrl.isBlank() || token.isBlank()) {
+            return Result.failure(IllegalStateException("Sign in again to update account."))
+        }
+        return withContext(Dispatchers.IO) {
+            try {
+                Result.success(action(serverUrl, token))
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                Result.failure(error)
+            }
+        }
+    }
+
     suspend fun changePassword(newPassword: String): Result<Unit> {
         if (newPassword.length < 8) {
             return Result.failure(IllegalArgumentException("Password must be at least 8 characters."))
@@ -254,6 +283,9 @@ internal fun completeWebLoginSession(
     saveSession(
         AuthResponse(
             userId = me.userId,
+            email = me.email,
+            displayName = me.displayName,
+            emailVerified = me.emailVerified,
             role = me.role,
             accessToken = token.accessToken,
             tokenType = token.tokenType,

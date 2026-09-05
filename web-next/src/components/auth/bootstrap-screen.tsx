@@ -3,25 +3,29 @@
 import { useState } from "react"
 import { Key, User, Lock, Eye, EyeOff } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { Label } from "@/components/ui/label"
+import { Field, FieldGroup, FieldLabel as Label } from "@/components/ui/field"
+import { isValidEmail, isValidDisplayName } from "@/features/auth/account-profile"
 import { InputGroup, InputGroupAddon, InputGroupInput, InputGroupButton } from "@/components/ui/input-group"
+import { EmailCodeField, DisplayNameField } from "./account-identity-fields"
 import { AuthShell } from "./auth-shell"
 import { useAuth } from "./auth-context"
 import { useTranslations } from "next-intl"
 
 export function BootstrapScreen() {
-  const { register, loading, error } = useAuth()
+  const { register, loading, error, emailVerificationRequired } = useAuth()
   const t = useTranslations("auth")
   const [showPassword, setShowPassword] = useState(false)
   const [setupToken, setSetupToken] = useState("")
-  const [userId, setUserId] = useState("")
+  const [displayName, setDisplayName] = useState("")
+  const [code, setCode] = useState("")
+  const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [confirm, setConfirm] = useState("")
   const localError = password && confirm && password !== confirm ? t("register.passwordMismatch") : null
 
   const submit = async () => {
-    if (!setupToken.trim() || !userId.trim() || !password || password !== confirm) return
-    await register({ userId, password, setupToken }).catch(() => undefined)
+    if (!setupToken.trim() || !isValidEmail(email) || !isValidDisplayName(displayName) || (emailVerificationRequired && code.length !== 6) || !password || password !== confirm) return
+    await register({ email, displayName, code, password, setupToken }).catch(() => undefined)
   }
 
   return (
@@ -36,8 +40,8 @@ export function BootstrapScreen() {
         </p>
       </div>
 
-      <div className="flex flex-col gap-5">
-        <div className="flex flex-col gap-1.5">
+      <FieldGroup>
+        <Field>
           <Label htmlFor="bs-token">{t("fields.setupToken")}</Label>
           <InputGroup className="h-11 rounded-lg">
             <InputGroupAddon><Key className="size-4" /></InputGroupAddon>
@@ -51,25 +55,29 @@ export function BootstrapScreen() {
             />
           </InputGroup>
           <p className="text-xs text-muted-foreground">{t("bootstrap.setupHint")}</p>
-        </div>
+        </Field>
 
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="bs-userid">{t("fields.adminUserId")}</Label>
+        <Field>
+          <Label htmlFor="bs-email">{t("fields.adminEmail")}</Label>
           <InputGroup className="h-11 rounded-lg">
             <InputGroupAddon><User className="size-4" /></InputGroupAddon>
             <InputGroupInput
-              id="bs-userid"
-              value={userId}
-              onChange={(event) => setUserId(event.currentTarget.value)}
+              id="bs-email"
+              value={email}
+              onChange={(event) => { setEmail(event.currentTarget.value); setCode("") }}
               placeholder={t("bootstrap.userPlaceholder")}
-              autoComplete="username"
+              type="email"
+              autoComplete="email"
               spellCheck={false}
               className="code-mono"
             />
           </InputGroup>
-        </div>
+        </Field>
 
-        <div className="flex flex-col gap-1.5">
+        <DisplayNameField value={displayName} onChange={setDisplayName} />
+        {emailVerificationRequired ? <EmailCodeField email={email} value={code} onChange={setCode} setupToken={setupToken} disabled={loading} /> : null}
+
+        <Field>
           <Label htmlFor="bs-password">{t("fields.adminPassword")}</Label>
           <InputGroup className="h-11 rounded-lg">
             <InputGroupAddon><Lock className="size-4" /></InputGroupAddon>
@@ -89,9 +97,9 @@ export function BootstrapScreen() {
               </InputGroupButton>
             </InputGroupAddon>
           </InputGroup>
-        </div>
+        </Field>
 
-        <div className="flex flex-col gap-1.5">
+        <Field>
           <Label htmlFor="bs-confirm">{t("fields.confirmPassword")}</Label>
           <InputGroup className="h-11 rounded-lg">
             <InputGroupAddon><Lock className="size-4" /></InputGroupAddon>
@@ -109,11 +117,11 @@ export function BootstrapScreen() {
               className="code-mono"
             />
           </InputGroup>
-        </div>
+        </Field>
 
         <Button
           className="h-11 w-full font-medium"
-          disabled={loading || !setupToken.trim() || !userId.trim() || !password || password !== confirm}
+          disabled={loading || !setupToken.trim() || !isValidEmail(email) || !isValidDisplayName(displayName) || (emailVerificationRequired && code.length !== 6) || !password || password !== confirm}
           onClick={() => void submit()}
         >
           {loading ? t("bootstrap.submitting") : t("bootstrap.submit")}
@@ -122,7 +130,7 @@ export function BootstrapScreen() {
         {localError || error ? (
           <p className="text-center text-sm text-destructive">{localError || error}</p>
         ) : null}
-      </div>
+      </FieldGroup>
     </AuthShell>
   )
 }

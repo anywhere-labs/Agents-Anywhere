@@ -134,6 +134,39 @@ class AuthApi(
         ).toAuthMeResponse()
     }
 
+    fun updateDisplayName(serverUrl: String, token: String, displayName: String): AuthMeResponse {
+        return client.putJson(
+            serverUrl = serverUrl,
+            path = "/auth/me/profile",
+            body = JSONObject().put("displayName", displayName.trim()),
+            authorizationToken = token,
+        ).toAuthMeResponse()
+    }
+
+    fun sendEmailCode(serverUrl: String, token: String, email: String): EmailCodeResponse {
+        val response = client.postJson(
+            serverUrl = serverUrl,
+            path = "/auth/email-code",
+            body = JSONObject().put("email", email.trim()).put("purpose", "bind"),
+            authorizationToken = token,
+        )
+        return EmailCodeResponse(
+            expiresIn = response.getInt("expiresIn"),
+            retryAfter = response.getInt("retryAfter"),
+        )
+    }
+
+    fun bindEmail(serverUrl: String, token: String, email: String, code: String?): AuthMeResponse {
+        val body = JSONObject().put("email", email.trim())
+        if (!code.isNullOrBlank()) body.put("code", code.trim())
+        return client.putJson(
+            serverUrl = serverUrl,
+            path = "/auth/me/email",
+            body = body,
+            authorizationToken = token,
+        ).toAuthMeResponse()
+    }
+
     fun changePassword(
         serverUrl: String,
         token: String,
@@ -150,6 +183,7 @@ class AuthApi(
     private fun JSONObject.toAuthConfigResponse(): AuthConfigResponse {
         return AuthConfigResponse(
             needsBootstrap = optBoolean("needsBootstrap", false),
+            emailVerificationRequired = optBoolean("emailVerificationRequired", false),
             registrationOpen = optBoolean("registrationOpen", false),
             oauthRegistrationOpen = optBoolean("oauthRegistrationOpen", false),
             oauthEnabled = optBoolean("oauthEnabled", false),
@@ -172,6 +206,9 @@ class AuthApi(
     private fun JSONObject.toAuthMeResponse(): AuthMeResponse {
         return AuthMeResponse(
             userId = getString("userId"),
+            email = optNullableString("email"),
+            displayName = optString("displayName", ""),
+            emailVerified = optBoolean("emailVerified", false),
             role = getString("role"),
             disabled = optBoolean("disabled", false),
             avatar = optNullableString("avatar"),
@@ -182,6 +219,9 @@ class AuthApi(
     private fun JSONObject.toAuthResponse(): AuthResponse {
         return AuthResponse(
             userId = getString("userId"),
+            email = optNullableString("email"),
+            displayName = optString("displayName", ""),
+            emailVerified = optBoolean("emailVerified", false),
             role = getString("role"),
             accessToken = getString("accessToken"),
             tokenType = optString("tokenType", "bearer"),

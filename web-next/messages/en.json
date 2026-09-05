@@ -1007,27 +1007,29 @@
       "submitting": "Creating admin…",
       "titlePrefix": "Welcome to",
       "tokenPlaceholder": "Paste the token from the server log",
-      "userPlaceholder": "e.g. admin"
+      "userPlaceholder": "admin@example.com"
     },
     "fields": {
       "adminPassword": "Admin password",
-      "adminUserId": "Admin user ID",
       "confirm": "Confirm",
       "confirmPassword": "Confirm password",
       "password": "Password",
       "setupToken": "Setup token",
-      "userId": "User ID"
+      "email": "Email",
+      "adminEmail": "Admin email",
+      "displayName": "Nickname",
+      "displayNameDescription": "Your display name, 1–64 characters. You can change it later."
     },
     "login": {
       "createAccount": "Create an account",
-      "description": "Use the credentials your instance admin gave you.",
+      "description": "Sign in with your email address and password.",
       "forgot": "Forgot your password? Ask your instance admin to reset it.",
       "newHere": "New here?",
       "oauth": "Sign in with {provider}",
       "passwordPlaceholder": "••••••••",
       "submit": "Sign in",
       "titlePrefix": "Sign in to",
-      "userPlaceholder": "enter your username",
+      "userPlaceholder": "name@example.com",
       "signingIn": "Signing in...",
       "submitWithEnter": "Sign in ↵"
     },
@@ -1061,7 +1063,7 @@
       "confirmTitle": "Confirm your password",
       "createDescription": "Create a local account for this OAuth identity.",
       "createSubmit": "Create and sign in",
-      "createTitle": "Choose your user ID",
+      "createTitle": "Set up your email and nickname",
       "matchDescriptionPrefix": "OAuth matched the local account",
       "matchTitle": "Is this your account?",
       "linkSubmit": "Link and sign in",
@@ -1089,7 +1091,7 @@
       "signIn": "Sign in",
       "submit": "Create account",
       "title": "Create an account",
-      "userHint": "3-32 chars · a-z 0-9 _ -",
+      "userHint": "Use your email to sign in and a nickname for display.",
       "userOk": "looks good",
       "creating": "Creating account...",
       "submitWithEnter": "Create account ↵"
@@ -1101,12 +1103,20 @@
     },
     "status": {
       "connecting": "Connecting"
+    },
+    "emailCode": {
+      "label": "Email verification code",
+      "description": "Enter the 6-digit code sent to this email address.",
+      "send": "Send code",
+      "retry": "Resend in {seconds}s",
+      "sent": "Code sent. Check your inbox.",
+      "failed": "Failed to send verification code."
     }
   },
   "pages": {
     "settings": {
       "title": "Settings",
-      "description": "Account access and preferences for this browser.",
+      "description": "Description",
       "account": "Account",
       "agent": "Agent settings",
       "appearance": "Appearance",
@@ -1153,7 +1163,6 @@
       "editModel": "Edit model",
       "modelId": "Model ID",
       "displayName": "Display name",
-      "description": "Description",
       "noModels": "No models yet.",
       "reasoningEffort": "Reasoning effort",
       "defaultEffort": "Default effort",
@@ -1199,12 +1208,27 @@
         "approved": "Mobile sign-in approved",
         "rejected": "Mobile sign-in rejected",
         "expired": "QR code expired"
+      },
+      "profile": {
+        "title": "Nickname and email",
+        "description": "Your nickname is shown to others. Your email is used to sign in.",
+        "email": "Sign-in email",
+        "emailDescription": "After changing it, sign in with your new email address.",
+        "verified": "Verified",
+        "unverified": "Unverified",
+        "verificationDisabled": "Email codes are disabled by the administrator. Saving marks the address as verified.",
+        "saveDisplayName": "Save nickname",
+        "changeEmail": "Change email",
+        "bindEmail": "Bind email",
+        "displayNameSaved": "Nickname updated.",
+        "emailSaved": "Email updated.",
+        "failed": "Failed to update account."
       }
     },
     "team": {
       "title": "Team",
       "description": "Manage who can sign in to this instance and what they can do.",
-      "searchPlaceholder": "Search by user id",
+      "searchPlaceholder": "Search by nickname or email",
       "newUser": "New user",
       "newUserDescription": "Create a local account for this instance.",
       "all": "All",
@@ -1212,7 +1236,6 @@
       "members": "Members",
       "user": "User",
       "userId": "User ID",
-      "userIdDescription": "Lowercase letters, numbers, underscores, and hyphens. 3-64 characters.",
       "role": "Role",
       "status": "Status",
       "created": "Created",
@@ -1245,7 +1268,6 @@
       "disabledDescription": "Sign-in is blocked for this user.",
       "adminDescription": "Can manage users and service settings.",
       "memberDescription": "Can sign in and use connected devices.",
-      "invalidUserId": "Enter a valid user ID.",
       "passwordTooShort": "Password must be at least 8 characters.",
       "passwordMismatch": "Passwords do not match.",
       "loadFailed": "Failed to load users.",
@@ -1262,7 +1284,12 @@
       "today": "today",
       "oneDayAgo": "1d ago",
       "daysAgo": "{count}d ago",
-      "weeksAgo": "{count}w ago"
+      "weeksAgo": "{count}w ago",
+      "email": "Email",
+      "emailDescription": "This address is used to sign in.",
+      "invalidEmail": "Enter a valid email address.",
+      "invalidDisplayName": "Nickname must be 1–64 characters.",
+      "typeEmail": "Type the account email to confirm"
     },
     "opsDashboard": {
       "title": "Dashboard",
@@ -1405,7 +1432,23 @@
       "unavailable": "Service settings unavailable.",
       "loadFailed": "Failed to load service settings.",
       "updateFailed": "Failed to update settings.",
-      "oauthUpdateFailed": "Failed to update OAuth settings."
+      "oauthUpdateFailed": "Failed to update OAuth settings.",
+      "email": {
+        "title": "Email verification · Resend",
+        "description": "Configure Resend delivery and email verification requirements.",
+        "enabled": "Require email verification codes",
+        "enabledDescription": "When enabled, registration (including admin-created users) and binding or changing email require a code. When disabled, email is marked verified directly.",
+        "fromAddress": "Sender address",
+        "fromDescription": "Use a domain verified in Resend. Name <email> format is supported.",
+        "apiKey": "Resend API key",
+        "apiKeyDescription": "Leave blank to keep the saved key. The server never returns the key.",
+        "configured": "API key configured",
+        "notConfigured": "No API key configured",
+        "clearKey": "Remove the saved API key",
+        "save": "Save email settings",
+        "saved": "Email settings saved.",
+        "failed": "Failed to save email settings."
+      }
     }
   },
   "preview": {

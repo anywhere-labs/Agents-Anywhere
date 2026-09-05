@@ -5,18 +5,21 @@ import { Lock, User } from "lucide-react"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
-import { Input } from "@/components/ui/input"
+import { EmailCodeField, DisplayNameField } from "./account-identity-fields"
+import { isValidEmail, isValidDisplayName } from "@/features/auth/account-profile"
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group"
-import { Label } from "@/components/ui/label"
+import { Field, FieldGroup, FieldLabel as Label } from "@/components/ui/field"
 import { AuthShell } from "./auth-shell"
 import { useAuth } from "./auth-context"
 import { useTranslations } from "next-intl"
 
 export function OAuthNewUserScreen() {
-  const { cancelOAuth, error, finalizeOAuth, loading, navigate, oauthPending } = useAuth()
+  const { cancelOAuth, error, finalizeOAuth, loading, navigate, oauthPending, emailVerificationRequired } = useAuth()
   const t = useTranslations("auth")
   const [setLocalPassword, setSetLocalPassword] = useState(false)
-  const [userId, setUserId] = useState(oauthPending?.userId ?? "")
+  const [displayName, setDisplayName] = useState(oauthPending?.displayName ?? "")
+  const [code, setCode] = useState("")
+  const [email, setEmail] = useState(oauthPending?.email ?? "")
   const [password, setPassword] = useState("")
 
   if (!oauthPending || (oauthPending.status !== "needs_registration" && oauthPending.status !== "needs_password")) {
@@ -32,8 +35,8 @@ export function OAuthNewUserScreen() {
     )
   }
 
-  const normalizedUserId = userId.trim().toLowerCase()
-  const fallback = normalizedUserId.slice(0, 2).toUpperCase() || "AA"
+  const normalizedEmail = email.trim().toLowerCase()
+  const fallback = normalizedEmail.slice(0, 2).toUpperCase() || "AA"
 
   return (
     <AuthShell>
@@ -49,22 +52,26 @@ export function OAuthNewUserScreen() {
         </div>
       </div>
 
-      <div className="flex flex-col gap-5">
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="oauth-userid">{t("fields.userId")}</Label>
+      <FieldGroup>
+        <Field>
+          <Label htmlFor="oauth-email">{t("fields.email")}</Label>
           <InputGroup className="h-11 rounded-lg">
             <InputGroupAddon><User className="size-4" /></InputGroupAddon>
-            <Input
-              id="oauth-userid"
-              value={userId}
-              onChange={(event) => setUserId(event.currentTarget.value.replace(/\s/g, ""))}
-              className="code-mono h-11 border-0 bg-transparent px-0 shadow-none focus-visible:ring-0"
-              autoComplete="username"
+            <InputGroupInput
+              id="oauth-email"
+              value={email}
+              onChange={(event) => { setEmail(event.currentTarget.value); setCode("") }}
+              className="code-mono"
+              type="email"
+              autoComplete="email"
               spellCheck={false}
               required
             />
           </InputGroup>
-        </div>
+        </Field>
+
+        <DisplayNameField value={displayName} onChange={setDisplayName} />
+        {emailVerificationRequired ? <EmailCodeField email={email} value={code} onChange={setCode} pendingToken={oauthPending.pendingToken} disabled={loading} /> : null}
 
         <div className="flex items-center gap-2.5">
           <Checkbox
@@ -78,7 +85,7 @@ export function OAuthNewUserScreen() {
         </div>
 
         {setLocalPassword ? (
-          <div className="flex flex-col gap-1.5">
+          <Field>
             <Label htmlFor="oauth-password">{t("fields.password")}</Label>
             <InputGroup className="h-11 rounded-lg">
               <InputGroupAddon><Lock className="size-4" /></InputGroupAddon>
@@ -89,27 +96,29 @@ export function OAuthNewUserScreen() {
                 value={password}
                 onChange={(event) => setPassword(event.currentTarget.value)}
                 onKeyDown={(event) => {
-                  if (event.key === "Enter" && normalizedUserId && (!setLocalPassword || password)) {
-                    void finalizeOAuth({ userId: normalizedUserId, password, setPassword: true })
+                  if (event.key === "Enter" && isValidEmail(email) && isValidDisplayName(displayName) && (!emailVerificationRequired || code.length === 6) && password) {
+                    void finalizeOAuth({ email: normalizedEmail, displayName, code, password, setPassword: true }).catch(() => undefined)
                   }
                 }}
                 className="code-mono"
                 autoComplete="new-password"
               />
             </InputGroup>
-          </div>
+          </Field>
         ) : null}
 
         {error ? <p className="text-center text-sm text-destructive">{error}</p> : null}
 
         <Button
           className="h-11 w-full font-medium"
-          disabled={loading || !normalizedUserId || (setLocalPassword && !password)}
+          disabled={loading || !isValidEmail(email) || !isValidDisplayName(displayName) || (emailVerificationRequired && code.length !== 6) || (setLocalPassword && !password)}
           onClick={() => void finalizeOAuth({
-            userId: normalizedUserId,
+            email: normalizedEmail,
+            displayName,
+            code,
             password: setLocalPassword ? password : undefined,
             setPassword: setLocalPassword,
-          })}
+          }).catch(() => undefined)}
         >
           {loading ? t("login.signingIn") : t("oauth.createSubmit")}
         </Button>
@@ -117,7 +126,7 @@ export function OAuthNewUserScreen() {
         <Button variant="outline" className="h-11 w-full" onClick={cancelOAuth}>
           {t("oauth.back")}
         </Button>
-      </div>
+      </FieldGroup>
     </AuthShell>
   )
 }

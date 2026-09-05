@@ -23,6 +23,7 @@
 4. [部署](./deployment.md)：给出有顺序的演练、切换和回滚流程。
 5. [验收 checklist](./acceptance-checklist.md)：定义发布门槛。
 6. [前端与 Desktop 跟进说明](./frontend-desktop-follow-up.md)：说明本轮配对、New Session 和 Desktop 的业务跟进事项。
+7. [邮箱账号与昵称](./email-accounts.md)：说明邮箱登录、用户级 `displayName`、Resend 验证码和旧用户名停止支持的边界。
 
 ## 破坏性变化总览
 

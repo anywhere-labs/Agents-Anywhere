@@ -7,6 +7,7 @@ enum UserRole: String, Codable, Hashable {
 
 struct AuthConfig: Decodable {
     let needsBootstrap: Bool
+    let emailVerificationRequired: Bool
     let registrationOpen: Bool
     let oauthRegistrationOpen: Bool
     let oauthEnabled: Bool
@@ -17,6 +18,9 @@ struct AuthConfig: Decodable {
 
 struct AuthResponse: Codable, Hashable {
     let userId: String
+    let email: String?
+    let displayName: String
+    let emailVerified: Bool
     let role: UserRole
     let accessToken: String
     let tokenType: String?
@@ -41,10 +45,17 @@ struct OAuthTokenResponse: Decodable, Hashable {
 
 struct AuthMe: Codable {
     let userId: String
+    let email: String?
+    let displayName: String
+    let emailVerified: Bool
     let role: UserRole
     let disabled: Bool
     let avatar: String?
     let serverTime: String
+
+    var accountLabel: String {
+        displayName.isEmpty ? (email ?? String(localized: "Account")) : displayName
+    }
 }
 
 struct HealthResponse: Decodable {

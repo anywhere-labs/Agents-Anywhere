@@ -12,7 +12,7 @@ from conftest import ApiV2TestClient as TestClient
 
 def _register_admin(client: TestClient) -> dict[str, str]:
     config = client.get("/auth/config").json()
-    body: dict[str, Any] = {"userId": "admin", "password": "secret"}
+    body: dict[str, Any] = {"email": "admin@example.com", "displayName": "Admin", "password": "secret"}
     if config["needsBootstrap"]:
         body["setupToken"] = client.app.state.setup_token.peek()
     response = client.post("/auth/register", json=body)

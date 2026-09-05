@@ -29,11 +29,11 @@ struct ChatSidebarSession: Identifiable, Equatable {
 }
 
 struct ChatSidebarAccount: Equatable {
-    let userId: String
+    let displayName: String
     let avatarSource: AccountAvatarImageSource?
 
     init(me: AuthMe, avatarSource: AccountAvatarImageSource?) {
-        userId = me.userId
+        displayName = me.accountLabel
         self.avatarSource = avatarSource
     }
 }
