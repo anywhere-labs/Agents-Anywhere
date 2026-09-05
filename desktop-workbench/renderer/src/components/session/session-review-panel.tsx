@@ -2,6 +2,9 @@
 
 import * as React from "react"
 import {
+  ChevronDown,
+  ChevronRight,
+  ExternalLink,
   FileDiff,
   LoaderCircle,
   RotateCcw,
@@ -10,8 +13,12 @@ import {
   SquarePlus,
 } from "lucide-react"
 import { useTranslations } from "next-intl"
+import { toast } from "sonner"
 
-import { LazyFileTree } from "@/components/panels/lazy-file-tree"
+import {
+  LazyFileTree,
+  sortFileTreeEntries,
+} from "@/components/panels/lazy-file-tree"
 import { FileTypeIcon } from "@/components/panels/file-type-icon"
 import { useStoredSessionReviewTimeline } from "@/components/session-tool-sidebar-state"
 import { DiffPanel } from "@/components/session/session-tool-cards"
@@ -22,6 +29,12 @@ import {
 } from "@/components/session/session-review-model"
 import { isVisibleTimelineItem } from "@/components/session/session-utils"
 import { Button } from "@/components/ui/button"
+import { Card, CardContent } from "@/components/ui/card"
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible"
 import {
   Empty,
   EmptyDescription,
@@ -45,6 +58,7 @@ import {
 import { dashboardApi } from "@/features/dashboard/api"
 import type { FsEntry, TimelineItem } from "@/features/dashboard/types"
 import { mergeTimelineItems } from "@/components/session/optimistic-timeline"
+import { openNativeFilePreviewWindow } from "@/lib/file-preview-window"
 import { cn } from "@/lib/utils"
 
 const REVIEW_HISTORY_PAGE_SIZE = 500
@@ -60,17 +74,20 @@ type ReviewTree = {
   childrenByPath: Map<string, FsEntry[]>
   expandedPaths: string[]
   actionByPath: Map<string, ReviewFileChange["action"]>
+  orderedFilePaths: string[]
 }
 
 export function SessionReviewPanel({
   sessionId,
   token,
+  connectorId,
   root,
   connectorDeviceOs,
   active,
 }: {
   sessionId: string
   token: string | null
+  connectorId: string | null
   root: string
   connectorDeviceOs?: string | null
   active: boolean
@@ -197,6 +214,8 @@ export function SessionReviewPanel({
       ) : null}
       <ReviewWorkspace
         review={review}
+        token={token}
+        connectorId={connectorId}
         root={root}
         caseInsensitivePaths={caseInsensitivePaths}
         loadingHistory={loadingHistory}
@@ -207,11 +226,15 @@ export function SessionReviewPanel({
 
 function ReviewWorkspace({
   review,
+  token,
+  connectorId,
   root,
   caseInsensitivePaths,
   loadingHistory,
 }: {
   review: ChangedTurnReview
+  token: string | null
+  connectorId: string | null
   root: string
   caseInsensitivePaths: boolean
   loadingHistory: boolean
@@ -219,19 +242,29 @@ function ReviewWorkspace({
   const t = useTranslations("dashboard.session.tools")
   const [selectedPath, setSelectedPath] = React.useState<string | null>(null)
   const fileRefs = React.useRef(new Map<string, HTMLElement>())
-  const reviewTree = React.useMemo(() => buildReviewTree(review, root), [review, root])
+  const reviewTree = React.useMemo(
+    () => buildReviewTree(review, root, caseInsensitivePaths),
+    [caseInsensitivePaths, review, root],
+  )
+  const orderedFiles = React.useMemo(() => {
+    const fileByPath = new Map(review.files.map((file) => [file.path, file]))
+    return reviewTree.orderedFilePaths.flatMap((path) => {
+      const file = fileByPath.get(path)
+      return file ? [file] : []
+    })
+  }, [review.files, reviewTree.orderedFilePaths])
   const treeIdentity = React.useMemo(
-    () => `${review.key}:${review.files.map((file) => file.path).sort().join("\n")}`,
-    [review.files, review.key],
+    () => `${review.key}:${reviewTree.orderedFilePaths.join("\n")}`,
+    [review.key, reviewTree.orderedFilePaths],
   )
 
   React.useEffect(() => {
     setSelectedPath((current) => (
-      current && review.files.some((file) => file.path === current)
+      current && orderedFiles.some((file) => file.path === current)
         ? current
-        : review.files[0]?.path ?? null
+        : orderedFiles[0]?.path ?? null
     ))
-  }, [review.files, review.key])
+  }, [orderedFiles, review.key])
 
   const loadDirectory = React.useCallback(async (path: string) => ({
     path,
@@ -252,37 +285,20 @@ function ReviewWorkspace({
         <ScrollArea className="h-full min-w-0">
           <TooltipProvider delayDuration={350}>
             <div className="min-w-0 divide-y divide-border pb-8">
-              {review.files.map((file) => (
-                <section
-                  key={file.path}
-                  ref={(element) => {
+              {orderedFiles.map((file) => (
+                <ReviewFileSection
+                  key={`${review.key}:${file.path}`}
+                  file={file}
+                  token={token}
+                  connectorId={connectorId}
+                  root={root}
+                  selected={selectedPath === file.path}
+                  sectionRef={(element) => {
                     if (element) fileRefs.current.set(file.path, element)
                     else fileRefs.current.delete(file.path)
                   }}
-                  data-review-file-path={file.path}
-                  className="min-w-0 scroll-mt-0"
-                >
-                  <header
-                    className={cn(
-                      "sticky top-0 z-10 flex h-11 min-w-0 items-center gap-2 border-b border-border bg-background/95 px-3 backdrop-blur",
-                      selectedPath === file.path && "bg-muted/80",
-                    )}
-                  >
-                    <FileTypeIcon name={file.name} className="size-[18px] shrink-0" />
-                    <ReviewFilePath file={file} />
-                    <div className="ml-auto flex shrink-0 items-center gap-1.5 font-mono text-xs tabular-nums">
-                      <span className="text-emerald-600 dark:text-emerald-400">+{file.additions}</span>
-                      <span className="text-red-600 dark:text-red-400">-{file.deletions}</span>
-                    </div>
-                  </header>
-                  {file.diff ? (
-                    <DiffPanel code={file.diff} maxHeight={diffPanelHeight(file.diff)} />
-                  ) : (
-                    <div className="px-3 py-5 text-xs text-muted-foreground">
-                      {t("reviewDiffUnavailable")}
-                    </div>
-                  )}
-                </section>
+                  onSelect={() => setSelectedPath(file.path)}
+                />
               ))}
             </div>
           </TooltipProvider>
@@ -307,6 +323,7 @@ function ReviewWorkspace({
               identity={treeIdentity}
               rootPath={`review:${review.key}`}
               entries={reviewTree.entries}
+              ariaLabel={t("reviewFileTree")}
               canLoad
               caseInsensitivePaths={caseInsensitivePaths}
               selectedPath={selectedPath}
@@ -334,6 +351,129 @@ function ReviewWorkspace({
   )
 }
 
+function ReviewFileSection({
+  file,
+  token,
+  connectorId,
+  root,
+  selected,
+  sectionRef,
+  onSelect,
+}: {
+  file: ReviewFileChange
+  token: string | null
+  connectorId: string | null
+  root: string
+  selected: boolean
+  sectionRef: (element: HTMLElement | null) => void
+  onSelect: () => void
+}) {
+  const t = useTranslations("dashboard.session.tools")
+  const [open, setOpen] = React.useState(true)
+
+  const openFilePreview = React.useCallback(() => {
+    onSelect()
+    openNativeFilePreviewWindow({
+      token,
+      connectorId,
+      root,
+      file: { name: file.name, path: file.path },
+      onBlocked: () => toast.error(t("reviewPreviewBlocked")),
+    })
+  }, [connectorId, file.name, file.path, onSelect, root, t, token])
+
+  return (
+    <Collapsible open={open} onOpenChange={setOpen} asChild>
+      <section
+        ref={sectionRef}
+        data-review-file-path={file.path}
+        className="min-w-0 scroll-mt-0"
+      >
+        <header
+          className={cn(
+            "sticky top-0 z-10 flex h-11 min-w-0 items-center border-b border-border bg-background/95 backdrop-blur",
+            selected && "bg-muted/80",
+          )}
+        >
+          <CollapsibleTrigger asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              aria-label={t(open ? "reviewCollapseFile" : "reviewExpandFile", {
+                file: file.displayPath,
+              })}
+              className="h-full min-w-0 flex-1 justify-start gap-2 rounded-none px-3 font-normal hover:bg-muted/50"
+              onClick={onSelect}
+            >
+              <FileTypeIcon name={file.name} className="size-[18px] shrink-0" />
+              <ReviewFilePath file={file} />
+              <div className="ml-auto flex shrink-0 items-center gap-1.5 font-mono text-xs tabular-nums">
+                <span className="text-emerald-600 dark:text-emerald-400">+{file.additions}</span>
+                <span className="text-red-600 dark:text-red-400">-{file.deletions}</span>
+              </div>
+              {open ? <ChevronDown /> : <ChevronRight />}
+            </Button>
+          </CollapsibleTrigger>
+
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                aria-label={t("reviewOpenFilePreview", { file: file.displayPath })}
+                className="mr-2 rounded-lg"
+                onClick={openFilePreview}
+              >
+                <ExternalLink />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" align="end" sideOffset={6}>
+              {t("reviewOpenFilePreview", { file: file.displayPath })}
+            </TooltipContent>
+          </Tooltip>
+        </header>
+
+        <CollapsibleContent>
+          <div className="flex min-w-0 flex-col gap-3 bg-muted/20 p-3">
+            {file.diffs.length > 0 ? (
+              file.diffs.map((diff, index) => (
+                <Card
+                  key={diff.id}
+                  size="sm"
+                  role="group"
+                  aria-label={t("reviewDiffCard", {
+                    index: index + 1,
+                    count: file.diffs.length,
+                  })}
+                  className="gap-0 rounded-lg bg-background py-0 shadow-sm ring-1 ring-border/80"
+                >
+                  <CardContent className="p-0">
+                    <DiffPanel
+                      code={diff.diff}
+                      maxHeight={diffPanelHeight(diff.diff)}
+                      compactGutter
+                    />
+                  </CardContent>
+                </Card>
+              ))
+            ) : (
+              <Card
+                size="sm"
+                className="gap-0 rounded-lg bg-background py-0 shadow-sm ring-1 ring-border/80"
+              >
+                <CardContent className="px-3 py-5 text-xs text-muted-foreground">
+                  {t("reviewDiffUnavailable")}
+                </CardContent>
+              </Card>
+            )}
+          </div>
+        </CollapsibleContent>
+      </section>
+    </Collapsible>
+  )
+}
+
 function ReviewFilePath({ file }: { file: ReviewFileChange }) {
   const slashIndex = file.displayPath.lastIndexOf("/")
   const prefix = slashIndex >= 0 ? file.displayPath.slice(0, slashIndex + 1) : ""
@@ -343,9 +483,8 @@ function ReviewFilePath({ file }: { file: ReviewFileChange }) {
     <Tooltip>
       <TooltipTrigger asChild>
         <span
-          tabIndex={0}
           aria-label={file.displayPath}
-          className="flex min-w-0 flex-1 items-center overflow-hidden whitespace-nowrap text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+          className="flex min-w-0 flex-1 items-center overflow-hidden whitespace-nowrap text-sm"
         >
           {prefix ? (
             <span className="min-w-0 overflow-hidden whitespace-nowrap text-muted-foreground [direction:rtl]">
@@ -373,6 +512,7 @@ function ReviewTreeStatus({
   if (entry.type === "directory") {
     return (
       <span
+        role="img"
         aria-label={t("reviewFolderChanged")}
         title={t("reviewFolderChanged")}
         className="size-2 rounded-full bg-amber-500 ring-2 ring-background"
@@ -408,7 +548,11 @@ function ReviewPanelSkeleton() {
   )
 }
 
-function buildReviewTree(review: ChangedTurnReview, root: string): ReviewTree {
+function buildReviewTree(
+  review: ChangedTurnReview,
+  root: string,
+  caseInsensitivePaths: boolean,
+): ReviewTree {
   const childrenByPath = new Map<string, FsEntry[]>()
   const actionByPath = new Map<string, ReviewFileChange["action"]>()
   const directoryByKey = new Map<string, FsEntry>()
@@ -429,17 +573,18 @@ function buildReviewTree(review: ChangedTurnReview, root: string): ReviewTree {
     let segmentKey = ""
 
     for (const segment of segments) {
-      segmentKey = `${segmentKey}/${segment}`
-      const directoryPath = `${treeRootPath}:directory:${segmentKey}`
-      let entry = directoryByKey.get(directoryPath)
+      const identitySegment = caseInsensitivePaths ? segment.toLocaleLowerCase() : segment
+      segmentKey = `${segmentKey}/${identitySegment}`
+      let entry = directoryByKey.get(segmentKey)
       if (!entry) {
+        const directoryPath = `${treeRootPath}:directory:${segmentKey}`
         entry = { name: segment, path: directoryPath, type: "directory" }
-        directoryByKey.set(directoryPath, entry)
+        directoryByKey.set(segmentKey, entry)
         appendTreeEntry(childrenByPath, parentPath, entry)
         childrenByPath.set(directoryPath, [])
         expandedPaths.push(directoryPath)
       }
-      parentPath = directoryPath
+      parentPath = entry.path
     }
 
     const fileEntry: FsEntry = { name: fileName, path: file.path, type: "file" }
@@ -447,11 +592,25 @@ function buildReviewTree(review: ChangedTurnReview, root: string): ReviewTree {
     actionByPath.set(file.path, file.action)
   }
 
+  const orderedFilePaths: string[] = []
+  const appendOrderedFiles = (parentPath: string) => {
+    const entries = sortFileTreeEntries(
+      childrenByPath.get(parentPath) ?? [],
+      caseInsensitivePaths,
+    )
+    for (const entry of entries) {
+      if (entry.type === "directory") appendOrderedFiles(entry.path)
+      else orderedFilePaths.push(entry.path)
+    }
+  }
+  appendOrderedFiles(treeRootPath)
+
   return {
     entries: [rootEntry],
     childrenByPath,
     expandedPaths,
     actionByPath,
+    orderedFilePaths,
   }
 }
 

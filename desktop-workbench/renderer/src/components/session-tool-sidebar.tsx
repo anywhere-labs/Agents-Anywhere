@@ -842,6 +842,7 @@ export function SessionToolSidebar({
                   <SessionReviewPanel
                     sessionId={sessionId}
                     token={token}
+                    connectorId={connectorId}
                     root={root}
                     connectorDeviceOs={connectorDeviceOs}
                     active={panelActive}

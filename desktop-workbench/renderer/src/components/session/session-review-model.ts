@@ -3,12 +3,20 @@ import type { TimelineItem } from "@/features/dashboard/types"
 export type FileChangeAction = "add" | "modify" | "delete" | "rename" | "unknown"
 export type ReviewFileAction = "add" | "modify" | "delete"
 
+export type ReviewFileDiff = {
+  id: string
+  diff: string
+  additions: number
+  deletions: number
+  orderSeq: number
+}
+
 export type ReviewFileChange = {
   path: string
   displayPath: string
   name: string
   action: ReviewFileAction
-  diff: string
+  diffs: ReviewFileDiff[]
   additions: number
   deletions: number
   firstOrderSeq: number
@@ -26,7 +34,7 @@ type MutableReviewFile = {
   displayPath: string
   name: string
   action: ReviewFileAction
-  diffs: string[]
+  diffs: ReviewFileDiff[]
   firstOrderSeq: number
   sourceItemIds: string[]
 }
@@ -67,8 +75,8 @@ export function buildLatestChangedTurnReview(
 
     const changes = timelineItemFileChanges(item)
     if (changes.length === 0) continue
-    for (const change of changes) {
-      foldFileChange(currentTurn.files, change, item, root, caseInsensitivePaths)
+    for (const [changeIndex, change] of changes.entries()) {
+      foldFileChange(currentTurn.files, change, item, changeIndex, root, caseInsensitivePaths)
     }
   }
 
@@ -225,6 +233,7 @@ function foldFileChange(
   files: Map<string, MutableReviewFile>,
   change: ExtractedFileChange,
   item: TimelineItem,
+  changeIndex: number,
   root: string,
   caseInsensitivePaths: boolean,
 ) {
@@ -245,7 +254,7 @@ function foldFileChange(
       displayPath,
       name: fileName(displayPath),
       action: nextAction,
-      diffs: change.diff ? [change.diff] : [],
+      diffs: change.diff ? [reviewFileDiff(change.diff, item, changeIndex)] : [],
       firstOrderSeq: item.orderSeq,
       sourceItemIds: [item.id],
     })
@@ -253,8 +262,19 @@ function foldFileChange(
   }
 
   existing.action = foldedReviewAction(existing.action, nextAction)
-  if (change.diff) existing.diffs.push(change.diff)
+  if (change.diff) existing.diffs.push(reviewFileDiff(change.diff, item, changeIndex))
   if (!existing.sourceItemIds.includes(item.id)) existing.sourceItemIds.push(item.id)
+}
+
+function reviewFileDiff(diff: string, item: TimelineItem, changeIndex: number): ReviewFileDiff {
+  const counts = diffLineCounts(diff)
+  return {
+    id: `${item.id}:${changeIndex}`,
+    diff,
+    additions: counts.additions,
+    deletions: counts.deletions,
+    orderSeq: item.orderSeq,
+  }
 }
 
 function reviewFileAction(action: FileChangeAction): ReviewFileAction {
@@ -279,21 +299,17 @@ function finishTurn(turn: MutableChangedTurn): ChangedTurnReview {
     startOrderSeq: turn.startOrderSeq,
     files: Array.from(turn.files.values())
       .sort((left, right) => left.firstOrderSeq - right.firstOrderSeq)
-      .map((file) => {
-        const diff = file.diffs.join("\n")
-        const counts = diffLineCounts(diff)
-        return {
-          path: file.path,
-          displayPath: file.displayPath,
-          name: file.name,
-          action: file.action,
-          diff,
-          additions: counts.additions,
-          deletions: counts.deletions,
-          firstOrderSeq: file.firstOrderSeq,
-          sourceItemIds: file.sourceItemIds,
-        }
-      }),
+      .map((file) => ({
+        path: file.path,
+        displayPath: file.displayPath,
+        name: file.name,
+        action: file.action,
+        diffs: file.diffs,
+        additions: file.diffs.reduce((total, diff) => total + diff.additions, 0),
+        deletions: file.diffs.reduce((total, diff) => total + diff.deletions, 0),
+        firstOrderSeq: file.firstOrderSeq,
+        sourceItemIds: file.sourceItemIds,
+      })),
   }
 }
 

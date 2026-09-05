@@ -173,15 +173,21 @@ test("folds repeated file operations into the turn-level result", () => {
   )
 })
 
-test("keeps identical diff text emitted by separate timeline items", () => {
+test("keeps repeated file diffs as chronological cards under one file", () => {
   const review = buildLatestChangedTurnReview([
     user("turn-a", 1),
     fileChange("first", 2, [{ path: "src/a.ts", action: "modify", diff: "-old\n+new" }]),
-    fileChange("second", 3, [{ path: "src/a.ts", action: "modify", diff: "-old\n+new" }]),
+    fileChange("second", 3, [{ path: "src/a.ts", action: "modify", diff: "-new\n+newer" }]),
   ], { root: "/repo" })
 
   assert.equal(review?.files.length, 1)
-  assert.equal(review?.files[0]?.diff, "-old\n+new\n-old\n+new")
+  assert.deepEqual(
+    review?.files[0]?.diffs.map((entry) => [entry.id, entry.diff, entry.orderSeq]),
+    [
+      ["first:0", "-old\n+new", 2],
+      ["second:0", "-new\n+newer", 3],
+    ],
+  )
   assert.deepEqual(
     { additions: review?.files[0]?.additions, deletions: review?.files[0]?.deletions },
     { additions: 2, deletions: 2 },

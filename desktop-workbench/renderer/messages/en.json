@@ -904,7 +904,12 @@
         "reviewFolderChanged": "Contains changed files",
         "reviewFileAdded": "Added file",
         "reviewFileDeleted": "Deleted file",
-        "reviewFileModified": "Modified file"
+        "reviewFileModified": "Modified file",
+        "reviewCollapseFile": "Collapse diffs for {file}",
+        "reviewExpandFile": "Expand diffs for {file}",
+        "reviewOpenFilePreview": "Open full preview for {file}",
+        "reviewPreviewBlocked": "The file preview window was blocked.",
+        "reviewDiffCard": "Change {index} of {count}"
       },
       "unavailable": "Session unavailable",
       "refreshFailed": "Refresh failed",

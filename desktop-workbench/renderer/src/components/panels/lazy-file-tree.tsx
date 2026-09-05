@@ -24,6 +24,7 @@ type LazyFileTreeProps = {
   identity: string
   rootPath: string
   entries: FsEntry[]
+  ariaLabel?: string
   rootLoading?: boolean
   rootError?: string | null
   rootTruncated?: boolean
@@ -50,6 +51,7 @@ export function LazyFileTree({
   identity,
   rootPath,
   entries,
+  ariaLabel,
   rootLoading = false,
   rootError = null,
   rootTruncated = false,
@@ -104,7 +106,7 @@ export function LazyFileTree({
   )
 
   const rootEntries = React.useMemo(
-    () => prepareEntries(entries, caseInsensitivePaths),
+    () => sortFileTreeEntries(entries, caseInsensitivePaths),
     [caseInsensitivePaths, entries],
   )
   const selectedKey = selectedPath ? keyForPath(selectedPath) : null
@@ -133,7 +135,7 @@ export function LazyFileTree({
         replaceBranchState(key, {
           status: "loaded",
           requestId,
-          entries: prepareEntries(result.entries, caseInsensitivePaths),
+          entries: sortFileTreeEntries(result.entries, caseInsensitivePaths),
           truncated: Boolean(result.truncated),
         })
       } catch (error) {
@@ -388,6 +390,7 @@ export function LazyFileTree({
     <div
       ref={treeRef}
       role="tree"
+      aria-label={ariaLabel}
       aria-busy={rootLoading}
       className="aa-file-tree"
       onContextMenu={(event) => {
@@ -417,7 +420,7 @@ function TreeStatus({ depth, label }: { depth: number; label: string }) {
   )
 }
 
-function prepareEntries(entries: FsEntry[], caseInsensitivePaths: boolean): FsEntry[] {
+export function sortFileTreeEntries(entries: FsEntry[], caseInsensitivePaths: boolean): FsEntry[] {
   const seen = new Set<string>()
   return entries
     .filter((entry) => {

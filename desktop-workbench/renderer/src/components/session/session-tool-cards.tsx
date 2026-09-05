@@ -373,7 +373,15 @@ export function JsonBlock({ value }: { value: unknown }) {
   return <CodePanel label="json" code={JSON.stringify(value, null, 2)} language="json" />
 }
 
-export function DiffPanel({ code, maxHeight }: { code: string; maxHeight: number }) {
+export function DiffPanel({
+  code,
+  maxHeight,
+  compactGutter = false,
+}: {
+  code: string
+  maxHeight: number
+  compactGutter?: boolean
+}) {
   const rows = React.useMemo(() => buildDiffRows(code), [code])
   return (
     <ScrollArea contentWide className="min-w-0" style={{ height: maxHeight, maxHeight }}>
@@ -381,7 +389,10 @@ export function DiffPanel({ code, maxHeight }: { code: string; maxHeight: number
         {rows.map((row, index) => (
           <div
             className={cn(
-              "grid min-w-full grid-cols-[0.875rem_2.5rem_1px_minmax(0,1fr)] gap-1 px-3 py-0.5 leading-relaxed",
+              "grid min-w-full gap-1 py-0.5 leading-relaxed",
+              compactGutter
+                ? "grid-cols-[0.75rem_2rem_1px_minmax(0,1fr)] px-2"
+                : "grid-cols-[0.875rem_2.5rem_1px_minmax(0,1fr)] px-3",
               row.kind === "add" && "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
               row.kind === "delete" && "bg-red-500/10 text-red-700 dark:text-red-300",
               row.kind === "hunk" && "bg-violet-500/10 text-violet-700 dark:text-violet-300",

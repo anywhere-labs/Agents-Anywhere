@@ -904,7 +904,12 @@
         "reviewFolderChanged": "包含变更文件",
         "reviewFileAdded": "新增文件",
         "reviewFileDeleted": "删除文件",
-        "reviewFileModified": "修改文件"
+        "reviewFileModified": "修改文件",
+        "reviewCollapseFile": "折叠 {file} 的 diff",
+        "reviewExpandFile": "展开 {file} 的 diff",
+        "reviewOpenFilePreview": "打开 {file} 的完整文件预览",
+        "reviewPreviewBlocked": "文件预览窗口被浏览器拦截了。",
+        "reviewDiffCard": "第 {index}/{count} 次修改"
       },
       "unavailable": "会话不可用",
       "refreshFailed": "刷新失败",
