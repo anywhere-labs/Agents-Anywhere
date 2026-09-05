@@ -286,9 +286,6 @@
     "account": {
       "menu": "Account menu"
     },
-    "updates": {
-      "available": "A new version is available"
-    },
     "empty": {
       "noDevices": "No devices paired",
       "noDevicesDescription": "Agents Anywhere needs an online connector before it can create or resume sessions.",
@@ -1646,9 +1643,7 @@
         "confirmCreate": "Create release",
         "platforms": {
           "android": "Android",
-          "desktop": "Desktop (legacy/fallback)",
-          "desktop-macos": "Desktop · macOS",
-          "desktop-windows": "Desktop · Windows"
+          "desktop": "Desktop"
         }
       }
     },
@@ -1707,36 +1702,6 @@
       "updateFailed": "Failed to update settings.",
       "oauthUpdateFailed": "Failed to update OAuth settings."
     }
-  },
-  "desktopUpdate": {
-    "requiredTitle": "Client update required",
-    "installerOpenedTitle": "Installer opened",
-    "requiredDescription": "This client is older than the backend service. Update before continuing to keep features compatible and reliable; using the older version may cause unexpected errors.",
-    "installerOpenedDescription": "The download is complete and the installer has opened. Follow the system prompts to finish installing, then restart Agents Anywhere.",
-    "availableTitle": "A new version is available",
-    "availableDescription": "Agents Anywhere {version} is ready to download. Update for the latest reliability improvements.",
-    "currentVersion": "Current",
-    "serverVersion": "Backend",
-    "latestVersion": "Latest",
-    "errorTitle": "The update could not be completed",
-    "errors": {
-      "requiredUnavailable": "The backend requires an update, but a compatible installer is not available yet. Try again later or contact your administrator.",
-      "checkFailed": "Update information could not be loaded. Check your connection and try again.",
-      "invalidDownload": "The installer URL or file type does not meet this platform's security requirements.",
-      "downloadFailed": "The installer download did not finish. Check your connection and try again.",
-      "openFailed": "The installer was downloaded but could not be opened automatically. Try again."
-    },
-    "openingInstaller": "Download complete. Opening the installer…",
-    "later": "Not now",
-    "close": "Close",
-    "checking": "Checking…",
-    "reopenInstaller": "Reopen installer",
-    "checkUpdate": "Check for update",
-    "retry": "Retry",
-    "updateNow": "Update now",
-    "downloading": "Downloading installer",
-    "downloadedBytes": "Downloaded {received} of {total}",
-    "downloadSizeUnknown": "Receiving the installer…"
   },
   "preview": {
     "home": "Home",

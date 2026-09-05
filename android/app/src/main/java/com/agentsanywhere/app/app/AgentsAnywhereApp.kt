@@ -62,10 +62,12 @@ import com.agentsanywhere.app.navigation.AppDestination
 import com.agentsanywhere.app.ui.designsystem.AgentsAnywhereTheme
 import com.agentsanywhere.app.ui.designsystem.AALanguageMode
 import com.agentsanywhere.app.ui.screens.home.HomeTab
+import com.agentsanywhere.app.ui.screens.update.AppUpdatePromptDialog
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 import java.util.concurrent.atomic.AtomicBoolean
+import java.io.File
 
 @Composable
 fun AgentsAnywhereApp(
@@ -79,6 +81,7 @@ fun AgentsAnywhereApp(
     onOAuthCallbackConsumed: () -> Unit = {},
     webLoginViewModel: WebLoginViewModel,
     appUpdateViewModel: AppUpdateViewModel,
+    onInstallUpdate: (File) -> Unit = {},
 ) {
     val context = LocalContext.current
     val sessionStore = remember(context) { AuthSessionStore(context) }
@@ -731,6 +734,15 @@ fun AgentsAnywhereApp(
             destinationName = AppDestination.QrWaiting.name
         },
     )
+    AppUpdatePromptDialog(
+        state = appUpdateViewModel.state,
+        onUpdate = appUpdateViewModel::downloadUpdate,
+        onLater = appUpdateViewModel::dismissPrompt,
+        onCancelDownload = appUpdateViewModel::cancelDownload,
+    )
+    LaunchedEffect(appUpdateViewModel.state.installFile) {
+        appUpdateViewModel.state.installFile?.let(onInstallUpdate)
+    }
 }
 
 

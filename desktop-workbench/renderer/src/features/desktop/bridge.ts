@@ -89,44 +89,6 @@ export type DesktopConnectorSettings = Partial<Pick<
   | "uvPypiIndexUrl"
 >>
 
-export type DesktopUpdatePhase =
-  | "checking-health"
-  | "ready"
-  | "force-required"
-  | "checking-update"
-  | "available"
-  | "deferred"
-  | "downloading"
-  | "opening-installer"
-  | "installer-opened"
-
-export type DesktopUpdateErrorCode =
-  | "required-update-unavailable"
-  | "check-failed"
-  | "invalid-download"
-  | "download-failed"
-  | "open-failed"
-
-export type DesktopUpdateSnapshot = {
-  supported: boolean
-  currentVersion: string
-  currentVersionCode: number
-  serverVersion: string | null
-  phase: DesktopUpdatePhase
-  forced: boolean
-  release: {
-    versionCode: number
-    versionName: string
-    downloadUrl: string
-  } | null
-  progress: {
-    receivedBytes: number
-    totalBytes: number | null
-    percent: number | null
-  } | null
-  errorCode: DesktopUpdateErrorCode | null
-}
-
 export type DesktopConnectorConfigPatch = Partial<Pick<
   DesktopConnectorConfig,
   | "heartbeatSeconds"
@@ -152,13 +114,6 @@ export type DesktopWorkbenchBridge = {
   }
   development?: {
     clearCache: () => Promise<void>
-  }
-  updates?: {
-    getState: () => Promise<DesktopUpdateSnapshot>
-    checkNow: () => Promise<DesktopUpdateSnapshot>
-    install: () => Promise<DesktopUpdateSnapshot>
-    defer: () => Promise<DesktopUpdateSnapshot>
-    onState: (listener: (state: DesktopUpdateSnapshot) => void) => void | (() => void)
   }
   notifications?: {
     show: (input: {

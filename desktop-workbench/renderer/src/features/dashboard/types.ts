@@ -864,11 +864,7 @@ export type AdminDashboardSnapshotResponse = {
   serverTime: string;
 };
 
-export type AppReleasePlatform =
-  | "android"
-  | "desktop"
-  | "desktop-macos"
-  | "desktop-windows";
+export type AppReleasePlatform = "android" | "desktop";
 
 export type AppReleaseView = {
   platform: AppReleasePlatform;

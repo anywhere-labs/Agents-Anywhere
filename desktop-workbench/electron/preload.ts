@@ -16,7 +16,6 @@ import type {
   DesktopSettingsPatch,
   PublicLocalDesktopBinding,
 } from "./connector-types";
-import type { DesktopUpdateSnapshot } from "./desktop-update-types";
 
 function subscribe<T>(channel: string, callback: (value: T) => void): () => void {
   const listener = (_event: Electron.IpcRendererEvent, value: T) => callback(value);
@@ -61,14 +60,6 @@ contextBridge.exposeInMainWorld("desktopWorkbench", {
   },
   development: {
     clearCache: (): Promise<void> => ipcRenderer.invoke("workbench:development:clearCache"),
-  },
-  updates: {
-    getState: (): Promise<DesktopUpdateSnapshot> => ipcRenderer.invoke("workbench:updates:getState"),
-    checkNow: (): Promise<DesktopUpdateSnapshot> => ipcRenderer.invoke("workbench:updates:checkNow"),
-    install: (): Promise<DesktopUpdateSnapshot> => ipcRenderer.invoke("workbench:updates:install"),
-    defer: (): Promise<DesktopUpdateSnapshot> => ipcRenderer.invoke("workbench:updates:defer"),
-    onState: (callback: (state: DesktopUpdateSnapshot) => void): (() => void) =>
-      subscribe("workbench:updates:state", callback),
   },
   notifications: {
     show: (input: DesktopNotificationInput): Promise<DesktopNotificationResult> =>

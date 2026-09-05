@@ -1,9 +1,7 @@
 {
   "name": "agents-anywhere-desktop-workbench",
   "private": true,
-  "version": "0.1.7-2",
-  "productVersion": "0.1.7.2",
-  "versionCode": 6,
+  "version": "0.1.0",
   "description": "Electron shell for the Agents Anywhere web workbench",
   "packageManager": "yarn@4.6.0",
   "workspaces": [

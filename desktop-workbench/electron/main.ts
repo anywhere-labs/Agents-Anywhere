@@ -16,17 +16,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { ConnectorSupervisor } from "./connector-supervisor";
-import { startDesktopConnectorOnLaunch } from "./desktop-connector-launch";
 import { DesktopBindingStore } from "./desktop-binding";
 import { DesktopDeviceService } from "./desktop-device-service";
 import { DesktopSettingsStore } from "./desktop-settings";
-import {
-  resolveDesktopUpdateRuntimeConfig,
-  type DesktopUpdateRuntimeConfig,
-} from "./desktop-update-config";
-import { DesktopUpdateService } from "./desktop-update-service";
 import { ConnectorLogStore } from "./log-store";
-import { readJsonFile } from "./json-store";
 import { readShellEnvironment } from "./shell-environment";
 import type {
   ConnectorConfigPatch,
@@ -73,8 +66,6 @@ let bindingStore: DesktopBindingStore | null = null;
 let logStore: ConnectorLogStore | null = null;
 let connector: ConnectorSupervisor | null = null;
 let devices: DesktopDeviceService | null = null;
-let updates: DesktopUpdateService | null = null;
-let updateRuntimeConfig: DesktopUpdateRuntimeConfig | null = null;
 let isQuitting = false;
 let shutdownComplete = false;
 let shutdownPromise: Promise<void> | null = null;
@@ -451,22 +442,6 @@ function registerIpcHandlers(): void {
     await event.sender.session.clearCache();
     event.sender.reloadIgnoringCache();
   });
-  ipcMain.handle("workbench:updates:getState", (event) => {
-    assertTrustedRenderer(event);
-    return requireUpdates().getState();
-  });
-  ipcMain.handle("workbench:updates:checkNow", async (event) => {
-    assertTrustedRenderer(event);
-    return requireUpdates().checkNow();
-  });
-  ipcMain.handle("workbench:updates:install", async (event) => {
-    assertTrustedRenderer(event);
-    return requireUpdates().install();
-  });
-  ipcMain.handle("workbench:updates:defer", (event) => {
-    assertTrustedRenderer(event);
-    return requireUpdates().defer();
-  });
   ipcMain.handle(
     "workbench:notifications:show",
     (event, input: DesktopNotificationInput): DesktopNotificationResult => {
@@ -588,7 +563,6 @@ function registerIpcHandlers(): void {
       });
     }
     isQuitting = true;
-    updates?.dispose();
     stopTerminalLeaseRenewal();
     await prepareRendererForQuit();
     quiesceRendererForShutdown();
@@ -599,9 +573,6 @@ function registerIpcHandlers(): void {
     fs.rmSync(connectorDataPath(), { recursive: true, force: true });
     fs.rmSync(connectorLogsPath(), { recursive: true, force: true });
     fs.rmSync(desktopSettingsPath(), { force: true });
-    const updateConfig = requireUpdateRuntimeConfig();
-    fs.rmSync(updateConfig.statePath, { force: true });
-    fs.rmSync(updateConfig.downloadDirectory, { recursive: true, force: true });
     app.relaunch();
     shutdownComplete = true;
     app.exit(0);
@@ -653,16 +624,6 @@ function requireLogs(): ConnectorLogStore {
   return logStore;
 }
 
-function requireUpdates(): DesktopUpdateService {
-  if (!updates) throw new Error("Desktop updates are not ready.");
-  return updates;
-}
-
-function requireUpdateRuntimeConfig(): DesktopUpdateRuntimeConfig {
-  if (!updateRuntimeConfig) throw new Error("Desktop update configuration is not ready.");
-  return updateRuntimeConfig;
-}
-
 async function initializeDesktopServices(): Promise<void> {
   const dataPath = connectorDataPath();
   fs.mkdirSync(dataPath, { recursive: true, mode: 0o700 });
@@ -695,29 +656,6 @@ async function initializeDesktopServices(): Promise<void> {
     fetcher: (input, init) => net.fetch(String(input), init),
     defaultServerUrl: apiOrigin,
     apiNamespace,
-  });
-  updateRuntimeConfig = resolveDesktopUpdateRuntimeConfig({
-    packaged: app.isPackaged,
-    packageMetadata: readJsonFile<unknown>(path.join(app.getAppPath(), "package.json"), null),
-    environment: process.env,
-    userDataPath: app.getPath("userData"),
-    tempPath: app.getPath("temp"),
-  });
-  const product = requireUpdateRuntimeConfig();
-  updates = new DesktopUpdateService({
-    currentVersion: product.productVersion,
-    currentVersionCode: product.versionCode,
-    platform: process.platform,
-    apiOrigin,
-    apiNamespace,
-    statePath: product.statePath,
-    downloadDirectory: product.downloadDirectory,
-    fetcher: (input, init) => net.fetch(String(input), init),
-    openPath: (filePath) => shell.openPath(filePath),
-    automaticCheckDelayMs: product.automaticCheckDelayMs,
-    allowInsecureHttp: !app.isPackaged,
-    onState: (state) => sendToRenderer("workbench:updates:state", state),
-    onLog: (message) => appendMainLog({ level: "WARNING", message }),
   });
   applyLoginItemSettings();
 }
@@ -754,7 +692,6 @@ async function requestQuit({ confirm = false }: { confirm?: boolean } = {}): Pro
   if (confirm && !(await confirmQuit())) return;
   if (shutdownPromise) return shutdownPromise;
   isQuitting = true;
-  updates?.dispose();
   stopTerminalLeaseRenewal();
   shutdownPromise = (async () => {
     try {
@@ -966,20 +903,14 @@ if (hasSingleInstanceLock) {
     await initializeDesktopServices();
     const settings = requireSettings().get();
     const showOnLaunch = !settings.silentLaunch || !launchedAsLoginItem() || Boolean(process.env.WORKBENCH_WEB_URL);
-    const updateStartup = requireUpdates().start();
     createMainWindow(showOnLaunch);
     if (process.platform === "darwin" && app.dock) app.dock.setIcon(appWindowIcon());
     if (!showOnLaunch) hideDockIfIdle();
 
-    const updateState = await updateStartup;
-    if (updateState.forced) showMainWindow();
-    await startDesktopConnectorOnLaunch({
-      updateForced: updateState.forced,
-      enabled: settings.startConnectorOnLaunch,
-      getState: () => requireConnector().getState(),
-      start: () => requireConnector().start(),
-      onStartError: (error) => appendMainLog({ level: "ERROR", message: errorMessage(error) }),
-    });
+    const state = await requireConnector().getState();
+    if (settings.startConnectorOnLaunch && state.hasCredential && !state.manualDisconnected) {
+      void requireConnector().start().catch((error) => appendMainLog({ level: "ERROR", message: errorMessage(error) }));
+    }
   }).catch((error) => {
     console.error("Failed to initialize Desktop Workbench", error);
     void requestQuit();

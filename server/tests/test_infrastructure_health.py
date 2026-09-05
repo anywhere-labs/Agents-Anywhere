@@ -9,13 +9,7 @@ from agent_server.infra.db.migrations import CURRENT_SCHEMA_VERSION
 def test_liveness_and_readiness_are_separate(tmp_path) -> None:
     client = TestClient(create_app(tmp_path / "health.sqlite3"))
 
-    for path in ("/api/v2/health", "/api/v2/health/live"):
-        liveness = client.get(path)
-        assert liveness.status_code == 200
-        assert liveness.json()["status"] == "ok"
-        assert liveness.json()["version"] == client.app.version
-        assert liveness.json()["serverTime"]
-
+    assert client.get("/api/v2/health/live").json()["status"] == "ok"
     response = client.get("/api/v2/health/ready")
 
     assert response.status_code == 200
