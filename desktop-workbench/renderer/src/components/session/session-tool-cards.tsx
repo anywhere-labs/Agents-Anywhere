@@ -17,6 +17,12 @@ import { dashboardApi } from "@/features/dashboard/api"
 import type { Notice, SessionView, TimelineItem } from "@/features/dashboard/types"
 import { useTranslations } from "next-intl"
 import { commandText, firstTextOf, recordsOf, textOf } from "@/components/session/session-utils"
+import {
+  fileChangeAction,
+  fileChangeDisplayDiff,
+  isCreatedFileChange,
+  type FileChangeAction,
+} from "@/components/session/session-review-model"
 
 const FILE_CHANGE_MONACO_OPTIONS = {
   folding: false,
@@ -367,7 +373,7 @@ export function JsonBlock({ value }: { value: unknown }) {
   return <CodePanel label="json" code={JSON.stringify(value, null, 2)} language="json" />
 }
 
-function DiffPanel({ code, maxHeight }: { code: string; maxHeight: number }) {
+export function DiffPanel({ code, maxHeight }: { code: string; maxHeight: number }) {
   const rows = React.useMemo(() => buildDiffRows(code), [code])
   return (
     <ScrollArea contentWide className="min-w-0" style={{ height: maxHeight, maxHeight }}>
@@ -628,31 +634,6 @@ function codePanelHeight(code: string) {
   return Math.max(96, Math.min(320, lines * 19 + 24))
 }
 
-function isUnifiedDiffLike(value: string) {
-  return value.split("\n").some((line) => {
-    if (line.startsWith("@@")) return true
-    if (line.startsWith("diff --git") || line.startsWith("index ")) return true
-    if (line.startsWith("--- ") || line.startsWith("+++ ")) return true
-    if (/^[+-]\S/.test(line)) return true
-    return false
-  })
-}
-
-type FileChangeAction = "add" | "modify" | "delete" | "rename" | "unknown"
-
-function fileChangeAction(change: Record<string, unknown>): FileChangeAction {
-  const direct = textOf(change.action) || textOf(change.type) || textOf(change.status)
-  const nestedKind = change.kind && typeof change.kind === "object" && !Array.isArray(change.kind)
-    ? textOf((change.kind as Record<string, unknown>).type)
-    : textOf(change.kind)
-  const value = (nestedKind || direct || "").toLowerCase()
-  if (value === "add" || value === "added" || value === "create" || value === "created") return "add"
-  if (value === "delete" || value === "deleted" || value === "remove" || value === "removed") return "delete"
-  if (value === "rename" || value === "renamed" || value === "move" || value === "moved") return "rename"
-  if (value === "modify" || value === "modified" || value === "change" || value === "changed" || value === "edit" || value === "edited") return "modify"
-  return "unknown"
-}
-
 function fileChangeActionLabelKey(action: FileChangeAction): string {
   if (action === "add") return "fileChangeAdded"
   if (action === "delete") return "fileChangeDeleted"
@@ -674,17 +655,4 @@ function displayPathForSession(path: string | null, cwd: string | null | undefin
 
 function normalizeDisplayPath(path: string): string {
   return path.replace(/\\/g, "/").replace(/\/+$/, "")
-}
-
-function fileChangeDisplayDiff(change: Record<string, unknown>, diff: string | null): string | null {
-  if (!diff) return null
-  if (isUnifiedDiffLike(diff)) return diff
-  const action = fileChangeAction(change)
-  if (action === "add") return diff.split("\n").map((line) => `+${line}`).join("\n")
-  if (action === "delete") return diff.split("\n").map((line) => `-${line}`).join("\n")
-  return null
-}
-
-export function isCreatedFileChange(change: Record<string, unknown>) {
-  return fileChangeAction(change) === "add"
 }
