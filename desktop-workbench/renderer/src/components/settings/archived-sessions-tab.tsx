@@ -39,6 +39,12 @@ const ALL_PROJECTS = "all"
 const UNKNOWN_PROJECT_GROUP = "unknown-project"
 const PROJECT_PREFIX = "project:"
 
+function projectIdFromFilter(filter: string): string | null {
+  return filter.startsWith(PROJECT_PREFIX)
+    ? filter.slice(PROJECT_PREFIX.length)
+    : null
+}
+
 type ArchivedSessionGroup = {
   key: string
   projectId: string | null
@@ -83,8 +89,11 @@ export function ArchivedSessionsTab({
   const tActions = useTranslations("dashboard.actions")
   const locale = useLocale()
   const requestIdRef = React.useRef(0)
+  const loadMoreRequestIdRef = React.useRef(0)
   const [sessions, setSessions] = React.useState<SessionView[]>([])
   const [projectFilter, setProjectFilter] = React.useState(ALL_PROJECTS)
+  const projectFilterRef = React.useRef(projectFilter)
+  projectFilterRef.current = projectFilter
   const [loading, setLoading] = React.useState(true)
   const [loadingMore, setLoadingMore] = React.useState(false)
   const [hasMore, setHasMore] = React.useState(false)
@@ -106,6 +115,8 @@ export function ArchivedSessionsTab({
 
   const loadInitial = React.useCallback(async () => {
     const requestId = ++requestIdRef.current
+    loadMoreRequestIdRef.current += 1
+    setLoadingMore(false)
     if (!token) {
       setSessions([])
       setLoading(false)
@@ -114,7 +125,10 @@ export function ArchivedSessionsTab({
     setLoading(true)
     setError(null)
     try {
-      const response = await dashboardApi.listSessions(token, { archived: true, limit: 100 })
+      const projectId = projectIdFromFilter(projectFilter)
+      const response = projectId
+        ? await dashboardApi.listProjectSessions(token, projectId, { archived: true, limit: 100 })
+        : await dashboardApi.listSessions(token, { archived: true, limit: 100 })
       if (requestId !== requestIdRef.current) return
       setSessions(mergeSessions([], response.sessions))
       setHasMore(response.hasMore)
@@ -125,23 +139,26 @@ export function ArchivedSessionsTab({
     } finally {
       if (requestId === requestIdRef.current) setLoading(false)
     }
-  }, [t, token])
+  }, [projectFilter, t, token])
 
   React.useEffect(() => {
     void loadInitial()
     return () => {
       requestIdRef.current += 1
+      loadMoreRequestIdRef.current += 1
     }
   }, [loadInitial])
 
   React.useEffect(() => {
     if (!projectFilter.startsWith(PROJECT_PREFIX)) return
-    const projectId = projectFilter.slice(PROJECT_PREFIX.length)
+    const projectId = projectIdFromFilter(projectFilter)
+    if (!projectId) return
     if (!projects.some((project) => project.id === projectId)) setProjectFilter(ALL_PROJECTS)
   }, [projectFilter, projects])
 
-  const selectedProject = projectFilter.startsWith(PROJECT_PREFIX)
-    ? projects.find((project) => project.id === projectFilter.slice(PROJECT_PREFIX.length)) ?? null
+  const selectedProjectId = projectIdFromFilter(projectFilter)
+  const selectedProject = selectedProjectId
+    ? projects.find((project) => project.id === selectedProjectId) ?? null
     : null
   const projectFilterLabel = selectedProject
     ? `${selectedProject.name} · ${selectedProject.workspacePath}`
@@ -151,7 +168,7 @@ export function ArchivedSessionsTab({
     const projectById = new Map(projects.map((project) => [project.id, project]))
     const filteredSessions = sessions.filter((session) => {
       if (projectFilter === ALL_PROJECTS) return true
-      return session.projectId === projectFilter.slice(PROJECT_PREFIX.length)
+      return session.projectId === selectedProjectId
     })
     const grouped = new Map<string, ArchivedSessionGroup>()
 
@@ -180,24 +197,36 @@ export function ArchivedSessionsTab({
       if (leftOrder !== rightOrder) return leftOrder - rightOrder
       return left.name.localeCompare(right.name, locale)
     })
-  }, [locale, projectFilter, projects, sessions, t])
+  }, [locale, projectFilter, projects, selectedProjectId, sessions, t])
 
   const loadMore = async () => {
     if (!token || !hasMore || !nextCursor || loadingMore) return
+    const requestId = ++loadMoreRequestIdRef.current
+    const filterAtRequestStart = projectFilter
     setLoadingMore(true)
     try {
-      const response = await dashboardApi.listSessions(token, {
-        archived: true,
-        limit: 100,
-        cursor: nextCursor,
-      })
+      const response = selectedProjectId
+        ? await dashboardApi.listProjectSessions(token, selectedProjectId, {
+            archived: true,
+            limit: 100,
+            cursor: nextCursor,
+          })
+        : await dashboardApi.listSessions(token, {
+            archived: true,
+            limit: 100,
+            cursor: nextCursor,
+          })
+      if (
+        requestId !== loadMoreRequestIdRef.current ||
+        projectFilterRef.current !== filterAtRequestStart
+      ) return
       setSessions((current) => mergeSessions(current, response.sessions))
       setHasMore(response.hasMore)
       setNextCursor(response.nextCursor)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : t("archivedLoadFailed"))
     } finally {
-      setLoadingMore(false)
+      if (requestId === loadMoreRequestIdRef.current) setLoadingMore(false)
     }
   }
 
