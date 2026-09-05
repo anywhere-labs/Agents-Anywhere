@@ -101,6 +101,221 @@ test("reconnect rejects a remote Desktop before rotating a token", async () => {
   harness.cleanup();
 });
 
+test("reconnect rotates credentials for an existing local Desktop without creating a device", async (t) => {
+  const requests: Array<{ url: string; init?: RequestInit }> = [];
+  const harness = createHarness(async (input, init) => {
+    requests.push({ url: String(input), init });
+    return Response.json({
+      connector: { id: "connector-old", name: "Renamed Mac" },
+      connectorToken: "rotated-secret",
+    });
+  });
+  t.after(harness.cleanup);
+  seedLocalConnector(harness);
+
+  const result = await harness.service.reconnectAndConnect({
+    userId: "user-1",
+    userToken: "user-secret",
+    connectorId: "connector-old",
+  });
+
+  assert.deepEqual(requests.map((request) => request.url), [
+    "https://server.example/api/v2/connectors/connector-old/revoke",
+  ]);
+  assert.equal(result.connectorId, "connector-old");
+  assert.equal(result.name, "Renamed Mac");
+  assert.equal(result.manualDisconnected, false);
+  assert.equal(result.hasCredential, true);
+  assert.equal(harness.mock.credential?.connectorToken, "rotated-secret");
+  assert.equal(harness.mock.restartCalls, 1);
+  assert.equal(harness.mock.preflightCalls, 0);
+});
+
+for (const hasCredential of [true, false]) {
+  test(`reconnect pairs a deleted local Desktop again (stored credential: ${hasCredential})`, async (t) => {
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    const harness = createHarness(async (input, init) => {
+      requests.push({ url: String(input), init });
+      if (String(input).endsWith("/connector-old/revoke")) {
+        return Response.json({ detail: "connector not found" }, { status: 404 });
+      }
+      return Response.json({
+        connector: { id: "connector-new", name: "Office Mac" },
+        connectorToken: "new-secret",
+      });
+    });
+    t.after(harness.cleanup);
+    seedLocalConnector(harness);
+    if (!hasCredential) harness.mock.credential = null;
+
+    const result = await harness.service.reconnectAndConnect({
+      userId: "user-1",
+      userToken: "user-secret",
+      connectorId: "connector-old",
+    });
+
+    assert.deepEqual(requests.map((request) => [request.url, request.init?.method]), [
+      ["https://server.example/api/v2/connectors/connector-old/revoke", "POST"],
+      ["https://server.example/api/v2/connectors", "POST"],
+    ]);
+    assert.equal(new Headers(requests[1].init?.headers).get("authorization"), "Bearer user-secret");
+    assert.deepEqual(JSON.parse(String(requests[1].init?.body)), {
+      name: "Office Mac",
+      connectorKind: "desktop",
+    });
+    assert.deepEqual(result, {
+      connectorId: "connector-new",
+      serverUrl: "https://server.example",
+      name: "Office Mac",
+      ownerUserId: "user-1",
+      manualDisconnected: false,
+      hasCredential: true,
+    });
+    assert.equal(harness.binding.get()?.connectorId, "connector-new");
+    assert.deepEqual(harness.mock.credential, {
+      serverUrl: "https://server.example",
+      connectorId: "connector-new",
+      connectorToken: "new-secret",
+    });
+    assert.equal(harness.mock.stopCalls, 1);
+    assert.equal(harness.mock.preflightCalls, 1);
+    assert.equal(harness.mock.startCalls, 1);
+    assert.equal(harness.mock.restartCalls, 0);
+    assert.equal(harness.mock.clearCalls, 0);
+  });
+}
+
+for (const status of [401, 403, 409, 500]) {
+  test(`reconnect does not create a replacement device after HTTP ${status}`, async (t) => {
+    let requests = 0;
+    const harness = createHarness(async () => {
+      requests += 1;
+      return Response.json({ detail: "reconnect failed" }, { status });
+    });
+    t.after(harness.cleanup);
+    seedLocalConnector(harness);
+    const previousBinding = harness.binding.get();
+    const previousCredential = harness.mock.credential;
+
+    await assert.rejects(harness.service.reconnectAndConnect({
+      userId: "user-1",
+      userToken: "user-secret",
+    }));
+
+    assert.equal(requests, 1);
+    assert.deepEqual(harness.binding.get(), previousBinding);
+    assert.deepEqual(harness.mock.credential, previousCredential);
+    assert.equal(harness.mock.preflightCalls, 0);
+    assert.equal(harness.mock.stopCalls, 0);
+    assert.equal(harness.mock.saveCalls.length, 0);
+  });
+}
+
+test("reconnect does not infer a deleted device from an arbitrary error message", async (t) => {
+  let requests = 0;
+  const error = new Error("The selected Connector no longer exists.");
+  const harness = createHarness(async () => {
+    requests += 1;
+    throw error;
+  });
+  t.after(harness.cleanup);
+  seedLocalConnector(harness);
+
+  await assert.rejects(harness.service.reconnectAndConnect({
+    userId: "user-1",
+    userToken: "user-secret",
+  }), (received) => received === error);
+
+  assert.equal(requests, 1);
+  assert.equal(harness.mock.preflightCalls, 0);
+});
+
+test("failed replacement provisioning preserves the local binding for another reconnect", async (t) => {
+  let creates = 0;
+  const harness = createHarness(async (input) => {
+    if (String(input).endsWith("/connector-old/revoke")) {
+      return Response.json({ detail: "connector not found" }, { status: 404 });
+    }
+    creates += 1;
+    if (creates === 1) {
+      return Response.json({ detail: "temporarily unavailable" }, { status: 503 });
+    }
+    return Response.json({
+      connector: { id: "connector-new", name: "Office Mac" },
+      connectorToken: "new-secret",
+    });
+  });
+  t.after(harness.cleanup);
+  seedLocalConnector(harness);
+  const previousBinding = harness.binding.get();
+  const previousCredential = harness.mock.credential;
+  const input = { userId: "user-1", userToken: "user-secret", connectorId: "connector-old" };
+
+  await assert.rejects(harness.service.reconnectAndConnect(input), /temporarily unavailable/);
+  assert.deepEqual(harness.binding.get(), previousBinding);
+  assert.deepEqual(harness.mock.credential, previousCredential);
+  assert.equal(harness.mock.startCalls, 0);
+  assert.equal(harness.mock.clearCalls, 0);
+
+  const result = await harness.service.reconnectAndConnect(input);
+  assert.equal(result.connectorId, "connector-new");
+  assert.equal(creates, 2);
+  assert.equal(harness.mock.startCalls, 1);
+});
+
+test("replacement provisioning rolls back a new server device if its local binding cannot be saved", async (t) => {
+  const requests: Array<{ url: string; method?: string }> = [];
+  const harness = createHarness(async (input, init) => {
+    const url = String(input);
+    requests.push({ url, method: init?.method });
+    if (url.endsWith("/connector-old/revoke")) {
+      return Response.json({ detail: "connector not found" }, { status: 404 });
+    }
+    if (init?.method === "DELETE") return new Response(null, { status: 204 });
+    return Response.json({
+      connector: { id: "connector-new", name: "Office Mac" },
+      connectorToken: "new-secret",
+    });
+  });
+  t.after(harness.cleanup);
+  seedLocalConnector(harness);
+  const previousBinding = harness.binding.get();
+  const previousCredential = harness.mock.credential;
+  t.mock.method(harness.binding, "save", () => { throw new Error("disk is full"); });
+
+  await assert.rejects(harness.service.reconnectAndConnect({
+    userId: "user-1",
+    userToken: "user-secret",
+  }), /disk is full/);
+
+  assert.deepEqual(requests, [
+    { url: "https://server.example/api/v2/connectors/connector-old/revoke", method: "POST" },
+    { url: "https://server.example/api/v2/connectors", method: "POST" },
+    { url: "https://server.example/api/v2/connectors/connector-new", method: "DELETE" },
+  ]);
+  assert.deepEqual(harness.binding.get(), previousBinding);
+  assert.deepEqual(harness.mock.credential, previousCredential);
+  assert.equal(harness.mock.saveCalls.length, 0);
+});
+
+test("reconnect rejects a different signed-in account before creating a replacement", async (t) => {
+  let requests = 0;
+  const harness = createHarness(async () => {
+    requests += 1;
+    return Response.json({ detail: "connector not found" }, { status: 404 });
+  });
+  t.after(harness.cleanup);
+  seedLocalConnector(harness);
+
+  await assert.rejects(harness.service.reconnectAndConnect({
+    userId: "another-user",
+    userToken: "another-user-secret",
+  }), /different signed-in account/);
+
+  assert.equal(requests, 0);
+  assert.equal(harness.mock.preflightCalls, 0);
+});
+
 test("createAndConnect replaces credentials when the signed-in account changes", async () => {
   const harness = createHarness(async () => Response.json({
     connector: { id: "connector-new", name: "Office Mac" },
@@ -192,6 +407,22 @@ test("disconnectLocal discards the rotated token and keeps the local binding", a
   assert.equal(result.hasCredential, false);
   harness.cleanup();
 });
+
+function seedLocalConnector(harness: ReturnType<typeof createHarness>): void {
+  harness.binding.save({
+    connectorId: "connector-old",
+    serverUrl: "https://server.example",
+    name: "Office Mac",
+    ownerUserId: "user-1",
+    manualDisconnected: true,
+  });
+  harness.mock.credential = {
+    serverUrl: "https://server.example",
+    connectorId: "connector-old",
+    connectorToken: "old-secret",
+  };
+  harness.mock.authFailed = true;
+}
 
 function createHarness(fetcher: (input: string | URL, init?: RequestInit) => Promise<Response>) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "aa-desktop-device-test-"));

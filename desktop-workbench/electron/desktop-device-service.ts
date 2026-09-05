@@ -26,6 +26,13 @@ type ConnectorCredentialResponse = {
   connectorToken: string;
 };
 
+class ConnectorApiError extends Error {
+  constructor(readonly status: number, payload: unknown) {
+    super(userFacingApiError(status, payload));
+    this.name = "ConnectorApiError";
+  }
+}
+
 export class DesktopDeviceService {
   constructor(private readonly options: DesktopDeviceServiceOptions) {}
 
@@ -64,14 +71,21 @@ export class DesktopDeviceService {
       return this.requirePublicBinding();
     }
 
-    const previousBinding = existing;
+    return this.provisionAndConnect({ ...input, userId, serverUrl });
+  }
+
+  private async provisionAndConnect(
+    input: DesktopDeviceProvisionInput & { serverUrl: string },
+  ): Promise<PublicLocalDesktopBinding> {
+    const { userId, serverUrl } = input;
+    const previousBinding = this.options.binding.get();
     const previousConfig = this.options.connector.loadPrivateConfig();
     const replacingLocalConnector = Boolean(previousBinding || previousConfig);
     const previousState = this.options.connector.publicState();
     const resumePrevious = Boolean(previousConfig && previousState.running && !previousState.authFailed);
     if (replacingLocalConnector) {
       // Stop the old runtime without deleting its credential. Provisioning the
-      // new account/Server is transactional: a failed POST can resume the old
+      // replacement device is transactional: a failed POST can resume the old
       // local Connector instead of stranding its binding without a token.
       await this.options.connector.stop();
     }
@@ -156,11 +170,24 @@ export class DesktopDeviceService {
       throw new Error("A different Desktop can only be reconnected on that Desktop.");
     }
     const serverUrl = this.resolveServerUrl(input.serverUrl || binding.serverUrl);
-    const credential = await this.requestCredential(
-      serverUrl,
-      `/connectors/${encodeURIComponent(binding.connectorId)}/revoke`,
-      input.userToken,
-    );
+    let credential: ConnectorCredentialResponse;
+    try {
+      credential = await this.requestCredential(
+        serverUrl,
+        `/connectors/${encodeURIComponent(binding.connectorId)}/revoke`,
+        input.userToken,
+      );
+    } catch (error) {
+      if (!(error instanceof ConnectorApiError) || error.status !== 404) throw error;
+      // A deleted device needs a new registration. Reuse first-login provisioning
+      // without letting createAndConnect return the stale local binding.
+      return this.provisionAndConnect({
+        userId: binding.ownerUserId,
+        userToken: input.userToken,
+        serverUrl,
+        name: binding.name,
+      });
+    }
     if (credential.connector.id !== binding.connectorId) {
       throw new Error("The server returned credentials for a different Connector.");
     }
@@ -228,7 +255,7 @@ export class DesktopDeviceService {
       // Keep authentication credentials and arbitrary response bodies out of logs.
     }
     if (!response.ok) {
-      throw new Error(userFacingApiError(response.status, payload));
+      throw new ConnectorApiError(response.status, payload);
     }
     return parseCredentialResponse(payload);
   }
