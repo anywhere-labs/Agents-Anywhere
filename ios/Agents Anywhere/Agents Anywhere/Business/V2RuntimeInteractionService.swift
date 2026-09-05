@@ -17,7 +17,7 @@ struct V2RuntimeInteractionService {
             sessionId: sessionId,
             noticeId: noticeId,
             request: V2RuntimeNoticeRespondRequest(actionId: actionId, input: input)
-        )
+        ).requireSuccess()
     }
 
     func commands(sessionId: V2SessionID) async throws -> [V2RuntimeCommand] {

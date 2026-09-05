@@ -14,7 +14,7 @@ struct V2APIClient {
         tokenProvider: any AuthTokenProvider,
         urlSession: URLSession = .shared
     ) {
-        self.serverURL = serverURL
+        self.serverURL = serverURL.normalizedV2ServerURL()
         let transport = URLSessionHTTPTransport(
             serverURL: serverURL,
             urlSession: urlSession,

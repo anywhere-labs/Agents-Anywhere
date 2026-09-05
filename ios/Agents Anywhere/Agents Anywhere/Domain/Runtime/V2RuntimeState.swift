@@ -31,9 +31,11 @@ struct V2RuntimeSelectionScope: RawRepresentable, Codable, Hashable, Expressible
 struct V2RuntimeState: Codable, Hashable {
     let sessionId: V2SessionID
     let runtime: V2RuntimeID
+    let runtimeId: V2RuntimeID?
+    let runtimeType: String?
     let externalSessionId: String?
     let status: V2RuntimeStatus
-    let selections: [V2RuntimeSelectionScope: V2SelectionID]
+    let selections: [V2RuntimeSelectionScope: V2SelectionID?]
     let statusReason: String?
     let error: V2RuntimeError?
     let metadata: JSONValue
@@ -44,6 +46,8 @@ struct V2RuntimeState: Codable, Hashable {
     enum CodingKeys: String, CodingKey {
         case sessionId
         case runtime
+        case runtimeId
+        case runtimeType
         case externalSessionId
         case status
         case selections
@@ -58,9 +62,11 @@ struct V2RuntimeState: Codable, Hashable {
     init(
         sessionId: V2SessionID,
         runtime: V2RuntimeID,
+        runtimeId: V2RuntimeID? = nil,
+        runtimeType: String? = nil,
         externalSessionId: String?,
         status: V2RuntimeStatus,
-        selections: [V2RuntimeSelectionScope: V2SelectionID],
+        selections: [V2RuntimeSelectionScope: V2SelectionID?],
         statusReason: String?,
         error: V2RuntimeError?,
         metadata: JSONValue,
@@ -70,6 +76,8 @@ struct V2RuntimeState: Codable, Hashable {
     ) {
         self.sessionId = sessionId
         self.runtime = runtime
+        self.runtimeId = runtimeId
+        self.runtimeType = runtimeType
         self.externalSessionId = externalSessionId
         self.status = status
         self.selections = selections
@@ -85,13 +93,18 @@ struct V2RuntimeState: Codable, Hashable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         sessionId = try container.decode(V2SessionID.self, forKey: .sessionId)
         runtime = try container.decode(V2RuntimeID.self, forKey: .runtime)
+        runtimeId = try container.decodeIfPresent(V2RuntimeID.self, forKey: .runtimeId)
+        runtimeType = try container.decodeIfPresent(String.self, forKey: .runtimeType)
         externalSessionId = try container.decodeIfPresent(String.self, forKey: .externalSessionId)
         let rawStatus = try container.decodeIfPresent(String.self, forKey: .status) ?? V2RuntimeStatus.unknown.rawValue
         status = V2RuntimeStatus(rawValue: rawStatus) ?? .unknown
         let rawSelections = try container.decodeIfPresent([String: JSONValue].self, forKey: .selections) ?? [:]
         selections = rawSelections.reduce(into: [:]) { result, entry in
-            if let selectionId = entry.value.stringValue {
-                result[V2RuntimeSelectionScope(rawValue: entry.key)] = selectionId
+            let scope = V2RuntimeSelectionScope(rawValue: entry.key)
+            if case let .string(selectionId) = entry.value {
+                result[scope] = .some(selectionId)
+            } else if entry.value == .null {
+                result[scope] = .some(nil)
             }
         }
         statusReason = try container.decodeIfPresent(String.self, forKey: .statusReason)
@@ -106,6 +119,8 @@ struct V2RuntimeState: Codable, Hashable {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(sessionId, forKey: .sessionId)
         try container.encode(runtime, forKey: .runtime)
+        try container.encodeIfPresent(runtimeId, forKey: .runtimeId)
+        try container.encodeIfPresent(runtimeType, forKey: .runtimeType)
         try container.encodeIfPresent(externalSessionId, forKey: .externalSessionId)
         try container.encode(status.rawValue, forKey: .status)
         let rawSelections = Dictionary(uniqueKeysWithValues: selections.map { scope, value in
@@ -133,13 +148,15 @@ struct V2RuntimeSelectionUpdateResponse: Decodable, Hashable {
     let serverTime: String
 }
 
-struct V2RuntimeError: Codable, Hashable {
+struct V2RuntimeError: Codable, Hashable, LocalizedError {
     let code: String?
     let message: String
+
+    var errorDescription: String? { message }
 }
 
 struct V2RuntimeSelectionUpdateRequest: Encodable, Hashable {
-    let selections: [V2RuntimeSelectionScope: V2SelectionID]
+    let selections: [V2RuntimeSelectionScope: V2SelectionID?]
 
     enum CodingKeys: String, CodingKey {
         case selections

@@ -1,0 +1,932 @@
+{
+  "authConfig": {
+    "emailVerificationRequired": false,
+    "needsBootstrap": false,
+    "oauthEnabled": false,
+    "oauthProviderLabel": null,
+    "oauthRegistrationOpen": false,
+    "registrationOpen": true,
+    "serverTime": "2026-09-05T12:00:00Z",
+    "setupTokenExpiresAt": null
+  },
+  "capabilities": {
+    "capabilitySet": {
+      "capabilities": [
+        {
+          "allowed": true,
+          "available": true,
+          "capabilityId": "session.send_message",
+          "parameters": {},
+          "runtime": "claude",
+          "runtimeId": "rti_work",
+          "scope": "runtime",
+          "sessionId": null,
+          "supported": true,
+          "unavailableReason": null,
+          "version": "1"
+        }
+      ],
+      "revision": 10
+    },
+    "connectorId": "device",
+    "serverTime": "2026-09-05T12:00:00Z"
+  },
+  "commands": {
+    "commands": [
+      {
+        "acceptsArgs": true,
+        "aliases": [],
+        "argsSchema": {
+          "type": "array"
+        },
+        "category": null,
+        "description": null,
+        "disabledReason": null,
+        "enabled": true,
+        "id": "plan",
+        "metadata": {},
+        "scope": "session",
+        "title": "Plan"
+      }
+    ],
+    "serverTime": "2026-09-05T12:00:00Z"
+  },
+  "connector": {
+    "connector": {
+      "createdAt": "2026-09-05T12:00:00Z",
+      "deviceOs": "macos",
+      "id": "device",
+      "lastSeenAt": null,
+      "name": "Mac",
+      "status": "online",
+      "updatedAt": "2026-09-05T12:00:00Z",
+      "userId": "account"
+    },
+    "serverTime": "2026-09-05T12:00:00Z"
+  },
+  "connectors": {
+    "connectors": [
+      {
+        "createdAt": "2026-09-05T12:00:00Z",
+        "deviceOs": "macos",
+        "id": "device",
+        "lastSeenAt": null,
+        "name": "Mac",
+        "status": "online",
+        "updatedAt": "2026-09-05T12:00:00Z",
+        "userId": "account"
+      }
+    ],
+    "serverTime": "2026-09-05T12:00:00Z"
+  },
+  "dashboard": {
+    "connectors": [
+      {
+        "createdAt": "2026-09-05T12:00:00Z",
+        "deviceOs": "macos",
+        "id": "device",
+        "lastSeenAt": null,
+        "name": "Mac",
+        "status": "online",
+        "updatedAt": "2026-09-05T12:00:00Z",
+        "userId": "account"
+      }
+    ],
+    "serverTime": "2026-09-05T12:00:00Z",
+    "sessions": [
+      {
+        "archiveSource": null,
+        "archived": false,
+        "archivedAt": null,
+        "connectorId": "device",
+        "connectorStatus": "online",
+        "cwd": "/workspace",
+        "externalSessionId": null,
+        "id": "session",
+        "lastActivityAt": null,
+        "lastItemAt": null,
+        "lastItemOrderSeq": null,
+        "lastReadSeq": 0,
+        "lastSyncedAt": null,
+        "latestTurnEndSeq": 0,
+        "pinned": false,
+        "pinnedAt": null,
+        "runtime": "claude",
+        "runtimeId": "rti_work",
+        "runtimeName": "Work",
+        "runtimeType": "claude",
+        "runtimeTypeDisplayName": null,
+        "sortAt": null,
+        "sourceAvailability": "available",
+        "sourceAvailabilityReason": null,
+        "sourceAvailabilityUpdatedAt": null,
+        "sourceObservationOrigin": null,
+        "sourceObservedAt": null,
+        "status": "idle",
+        "takeover": true,
+        "title": "Task",
+        "unread": false,
+        "updatedSeq": 10,
+        "userArchived": false
+      }
+    ],
+    "type": "dashboard.snapshot"
+  },
+  "download": {
+    "contentBase64": "SGVsbG8=",
+    "createdAt": "2026-09-05T12:00:00Z",
+    "fileId": "file",
+    "name": "test.txt",
+    "path": "test.txt",
+    "serverTime": "2026-09-05T12:00:00Z",
+    "sessionId": "session",
+    "sha256": "hash",
+    "size": 5
+  },
+  "event": {
+    "cursor": "seq:11",
+    "emittedAt": "2026-09-05T12:00:00Z",
+    "eventId": "event",
+    "payload": {
+      "item": {
+        "completedAt": null,
+        "content": {
+          "text": "Hello"
+        },
+        "contentHash": "hash",
+        "createdAt": "2026-09-05T12:00:00Z",
+        "id": "item-2",
+        "orderSeq": 2,
+        "revision": 1,
+        "role": "assistant",
+        "sessionId": "session",
+        "source": {
+          "clientMessageId": null,
+          "derivedKey": null,
+          "event": null,
+          "itemId": null,
+          "itemType": null,
+          "runtime": "claude",
+          "sessionId": null
+        },
+        "status": "done",
+        "type": "message",
+        "updatedAt": "2026-09-05T12:00:00Z",
+        "updatedSeq": 11
+      }
+    },
+    "protocolVersion": "1.0",
+    "sequence": 11,
+    "sessionId": "session",
+    "type": "timeline.item_created"
+  },
+  "files": {
+    "error": null,
+    "ok": true,
+    "result": {
+      "entries": [
+        {
+          "name": "test.txt",
+          "path": "test.txt",
+          "size": 5,
+          "type": "file"
+        }
+      ],
+      "path": "/workspace",
+      "truncated": false
+    }
+  },
+  "modelCatalog": {
+    "catalog": {
+      "models": [
+        {
+          "default": false,
+          "description": null,
+          "displayName": "Model",
+          "id": "model",
+          "metadata": {},
+          "reasoningItems": [
+            {
+              "default": false,
+              "description": null,
+              "displayName": "High",
+              "fullModelId": null,
+              "id": "high",
+              "metadata": {},
+              "selectionId": "sel_effort"
+            }
+          ],
+          "selectionId": "sel_model"
+        }
+      ],
+      "revision": 1,
+      "runtime": "claude"
+    },
+    "serverTime": "2026-09-05T12:00:00Z"
+  },
+  "notices": {
+    "notices": [
+      {
+        "actions": [
+          {
+            "actionId": "approve",
+            "input": {
+              "required": false,
+              "schema": null,
+              "uiSchema": null
+            },
+            "label": "Approve",
+            "style": "secondary"
+          }
+        ],
+        "blocking": null,
+        "context": {},
+        "createdAt": null,
+        "expiresAt": null,
+        "interactionType": null,
+        "message": null,
+        "metadata": {},
+        "noticeId": "notice",
+        "resolvedAt": null,
+        "responseRequired": true,
+        "revision": 1,
+        "sessionId": "session",
+        "severity": "info",
+        "source": {
+          "approvalId": null,
+          "component": null,
+          "operationId": null,
+          "runtime": null,
+          "timelineItemId": null
+        },
+        "status": "open",
+        "title": "Approve",
+        "type": "interaction"
+      }
+    ],
+    "serverTime": "2026-09-05T12:00:00Z"
+  },
+  "permissionCatalog": {
+    "catalog": {
+      "permissions": [
+        {
+          "default": false,
+          "description": null,
+          "displayName": "Default",
+          "id": "default",
+          "metadata": {},
+          "selectionId": "sel_permission"
+        }
+      ],
+      "revision": 1,
+      "runtime": "claude"
+    },
+    "serverTime": "2026-09-05T12:00:00Z"
+  },
+  "preferences": {
+    "connectorId": "device",
+    "preferences": {
+      "cwd": "/workspace"
+    },
+    "serverTime": "2026-09-05T12:00:00Z"
+  },
+  "profile": {
+    "avatar": null,
+    "disabled": false,
+    "displayName": "Test",
+    "email": "test@example.com",
+    "emailVerified": false,
+    "role": "member",
+    "serverTime": "2026-09-05T12:00:00Z",
+    "userId": "account"
+  },
+  "recovery": {
+    "events": [
+      {
+        "cursor": "seq:11",
+        "emittedAt": "2026-09-05T12:00:00Z",
+        "eventId": "event",
+        "payload": {
+          "item": {
+            "completedAt": null,
+            "content": {
+              "text": "Hello"
+            },
+            "contentHash": "hash",
+            "createdAt": "2026-09-05T12:00:00Z",
+            "id": "item-2",
+            "orderSeq": 2,
+            "revision": 1,
+            "role": "assistant",
+            "sessionId": "session",
+            "source": {
+              "clientMessageId": null,
+              "derivedKey": null,
+              "event": null,
+              "itemId": null,
+              "itemType": null,
+              "runtime": "claude",
+              "sessionId": null
+            },
+            "status": "done",
+            "type": "message",
+            "updatedAt": "2026-09-05T12:00:00Z",
+            "updatedSeq": 11
+          }
+        },
+        "protocolVersion": "1.0",
+        "sequence": 11,
+        "sessionId": "session",
+        "type": "timeline.item_created"
+      }
+    ],
+    "nextCursor": "seq:11",
+    "serverTime": "2026-09-05T12:00:00Z",
+    "snapshotRequired": false
+  },
+  "requests": {
+    "bindSession": {
+      "connectorId": "device",
+      "externalSessionId": "external",
+      "runtime": "claude",
+      "runtimeId": "rti_work",
+      "selections": {}
+    },
+    "command": {
+      "args": [
+        "task"
+      ],
+      "command": "plan",
+      "raw": "/plan task"
+    },
+    "createRuntime": {
+      "active": true,
+      "config": {},
+      "name": "Work",
+      "runtimeType": "claude"
+    },
+    "createSession": {
+      "attachments": [],
+      "connectorId": "device",
+      "content": "Hello",
+      "runtime": "claude",
+      "runtimeId": "rti_work",
+      "selections": {
+        "model": "sel_model"
+      }
+    },
+    "message": {
+      "attachments": [],
+      "clientMessageId": "client",
+      "content": "Hello"
+    },
+    "notice": {
+      "actionId": "approve",
+      "input": {
+        "confirmed": true
+      }
+    },
+    "readText": {
+      "maxBytes": 1048576,
+      "path": "test.txt"
+    },
+    "renameRuntime": {
+      "name": "Work"
+    },
+    "selection": {
+      "selections": {
+        "effort": null
+      }
+    },
+    "steer": {
+      "attachments": [],
+      "clientMessageId": "client",
+      "content": "Hello"
+    },
+    "ticket": {
+      "clientId": "client",
+      "scope": {
+        "dashboard": false,
+        "sessionId": "session"
+      }
+    }
+  },
+  "rpc": {
+    "error": null,
+    "ok": true,
+    "result": {
+      "accepted": true
+    }
+  },
+  "rpcError": {
+    "error": {
+      "code": "notice_not_found",
+      "message": "Notice expired"
+    },
+    "ok": false,
+    "result": null
+  },
+  "runtime": {
+    "active": true,
+    "available": true,
+    "capabilities": {},
+    "config": {},
+    "configured": true,
+    "connectorId": "device",
+    "createdAt": "2026-09-05T12:00:00Z",
+    "defaults": {},
+    "discovery": {},
+    "displayName": "Work",
+    "error": null,
+    "lastDiscoveredAt": "2026-09-05T12:00:00Z",
+    "metadata": {},
+    "name": "Work",
+    "present": true,
+    "reason": null,
+    "runtimeId": "rti_work",
+    "runtimeType": "claude",
+    "schema": {
+      "properties": {},
+      "type": "object"
+    },
+    "status": "running",
+    "typeDisplayName": "Claude",
+    "uiSchema": {},
+    "updatedAt": "2026-09-05T12:00:00Z"
+  },
+  "runtimeTypes": {
+    "connectorId": "device",
+    "runtimeTypes": [
+      {
+        "available": true,
+        "capabilities": {},
+        "configSchema": null,
+        "connectorId": "device",
+        "createdAt": "2026-09-05T12:00:00Z",
+        "defaults": {},
+        "description": null,
+        "discovery": {},
+        "displayName": "Claude",
+        "implementationType": "claude_sdk",
+        "instancePolicy": "multiple",
+        "lastDiscoveredAt": "2026-09-05T12:00:00Z",
+        "maxInstances": 3,
+        "metadata": {},
+        "present": true,
+        "reason": null,
+        "recommendationRank": 1,
+        "recommended": true,
+        "runtimeType": "claude",
+        "schema": {
+          "properties": {},
+          "type": "object"
+        },
+        "uiSchema": {},
+        "updatedAt": "2026-09-05T12:00:00Z"
+      }
+    ],
+    "serverTime": "2026-09-05T12:00:00Z"
+  },
+  "runtimes": {
+    "connectorId": "device",
+    "runtimes": [
+      {
+        "active": true,
+        "available": true,
+        "capabilities": {},
+        "config": {},
+        "configured": true,
+        "connectorId": "device",
+        "createdAt": "2026-09-05T12:00:00Z",
+        "defaults": {},
+        "discovery": {},
+        "displayName": "Work",
+        "error": null,
+        "lastDiscoveredAt": "2026-09-05T12:00:00Z",
+        "metadata": {},
+        "name": "Work",
+        "present": true,
+        "reason": null,
+        "runtimeId": "rti_work",
+        "runtimeType": "claude",
+        "schema": {
+          "properties": {},
+          "type": "object"
+        },
+        "status": "running",
+        "typeDisplayName": "Claude",
+        "uiSchema": {},
+        "updatedAt": "2026-09-05T12:00:00Z"
+      }
+    ],
+    "serverTime": "2026-09-05T12:00:00Z"
+  },
+  "session": {
+    "serverTime": "2026-09-05T12:00:00Z",
+    "session": {
+      "archiveSource": null,
+      "archived": false,
+      "archivedAt": null,
+      "connectorId": "device",
+      "connectorStatus": "online",
+      "cwd": "/workspace",
+      "externalSessionId": null,
+      "id": "session",
+      "lastActivityAt": null,
+      "lastItemAt": null,
+      "lastItemOrderSeq": null,
+      "lastReadSeq": 0,
+      "lastSyncedAt": null,
+      "latestTurnEndSeq": 0,
+      "pinned": false,
+      "pinnedAt": null,
+      "runtime": "claude",
+      "runtimeId": "rti_work",
+      "runtimeName": "Work",
+      "runtimeType": "claude",
+      "runtimeTypeDisplayName": null,
+      "sortAt": null,
+      "sourceAvailability": "available",
+      "sourceAvailabilityReason": null,
+      "sourceAvailabilityUpdatedAt": null,
+      "sourceObservationOrigin": null,
+      "sourceObservedAt": null,
+      "status": "idle",
+      "takeover": true,
+      "title": "Task",
+      "unread": false,
+      "updatedSeq": 10,
+      "userArchived": false
+    }
+  },
+  "sessions": {
+    "serverTime": "2026-09-05T12:00:00Z",
+    "sessions": [
+      {
+        "archiveSource": null,
+        "archived": false,
+        "archivedAt": null,
+        "connectorId": "device",
+        "connectorStatus": "online",
+        "cwd": "/workspace",
+        "externalSessionId": null,
+        "id": "session",
+        "lastActivityAt": null,
+        "lastItemAt": null,
+        "lastItemOrderSeq": null,
+        "lastReadSeq": 0,
+        "lastSyncedAt": null,
+        "latestTurnEndSeq": 0,
+        "pinned": false,
+        "pinnedAt": null,
+        "runtime": "claude",
+        "runtimeId": "rti_work",
+        "runtimeName": "Work",
+        "runtimeType": "claude",
+        "runtimeTypeDisplayName": null,
+        "sortAt": null,
+        "sourceAvailability": "available",
+        "sourceAvailabilityReason": null,
+        "sourceAvailabilityUpdatedAt": null,
+        "sourceObservationOrigin": null,
+        "sourceObservedAt": null,
+        "status": "idle",
+        "takeover": true,
+        "title": "Task",
+        "unread": false,
+        "updatedSeq": 10,
+        "userArchived": false
+      }
+    ]
+  },
+  "snapshot": {
+    "approvals": [],
+    "catalogs": {
+      "model": {
+        "models": [
+          {
+            "default": false,
+            "description": null,
+            "displayName": "Model",
+            "id": "model",
+            "metadata": {},
+            "reasoningItems": [
+              {
+                "default": false,
+                "description": null,
+                "displayName": "High",
+                "fullModelId": null,
+                "id": "high",
+                "metadata": {},
+                "selectionId": "sel_effort"
+              }
+            ],
+            "selectionId": "sel_model"
+          }
+        ],
+        "revision": 1,
+        "runtime": "claude"
+      },
+      "permission": {
+        "permissions": [
+          {
+            "default": false,
+            "description": null,
+            "displayName": "Default",
+            "id": "default",
+            "metadata": {},
+            "selectionId": "sel_permission"
+          }
+        ],
+        "revision": 1,
+        "runtime": "claude"
+      }
+    },
+    "effectiveCapabilities": {
+      "capabilities": [
+        {
+          "allowed": true,
+          "available": true,
+          "capabilityId": "session.send_message",
+          "parameters": {},
+          "runtime": "claude",
+          "runtimeId": "rti_work",
+          "scope": "runtime",
+          "sessionId": null,
+          "supported": true,
+          "unavailableReason": null,
+          "version": "1"
+        }
+      ],
+      "revision": 10
+    },
+    "eventCursor": "seq:10",
+    "notices": [
+      {
+        "actions": [
+          {
+            "actionId": "approve",
+            "input": {
+              "required": false,
+              "schema": null,
+              "uiSchema": null
+            },
+            "label": "Approve",
+            "style": "secondary"
+          }
+        ],
+        "blocking": null,
+        "context": {},
+        "createdAt": null,
+        "expiresAt": null,
+        "interactionType": null,
+        "message": null,
+        "metadata": {},
+        "noticeId": "notice",
+        "resolvedAt": null,
+        "responseRequired": true,
+        "revision": 1,
+        "sessionId": "session",
+        "severity": "info",
+        "source": {
+          "approvalId": null,
+          "component": null,
+          "operationId": null,
+          "runtime": null,
+          "timelineItemId": null
+        },
+        "status": "open",
+        "title": "Approve",
+        "type": "interaction"
+      }
+    ],
+    "runtimeCapabilities": {
+      "capabilities": [
+        {
+          "allowed": true,
+          "available": true,
+          "capabilityId": "session.send_message",
+          "parameters": {},
+          "runtime": "claude",
+          "runtimeId": "rti_work",
+          "scope": "runtime",
+          "sessionId": null,
+          "supported": true,
+          "unavailableReason": null,
+          "version": "1"
+        }
+      ],
+      "revision": 10
+    },
+    "serverTime": "2026-09-05T12:00:00Z",
+    "session": {
+      "archiveSource": null,
+      "archived": false,
+      "archivedAt": null,
+      "connectorId": "device",
+      "connectorStatus": "online",
+      "cwd": "/workspace",
+      "externalSessionId": null,
+      "id": "session",
+      "lastActivityAt": null,
+      "lastItemAt": null,
+      "lastItemOrderSeq": null,
+      "lastReadSeq": 0,
+      "lastSyncedAt": null,
+      "latestTurnEndSeq": 0,
+      "pinned": false,
+      "pinnedAt": null,
+      "runtime": "claude",
+      "runtimeId": "rti_work",
+      "runtimeName": "Work",
+      "runtimeType": "claude",
+      "runtimeTypeDisplayName": null,
+      "sortAt": null,
+      "sourceAvailability": "available",
+      "sourceAvailabilityReason": null,
+      "sourceAvailabilityUpdatedAt": null,
+      "sourceObservationOrigin": null,
+      "sourceObservedAt": null,
+      "status": "idle",
+      "takeover": true,
+      "title": "Task",
+      "unread": false,
+      "updatedSeq": 10,
+      "userArchived": false
+    },
+    "state": {
+      "createdAt": "2026-09-05T12:00:00Z",
+      "error": null,
+      "externalSessionId": null,
+      "metadata": {},
+      "runtime": "claude",
+      "runtimeId": "rti_work",
+      "runtimeType": "claude",
+      "selections": {
+        "effort": null,
+        "model": "sel_model"
+      },
+      "sessionId": "session",
+      "status": "idle",
+      "statusReason": null,
+      "updatedAt": "2026-09-05T12:00:00Z",
+      "updatedSeq": 10
+    },
+    "timeline": {
+      "hasMore": false,
+      "items": [
+        {
+          "completedAt": null,
+          "content": {
+            "text": "Hello"
+          },
+          "contentHash": "hash",
+          "createdAt": "2026-09-05T12:00:00Z",
+          "id": "item",
+          "orderSeq": 1,
+          "revision": 1,
+          "role": "assistant",
+          "sessionId": "session",
+          "source": {
+            "clientMessageId": null,
+            "derivedKey": null,
+            "event": null,
+            "itemId": null,
+            "itemType": null,
+            "runtime": "claude",
+            "sessionId": null
+          },
+          "status": "done",
+          "type": "message",
+          "updatedAt": "2026-09-05T12:00:00Z",
+          "updatedSeq": 10
+        }
+      ],
+      "nextSeq": 10
+    }
+  },
+  "state": {
+    "serverTime": "2026-09-05T12:00:00Z",
+    "state": {
+      "createdAt": "2026-09-05T12:00:00Z",
+      "error": null,
+      "externalSessionId": null,
+      "metadata": {},
+      "runtime": "claude",
+      "runtimeId": "rti_work",
+      "runtimeType": "claude",
+      "selections": {
+        "effort": null,
+        "model": "sel_model"
+      },
+      "sessionId": "session",
+      "status": "idle",
+      "statusReason": null,
+      "updatedAt": "2026-09-05T12:00:00Z",
+      "updatedSeq": 10
+    }
+  },
+  "takeover": {
+    "session": {
+      "archiveSource": null,
+      "archived": false,
+      "archivedAt": null,
+      "connectorId": "device",
+      "connectorStatus": "online",
+      "cwd": "/workspace",
+      "externalSessionId": null,
+      "id": "session",
+      "lastActivityAt": null,
+      "lastItemAt": null,
+      "lastItemOrderSeq": null,
+      "lastReadSeq": 0,
+      "lastSyncedAt": null,
+      "latestTurnEndSeq": 0,
+      "pinned": false,
+      "pinnedAt": null,
+      "runtime": "claude",
+      "runtimeId": "rti_work",
+      "runtimeName": "Work",
+      "runtimeType": "claude",
+      "runtimeTypeDisplayName": null,
+      "sortAt": null,
+      "sourceAvailability": "available",
+      "sourceAvailabilityReason": null,
+      "sourceAvailabilityUpdatedAt": null,
+      "sourceObservationOrigin": null,
+      "sourceObservedAt": null,
+      "status": "idle",
+      "takeover": true,
+      "title": "Task",
+      "unread": false,
+      "updatedSeq": 10,
+      "userArchived": false
+    }
+  },
+  "text": {
+    "binary": false,
+    "content": "Hello",
+    "encoding": "utf8",
+    "name": "test.txt",
+    "path": "test.txt",
+    "serverTime": "2026-09-05T12:00:00Z",
+    "sha256": "hash",
+    "size": 5,
+    "truncated": false
+  },
+  "ticket": {
+    "expiresAt": "2026-09-05T12:00:00Z",
+    "serverTime": "2026-09-05T12:00:00Z",
+    "ticket": "test-ticket"
+  },
+  "timeline": {
+    "hasMore": false,
+    "items": [
+      {
+        "completedAt": null,
+        "content": {
+          "text": "Hello"
+        },
+        "contentHash": "hash",
+        "createdAt": "2026-09-05T12:00:00Z",
+        "id": "item",
+        "orderSeq": 1,
+        "revision": 1,
+        "role": "assistant",
+        "sessionId": "session",
+        "source": {
+          "clientMessageId": null,
+          "derivedKey": null,
+          "event": null,
+          "itemId": null,
+          "itemType": null,
+          "runtime": "claude",
+          "sessionId": null
+        },
+        "status": "done",
+        "type": "message",
+        "updatedAt": "2026-09-05T12:00:00Z",
+        "updatedSeq": 10
+      }
+    ],
+    "nextSeq": 10,
+    "serverTime": "2026-09-05T12:00:00Z",
+    "sessionId": "session"
+  },
+  "upload": {
+    "attachments": [
+      {
+        "createdAt": "2026-09-05T12:00:00Z",
+        "downloadUrl": "/api/v2/sessions/session/attachments/file",
+        "fileId": "file",
+        "mediaType": "text/plain",
+        "name": "test.txt",
+        "openUrl": "/api/v2/sessions/session/attachments/file/open",
+        "sessionId": "session",
+        "sha256": "hash",
+        "size": 5
+      }
+    ],
+    "serverTime": "2026-09-05T12:00:00Z"
+  }
+}

@@ -1,15 +1,5 @@
 import Foundation
 
-private let apiNamespace = "/api/v2"
-
-private func apiPath(_ path: String) -> String {
-    if path == apiNamespace || path.hasPrefix("\(apiNamespace)/") {
-        return path
-    }
-    let normalized = path.hasPrefix("/") ? path : "/\(path)"
-    return "\(apiNamespace)\(normalized)"
-}
-
 enum APIClientError: LocalizedError {
     case invalidServerURL
     case invalidResponse
@@ -59,7 +49,7 @@ struct APIClient {
     }
 
     func oauthToken(code: String, codeVerifier: String) async throws -> OAuthTokenResponse {
-        guard let url = URL(string: apiPath("/oauth/token"), relativeTo: serverURL)?.absoluteURL else {
+        guard let url = URL(string: v2APIPath("/oauth/token"), relativeTo: serverURL)?.absoluteURL else {
             throw APIClientError.invalidResponse
         }
         var request = URLRequest(url: url)
@@ -118,382 +108,13 @@ struct APIClient {
         )
     }
 
-    func listConnectors(token: String) async throws -> ConnectorListResponse {
-        try await request("/connectors", token: token)
-    }
-
-    func listSessions(token: String) async throws -> SessionListResponse {
-        try await request("/sessions", token: token)
-    }
-
-    func createSession(
-        token: String,
-        connectorId: String,
-        runtime: String,
-        title: String?,
-        cwd: String?,
-        approvalPolicy: String?,
-        sandbox: String?,
-    ) async throws -> SessionCreateResponse {
-        try await request(
-            "/sessions",
-            method: "POST",
-            body: SessionCreateRequest(
-                connectorId: connectorId,
-                runtime: runtime,
-                title: title,
-                cwd: cwd,
-                approvalPolicy: approvalPolicy,
-                sandbox: sandbox,
-            ),
-            token: token,
-        )
-    }
-
-    func connectorFsList(
-        token: String,
-        connectorId: String,
-        root: String,
-        path: String = ".",
-    ) async throws -> RpcResponse<FsListResult> {
-        let id = connectorId.urlPathComponentEncoded
-        return try await request(
-            "/connectors/\(id)/fs/list",
-            method: "POST",
-            body: FsListRequest(root: root, path: path),
-            token: token,
-        )
-    }
-
-    func createConnectorFsPreviewToken(
-        token: String,
-        connectorId: String,
-        root: String,
-        path: String,
-    ) async throws -> FsPreviewTokenCreateResponse {
-        let id = connectorId.urlPathComponentEncoded
-        return try await request(
-            "/connectors/\(id)/fs/preview-token?root=\(root.urlQueryEncoded)",
-            method: "POST",
-            body: FsReadRequest(path: path),
-            token: token,
-        )
-    }
-
-    func filePreviewURL(previewToken: String, name: String? = nil) throws -> URL {
-        guard var components = URLComponents(
-            url: URL(string: "/", relativeTo: serverURL)?.absoluteURL ?? serverURL,
-            resolvingAgainstBaseURL: false,
-        ) else {
-            throw APIClientError.invalidResponse
-        }
-        var queryItems = [URLQueryItem(name: "previewToken", value: previewToken)]
-        if let name, !name.isEmpty {
-            queryItems.append(URLQueryItem(name: "name", value: name))
-        }
-        components.percentEncodedFragment = hashRouteFragment("preview", queryItems: queryItems)
-        guard let url = components.url else { throw APIClientError.invalidResponse }
-        return url
-    }
-
-    func markSessionRead(token: String, sessionId: String) async throws -> SessionResponse {
-        let id = sessionId.urlPathComponentEncoded
-        return try await request(
-            "/sessions/\(id)/read",
-            method: "POST",
-            body: EmptyBody(),
-            token: token,
-        )
-    }
-
-    func patchSession(
-        token: String,
-        sessionId: String,
-        title: String? = nil,
-        pinned: Bool? = nil,
-        archived: Bool? = nil,
-    ) async throws -> SessionResponse {
-        let id = sessionId.urlPathComponentEncoded
-        return try await request(
-            "/sessions/\(id)",
-            method: "PATCH",
-            body: SessionPatchRequest(title: title, pinned: pinned, archived: archived),
-            token: token,
-        )
-    }
-
-    func enableTakeover(token: String, sessionId: String) async throws -> TakeoverResponse {
-        let id = sessionId.urlPathComponentEncoded
-        return try await request(
-            "/sessions/\(id)/takeover",
-            method: "POST",
-            body: EmptyBody(),
-            token: token,
-        )
-    }
-
-    func disableTakeover(token: String, sessionId: String) async throws -> TakeoverResponse {
-        let id = sessionId.urlPathComponentEncoded
-        return try await request(
-            "/sessions/\(id)/takeover",
-            method: "DELETE",
-            token: token,
-        )
-    }
-
-    func getRuntimeConfigSchema(token: String, runtime: String) async throws -> RuntimeConfigSchemaResponse {
-        let id = runtime.urlPathComponentEncoded
-        return try await request(
-            "/agents/\(id)/config-schema",
-            token: token,
-        )
-    }
-
-    func getConnectorAgentSettings(
-        token: String,
-        connectorId: String,
-        runtime: String,
-    ) async throws -> RuntimeSettingsResponse {
-        let connector = connectorId.urlPathComponentEncoded
-        let runtimeId = runtime.urlPathComponentEncoded
-        return try await request(
-            "/connectors/\(connector)/agents/\(runtimeId)/settings",
-            token: token,
-        )
-    }
-
-    func getSessionRuntimeSettings(token: String, sessionId: String) async throws -> RuntimeSettingsResponse {
-        let id = sessionId.urlPathComponentEncoded
-        return try await request(
-            "/sessions/\(id)/runtime-settings",
-            token: token,
-        )
-    }
-
-    func patchSessionRuntimeSettings(
-        token: String,
-        sessionId: String,
-        settings: [String: JSONValue],
-    ) async throws -> RuntimeSettingsResponse {
-        let id = sessionId.urlPathComponentEncoded
-        return try await request(
-            "/sessions/\(id)/runtime-settings",
-            method: "PATCH",
-            body: RuntimeSettingsPatchRequest(settings: settings),
-            token: token,
-        )
-    }
-
-    func getSessionState(
-        token: String,
-        sessionId: String,
-        afterSeq: Int = 0,
-        limit: Int = 200,
-    ) async throws -> SessionStateResponse {
-        let id = sessionId.urlPathComponentEncoded
-        return try await request(
-            "/sessions/\(id)/state?afterSeq=\(afterSeq)&limit=\(limit)",
-            token: token,
-        )
-    }
-
-    func getLatestSessionState(
-        token: String,
-        sessionId: String,
-        limit: Int = 100,
-    ) async throws -> SessionStateResponse {
-        let id = sessionId.urlPathComponentEncoded
-        return try await request(
-            "/sessions/\(id)/state?mode=latest&limit=\(limit)",
-            token: token,
-        )
-    }
-
-    func getSessionStateBefore(
-        token: String,
-        sessionId: String,
-        beforeOrderSeq: Int,
-        limit: Int = 100,
-    ) async throws -> SessionStateResponse {
-        let id = sessionId.urlPathComponentEncoded
-        return try await request(
-            "/sessions/\(id)/state?mode=before&beforeOrderSeq=\(beforeOrderSeq)&limit=\(limit)",
-            token: token,
-        )
-    }
-
-    func sendSessionMessage(
-        token: String,
-        sessionId: String,
-        content: String,
-        attachments: [AttachmentRef] = [],
-        clientMessageId: String? = nil,
-    ) async throws -> RpcResponsePayload {
-        let id = sessionId.urlPathComponentEncoded
-        return try await request(
-            "/sessions/\(id)/messages",
-            method: "POST",
-            body: MessageCreateRequest(
-                content: content,
-                attachments: attachments.isEmpty ? nil : attachments,
-                clientMessageId: clientMessageId,
-            ),
-            token: token,
-        )
-    }
-
-    func interruptSession(token: String, sessionId: String) async throws -> RpcResponsePayload {
-        let id = sessionId.urlPathComponentEncoded
-        return try await request(
-            "/sessions/\(id)/interrupt",
-            method: "POST",
-            body: EmptyBody(),
-            token: token,
-        )
-    }
-
-    func resolveApproval(token: String, approvalId: String, status: ApprovalResolveStatus) async throws -> RpcResponsePayload {
-        let id = approvalId.urlPathComponentEncoded
-        return try await request(
-            "/approvals/\(id)/resolve",
-            method: "POST",
-            body: ApprovalResolveRequest(status: status),
-            token: token,
-        )
-    }
-
-    func uploadSessionAttachments(
-        token: String,
-        sessionId: String,
-        uploads: [AttachmentUpload],
-    ) async throws -> UserUploadResponse {
-        let id = sessionId.urlPathComponentEncoded
-        let boundary = "Boundary-\(UUID().uuidString)"
-        guard let url = URL(string: apiPath("/sessions/\(id)/attachments"), relativeTo: serverURL)?.absoluteURL else {
-            throw APIClientError.invalidResponse
-        }
-
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try uploads.multipartBody(boundary: boundary)
-
-        let (data, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse else {
-            throw APIClientError.invalidResponse
-        }
-        guard 200..<300 ~= http.statusCode else {
-            let detail = (try? JSONDecoder().decode(APIErrorResponse.self, from: data).message)
-                ?? HTTPURLResponse.localizedString(forStatusCode: http.statusCode)
-            throw APIClientError.server(status: http.statusCode, detail: detail)
-        }
-        return try JSONDecoder().decode(UserUploadResponse.self, from: data)
-    }
-
-    func downloadAttachment(
-        token: String,
-        sessionId: String,
-        attachment: UploadedAttachment,
-    ) async throws -> Data {
-        let url = try attachmentOpenURL(token: token, sessionId: sessionId, attachment: attachment)
-        var request = URLRequest(url: url)
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        let (data, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse else {
-            throw APIClientError.invalidResponse
-        }
-        guard 200..<300 ~= http.statusCode else {
-            let detail = (try? JSONDecoder().decode(APIErrorResponse.self, from: data).message)
-                ?? HTTPURLResponse.localizedString(forStatusCode: http.statusCode)
-            throw APIClientError.server(status: http.statusCode, detail: detail)
-        }
-        return data
-    }
-
-    func attachmentOpenURL(
-        token: String,
-        sessionId: String,
-        attachment: UploadedAttachment,
-    ) throws -> URL {
-        if let openUrl = attachment.resolvedOpenUrl,
-           var components = URLComponents(url: URL(string: openUrl, relativeTo: serverURL)?.absoluteURL ?? serverURL, resolvingAgainstBaseURL: false)
-        {
-            if components.queryItems?.contains(where: { $0.name == "token" }) != true {
-                var queryItems = components.queryItems ?? []
-                queryItems.append(URLQueryItem(name: "token", value: token))
-                components.queryItems = queryItems
-            }
-            if let url = components.url {
-                return url
-            }
-        }
-
-        let sid = sessionId.urlPathComponentEncoded
-        let fid = attachment.fileId.urlPathComponentEncoded
-        guard var components = URLComponents(
-            url: URL(string: apiPath("/sessions/\(sid)/attachments/\(fid)/open"), relativeTo: serverURL)?.absoluteURL ?? serverURL,
-            resolvingAgainstBaseURL: false,
-        ) else {
-            throw APIClientError.invalidResponse
-        }
-        components.queryItems = [URLQueryItem(name: "token", value: token)]
-        guard let url = components.url else { throw APIClientError.invalidResponse }
-        return url
-    }
-
-    func attachmentMetadataURL(
-        token: String,
-        sessionId: String,
-        attachment: UploadedAttachment,
-    ) throws -> URL {
-        if let downloadUrl = attachment.downloadUrl,
-           var components = URLComponents(url: URL(string: downloadUrl, relativeTo: serverURL)?.absoluteURL ?? serverURL, resolvingAgainstBaseURL: false)
-        {
-            if components.queryItems?.contains(where: { $0.name == "token" }) != true {
-                var queryItems = components.queryItems ?? []
-                queryItems.append(URLQueryItem(name: "token", value: token))
-                components.queryItems = queryItems
-            }
-            if let url = components.url {
-                return url
-            }
-        }
-
-        let sid = sessionId.urlPathComponentEncoded
-        let fid = attachment.fileId.urlPathComponentEncoded
-        guard var components = URLComponents(
-            url: URL(string: apiPath("/sessions/\(sid)/attachments/\(fid)"), relativeTo: serverURL)?.absoluteURL ?? serverURL,
-            resolvingAgainstBaseURL: false,
-        ) else {
-            throw APIClientError.invalidResponse
-        }
-        components.queryItems = [URLQueryItem(name: "token", value: token)]
-        guard let url = components.url else { throw APIClientError.invalidResponse }
-        return url
-    }
-
-    func sessionEventsURL(token: String, sessionId: String) throws -> URL {
-        let id = sessionId.urlPathComponentEncoded
-        guard var components = URLComponents(
-            url: URL(string: apiPath("/sessions/\(id)/events"), relativeTo: serverURL)?.absoluteURL ?? serverURL,
-            resolvingAgainstBaseURL: false,
-        ) else {
-            throw APIClientError.invalidResponse
-        }
-        components.queryItems = [URLQueryItem(name: "token", value: token)]
-        guard let url = components.url else { throw APIClientError.invalidResponse }
-        return url
-    }
-
     private func request<Response: Decodable>(
         _ path: String,
         method: String = "GET",
         body: Encodable? = nil,
         token: String? = nil,
     ) async throws -> Response {
-        guard let url = URL(string: apiPath(path), relativeTo: serverURL)?.absoluteURL else {
+        guard let url = URL(string: v2APIPath(path), relativeTo: serverURL)?.absoluteURL else {
             throw APIClientError.invalidResponse
         }
 
@@ -520,39 +141,8 @@ struct APIClient {
         do {
             return try JSONDecoder().decode(Response.self, from: data)
         } catch let error as DecodingError {
-            throw APIClientError.decoding(error.agentsAnywhereDescription)
+            throw APIClientError.decoding(error.v2Description)
         }
-    }
-}
-
-private func hashRouteFragment(_ route: String, queryItems: [URLQueryItem]) -> String {
-    var fragmentComponents = URLComponents()
-    fragmentComponents.queryItems = queryItems
-    guard let query = fragmentComponents.percentEncodedQuery, !query.isEmpty else {
-        return "/\(route)"
-    }
-    return "/\(route)?\(query)"
-}
-
-private extension DecodingError {
-    var agentsAnywhereDescription: String {
-        switch self {
-        case let .keyNotFound(key, context):
-            return "The server response is missing '\(path(context.codingPath + [key]))'."
-        case let .typeMismatch(type, context):
-            return "The server response has an invalid type at '\(path(context.codingPath))' for \(type)."
-        case let .valueNotFound(type, context):
-            return "The server response is missing a value at '\(path(context.codingPath))' for \(type)."
-        case let .dataCorrupted(context):
-            return "The server response could not be decoded at '\(path(context.codingPath))'."
-        @unknown default:
-            return "The server response could not be decoded."
-        }
-    }
-
-    private func path(_ codingPath: [CodingKey]) -> String {
-        let value = codingPath.map(\.stringValue).joined(separator: ".")
-        return value.isEmpty ? "<root>" : value
     }
 }
 
@@ -570,54 +160,9 @@ private struct AnyEncodable: Encodable {
 
 private struct EmptyBody: Encodable {}
 
-private extension Array where Element == AttachmentUpload {
-    func multipartBody(boundary: String) throws -> Data {
-        var data = Data()
-        for upload in self {
-            data.append("--\(boundary)\r\n")
-            data.append("Content-Disposition: form-data; name=\"files\"; filename=\"\(upload.name.escapedMultipartFilename)\"\r\n")
-            data.append("Content-Type: \(upload.mediaType)\r\n\r\n")
-            data.append(try Data(contentsOf: upload.fileURL))
-            data.append("\r\n")
-        }
-        data.append("--\(boundary)--\r\n")
-        return data
-    }
-}
-
-private extension Data {
-    mutating func append(_ string: String) {
-        append(Data(string.utf8))
-    }
-}
-
-private extension String {
-    var escapedMultipartFilename: String {
-        replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "\"", with: "\\\"")
-    }
-}
-
 extension URL {
     func normalizedServerURL() -> URL {
-        let components = URLComponents(url: self, resolvingAgainstBaseURL: false)
-        guard var normalized = components else { return self }
-        normalized.path = normalized.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        normalized.query = nil
-        normalized.fragment = nil
-        return normalized.url ?? self
-    }
-}
-
-private extension String {
-    var urlPathComponentEncoded: String {
-        addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? self
-    }
-
-    var urlQueryEncoded: String {
-        var allowed = CharacterSet.urlQueryAllowed
-        allowed.remove(charactersIn: ":#[]@!$&'()*+,;=")
-        return addingPercentEncoding(withAllowedCharacters: allowed) ?? self
+        normalizedV2ServerURL()
     }
 }
 
@@ -626,7 +171,7 @@ extension URL {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw APIClientError.invalidServerURL }
         let withScheme = trimmed.contains("://") ? trimmed : "https://\(trimmed)"
-        guard let url = URL(string: withScheme), url.scheme != nil, url.host != nil else {
+        guard let url = URL(string: withScheme), ["http", "https"].contains(url.scheme?.lowercased() ?? ""), url.host != nil else {
             throw APIClientError.invalidServerURL
         }
         return url.normalizedServerURL()

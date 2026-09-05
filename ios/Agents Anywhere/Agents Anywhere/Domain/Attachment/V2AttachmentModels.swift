@@ -2,6 +2,7 @@ import Foundation
 
 struct V2AttachmentReference: Codable, Identifiable, Hashable {
     let fileId: V2AttachmentID
+    let sessionId: V2SessionID
     let name: String
     let mediaType: String
     let size: Int

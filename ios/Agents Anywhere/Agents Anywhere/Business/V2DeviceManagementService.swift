@@ -93,10 +93,50 @@ struct V2DeviceManagementService {
         ).sessions
     }
 
+    func inventory(connectorId: V2ConnectorID, discover: Bool = false) async throws -> V2RuntimeInventory {
+        let types = try await (discover
+            ? connectorAPI.discoverRuntimeTypes(connectorId: connectorId)
+            : connectorAPI.runtimeTypes(connectorId: connectorId))
+        let instances = try await connectorAPI.listRuntimes(connectorId: connectorId)
+        return V2RuntimeInventory(types: types.runtimeTypes, instances: instances.runtimes)
+    }
+
+    /// Creation is atomic at the API boundary: never persist an empty placeholder instance.
+    func createRuntime(connectorId: V2ConnectorID, runtimeType: String, name: String, config: [String: JSONValue], active: Bool = true) async throws -> V2DeviceRuntime {
+        let normalizedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedName.isEmpty else { throw V2BusinessError.emptyDeviceName }
+        return try await connectorAPI.createRuntime(
+            connectorId: connectorId,
+            request: V2RuntimeInstanceCreateRequest(runtimeType: runtimeType, name: normalizedName, config: config, active: active)
+        )
+    }
+
+    func renameRuntime(connectorId: V2ConnectorID, runtimeId: V2RuntimeID, name: String) async throws -> V2DeviceRuntime {
+        let normalizedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedName.isEmpty else { throw V2BusinessError.emptyDeviceName }
+        return try await connectorAPI.renameRuntime(
+            connectorId: connectorId, runtimeId: runtimeId,
+            request: V2RuntimeInstanceRenameRequest(name: normalizedName)
+        )
+    }
+
+    func preferences(connectorId: V2ConnectorID) async throws -> [String: JSONValue] {
+        try await connectorAPI.preferences(connectorId: connectorId).preferences
+    }
+
     func configSchema(runtime: V2DeviceRuntime) throws -> V2RuntimeConfigSchema {
-        guard let schema = runtime.schema else {
+        guard let schema = runtime.schema else { throw V2BusinessError.invalidRuntimeConfigSchema }
+        return try V2RuntimeConfigSchema(schema: schema, uiSchema: runtime.uiSchema, defaults: runtime.defaults)
+    }
+
+    func configSchema(type: V2RuntimeType) throws -> V2RuntimeConfigSchema {
+        guard let schema = type.configSchema?.schema ?? type.schema else {
             throw V2BusinessError.invalidRuntimeConfigSchema
         }
-        return try V2RuntimeConfigSchema(schema: schema, uiSchema: runtime.uiSchema)
+        return try V2RuntimeConfigSchema(
+            schema: schema,
+            uiSchema: type.configSchema?.uiSchema ?? type.uiSchema,
+            defaults: type.configSchema?.defaults ?? type.defaults
+        )
     }
 }

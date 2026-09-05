@@ -11,8 +11,8 @@ struct V2WorkspaceFileReadRequest: Encodable, Hashable {
 
 struct V2WorkspaceDirectoryResponse: Decodable, Hashable {
     let ok: Bool
-    let result: V2WorkspaceDirectory
-    let error: String?
+    let result: V2WorkspaceDirectory?
+    let error: V2RuntimeError?
 }
 
 struct V2WorkspaceDirectory: Decodable, Hashable {
@@ -36,5 +36,22 @@ struct V2WorkspaceEntry: Decodable, Identifiable, Hashable {
 struct V2WorkspaceFilePreviewToken: Decodable, Hashable {
     let previewToken: String
     let expiresAt: String
+    let serverTime: String
+}
+
+struct V2WorkspaceTextRequest: Encodable, Hashable {
+    let path: String
+    var maxBytes: Int = 1_048_576
+}
+
+struct V2WorkspaceTextResponse: Decodable, Hashable {
+    let path: String
+    let name: String
+    let size: Int
+    let sha256: String
+    let encoding: String
+    let content: String
+    let truncated: Bool
+    let binary: Bool
     let serverTime: String
 }

@@ -155,11 +155,11 @@ struct URLSessionHTTPTransport: HTTPTransport {
 
 private let v2Namespace = "/api/v2"
 
-private func v2APIPath(_ path: String) -> String {
-    if path == v2Namespace || path.hasPrefix("\(v2Namespace)/") {
-        return path
-    }
+func v2APIPath(_ path: String) -> String {
     let normalized = path.hasPrefix("/") ? path : "/\(path)"
+    if normalized == v2Namespace || normalized.hasPrefix("\(v2Namespace)/") {
+        return normalized
+    }
     return "\(v2Namespace)\(normalized)"
 }
 
@@ -167,9 +167,7 @@ extension URL {
     func normalizedV2ServerURL() -> URL {
         let components = URLComponents(url: self, resolvingAgainstBaseURL: false)
         guard var normalized = components else { return self }
-        while normalized.path.count > 1, normalized.path.hasSuffix("/") {
-            normalized.path.removeLast()
-        }
+        normalized.path = ""
         normalized.query = nil
         normalized.fragment = nil
         return normalized.url ?? self
@@ -183,7 +181,7 @@ extension String {
     }
 }
 
-private extension DecodingError {
+extension DecodingError {
     var v2Description: String {
         switch self {
         case let .keyNotFound(key, context):

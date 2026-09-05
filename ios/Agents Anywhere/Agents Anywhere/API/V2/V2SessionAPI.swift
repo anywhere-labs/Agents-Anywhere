@@ -1,6 +1,8 @@
 import Foundation
 
 protocol V2SessionAPIProtocol {
+    func setTakeover(sessionId: V2SessionID, enabled: Bool) async throws -> V2SessionTakeoverResponse
+    func sync(sessionId: V2SessionID) async throws -> V2RuntimeActionResponse
     func listSessions() async throws -> V2SessionListResponse
     func sessionMeta(sessionId: V2SessionID) async throws -> V2SessionMetaResponse
     func patchSessionMeta(sessionId: V2SessionID, request: V2SessionMetaPatchRequest) async throws -> V2SessionMetaResponse
@@ -101,6 +103,18 @@ struct V2SessionAPI: V2SessionAPIProtocol {
             beforeOrderSeq: beforeOrderSeq,
             limit: limit
         )
+    }
+
+    func setTakeover(sessionId: V2SessionID, enabled: Bool) async throws -> V2SessionTakeoverResponse {
+        try await transport.send(HTTPRequest<EmptyRequestBody, V2SessionTakeoverResponse>(
+            method: enabled ? .post : .delete, path: sessionPath(sessionId, suffix: "takeover")
+        ))
+    }
+
+    func sync(sessionId: V2SessionID) async throws -> V2RuntimeActionResponse {
+        try await transport.send(HTTPRequest<EmptyRequestBody, V2RuntimeActionResponse>(
+            method: .post, path: sessionPath(sessionId, suffix: "sync")
+        ))
     }
 
     private func bulkAction(path: String, sessionIds: [V2SessionID]) async throws -> V2SessionBulkActionResponse {

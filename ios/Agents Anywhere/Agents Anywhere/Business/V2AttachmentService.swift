@@ -8,6 +8,7 @@ struct V2AttachmentService {
         sessionId: V2SessionID,
         attachments: [V2LocalAttachment]
     ) async throws -> [V2AttachmentReference] {
+        if attachments.isEmpty { throw V2BusinessError.emptyMessage }
         if attachments.count > 5 {
             throw V2BusinessError.tooManyAttachments(maximum: 5)
         }

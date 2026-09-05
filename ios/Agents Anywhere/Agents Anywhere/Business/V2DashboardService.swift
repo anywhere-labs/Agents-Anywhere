@@ -66,5 +66,6 @@ struct V2DashboardService {
         if sessionIds.isEmpty {
             throw V2BusinessError.emptySessionSelection
         }
+        if sessionIds.count > 200 { throw V2BusinessError.tooManySessions }
     }
 }

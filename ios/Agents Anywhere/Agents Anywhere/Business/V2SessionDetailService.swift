@@ -34,6 +34,7 @@ struct V2SessionDetailService {
         clientMessageId: String
     ) async throws -> V2RuntimeActionResponse {
         let normalizedContent = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        if attachmentIds.count > 10 { throw V2BusinessError.tooManyAttachments(maximum: 10) }
         if normalizedContent.isEmpty, attachmentIds.isEmpty {
             throw V2BusinessError.emptyMessage
         }
@@ -44,7 +45,7 @@ struct V2SessionDetailService {
                 attachments: attachmentIds.map { V2AttachmentSendReference(fileId: $0) },
                 clientMessageId: clientMessageId
             )
-        )
+        ).requireSuccess()
     }
 
     func steer(
@@ -54,6 +55,7 @@ struct V2SessionDetailService {
         clientMessageId: String
     ) async throws -> V2RuntimeActionResponse {
         let normalizedContent = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        if attachmentIds.count > 10 { throw V2BusinessError.tooManyAttachments(maximum: 10) }
         if normalizedContent.isEmpty, attachmentIds.isEmpty {
             throw V2BusinessError.emptyMessage
         }
@@ -64,17 +66,17 @@ struct V2SessionDetailService {
                 attachments: attachmentIds.map { V2AttachmentSendReference(fileId: $0) },
                 clientMessageId: clientMessageId
             )
-        )
+        ).requireSuccess()
     }
 
     func interrupt(sessionId: V2SessionID) async throws -> V2RuntimeActionResponse {
-        try await runtimeAPI.interrupt(sessionId: sessionId)
+        try await runtimeAPI.interrupt(sessionId: sessionId).requireSuccess()
     }
 
     func updateSelection(
         sessionId: V2SessionID,
         scope: V2RuntimeSelectionScope,
-        selectionId: V2SelectionID
+        selectionId: V2SelectionID?
     ) async throws -> V2RuntimeState? {
         let response = try await runtimeAPI.updateSelections(
             sessionId: sessionId,
@@ -97,6 +99,30 @@ struct V2SessionDetailService {
         after cursor: String
     ) async throws -> V2EventRecoveryResponse {
         try await realtimeAPI.recover(sessionId: sessionId, after: cursor)
+    }
+
+    func setTakeover(sessionId: V2SessionID, enabled: Bool) async throws -> V2SessionMeta {
+        try await sessionAPI.setTakeover(sessionId: sessionId, enabled: enabled).session
+    }
+
+    func sync(sessionId: V2SessionID) async throws -> V2RuntimeActionResponse {
+        try await sessionAPI.sync(sessionId: sessionId).requireSuccess()
+    }
+
+    /// Recovery replays durable data only. Refresh ephemeral runtime facts separately.
+    func liveState(sessionId: V2SessionID) async throws -> V2SessionLiveState {
+        async let state = runtimeAPI.state(sessionId: sessionId)
+        async let capabilities = runtimeAPI.capabilities(sessionId: sessionId)
+        async let notices = runtimeAPI.notices(sessionId: sessionId)
+        return try await V2SessionLiveState(
+            state: state.state, capabilities: capabilities.capabilitySet, notices: notices.notices
+        )
+    }
+
+    func catalogs(sessionId: V2SessionID) async throws -> V2SessionCatalogs {
+        async let model = runtimeAPI.modelCatalog(sessionId: sessionId)
+        async let permission = runtimeAPI.permissionCatalog(sessionId: sessionId)
+        return try await V2SessionCatalogs(model: model.catalog, permission: permission.catalog)
     }
 
     private func validatePageSize(_ limit: Int) throws {

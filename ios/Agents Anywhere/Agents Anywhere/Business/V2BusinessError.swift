@@ -3,6 +3,7 @@ import Foundation
 enum V2BusinessError: LocalizedError {
     case emptyMessage
     case emptySessionSelection
+    case tooManySessions
     case emptySessionTitle
     case emptyAvatar
     case passwordTooShort
@@ -26,6 +27,8 @@ enum V2BusinessError: LocalizedError {
             return String(localized: "Enter a message before sending.")
         case .emptySessionSelection:
             return String(localized: "Select at least one session.")
+        case .tooManySessions:
+            return "Select no more than 200 sessions at once."
         case .emptySessionTitle:
             return String(localized: "Enter a session title.")
         case .emptyAvatar:

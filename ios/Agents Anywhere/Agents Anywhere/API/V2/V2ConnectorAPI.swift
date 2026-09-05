@@ -8,6 +8,17 @@ protocol V2ConnectorAPIProtocol {
     func deleteConnector(connectorId: V2ConnectorID) async throws
     func revokeConnector(connectorId: V2ConnectorID) async throws -> V2ConnectorRevokeResponse
     func claimPairing(request: V2PairingClaimRequest) async throws -> V2PairingClaimResponse
+    func runtimeTypes(connectorId: V2ConnectorID) async throws -> V2RuntimeTypeListResponse
+    func discoverRuntimeTypes(connectorId: V2ConnectorID) async throws -> V2RuntimeTypeListResponse
+    func createRuntime(connectorId: V2ConnectorID, request: V2RuntimeInstanceCreateRequest) async throws -> V2DeviceRuntime
+    func runtime(connectorId: V2ConnectorID, runtimeId: V2RuntimeID) async throws -> V2DeviceRuntime
+    func renameRuntime(connectorId: V2ConnectorID, runtimeId: V2RuntimeID, request: V2RuntimeInstanceRenameRequest) async throws -> V2DeviceRuntime
+    func runtimeCapabilities(connectorId: V2ConnectorID, runtimeId: V2RuntimeID) async throws -> V2RuntimeCapabilityResponse
+    func modelCatalog(connectorId: V2ConnectorID, runtimeId: V2RuntimeID) async throws -> V2ModelCatalogResponse
+    func permissionCatalog(connectorId: V2ConnectorID, runtimeId: V2RuntimeID) async throws -> V2PermissionCatalogResponse
+    func commands(connectorId: V2ConnectorID, runtimeId: V2RuntimeID) async throws -> V2RuntimeCommandListResponse
+    func preferences(connectorId: V2ConnectorID) async throws -> V2ConnectorPreferencesResponse
+    func readWorkspaceText(connectorId: V2ConnectorID, root: String, request: V2WorkspaceTextRequest) async throws -> V2WorkspaceTextResponse
     func listRuntimes(connectorId: V2ConnectorID) async throws -> V2DeviceRuntimeListResponse
     func discoverRuntimes(connectorId: V2ConnectorID) async throws -> V2DeviceRuntimeListResponse
     func updateRuntimeConfig(
@@ -190,6 +201,67 @@ struct V2ConnectorAPI: V2ConnectorAPIProtocol {
             body: body
         )
         return try await transport.send(request)
+    }
+
+    func runtimeTypes(connectorId: V2ConnectorID) async throws -> V2RuntimeTypeListResponse {
+        try await get(path: "\(connectorPath(connectorId))/runtime-types")
+    }
+
+    func discoverRuntimeTypes(connectorId: V2ConnectorID) async throws -> V2RuntimeTypeListResponse {
+        try await transport.send(HTTPRequest<EmptyRequestBody, V2RuntimeTypeListResponse>(
+            method: .post, path: "\(connectorPath(connectorId))/runtime-types/discover"
+        ))
+    }
+
+    func createRuntime(connectorId: V2ConnectorID, request: V2RuntimeInstanceCreateRequest) async throws -> V2DeviceRuntime {
+        try await transport.send(HTTPRequest<V2RuntimeInstanceCreateRequest, V2DeviceRuntime>(
+            method: .post, path: runtimeCollectionPath(connectorId), body: request
+        ))
+    }
+
+    func runtime(connectorId: V2ConnectorID, runtimeId: V2RuntimeID) async throws -> V2DeviceRuntime {
+        try await get(path: "\(runtimeCollectionPath(connectorId))/\(runtimeId.v2URLPathComponentEncoded)")
+    }
+
+    func renameRuntime(connectorId: V2ConnectorID, runtimeId: V2RuntimeID, request: V2RuntimeInstanceRenameRequest) async throws -> V2DeviceRuntime {
+        try await transport.send(HTTPRequest<V2RuntimeInstanceRenameRequest, V2DeviceRuntime>(
+            method: .patch,
+            path: "\(runtimeCollectionPath(connectorId))/\(runtimeId.v2URLPathComponentEncoded)",
+            body: request
+        ))
+    }
+
+    func runtimeCapabilities(connectorId: V2ConnectorID, runtimeId: V2RuntimeID) async throws -> V2RuntimeCapabilityResponse {
+        try await get(path: runtimePath(connectorId, runtimeId: runtimeId, suffix: "capabilities"))
+    }
+
+    func modelCatalog(connectorId: V2ConnectorID, runtimeId: V2RuntimeID) async throws -> V2ModelCatalogResponse {
+        try await get(path: runtimePath(connectorId, runtimeId: runtimeId, suffix: "catalogs/model"))
+    }
+
+    func permissionCatalog(connectorId: V2ConnectorID, runtimeId: V2RuntimeID) async throws -> V2PermissionCatalogResponse {
+        try await get(path: runtimePath(connectorId, runtimeId: runtimeId, suffix: "catalogs/permission"))
+    }
+
+    func commands(connectorId: V2ConnectorID, runtimeId: V2RuntimeID) async throws -> V2RuntimeCommandListResponse {
+        try await get(path: runtimePath(connectorId, runtimeId: runtimeId, suffix: "commands"))
+    }
+
+    func preferences(connectorId: V2ConnectorID) async throws -> V2ConnectorPreferencesResponse {
+        try await get(path: "\(connectorPath(connectorId))/preferences")
+    }
+
+    func readWorkspaceText(connectorId: V2ConnectorID, root: String, request: V2WorkspaceTextRequest) async throws -> V2WorkspaceTextResponse {
+        try await transport.send(HTTPRequest<V2WorkspaceTextRequest, V2WorkspaceTextResponse>(
+            method: .post,
+            path: "\(connectorPath(connectorId))/fs/readText",
+            queryItems: [URLQueryItem(name: "root", value: root)],
+            body: request
+        ))
+    }
+
+    private func get<Response: Decodable>(path: String) async throws -> Response {
+        try await transport.send(HTTPRequest<EmptyRequestBody, Response>(method: .get, path: path))
     }
 
     private func connectorPath(_ connectorId: V2ConnectorID) -> String {
