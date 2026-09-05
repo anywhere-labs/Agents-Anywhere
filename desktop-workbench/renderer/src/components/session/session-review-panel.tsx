@@ -108,6 +108,13 @@ export function SessionReviewPanel({
   )
   const historyHasMore = history.hasMore ?? timeline?.hasMore ?? false
   const needsOlderTimeline = historyHasMore && (!review || review.key === "prelude")
+  const needsOlderTimelineRef = React.useRef(needsOlderTimeline)
+  needsOlderTimelineRef.current = needsOlderTimeline
+
+  React.useEffect(() => () => {
+    requestGenerationRef.current += 1
+    loadingHistoryRef.current = false
+  }, [])
 
   const loadOlderTimeline = React.useCallback(async () => {
     if (!active || !token || !timeline || loadingHistoryRef.current || !needsOlderTimeline) return
@@ -132,7 +139,7 @@ export function SessionReviewPanel({
         error: null,
       }))
     } catch (error) {
-      if (generation !== requestGenerationRef.current) return
+      if (generation !== requestGenerationRef.current || !needsOlderTimelineRef.current) return
       setHistory((current) => ({
         ...current,
         error: error instanceof Error ? error.message : String(error),
@@ -235,7 +242,7 @@ function ReviewWorkspace({
   const selectFile = React.useCallback((path: string) => {
     setSelectedPath(path)
     window.requestAnimationFrame(() => {
-      fileRefs.current.get(path)?.scrollIntoView({ behavior: "smooth", block: "start" })
+      fileRefs.current.get(path)?.scrollIntoView({ block: "start" })
     })
   }, [])
 

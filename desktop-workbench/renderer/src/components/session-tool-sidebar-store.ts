@@ -126,7 +126,6 @@ export function createSessionToolSidebarStore() {
       if (sameReviewTimeline(current, snapshot)) return
       if (snapshot) {
         reviewTimelines.set(sessionId, snapshot)
-        addSessionId(sessionId)
       } else {
         reviewTimelines.delete(sessionId)
       }

@@ -86,6 +86,7 @@ test("review timeline snapshots are isolated and notify subscribers on meaningfu
 
   assert.equal(store.getReviewTimeline("session-a"), snapshot)
   assert.equal(store.getReviewTimeline("session-b"), null)
+  assert.deepEqual(store.getSessionIds(), [])
   assert.equal(notifications, 1)
 
   const nextSnapshot = { items: [...items], hasMore: false, nextSeq: 13 }
@@ -107,6 +108,12 @@ test("review timeline follows optimistic session migration and aliases", () => {
   const canonicalSnapshot = { items: [{ id: "remote-change" }], hasMore: false, nextSeq: 7 }
   let canonicalNotifications = 0
 
+  store.setContext("session-local", {
+    ownerUserId: "user-a",
+    connectorId: "connector-a",
+    root: "/repo/a",
+    terminalLabel: "Terminal",
+  })
   store.setReviewTimeline("session-local", localSnapshot)
   store.setReviewTimeline("session-real", canonicalSnapshot)
   store.subscribeReviewTimeline("session-real", () => {
