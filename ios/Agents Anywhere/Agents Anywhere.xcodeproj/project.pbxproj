@@ -7,7 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		000000000000000130000001 /* MarkdownUI in Frameworks */ = {isa = PBXBuildFile; productRef = 000000000000000300000001 /* MarkdownUI */; };
+		000000000000000130000001 /* Textual in Frameworks */ = {isa = PBXBuildFile; productRef = 000000000000000300000001 /* Textual */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -26,7 +26,7 @@
 		000000000000000130000000 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			files = (
-				000000000000000130000001 /* MarkdownUI in Frameworks */,
+				000000000000000130000001 /* Textual in Frameworks */,
 			);
 		};
 /* End PBXFrameworksBuildPhase section */
@@ -66,7 +66,7 @@
 			);
 			name = "Agents Anywhere";
 			packageProductDependencies = (
-				000000000000000300000001 /* MarkdownUI */,
+				000000000000000300000001 /* Textual */,
 			);
 			productName = MyApp;
 			productReference = 000000000000000000000120 /* Agents Anywhere.app */;
@@ -100,7 +100,7 @@
 			mainGroup = 000000000000000000000001;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				000000000000000300000000 /* XCRemoteSwiftPackageReference "swift-markdown-ui" */,
+				000000000000000300000000 /* XCRemoteSwiftPackageReference "textual" */,
 			);
 			preferredProjectObjectVersion = 90;
 			productRefGroup = 000000000000000000000020 /* Products */;
@@ -377,21 +377,21 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
-		000000000000000300000000 /* XCRemoteSwiftPackageReference "swift-markdown-ui" */ = {
+		000000000000000300000000 /* XCRemoteSwiftPackageReference "textual" */ = {
 			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/gonzalezreal/swift-markdown-ui.git";
+			repositoryURL = "https://github.com/gonzalezreal/textual";
 			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 2.4.1;
+				kind = exactVersion;
+				version = 0.5.0;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		000000000000000300000001 /* MarkdownUI */ = {
+		000000000000000300000001 /* Textual */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 000000000000000300000000 /* XCRemoteSwiftPackageReference "swift-markdown-ui" */;
-			productName = MarkdownUI;
+			package = 000000000000000300000000 /* XCRemoteSwiftPackageReference "textual" */;
+			productName = Textual;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

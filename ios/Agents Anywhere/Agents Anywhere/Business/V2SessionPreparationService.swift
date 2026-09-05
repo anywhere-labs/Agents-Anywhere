@@ -12,13 +12,17 @@ struct V2SessionPreparationService {
     /// New-session catalogs are Connector/instance resources; no session is created here.
     func prepare(connectorId: V2ConnectorID, runtimeId: V2RuntimeID) async throws -> V2PreparedSession {
         async let runtime = connectorAPI.runtime(connectorId: connectorId, runtimeId: runtimeId)
-        async let capabilities = connectorAPI.runtimeCapabilities(connectorId: connectorId, runtimeId: runtimeId)
-        async let model = connectorAPI.modelCatalog(connectorId: connectorId, runtimeId: runtimeId)
-        async let permission = connectorAPI.permissionCatalog(connectorId: connectorId, runtimeId: runtimeId)
+        let capabilities = try await connectorAPI.runtimeCapabilities(connectorId: connectorId, runtimeId: runtimeId).capabilitySet
+        async let model = capabilities.allows("catalog.model")
+            ? connectorAPI.modelCatalog(connectorId: connectorId, runtimeId: runtimeId).catalog
+            : V2ModelCatalog(runtime: runtimeId, revision: 0, models: [])
+        async let permission = capabilities.allows("catalog.permission")
+            ? connectorAPI.permissionCatalog(connectorId: connectorId, runtimeId: runtimeId).catalog
+            : V2PermissionCatalog(runtime: runtimeId, revision: 0, permissions: [])
         return try await V2PreparedSession(
             runtime: runtime,
-            capabilities: capabilities.capabilitySet,
-            catalogs: V2SessionCatalogs(model: model.catalog, permission: permission.catalog)
+            capabilities: capabilities,
+            catalogs: V2SessionCatalogs(model: model, permission: permission)
         )
     }
 

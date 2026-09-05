@@ -122,12 +122,33 @@ struct ChatShellView: View {
                 safeAreaInsets: safeAreaInsets,
                 onMenu: toggleSidebar,
                 onOpenSession: openSession,
-                onNewSession: { _ in startNewSession() },
+                onNewSession: { path in
+                    if let model = appState.nativeChatServices?.newSession {
+                        model.focusDevice(connectorId, workspace: path)
+                    }
+                    startNewSession()
+                },
                 onConnectorUpdated: appState.updateConnector,
                 onConnectorDeleted: removeConnector,
                 onSessionsUpdated: appState.updateSessions,
                 onSetSessionsArchived: appState.setSessionsArchived
             )
+        } else if let services = appState.nativeChatServices {
+            if case let .session(id) = selection {
+                SessionChatView(session: services.sessionRepository.session(id: id), services: services,
+                    safeAreaInsets: safeAreaInsets, onMenu: toggleSidebar, onNewSession: startNewSession)
+                    .id(id)
+            } else {
+                NewSessionView(model: services.newSession, connectors: appState.connectors, sessions: appState.sessions,
+                    safeAreaInsets: safeAreaInsets, dashboardLoading: appState.isDashboardLoading,
+                    dashboardError: appState.connectorsError,
+                    onMenu: toggleSidebar, onManageDevice: openDevice,
+                    onCreated: { session in
+                        appState.updateSession(session)
+                        if case .newSession = selection { openSession(session.id) }
+                    },
+                    onRefresh: appState.refreshDashboard)
+            }
         } else {
             ChatShellPlaceholderPage(
                 title: selectedContentTitle ?? "Agents Anywhere",

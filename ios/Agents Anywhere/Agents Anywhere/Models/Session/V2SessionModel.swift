@@ -43,10 +43,12 @@ final class V2PendingMessage: Identifiable {
     let id: String
     let content: String
     let attachmentIDs: [V2AttachmentID]
+    let localAttachmentIDs: [String]
     private(set) var delivery: Delivery = .sending
 
-    init(id: String, content: String, attachmentIDs: [V2AttachmentID]) {
+    init(id: String, content: String, attachmentIDs: [V2AttachmentID], localAttachmentIDs: [String] = []) {
         self.id = id; self.content = content; self.attachmentIDs = attachmentIDs
+        self.localAttachmentIDs = localAttachmentIDs
     }
 
     func update(_ delivery: Delivery) {
@@ -74,7 +76,11 @@ final class V2SessionModel: Identifiable {
     private(set) var isLoadingHistory = false
     private(set) var isValid = true
     private(set) var pendingMessages: [V2PendingMessage] = []
-    var draft = ""
+    let composer = ComposerDraft()
+    var draft: String {
+        get { composer.text }
+        set { composer.text = newValue }
+    }
     var draftAttachmentIDs: [V2AttachmentID] = []
     @ObservationIgnored private weak var repository: V2SessionRepository?
 
@@ -83,7 +89,7 @@ final class V2SessionModel: Identifiable {
     }
 
     var canSend: Bool { isValid && runtime.allows("session.send_message") }
-    var hasLocalWork: Bool { !draft.isEmpty || !draftAttachmentIDs.isEmpty || !pendingMessages.isEmpty }
+    var hasLocalWork: Bool { !draft.isEmpty || !composer.attachments.isEmpty || !draftAttachmentIDs.isEmpty || !pendingMessages.isEmpty }
 
     func connect() async {
         guard let repository, isValid else { return }
@@ -143,7 +149,8 @@ final class V2SessionModel: Identifiable {
             if case .rejected = $0.delivery { return false }
             return true
         }) else { return nil }
-        let pending = V2PendingMessage(id: UUID().uuidString, content: content, attachmentIDs: attachments)
+        let pending = V2PendingMessage(id: UUID().uuidString, content: content, attachmentIDs: attachments,
+                                      localAttachmentIDs: composer.attachments.map(\.id))
         pendingMessages.append(pending)
         do {
             _ = try await repository.send(sessionId: id, content: content, attachmentIDs: attachments, clientMessageID: pending.id)
@@ -197,12 +204,14 @@ final class V2SessionModel: Identifiable {
     func invalidate() {
         runtime.update(nil, connected: false)
         metadata = nil; timeline = []; pendingMessages = []; draft = ""; draftAttachmentIDs = []
+        composer.clear()
         connection = .inactive; isValid = false; repository = nil
     }
 
     private func clearDraft(ifMatching pending: V2PendingMessage) {
-        if draft == pending.content && draftAttachmentIDs == pending.attachmentIDs {
-            draft = ""; draftAttachmentIDs = []
+        if draft == pending.content && draftAttachmentIDs == pending.attachmentIDs,
+           composer.attachments.map(\.id) == pending.localAttachmentIDs {
+            composer.clear(); draftAttachmentIDs = []
         }
     }
 }

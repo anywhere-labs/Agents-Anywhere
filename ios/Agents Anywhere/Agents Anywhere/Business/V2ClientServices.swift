@@ -17,6 +17,7 @@ final class V2ClientServices {
     let devicePairing: V2DevicePairingService
     let deviceManagement: V2DeviceManagementService
     let workspaceFiles: V2WorkspaceFilesService
+    let newSession: NewSessionModel
 
     init(api: V2APIClient, accountID: String) {
         self.api = api
@@ -43,14 +44,18 @@ final class V2ClientServices {
             connectorAPI: api.connectors,
             serverURL: api.serverURL
         )
+        newSession = NewSessionModel(scope: scope, devices: deviceManagement,
+            preparation: sessionPreparation, creation: sessionCreation)
         connectivity.onChange = { [weak self] status in
             self?.sessionRepository.updateConnectivity(status)
+            self?.newSession.updateNetwork(status)
             self?.onConnectivityChange?(status)
         }
         connectivity.start()
     }
 
     func shutdown() {
+        newSession.invalidate()
         connectivity.stop()
         onConnectivityChange = nil
         sessionRepository.reset()

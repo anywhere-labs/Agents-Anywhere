@@ -710,6 +710,7 @@ final class AppState: ObservableObject {
     }
 
     var sessionRepository: V2SessionRepository? { makeV2Services()?.sessionRepository }
+    var nativeChatServices: V2ClientServices? { makeV2Services() }
 
     func sessionModel(id: V2SessionID) -> V2SessionModel? { sessionRepository?.session(id: id) }
 
