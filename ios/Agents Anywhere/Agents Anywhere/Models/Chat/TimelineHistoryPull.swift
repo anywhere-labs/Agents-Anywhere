@@ -1,8 +1,10 @@
 import Foundation
 
-/// A fresh upward pull on an already visible history footer loads the latest
-/// window once on release. Inertia, automatic scrolling and resizing cannot arm it.
-nonisolated struct TimelineLatestPull {
+/// One fresh pull beyond a visible history edge loads one page on release.
+/// Inertia, automatic scrolling and resizing cannot arm either edge.
+nonisolated struct TimelineHistoryPull {
+    enum Edge { case older, latest }
+    var edge = Edge.latest
     private var origin: TimelineViewport?
     private(set) var isReady = false
 
@@ -18,7 +20,8 @@ nonisolated struct TimelineLatestPull {
             cancel()
             return
         }
-        isReady = viewport.visibleBottom - origin.visibleBottom >= 24
+        let movement = viewport.visibleBottom - origin.visibleBottom
+        isReady = (edge == .latest ? movement : -movement) >= 24
     }
 
     mutating func end() -> Bool {

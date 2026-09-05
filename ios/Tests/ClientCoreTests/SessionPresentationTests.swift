@@ -111,23 +111,6 @@ import Testing
         #expect(TimelineGrouping.groups(children, interactionTargets: [])[0].kind == .agents("parent"))
     }
 
-    @Test func explicitReturnSurvivesOldDecelerationAndANewDragCanCancelIt() {
-        let far = TimelineViewport(contentHeight: 2000, containerHeight: 600, offsetY: 200)
-        let bottom = TimelineViewport(contentHeight: 2000, containerHeight: 600, offsetY: 1400)
-        var state = TimelineScrollState()
-        state.phaseChanged(.tracking, viewport: far); state.geometryChanged(far)
-        state.phaseChanged(.decelerating, viewport: far)
-        #expect(!state.followsTail)
-        state.requestBottom()
-        state.geometryChanged(bottom); state.geometryChanged(far)
-        state.phaseChanged(.idle, viewport: far)
-        #expect(state.followsTail && state.returningToBottom && state.shouldFollow(far))
-        state.phaseChanged(.animating, viewport: far); state.geometryChanged(bottom)
-        #expect(state.followsTail && !state.returningToBottom)
-        state.requestBottom(); state.phaseChanged(.tracking, viewport: far); state.geometryChanged(far)
-        #expect(!state.followsTail && !state.returningToBottom && !state.shouldFollow(far))
-    }
-
     @Test func fileReferencesRouteDevicePathsWithoutOpeningLocalFilesOrWebLinks() throws {
         #expect(SessionFileReference.path(from: URL(string: "src/My%20File.swift:32:2")!) == "src/My File.swift")
         #expect(SessionFileReference.path(from: URL(string: "file:///work/app.swift#L8")!) == "/work/app.swift")

@@ -330,6 +330,25 @@ final class AppState: ObservableObject {
         }
     }
 
+    func markSessionRead(sessionId: V2SessionID) async {
+        guard route == .signedIn, !isInBackground,
+              sessions.contains(where: { $0.id == sessionId && $0.unread }),
+              let services = makeV2Services(), services.connectivity.status.availability != .offline else { return }
+        do {
+            let updated = try await services.dashboard.markRead(sessionIds: [sessionId])
+            guard !Task.isCancelled, cachedServices === services, route == .signedIn else { return }
+            for receipt in updated {
+                // A read receipt must not overwrite a newer running/approval
+                // state that arrived on the dashboard stream during the request.
+                if let current = sessions.first(where: { $0.id == receipt.id }), current.updatedSeq > receipt.updatedSeq { continue }
+                updateSession(receipt)
+            }
+        } catch {
+            // Keep the unread indicator on failure; reopening or a fresh
+            // dashboard connection provides another opportunity to acknowledge.
+        }
+    }
+
     func setSessionPinned(sessionId: V2SessionID, pinned: Bool) async -> Bool {
         sessionActionError = nil
         guard let services = makeV2Services() else {

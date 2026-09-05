@@ -1,7 +1,7 @@
 import Foundation
 
-/// Measure the unobscured viewport in content coordinates, including keyboard
-/// and safe-area bars. Preserve fractional values instead of rounding both edges.
+/// Relative scroll movement for edge pulls and layout-change cancellation.
+/// Absolute content-size arithmetic never decides whether the tail is visible.
 nonisolated struct TimelineViewport: Equatable {
     let contentHeight: CGFloat
     let visibleHeight: CGFloat
@@ -14,15 +14,4 @@ nonisolated struct TimelineViewport: Equatable {
         visibleBottom = offsetY + containerHeight - bottomInset
     }
 
-    private static let bottomTolerance: CGFloat = 2
-    var hasOverflow: Bool { visibleHeight > 0 && contentHeight > visibleHeight + Self.bottomTolerance }
-    var distanceToBottom: CGFloat { max(0, contentHeight - visibleBottom) }
-    var isAtBottom: Bool { !hasOverflow || distanceToBottom <= Self.bottomTolerance }
-    // Button visibility is deliberately more forgiving than follow intent. A
-    // short manual scroll must not opt the user back into streaming auto-follow.
-    var isNearBottom: Bool { !hasOverflow || distanceToBottom <= 96 }
-
-    func shouldFollowTail(isFollowing: Bool, userIsScrolling: Bool) -> Bool {
-        isFollowing && !userIsScrolling && hasOverflow && !isAtBottom
-    }
 }

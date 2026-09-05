@@ -3,174 +3,168 @@ import Testing
 @testable import ClientCore
 
 @Suite struct TimelineNavigationTests {
-    private func viewport(distance: CGFloat, height: CGFloat = 2000) -> TimelineViewport {
-        TimelineViewport(contentHeight: height, containerHeight: 800,
-            topInset: 80, bottomInset: 120, offsetY: height - 680 - distance)
+    private func viewport(offset: CGFloat = 0, height: CGFloat = 2000, container: CGFloat = 800) -> TimelineViewport {
+        TimelineViewport(contentHeight: height, containerHeight: container, topInset: 80, bottomInset: 120, offsetY: offset)
+    }
+    private func tail(_ state: inout TimelineScrollState, near: Bool, end: Bool) {
+        state.tailVisibilityChanged(.near, visible: near)
+        state.tailVisibilityChanged(.end, visible: end)
     }
 
-    @Test func buttonHidesDuringReturnAndNewDragLeavesItInHistory() {
-        let far = viewport(distance: 500), bottom = viewport(distance: 0), above = viewport(distance: 140)
+    @Test func realTailVisibilityWinsOverMisleadingContentSizeAndInsets() {
         var state = TimelineScrollState()
         state.browseHistory()
-        #expect(state.showsBottomButton(far))
-        state.requestBottom()
-        #expect(state.showsBottomButton(far))
-        state.phaseChanged(.animating, viewport: far)
-        state.geometryChanged(viewport(distance: 15))
-        #expect(!state.showsBottomButton(viewport(distance: 15)))
-        state.geometryChanged(bottom)
-        state.phaseChanged(.idle, viewport: bottom)
-        #expect(!state.showsBottomButton(bottom) && !state.returningToBottom)
-
-        // Native scrolling may go directly to interacting after an animation.
-        let result1 = state.phaseChanged(.interacting, viewport: bottom)
-        #expect(result1)
-        state.geometryChanged(above)
-        state.phaseChanged(.decelerating, viewport: above)
-        state.phaseChanged(.idle, viewport: above)
-        #expect(state.showsBottomButton(above))
-        #expect(!state.followsTail && !state.shouldFollow(above))
-        state.geometryChanged(viewport(distance: 80, height: 2050))
-        #expect(!state.shouldFollow(viewport(distance: 80, height: 2050)))
+        // This geometry used to suggest a gap even when the rendered tail was visible.
+        let misleading = viewport(offset: 1300)
+        #expect(misleading.contentHeight - misleading.visibleBottom > 0)
+        tail(&state, near: true, end: true)
+        #expect(!state.showsBottomButton() && !state.shouldFollow())
+        // Independently delivered near/end callbacks must not flash the pill.
+        state.tailVisibilityChanged(.near, visible: false)
+        #expect(!state.showsBottomButton())
+        state.tailVisibilityChanged(.end, visible: false)
+        #expect(state.showsBottomButton())
     }
 
-    @Test func phaseGeometryWinsOverThePreviousGeometryCallback() {
-        let bottom = viewport(distance: 0), above = viewport(distance: 28)
-        var state = TimelineScrollState()
-        state.requestBottom()
-        state.phaseChanged(.animating, viewport: bottom)
-        state.geometryChanged(bottom)
-        state.phaseChanged(.interacting, viewport: bottom)
-        // No geometry callback has published the new offset before idle.
-        state.phaseChanged(.idle, viewport: above)
-        #expect(!state.followsTail && !state.showsBottomButton(above))
-        #expect(!state.shouldFollow(above))
-    }
-
-    @Test func reachingBottomHidesThePillRegardlessOfPreviousFollowIntent() {
+    @Test func unknownAndNearTailHideThePillWithoutGrantingAutoFollow() {
         var state = TimelineScrollState()
         state.browseHistory()
-        #expect(!state.showsBottomButton(viewport(distance: 0)))
-        #expect(!state.showsBottomButton(viewport(distance: 0.8)))
-        state.phaseChanged(.interacting, viewport: viewport(distance: 50))
-        state.phaseChanged(.idle, viewport: viewport(distance: 0))
-        #expect(state.followsTail)
-        #expect(state.shouldFollow(viewport(distance: 50, height: 2050)))
+        #expect(!state.showsBottomButton() && !state.shouldFollow())
+        tail(&state, near: true, end: false)
+        #expect(!state.showsBottomButton() && !state.shouldFollow())
+        tail(&state, near: false, end: false)
+        #expect(state.showsBottomButton())
+        for phase in [TimelineScrollState.Phase.tracking, .interacting, .decelerating, .animating] {
+            state.phaseChanged(phase)
+            #expect(!state.showsBottomButton())
+        }
+        state.phaseChanged(.idle)
+        state.settleUserScroll()
+        #expect(state.showsBottomButton() && !state.shouldFollow())
     }
 
-    @Test func newGestureInvalidatesAPendingReturnOrLatestLoad() {
+    @Test func lateVisibilityAfterIdleCannotPullTheReaderBackToTheTail() {
         var state = TimelineScrollState()
+        tail(&state, near: true, end: true)
+        state.phaseChanged(.interacting)
+        state.phaseChanged(.idle)
+        // Visibility delivery can trail the native phase callback.
+        #expect(!state.followsTail && state.needsScrollSettlement)
+        tail(&state, near: false, end: false)
+        state.settleUserScroll()
+        #expect(!state.followsTail && !state.shouldFollow() && state.showsBottomButton())
+    }
+
+    @Test func manualArrivalResumesFollowingOnlyAfterVisibilitySettles() {
+        var state = TimelineScrollState()
+        tail(&state, near: false, end: false)
+        state.phaseChanged(.interacting)
+        tail(&state, near: true, end: true)
+        state.phaseChanged(.idle)
+        #expect(!state.followsTail)
+        state.settleUserScroll()
+        #expect(state.followsTail && !state.shouldFollow())
+        state.tailVisibilityChanged(.end, visible: false)
+        #expect(state.shouldFollow())
+    }
+
+    @Test func returnSurvivesOldDecelerationButANewDragCancelsIt() {
+        var state = TimelineScrollState()
+        tail(&state, near: false, end: false)
+        state.phaseChanged(.tracking); state.phaseChanged(.decelerating)
         state.requestBottom()
         let request = state.navigationGeneration
-        state.phaseChanged(.animating, viewport: viewport(distance: 200))
-        let result2 = state.phaseChanged(.interacting, viewport: viewport(distance: 200))
-        #expect(result2)
-        #expect(state.navigationGeneration != request)
-        #expect(!state.returningToBottom && !state.shouldFollow(viewport(distance: 200)))
-        let gesture = state.navigationGeneration
-        let result3 = !state.phaseChanged(.interacting, viewport: viewport(distance: 300))
-        #expect(result3)
-        #expect(state.navigationGeneration == gesture)
+        #expect(state.shouldFollow() && !state.showsBottomButton())
+        tail(&state, near: true, end: true)
+        #expect(state.returningToBottom)
+        state.phaseChanged(.animating)
+        #expect(!state.returningToBottom)
+        tail(&state, near: false, end: false)
+        let began = state.phaseChanged(.interacting)
+        #expect(began && state.navigationGeneration != request)
+        state.phaseChanged(.idle); state.settleUserScroll()
+        #expect(!state.shouldFollow() && state.showsBottomButton())
     }
 
-    @Test func safeAreaKeyboardShortContentAndFractionalBottomHaveNoCorrectionLoop() {
-        for bottomInset in [80.0, 380] {
-            let atBottom = TimelineViewport(contentHeight: 1200.2, containerHeight: 800,
-                topInset: 80, bottomInset: bottomInset, offsetY: 400.2 + bottomInset)
-            #expect(atBottom.hasOverflow && atBottom.isAtBottom)
-            #expect(!atBottom.shouldFollowTail(isFollowing: true, userIsScrolling: false))
-        }
-        let short = TimelineViewport(contentHeight: 500, containerHeight: 800, topInset: 80, bottomInset: 80, offsetY: -80)
-        #expect(!short.hasOverflow && short.isAtBottom)
-        let keyboard = TimelineViewport(contentHeight: 500, containerHeight: 800, topInset: 80, bottomInset: 380, offsetY: -80)
-        #expect(keyboard.hasOverflow && !keyboard.isAtBottom)
-        #expect(!TimelineViewport().shouldFollowTail(isFollowing: true, userIsScrolling: false))
-        #expect(viewport(distance: 1.8).isAtBottom)
-        #expect(!viewport(distance: 20).isAtBottom)
-    }
-
-    @Test func pillUsesANearBottomMarginAndHidesDuringEveryScrollPhase() {
+    @Test func interactionInvalidatesQueuedNavigationAndKeepsTheReadingPosition() {
         var state = TimelineScrollState()
-        state.browseHistory()
-        for distance in [0.0, 2, 28, 64, 96] {
-            #expect(!state.showsBottomButton(viewport(distance: distance)))
-            #expect(!state.shouldFollow(viewport(distance: distance)))
-        }
-        let far = viewport(distance: 180)
-        #expect(state.showsBottomButton(far))
-        for phase in [TimelineScrollState.Phase.tracking, .interacting, .decelerating, .animating] {
-            state.phaseChanged(phase, viewport: far)
-            #expect(!state.showsBottomButton(far))
-        }
-        state.phaseChanged(.idle, viewport: far)
-        #expect(state.showsBottomButton(far) && !state.shouldFollow(far))
-    }
-
-    @Test func interactionCancelsQueuedReturnsAndInsetChangesCannotResumeFollowing() {
-        var state = TimelineScrollState()
+        tail(&state, near: false, end: false)
         state.requestBottom()
-        let oldRequest = state.navigationGeneration
+        let request = state.navigationGeneration
         state.setInteractionPresented(true)
-        #expect(state.navigationGeneration != oldRequest && !state.returningToBottom)
-        for distance in [0.0, 32, 240, 400] {
-            let changed = viewport(distance: distance, height: 2000 + distance)
-            state.geometryChanged(changed)
-            #expect(!state.shouldFollow(changed))
-        }
-        state.phaseChanged(.interacting, viewport: viewport(distance: 100))
-        state.phaseChanged(.idle, viewport: viewport(distance: 0))
-        #expect(!state.shouldFollow(viewport(distance: 160)))
-        // A deliberate tap still works, but reaching the bottom ends that intent.
+        #expect(state.navigationGeneration != request && !state.returningToBottom && !state.shouldFollow())
+        tail(&state, near: true, end: true)
+        tail(&state, near: false, end: false)
+        #expect(!state.shouldFollow())
         state.requestBottom()
-        #expect(state.shouldFollow(viewport(distance: 160)))
-        state.geometryChanged(viewport(distance: 0))
-        #expect(!state.returningToBottom && !state.shouldFollow(viewport(distance: 160)))
+        #expect(state.shouldFollow())
+        tail(&state, near: true, end: true)
+        #expect(!state.returningToBottom)
+        tail(&state, near: false, end: false)
+        #expect(!state.shouldFollow())
         state.setInteractionPresented(false)
-        #expect(!state.shouldFollow(viewport(distance: 160)))
+        #expect(!state.shouldFollow())
+    }
+
+    @Test func newGestureInvalidatesHistoryRestorationAndPendingSettlements() {
+        var state = TimelineScrollState()
+        tail(&state, near: false, end: false)
+        state.browseHistory()
+        let request = state.navigationGeneration
+        state.phaseChanged(.interacting)
+        #expect(state.navigationGeneration != request)
+        let gesture = state.navigationGeneration
+        state.phaseChanged(.interacting)
+        #expect(state.navigationGeneration == gesture)
+        state.settleUserScroll()
+        #expect(!state.followsTail)
         state.requestBottom()
-        #expect(state.shouldFollow(viewport(distance: 160)))
+        state.phaseChanged(.idle); state.settleUserScroll()
+        #expect(state.followsTail)
     }
 
-    @Test func latestRecordsRequireOneFreshPullOnAnAlreadyVisiblePrompt() {
-        var pull = TimelineLatestPull()
-        let bottom = viewport(distance: 0), pulled = viewport(distance: -30)
-        pull.begin(at: bottom, promptVisible: true, canLoad: true)
-        pull.update(pulled)
-        #expect(pull.isReady)
-        let result4 = pull.end()
-        #expect(result4)
-        let result5 = !pull.end()
-        #expect(result5)
-        // Subsequent geometry from inertia cannot trigger another request.
-        pull.update(viewport(distance: -50))
-        let result6 = !pull.end()
-        #expect(result6)
-        pull.begin(at: viewport(distance: 500), promptVisible: false, canLoad: true)
-        pull.update(pulled)
-        let result7 = !pull.end()
-        #expect(result7)
-        // A failed read can be retried by another deliberate pull.
-        pull.begin(at: bottom, promptVisible: true, canLoad: true)
-        pull.update(pulled)
-        let result8 = pull.end()
-        #expect(result8)
+    @Test func eachHistoryEdgeNeedsOneFreshPullOnAnAlreadyVisiblePrompt() {
+        for edge in [TimelineHistoryPull.Edge.older, .latest] {
+            var pull = TimelineHistoryPull(edge: edge)
+            let direction: CGFloat = edge == .older ? -1 : 1
+            pull.begin(at: viewport(), promptVisible: true, canLoad: true)
+            pull.update(viewport(offset: direction * 30))
+            #expect(pull.isReady)
+            let first = pull.end(), second = pull.end()
+            #expect(first && !second)
+            pull.update(viewport(offset: direction * 60))
+            let inertia = pull.end()
+            #expect(!inertia)
+            pull.begin(at: viewport(), promptVisible: false, canLoad: true)
+            pull.update(viewport(offset: direction * 30))
+            let firstArrival = pull.end()
+            #expect(!firstArrival)
+            // A failed page read can be retried by a new deliberate pull.
+            pull.begin(at: viewport(), promptVisible: true, canLoad: true)
+            pull.update(viewport(offset: direction * 30))
+            let retry = pull.end()
+            #expect(retry)
+        }
     }
 
-    @Test func resizingAndLoadingCannotTriggerPullAndReversingCancelsIt() {
-        var pull = TimelineLatestPull()
-        let bottom = viewport(distance: 0)
-        pull.begin(at: bottom, promptVisible: true, canLoad: false)
-        pull.update(viewport(distance: -50))
-        let result9 = !pull.end()
-        #expect(result9)
-        pull.begin(at: bottom, promptVisible: true, canLoad: true)
-        pull.update(viewport(distance: -50, height: 2020))
-        let result10 = !pull.end()
-        #expect(result10)
-        pull.begin(at: bottom, promptVisible: true, canLoad: true)
-        pull.update(viewport(distance: -40))
-        pull.update(viewport(distance: -5))
-        let result11 = !pull.end()
-        #expect(result11)
+    @Test func historyPullCancelsOnResizingReversalOrExistingRequests() {
+        for edge in [TimelineHistoryPull.Edge.older, .latest] {
+            var pull = TimelineHistoryPull(edge: edge)
+            let direction: CGFloat = edge == .older ? -1 : 1
+            pull.begin(at: viewport(), promptVisible: true, canLoad: false)
+            pull.update(viewport(offset: direction * 50))
+            #expect(!pull.isReady)
+            pull.begin(at: viewport(), promptVisible: true, canLoad: true)
+            pull.update(viewport(offset: direction * 50, height: 2020))
+            #expect(!pull.isReady)
+            pull.begin(at: viewport(), promptVisible: true, canLoad: true)
+            pull.update(viewport(offset: direction * 50, container: 500))
+            #expect(!pull.isReady)
+            pull.begin(at: viewport(), promptVisible: true, canLoad: true)
+            pull.update(viewport(offset: direction * 40))
+            pull.update(viewport(offset: direction * 5))
+            let reversed = pull.end()
+            #expect(!reversed)
+        }
     }
 }

@@ -288,14 +288,10 @@ private struct ChatSidebarSessionRow: View {
     var body: some View {
         Button(action: onOpen) {
             HStack(spacing: 10) {
-                ChatSidebarSessionStatusDot(
-                    status: session.status,
-                    unread: session.unread
-                )
-
                 Text(session.title ?? String(localized: "Untitled session"))
-                    .font(.body)
-                    .lineLimit(1)
+                    .font(.body).foregroundStyle(isSelected ? .primary : .secondary)
+                    .lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
+                ChatSidebarSessionIndicator(indicator: session.presentation.indicator)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 10)
@@ -346,36 +342,22 @@ private struct ChatSidebarSessionRow: View {
     }
 }
 
-private struct ChatSidebarSessionStatusDot: View {
-    let status: V2RuntimeStatus
-    let unread: Bool
-
+private struct ChatSidebarSessionIndicator: View {
+    let indicator: SessionSidebarPresentation.Indicator
     var body: some View {
-        Circle()
-            .fill(fillColor)
-            .overlay {
-                Circle().stroke(borderColor, lineWidth: 1)
-            }
-            .frame(width: 7, height: 7)
-    }
-
-    private var fillColor: Color {
-        if unread { return .primary }
-        if status == .running { return .green }
-        return .clear
-    }
-
-    private var borderColor: Color {
-        if unread { return .primary }
-        switch status {
+        switch indicator {
+        case .waitingApproval:
+            Text("等待批准").font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.mint).padding(.horizontal, 8).padding(.vertical, 3)
+                .background(.mint.opacity(0.16), in: .capsule)
+                .fixedSize().accessibilityLabel("等待批准")
         case .running:
-            return .green
-        case .blocked, .waitingApproval:
-            return .orange.opacity(0.8)
-        case .waiting, .pending, .stopping:
-            return .blue.opacity(0.8)
-        default:
-            return .secondary.opacity(0.55)
+            ProgressView().controlSize(.mini).tint(.primary)
+                .frame(width: 14, height: 14).accessibilityLabel("运行中")
+        case .unread:
+            Circle().fill(.green).frame(width: 8, height: 8).accessibilityLabel("未读")
+        case .none:
+            EmptyView()
         }
     }
 }

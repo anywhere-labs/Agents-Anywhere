@@ -18,6 +18,7 @@ struct ChatSidebarSession: Identifiable, Equatable {
     let status: V2RuntimeStatus
     let unread: Bool
     let pinned: Bool
+    let presentation: SessionSidebarPresentation
 
     init(session: V2SessionMeta) {
         id = session.id
@@ -25,6 +26,7 @@ struct ChatSidebarSession: Identifiable, Equatable {
         status = session.status
         unread = session.unread
         pinned = session.pinned
+        presentation = SessionSidebarPresentation(session)
     }
 }
 

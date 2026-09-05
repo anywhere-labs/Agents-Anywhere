@@ -129,6 +129,23 @@ import Testing
         #expect(!item.canRespond(fresh: true))
     }
 
+    @Test func compactActionsPreferRejectionAndKeepEveryExtraChoiceInMore() throws {
+        var raw = (try fixtureObject("notices")["notices"] as! [[String: Any]])[0]
+        raw["interactionType"] = "approval"
+        raw["actions"] = ["approve", "approve_for_session", "cancel", "reject", "custom_policy"].map { id in
+            ["actionId": id, "label": id, "style": id == "approve" ? "primary" : "secondary", "input": ["required": false]] as [String: Any]
+        }
+        let notice: V2RuntimeNotice = try decode(raw)
+        let layout = NoticeActionPresentation(notice.actions)
+        #expect(layout.direct.map(\.id) == ["approve", "reject"])
+        #expect(layout.more.map(\.id) == ["approve_for_session", "cancel", "custom_policy"])
+        #expect(NoticeActionPresentation.title(notice.actions[2], notice: notice) == "取消本轮")
+        #expect(NoticeActionPresentation.title(notice.actions[3], notice: notice) == "拒绝")
+        let limited = NoticeActionPresentation(notice.actions.filter { ["approve", "cancel"].contains($0.id) })
+        #expect(limited.direct.map(\.id) == ["approve", "cancel"] && limited.more.isEmpty)
+        #expect(!limited.direct.contains { $0.id == "reject" })
+    }
+
     @Test func draftsSurviveStatusRevisionsButNotChangedDefinitions() throws {
         let store = SessionNoticeStore()
         store.update([try notice(interaction: "input_request", input: true)], sessionID: "session")

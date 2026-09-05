@@ -3,6 +3,7 @@ import UIKit
 
 struct ChatShellView: View {
     @EnvironmentObject private var appState: AppState
+    @Environment(\.scenePhase) private var scenePhase
 
     @State private var isSidebarOpen = false
     @State private var isSearching = false
@@ -48,6 +49,10 @@ struct ChatShellView: View {
         } message: {
             Text(appState.sessionActionError ?? "")
         }
+        .task(id: readTarget) {
+            guard let target = readTarget else { return }
+            await appState.markSessionRead(sessionId: target.id)
+        }
     }
 
     private var sidebarDevices: [ChatSidebarDevice] {
@@ -71,6 +76,15 @@ struct ChatShellView: View {
             .map { session in
                 ChatSidebarSession(session: session)
             }
+            .sorted { $0.presentation.precedes($1.presentation, id: $0.id, otherID: $1.id) }
+    }
+
+    private struct ReadTarget: Equatable { let id: String; let turnEndSeq: Int }
+    private var readTarget: ReadTarget? {
+        guard scenePhase == .active, !isSidebarOpen, appState.dashboardError == nil,
+              let id = selectedSessionId,
+              let session = appState.sessions.first(where: { $0.id == id }), session.unread else { return nil }
+        return ReadTarget(id: id, turnEndSeq: session.latestTurnEndSeq)
     }
 
     private var selectedDeviceId: V2ConnectorID? {

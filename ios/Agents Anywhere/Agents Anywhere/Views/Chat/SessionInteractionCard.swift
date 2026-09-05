@@ -17,11 +17,11 @@ struct SessionInteractionCard: View {
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { timeline in
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(alignment: .top, spacing: 8) {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(alignment: .center, spacing: 8) {
                     Image(systemName: item.form == nil ? "checkmark.shield" : "text.bubble")
-                        .font(.subheadline).padding(.top, 3)
-                    Text(item.notice.title).font(.subheadline.weight(.semibold))
+                        .font(.subheadline)
+                    Text(title).font(.subheadline.weight(.semibold))
                         .lineLimit(2).frame(maxWidth: .infinity, alignment: .leading)
                     Button {
                         if let onExpand { onExpand() } else { destination = .expanded }
@@ -33,17 +33,19 @@ struct SessionInteractionCard: View {
                     }.buttonStyle(.plain)
                 }
                 .foregroundStyle(item.notice.severity == "error" ? Color.red : Color.primary)
-                .frame(height: metrics.titleHeight, alignment: .top)
+                .frame(height: metrics.titleHeight, alignment: .center)
 
-                Text(summary).font(.subheadline).foregroundStyle(.secondary).lineLimit(2)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading).clipped()
+                Text(summary).font(.system(.subheadline, design: item.notice.interactionType == "approval" ? .monospaced : .default))
+                    .foregroundStyle(.secondary).lineLimit(2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(height: metrics.lineHeight * 2, alignment: .topLeading).clipped()
 
                 HStack(spacing: 8) {
                     Text(status(at: timeline.date)).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                     Spacer(minLength: 0)
                     Button("操作详情", systemImage: "arrow.up.right.square") { destination = .details }
-                        .font(.caption).fixedSize().frame(minHeight: 44)
-                }.frame(height: 44)
+                        .font(.caption).fixedSize().frame(minHeight: 28)
+                }.frame(height: 28)
 
                 if item.notice.type == "interaction" {
                     SessionInteractionActions(item: item, chat: chat, now: timeline.date, compact: true,
@@ -51,7 +53,7 @@ struct SessionInteractionCard: View {
                         .frame(height: metrics.actionHeight)
                 }
             }
-            .padding(14)
+            .padding(.horizontal, 14).padding(.vertical, 12)
             .frame(height: height ?? metrics.compactHeight)
             .frame(maxWidth: .infinity, alignment: .leading)
             .glassEffect(.regular, in: .rect(cornerRadius: 24))
@@ -64,6 +66,15 @@ struct SessionInteractionCard: View {
         }
     }
 
+    private var title: String {
+        switch item.notice.title {
+        case "Codex wants to run a command": "Codex 请求执行命令"
+        case "Codex wants to edit files": "Codex 请求修改文件"
+        case "Codex requests additional permissions": "Codex 请求额外权限"
+        case "Claude wants to use a tool": "Claude 请求使用工具"
+        default: item.notice.title
+        }
+    }
     private var summary: String {
         if let message = item.notice.message, !message.isEmpty { return message }
         if let question = item.form?.questions.first { return question.prompt }
@@ -95,58 +106,66 @@ struct SessionInteractionActions: View {
     var onEdit: (() -> Void)? = nil
 
     var body: some View {
-        if compact && item.notice.actions.count > 2 {
-            ScrollView(.horizontal) {
-                HStack(spacing: 8) { buttons(intrinsic: true) }.padding(.horizontal, 2)
-            }.scrollIndicators(.hidden).scrollClipDisabled()
-        } else if compact {
-            HStack(spacing: 8) { buttons(intrinsic: false) }
+        let layout = NoticeActionPresentation(item.notice.actions)
+        if compact {
+            HStack(spacing: 8) {
+                buttons(layout.direct, intrinsic: false)
+                if !layout.more.isEmpty {
+                    Menu {
+                        ForEach(layout.more) { action in
+                            Button(NoticeActionPresentation.title(action, notice: item.notice),
+                                systemImage: NoticeActionPresentation.symbol(action), role: action.style == "danger" ? .destructive : nil) {
+                                    respond(action)
+                                }
+                                .disabled(isDisabled(action))
+                        }
+                    } label: {
+                        Label("更多", systemImage: "ellipsis")
+                            .opacity(layout.more.contains(where: item.isSending) ? 0 : 1)
+                            .overlay {
+                                if layout.more.contains(where: item.isSending) { ProgressView().controlSize(.small) }
+                            }
+                    }
+                    .font(.subheadline).buttonStyle(.glass).buttonBorderShape(.capsule).controlSize(.large)
+                    .disabled(chat.isWorking || !item.canRespond(fresh: chat.session.runtime.isFresh, at: now))
+                    .fixedSize()
+                }
+            }
         } else {
             ViewThatFits(in: .horizontal) {
-                HStack(spacing: 8) { buttons(intrinsic: true) }.fixedSize(horizontal: true, vertical: false)
-                VStack(spacing: 8) { buttons(intrinsic: false) }
+                HStack(spacing: 8) { buttons(item.notice.actions, intrinsic: true) }.fixedSize(horizontal: true, vertical: false)
+                VStack(spacing: 8) { buttons(item.notice.actions, intrinsic: false) }
             }
         }
     }
-    @ViewBuilder private func buttons(intrinsic: Bool) -> some View {
-        ForEach(item.notice.actions) { action in
-            let needsInput = !item.hasValidInput(for: action)
-            AppGlassButton(actionTitle(action), systemImage: actionIcon(action),
+    @ViewBuilder private func buttons(_ actions: [V2RuntimeNoticeAction], intrinsic: Bool) -> some View {
+        ForEach(actions) { action in
+            AppGlassButton(NoticeActionPresentation.title(action, notice: item.notice),
+                systemImage: compact ? nil : NoticeActionPresentation.symbol(action),
                 role: action.style == "danger" ? .destructive : nil,
                 style: action.style == "primary" ? .prominent : .regular,
-                isLoading: item.isSending(action),
-                disabled: chat.isWorking || !item.canRespond(fresh: chat.session.runtime.isFresh, at: now)
-                    || (needsInput && onEdit == nil), maxWidth: intrinsic ? nil : .infinity) {
-                    if needsInput, let onEdit { onEdit() }
-                    else { Task { await chat.respond(notice: item, action: action) } }
+                isLoading: item.isSending(action), disabled: isDisabled(action), maxWidth: intrinsic ? nil : .infinity) {
+                    respond(action)
                 }
-                .accessibilityHint(needsInput && onEdit != nil ? "打开表单，填写后提交" : "")
+                .font(.subheadline)
+                .accessibilityHint(!item.hasValidInput(for: action) && onEdit != nil ? "打开表单，填写后提交" : "")
         }
     }
-    private func actionTitle(_ action: V2RuntimeNoticeAction) -> String {
-        switch action.id {
-        case "approve": "批准"
-        case "approve_for_session": "本会话批准"
-        case "reject": "拒绝"
-        case "cancel", "dismiss": "取消"
-        case "submit": "提交"
-        default: action.label
-        }
+    private func isDisabled(_ action: V2RuntimeNoticeAction) -> Bool {
+        chat.isWorking || !item.canRespond(fresh: chat.session.runtime.isFresh, at: now)
+            || (!item.hasValidInput(for: action) && onEdit == nil)
     }
-    private func actionIcon(_ action: V2RuntimeNoticeAction) -> String {
-        switch action.id {
-        case "reject", "cancel", "dismiss": "xmark"
-        case "approve_for_session": "checkmark.shield"
-        default: "checkmark"
-        }
+    private func respond(_ action: V2RuntimeNoticeAction) {
+        if !item.hasValidInput(for: action), let onEdit { onEdit() }
+        else { Task { await chat.respond(notice: item, action: action) } }
     }
 }
 
 /// Shared scaled slots keep every page aligned, including during loading.
 struct SessionInteractionMetrics: DynamicProperty {
-    @ScaledMetric(relativeTo: .subheadline) var lineHeight: CGFloat = 20
+    @ScaledMetric(relativeTo: .subheadline) var lineHeight: CGFloat = 18
     @ScaledMetric(relativeTo: .body) var actionHeight: CGFloat = 50
     var titleHeight: CGFloat { max(44, lineHeight * 2) }
-    var minimumHeight: CGFloat { titleHeight + 44 + actionHeight + 52 }
+    var minimumHeight: CGFloat { titleHeight + 28 + actionHeight + 42 }
     var compactHeight: CGFloat { minimumHeight + lineHeight * 2 }
 }

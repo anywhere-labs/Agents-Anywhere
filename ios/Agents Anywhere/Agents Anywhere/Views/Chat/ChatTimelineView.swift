@@ -4,11 +4,14 @@ struct ChatTimelineView: View {
     let model: SessionChatModel
     let onAttachment: (V2AttachmentContent) -> Void
     let onFile: (String) -> Void
-    @State private var historyAnchor: String?
+    @State private var historyAnchor: HistoryAnchor?
     @State private var position = ScrollPosition(idType: String.self)
     @State private var scrolling = TimelineScrollState()
     @State private var viewport = TimelineViewport()
-    @State private var latestPull = TimelineLatestPull()
+    @State private var latestPull = TimelineHistoryPull()
+    @State private var olderPull = TimelineHistoryPull(edge: .older)
+    @State private var olderPromptVisible = false
+    @State private var olderLoadRequest: Int?
     @State private var latestPromptVisible = false
     @State private var latestLoadRequest: Int?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -24,11 +27,11 @@ struct ChatTimelineView: View {
             ScrollView {
                 ChatTimelineContent(model: model, onAttachment: onAttachment, onFile: onFile,
                     latestPullReady: latestPull.isReady, isLoadingLatest: latestLoadRequest != nil,
-                    onLoadOlder: {
-                        scrolling.browseHistory()
-                        historyAnchor = model.timeline.rows.first?.id
-                        Task { await model.session.loadOlder() }
-                    }, onLoadLatest: loadLatest, onPromptVisibility: { latestPromptVisible = $0 })
+                    olderPullReady: olderPull.isReady, isLoadingOlder: olderLoadRequest != nil,
+                    onLoadOlder: loadOlder, onLoadLatest: loadLatest,
+                    onPromptVisibility: { latestPromptVisible = $0 },
+                    onOlderPromptVisibility: { olderPromptVisible = $0 },
+                    onTailVisibility: { region, visible in scrolling.tailVisibilityChanged(region, visible: visible) })
                     .equatable()
             }
             .scrollPosition($position)
@@ -52,25 +55,30 @@ struct ChatTimelineView: View {
                 let current = TimelineViewport(geometry: context.geometry)
                 let wasInteracting = scrolling.phase == .interacting
                 viewport = current
-                if scrolling.phaseChanged(mapped, viewport: current) {
+                if scrolling.phaseChanged(mapped) {
                     // Release ScrollPosition's persistent edge target as soon
                     // as the user takes over, including interrupted animations.
                     position.isPositionedByUser = true
+                    historyAnchor = nil
+                    olderPull.begin(at: current, promptVisible: olderPromptVisible,
+                        canLoad: model.session.hasOlderItems && !model.session.isLoadingHistory && olderLoadRequest == nil && latestLoadRequest == nil)
                     latestPull.begin(at: current, promptVisible: latestPromptVisible,
-                        canLoad: model.session.hasNewerItems && !model.session.isLoadingHistory && latestLoadRequest == nil)
+                        canLoad: model.session.hasNewerItems && !model.session.isLoadingHistory && latestLoadRequest == nil && olderLoadRequest == nil)
                 }
-                if mapped == .interacting { latestPull.update(current) }
+                if mapped == .interacting { latestPull.update(current); olderPull.update(current) }
                 if mapped == .idle || mapped == .decelerating {
-                    let shouldLoad = latestPull.end()
-                    if wasInteracting && shouldLoad { loadLatest() }
-                } else if mapped == .animating { latestPull.cancel() }
+                    let shouldLoadLatest = latestPull.end(), shouldLoadOlder = olderPull.end()
+                    if wasInteracting {
+                        if shouldLoadOlder { loadOlder() }
+                        else if shouldLoadLatest { loadLatest() }
+                    }
+                } else if mapped == .animating { latestPull.cancel(); olderPull.cancel() }
             }
             .onScrollGeometryChange(for: TimelineViewport.self) { geometry in
                 TimelineViewport(geometry: geometry)
             } action: { _, value in
                 viewport = value
-                scrolling.geometryChanged(value)
-                if scrolling.phase == .interacting { latestPull.update(value) }
+                if scrolling.phase == .interacting { latestPull.update(value); olderPull.update(value) }
             }
             .onChange(of: model.session.pendingMessages.last?.id) { _, id in
                 if id != nil && !hasInteractions { scrolling.requestBottom() }
@@ -83,10 +91,11 @@ struct ChatTimelineView: View {
                 if !returning && hasInteractions { position.isPositionedByUser = true }
             }
             .onChange(of: model.timeline.rows.map(\.id)) {
-                if let anchor = historyAnchor, model.timeline.rows.first?.id != anchor {
+                if let anchor = historyAnchor, model.timeline.rows.first?.id != anchor.id {
                     let targets = Set(model.session.notices.notices.filter(\.isVisible).compactMap(\.timelineTargetID))
-                    if let group = TimelineGrouping.groups(model.timeline.rows, interactionTargets: targets)
-                        .first(where: { $0.rows.contains(where: { $0.id == anchor }) }) {
+                    if scrolling.navigationGeneration == anchor.generation,
+                       let group = TimelineGrouping.groups(model.timeline.rows, interactionTargets: targets)
+                        .first(where: { $0.rows.contains(where: { $0.id == anchor.id }) }) {
                         position.scrollTo(id: group.id, anchor: .top)
                     }
                     historyAnchor = nil
@@ -94,11 +103,23 @@ struct ChatTimelineView: View {
             }
             .task(id: FollowRequest(contentHeight: viewport.contentHeight, visibleHeight: viewport.visibleHeight,
                 followsTail: scrolling.followsTail, userIsScrolling: scrolling.userIsScrolling,
-                navigationGeneration: scrolling.navigationGeneration, interactionIsPresented: hasInteractions)) {
-                guard (!hasInteractions || scrolling.returningToBottom), scrolling.shouldFollow(viewport) else { return }
+                navigationGeneration: scrolling.navigationGeneration, interactionIsPresented: hasInteractions, tail: scrolling.tail)) {
+                guard (!hasInteractions || scrolling.returningToBottom), scrolling.shouldFollow() else { return }
                 do { try await Task.sleep(for: .milliseconds(24)) } catch { return }
-                guard !Task.isCancelled, (!hasInteractions || scrolling.returningToBottom), scrolling.shouldFollow(viewport) else { return }
+                guard !Task.isCancelled, (!hasInteractions || scrolling.returningToBottom), scrolling.shouldFollow() else { return }
                 scrollToBottom()
+            }
+            .task(id: ScrollSettlement(phase: scrolling.phase, tail: scrolling.tail, generation: scrolling.navigationGeneration)) {
+                guard scrolling.needsScrollSettlement else { return }
+                do { try await Task.sleep(for: .milliseconds(64)) } catch { return }
+                guard !Task.isCancelled else { return }
+                scrolling.settleUserScroll()
+            }
+            .task(id: olderLoadRequest) {
+                guard olderLoadRequest != nil else { return }
+                await model.session.loadOlder()
+                guard !Task.isCancelled else { return }
+                olderLoadRequest = nil
             }
             .task(id: latestLoadRequest) {
                 guard let generation = latestLoadRequest else { return }
@@ -108,9 +129,10 @@ struct ChatTimelineView: View {
                 if scrolling.navigationGeneration == generation { scrolling.requestBottom() }
                 latestLoadRequest = nil
             }
-            if scrolling.showsBottomButton(viewport) {
+            if scrolling.showsBottomButton() {
                 Button {
-                    latestPull.cancel()
+                    latestPull.cancel(); olderPull.cancel()
+                    historyAnchor = nil
                     scrolling.requestBottom()
                     scrollToBottom()
                 } label: {
@@ -124,9 +146,19 @@ struct ChatTimelineView: View {
             }
         }
     }
+    private func loadOlder() {
+        guard model.session.isValid, model.session.hasOlderItems,
+              !model.session.isLoadingHistory, olderLoadRequest == nil, latestLoadRequest == nil else { return }
+        olderPull.cancel(); latestPull.cancel()
+        scrolling.browseHistory()
+        position.isPositionedByUser = true
+        historyAnchor = model.timeline.rows.first.map { HistoryAnchor(id: $0.id, generation: scrolling.navigationGeneration) }
+        olderLoadRequest = scrolling.navigationGeneration
+    }
     private func loadLatest() {
         guard model.session.isValid, model.session.hasNewerItems,
-              !model.session.isLoadingHistory, latestLoadRequest == nil else { return }
+              !model.session.isLoadingHistory, latestLoadRequest == nil, olderLoadRequest == nil else { return }
+        olderPull.cancel(); latestPull.cancel()
         historyAnchor = nil
         scrolling.requestBottom()
         latestLoadRequest = scrolling.navigationGeneration
@@ -143,6 +175,16 @@ struct ChatTimelineView: View {
         let userIsScrolling: Bool
         let navigationGeneration: Int
         let interactionIsPresented: Bool
+        let tail: TimelineTailVisibility
+    }
+    private struct ScrollSettlement: Equatable {
+        let phase: TimelineScrollState.Phase
+        let tail: TimelineTailVisibility
+        let generation: Int
+    }
+    private struct HistoryAnchor {
+        let id: String
+        let generation: Int
     }
 }
 
@@ -152,12 +194,17 @@ private struct ChatTimelineContent: View, Equatable {
     let onFile: (String) -> Void
     let latestPullReady: Bool
     let isLoadingLatest: Bool
+    let olderPullReady: Bool
+    let isLoadingOlder: Bool
     let onLoadOlder: () -> Void
     let onLoadLatest: () -> Void
     let onPromptVisibility: (Bool) -> Void
+    let onOlderPromptVisibility: (Bool) -> Void
+    let onTailVisibility: (TimelineTailVisibility.Region, Bool) -> Void
 
     static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.model === rhs.model && lhs.latestPullReady == rhs.latestPullReady && lhs.isLoadingLatest == rhs.isLoadingLatest
+            && lhs.olderPullReady == rhs.olderPullReady && lhs.isLoadingOlder == rhs.isLoadingOlder
     }
     var body: some View {
         let groups = TimelineGrouping.groups(model.timeline.rows, interactionTargets: Set(model.session.notices.notices
@@ -167,7 +214,14 @@ private struct ChatTimelineContent: View, Equatable {
         // change height. Hidden tool details own their deferred work separately.
         VStack(alignment: .leading, spacing: 20) {
             if model.session.hasOlderItems {
-                Button("加载较早的消息", action: onLoadOlder).font(.footnote).disabled(model.session.isLoadingHistory).frame(maxWidth: .infinity)
+                Button(action: onLoadOlder) {
+                    Group {
+                        if isLoadingOlder { ProgressView("正在加载较早的消息…") }
+                        else { Text(olderPullReady ? "松开加载较早的消息" : "加载较早的消息") }
+                    }.font(.footnote).frame(maxWidth: .infinity, minHeight: 44)
+                }
+                .disabled(model.session.isLoadingHistory || isLoadingOlder || isLoadingLatest)
+                .onScrollVisibilityChange(threshold: 0.9) { onOlderPromptVisibility($0) }
             }
             ForEach(groups) { group in
                 SessionTimelineGroupView(group: group, chat: model, onAttachment: onAttachment, onFile: onFile,
@@ -191,12 +245,25 @@ private struct ChatTimelineContent: View, Equatable {
                         else { Text(latestPullReady ? "松开加载更新的记录" : "继续上拉加载更新的记录") }
                     }.font(.footnote).frame(maxWidth: .infinity, minHeight: 44)
                 }
-                .disabled(model.session.isLoadingHistory || isLoadingLatest)
+                .disabled(model.session.isLoadingHistory || isLoadingLatest || isLoadingOlder)
                 .onScrollVisibilityChange { onPromptVisibility($0) }
             }
             // Constant breathing room: status text and card counts cannot
             // change this spacer or create a spurious follow request.
-            Color.clear.frame(height: 32).id("tail")
+            Color.clear.frame(height: 32)
+                .overlay(alignment: .bottom) {
+                    // Probes overlap existing content; their size never changes
+                    // the spacer or the scroll view's content height.
+                    Color.clear.frame(height: 96)
+                        .onScrollVisibilityChange(threshold: 0.01) { onTailVisibility(.near, $0) }
+                        .allowsHitTesting(false).accessibilityHidden(true)
+                }
+                .overlay(alignment: .bottom) {
+                    Color.clear.frame(height: 2)
+                        .onScrollVisibilityChange(threshold: 0.5) { onTailVisibility(.end, $0) }
+                        .allowsHitTesting(false).accessibilityHidden(true)
+                }
+                .id("tail")
         }
         .scrollTargetLayout()
         .padding(.horizontal, 24).padding(.top, 16)

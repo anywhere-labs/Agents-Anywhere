@@ -13,7 +13,8 @@ Semantic error and availability colors remain separate from the primary color.
 ## Composer and timeline
 
 - The empty, unfocused composer is a pill with the same 48-point base height as
-  the header controls. Focus, any text (including whitespace), or attachments
+  the header controls and 32-point horizontal insets (eight points narrower on
+  each side than before). Focus, any text (including whitespace), or attachments
   expand it. A single `UITextView` survives the layout transition.
 - Return always enters a newline or participates in IME candidate selection.
   The send button and Command-Return share the same send path. Marked text blocks
@@ -45,19 +46,24 @@ Semantic error and availability colors remain separate from the primary color.
   callbacks. The pill is a sibling of the scroll view, and native `ScrollPosition`
   owns navigation. A new drag (including a direct transition from animation to
   interaction) releases its persistent edge target and cancels queued following.
-  The pill hides within 96 points of the bottom and throughout tracking,
-  dragging, deceleration and programmatic scrolling. Exact follow intent keeps
-  its two-point tolerance: stopping near the bottom does not resume following.
-  Phase changes use their own geometry rather than a stale callback's value.
+  Native scroll visibility of two overlapping tail markers determines arrival
+  and proximity; content-height/offset arithmetic does not decide either. A
+  96-point probe hides the pill near the bottom, while the two-point end marker
+  confirms arrival. The pill also hides throughout tracking, dragging,
+  deceleration and programmatic scrolling. Visibility and phase callbacks settle
+  for 64 ms before a manual arrival can re-enable following; stopping merely
+  nearby cannot do so. The probes overlay existing space without adding height.
   Active interactions cancel queued auto-follow and release the native edge
   target. Explicit return remains available, but ends on arrival while an
   interaction is present. Removing the card preserves the reading position.
   A constant 32-point tail spacer provides breathing room without status-driven
   padding changes.
-- When the latest-history prompt is already visible, pulling up another 24 points
-  and releasing loads the latest records once. The prompt changes to “松开加载”;
-  tapping remains available. Inertia and viewport resizing cannot trigger a load.
-  A drag during the fetch cancels its pending return to the bottom.
+- Both history prompts support a fresh 24-point outward pull and release when
+  already visible: pulling past the top loads older messages, and pulling past
+  the bottom loads newer records. The prompt changes to “松开加载”; tapping remains
+  available. Only one history request runs at a time. Inertia and viewport/content
+  resizing cannot trigger a load. A drag during the fetch cancels pending anchor
+  restoration or return to the bottom, preserving the user's new reading intent.
 
 ## Session presentation and files
 
@@ -90,6 +96,14 @@ Semantic error and availability colors remain separate from the primary color.
   A right-hand glass button group contains New Session and a details menu. The
   phone's left-edge drawer gesture starts within 44 points and still requires
   horizontal intent so vertical timeline scrolling is not intercepted.
+- Sidebar indicators follow Web's priority and position, on the title's trailing
+  side: a green waiting-approval capsule, a native spinner for running/waiting/
+  pending, or a green unread dot for an idle session. Opening an unread session
+  in the active foreground sends the existing read-receipt API; failures retain
+  unread state and older receipts cannot replace newer dashboard revisions.
+  Dashboard updates drive indicators live. Running sessions sort first in stable
+  ID order; other sessions use descending `sortAt`, matching Web within pinned
+  and recent sections.
 - The plus sheet includes takeover, its consequences and an explicit confirmation.
   Ambiguous writes require refreshing; a successful takeover followed by a failed
   read retains the confirmed write result.
@@ -164,7 +178,9 @@ are localized like Web; extension actions retain their protocol labels.
   selected item survives new arrivals; removing it selects an adjacent item.
   The collapsed surface is a glass card with fixed title, summary, status and
   action slots; there is no external response prompt. Expand and the optional
-  page count live inside the card. The stack retains its height across notice
+  page count live inside its aligned header. At default text size the preview is
+  200 points tall, with a two-line command summary and a compact details row.
+  The stack retains its height across notice
   counts and submission/network hints. Vertical swipes change the selected card.
   Expand opens the selected notice in the full interaction sheet. Operation
   Details opens a sheet with context, editable fields and full diagnostic text.
@@ -172,7 +188,11 @@ are localized like Web; extension actions retain their protocol labels.
 - Actions reuse `AppGlassButton`: protocol-primary actions are prominent,
   secondary/cancel actions regular, and danger actions destructive. Only the
   selected action shows loading; all actions reject concurrent submissions.
-  Every protocol choice remains accessible, including approve-for-session.
+  The compact card prioritizes the primary action and an actual reject action;
+  additional choices, including approve-for-session, open in a native “更多” menu
+  beside the buttons. Reject and cancel are distinct wire decisions. If the
+  protocol offers cancel without reject, the card says “取消本轮”; it never invents
+  a reject action or submits cancellation disguised as rejection.
   An incomplete form action opens the editable sheet from the compact card;
   the full form cannot submit until valid.
 - Nonblocking interactions are associated with their source/context timeline
@@ -221,13 +241,16 @@ than a “server unavailable” alert.
 
 Verified on 2026-09-05, without starting a server or simulator:
 
-- 73 headless Swift tests across ten suites pass against production client-core
+- 97 headless Swift tests across fourteen suites pass against production client-core
   sources. They cover API contracts, recovery/cache races, uncertain delivery,
   30 Hz presentation, echo handoff, target preparation, preference scope, schema
   payloads and interaction lifecycle/IME guards. Session-detail checks cover
   tool/diff parsing, grouping identity, file routing, export pagination/cancellation,
   OAuth callback validation, local-server classification and waiting-approval
-  metadata through an actual repository connection and response.
+  metadata through an actual repository connection and response. Navigation
+  cases cover delayed visibility, inertia, explicit return, interaction changes
+  and both history edges. Sidebar status priority/order and compact approval
+  grouping are checked against the Web and runtime contracts.
 - The Python backend contract fixture exporter reports that fixtures are current.
 - The complete unsigned iOS Debug target builds for `generic/platform=iOS`, using
   the checked-in package resolutions and the Xcode beta toolchain. The app's
@@ -283,7 +306,15 @@ keyboard layout and real mobile-network behavior still need manual validation:
    browser; refresh previews after disconnection and close/reopen a sheet.
 9. Swipe approval cards vertically, including long forms; verify their width
    against the collapsed composer. Swipe multiple top errors horizontally and
-   dismiss them without changing the conversation's scroll position.
+   dismiss them without changing the conversation's scroll position. Check
+   Approve/Reject, the native More menu, and a runtime offering only Approve/Cancel.
 10. Test first-use local-network permission (allow and deny), cancelling OAuth,
     an invalid/expired callback and starting login again. Inspect the native
     header edge effect over long titles and bright content in both appearances.
+11. Reach the actual bottom with and without the keyboard/approval dock; the
+    return pill should hide near the bottom and while scrolling. Stop farther up
+    and verify it returns without snapping back. At each history edge, release
+    a fresh pull to load one page; scroll during loading to cancel restoration.
+12. Open the sidebar during running, approval and idle-unread states. Open an
+    unread session, switch apps and return, and reconnect after going offline;
+    verify read indicators and live status changes without reopening the app.

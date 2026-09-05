@@ -2,7 +2,6 @@ import SwiftUI
 
 struct SessionInteractionDock: View {
     let chat: SessionChatModel
-    let maximumHeight: CGFloat
     let onShowAll: (String) -> Void
     @State private var selectedID: String?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -14,7 +13,7 @@ struct SessionInteractionDock: View {
     // queued item does not resize the entire dock. Status text never measures it.
     private let peek: CGFloat = 12
     private var pageHeight: CGFloat {
-        max(metrics.minimumHeight, min(maximumHeight - peek * 2, metrics.compactHeight))
+        metrics.compactHeight
     }
 
     var body: some View {
