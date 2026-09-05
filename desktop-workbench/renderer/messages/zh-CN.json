@@ -1201,7 +1201,10 @@
       "confirmPassword": "确认密码",
       "password": "密码",
       "setupToken": "Setup token",
-      "userId": "用户 ID"
+      "userId": "用户 ID",
+      "displayName": "昵称",
+      "displayNamePlaceholder": "该如何称呼您",
+      "displayNameDescription": "用于展示，支持 1–64 个字符，可随时修改。"
     },
     "login": {
       "createAccount": "创建账号",
@@ -1289,6 +1292,14 @@
     },
     "status": {
       "connecting": "连接中"
+    },
+    "emailCode": {
+      "label": "邮箱验证码",
+      "description": "输入发送到此邮箱的 6 位验证码。",
+      "send": "发送验证码",
+      "retry": "{seconds} 秒后重发",
+      "sent": "验证码已发送，请查看邮箱。",
+      "failed": "验证码发送失败。"
     }
   },
   "pages": {
@@ -1508,6 +1519,21 @@
         "approved": "移动端登录已批准",
         "rejected": "移动端登录已拒绝",
         "expired": "二维码已过期"
+      },
+      "profile": {
+        "title": "昵称与邮箱",
+        "description": "昵称用于展示，邮箱用于登录。",
+        "email": "登录邮箱",
+        "emailDescription": "修改后请使用新邮箱登录。",
+        "verified": "已验证",
+        "unverified": "未验证",
+        "verificationDisabled": "管理员未开启邮箱验证码，保存后邮箱直接标记为已验证。",
+        "saveDisplayName": "保存昵称",
+        "changeEmail": "更换邮箱",
+        "bindEmail": "绑定邮箱",
+        "displayNameSaved": "昵称已更新。",
+        "emailSaved": "邮箱已更新。",
+        "failed": "账号信息更新失败。"
       }
     },
     "team": {

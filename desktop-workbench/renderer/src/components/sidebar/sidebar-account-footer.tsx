@@ -27,6 +27,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { SidebarFooter } from "@/components/ui/sidebar"
 import type { WorkspaceState } from "@/components/workspace-context"
+import { accountDisplayName } from "@/features/auth/account-profile"
 import type { AuthMe } from "@/features/auth/types"
 import { useTranslations } from "next-intl"
 
@@ -44,7 +45,7 @@ export function SidebarAccountFooter({
   const t = useTranslations("dashboard")
   const tCommon = useTranslations("common")
   const [signOutOpen, setSignOutOpen] = React.useState(false)
-  const userId = me?.userId ?? "Unknown"
+  const userId = me ? accountDisplayName(me) : "Unknown"
   const userRole = me?.role ? me.role.replace(/^\w/, (char) => char.toUpperCase()) : ""
   const userInitials = userId.slice(0, 2).toUpperCase()
   const isAdmin = me?.role === "admin"

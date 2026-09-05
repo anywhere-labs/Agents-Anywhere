@@ -1,7 +1,21 @@
 export type UserRole = "admin" | "member";
 
+export type AuthConfig = {
+  needsBootstrap: boolean;
+  emailVerificationRequired: boolean;
+  registrationOpen: boolean;
+  oauthRegistrationOpen: boolean;
+  oauthEnabled: boolean;
+  oauthProviderLabel: string | null;
+  setupTokenExpiresAt: string | null;
+  serverTime: string;
+};
+
 export type AuthMe = {
   userId: string;
+  email: string | null;
+  displayName: string;
+  emailVerified: boolean;
   role: UserRole;
   disabled: boolean;
   avatar: string | null;

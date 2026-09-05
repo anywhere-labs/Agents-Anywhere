@@ -1201,7 +1201,10 @@
       "confirmPassword": "Confirm password",
       "password": "Password",
       "setupToken": "Setup token",
-      "userId": "User ID"
+      "userId": "User ID",
+      "displayName": "Nickname",
+      "displayNamePlaceholder": "How should we address you?",
+      "displayNameDescription": "Your display name, 1–64 characters. You can change it later."
     },
     "login": {
       "createAccount": "Create an account",
@@ -1289,6 +1292,14 @@
     },
     "status": {
       "connecting": "Connecting"
+    },
+    "emailCode": {
+      "label": "Email verification code",
+      "description": "Enter the 6-digit code sent to this email address.",
+      "send": "Send code",
+      "retry": "Resend in {seconds}s",
+      "sent": "Code sent. Check your inbox.",
+      "failed": "Failed to send verification code."
     }
   },
   "pages": {
@@ -1508,6 +1519,21 @@
         "approved": "Mobile sign-in approved",
         "rejected": "Mobile sign-in rejected",
         "expired": "QR code expired"
+      },
+      "profile": {
+        "title": "Nickname and email",
+        "description": "Your nickname is shown to others. Your email is used to sign in.",
+        "email": "Sign-in email",
+        "emailDescription": "After changing it, sign in with your new email address.",
+        "verified": "Verified",
+        "unverified": "Unverified",
+        "verificationDisabled": "Email codes are disabled by the administrator. Saving marks the address as verified.",
+        "saveDisplayName": "Save nickname",
+        "changeEmail": "Change email",
+        "bindEmail": "Bind email",
+        "displayNameSaved": "Nickname updated.",
+        "emailSaved": "Email updated.",
+        "failed": "Failed to update account."
       }
     },
     "team": {

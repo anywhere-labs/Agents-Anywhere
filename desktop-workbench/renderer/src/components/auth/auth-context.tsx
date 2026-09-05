@@ -8,6 +8,7 @@ import {
   saveStoredSession,
 } from "@/features/auth/session"
 import type { AuthMe, StoredSession } from "@/features/auth/types"
+import { normalizeAuthMe, normalizeDesktopOAuthMe } from "@/features/auth/normalize-me"
 import { getDesktopWorkbenchBridge } from "@/features/desktop/bridge"
 import { useTranslations } from "next-intl"
 
@@ -21,6 +22,8 @@ type AuthState = {
   error: string | null
   isAuthenticated: boolean
   desktopOAuthAvailable: boolean
+  emailVerificationRequired: boolean
+  refreshConfig: () => Promise<void>
   navigate: (screen: AuthScreen) => void
   startDesktopOAuth: () => Promise<void>
   refreshMe: () => Promise<AuthMe | null>
@@ -73,6 +76,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [me, setMe] = React.useState<AuthMe | null>(null)
   const [loading, setLoading] = React.useState(true)
   const [error, setError] = React.useState<string | null>(null)
+  const [emailVerificationRequired, setEmailVerificationRequired] = React.useState(false)
+  const refreshConfig = React.useCallback(async () => {
+    const config = await authApi.config()
+    setEmailVerificationRequired(config.emailVerificationRequired)
+  }, [])
   const desktopAuthBridge = getDesktopWorkbenchBridge()?.auth ?? null
 
   React.useEffect(() => {
@@ -216,6 +224,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         error,
         isAuthenticated: Boolean(session),
         desktopOAuthAvailable: Boolean(desktopAuthBridge),
+        emailVerificationRequired,
+        refreshConfig,
         navigate,
         startDesktopOAuth,
         refreshMe,
@@ -225,53 +235,4 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       {children}
     </AuthContext.Provider>
   )
-}
-
-function normalizeAuthMe(value: unknown, fallback: StoredSession): AuthMe {
-  const envelope = isRecord(value) ? value : {}
-  const candidate = isRecord(envelope.user) ? envelope.user : envelope
-  const role = candidate.role === "admin" || candidate.role === "member"
-    ? candidate.role
-    : fallback.role
-
-  return {
-    userId: typeof candidate.userId === "string" && candidate.userId.trim()
-      ? candidate.userId
-      : fallback.userId,
-    role,
-    disabled: candidate.disabled === true,
-    avatar: typeof candidate.avatar === "string" ? candidate.avatar : null,
-    serverTime: typeof envelope.serverTime === "string"
-      ? envelope.serverTime
-      : typeof candidate.serverTime === "string"
-        ? candidate.serverTime
-        : "",
-  }
-}
-
-function normalizeDesktopOAuthMe(value: unknown): AuthMe {
-  const envelope = isRecord(value) ? value : {}
-  const candidate = isRecord(envelope.user) ? envelope.user : envelope
-  if (
-    typeof candidate.userId !== "string" ||
-    !candidate.userId.trim() ||
-    (candidate.role !== "admin" && candidate.role !== "member")
-  ) {
-    throw new Error("Desktop OAuth returned an invalid account.")
-  }
-  return {
-    userId: candidate.userId,
-    role: candidate.role,
-    disabled: candidate.disabled === true,
-    avatar: typeof candidate.avatar === "string" ? candidate.avatar : null,
-    serverTime: typeof envelope.serverTime === "string"
-      ? envelope.serverTime
-      : typeof candidate.serverTime === "string"
-        ? candidate.serverTime
-        : "",
-  }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value && typeof value === "object")
 }

@@ -82,6 +82,7 @@ import { Separator } from "@/components/ui/separator"
 import { Slider } from "@/components/ui/slider"
 import { Spinner } from "@/components/ui/spinner"
 import { Switch } from "@/components/ui/switch"
+import { AccountProfileCard } from "@/components/pages/account-profile-card"
 import { MobileConnectionDialog } from "@/components/pages/mobile-signin-panel"
 import { ArchivedSessionsTab } from "@/components/settings/archived-sessions-tab"
 import { DashboardSidebarToggle } from "@/components/dashboard-sidebar-toggle"
@@ -90,6 +91,8 @@ import { LocaleSwitcher } from "@/components/locale-switcher"
 import { LoadingState } from "@/components/loading-state"
 import { useWorkspace } from "@/components/workspace-context"
 import { authApi } from "@/features/auth/api"
+import { accountDisplayName } from "@/features/auth/account-profile"
+import { normalizeAuthMe } from "@/features/auth/normalize-me"
 import type { AuthMe } from "@/features/auth/types"
 import { useDesktopConnector } from "@/features/desktop/desktop-connector-context"
 import {
@@ -161,6 +164,7 @@ function AccountTab({
   const [avatarOpen, setAvatarOpen] = React.useState(false)
   const [clearingAvatar, setClearingAvatar] = React.useState(false)
   const userId = me.userId?.trim() || fallbackUserId
+  const displayName = accountDisplayName(me)
 
   const clearAvatar = async () => {
     if (!token || clearingAvatar) return
@@ -182,13 +186,13 @@ function AccountTab({
         <div className="flex flex-wrap items-center justify-between gap-4 px-6 py-5">
           <div className="flex min-w-0 items-center gap-4">
             <Avatar className="size-16 rounded-full">
-              {me.avatar && <AvatarImage src={me.avatar} alt={userId} />}
+              {me.avatar && <AvatarImage src={me.avatar} alt={displayName} />}
               <AvatarFallback className="rounded-full bg-primary text-xl text-primary-foreground">
-                {(userId.slice(0, 2) || "AA").toUpperCase()}
+                {displayName.slice(0, 2).toUpperCase()}
               </AvatarFallback>
             </Avatar>
             <div className="min-w-0">
-              <p className="truncate text-base font-semibold">{userId}</p>
+              <p className="truncate text-base font-semibold">{displayName}</p>
               <p className="text-sm capitalize text-muted-foreground">{me.role}</p>
             </div>
           </div>
@@ -243,11 +247,13 @@ function AccountTab({
         </div>
       </section>
 
+      <AccountProfileCard me={me} token={token} onMeChange={onMeChange} />
+
       <ResetPasswordDialog open={passwordOpen} token={token} onOpenChange={setPasswordOpen} />
       <AvatarCropDialog
         open={avatarOpen}
         token={token}
-        userId={userId}
+        userId={displayName}
         onMeChange={onMeChange}
         onOpenChange={setAvatarOpen}
       />
@@ -1438,11 +1444,7 @@ export function SettingsPage() {
       .me(session.accessToken)
       .then((nextMe) => {
         if (!cancelled) {
-          setMe({
-            ...nextMe,
-            userId: nextMe.userId?.trim() || session.userId,
-            role: nextMe.role === "admin" || nextMe.role === "member" ? nextMe.role : session.role,
-          })
+          setMe(normalizeAuthMe(nextMe, session))
         }
       })
       .catch((err) => {

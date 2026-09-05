@@ -1,8 +1,10 @@
+import { normalizeEmail } from "./account-profile";
 import { ApiClient, apiClient } from "@/lib/api";
 import { createPasswordVerifier } from "@/features/auth/password-verifier";
 import type {
   AdminUser,
   AdminUserListResponse,
+  AuthConfig,
   AuthMe,
   ChangePasswordRequest,
   InstanceSettings,
@@ -15,6 +17,10 @@ import type {
 
 export class AuthApi {
   constructor(private readonly client: ApiClient = apiClient) {}
+
+  config(): Promise<AuthConfig> {
+    return this.client.get<AuthConfig>("/auth/config", { auth: false });
+  }
 
   me(token?: string | null): Promise<AuthMe> {
     return this.client.get<AuthMe>("/auth/me", { token });
@@ -39,6 +45,18 @@ export class AuthApi {
       verifier,
       { token },
     );
+  }
+
+  sendEmailCode(email: string, purpose: "register" | "bind", token?: string, pendingToken?: string, setupToken?: string): Promise<{ expiresIn: number; retryAfter: number }> {
+    return this.client.post("/auth/email-code", { email: normalizeEmail(email), purpose, ...(pendingToken ? { pendingToken } : {}), ...(setupToken ? { setupToken } : {}) }, { auth: false, token });
+  }
+
+  updateEmail(token: string, email: string, code?: string): Promise<AuthMe> {
+    return this.client.put("/auth/me/email", { email: normalizeEmail(email), ...(code ? { code } : {}) }, { token });
+  }
+
+  updateProfile(token: string, displayName: string): Promise<AuthMe> {
+    return this.client.put("/auth/me/profile", { displayName: displayName.trim() }, { token });
   }
 
   updateAvatar(token: string, avatar: string): Promise<AuthMe> {
