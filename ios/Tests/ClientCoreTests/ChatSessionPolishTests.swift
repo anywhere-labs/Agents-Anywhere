@@ -41,6 +41,37 @@ import Testing
         #expect(model.isOpeningPrepared && model.openingError != nil && !model.isOpeningReady)
     }
 
+    @Test func openingPublishesStreamingAndOptimisticHandoffWithoutAScrollAcknowledgement() throws {
+        let first: V2TimelineItem = try decode(itemObject(id: "reply", text: "Initial reply"))
+        let updated: V2TimelineItem = try decode(itemObject(id: "reply", revision: 2, text: "Initial reply with more content"))
+        let echo: V2TimelineItem = try decode(itemObject(id: "echo", order: 2, text: "Question", clientID: "local"))
+        let pending = V2PendingMessage(id: "local", content: "Question", attachmentIDs: [])
+        let timeline = SessionTimelinePresentation()
+        timeline.presentOpening([first], pendingMessages: [pending])
+        let row = try #require(timeline.rows.first)
+        timeline.stage([updated, echo], animate: false)
+        timeline.flush(now: 1)
+        timeline.synchronizePending([])
+        #expect(timeline.rows.first === row && row.text == "Initial reply with more content")
+        #expect(timeline.rows.last?.id == "echo" && timeline.pendingMessages.isEmpty)
+    }
+
+    @Test func openingRealtimeReachesPresentationWhileTheViewIsStillScrolling() async throws {
+        let http = TestHTTPTransport(), realtime = TestRealtimeAPI()
+        let repo = repository(transport: http, realtime: realtime)
+        defer { repo.reset() }
+        let session = repo.session(id: "session")
+        let model = SessionChatModel(session: session, repository: repo,
+            attachments: .init(attachmentAPI: V2AttachmentAPI(transport: http)))
+        await model.prepareOpening()
+        #expect(model.isOpeningReady)
+        let updates = Task { await model.timeline.run(sessionID: session.id, repository: repo) }
+        defer { updates.cancel() }
+        try await eventually { session.runtime.isFresh }
+        realtime.yield(try event("timeline.item_created", seq: 11, payload: ["item": itemObject(id: "next", order: 2, seq: 11)]))
+        try await eventually { model.timeline.rows.contains { $0.id == "next" } }
+    }
+
     @Test func optimisticAttachmentMetadataAndPreviewsSurviveReorderedOrSparseEchoes() throws {
         let store = ChatAttachmentStore()
         let first = ChatAttachment(id: "a", name: "first.png", data: Data([1]), mediaType: "image/png", previewData: Data([11]))

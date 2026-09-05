@@ -46,7 +46,15 @@ private struct SidebarDrawerTransitionKey: EnvironmentKey {
     static let defaultValue = false
 }
 
+private struct SidebarDrawerObscuresDetailKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
 extension EnvironmentValues {
+    var sidebarDrawerObscuresDetail: Bool {
+        get { self[SidebarDrawerObscuresDetailKey.self] }
+        set { self[SidebarDrawerObscuresDetailKey.self] = newValue }
+    }
     var sidebarDrawerIsTransitioning: Bool {
         get { self[SidebarDrawerTransitionKey.self] }
         set { self[SidebarDrawerTransitionKey.self] = newValue }
@@ -227,6 +235,7 @@ private struct SidebarDrawerInteractive<
             .ignoresSafeArea()
         }
         .environment(\.sidebarDrawerPresentation, .drawer)
+        .environment(\.sidebarDrawerObscuresDetail, isOpen || progress > 0.001)
         .environment(\.sidebarDrawerIsTransitioning, isAnimating || dragStartProgress != nil
             || abs(progress - (isOpen ? 1 : 0)) > 0.001)
         .sensoryFeedback(
@@ -635,10 +644,10 @@ private struct SidebarDrawerMainCard<Content: View>: View {
         )
 
         content
-            // The host already supplies the original safe-area insets. A card
-            // sliding partly off-screen must not inherit a growing horizontal
-            // inset from its intersection with the window and rewrap its text.
-            .ignoresSafeArea(.container, edges: .horizontal)
+            // The untransformed host supplies all original insets, including
+            // the keyboard. Apply them once inside the page, never again from
+            // this moving card's intersection with the window.
+            .ignoresSafeArea()
             .frame(width: size.width, height: size.height)
             .background(drawerSystemBackground, in: screenShape)
             .clipShape(screenShape)

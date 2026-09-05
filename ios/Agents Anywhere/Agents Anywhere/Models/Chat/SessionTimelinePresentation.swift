@@ -56,22 +56,12 @@ final class SessionTimelinePresentation {
     @ObservationIgnored private var initialized = false
     @ObservationIgnored private var lastConnection: V2SessionConnectionState = .inactive
     @ObservationIgnored private var wake: AsyncStream<Void>.Continuation?
-    @ObservationIgnored private var holdsOpeningSnapshot = false
 
     func presentOpening(_ items: [V2TimelineItem], pendingMessages: [V2PendingMessage]) {
-        holdsOpeningSnapshot = false
         stage(items, animate: false)
         flush()
         synchronizePending(pendingMessages)
-        holdsOpeningSnapshot = true
     }
-
-    func finishOpening() {
-        holdsOpeningSnapshot = false
-        wake?.yield(())
-    }
-
-    func holdForOpening() { holdsOpeningSnapshot = true }
 
     func receive(_ observation: V2SessionObservation) {
         defer { lastConnection = observation.connection }
@@ -91,7 +81,6 @@ final class SessionTimelinePresentation {
     @ObservationIgnored private var pendingWasStaged = false
 
     func flush(now: TimeInterval = ProcessInfo.processInfo.systemUptime) {
-        guard !holdsOpeningSnapshot else { return }
         if let pending {
             let existing = Dictionary(uniqueKeysWithValues: rows.map { ($0.id, $0) })
             let previousTail = rows.last?.value.orderSeq ?? Int.min
@@ -132,7 +121,7 @@ final class SessionTimelinePresentation {
                         self.flush()
                         self.synchronizePending(session.pendingMessages)
                         schedule.advance(after: clock.now)
-                    } while !Task.isCancelled && !self.holdsOpeningSnapshot && (self.pending != nil || self.rows.contains { $0.isRevealing })
+                    } while !Task.isCancelled && (self.pending != nil || self.rows.contains { $0.isRevealing })
                 }
             }
             await group.waitForAll()
@@ -140,7 +129,6 @@ final class SessionTimelinePresentation {
     }
 
     func synchronizePending(_ messages: [V2PendingMessage]) {
-        guard !holdsOpeningSnapshot else { return }
         // Change optimistic membership in the same tick that publishes echoes,
         // avoiding a blank first user row between HTTP/realtime and UI clocks.
         let visible = messages.filter { message in

@@ -21,11 +21,9 @@ struct SessionChatView: View, Equatable {
     @State private var isDownloading = false
     @State private var toasts = ChatToastStore()
     @State private var headerHeight: CGFloat = 66
+    @State private var composerDockHeight: CGFloat = 66
     @State private var pendingTakeover: Bool?
     @State private var hasStartedLoading = false
-    @State private var isInitialPositioned = false
-    @State private var openingAttempt = 0
-    @State private var openingPositionFailed = false
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.sidebarDrawerIsTransitioning) private var sidebarIsTransitioning
     @ScaledMetric(relativeTo: .body) private var bodyLineHeight: CGFloat = 22
@@ -52,21 +50,20 @@ struct SessionChatView: View, Equatable {
         GeometryReader { geometry in
             Group {
                 if hasStartedLoading {
-                    ChatTimelineView(model: model, isInitialPositioned: $isInitialPositioned,
-                        openingPositionFailed: $openingPositionFailed, openingAttempt: openingAttempt,
+                    ChatTimelineView(model: model, bottomMargin: composerDockHeight,
                         onAttachment: openAttachment, onFile: openFile)
                 } else {
                     Color.clear.frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
                 .overlay {
-                    if isInitialPositioned && model.timeline.rows.isEmpty && model.timeline.pendingMessages.isEmpty {
+                    if model.isOpeningReady && model.timeline.rows.isEmpty && model.timeline.pendingMessages.isEmpty {
                         VStack(spacing: 12) {
                             Text("在这里继续你的任务").foregroundStyle(.secondary)
                         }.allowsHitTesting(false)
                     }
                 }
-                .overlay { if !isInitialPositioned { openingMask } }
+                .overlay { if !model.isOpeningReady { openingMask } }
                 .safeAreaBar(edge: .top, spacing: 0) {
                     VStack(spacing: 0) {
                         ChatPageHeader(title: session.metadata?.title ?? "会话",
@@ -90,7 +87,7 @@ struct SessionChatView: View, Equatable {
                     }
                     .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { headerHeight = $0 }
                 }
-                .safeAreaInset(edge: .bottom, spacing: 0) {
+                .overlay(alignment: .bottom) {
                     VStack(spacing: 0) {
                         SessionInteractionDock(chat: model,
                             onShowAll: { expandedNoticeID = $0; sheet = .notices })
@@ -100,13 +97,16 @@ struct SessionChatView: View, Equatable {
                             canSelectModel: session.runtime.allows("catalog.model"),
                             canSelectPermission: session.runtime.allows("catalog.permission"),
                             isStreaming: model.isRunning, canStop: session.runtime.allows("session.interrupt"),
-                            isBusy: model.isWorking || !isInitialPositioned, placeholder: requiresTakeover ? "请先接管" : "询问 Agents",
+                            isBusy: model.isWorking || !model.isOpeningReady, placeholder: requiresTakeover ? "请先接管" : "询问 Agents",
                             isLoadingSettings: model.isLoadingSettings,
                             settingsError: model.settingsError, sessionChat: model,
                             onSend: model.send, onStop: model.interrupt, onLoadSettings: model.loadSettings,
                             onApplySettings: model.applySettings, applyError: { model.settingsError })
                     }
                     .frame(maxWidth: ChatControlMetrics.maximumContentWidth).frame(maxWidth: .infinity)
+                    // One measured inset owns the footer's space. Overlaying it
+                    // keeps the scroll viewport stable while cards/editors resize.
+                    .onGeometryChange(for: CGFloat.self, of: { ceil($0.size.height) }) { composerDockHeight = $0 }
                 }
                 .overlay(alignment: .top) {
                     ChatErrorToasts(store: toasts, isRetrying: session.isLoading, onRetry: { _ in await session.refresh() })
@@ -130,9 +130,8 @@ struct SessionChatView: View, Equatable {
         }
         .task(id: hasStartedLoading) {
             guard hasStartedLoading else { return }
-            // Reattaching an already revealed detail only resumes observation;
-            // it must not put its presentation clock back behind an opening hold.
-            if !isInitialPositioned { await model.prepareOpening() }
+            // Reattaching a loaded detail only resumes observation.
+            if !model.isOpeningReady { await model.prepareOpening() }
             guard !Task.isCancelled else { return }
             await model.timeline.run(sessionID: session.id, repository: model.repository)
         }
@@ -178,10 +177,6 @@ struct SessionChatView: View, Equatable {
                 if let error = model.openingError, !model.timeline.hasPresentedSnapshot {
                     Text(error).font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
                     Button("重试") { Task { await model.prepareOpening() } }
-                } else if openingPositionFailed {
-                    Text("会话已加载，暂时无法完成底部布局。")
-                        .font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
-                    Button("重新定位") { openingPositionFailed = false; openingAttempt += 1 }
                 } else {
                     ProgressView().progressViewStyle(.circular).accessibilityLabel("正在加载会话")
                 }
