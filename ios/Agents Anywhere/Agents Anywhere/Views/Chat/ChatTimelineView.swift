@@ -3,6 +3,8 @@ import SwiftUI
 struct ChatTimelineView: View {
     let model: SessionChatModel
     @Binding var isInitialPositioned: Bool
+    @Binding var openingPositionFailed: Bool
+    let openingAttempt: Int
     let onAttachment: (V2AttachmentContent) -> Void
     let onFile: (String) -> Void
     @State private var historyLayout: TimelineHistoryLayout?
@@ -17,24 +19,13 @@ struct ChatTimelineView: View {
     @State private var olderLoadRequest: Int?
     @State private var latestPromptVisible = false
     @State private var latestLoadRequest: Int?
-    @State private var openingLayout: TimelineOpeningLayout?
-    @State private var openingVisibleID: String?
-    @State private var openingAttempt = 0
-    @State private var openingPositionFailed = false
+    @State private var nativePhase = TimelineScrollState.Phase.idle
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.sidebarDrawerIsTransitioning) private var sidebarIsTransitioning
     @ScaledMetric(relativeTo: .caption) private var returnPillHeight: CGFloat = 32
 
     private var hasInteractions: Bool {
         model.session.notices.notices.contains { $0.isVisible && $0.notice.type == "interaction" }
-    }
-    private var openingTargetID: String? {
-        guard !isInitialPositioned, let target = model.openingTargetID else { return nil }
-        return model.timeline.rows.first { $0.id == target || $0.value.source["clientMessageId"]?.stringValue == target }?.id
-            ?? target
-    }
-    private var openingRequest: OpeningRequest {
-        OpeningRequest(prepared: model.isOpeningPrepared, target: openingTargetID,
-            completed: isInitialPositioned, attempt: openingAttempt)
     }
     var body: some View {
         // A sibling overlay receives taps independently of the scroll view's
@@ -45,13 +36,8 @@ struct ChatTimelineView: View {
                     latestPullReady: latestPull.isReady, isLoadingLatest: latestLoadRequest != nil,
                     olderPullReady: olderPull.isReady, isLoadingOlder: olderLoadRequest != nil,
                     keepsOlderPrompt: hasRequestedOlder, historyAnchor: historyPosition?.origin,
-                    openingTargetID: openingTargetID,
                     onLoadOlder: loadOlder, onLoadLatest: loadLatest,
                     onHistoryLayout: historyDidLayOut,
-                    onOpeningLayout: { if $0.id == openingTargetID { openingLayout = $0 } },
-                    onOpeningVisibility: { id, visible in
-                        if id == openingTargetID { openingVisibleID = visible ? id : nil }
-                    },
                     onPromptVisibility: { latestPromptVisible = $0 },
                     onOlderPromptVisibility: { olderPromptVisible = $0 },
                     onTailVisibility: { region, visible in scrolling.tailVisibilityChanged(region, visible: visible) })
@@ -62,7 +48,7 @@ struct ChatTimelineView: View {
             .scrollIndicators(.hidden)
             .scrollBounceBehavior(.always, axes: .vertical)
             .scrollEdgeEffectStyle(.soft, for: .top)
-            .defaultScrollAnchor(.top, for: .initialOffset)
+            .defaultScrollAnchor(.bottom, for: .initialOffset)
             .defaultScrollAnchor(.top, for: .alignment)
             .defaultScrollAnchor(.top, for: .sizeChanges)
             .allowsHitTesting(isInitialPositioned)
@@ -80,6 +66,10 @@ struct ChatTimelineView: View {
                 let current = TimelineViewport(geometry: context.geometry)
                 let wasInteracting = scrolling.phase == .interacting
                 viewport = current
+                nativePhase = mapped
+                // The drawer owns horizontal navigation. Do not interpret its
+                // interrupted scroll callbacks as a fresh vertical reading intent.
+                if sidebarIsTransitioning { return }
                 if scrolling.phaseChanged(mapped) {
                     // Release ScrollPosition's persistent edge target as soon
                     // as the user takes over, including interrupted animations.
@@ -103,7 +93,16 @@ struct ChatTimelineView: View {
                 TimelineViewport(geometry: geometry)
             } action: { _, value in
                 viewport = value
-                if scrolling.phase == .interacting { latestPull.update(value); olderPull.update(value) }
+                if !sidebarIsTransitioning && scrolling.phase == .interacting { latestPull.update(value); olderPull.update(value) }
+            }
+            .onChange(of: sidebarIsTransitioning) { _, transitioning in
+                if transitioning {
+                    if isInitialPositioned { position.isPositionedByUser = true }
+                    latestPull.cancel(); olderPull.cancel()
+                } else {
+                    scrolling.phaseChanged(nativePhase)
+                    if let historyLayout { historyDidLayOut(historyLayout) }
+                }
             }
             .onChange(of: model.session.pendingMessages.last?.id) { _, id in
                 if isInitialPositioned, id != nil && !hasInteractions { scrolling.requestBottom() }
@@ -118,43 +117,40 @@ struct ChatTimelineView: View {
             .onChange(of: scrolling.returningToBottom) { _, returning in
                 if isInitialPositioned && !returning && hasInteractions { position.isPositionedByUser = true }
             }
-            .task(id: FollowRequest(contentHeight: viewport.contentHeight, visibleHeight: viewport.visibleHeight,
-                followsTail: scrolling.followsTail, userIsScrolling: scrolling.userIsScrolling,
-                navigationGeneration: scrolling.navigationGeneration, interactionIsPresented: hasInteractions, tail: scrolling.tail)) {
-                guard isInitialPositioned, (!hasInteractions || scrolling.returningToBottom), scrolling.shouldFollow() else { return }
-                do { try await Task.sleep(for: .milliseconds(24)) } catch { return }
-                guard !Task.isCancelled, isInitialPositioned, (!hasInteractions || scrolling.returningToBottom), scrolling.shouldFollow() else { return }
-                scrollToBottom()
-            }
-            .task(id: openingRequest) {
-                let request = openingRequest
-                guard !request.completed, request.prepared else { return }
+            .task(id: OpeningRequest(ready: model.isOpeningReady, completed: isInitialPositioned, attempt: openingAttempt)) {
+                guard model.isOpeningReady, !isInitialPositioned else { return }
                 openingPositionFailed = false
-                var opening = TimelineOpeningPosition(targetID: request.target, now: ProcessInfo.processInfo.systemUptime)
-                // A single bounded task survives geometry updates. A failed
-                // native scroll must not rely on a new callback to be retried.
-                while !Task.isCancelled, openingRequest == request {
-                    if model.openingError != nil && !model.timeline.hasPresentedSnapshot { return }
-                    switch opening.advance(presented: model.timeline.hasPresentedSnapshot,
-                        layout: openingLayout, visibleID: openingVisibleID,
-                        viewportHeight: viewport.visibleHeight, isIdle: scrolling.phase == .idle,
-                        now: ProcessInfo.processInfo.systemUptime) {
+                model.timeline.holdForOpening()
+                scrolling.requestBottom()
+                var opening = TimelineOpeningPosition(now: ProcessInfo.processInfo.systemUptime)
+                while !Task.isCancelled {
+                    switch opening.advance(viewport: viewport, isAtBottom: scrolling.tail.isAtBottom,
+                        isIdle: scrolling.phase == .idle && !sidebarIsTransitioning, now: ProcessInfo.processInfo.systemUptime) {
                     case .wait: break
-                    case .scrollTo(let id):
+                    case .scrollToBottom:
                         var transaction = Transaction(animation: nil)
                         transaction.disablesAnimations = true
-                        withTransaction(transaction) { position.scrollTo(id: id, anchor: .top) }
+                        withTransaction(transaction) { position.scrollTo(edge: .bottom) }
                     case .reveal:
-                        position.isPositionedByUser = true
-                        scrolling.browseHistory()
+                        if hasInteractions { position.isPositionedByUser = true }
                         isInitialPositioned = true
+                        model.timeline.finishOpening()
                         return
                     case .retry:
                         openingPositionFailed = true
                         return
                     }
-                    do { try await Task.sleep(for: .milliseconds(64)) } catch { return }
+                    do { try await Task.sleep(for: .milliseconds(32)) } catch { return }
                 }
+            }
+            .task(id: FollowRequest(contentHeight: viewport.contentHeight, visibleHeight: viewport.visibleHeight,
+                followsTail: scrolling.followsTail, userIsScrolling: scrolling.userIsScrolling,
+                navigationGeneration: scrolling.navigationGeneration, interactionIsPresented: hasInteractions,
+                sidebarIsTransitioning: sidebarIsTransitioning, tail: scrolling.tail)) {
+                guard isInitialPositioned, !sidebarIsTransitioning, (!hasInteractions || scrolling.returningToBottom), scrolling.shouldFollow() else { return }
+                do { try await Task.sleep(for: .milliseconds(24)) } catch { return }
+                guard !Task.isCancelled, isInitialPositioned, !sidebarIsTransitioning, (!hasInteractions || scrolling.returningToBottom), scrolling.shouldFollow() else { return }
+                scrollToBottom()
             }
             .task(id: ScrollSettlement(phase: scrolling.phase, tail: scrolling.tail, generation: scrolling.navigationGeneration)) {
                 guard scrolling.needsScrollSettlement else { return }
@@ -206,29 +202,6 @@ struct ChatTimelineView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .overlay {
-            if !isInitialPositioned {
-                ZStack {
-                    // Keep the timeline in native layout beneath an opaque mask;
-                    // its visibility probes still acknowledge the actual target.
-                    Color(uiColor: .systemBackground)
-                    VStack(spacing: 12) {
-                        if let error = model.openingError, !model.timeline.hasPresentedSnapshot {
-                            Text(error).font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
-                            Button("重试") { Task { await model.prepareOpening() } }
-                        } else if openingPositionFailed {
-                            Text("会话已加载，暂时无法定位到最近的消息。")
-                                .font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
-                            Button("重新定位") { openingPositionFailed = false; openingAttempt += 1 }
-                        } else {
-                            ProgressView().progressViewStyle(.circular).accessibilityLabel("正在加载并定位会话")
-                        }
-                    }
-                    .padding(24).frame(maxWidth: 320)
-                }
-                .transition(.identity)
-            }
-        }
     }
     private func loadOlder() {
         guard model.session.isValid, model.session.hasOlderItems,
@@ -257,6 +230,7 @@ struct ChatTimelineView: View {
     }
     private func historyDidLayOut(_ layout: TimelineHistoryLayout) {
         historyLayout = layout
+        guard !sidebarIsTransitioning else { return }
         guard let offset = historyPosition?.laidOut(layout, generation: scrolling.navigationGeneration) else { return }
         var transaction = Transaction(animation: nil)
         transaction.disablesAnimations = true
@@ -269,6 +243,7 @@ struct ChatTimelineView: View {
         let userIsScrolling: Bool
         let navigationGeneration: Int
         let interactionIsPresented: Bool
+        let sidebarIsTransitioning: Bool
         let tail: TimelineTailVisibility
     }
     private struct ScrollSettlement: Equatable {
@@ -281,12 +256,7 @@ struct ChatTimelineView: View {
         let ready: Bool
         let offset: CGFloat?
     }
-    private struct OpeningRequest: Equatable {
-        let prepared: Bool
-        let target: String?
-        let completed: Bool
-        let attempt: Int
-    }
+    private struct OpeningRequest: Equatable { let ready: Bool; let completed: Bool; let attempt: Int }
 }
 
 private struct ChatTimelineContent: View, Equatable {
@@ -299,12 +269,9 @@ private struct ChatTimelineContent: View, Equatable {
     let isLoadingOlder: Bool
     let keepsOlderPrompt: Bool
     let historyAnchor: TimelineHistoryLayout?
-    let openingTargetID: String?
     let onLoadOlder: () -> Void
     let onLoadLatest: () -> Void
     let onHistoryLayout: (TimelineHistoryLayout) -> Void
-    let onOpeningLayout: (TimelineOpeningLayout) -> Void
-    let onOpeningVisibility: (String, Bool) -> Void
     let onPromptVisibility: (Bool) -> Void
     let onOlderPromptVisibility: (Bool) -> Void
     let onTailVisibility: (TimelineTailVisibility.Region, Bool) -> Void
@@ -313,7 +280,6 @@ private struct ChatTimelineContent: View, Equatable {
         lhs.model === rhs.model && lhs.latestPullReady == rhs.latestPullReady && lhs.isLoadingLatest == rhs.isLoadingLatest
             && lhs.olderPullReady == rhs.olderPullReady && lhs.isLoadingOlder == rhs.isLoadingOlder
             && lhs.keepsOlderPrompt == rhs.keepsOlderPrompt && lhs.historyAnchor == rhs.historyAnchor
-            && lhs.openingTargetID == rhs.openingTargetID
     }
     var body: some View {
         let groups = TimelineGrouping.groups(model.timeline.rows, interactionTargets: Set(model.session.notices.notices
@@ -354,11 +320,6 @@ private struct ChatTimelineContent: View, Equatable {
                 SessionTimelineGroupView(group: group, chat: model, onAttachment: onAttachment, onFile: onFile,
                     turnAction: actions[group.id])
                     .id(group.id)
-                    .overlay(alignment: .top) {
-                        if let openingTargetID, group.rows.contains(where: { $0.id == openingTargetID }) {
-                            openingMarker(id: openingTargetID, scrollID: group.id)
-                        }
-                    }
                     .background {
                         if group.id == anchorGroup?.id, let firstRowID = model.timeline.rows.first?.id {
                             Color.clear.onGeometryChange(for: TimelineHistoryLayout.self) { geometry in
@@ -378,11 +339,6 @@ private struct ChatTimelineContent: View, Equatable {
                 PendingMessageRow(pending: pending, chat: model, onAttachment: onAttachment,
                     onDismiss: { model.session.dismissPendingMessage(id: pending.id) })
                     .id(pending.id)
-                    .overlay(alignment: .top) {
-                        if openingTargetID == pending.id {
-                            openingMarker(id: pending.id, scrollID: pending.id)
-                        }
-                    }
             }
             if model.isRunning && !model.timeline.rows.contains(where: { $0.structure.isStreamingText }) {
                 Text("正在处理任务").font(.subheadline).foregroundStyle(.secondary).frame(height: 40, alignment: .leading)
@@ -420,23 +376,12 @@ private struct ChatTimelineContent: View, Equatable {
         .coordinateSpace(name: "chat.timeline.content")
     }
 
-    private func openingMarker(id: String, scrollID: String) -> some View {
-        // Measuring the entire message would prevent a tall message from ever
-        // becoming fully visible. This probe also leaves the row's size intact.
-        Color.clear.frame(height: 2)
-            .onGeometryChange(for: TimelineOpeningLayout.self) { geometry in
-                TimelineOpeningLayout(id: id, scrollID: scrollID, frame: geometry.frame(in: .scrollView(axis: .vertical)))
-            } action: { onOpeningLayout($0) }
-            .onScrollVisibilityChange(threshold: 0.5) { onOpeningVisibility(id, $0) }
-            .allowsHitTesting(false).accessibilityHidden(true)
-            .id(OpeningMarkerID(message: id, group: scrollID))
-    }
-    private struct OpeningMarkerID: Hashable { let message: String; let group: String }
 }
 
 private extension TimelineViewport {
     init(geometry: ScrollGeometry) {
         self.init(contentHeight: geometry.contentSize.height, containerHeight: geometry.containerSize.height,
+            containerWidth: geometry.containerSize.width,
             topInset: geometry.contentInsets.top, bottomInset: geometry.contentInsets.bottom, offsetY: geometry.contentOffset.y)
     }
 }

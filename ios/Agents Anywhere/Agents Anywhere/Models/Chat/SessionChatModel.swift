@@ -17,14 +17,7 @@ final class SessionChatModel {
     var error: String?
     var settingsError: String?
     private(set) var isOpeningPrepared = false
-    var openingTargetID: String? {
-        guard isOpeningPrepared else { return nil }
-        // An optimistic message can be replaced by its echo, or a recovery
-        // snapshot can replace the window while native layout is still pending.
-        return session.pendingMessages.last?.id
-            ?? session.timeline.last(where: { $0.value.type == .message && $0.value.role == .user && $0.value.isVisibleInChat })?.id
-            ?? session.timeline.last(where: { $0.value.isVisibleInChat })?.id
-    }
+    var isOpeningReady: Bool { isOpeningPrepared && timeline.hasPresentedSnapshot }
     private(set) var openingError: String?
     private(set) var responseRevision = 0
     @ObservationIgnored let repository: V2SessionRepository
@@ -62,20 +55,18 @@ final class SessionChatModel {
     func prepareOpening() async {
         isOpeningPrepared = false; openingError = nil
         do {
-            var data = try await repository.load(sessionId: session.id)
-            if data.hasNewerItems { data = try await repository.loadLatest(sessionId: session.id) }
-            // A tool-heavy latest page may not contain its user's message yet.
-            while !data.items.contains(where: { $0.type == .message && $0.role == .user && $0.isVisibleInChat }), data.hasOlderItems {
-                try Task.checkCancellation()
-                let first = data.items.first?.id
-                data = try await repository.loadOlder(sessionId: session.id)
-                if data.items.first?.id == first { break }
-            }
+            let data = try await repository.load(sessionId: session.id)
+            // Reopening an older cached window returns to the latest records.
+            // Opening never pages backward just to find a user-message anchor.
+            if data.hasNewerItems { _ = try await repository.loadLatest(sessionId: session.id) }
         } catch {
             guard !Task.isCancelled else { return }
             openingError = error.localizedDescription
         }
         guard session.isValid, !Task.isCancelled else { return }
+        if let data = repository.cached(sessionId: session.id) {
+            timeline.presentOpening(data.items, pendingMessages: session.pendingMessages)
+        }
         isOpeningPrepared = true
     }
 

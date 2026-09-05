@@ -11,7 +11,7 @@ import Testing
             attachments: .init(attachmentAPI: V2AttachmentAPI(transport: http)))
     }
 
-    @Test func openingLoadsBackToTheLatestUserInsteadOfChoosingTheLastTool() async throws {
+    @Test func openingKeepsTheLatestWindowWithoutFetchingAnEarlierUserMessage() async throws {
         let http = TestHTTPTransport()
         http.respond = { call in
             if call.path.hasSuffix("snapshot") {
@@ -22,20 +22,14 @@ import Testing
                 timeline["items"] = [tool]; timeline["hasMore"] = true; snapshot["timeline"] = timeline
                 return try JSONSerialization.data(withJSONObject: snapshot)
             }
-            if call.path.hasSuffix("timeline") {
-                #expect(call.query.contains { $0.name == "beforeOrderSeq" && $0.value == "100" })
-                var page = try fixtureObject("timeline")
-                var user = try itemObject(id: "user", order: 90); user["role"] = "user"
-                page["items"] = [user]; page["hasMore"] = false
-                return try JSONSerialization.data(withJSONObject: page)
-            }
             return try http.defaultResponse(call)
         }
         let model = chat(http)
         defer { model.repository.reset() }
         await model.prepareOpening()
-        #expect(model.isOpeningPrepared && model.openingTargetID == "user" && model.openingError == nil)
-        #expect(http.count("snapshot") == 1 && http.count("timeline") == 1)
+        #expect(model.isOpeningReady && model.openingError == nil)
+        #expect(model.timeline.rows.map(\.id) == ["tool"] && model.session.hasOlderItems)
+        #expect(http.count("snapshot") == 1 && http.count("timeline") == 0)
     }
 
     @Test func openingNetworkFailureIsActionableWithoutAnEndlessLoadingPhase() async {
@@ -44,7 +38,7 @@ import Testing
         let model = chat(http)
         defer { model.repository.reset() }
         await model.prepareOpening()
-        #expect(model.isOpeningPrepared && model.openingError != nil && model.openingTargetID == nil)
+        #expect(model.isOpeningPrepared && model.openingError != nil && !model.isOpeningReady)
     }
 
     @Test func optimisticAttachmentMetadataAndPreviewsSurviveReorderedOrSparseEchoes() throws {

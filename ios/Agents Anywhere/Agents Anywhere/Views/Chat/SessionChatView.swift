@@ -4,6 +4,7 @@ import QuickLook
 struct SessionChatView: View, Equatable {
     @State private var model: SessionChatModel
     private let sessionIdentity: V2SessionModel
+    let deviceName: String?
     let safeAreaInsets: EdgeInsets
     let onMenu: () -> Void
     let onNewSession: () -> Void
@@ -21,16 +22,21 @@ struct SessionChatView: View, Equatable {
     @State private var toasts = ChatToastStore()
     @State private var headerHeight: CGFloat = 66
     @State private var pendingTakeover: Bool?
+    @State private var hasStartedLoading = false
     @State private var isInitialPositioned = false
+    @State private var openingAttempt = 0
+    @State private var openingPositionFailed = false
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.sidebarDrawerIsTransitioning) private var sidebarIsTransitioning
     @ScaledMetric(relativeTo: .body) private var bodyLineHeight: CGFloat = 22
     @ScaledMetric(relativeTo: .footnote) private var takeoverPillHeight: CGFloat = 32
 
-    init(session: V2SessionModel, services: V2ClientServices, safeAreaInsets: EdgeInsets,
+    init(session: V2SessionModel, services: V2ClientServices, deviceName: String?, safeAreaInsets: EdgeInsets,
          onMenu: @escaping () -> Void, onNewSession: @escaping () -> Void) {
         _model = State(initialValue: SessionChatModel(session: session, repository: services.sessionRepository, attachments: services.attachments,
             files: services.workspaceFiles))
         sessionIdentity = session
+        self.deviceName = deviceName
         fileService = services.workspaceFiles; detailService = services.sessionDetail
         self.safeAreaInsets = safeAreaInsets; self.onMenu = onMenu; self.onNewSession = onNewSession
     }
@@ -40,11 +46,19 @@ struct SessionChatView: View, Equatable {
     // Sidebar motion changes the containing card, not the session. Observable
     // model changes and real size/environment changes still update this subtree.
     static func == (lhs: Self, rhs: Self) -> Bool {
-        lhs.sessionIdentity === rhs.sessionIdentity && lhs.safeAreaInsets == rhs.safeAreaInsets
+        lhs.sessionIdentity === rhs.sessionIdentity && lhs.safeAreaInsets == rhs.safeAreaInsets && lhs.deviceName == rhs.deviceName
     }
     var body: some View {
         GeometryReader { geometry in
-            ChatTimelineView(model: model, isInitialPositioned: $isInitialPositioned, onAttachment: openAttachment, onFile: openFile)
+            Group {
+                if hasStartedLoading {
+                    ChatTimelineView(model: model, isInitialPositioned: $isInitialPositioned,
+                        openingPositionFailed: $openingPositionFailed, openingAttempt: openingAttempt,
+                        onAttachment: openAttachment, onFile: openFile)
+                } else {
+                    Color.clear.frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            }
                 .overlay {
                     if isInitialPositioned && model.timeline.rows.isEmpty && model.timeline.pendingMessages.isEmpty {
                         VStack(spacing: 12) {
@@ -52,10 +66,12 @@ struct SessionChatView: View, Equatable {
                         }.allowsHitTesting(false)
                     }
                 }
+                .overlay { if !isInitialPositioned { openingMask } }
                 .safeAreaBar(edge: .top, spacing: 0) {
                     VStack(spacing: 0) {
                         ChatPageHeader(title: session.metadata?.title ?? "会话",
-                            subtitle: session.metadata?.runtimeName ?? session.metadata?.runtime,
+                            subtitle: [session.metadata?.runtimeName ?? session.metadata?.runtime,
+                                deviceName ?? session.metadata?.connectorId].compactMap { $0 }.joined(separator: " · "),
                             controls: controls, onMenu: onMenu) {
                             HStack(spacing: 0) {
                                 Button(action: onNewSession) { ChatHeaderActionLabel(symbol: "square.and.pencil", controls: controls) }
@@ -102,8 +118,24 @@ struct SessionChatView: View, Equatable {
             model.error = nil
             if !(await model.setTakeover(enabled)), let error = model.takeoverError { model.error = error }
         })
-        .task { await model.timeline.run(sessionID: session.id, repository: model.repository) }
-        .task { await model.prepareOpening() }
+        .task(id: sidebarIsTransitioning) {
+            guard !hasStartedLoading, !sidebarIsTransitioning else { return }
+            // Show feedback immediately, but let the drawer's completed
+            // animation and the selection's final layout leave the main thread.
+            do { try await Task.sleep(for: .milliseconds(120)) } catch { return }
+            guard !Task.isCancelled, !sidebarIsTransitioning else { return }
+            var transaction = Transaction(animation: nil)
+            transaction.disablesAnimations = true
+            withTransaction(transaction) { hasStartedLoading = true }
+        }
+        .task(id: hasStartedLoading) {
+            guard hasStartedLoading else { return }
+            // Reattaching an already revealed detail only resumes observation;
+            // it must not put its presentation clock back behind an opening hold.
+            if !isInitialPositioned { await model.prepareOpening() }
+            guard !Task.isCancelled else { return }
+            await model.timeline.run(sessionID: session.id, repository: model.repository)
+        }
         .sheet(item: $sheet) { destination in
             switch destination {
             case .notices: SessionNoticesSheet(model: model, initialNoticeID: expandedNoticeID)
@@ -137,6 +169,26 @@ struct SessionChatView: View, Equatable {
         .onChange(of: model.openingError, initial: true) { _, message in
             toasts.update(source: "opening", failure: message.map { V2ClientFailure(kind: .unavailable, message: $0) })
         }
+    }
+
+    private var openingMask: some View {
+        ZStack {
+            Color(uiColor: .systemBackground)
+            VStack(spacing: 12) {
+                if let error = model.openingError, !model.timeline.hasPresentedSnapshot {
+                    Text(error).font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                    Button("重试") { Task { await model.prepareOpening() } }
+                } else if openingPositionFailed {
+                    Text("会话已加载，暂时无法完成底部布局。")
+                        .font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                    Button("重新定位") { openingPositionFailed = false; openingAttempt += 1 }
+                } else {
+                    ProgressView().progressViewStyle(.circular).accessibilityLabel("正在加载会话")
+                }
+            }
+            .padding(24).frame(maxWidth: 320)
+        }
+        .transition(.identity)
     }
 
     @ViewBuilder private var connectionBar: some View {

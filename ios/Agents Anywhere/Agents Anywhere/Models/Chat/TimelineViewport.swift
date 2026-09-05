@@ -4,14 +4,16 @@ import Foundation
 /// Absolute content-size arithmetic never decides whether the tail is visible.
 nonisolated struct TimelineViewport: Equatable {
     let contentHeight: CGFloat
+    let containerWidth: CGFloat
     let visibleHeight: CGFloat
     let visibleBottom: CGFloat
     let offsetY: CGFloat
     let topInset: CGFloat
 
-    init(contentHeight: CGFloat = 0, containerHeight: CGFloat = 0,
+    init(contentHeight: CGFloat = 0, containerHeight: CGFloat = 0, containerWidth: CGFloat = 0,
          topInset: CGFloat = 0, bottomInset: CGFloat = 0, offsetY: CGFloat = 0) {
         self.contentHeight = max(0, contentHeight)
+        self.containerWidth = max(0, containerWidth)
         visibleHeight = max(0, containerHeight - topInset - bottomInset)
         visibleBottom = offsetY + containerHeight - bottomInset
         self.offsetY = offsetY

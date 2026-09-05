@@ -39,19 +39,20 @@ Semantic error and availability colors remain separate from the primary color.
   same presentation tick. A per-width/Dynamic-Type height floor and stable blocks
   reduce Markdown height churn during streaming. Authoritative replacements
   reset the layout generation.
-- Opening a session prepares the latest window and, when a tool-heavy page has
-  no user message, reads back until it finds one. The detail column keeps its
-  centered loading indicator above an opaque mask while the timeline lays out
-  and scrolls to that latest user message's native ID without animation. Native
-  scrolling owns safe-area insets and end clamping. A two-point probe at the
-  message's start must become visible and settle with an idle viewport for 64 ms
-  before the mask disappears; tall messages need not fit entirely on screen.
-  A bounded positioning task retries unacknowledged requests even without new
-  geometry callbacks and offers “重新定位” after six seconds instead of spinning
-  forever. Retrying positioning reuses the loaded history. Optimistic echoes and
-  recovery snapshots update the target ID while opening. An initial network
-  failure separately offers Retry. Approval state cannot cancel the initial
-  native target before positioning completes.
+- Opening a session immediately displays one persistent loading indicator in
+  the detail column. History loading and timeline mounting wait for the sidebar
+  animation's completion and another 120 ms; a new selection cancels the pending
+  start. A sidebar gesture after loading starts does not restart the connection.
+  Opening loads the latest window and uses the native bottom edge without an
+  animated scroll from the top. It never pages backward to find a user message.
+  Native tail visibility must confirm the bottom, and the content/viewport size,
+  offset and idle state must settle for 160 ms before the opaque mask disappears.
+  The initial snapshot stays fixed while new projections and optimistic echoes
+  are buffered; revealing resumes the 30 Hz presentation clock without requiring
+  another network event. Unacknowledged native requests retry even without new
+  geometry callbacks. A six-second positioning failure offers “重新定位”, reusing
+  the loaded history; network failures separately offer Retry. Approval state
+  cannot cancel the initial bottom target before positioning completes.
 - Tail following uses a continuous spring. Scrolling away suspends it, and a
   small borderless “到底部” pill sits centered above the composer. There is no
   animated streaming dot or cursor.
@@ -117,10 +118,15 @@ Semantic error and availability colors remain separate from the primary color.
   pending user message already marks the next turn, so its predecessor's footer
   stays visible through HTTP acceptance and the authoritative echo.
 - The session header uses `safeAreaBar` with the scroll view's native soft edge
-  effect. The sidebar icon has three left-aligned strokes, the last shorter.
+  effect. Its subtitle shows the Agent and device names, using the device ID
+  when its name is not yet available. The sidebar icon has three left-aligned strokes, the last shorter.
   A right-hand glass button group contains New Session and a details menu. The
   phone's left-edge drawer gesture starts within 44 points and still requires
   horizontal intent so vertical timeline scrolling is not intercepted.
+  The sliding card uses the host's original horizontal safe-area insets instead
+  of deriving new insets from its partly off-screen position. Sidebar movement
+  releases the native edge target and suspends queued auto-follow/edge pulls;
+  vertical navigation resumes from the reported native scroll phase afterward.
 - At regular iPad widths, the native split opens with both columns and keeps the
   sidebar visible when selecting a session, device or New Session. The detail
   remains an active read target while the sidebar sits beside it. Narrow iPad
@@ -304,7 +310,7 @@ than a “server unavailable” alert.
 
 Verified on 2026-09-06, without starting a server or simulator:
 
-- 133 headless Swift tests across nineteen suites pass against production client-core
+- 134 headless Swift tests across nineteen suites pass against production client-core
   sources. They cover API contracts, recovery/cache races, uncertain delivery,
   30 Hz presentation, echo handoff, target preparation, preference scope, schema
   payloads and interaction lifecycle/IME guards. Session-detail checks cover
@@ -320,9 +326,10 @@ Verified on 2026-09-06, without starting a server or simulator:
   Sidebar tests cover regular/compact selection and resize behavior, and confirm
   cached model lookup does not subscribe its caller to historical row payloads.
   Opening/history tests cover delayed presentation, measured offset retention,
-  native marker acknowledgment, inset/clamped positions, missing callbacks,
-  resize settlement, folded targets, optimistic target replacement, bounded
-  positioning retries, pulls, cancellation and loading back to a user message.
+  native bottom visibility, inset/clamped positions, missing callbacks, resize
+  settlement, bounded positioning retries, opening snapshot/echo buffering and
+  waking buffered realtime on reveal, pulls, cancellation and opening without
+  fetching earlier user messages.
   Attachment/delivery tests cover sparse/reordered echoes, bounded caches, FS
   thumbnail reads, offline preview reuse and preserving a newer identical draft.
 - The Python backend contract fixture exporter reports that fixtures are current.
@@ -403,9 +410,12 @@ keyboard layout and real mobile-network behavior still need manual validation:
     narrow window, select a session, reopen the sidebar and widen again. With a
     long Markdown history, toggle the sidebar and check responsiveness, retained
     reading position and continued streaming while the detail remains visible.
-14. Open a long session and verify that loading stays centered inside the detail
-    column until the latest user message is positioned, with no visible scroll
-    from the top. Load older pages by tap/pull and check the spinner, retained
+14. Open long, short and running sessions: the detail's spinner appears at once,
+    loading starts after the sidebar animation, and the spinner remains until
+    the bottom is visible with a stable layout. Switch sessions rapidly during
+    drawer motion, then slowly drag the iPhone drawer closed; check that text
+    does not wrap with the horizontal pan or trigger vertical corrections. Check
+    Agent/device names in the header. Load older pages by tap/pull and check the spinner, retained
     reading offset and the final-page marker. Send images and documents, check
     composer thumbnails, the bubble's left spinner and unchanged preview/text
     geometry after echoes. Read a device-path image online, then reopen it offline

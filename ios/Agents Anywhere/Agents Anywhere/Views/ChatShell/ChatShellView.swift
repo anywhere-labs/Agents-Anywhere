@@ -152,7 +152,10 @@ struct ChatShellView: View {
             )
         } else if let services = appState.nativeChatServices {
             if case let .session(id) = selection {
-                SessionChatView(session: services.sessionRepository.session(id: id), services: services,
+                let session = services.sessionRepository.session(id: id)
+                let connectorID = session.metadata?.connectorId ?? appState.sessions.first { $0.id == id }?.connectorId
+                SessionChatView(session: session, services: services,
+                    deviceName: appState.connectors.first { $0.id == connectorID }?.name,
                     safeAreaInsets: safeAreaInsets, onMenu: toggleSidebar, onNewSession: startNewSession)
                     .equatable()
                     .id(id)

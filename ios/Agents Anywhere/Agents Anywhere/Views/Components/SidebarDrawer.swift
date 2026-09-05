@@ -42,7 +42,15 @@ private struct SidebarDrawerPresentationKey: EnvironmentKey {
     static let defaultValue = SidebarDrawerPresentation.drawer
 }
 
+private struct SidebarDrawerTransitionKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
 extension EnvironmentValues {
+    var sidebarDrawerIsTransitioning: Bool {
+        get { self[SidebarDrawerTransitionKey.self] }
+        set { self[SidebarDrawerTransitionKey.self] = newValue }
+    }
     var sidebarDrawerPresentation: SidebarDrawerPresentation {
         get { self[SidebarDrawerPresentationKey.self] }
         set { self[SidebarDrawerPresentationKey.self] = newValue }
@@ -118,6 +126,7 @@ private struct SidebarDrawerInteractive<
     @State private var dragStartProgress: CGFloat?
     @State private var dragDisposition: DragDisposition?
     @State private var animationGeneration = 0
+    @State private var isAnimating = false
     @State private var feedbackTrigger = 0
 
     init(
@@ -218,6 +227,8 @@ private struct SidebarDrawerInteractive<
             .ignoresSafeArea()
         }
         .environment(\.sidebarDrawerPresentation, .drawer)
+        .environment(\.sidebarDrawerIsTransitioning, isAnimating || dragStartProgress != nil
+            || abs(progress - (isOpen ? 1 : 0)) > 0.001)
         .sensoryFeedback(
             .impact(weight: .light, intensity: 1),
             trigger: feedbackTrigger
@@ -388,6 +399,7 @@ private struct SidebarDrawerInteractive<
 
         animationGeneration &+= 1
         let generation = animationGeneration
+        isAnimating = true
 
         if shouldProvideFeedback {
             feedbackTrigger &+= 1
@@ -396,6 +408,7 @@ private struct SidebarDrawerInteractive<
         let completion = {
             guard generation == animationGeneration else { return }
 
+            isAnimating = false
             progress = target
             let targetIsOpen = target == 1
             if isOpen != targetIsOpen {
@@ -416,7 +429,7 @@ private struct SidebarDrawerInteractive<
                     Spring(response: 0.34, dampingRatio: 0.9),
                     initialVelocity: initialVelocity
                 ),
-                completionCriteria: .logicallyComplete
+                completionCriteria: .removed
             ) {
                 progress = target
             } completion: {
@@ -440,6 +453,8 @@ private struct SidebarDrawerNativeSplitView<
 
     @State private var columnVisibility: NavigationSplitViewVisibility
     @State private var preferredCompactColumn: NavigationSplitViewColumn
+    @State private var isAnimating = false
+    @State private var animationGeneration = 0
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -481,6 +496,7 @@ private struct SidebarDrawerNativeSplitView<
         }
         .navigationSplitViewStyle(.balanced)
         .environment(\.sidebarDrawerPresentation, .nativeSidebar)
+        .environment(\.sidebarDrawerIsTransitioning, isAnimating || columnsNeedUpdate)
         .onChange(of: isOpen) { _, newValue in
             updateColumns(open: newValue)
         }
@@ -509,9 +525,23 @@ private struct SidebarDrawerNativeSplitView<
     }
 
     private func updateColumns(open: Bool) {
-        withAnimation(reduceMotion ? nil : .smooth(duration: 0.3)) {
+        animationGeneration &+= 1
+        let generation = animationGeneration
+        isAnimating = true
+        withAnimation(reduceMotion ? nil : .smooth(duration: 0.3), completionCriteria: .removed) {
             columnVisibility = open ? .all : .detailOnly
             preferredCompactColumn = open ? .sidebar : .detail
+        } completion: {
+            if animationGeneration == generation { isAnimating = false }
+        }
+    }
+
+    private var columnsNeedUpdate: Bool {
+        if horizontalSizeClass == .compact { return preferredCompactColumn != (isOpen ? .sidebar : .detail) }
+        switch columnVisibility {
+        case .all, .doubleColumn: return !isOpen
+        case .detailOnly: return isOpen
+        default: return false
         }
     }
 }
@@ -605,6 +635,10 @@ private struct SidebarDrawerMainCard<Content: View>: View {
         )
 
         content
+            // The host already supplies the original safe-area insets. A card
+            // sliding partly off-screen must not inherit a growing horizontal
+            // inset from its intersection with the window and rewrap its text.
+            .ignoresSafeArea(.container, edges: .horizontal)
             .frame(width: size.width, height: size.height)
             .background(drawerSystemBackground, in: screenShape)
             .clipShape(screenShape)

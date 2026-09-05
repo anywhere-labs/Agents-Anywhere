@@ -1,59 +1,46 @@
 import Foundation
 import CoreGraphics
 
-/// The two-point probe at the start of the message, measured in the scroll
-/// view's coordinate space. A folded group supplies its own native target ID.
-nonisolated struct TimelineOpeningLayout: Equatable {
-    let id: String
-    let scrollID: String
-    let frame: CGRect
-}
-
-/// Native identity-based scrolling owns insets and clamping. Completion uses
-/// the actual marker's visibility and settled geometry, never a guessed offset.
+/// Opening always uses the native bottom edge. Keep the mask until the actual
+/// tail is visible and its viewport/content layout has stopped changing.
 nonisolated struct TimelineOpeningPosition {
-    enum Action: Equatable { case wait, scrollTo(String), reveal, retry }
-    let targetID: String?
+    enum Action: Equatable { case wait, scrollToBottom, reveal, retry }
     private let startedAt: TimeInterval
-    private var requestedID: String?
     private var requestedAt: TimeInterval?
-    private var candidate: Measurement?
+    private var candidate: TimelineViewport?
     private var candidateAt: TimeInterval?
 
-    private struct Measurement: Equatable {
-        let layout: TimelineOpeningLayout
-        let viewportHeight: CGFloat
-    }
+    init(now: TimeInterval) { startedAt = now }
 
-    init(targetID: String?, now: TimeInterval) {
-        self.targetID = targetID; startedAt = now
-    }
-
-    mutating func advance(presented: Bool, layout: TimelineOpeningLayout?, visibleID: String?,
-                          viewportHeight: CGFloat, isIdle: Bool, now: TimeInterval) -> Action {
+    mutating func advance(viewport: TimelineViewport, isAtBottom: Bool, isIdle: Bool, now: TimeInterval) -> Action {
         let expired = now - startedAt >= 6
-        guard presented, viewportHeight > 0 else { return expired ? .retry : .wait }
-        guard let targetID else { return .reveal }
-        guard let layout, layout.id == targetID, layout.frame.width > 0, layout.frame.height > 0 else {
-            return expired ? .retry : .wait
-        }
-        if requestedID == layout.scrollID, let requestedAt {
-            if visibleID == targetID, isIdle {
-                let measurement = Measurement(layout: layout, viewportHeight: viewportHeight)
-                if candidate == measurement, let candidateAt, now - candidateAt >= 0.064 { return .reveal }
-                if candidate != measurement { candidate = measurement; candidateAt = now }
+        guard viewport.visibleHeight > 0 else { return expired ? .retry : .wait }
+        if let requestedAt {
+            if isAtBottom, isIdle {
+                let isStable = candidate.map { Self.sameLayout($0, viewport) } ?? false
+                if isStable, let candidateAt, now - candidateAt >= 0.16 { return .reveal }
+                if !isStable { candidate = viewport; candidateAt = now }
             } else {
                 candidate = nil; candidateAt = nil
             }
             if expired { return .retry }
-            // A native request can arrive before its target is registered. Retry
-            // even when no geometry callback fires; an unchanged offset is not
-            // a reason to leave the loading mask up forever.
-            if visibleID == targetID || now - requestedAt < 0.25 { return .wait }
+            // Retry even without a new geometry callback. Native scrolling owns
+            // insets and clamping; no exact content-offset equality is required.
+            if isAtBottom || now - requestedAt < 0.25 { return .wait }
         }
         if expired { return .retry }
         candidate = nil; candidateAt = nil
-        requestedID = layout.scrollID; requestedAt = now
-        return .scrollTo(layout.scrollID)
+        requestedAt = now
+        return .scrollToBottom
+    }
+
+    private static func sameLayout(_ lhs: TimelineViewport, _ rhs: TimelineViewport) -> Bool {
+        // Ignore subpixel native rounding without accepting cumulative movement.
+        abs(lhs.contentHeight - rhs.contentHeight) <= 0.5
+            && abs(lhs.containerWidth - rhs.containerWidth) <= 0.5
+            && abs(lhs.visibleHeight - rhs.visibleHeight) <= 0.5
+            && abs(lhs.visibleBottom - rhs.visibleBottom) <= 0.5
+            && abs(lhs.offsetY - rhs.offsetY) <= 0.5
+            && abs(lhs.topInset - rhs.topInset) <= 0.5
     }
 }
