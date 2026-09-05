@@ -19,66 +19,46 @@ function sourceBetween(start, end) {
   return source.slice(startIndex, endIndex)
 }
 
-test("pairing waits for online and enters explicit agent setup without closing", () => {
-  assert.match(source, /type Step = .*\| "agents"/)
-  assert.match(source, /step === "agents"/)
-  assert.match(source, /discoverConnectorRuntimeOverview/)
-  assert.doesNotMatch(source, /\bcompletePairing\b/)
-
-  const polling = sourceBetween(
-    "const startConnectorPolling",
-    "React.useEffect(() =>",
-  )
-  assert.match(
-    polling,
-    /if \(connector\.status === "online"\) \{\s*enterAgentsStep\(cid\)/,
-  )
-  assert.doesNotMatch(polling, /onOpenChange\(false\)/)
-
-  const claim = sourceBetween("const handleClaim", "const handleForceClose")
-  assert.match(
-    claim,
-    /stopPolling\(\)\s*const claimGeneration = pollingGenerationRef\.current/,
-  )
-  assert.match(
-    claim,
-    /if \(claimGeneration !== pollingGenerationRef\.current\) return/,
-  )
-  assert.match(claim, /startConnectorPolling\(claimedConnectorId\)/)
-  assert.doesNotMatch(claim, /enterAgentsStep|onOpenChange\(false\)/)
+test("pairing starts with the Desktop-or-Linux platform flow", () => {
+  assert.match(source, /type Platform = "macos" \| "windows" \| "linux"/)
+  assert.match(source, /type Step =[\s\S]*\| "platform"[\s\S]*\| "desktop-install"[\s\S]*\| "linux-method"/)
+  assert.match(source, /step === "platform"/)
+  assert.match(source, /selectPlatform\("macos"\)/)
+  assert.match(source, /selectPlatform\("windows"\)/)
+  assert.match(source, /selectPlatform\("linux"\)/)
+  assert.match(source, /DESKTOP_DOWNLOAD_URL/)
 })
 
-test("online completion is idempotent and only reports success once", () => {
-  const enterAgents = sourceBetween(
-    "const enterAgentsStep",
-    "const startConnectorPolling",
-  )
-  assert.match(
-    enterAgents,
-    /if \(onlineNotificationRef\.current === cid\) return\s*onlineNotificationRef\.current = cid/,
-  )
+test("Linux supports both CLI command and pair-code setup", () => {
+  assert.match(source, /type LinuxMethod = "terminal" \| "pair-code"/)
+  assert.match(source, /routeToLinuxMethod\("terminal"\)/)
+  assert.match(source, /routeToLinuxMethod\("pair-code"\)/)
+  assert.match(source, /dashboardApi\.createConnector/)
+  assert.match(source, /uvx anywhere-cli start/)
+  assert.match(source, /uvx anywhere-cli pair/)
+  assert.match(source, /dashboardApi\.claimPairing/)
+})
+
+test("an online Linux connector completes the dialog and refreshes once", () => {
+  const polling = sourceBetween("const startConnectorPolling", "const handleOpenChange")
+  assert.match(polling, /connector\.status === "online"/)
+  assert.match(polling, /completePairing\(\)/)
+
+  const complete = sourceBetween("const completePairing", "const startConnectorPolling")
+  assert.match(complete, /reset\(\)/)
+  assert.match(complete, /onConnectorCreated\?\.\(\)/)
+  assert.match(complete, /onOpenChange\(false\)/)
   assert.equal(source.match(/onConnectorCreated\?\.\(\)/g)?.length, 1)
 })
 
-test("agent setup follows connector presence and reloads after reconnect", () => {
-  assert.match(source, /watchConnectorPresence\(\{/)
-  assert.match(source, /initialOnline: agentSetupPresenceRef\.current === "online"/)
-  assert.match(source, /if \(reconnected\) void loadRuntimes\(cid\)/)
-  assert.match(source, /runtimeLoadIdRef\.current \+= 1/)
-  assert.match(source, /!agentSetupOnline \? \(\s*<Alert>/)
-  assert.match(source, /waitingReconnectTitle/)
-
-  const agentsStep = sourceBetween(
-    '{/* ── Step: Configure agents ── */}',
-    "</DialogContent>",
-  )
-  assert.match(
-    agentsStep,
-    /disabled=\{!agentSetupOnline \|\| runtimesLoading \|\| savingRuntimeId !== null\}/,
-  )
+test("the Web flow no longer embeds connector runtime setup", () => {
+  assert.doesNotMatch(source, /type Step =[^;]*\| "agents"/)
+  assert.doesNotMatch(source, /discoverConnectorRuntimeOverview/)
+  assert.doesNotMatch(source, /createConnectorRuntime/)
+  assert.doesNotMatch(source, /setConnectorRuntimeActive/)
 })
 
-test("workspace refresh does not close the explicit agent setup step", () => {
+test("workspace refresh does not manually close the pairing dialog", () => {
   const callbackStart = demoSource.indexOf("onConnectorCreated={() => {")
   const callbackEnd = demoSource.indexOf("}}", callbackStart)
   assert.notEqual(callbackStart, -1)
@@ -89,24 +69,9 @@ test("workspace refresh does not close the explicit agent setup step", () => {
   assert.doesNotMatch(callback, /closePairDeviceDialog\(\)/)
 })
 
-test("skipping setup does not create a runtime and explicit creation starts it", () => {
-  const finish = sourceBetween("const handleSuccessClose", "const replaceRuntime")
-  assert.match(finish, /reset\(\)/)
-  assert.match(finish, /onOpenChange\(false\)/)
-  assert.doesNotMatch(finish, /createConnectorRuntime|setConnectorRuntimeActive/)
-
-  const create = sourceBetween("const createAndStartRuntime", "const addRuntime")
-  assert.match(create, /createConnectorRuntime/)
-  assert.match(create, /config,\s*active: true/)
-})
-
-test("a configured inactive runtime keeps a configure-and-start retry", () => {
-  const agentsStep = sourceBetween(
-    '{/* ── Step: Configure agents ── */}',
-    "</DialogContent>",
-  )
-  assert.match(agentsStep, /runtime\.active \? \(/)
-  assert.match(agentsStep, /onClick=\{\(\) => setConfigRuntime\(runtime\)\}/)
-  assert.match(agentsStep, /\{t\("configureAndStart"\)\}/)
-  assert.match(source, /submitDisabled=\{!agentSetupOnline\}/)
+test("closing after creating a Linux credential asks for confirmation", () => {
+  assert.match(source, /const shouldConfirmExit = connectorId !== null && createdThisFlow/)
+  const closeHandler = sourceBetween("const handleOpenChange", "const goBack")
+  assert.match(closeHandler, /if \(!nextOpen && shouldConfirmExit\)/)
+  assert.match(closeHandler, /setExitGuardOpen\(true\)/)
 })

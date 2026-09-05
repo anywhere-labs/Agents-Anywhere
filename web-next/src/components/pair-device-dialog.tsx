@@ -2,29 +2,19 @@
 
 import * as React from "react"
 import {
-  AlertCircle,
   ArrowLeft,
   Check,
-  CheckCircle2,
   Copy,
   ExternalLink,
-  KeyRound,
+  Laptop,
   Loader2,
-  MonitorUp,
-  Plus,
-  RefreshCw,
+  Monitor,
   Terminal,
-  WifiOff,
 } from "lucide-react"
+import { useTranslations } from "next-intl"
 import { toast } from "sonner"
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-  DialogFooter,
-} from "@/components/ui/dialog"
+
+import { useAuth } from "@/components/auth/auth-context"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -37,72 +27,59 @@ import {
 } from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
 import {
-  Alert,
-  AlertDescription,
-  AlertTitle,
-} from "@/components/ui/alert"
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
 import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp"
+import { Label } from "@/components/ui/label"
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area"
-import { cn } from "@/lib/utils"
-import { useAuth } from "@/components/auth/auth-context"
 import { dashboardApi } from "@/features/dashboard/api"
-import type {
-  ConnectorCreateResponse,
-  ConnectorRevokeResponse,
-  DeviceRuntimeView,
-  RuntimeTypeView,
-} from "@/features/dashboard/types"
-import { useTranslations } from "next-intl"
-import { RuntimeConfigDialog } from "@/components/runtime-config-dialog"
-import { RuntimeInstanceNameDialog } from "@/components/runtime-instance-name-dialog"
-import { discoverConnectorRuntimeOverview } from "@/features/dashboard/runtime-discovery"
-import { watchConnectorPresence } from "@/features/dashboard/connector-presence"
-import {
-  addableRuntimeTypes,
-  configuredRuntimeInstances,
-  namedInstanceRequiredConfigFields,
-  reconfigurableRuntimeInstance,
-  runtimeConfigDraft,
-  runtimeCreationDefaults,
-  runtimeInstanceName,
-  runtimeTypeName,
-  suggestedRuntimeInstanceName,
-} from "@/features/dashboard/runtime-instances"
+import type { ConnectorCreateResponse, ConnectorRevokeResponse } from "@/features/dashboard/types"
+import { cn } from "@/lib/utils"
 
-// ── Readable name generator ────────────────────────────────
 const ADJECTIVES = [
   "amber", "azure", "brisk", "calm", "clear", "clever", "copper", "crisp", "deft", "eager",
-  "fair", "fleet", "fresh", "gentle", "gilt", "golden", "hale", "happy", "honest", "jade",
-  "keen", "light", "lively", "lucky", "lunar", "lush", "mellow", "mild", "nimble", "neat",
-  "noble", "opal", "pearl", "pine", "plucky", "quiet", "rapid", "ready", "rose", "ruby",
-  "sage", "silver", "smart", "solar", "spry", "steady", "swift", "teal", "tidy", "umber",
-  "vivid", "warm", "witty", "zesty", "bright", "cosmic", "dapper", "ember", "frosty", "glossy",
-  "hearty", "ivory", "jolly", "lucid", "misty", "modern", "plush", "polite", "proud", "quick",
-  "rustic", "sunny", "tidal", "velvet", "verdant", "violet", "wavy", "wise", "young", "zen",
+  "fair", "fleet", "fresh", "gentle", "golden", "happy", "honest", "jade", "keen", "lively",
+  "lucky", "lunar", "mellow", "nimble", "noble", "opal", "quiet", "rapid", "silver", "smart",
+  "solar", "steady", "swift", "tidy", "vivid", "warm", "witty", "zesty", "bright", "cosmic",
 ]
 const NOUNS = [
-  "acorn", "anchor", "ash", "badger", "bamboo", "beacon", "birch", "brook", "canopy", "cedar",
-  "cliff", "clover", "cobalt", "comet", "condor", "cove", "creek", "daisy", "delta", "falcon",
-  "fern", "finch", "fjord", "forest", "garden", "glade", "grove", "harbor", "heron", "hill",
-  "island", "juniper", "lagoon", "lantern", "laurel", "linden", "lotus", "magpie", "maple", "marble",
-  "marsh", "meadow", "meteor", "mesa", "moss", "nebula", "orchid", "otter", "pebble", "phoenix",
-  "prairie", "quartz", "raven", "reef", "ridge", "river", "rocket", "sequoia", "shore", "sparrow",
-  "spruce", "summit", "thistle", "tulip", "valley", "violet", "willow", "zephyr", "aurora", "breeze",
-  "canyon", "drift", "ember", "granite", "hazel", "iris", "kernel", "oasis", "orbit", "ripple",
+  "acorn", "anchor", "badger", "bamboo", "beacon", "birch", "brook", "cedar", "clover", "comet",
+  "condor", "cove", "falcon", "finch", "fjord", "forest", "garden", "grove", "harbor", "heron",
+  "island", "juniper", "lagoon", "lantern", "maple", "meadow", "meteor", "nebula", "otter", "phoenix",
+  "quartz", "raven", "ridge", "river", "rocket", "sequoia", "sparrow", "summit", "willow", "zephyr",
 ]
-const GITHUB_RELEASES_URL = "https://github.com/anywhere-labs/Agents-Anywhere/releases"
-const COMMAND_WARNING_ACCEPTED_KEY = "agents-anywhere.pairDevice.commandWarningAccepted.v1"
-const COMMAND_WARNING_WAIT_SECONDS = 5
-const PAIRED_RUNTIME_DISCOVERY_DELAY_MS = 750
-const AGENT_SETUP_PRESENCE_POLL_MS = 2000
-const NEW_RUNTIME_SAVING_ID = "@new-runtime"
+
+const DESKTOP_DOWNLOAD_URL = "https://www.agents-anywhere.com/download"
+
+type Platform = "macos" | "windows" | "linux"
+type LinuxMethod = "terminal" | "pair-code"
+type Step =
+  | "platform"
+  | "desktop-install"
+  | "linux-method"
+  | "name"
+  | "command"
+  | "pair-code"
+
+interface Props {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  onConnectorCreated?: () => void
+  /** Transitional compatibility for callers still passing a rotated CLI credential. */
+  setupCredential?: ConnectorCreateResponse | ConnectorRevokeResponse | null
+  title?: string
+}
 
 function randomName(): string {
-  const adj = ADJECTIVES[Math.floor(Math.random() * ADJECTIVES.length)]
+  const adjective = ADJECTIVES[Math.floor(Math.random() * ADJECTIVES.length)]
   const noun = NOUNS[Math.floor(Math.random() * NOUNS.length)]
-  return `${adj}-${noun}`
+  return `${adjective}-${noun}`
 }
 
 function resolvePairingServerUrl(): string {
@@ -121,7 +98,7 @@ function pairServerAddress(serverUrl: string): string {
     const url = new URL(serverUrl)
     if (url.protocol === "https:") return url.host
   } catch {
-    return serverUrl
+    // Keep the configured value visible when it cannot be parsed as a URL.
   }
   return serverUrl
 }
@@ -131,87 +108,28 @@ function shellQuote(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`
 }
 
-function desktopConnectorUrl(serverUrl: string, connectorId: string, connectorToken: string): string {
-  const params = new URLSearchParams({
-    serverUrl,
-    connectorId,
-    connectorToken,
-  })
-  return `agents-anywhere://start?${params.toString()}`
-}
-
-function encodeUtf8Base64(value: string): string {
-  const bytes = new TextEncoder().encode(value)
-  let binary = ""
-  for (const byte of bytes) binary += String.fromCharCode(byte)
-  return btoa(binary)
-}
-
-function connectorCredentialsPayload(serverUrl: string, connectorId: string, connectorToken: string): string {
-  return encodeUtf8Base64(
-    JSON.stringify({
-      type: "agents-anywhere.connector-credentials",
-      version: 1,
-      serverUrl,
-      connectorId,
-      connectorToken,
-    }),
-  )
-}
-
-function readCommandWarningAccepted(): boolean {
-  if (typeof window === "undefined") return false
-  try {
-    return window.localStorage.getItem(COMMAND_WARNING_ACCEPTED_KEY) === "1"
-  } catch {
-    return false
-  }
-}
-
-function writeCommandWarningAccepted() {
-  try {
-    window.localStorage.setItem(COMMAND_WARNING_ACCEPTED_KEY, "1")
-  } catch {
-    // The in-memory state is enough when storage is unavailable.
-  }
-}
-
-// ── Types ──────────────────────────────────────────────────
-type Step = "name" | "method" | "desktop-method" | "desktop-local" | "desktop-paircode" | "desktop-credentials" | "command-warning" | "command" | "agents"
-type AgentSetupPresence = "online" | "waiting"
-
-interface Props {
-  open: boolean
-  onOpenChange: (open: boolean) => void
-  onConnectorCreated?: () => void
-  setupCredential?: ConnectorCreateResponse | ConnectorRevokeResponse | null
-  title?: string
-}
-
-// ── Inline code block ──────────────────────────────────────
-function CodeBlock({ code, copyLabel }: { code: string; copyLabel?: string }) {
-  const t = useTranslations("dashboard.pairDevice")
+function CodeBlock({ code, copyLabel }: { code: string; copyLabel: string }) {
   const [copied, setCopied] = React.useState(false)
   const copy = () => {
     navigator.clipboard.writeText(code).catch(() => {})
     setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
+    window.setTimeout(() => setCopied(false), 2000)
   }
+
   return (
     <div className="grid rounded-lg border border-border bg-muted/40" style={{ gridTemplateColumns: "1fr auto" }}>
       <ScrollArea className="min-w-0">
         <div className="px-4 py-3">
-        <code className="block whitespace-nowrap code-mono text-xs text-foreground">{code}</code>
+          <code className="block whitespace-pre code-mono text-xs text-foreground">{code}</code>
         </div>
         <ScrollBar orientation="horizontal" />
       </ScrollArea>
-      {/* copy button: outside scroll area, always visible, same vertical padding */}
       <Button
         type="button"
         variant="ghost"
         size="icon"
         onClick={copy}
-        aria-label={copyLabel ?? t("copyCommand")}
+        aria-label={copyLabel}
         className="m-2 self-center text-muted-foreground"
       >
         {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
@@ -220,7 +138,6 @@ function CodeBlock({ code, copyLabel }: { code: string; copyLabel?: string }) {
   )
 }
 
-// ── Polling indicator ──────────────────────────────────────
 function PollingIndicator({ label }: { label: string }) {
   return (
     <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -230,248 +147,192 @@ function PollingIndicator({ label }: { label: string }) {
   )
 }
 
-// ── Main component ─────────────────────────────────────────
-export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setupCredential = null, title }: Props) {
+function ChoiceCard({
+  icon,
+  title,
+  description,
+  onClick,
+}: {
+  icon: React.ReactNode
+  title: string
+  description: string
+  onClick: () => void
+}) {
+  return (
+    <Button
+      type="button"
+      variant="outline"
+      onClick={onClick}
+      className="h-auto w-full min-w-0 justify-start gap-3 whitespace-normal px-4 py-4 text-left"
+    >
+      <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-muted text-foreground">{icon}</span>
+      <span className="min-w-0">
+        <span className="block font-medium">{title}</span>
+        <span className="mt-0.5 block break-words text-sm font-normal text-muted-foreground">{description}</span>
+      </span>
+    </Button>
+  )
+}
+
+export function PairDeviceDialog({
+  open,
+  onOpenChange,
+  onConnectorCreated,
+  setupCredential = null,
+  title,
+}: Props) {
   const { session } = useAuth()
   const t = useTranslations("dashboard.pairDevice")
-  const tDevice = useTranslations("dashboard.device")
   const tCommon = useTranslations("common")
-  const [step, setStep] = React.useState<Step>(() => (setupCredential ? "method" : "name"))
+  const [step, setStep] = React.useState<Step>(setupCredential ? "linux-method" : "platform")
+  const [platform, setPlatform] = React.useState<Platform | null>(setupCredential ? "linux" : null)
+  const [linuxMethod, setLinuxMethod] = React.useState<LinuxMethod | null>(null)
   const [name, setName] = React.useState(() => setupCredential?.connector.name ?? randomName())
   const [connectorId, setConnectorId] = React.useState<string | null>(() => setupCredential?.connector.id ?? null)
-  const [token, setToken] = React.useState<string | null>(() => setupCredential?.connectorToken ?? null)
+  const [connectorToken, setConnectorToken] = React.useState<string | null>(() => setupCredential?.connectorToken ?? null)
   const [pairCode, setPairCode] = React.useState("")
   const [creating, setCreating] = React.useState(false)
   const [claiming, setClaiming] = React.useState(false)
   const [polling, setPolling] = React.useState(false)
+  const [createdThisFlow, setCreatedThisFlow] = React.useState(false)
   const [exitGuardOpen, setExitGuardOpen] = React.useState(false)
-  const [credentialsBackStep, setCredentialsBackStep] = React.useState<"method" | "desktop-method">("desktop-method")
-  const [commandWarningAccepted, setCommandWarningAccepted] = React.useState(readCommandWarningAccepted)
-  const [commandCountdown, setCommandCountdown] = React.useState(COMMAND_WARNING_WAIT_SECONDS)
-  const [runtimes, setRuntimes] = React.useState<DeviceRuntimeView[]>([])
-  const [runtimeTypes, setRuntimeTypes] = React.useState<RuntimeTypeView[]>([])
-  const [runtimesLoading, setRuntimesLoading] = React.useState(false)
-  const [runtimeLoadError, setRuntimeLoadError] = React.useState<string | null>(null)
-  const [agentSetupPresence, setAgentSetupPresence] = React.useState<AgentSetupPresence>("waiting")
-  const [configRuntime, setConfigRuntime] = React.useState<DeviceRuntimeView | null>(null)
-  const [createRuntimeType, setCreateRuntimeType] = React.useState<RuntimeTypeView | null>(null)
-  const [pendingRuntimeCreation, setPendingRuntimeCreation] = React.useState<{
-    runtimeType: RuntimeTypeView
-    name: string
-    initialConfig: Record<string, unknown>
-  } | null>(null)
-  const [savingRuntimeId, setSavingRuntimeId] = React.useState<string | null>(null)
-  const pollingRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
-  const pollingGenerationRef = React.useRef(0)
-  const runtimeLoadIdRef = React.useRef(0)
-  const onlineNotificationRef = React.useRef<string | null>(null)
-  const agentSetupPresenceRef = React.useRef<AgentSetupPresence>("waiting")
-  const stopAgentPresencePollingRef = React.useRef<(() => void) | null>(null)
-  const commandCountdownRef = React.useRef<number | null>(null)
+  const pollingRef = React.useRef<number | null>(null)
   const suppressCloseGuardRef = React.useRef(false)
   const serverUrl = React.useMemo(resolvePairingServerUrl, [])
 
-  const shouldConfirmExit =
-    connectorId !== null &&
-    (step === "command" || step === "desktop-local" || step === "desktop-paircode" || step === "desktop-credentials") &&
-    (polling || claiming || pairCode.length > 0)
-
-  React.useEffect(() => {
-    if (!open) return
-    if (setupCredential) {
-      setStep("method")
-      setName(setupCredential.connector.name)
-      setConnectorId(setupCredential.connector.id)
-      setToken(setupCredential.connectorToken)
-    }
-  }, [open, setupCredential])
+  const shouldConfirmExit = connectorId !== null && createdThisFlow
 
   const stopPolling = React.useCallback(() => {
-    pollingGenerationRef.current += 1
-    if (pollingRef.current) clearTimeout(pollingRef.current)
+    if (pollingRef.current) window.clearTimeout(pollingRef.current)
     pollingRef.current = null
     setPolling(false)
   }, [])
 
-  const stopAgentPresencePolling = React.useCallback(() => {
-    stopAgentPresencePollingRef.current?.()
-    stopAgentPresencePollingRef.current = null
-  }, [])
-
-  const loadRuntimes = React.useCallback(async (cid: string, waitForConnector = false) => {
-    if (!session?.accessToken) return
-    const loadId = ++runtimeLoadIdRef.current
-    setRuntimeLoadError(null)
-    setRuntimesLoading(true)
-    try {
-      const overview = await discoverConnectorRuntimeOverview(session.accessToken, cid, {
-        initialDelayMs: waitForConnector ? PAIRED_RUNTIME_DISCOVERY_DELAY_MS : 0,
-      })
-      if (loadId !== runtimeLoadIdRef.current) return
-      setRuntimes(overview.runtimes)
-      setRuntimeTypes(overview.runtimeTypes)
-    } catch (error) {
-      if (loadId === runtimeLoadIdRef.current) {
-        const message = error instanceof Error ? error.message : t("errors.discoverRuntimesFailed")
-        setRuntimeLoadError(message)
-        toast.error(message)
-      }
-    } finally {
-      if (loadId === runtimeLoadIdRef.current) setRuntimesLoading(false)
-    }
-  }, [session?.accessToken, t])
-
   const reset = React.useCallback(() => {
     stopPolling()
-    stopAgentPresencePolling()
-    setStep("name")
+    setStep(setupCredential ? "linux-method" : "platform")
+    setPlatform(setupCredential ? "linux" : null)
+    setLinuxMethod(null)
     setName(setupCredential?.connector.name ?? randomName())
     setConnectorId(setupCredential?.connector.id ?? null)
-    setToken(setupCredential?.connectorToken ?? null)
+    setConnectorToken(setupCredential?.connectorToken ?? null)
     setPairCode("")
     setCreating(false)
     setClaiming(false)
-    setPolling(false)
-    setCredentialsBackStep("desktop-method")
-    setCommandCountdown(COMMAND_WARNING_WAIT_SECONDS)
-    setRuntimes([])
-    setRuntimeTypes([])
-    setRuntimesLoading(false)
-    setRuntimeLoadError(null)
-    setAgentSetupPresence("waiting")
-    agentSetupPresenceRef.current = "waiting"
-    setConfigRuntime(null)
-    setCreateRuntimeType(null)
-    setPendingRuntimeCreation(null)
-    setSavingRuntimeId(null)
-    runtimeLoadIdRef.current += 1
-    onlineNotificationRef.current = null
-  }, [setupCredential, stopAgentPresencePolling, stopPolling])
+    setCreatedThisFlow(false)
+  }, [setupCredential, stopPolling])
 
-  const enterAgentsStep = React.useCallback((cid: string) => {
-    if (onlineNotificationRef.current === cid) return
-    onlineNotificationRef.current = cid
-    stopPolling()
-    setConnectorId(cid)
-    setPairCode("")
-    setRuntimes([])
-    setRuntimeTypes([])
-    setRuntimeLoadError(null)
-    setAgentSetupPresence("online")
-    agentSetupPresenceRef.current = "online"
-    setStep("agents")
+  React.useEffect(() => {
+    if (!open || !setupCredential) return
+    setStep("linux-method")
+    setPlatform("linux")
+    setName(setupCredential.connector.name)
+    setConnectorId(setupCredential.connector.id)
+    setConnectorToken(setupCredential.connectorToken)
+  }, [open, setupCredential])
+
+  React.useEffect(() => () => stopPolling(), [stopPolling])
+
+  const completePairing = React.useCallback(() => {
+    reset()
     onConnectorCreated?.()
-    void loadRuntimes(cid, true)
-  }, [loadRuntimes, onConnectorCreated, stopPolling])
+    onOpenChange(false)
+  }, [onConnectorCreated, onOpenChange, reset])
 
-  const startConnectorPolling = React.useCallback((cid: string) => {
+  const startConnectorPolling = React.useCallback((id: string) => {
     if (!session?.accessToken) return
-    stopPolling()
-    const generation = pollingGenerationRef.current
     setPolling(true)
     const tick = async () => {
       try {
-        const { connector } = await dashboardApi.getConnector(session.accessToken, cid)
-        if (generation !== pollingGenerationRef.current) return
+        const { connector } = await dashboardApi.getConnector(session.accessToken, id)
         if (connector.status === "online") {
-          enterAgentsStep(cid)
-        } else {
-          pollingRef.current = setTimeout(tick, 2000)
-        }
-      } catch {
-        if (generation !== pollingGenerationRef.current) return
-        pollingRef.current = setTimeout(tick, 3000)
-      }
-    }
-    pollingRef.current = setTimeout(tick, 1500)
-  }, [enterAgentsStep, session?.accessToken, stopPolling])
-
-  React.useEffect(() => {
-    stopAgentPresencePolling()
-    if (
-      !open ||
-      step !== "agents" ||
-      !connectorId ||
-      !session?.accessToken
-    ) {
-      return
-    }
-
-    const cid = connectorId
-    const accessToken = session.accessToken
-    const stop = watchConnectorPresence({
-      initialOnline: agentSetupPresenceRef.current === "online",
-      intervalMs: AGENT_SETUP_PRESENCE_POLL_MS,
-      check: async () => {
-        const { connector } = await dashboardApi.getConnector(accessToken, cid)
-        return connector.status === "online"
-      },
-      onTransition: ({ online, reconnected }) => {
-        const nextPresence: AgentSetupPresence = online ? "online" : "waiting"
-        agentSetupPresenceRef.current = nextPresence
-        setAgentSetupPresence(nextPresence)
-        if (!online) {
-          runtimeLoadIdRef.current += 1
-          setRuntimesLoading(false)
-          setRuntimeLoadError(null)
+          completePairing()
           return
         }
-        if (reconnected) void loadRuntimes(cid)
-      },
-    })
-    stopAgentPresencePollingRef.current = stop
-
-    return () => {
-      if (stopAgentPresencePollingRef.current === stop) {
-        stopAgentPresencePollingRef.current = null
+        pollingRef.current = window.setTimeout(tick, 2000)
+      } catch {
+        pollingRef.current = window.setTimeout(tick, 3000)
       }
-      stop()
     }
-  }, [connectorId, loadRuntimes, open, session?.accessToken, step, stopAgentPresencePolling])
+    pollingRef.current = window.setTimeout(tick, 1500)
+  }, [completePairing, session?.accessToken])
 
-  React.useEffect(() => {
-    return () => {
-      runtimeLoadIdRef.current += 1
-      stopPolling()
-      stopAgentPresencePolling()
-    }
-  }, [stopAgentPresencePolling, stopPolling])
-
-  React.useEffect(() => {
-    if (step !== "command-warning") {
-      if (commandCountdownRef.current) window.clearInterval(commandCountdownRef.current)
-      commandCountdownRef.current = null
-      return
-    }
-    if (commandWarningAccepted) {
-      setCommandCountdown(0)
-      return
-    }
-    setCommandCountdown(COMMAND_WARNING_WAIT_SECONDS)
-    commandCountdownRef.current = window.setInterval(() => {
-      setCommandCountdown((current) => {
-        if (current <= 1) {
-          if (commandCountdownRef.current) window.clearInterval(commandCountdownRef.current)
-          commandCountdownRef.current = null
-          return 0
-        }
-        return current - 1
-      })
-    }, 1000)
-    return () => {
-      if (commandCountdownRef.current) window.clearInterval(commandCountdownRef.current)
-      commandCountdownRef.current = null
-    }
-  }, [commandWarningAccepted, step])
-
-  const handleOpenChange = (next: boolean) => {
-    if (!next && suppressCloseGuardRef.current) return
-    if (!next && shouldConfirmExit) {
+  const handleOpenChange = (nextOpen: boolean) => {
+    if (!nextOpen && suppressCloseGuardRef.current) return
+    if (!nextOpen && shouldConfirmExit) {
       setExitGuardOpen(true)
       return
     }
-    if (!next) reset()
-    onOpenChange(next)
+    if (!nextOpen) reset()
+    onOpenChange(nextOpen)
+  }
+
+  const goBack = () => {
+    stopPolling()
+    if (step === "desktop-install" || step === "linux-method") {
+      setStep("platform")
+    } else {
+      setStep("linux-method")
+    }
+  }
+
+  const selectPlatform = (nextPlatform: Platform) => {
+    setPlatform(nextPlatform)
+    setStep(nextPlatform === "linux" ? "linux-method" : "desktop-install")
+  }
+
+  const routeToLinuxMethod = (method: LinuxMethod) => {
+    setLinuxMethod(method)
+    if (!connectorId || !connectorToken) {
+      setStep("name")
+      return
+    }
+    setStep(method === "terminal" ? "command" : "pair-code")
+    if (method === "terminal") startConnectorPolling(connectorId)
+  }
+
+  const handleCreate = async () => {
+    if (!name.trim() || !session?.accessToken || !linuxMethod) return
+    setCreating(true)
+    try {
+      const result = await dashboardApi.createConnector(session.accessToken, name.trim())
+      setConnectorId(result.connector.id)
+      setConnectorToken(result.connectorToken)
+      setName(result.connector.name)
+      setCreatedThisFlow(true)
+      setStep(linuxMethod === "terminal" ? "command" : "pair-code")
+      if (linuxMethod === "terminal") startConnectorPolling(result.connector.id)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t("errors.createFailed"))
+    } finally {
+      setCreating(false)
+    }
+  }
+
+  const handleClaim = async () => {
+    if (pairCode.length < 6 || !session?.accessToken || !connectorId || !connectorToken) return
+    setClaiming(true)
+    try {
+      await dashboardApi.claimPairing(session.accessToken, {
+        code: pairCode,
+        name: name.trim(),
+        serverUrl,
+        connectorId,
+        connectorToken,
+      })
+      completePairing()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t("errors.claimFailed"))
+    } finally {
+      setClaiming(false)
+    }
+  }
+
+  const handleForceClose = () => {
+    setExitGuardOpen(false)
+    stopPolling()
+    reset()
+    onOpenChange(false)
   }
 
   const continuePairing = () => {
@@ -482,211 +343,16 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
     }, 0)
   }
 
-  const handleCreate = async () => {
-    if (!name.trim() || !session?.accessToken) return
-    setCreating(true)
-    try {
-      const result = await dashboardApi.createConnector(session.accessToken, name.trim())
-      setConnectorId(result.connector.id)
-      setToken(result.connectorToken)
-      setName(result.connector.name)
-      setStep("method")
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : t("errors.createFailed"))
-    } finally {
-      setCreating(false)
-    }
-  }
-
-  const enterCommandStep = () => {
-    if (!connectorId) return
-    setStep("command")
-    startConnectorPolling(connectorId)
-  }
-
-  const handleSelectDesktop = () => {
-    if (!connectorId) return
-    stopPolling()
-    setStep("desktop-method")
-  }
-
-  const handleSelectLocalDesktop = () => {
-    if (!connectorId) return
-    stopPolling()
-    setStep("desktop-local")
-  }
-
-  const handleSelectPairCode = () => {
-    stopPolling()
-    setStep("desktop-paircode")
-  }
-
-  const handleSelectDesktopCredentials = (backStep: "method" | "desktop-method" = "desktop-method") => {
-    if (!connectorId) return
-    setCredentialsBackStep(backStep)
-    setStep("desktop-credentials")
-    startConnectorPolling(connectorId)
-  }
-
-  const handleSelectCommand = () => {
-    if (!connectorId) return
-    stopPolling()
-    setCommandCountdown(commandWarningAccepted ? 0 : COMMAND_WARNING_WAIT_SECONDS)
-    setStep("command-warning")
-  }
-
-  const handleAcceptCommandWarning = () => {
-    writeCommandWarningAccepted()
-    setCommandWarningAccepted(true)
-    enterCommandStep()
-  }
-
-  const handleUseDesktopFromCommandWarning = () => {
-    handleSelectDesktop()
-  }
-
-  const handleClaim = async () => {
-    const code = pairCode
-    if (code.length < 6 || !session?.accessToken || !connectorId || !token) return
-    stopPolling()
-    const claimGeneration = pollingGenerationRef.current
-    setClaiming(true)
-    try {
-      const result = await dashboardApi.claimPairing(session.accessToken, {
-        code,
-        name: name.trim(),
-        serverUrl,
-        connectorId,
-        connectorToken: token,
-      })
-      if (claimGeneration !== pollingGenerationRef.current) return
-      const claimedConnectorId = result.connector?.id ?? connectorId
-      if (result.connector?.id) setConnectorId(result.connector.id)
-      setClaiming(false)
-      startConnectorPolling(claimedConnectorId)
-    } catch (err) {
-      if (claimGeneration !== pollingGenerationRef.current) return
-      toast.error(err instanceof Error ? err.message : t("errors.claimFailed"))
-    } finally {
-      if (claimGeneration === pollingGenerationRef.current) setClaiming(false)
-    }
-  }
-
-  const handleForceClose = async () => {
-    setExitGuardOpen(false)
-    stopPolling()
-    // Don't auto-delete; user must do it manually (as instructed)
-    reset()
-    onOpenChange(false)
-  }
-
-  const handleSuccessClose = () => {
-    reset()
-    onOpenChange(false)
-  }
-
-  const replaceRuntime = (runtime: DeviceRuntimeView) => {
-    setRuntimes((current) => current.some((item) => item.runtimeId === runtime.runtimeId)
-      ? current.map((item) => item.runtimeId === runtime.runtimeId ? runtime : item)
-      : [...current, runtime])
-  }
-
-  const configureAndStartRuntime = async (runtime: DeviceRuntimeView, config: Record<string, unknown>) => {
-    if (!session?.accessToken || !connectorId) return
-    setSavingRuntimeId(runtime.runtimeId)
-    try {
-      const saved = await dashboardApi.putConnectorRuntimeConfig(
-        session.accessToken,
-        connectorId,
-        runtime.runtimeId,
-        config,
-      )
-      replaceRuntime(saved)
-      const started = await dashboardApi.setConnectorRuntimeActive(
-        session.accessToken,
-        connectorId,
-        runtime.runtimeId,
-        true,
-      )
-      replaceRuntime(started)
-      toast.success(t("agentConfiguredAndStarted", { name: runtimeInstanceName(runtime) }))
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : t("errors.configureAndStartFailed"))
-      throw error
-    } finally {
-      setSavingRuntimeId(null)
-    }
-  }
-
-  const stageRuntimeCreation = async (runtimeName: string) => {
-    if (!createRuntimeType) return
-    setPendingRuntimeCreation({
-      runtimeType: createRuntimeType,
-      name: runtimeName,
-      initialConfig: runtimeCreationDefaults(createRuntimeType),
-    })
-    setCreateRuntimeType(null)
-  }
-
-  const createAndStartRuntime = async (
-    pending: NonNullable<typeof pendingRuntimeCreation>,
-    config: Record<string, unknown>,
-  ) => {
-    if (!session?.accessToken || !connectorId) return
-    setSavingRuntimeId(NEW_RUNTIME_SAVING_ID)
-    try {
-      const created = await dashboardApi.createConnectorRuntime(
-        session.accessToken,
-        connectorId,
-        {
-          runtimeType: pending.runtimeType.runtimeType,
-          name: pending.name,
-          config,
-          active: true,
-        },
-      )
-      replaceRuntime(created)
-      toast.success(t("agentConfiguredAndStarted", { name: pending.name }))
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : tDevice("createRuntimeFailed"))
-      throw error
-    } finally {
-      setSavingRuntimeId(null)
-    }
-  }
-
-  const addRuntime = (runtimeType: RuntimeTypeView) => {
-    const existing = reconfigurableRuntimeInstance(runtimeType, runtimes)
-    if (existing) {
-      setConfigRuntime({
-        ...existing,
-        config: runtimeConfigDraft(runtimeType, existing),
-      })
-      return
-    }
-    setCreateRuntimeType(runtimeType)
-  }
-
   const pairServer = pairServerAddress(serverUrl)
-  const tokenCommand = connectorId && token
+  const pairCommand = `uvx anywhere-cli pair ${shellQuote(pairServer)}`
+  const tokenCommand = connectorId && connectorToken
     ? [
       "uvx anywhere-cli start",
       `--server-url ${shellQuote(serverUrl)}`,
       `--connector-id ${shellQuote(connectorId)}`,
-      `--connector-token ${shellQuote(token)}`,
+      `--connector-token ${shellQuote(connectorToken)}`,
     ].join(" ")
     : ""
-  const desktopLaunchUrl = connectorId && token ? desktopConnectorUrl(serverUrl, connectorId, token) : ""
-  const desktopCredentials = connectorId && token ? connectorCredentialsPayload(serverUrl, connectorId, token) : ""
-  const visibleRuntimes = configuredRuntimeInstances(runtimes)
-  const visibleRuntimeTypes = addableRuntimeTypes(runtimeTypes, runtimes)
-  const agentSetupOnline = agentSetupPresence === "online"
-
-  const openDesktopConnector = () => {
-    if (!desktopLaunchUrl || !connectorId) return
-    startConnectorPolling(connectorId)
-    window.location.href = desktopLaunchUrl
-  }
 
   return (
     <>
@@ -696,497 +362,218 @@ export function PairDeviceDialog({ open, onOpenChange, onConnectorCreated, setup
             key={step}
             className="grid gap-4 motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-right-4 motion-safe:duration-200"
           >
+            {step === "platform" ? (
+              <>
+                <DialogHeader>
+                  <DialogTitle>{title ?? t("platformTitle")}</DialogTitle>
+                  <DialogDescription>{t("platformDescription")}</DialogDescription>
+                </DialogHeader>
+                <div className="grid gap-3 py-2 sm:grid-cols-3">
+                  <ChoiceCard
+                    icon={<Laptop className="size-5" />}
+                    title={t("platformMacos")}
+                    description={t("platformMacosDescription")}
+                    onClick={() => selectPlatform("macos")}
+                  />
+                  <ChoiceCard
+                    icon={<Monitor className="size-5" />}
+                    title={t("platformWindows")}
+                    description={t("platformWindowsDescription")}
+                    onClick={() => selectPlatform("windows")}
+                  />
+                  <ChoiceCard
+                    icon={<Terminal className="size-5" />}
+                    title={t("platformLinux")}
+                    description={t("platformLinuxDescription")}
+                    onClick={() => selectPlatform("linux")}
+                  />
+                </div>
+              </>
+            ) : null}
 
-          {/* ── Step: Name ── */}
-          {step === "name" && (
-            <>
-              <DialogHeader>
-                <DialogTitle>{t("nameTitle")}</DialogTitle>
-                <DialogDescription>
-                  {t("nameDescription")}
-                </DialogDescription>
-              </DialogHeader>
-              <div className="flex flex-col gap-2 py-2">
-                <Label htmlFor="device-name">{t("nameLabel")}</Label>
-                <Input
-                  id="device-name"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  placeholder={t("namePlaceholder")}
-                  className="code-mono"
-                  onKeyDown={(e) => e.key === "Enter" && handleCreate()}
-                  autoFocus
-                />
-              </div>
-              <DialogFooter>
-                <Button onClick={handleCreate} disabled={!name.trim() || creating} className="w-full">
-                  {creating && <Loader2 className="mr-2 size-4 animate-spin" />}
-                  {t("createDevice")}
-                </Button>
-              </DialogFooter>
-            </>
-          )}
-
-          {/* ── Step: Method ── */}
-          {step === "method" && (
-            <>
-              <DialogHeader>
-                <DialogTitle>{title ?? t("methodTitle")}</DialogTitle>
-                <DialogDescription>
-                  {t("methodDescription", { name })}
-                </DialogDescription>
-              </DialogHeader>
-              <div className="flex flex-col gap-3 py-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={handleSelectDesktop}
-                  className="h-auto w-full min-w-0 flex-col items-start gap-0.5 whitespace-normal px-4 py-3 text-left"
-                >
-                  <span className="flex min-w-0 items-center gap-2 font-medium">
-                    <MonitorUp className="size-4" />
-                    {t("desktopTitle")}
-                  </span>
-                  <span className="min-w-0 break-words text-sm text-muted-foreground">{t("desktopDescription")}</span>
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={handleSelectCommand}
-                  className="h-auto w-full min-w-0 flex-col items-start gap-0.5 whitespace-normal px-4 py-3 text-left"
-                >
-                  <span className="flex min-w-0 items-center gap-2 font-medium">
-                    <Terminal className="size-4" />
-                    {t("commandTitle")}
-                  </span>
-                  <span className="min-w-0 break-words text-sm text-muted-foreground">{t("commandDescription")}</span>
-                </Button>
-              </div>
-            </>
-          )}
-
-          {/* ── Step: Command warning ── */}
-          {step === "command-warning" && (
-            <>
-              <DialogHeader>
-                <DialogTitle>{t("commandWarningTitle")}</DialogTitle>
-                <DialogDescription>{t("commandWarningDescription")}</DialogDescription>
-              </DialogHeader>
-              <div className="rounded-lg border bg-muted/30 p-4 text-sm text-muted-foreground">
-                {t("commandWarningFallback")}
-              </div>
-              <DialogFooter>
-                <Button variant="outline" onClick={handleAcceptCommandWarning} disabled={commandCountdown > 0}>
-                  {commandCountdown > 0 ? t("commandWarningCommandCountdown", { seconds: commandCountdown }) : t("commandWarningConfirm")}
-                </Button>
-                <Button onClick={handleUseDesktopFromCommandWarning}>
-                  <MonitorUp className="size-4" />
-                  {t("commandWarningDesktop")}
-                </Button>
-              </DialogFooter>
-            </>
-          )}
-
-          {/* ── Step: Desktop method ── */}
-          {step === "desktop-method" && (
-            <>
-              <DialogHeader>
-                <DialogTitle>{t("desktopMethodTitle")}</DialogTitle>
-                <DialogDescription>
-                  {t("desktopMethodDescription", { name })}
-                </DialogDescription>
-              </DialogHeader>
-              <div className="flex flex-col gap-3 py-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={handleSelectLocalDesktop}
-                  className="h-auto w-full min-w-0 flex-col items-start gap-0.5 whitespace-normal px-4 py-3 text-left"
-                >
-                  <span className="flex min-w-0 items-center gap-2 font-medium">
-                    <MonitorUp className="size-4" />
-                    {t("desktopLocalTitle")}
-                  </span>
-                  <span className="min-w-0 break-words text-sm text-muted-foreground">{t("desktopLocalDescription")}</span>
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={handleSelectPairCode}
-                  className="h-auto w-full min-w-0 flex-col items-start gap-0.5 whitespace-normal px-4 py-3 text-left"
-                >
-                  <span className="min-w-0 font-medium">{t("pairCodeTitle")}</span>
-                  <span className="min-w-0 break-words text-sm text-muted-foreground">{t("pairCodeDescription")}</span>
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => handleSelectDesktopCredentials("desktop-method")}
-                  className="h-auto w-full min-w-0 flex-col items-start gap-0.5 whitespace-normal px-4 py-3 text-left"
-                >
-                  <span className="flex min-w-0 items-center gap-2 font-medium">
-                    <KeyRound className="size-4" />
-                    {t("credentialsTitle")}
-                  </span>
-                  <span className="min-w-0 break-words text-sm text-muted-foreground">{t("credentialsDescription")}</span>
-                </Button>
-              </div>
-              <DialogFooter>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => { stopPolling(); setStep("method") }}
-                  className="gap-1.5"
-                >
-                  <ArrowLeft className="size-3.5" />
-                  {tCommon("back")}
-                </Button>
-              </DialogFooter>
-            </>
-          )}
-
-          {/* ── Step: Local desktop ── */}
-          {step === "desktop-local" && (
-            <>
-              <DialogHeader>
-                <DialogTitle>{t("desktopLocalStepTitle")}</DialogTitle>
-                <DialogDescription>
-                  {t("desktopLocalStepDescription", { name })}
-                </DialogDescription>
-              </DialogHeader>
-              <div className="flex flex-col gap-3 py-2">
-                <div className="rounded-lg border bg-muted/30 p-4 text-sm text-muted-foreground">
-                  <p>{t("desktopInstallHint")}</p>
-                  <Button type="button" variant="link" className="mt-2 h-auto p-0" asChild>
-                    <a href={GITHUB_RELEASES_URL} target="_blank" rel="noreferrer">
-                      {t("githubReleases")}
-                      <ExternalLink className="size-3.5" />
-                    </a>
+            {step === "desktop-install" && platform !== "linux" ? (
+              <>
+                <DialogHeader>
+                  <DialogTitle>
+                    {t("desktopInstallTitle", {
+                      platform: t(platform === "macos" ? "platformMacos" : "platformWindows"),
+                    })}
+                  </DialogTitle>
+                </DialogHeader>
+                <ol className="grid gap-3 py-2 text-sm">
+                  <li className="rounded-xl border bg-muted/25 p-4">{t("desktopInstallStepDownload")}</li>
+                  <li className="rounded-xl border bg-muted/25 p-4">{t("desktopInstallStepLogin")}</li>
+                  <li className="rounded-xl border bg-muted/25 p-4">{t("desktopInstallStepOnline")}</li>
+                </ol>
+                <DialogFooter className="gap-2 sm:justify-between">
+                  <Button type="button" variant="ghost" size="sm" onClick={goBack} className="gap-1.5">
+                    <ArrowLeft className="size-3.5" />
+                    {tCommon("back")}
                   </Button>
-                </div>
-                <Button
-                  type="button"
-                  onClick={openDesktopConnector}
-                  disabled={!desktopLaunchUrl}
-                  className="w-full justify-start"
-                >
-                  <MonitorUp className="size-4" />
-                  {t("desktopStarted")}
-                </Button>
-                {polling ? <PollingIndicator label={t("waitingOnline")} /> : null}
-              </div>
-              <DialogFooter>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => { stopPolling(); setStep("desktop-method") }}
-                  className="gap-1.5"
-                >
-                  <ArrowLeft className="size-3.5" />
-                  {tCommon("back")}
-                </Button>
-              </DialogFooter>
-            </>
-          )}
+                  <div className="flex gap-2">
+                    <Button type="button" variant="outline" asChild>
+                      <a href={DESKTOP_DOWNLOAD_URL} target="_blank" rel="noreferrer">
+                        {t("githubReleases")}
+                        <ExternalLink className="size-3.5" />
+                      </a>
+                    </Button>
+                    <Button type="button" onClick={completePairing}>{tCommon("done")}</Button>
+                  </div>
+                </DialogFooter>
+              </>
+            ) : null}
 
-          {/* ── Step: Pair code ── */}
-          {step === "desktop-paircode" && (
-            <>
-              <DialogHeader>
-                <DialogTitle>{t("codeStepTitle")}</DialogTitle>
-                <DialogDescription>
-                  {t("codeStepDescription", { name })}
-                </DialogDescription>
-              </DialogHeader>
-              <div className="flex flex-col gap-4 py-2">
-                <div className="rounded-lg border bg-muted/30 p-4 text-sm">
-                  <div className="font-medium">{t("serverAddress")}</div>
-                  <div className="mt-2 break-all font-mono text-xs text-muted-foreground">{pairServer}</div>
-                  <p className="mt-2 text-muted-foreground">{t("serverAddressHint")}</p>
+            {step === "linux-method" ? (
+              <>
+                <DialogHeader>
+                  <DialogTitle>{t("linuxMethodTitle")}</DialogTitle>
+                  <DialogDescription>{t("linuxMethodDescription")}</DialogDescription>
+                </DialogHeader>
+                <div className="grid gap-3 py-2">
+                  <ChoiceCard
+                    icon={<Terminal className="size-5" />}
+                    title={t("linuxTerminalTitle")}
+                    description={t("linuxTerminalDescription")}
+                    onClick={() => routeToLinuxMethod("terminal")}
+                  />
+                  <ChoiceCard
+                    icon={<Monitor className="size-5" />}
+                    title={t("linuxPairCodeTitle")}
+                    description={t("linuxPairCodeDescription")}
+                    onClick={() => routeToLinuxMethod("pair-code")}
+                  />
                 </div>
-                <div className="flex flex-col gap-2">
-                  <Label>{t("codeLabel")}</Label>
-                  <InputOTP
-                    maxLength={6}
-                    value={pairCode}
-                    onChange={(value) => setPairCode(value.replace(/\D/g, "").slice(0, 6))}
-                    disabled={polling}
-                    inputMode="numeric"
-                    aria-label={t("codeLabel")}
-                    containerClassName={cn("w-full justify-between", polling && "opacity-40")}
+                <DialogFooter>
+                  <Button type="button" variant="ghost" size="sm" onClick={goBack} className="gap-1.5">
+                    <ArrowLeft className="size-3.5" />
+                    {tCommon("back")}
+                  </Button>
+                </DialogFooter>
+              </>
+            ) : null}
+
+            {step === "name" ? (
+              <>
+                <DialogHeader>
+                  <DialogTitle>{t("nameTitle")}</DialogTitle>
+                  <DialogDescription>{t("nameDescription")}</DialogDescription>
+                </DialogHeader>
+                <div className="flex flex-col gap-2 py-2">
+                  <Label htmlFor="device-name">{t("nameLabel")}</Label>
+                  <Input
+                    id="device-name"
+                    value={name}
+                    onChange={(event) => setName(event.target.value)}
+                    placeholder={t("namePlaceholder")}
+                    className="code-mono"
+                    onKeyDown={(event) => event.key === "Enter" && void handleCreate()}
+                    autoFocus
+                  />
+                </div>
+                <DialogFooter className="gap-2 sm:justify-between">
+                  <Button type="button" variant="ghost" size="sm" onClick={goBack} className="gap-1.5">
+                    <ArrowLeft className="size-3.5" />
+                    {tCommon("back")}
+                  </Button>
+                  <Button type="button" onClick={() => void handleCreate()} disabled={!name.trim() || creating}>
+                    {creating ? <Loader2 className="size-4 animate-spin" /> : null}
+                    {t("createDevice")}
+                  </Button>
+                </DialogFooter>
+              </>
+            ) : null}
+
+            {step === "command" ? (
+              <>
+                <DialogHeader>
+                  <DialogTitle>{t("commandStepTitle")}</DialogTitle>
+                  <DialogDescription>{t("commandStepDescription", { name })}</DialogDescription>
+                </DialogHeader>
+                <div className="flex flex-col gap-3 py-2">
+                  <CodeBlock code={tokenCommand} copyLabel={t("copyCommand")} />
+                  <p className="pt-2 text-sm text-muted-foreground">{t("linuxSessionWarning")}</p>
+                  <CodeBlock code={`screen -S anywhere\n${tokenCommand}`} copyLabel={t("copyCommand")} />
+                  <p className="pt-2 text-sm text-muted-foreground">{t("linuxDetachHint")}</p>
+                  <CodeBlock code="screen -r anywhere" copyLabel={t("copyCommand")} />
+                  {polling ? <PollingIndicator label={t("waitingOnline")} /> : null}
+                </div>
+                <DialogFooter>
+                  <Button type="button" variant="ghost" size="sm" onClick={goBack} className="gap-1.5">
+                    <ArrowLeft className="size-3.5" />
+                    {tCommon("back")}
+                  </Button>
+                </DialogFooter>
+              </>
+            ) : null}
+
+            {step === "pair-code" ? (
+              <>
+                <DialogHeader>
+                  <DialogTitle>{t("codeStepTitle")}</DialogTitle>
+                </DialogHeader>
+                <div className="flex flex-col gap-4 py-2">
+                  <div className="rounded-xl border bg-muted/25 p-4 text-sm">
+                    <div className="font-medium">{t("pairCommand")}</div>
+                    <div className="mt-3">
+                      <CodeBlock code={pairCommand} copyLabel={t("copyCommand")} />
+                    </div>
+                    <p className="mt-3 text-muted-foreground">{t("pairCommandHint")}</p>
+                  </div>
+                  <div className="flex flex-col gap-2">
+                    <Label>{t("codeLabel")}</Label>
+                    <InputOTP
+                      maxLength={6}
+                      value={pairCode}
+                      onChange={(value) => setPairCode(value.replace(/\D/g, "").slice(0, 6))}
+                      disabled={claiming}
+                      inputMode="numeric"
+                      aria-label={t("codeLabel")}
+                      containerClassName={cn("w-full justify-between", claiming && "opacity-40")}
+                    >
+                      <InputOTPGroup className="w-full">
+                        {Array.from({ length: 6 }).map((_, index) => (
+                          <InputOTPSlot key={index} index={index} className="h-12 flex-1 text-xl" />
+                        ))}
+                      </InputOTPGroup>
+                    </InputOTP>
+                  </div>
+                  {claiming ? <PollingIndicator label={t("confirming")} /> : null}
+                </div>
+                <DialogFooter className="gap-2 sm:justify-between">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={goBack}
+                    className="gap-1.5"
+                    disabled={claiming}
                   >
-                    <InputOTPGroup className="w-full">
-                      {Array.from({ length: 6 }).map((_, i) => (
-                        <InputOTPSlot key={i} index={i} className="h-12 flex-1 text-xl" />
-                      ))}
-                    </InputOTPGroup>
-                  </InputOTP>
-                </div>
-                {polling && <PollingIndicator label={t("confirming")} />}
-              </div>
-              <DialogFooter className="gap-2 sm:gap-2">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => { stopPolling(); setStep("desktop-method") }}
-                  className="gap-1.5"
-                  disabled={polling || claiming}
-                >
-                  <ArrowLeft className="size-3.5" />
-                  {tCommon("back")}
-                </Button>
-                <Button
-                  onClick={handleClaim}
-                  disabled={pairCode.length < 6 || claiming || polling}
-                  className="flex-1"
-                >
-                  {claiming && <Loader2 className="mr-2 size-4 animate-spin" />}
-                  {t("claim")}
-                </Button>
-              </DialogFooter>
-            </>
-          )}
-
-          {/* ── Step: Command ── */}
-          {step === "command" && (
-            <>
-              <DialogHeader>
-                <DialogTitle>{t("commandStepTitle")}</DialogTitle>
-                <DialogDescription>
-                  {t("commandStepDescription", { name })}
-                </DialogDescription>
-              </DialogHeader>
-              <div className="flex flex-col gap-3 py-2">
-                <div className="rounded-lg border bg-muted/30 p-4 text-sm text-muted-foreground">
-                  {t("commandSkillReminder")}
-                </div>
-                <CodeBlock code={tokenCommand} />
-                <PollingIndicator label={t("waitingOnline")} />
-              </div>
-              <DialogFooter>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => { stopPolling(); setStep("method") }}
-                  className="gap-1.5"
-                >
-                  <ArrowLeft className="size-3.5" />
-                  {tCommon("back")}
-                </Button>
-              </DialogFooter>
-            </>
-          )}
-
-          {/* ── Step: Copy credentials ── */}
-          {step === "desktop-credentials" && (
-            <>
-              <DialogHeader>
-                <DialogTitle>{t("credentialsStepTitle")}</DialogTitle>
-                <DialogDescription>
-                  {t("credentialsStepDescription", { name })}
-                </DialogDescription>
-              </DialogHeader>
-              <div className="flex flex-col gap-3 py-2">
-                <CodeBlock code={desktopCredentials} copyLabel={t("copyCredentials")} />
-                <PollingIndicator label={t("waitingOnline")} />
-              </div>
-              <DialogFooter>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => { stopPolling(); setStep(credentialsBackStep) }}
-                  className="gap-1.5"
-                >
-                  <ArrowLeft className="size-3.5" />
-                  {tCommon("back")}
-                </Button>
-              </DialogFooter>
-            </>
-          )}
-
-          {/* ── Step: Configure agents ── */}
-          {step === "agents" && (
-            <>
-              <DialogHeader>
-                <DialogTitle className="flex items-center gap-2">
-                  <CheckCircle2 className="size-5 text-primary" />
-                  {t("successTitle")}
-                </DialogTitle>
-                <DialogDescription>
-                  {agentSetupOnline
-                    ? t("successDescription", { name })
-                    : t("waitingReconnectHeader", { name })}
-                </DialogDescription>
-              </DialogHeader>
-              <div className="flex min-h-32 flex-col gap-3 py-1">
-                <div className="flex flex-col gap-1">
-                  <p className="text-sm font-medium">{t("agentsTitle")}</p>
-                  <p className="text-xs text-muted-foreground">{t("agentsDescription")}</p>
-                </div>
-                {!agentSetupOnline ? (
-                  <Alert>
-                    <WifiOff />
-                    <AlertTitle>{t("waitingReconnectTitle")}</AlertTitle>
-                    <AlertDescription>{t("waitingReconnectDescription")}</AlertDescription>
-                  </Alert>
-                ) : runtimesLoading ? (
-                  <div className="flex min-h-32 items-center justify-center gap-2 text-sm text-muted-foreground">
-                    <Loader2 className="size-4 animate-spin" />
-                    {t("discoveringAgents")}
-                  </div>
-                ) : runtimeLoadError ? (
-                  <Alert>
-                    <AlertCircle />
-                    <AlertTitle>{t("agentsLoadFailedTitle")}</AlertTitle>
-                    <AlertDescription>{runtimeLoadError}</AlertDescription>
-                  </Alert>
-                ) : visibleRuntimes.length === 0 && visibleRuntimeTypes.length === 0 ? (
-                  <div className="flex min-h-32 items-center justify-center text-center">
-                    <p className="text-sm text-muted-foreground">{t("noAgentsFound")}</p>
-                  </div>
-                ) : (
-                  <>
-                    {visibleRuntimes.map((runtime) => (
-                      <div key={runtime.runtimeId} className="flex min-w-0 items-center gap-3 rounded-lg border px-4 py-3">
-                        <div className="min-w-0 flex-1">
-                          <p className="truncate text-sm font-medium">{runtimeInstanceName(runtime)}</p>
-                          <p className="truncate text-xs text-muted-foreground">
-                            {runtimeTypeName(runtime)} · {runtime.active && runtime.status === "running"
-                              ? t("agentRunning")
-                              : t("agentConfigured")}
-                          </p>
-                        </div>
-                        {runtime.active ? (
-                          <CheckCircle2 className="size-4 shrink-0 text-primary" aria-label={t("agentConfigured")} />
-                        ) : (
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            onClick={() => setConfigRuntime(runtime)}
-                            disabled={!agentSetupOnline || savingRuntimeId !== null}
-                          >
-                            {t("configureAndStart")}
-                          </Button>
-                        )}
-                      </div>
-                    ))}
-                    {visibleRuntimeTypes.map((runtimeType) => (
-                        <div key={runtimeType.runtimeType} className="flex min-w-0 items-center gap-3 rounded-lg border border-dashed px-4 py-3">
-                          <div className="min-w-0 flex-1">
-                            <div className="flex min-w-0 items-center gap-1">
-                              <p className="truncate text-sm font-medium">{runtimeType.displayName}</p>
-                            </div>
-                            <p className="truncate text-xs text-muted-foreground">
-                              {runtimeType.description || runtimeType.reason || runtimeType.implementationType}
-                            </p>
-                          </div>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            onClick={() => addRuntime(runtimeType)}
-                            disabled={!agentSetupOnline || savingRuntimeId !== null}
-                          >
-                            <Plus data-icon="inline-start" />
-                            {tDevice("addRuntime")}
-                          </Button>
-                        </div>
-                    ))}
-                  </>
-                )}
-              </div>
-              <DialogFooter className="sm:justify-between">
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => connectorId && void loadRuntimes(connectorId)}
-                  disabled={!agentSetupOnline || runtimesLoading || savingRuntimeId !== null}
-                >
-                  <RefreshCw data-icon="inline-start" className={cn(runtimesLoading && "animate-spin")} />
-                  {t("refreshAgents")}
-                </Button>
-                <Button onClick={handleSuccessClose} className="sm:min-w-28">{tCommon("done")}</Button>
-              </DialogFooter>
-            </>
-          )}
-
+                    <ArrowLeft className="size-3.5" />
+                    {tCommon("back")}
+                  </Button>
+                  <Button type="button" onClick={() => void handleClaim()} disabled={pairCode.length < 6 || claiming}>
+                    {claiming ? <Loader2 className="size-4 animate-spin" /> : null}
+                    {t("claim")}
+                  </Button>
+                </DialogFooter>
+              </>
+            ) : null}
           </div>
         </DialogContent>
       </Dialog>
 
-      {configRuntime ? (
-        <RuntimeConfigDialog
-          runtimeName={runtimeInstanceName(configRuntime)}
-          schema={configRuntime.schema}
-          uiSchema={configRuntime.uiSchema}
-          config={configRuntime.config}
-          defaults={configRuntime.defaults}
-          requiredFields={configRuntime.runtimeId === configRuntime.runtimeType
-            ? []
-            : namedInstanceRequiredConfigFields(configRuntime)}
-          saving={savingRuntimeId === configRuntime.runtimeId}
-          submitDisabled={!agentSetupOnline}
-          submitLabel={t("configureAndStart")}
-          open
-          onOpenChange={(nextOpen) => { if (!nextOpen) setConfigRuntime(null) }}
-          onSave={(config) => configureAndStartRuntime(configRuntime, config)}
-        />
-      ) : null}
-
-      {createRuntimeType ? (
-        <RuntimeInstanceNameDialog
-          open
-          title={tDevice("createRuntimeTitle", { type: createRuntimeType.displayName })}
-          description={tDevice("createRuntimeDescription", { type: createRuntimeType.displayName })}
-          label={tDevice("runtimeName")}
-          requiredMessage={tDevice("runtimeNameRequired")}
-          placeholder={tDevice("runtimeNamePlaceholder")}
-          submitLabel={tDevice("createRuntime")}
-          cancelLabel={tCommon("cancel")}
-          initialName={suggestedRuntimeInstanceName(createRuntimeType, runtimes)}
-          saving={false}
-          submitDisabled={!agentSetupOnline}
-          onOpenChange={(nextOpen) => { if (!nextOpen) setCreateRuntimeType(null) }}
-          onSubmit={stageRuntimeCreation}
-        />
-      ) : null}
-
-      {pendingRuntimeCreation ? (
-        <RuntimeConfigDialog
-          runtimeName={pendingRuntimeCreation.name}
-          schema={pendingRuntimeCreation.runtimeType.schema}
-          uiSchema={pendingRuntimeCreation.runtimeType.uiSchema}
-          config={pendingRuntimeCreation.initialConfig}
-          defaults={pendingRuntimeCreation.runtimeType.defaults}
-          requiredFields={namedInstanceRequiredConfigFields(pendingRuntimeCreation.runtimeType)}
-          saving={savingRuntimeId === NEW_RUNTIME_SAVING_ID}
-          submitDisabled={!agentSetupOnline}
-          submitLabel={t("configureAndStart")}
-          open
-          onOpenChange={(nextOpen) => { if (!nextOpen) setPendingRuntimeCreation(null) }}
-          onSave={(config) => createAndStartRuntime(pendingRuntimeCreation, config)}
-        />
-      ) : null}
-
-      {/* Exit guard */}
       <AlertDialog open={exitGuardOpen} onOpenChange={setExitGuardOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>{t("exitTitle")}</AlertDialogTitle>
-            <AlertDialogDescription>
-              {t("exitDescription", { name })}
-            </AlertDialogDescription>
+            <AlertDialogDescription>{t("exitDescription", { name })}</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel onClick={continuePairing}>{t("continuePairing")}</AlertDialogCancel>
-            <AlertDialogAction onClick={handleForceClose}>
-              {t("closeAnyway")}
-            </AlertDialogAction>
+            <AlertDialogAction onClick={handleForceClose}>{t("closeAnyway")}</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-
     </>
   )
 }

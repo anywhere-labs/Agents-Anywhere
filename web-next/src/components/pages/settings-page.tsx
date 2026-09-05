@@ -3,11 +3,13 @@
 import * as React from "react"
 import Cropper, { type Area, type Point } from "react-easy-crop"
 import {
+  Archive,
   Camera,
   ChevronDown,
   ChevronLeft,
   RotateCw,
   Settings,
+  Smartphone,
   Sun,
   Trash2,
   Upload,
@@ -19,6 +21,14 @@ import { toast } from "sonner"
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card"
 import {
   Dialog,
   DialogContent,
@@ -47,9 +57,11 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { Separator } from "@/components/ui/separator"
 import { Slider } from "@/components/ui/slider"
 import { Spinner } from "@/components/ui/spinner"
+import { Switch } from "@/components/ui/switch"
 import { AccountProfileCard } from "@/components/pages/account-profile-card"
 import { accountDisplayName } from "@/features/auth/account-profile"
-import { MobileSignInPanel } from "@/components/pages/mobile-signin-panel"
+import { MobileConnectionDialog } from "@/components/pages/mobile-signin-panel"
+import { ArchivedSessionsTab } from "@/components/settings/archived-sessions-tab"
 import { DashboardSidebarToggle } from "@/components/dashboard-sidebar-toggle"
 import { useAuth } from "@/components/auth/auth-context"
 import { LocaleSwitcher } from "@/components/locale-switcher"
@@ -57,18 +69,32 @@ import { LoadingState } from "@/components/loading-state"
 import { useWorkspace } from "@/components/workspace-context"
 import { authApi } from "@/features/auth/api"
 import type { AuthMe } from "@/features/auth/types"
+import { useMobileConnectionsSidebarVisibility } from "@/features/mobile-connections/sidebar-visibility"
 import { cn } from "@/lib/utils"
 
-type SettingsTab = "account" | "agent" | "appearance"
+type SettingsTab =
+  | "account"
+  | "agent"
+  | "appearance"
+  | "mobile-connections"
+  | "archived-sessions"
+type SettingsLabelKey =
+  | "account"
+  | "agent"
+  | "appearance"
+  | "mobileConnections"
+  | "archivedSessions"
 type AppearanceMode = "light" | "dark" | "auto"
 
 const AVATAR_OUTPUT_SIZE = 256
 const AVATAR_MAX_FILE_SIZE = 8 * 1024 * 1024
 
-const navItems: { id: SettingsTab; labelKey: "account" | "agent" | "appearance"; icon: typeof User }[] = [
+const navItems: { id: SettingsTab; labelKey: SettingsLabelKey; icon: typeof User }[] = [
   { id: "account", labelKey: "account", icon: User },
   { id: "agent", labelKey: "agent", icon: Settings },
   { id: "appearance", labelKey: "appearance", icon: Sun },
+  { id: "mobile-connections", labelKey: "mobileConnections", icon: Smartphone },
+  { id: "archived-sessions", labelKey: "archivedSessions", icon: Archive },
 ]
 
 function AccountTab({
@@ -168,8 +194,6 @@ function AccountTab({
 
       <AccountProfileCard me={me} token={token} onMeChange={onMeChange} />
 
-      <MobileSignInPanel token={token} userId={accountDisplayName(me)} />
-
       <ResetPasswordDialog open={passwordOpen} token={token} onOpenChange={setPasswordOpen} />
       <AvatarCropDialog
         open={avatarOpen}
@@ -178,6 +202,55 @@ function AccountTab({
         onMeChange={onMeChange}
         onOpenChange={setAvatarOpen}
       />
+    </div>
+  )
+}
+
+function MobileConnectionsTab({ token, userId }: { token: string; userId: string }) {
+  const t = useTranslations("pages.settings")
+  const tMobile = useTranslations("dashboard.mobileConnections")
+  const [sidebarVisible, setSidebarVisible] = useMobileConnectionsSidebarVisibility()
+
+  return (
+    <div className="flex max-w-3xl flex-col gap-4">
+      <Card className="border border-border">
+        <CardHeader className="border-b">
+          <CardTitle>{t("mobileSidebarTitle")}</CardTitle>
+          <CardDescription>{t("mobileSidebarDescription")}</CardDescription>
+        </CardHeader>
+        <CardContent className="px-0">
+          <FieldGroup className="gap-0">
+            <Field orientation="horizontal" className="px-6 py-1">
+              <FieldContent>
+                <FieldLabel htmlFor="mobile-connections-sidebar-visible">
+                  {t("mobileSidebarShow")}
+                </FieldLabel>
+                <FieldDescription>{t("mobileSidebarShowDescription")}</FieldDescription>
+              </FieldContent>
+              <Switch
+                id="mobile-connections-sidebar-visible"
+                checked={sidebarVisible}
+                onCheckedChange={setSidebarVisible}
+              />
+            </Field>
+          </FieldGroup>
+        </CardContent>
+      </Card>
+
+      <Card className="border border-border">
+        <CardHeader>
+          <CardTitle>{tMobile("onboardingTitle")}</CardTitle>
+          <CardDescription>{tMobile("onboardingDescription")}</CardDescription>
+        </CardHeader>
+        <CardFooter className="justify-end border-t">
+          <MobileConnectionDialog token={token} userId={userId}>
+            <Button type="button">
+              <Smartphone data-icon="inline-start" />
+              {tMobile("startConnection")}
+            </Button>
+          </MobileConnectionDialog>
+        </CardFooter>
+      </Card>
     </div>
   )
 }
@@ -480,6 +553,7 @@ const themes: { id: AppearanceMode; labelKey: string; descKey: string }[] = [
 function AppearanceTab() {
   const t = useTranslations("pages.settings")
   const { theme, setTheme } = useTheme()
+  const { sidebarShowsSessions, setSidebarShowsSessions } = useWorkspace()
   const selected: AppearanceMode = theme === "light" || theme === "dark" ? theme : "auto"
 
   const handleThemeChange = (value: string) => {
@@ -515,6 +589,27 @@ function AppearanceTab() {
       </section>
 
       <section className="rounded-xl border border-border bg-card">
+        <div className="px-6 py-5">
+          <h2 className="text-base font-semibold">{t("desktopSidebar")}</h2>
+          <p className="mt-0.5 text-sm text-muted-foreground">{t("desktopSidebarDescription")}</p>
+        </div>
+        <Separator />
+        <Field orientation="horizontal" className="px-6 py-4">
+          <FieldContent>
+            <FieldLabel htmlFor="settings-sidebar-shows-sessions">
+              {t("desktopSidebarShowSessions")}
+            </FieldLabel>
+            <FieldDescription>{t("desktopSidebarShowSessionsDescription")}</FieldDescription>
+          </FieldContent>
+          <Switch
+            id="settings-sidebar-shows-sessions"
+            checked={sidebarShowsSessions}
+            onCheckedChange={setSidebarShowsSessions}
+          />
+        </Field>
+      </section>
+
+      <section className="rounded-xl border border-border bg-card">
         <div className="flex items-center justify-between gap-4 px-6 py-5">
           <div className="min-w-0">
             <h2 className="text-base font-semibold">{t("language")}</h2>
@@ -528,11 +623,13 @@ function AppearanceTab() {
 }
 
 export function SettingsPage() {
-  const { navigate, settingsTab } = useWorkspace()
+  const { navigate, openSession, projects, refreshData, settingsTab, upsertSession } = useWorkspace()
   const { session, me: authMe, refreshMe } = useAuth()
   const t = useTranslations("pages.settings")
   const tCommon = useTranslations("common")
-  const [tab, setTab] = React.useState<SettingsTab>((settingsTab as SettingsTab) ?? "account")
+  const [tab, setTab] = React.useState<SettingsTab>(() => (
+    navItems.some((item) => item.id === settingsTab) ? settingsTab as SettingsTab : "account"
+  ))
   const [me, setMe] = React.useState<AuthMe | null>(authMe)
   const [loadingMe, setLoadingMe] = React.useState(!authMe)
   const [meError, setMeError] = React.useState<string | null>(null)
@@ -570,8 +667,10 @@ export function SettingsPage() {
   }, [authMe, session?.accessToken, t])
 
   React.useEffect(() => {
-    if (settingsTab && ["account", "agent", "appearance"].includes(settingsTab)) {
+    if (settingsTab && navItems.some((item) => item.id === settingsTab)) {
       setTab(settingsTab as SettingsTab)
+    } else if (settingsTab) {
+      setTab("account")
     }
   }, [settingsTab])
 
@@ -592,6 +691,11 @@ export function SettingsPage() {
 
   const activeNavItem = navItems.find((item) => item.id === tab) ?? navItems[0]!
   const ActiveNavIcon = activeNavItem.icon
+  const mobileUserId = me
+    ? accountDisplayName(me)
+    : authMe
+      ? accountDisplayName(authMe)
+      : session?.userId ?? ""
 
   return (
     <div className="flex h-full flex-col bg-background">
@@ -658,6 +762,21 @@ export function SettingsPage() {
           )}
           {tab === "agent" && <AgentTab token={session?.accessToken ?? ""} />}
           {tab === "appearance" && <AppearanceTab />}
+          {tab === "mobile-connections" && (
+            <MobileConnectionsTab
+              token={session?.accessToken ?? ""}
+              userId={mobileUserId}
+            />
+          )}
+          {tab === "archived-sessions" && (
+            <ArchivedSessionsTab
+              token={session?.accessToken ?? ""}
+              projects={projects}
+              onOpenSession={openSession}
+              onSessionUpdated={upsertSession}
+              onWorkspaceRefresh={refreshData}
+            />
+          )}
         </ScrollArea>
       </div>
     </div>
