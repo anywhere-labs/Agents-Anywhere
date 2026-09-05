@@ -9,6 +9,7 @@ import {
   useSessionToolSidebar,
 } from "@/components/session-tool-sidebar"
 import {
+  updateSessionReviewTimeline,
   updateSessionToolSidebarHostBounds,
   useSessionToolSidebarStore,
 } from "@/components/session-tool-sidebar-state"
@@ -58,6 +59,7 @@ export function SessionView() {
     markSessionRead,
   } = useWorkspace()
   const session = activeSession
+  const detailSessionId = activeSessionId ?? session?.id ?? null
   const connector = connectors.find((item) => item.id === session?.connectorId)
   const token = authSession?.accessToken ?? null
   const connectorId = session?.connectorId ?? null
@@ -98,14 +100,37 @@ export function SessionView() {
     [setPanelMode, toolSidebar.openFilePreview],
   )
 
+  const handleMemorySnapshotUpdated = React.useCallback((snapshot: SessionMemorySnapshot | null) => {
+    if (!detailSessionId) {
+      setMemorySnapshot(null)
+      return
+    }
+    const currentSnapshot = snapshot?.session.id === detailSessionId ? snapshot : null
+    setMemorySnapshot(currentSnapshot)
+    updateSessionReviewTimeline(
+      toolSidebarStore,
+      detailSessionId,
+      currentSnapshot
+        ? {
+            items: currentSnapshot.items,
+            hasMore: currentSnapshot.hasMore,
+            nextSeq: currentSnapshot.nextSeq,
+          }
+        : null,
+    )
+  }, [detailSessionId, toolSidebarStore])
+
   React.useLayoutEffect(() => {
     if (!session) return
     updateSessionToolSidebarHostBounds(toolSidebarStore, viewBounds)
   }, [session, toolSidebarStore, viewBounds])
 
-  React.useEffect(() => {
+  React.useLayoutEffect(() => {
     setMemorySnapshot(null)
-  }, [activeSessionId])
+    if (detailSessionId) {
+      updateSessionReviewTimeline(toolSidebarStore, detailSessionId, null)
+    }
+  }, [detailSessionId, toolSidebarStore])
 
   React.useEffect(() => {
     if (activeSessionId) markSessionRead(activeSessionId)
@@ -223,10 +248,10 @@ export function SessionView() {
               <SessionFilePreviewProvider onOpenFilePreview={handleOpenFilePreview}>
                 <SessionDetail
                   token={token}
-                  sessionId={activeSessionId ?? session.id}
+                  sessionId={detailSessionId ?? session.id}
                   fallbackSession={activeSessionFallback}
                   onSessionUpdated={upsertSession}
-                  onMemorySnapshotUpdated={setMemorySnapshot}
+                  onMemorySnapshotUpdated={handleMemorySnapshotUpdated}
                   onStreamProgress={reportSessionStreamProgress}
                 />
               </SessionFilePreviewProvider>

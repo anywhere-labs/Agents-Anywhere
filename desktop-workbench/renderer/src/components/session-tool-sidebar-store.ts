@@ -4,6 +4,7 @@ import {
   type SessionToolTabsAction,
   type SessionToolTabsState,
 } from "./session-tool-tabs.ts"
+import type { TimelineItem } from "@/features/dashboard/types"
 
 export type SessionToolSidebarContext = {
   ownerUserId: string
@@ -18,6 +19,12 @@ export type SessionToolSidebarHostBounds = {
   width: number
 }
 
+export type SessionReviewTimelineSnapshot = {
+  items: TimelineItem[]
+  hasMore: boolean
+  nextSeq: number
+}
+
 type Listener = () => void
 
 export type SessionToolSidebarStore = ReturnType<typeof createSessionToolSidebarStore>
@@ -25,10 +32,12 @@ export type SessionToolSidebarStore = ReturnType<typeof createSessionToolSidebar
 export function createSessionToolSidebarStore() {
   const states = new Map<string, SessionToolTabsState>()
   const contexts = new Map<string, SessionToolSidebarContext>()
+  const reviewTimelines = new Map<string, SessionReviewTimelineSnapshot>()
   const aliases = new Map<string, string>()
   const hostKeys = new Map<string, string>()
   const stateListeners = new Map<string, Set<Listener>>()
   const contextListeners = new Map<string, Set<Listener>>()
+  const reviewTimelineListeners = new Map<string, Set<Listener>>()
   const sessionIdsListeners = new Set<Listener>()
   const hostBoundsListeners = new Set<Listener>()
   const terminalTasks = new Set<Promise<unknown>>()
@@ -104,12 +113,37 @@ export function createSessionToolSidebarStore() {
       return subscribeToMap(contextListeners, resolveSessionId(sessionId), listener)
     },
 
+    getReviewTimeline(sessionId: string): SessionReviewTimelineSnapshot | null {
+      return reviewTimelines.get(resolveSessionId(sessionId)) ?? null
+    },
+
+    setReviewTimeline(
+      sessionId: string,
+      snapshot: SessionReviewTimelineSnapshot | null,
+    ) {
+      sessionId = resolveSessionId(sessionId)
+      const current = reviewTimelines.get(sessionId) ?? null
+      if (sameReviewTimeline(current, snapshot)) return
+      if (snapshot) {
+        reviewTimelines.set(sessionId, snapshot)
+        addSessionId(sessionId)
+      } else {
+        reviewTimelines.delete(sessionId)
+      }
+      reviewTimelineListeners.get(sessionId)?.forEach((listener) => listener())
+    },
+
+    subscribeReviewTimeline(sessionId: string, listener: Listener) {
+      return subscribeToMap(reviewTimelineListeners, resolveSessionId(sessionId), listener)
+    },
+
     migrateSession(fromSessionId: string, toSessionId: string) {
       const from = resolveSessionId(fromSessionId)
       const to = resolveSessionId(toSessionId)
       if (from === to) return
       const fromStateListeners = stateListeners.get(from)
       const fromContextListeners = contextListeners.get(from)
+      const fromReviewTimelineListeners = reviewTimelineListeners.get(from)
 
       const fromState = states.get(from)
       const toState = states.get(to)
@@ -124,6 +158,13 @@ export function createSessionToolSidebarStore() {
       if (fromContext && !contexts.has(to)) contexts.set(to, fromContext)
       contexts.delete(from)
 
+      const fromReviewTimeline = reviewTimelines.get(from)
+      const toReviewTimeline = reviewTimelines.get(to)
+      if (fromReviewTimeline) {
+        reviewTimelines.set(to, mergeReviewTimelines(toReviewTimeline, fromReviewTimeline))
+      }
+      reviewTimelines.delete(from)
+
       aliases.set(fromSessionId, to)
       aliases.set(from, to)
       sessionIdsSnapshot = Array.from(new Set(
@@ -131,8 +172,10 @@ export function createSessionToolSidebarStore() {
       ))
       fromStateListeners?.forEach((listener) => listener())
       fromContextListeners?.forEach((listener) => listener())
+      fromReviewTimelineListeners?.forEach((listener) => listener())
       stateListeners.get(to)?.forEach((listener) => listener())
       contextListeners.get(to)?.forEach((listener) => listener())
+      reviewTimelineListeners.get(to)?.forEach((listener) => listener())
       sessionIdsListeners.forEach((listener) => listener())
     },
 
@@ -209,4 +252,30 @@ function sameContext(a: SessionToolSidebarContext, b: SessionToolSidebarContext)
     a.root === b.root &&
     a.terminalLabel === b.terminalLabel
   )
+}
+
+function sameReviewTimeline(
+  a: SessionReviewTimelineSnapshot | null,
+  b: SessionReviewTimelineSnapshot | null,
+) {
+  return (
+    a === b || (
+      a !== null &&
+      b !== null &&
+      a.items === b.items &&
+      a.hasMore === b.hasMore &&
+      a.nextSeq === b.nextSeq
+    )
+  )
+}
+
+function mergeReviewTimelines(
+  target: SessionReviewTimelineSnapshot | undefined,
+  source: SessionReviewTimelineSnapshot,
+): SessionReviewTimelineSnapshot {
+  if (!target) return source
+  if (source.nextSeq !== target.nextSeq) {
+    return source.nextSeq > target.nextSeq ? source : target
+  }
+  return source.items.length >= target.items.length ? source : target
 }

@@ -4,6 +4,7 @@ import * as React from "react"
 
 import {
   createSessionToolSidebarStore,
+  type SessionReviewTimelineSnapshot,
   type SessionToolSidebarContext,
   type SessionToolSidebarHostBounds,
   type SessionToolSidebarStore,
@@ -88,6 +89,19 @@ export function useStoredSessionToolSidebarContext(sessionId: string) {
   return React.useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
 }
 
+export function useStoredSessionReviewTimeline(sessionId: string) {
+  const store = useSessionToolSidebarStore()
+  const subscribe = React.useCallback(
+    (listener: () => void) => store.subscribeReviewTimeline(sessionId, listener),
+    [sessionId, store],
+  )
+  const getSnapshot = React.useCallback(
+    () => store.getReviewTimeline(sessionId),
+    [sessionId, store],
+  )
+  return React.useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
+}
+
 export function useStoredSessionToolSidebarIds() {
   const store = useSessionToolSidebarStore()
   return React.useSyncExternalStore(
@@ -112,6 +126,14 @@ export function registerSessionToolSidebarContext(
   context: SessionToolSidebarContext,
 ) {
   store.setContext(sessionId, context)
+}
+
+export function updateSessionReviewTimeline(
+  store: SessionToolSidebarStore,
+  sessionId: string,
+  snapshot: SessionReviewTimelineSnapshot | null,
+) {
+  store.setReviewTimeline(sessionId, snapshot)
 }
 
 export function updateSessionToolSidebarHostBounds(
