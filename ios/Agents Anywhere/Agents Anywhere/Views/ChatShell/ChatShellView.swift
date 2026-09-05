@@ -49,10 +49,10 @@ struct ChatShellView: View {
         } message: {
             Text(appState.sessionActionError ?? "")
         }
-        .task(id: readTarget) {
-            guard let target = readTarget else { return }
-            await appState.markSessionRead(sessionId: target.id)
+        .onChange(of: visibleSessionID, initial: true) { _, id in
+            appState.setVisibleSession(id)
         }
+        .onDisappear { appState.setVisibleSession(nil) }
     }
 
     private var sidebarDevices: [ChatSidebarDevice] {
@@ -79,12 +79,8 @@ struct ChatShellView: View {
             .sorted { $0.presentation.precedes($1.presentation, id: $0.id, otherID: $1.id) }
     }
 
-    private struct ReadTarget: Equatable { let id: String; let turnEndSeq: Int }
-    private var readTarget: ReadTarget? {
-        guard scenePhase == .active, !isSidebarOpen, appState.dashboardError == nil,
-              let id = selectedSessionId,
-              let session = appState.sessions.first(where: { $0.id == id }), session.unread else { return nil }
-        return ReadTarget(id: id, turnEndSeq: session.latestTurnEndSeq)
+    private var visibleSessionID: V2SessionID? {
+        scenePhase == .active && !isSidebarOpen ? selectedSessionId : nil
     }
 
     private var selectedDeviceId: V2ConnectorID? {

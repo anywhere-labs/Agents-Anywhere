@@ -52,6 +52,7 @@ final class AppState: ObservableObject {
     private var cachedServices: V2ClientServices?
     private var cachedServicesToken: String?
     private var isInBackground = false
+    private var visibleSessionID: V2SessionID?
 
     init() {
         Task { await restoreSession() }
@@ -289,8 +290,8 @@ final class AppState: ObservableObject {
             let dashboard = try await services.dashboard.load()
             guard cachedServices === services, !Task.isCancelled else { return }
             connectors = dashboard.connectors
-            sessions = dashboard.sessions
-            cachedServices?.sessionRepository.applyMetadata(dashboard.sessions)
+            sessions = dashboard.sessions.map(services.sessionReads.ingest)
+            services.sessionRepository.applyMetadata(sessions)
             hasLoadedConnectors = true
             hasLoadedSessions = true
         } catch {
@@ -330,23 +331,10 @@ final class AppState: ObservableObject {
         }
     }
 
-    func markSessionRead(sessionId: V2SessionID) async {
-        guard route == .signedIn, !isInBackground,
-              sessions.contains(where: { $0.id == sessionId && $0.unread }),
-              let services = makeV2Services(), services.connectivity.status.availability != .offline else { return }
-        do {
-            let updated = try await services.dashboard.markRead(sessionIds: [sessionId])
-            guard !Task.isCancelled, cachedServices === services, route == .signedIn else { return }
-            for receipt in updated {
-                // A read receipt must not overwrite a newer running/approval
-                // state that arrived on the dashboard stream during the request.
-                if let current = sessions.first(where: { $0.id == receipt.id }), current.updatedSeq > receipt.updatedSeq { continue }
-                updateSession(receipt)
-            }
-        } catch {
-            // Keep the unread indicator on failure; reopening or a fresh
-            // dashboard connection provides another opportunity to acknowledge.
-        }
+    func setVisibleSession(_ sessionId: V2SessionID?) {
+        guard route == .signedIn else { return }
+        visibleSessionID = sessionId
+        makeV2Services()?.sessionReads.setVisibleSession(sessionId)
     }
 
     func setSessionPinned(sessionId: V2SessionID, pinned: Bool) async -> Bool {
@@ -587,6 +575,7 @@ final class AppState: ObservableObject {
     }
 
     func updateSession(_ updated: V2SessionMeta) {
+        let updated = cachedServices?.sessionReads.ingest(updated) ?? updated
         cachedServices?.sessionRepository.applyMetadata([updated])
         if let index = sessions.firstIndex(where: { $0.id == updated.id }) {
             sessions[index] = updated
@@ -631,6 +620,7 @@ final class AppState: ObservableObject {
         cachedServices?.shutdown()
         cachedServices = nil
         cachedServicesToken = nil
+        visibleSessionID = nil
         me = nil
         serverURL = nil
         connectors = []
@@ -711,12 +701,13 @@ final class AppState: ObservableObject {
 
     private func applyDashboardSnapshot(_ snapshot: V2DashboardSnapshot) {
         guard snapshot.type == "dashboard.snapshot" else { return }
-        cachedServices?.sessionRepository.applyMetadata(snapshot.sessions)
+        let updatedSessions = snapshot.sessions.map { cachedServices?.sessionReads.ingest($0) ?? $0 }
+        cachedServices?.sessionRepository.applyMetadata(updatedSessions)
         if connectors != snapshot.connectors {
             connectors = snapshot.connectors
         }
-        if sessions != snapshot.sessions {
-            sessions = snapshot.sessions
+        if sessions != updatedSessions {
+            sessions = updatedSessions
         }
         hasLoadedConnectors = true
         hasLoadedSessions = true
@@ -748,6 +739,7 @@ final class AppState: ObservableObject {
 
     func setAppInBackground(_ background: Bool) {
         isInBackground = background
+        cachedServices?.sessionReads.setActive(!background)
         if background {
             dashboardUpdatesTask?.cancel()
             dashboardUpdatesTask = nil
@@ -782,6 +774,17 @@ final class AppState: ObservableObject {
         let services = V2ClientServices(api: api, accountID: accountID)
         cachedServices = services
         cachedServicesToken = token
+        services.sessionReads.setActive(!isInBackground)
+        services.sessionReads.onChange = { [weak self, weak services] id in
+            guard let self, let services, self.cachedServices === services,
+                  let index = self.sessions.firstIndex(where: { $0.id == id }) else { return }
+            let updated = services.sessionReads.project(self.sessions[index])
+            if self.sessions[index] != updated {
+                self.sessions[index] = updated
+                services.sessionRepository.applyMetadata([updated])
+            }
+        }
+        services.sessionReads.setVisibleSession(visibleSessionID)
         if isInBackground { services.sessionRepository.suspend() }
         services.onConnectivityChange = { [weak self, weak services] status in
             guard let self, let services, self.cachedServices === services else { return }

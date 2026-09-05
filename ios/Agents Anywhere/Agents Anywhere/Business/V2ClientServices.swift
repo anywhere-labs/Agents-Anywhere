@@ -10,6 +10,7 @@ final class V2ClientServices {
     let sessionPreparation: V2SessionPreparationService
     let account: V2AccountService
     let dashboard: V2DashboardService
+    let sessionReads: V2SessionReadCoordinator
     let sessionDetail: V2SessionDetailService
     let sessionCreation: V2SessionCreationService
     let attachments: V2AttachmentService
@@ -29,6 +30,11 @@ final class V2ClientServices {
             sessionAPI: api.sessions,
             realtimeAPI: api.realtime
         )
+        sessionReads = V2SessionReadCoordinator { id in
+            let response = try await api.sessions.markRead(sessionIds: [id])
+            guard let receipt = response.sessions.first(where: { $0.id == id }) else { throw HTTPError.invalidResponse }
+            return receipt
+        }
         sessionDetail = V2SessionDetailService(
             sessionAPI: api.sessions,
             runtimeAPI: api.runtime,
@@ -49,12 +55,14 @@ final class V2ClientServices {
         connectivity.onChange = { [weak self] status in
             self?.sessionRepository.updateConnectivity(status)
             self?.newSession.updateNetwork(status)
+            self?.sessionReads.updateConnectivity(status)
             self?.onConnectivityChange?(status)
         }
         connectivity.start()
     }
 
     func shutdown() {
+        sessionReads.invalidate()
         newSession.invalidate()
         connectivity.stop()
         onConnectivityChange = nil

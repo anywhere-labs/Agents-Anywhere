@@ -35,8 +35,8 @@ struct V2SessionMeta: Codable, Identifiable, Hashable {
     let sourceAvailabilityUpdatedAt: String?
     let sourceObservationOrigin: String?
     let archiveSource: String?
-    let unread: Bool
-    let lastReadSeq: Int
+    var unread: Bool
+    var lastReadSeq: Int
     let latestTurnEndSeq: Int
     let lastSyncedAt: String?
     let sourceObservedAt: String?

@@ -90,6 +90,13 @@ observable objects. Dashboard reads also reject late results from an old scope.
   Session sockets use bounded buffers; overflow reconnects and recovers. A
   45-second absence of server frames/keepalives is detected on a 15-second check
   interval, including when the system still reports an online path.
+- Session read receipts are a separate idempotent metadata operation. Opening
+  a session records local seen progress immediately, and account-scoped workers
+  coalesce the receipt independently of SwiftUI view tasks. Its monotonic
+  `lastReadSeq` merges independently of runtime `updatedSeq`. Transient failures
+  retry with bounded backoff only while that session is visible and foreground;
+  account changes cancel work and discard local progress. This does not replay
+  messages, approvals, takeover requests or uploads.
 - Sending keeps a stable `clientMessageId` and a pending delivery object. HTTP
   acceptance and authoritative timeline confirmation are different states.
   Ambiguous transport/RPC failures retain the draft and an uncertain outcome;

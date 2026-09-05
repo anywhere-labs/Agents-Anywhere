@@ -99,8 +99,18 @@ Semantic error and availability colors remain separate from the primary color.
 - Sidebar indicators follow Web's priority and position, on the title's trailing
   side: a green waiting-approval capsule, a native spinner for running/waiting/
   pending, or a green unread dot for an idle session. Opening an unread session
-  in the active foreground sends the existing read-receipt API; failures retain
-  unread state and older receipts cannot replace newer dashboard revisions.
+  in the active foreground immediately clears its local unread indicator and
+  sends the existing read-receipt API through `V2SessionReadCoordinator`. Requests
+  belong to the authenticated services, surviving drawer/selection changes.
+  Local seen progress and confirmed `lastReadSeq` merge monotonically across
+  dashboard snapshots, independently of `updatedSeq`. A receipt changes read
+  progress only, preserving current runtime metadata; older snapshots cannot
+  resurrect an already read turn or conceal a newer unseen turn.
+  Transient failures retry with backoff only for the visible foreground session.
+  Offline/background periods preserve local progress, and new turns received
+  while away remain unread. Returning foreground/online retries the visible
+  session. Account/server changes invalidate requests and clear the watermarks.
+  An unrelated dashboard error does not block this idempotent server operation.
   Dashboard updates drive indicators live. Running sessions sort first in stable
   ID order; other sessions use descending `sortAt`, matching Web within pinned
   and recent sections.
@@ -241,7 +251,7 @@ than a “server unavailable” alert.
 
 Verified on 2026-09-05, without starting a server or simulator:
 
-- 97 headless Swift tests across fourteen suites pass against production client-core
+- 106 headless Swift tests across fifteen suites pass against production client-core
   sources. They cover API contracts, recovery/cache races, uncertain delivery,
   30 Hz presentation, echo handoff, target preparation, preference scope, schema
   payloads and interaction lifecycle/IME guards. Session-detail checks cover
@@ -250,7 +260,10 @@ Verified on 2026-09-05, without starting a server or simulator:
   metadata through an actual repository connection and response. Navigation
   cases cover delayed visibility, inertia, explicit return, interaction changes
   and both history edges. Sidebar status priority/order and compact approval
-  grouping are checked against the Web and runtime contracts.
+  grouping are checked against the Web and runtime contracts. Read receipt tests
+  exercise the production API, immediate local read state, rapid navigation,
+  equal-revision snapshots, delayed acknowledgements, per-turn coalescing,
+  connectivity/lifecycle recovery and account invalidation.
 - The Python backend contract fixture exporter reports that fixtures are current.
 - The complete unsigned iOS Debug target builds for `generic/platform=iOS`, using
   the checked-in package resolutions and the Xcode beta toolchain. The app's
@@ -316,5 +329,8 @@ keyboard layout and real mobile-network behavior still need manual validation:
     and verify it returns without snapping back. At each history edge, release
     a fresh pull to load one page; scroll during loading to cancel restoration.
 12. Open the sidebar during running, approval and idle-unread states. Open an
-    unread session, switch apps and return, and reconnect after going offline;
-    verify read indicators and live status changes without reopening the app.
+    unread session and immediately reopen the sidebar or choose another session.
+    Its unread dot should clear immediately and stay cleared after the request
+    and dashboard update. New turns received while away should become unread.
+    Switch apps and return, and reconnect after going offline; verify read
+    synchronization and live status changes without reopening the app.
