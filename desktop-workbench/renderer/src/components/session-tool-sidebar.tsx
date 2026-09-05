@@ -22,6 +22,7 @@ import { useTranslations } from "next-intl"
 
 import { FilesPanelBody } from "@/components/panels/files-panel"
 import { TerminalSessionPanel } from "@/components/panels/terminal-panel"
+import { SessionReviewPanel } from "@/components/session/session-review-panel"
 import { DashboardSidebarToggle } from "@/components/dashboard-sidebar-toggle"
 import { useDashboardSidebarControls } from "@/components/dashboard-sidebar-controls"
 import { useAuth } from "@/components/auth/auth-context"
@@ -34,13 +35,6 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import {
-  Empty,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from "@/components/ui/empty"
 import {
   createSessionFilePreviewTab,
   createSessionToolTab,
@@ -498,6 +492,7 @@ function PersistentSessionToolSidebar({
 
   return (
     <SessionToolSidebar
+      sessionId={sessionId}
       controller={controller}
       presented={presented}
       hostLeft={hostLeft}
@@ -528,6 +523,7 @@ function usePreviousValue<T>(value: T) {
 }
 
 type SessionToolSidebarProps = {
+  sessionId: string
   controller: SessionToolSidebarController
   presented: boolean
   hostLeft: number
@@ -545,6 +541,7 @@ type SessionToolSidebarProps = {
 }
 
 export function SessionToolSidebar({
+  sessionId,
   controller,
   presented,
   hostLeft,
@@ -841,7 +838,15 @@ export function SessionToolSidebar({
                   panelActive ? "visible pointer-events-auto" : "invisible pointer-events-none",
                 )}
               >
-                {tab.kind === "review" ? <ReviewPlaceholder /> : null}
+                {tab.kind === "review" ? (
+                  <SessionReviewPanel
+                    sessionId={sessionId}
+                    token={token}
+                    root={root}
+                    connectorDeviceOs={connectorDeviceOs}
+                    active={panelActive}
+                  />
+                ) : null}
                 {tab.kind === "terminal" ? (
                   <TerminalSessionPanel
                     key={tab.terminal?.terminalId ?? tab.id}
@@ -982,21 +987,5 @@ function ToolLauncher({
         })}
       </div>
     </nav>
-  )
-}
-
-function ReviewPlaceholder() {
-  const t = useTranslations("dashboard.session.tools")
-
-  return (
-    <Empty className="h-full rounded-xl border-0">
-      <EmptyHeader>
-        <EmptyMedia variant="icon">
-          <FileDiff />
-        </EmptyMedia>
-        <EmptyTitle>{t("reviewPlaceholderTitle")}</EmptyTitle>
-        <EmptyDescription>{t("reviewPlaceholderDescription")}</EmptyDescription>
-      </EmptyHeader>
-    </Empty>
   )
 }

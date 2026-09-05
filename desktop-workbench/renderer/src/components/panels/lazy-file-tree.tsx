@@ -30,10 +30,12 @@ type LazyFileTreeProps = {
   canLoad: boolean
   caseInsensitivePaths?: boolean
   selectedPath?: string | null
+  initialExpandedPaths?: readonly string[]
   labels: LazyFileTreeLabels
   loadDirectory: (path: string) => Promise<FsListResult>
   onOpenFile: (entry: FsEntry) => void
   onContextEntryChange?: (entry: FsEntry | null) => void
+  renderTrailing?: (entry: FsEntry) => React.ReactNode
 }
 
 type TreeStyle = React.CSSProperties & {
@@ -54,19 +56,26 @@ export function LazyFileTree({
   canLoad,
   caseInsensitivePaths = false,
   selectedPath = null,
+  initialExpandedPaths = [],
   labels,
   loadDirectory,
   onOpenFile,
   onContextEntryChange,
+  renderTrailing,
 }: LazyFileTreeProps) {
   const treeRef = React.useRef<HTMLDivElement | null>(null)
   const branchStatesRef = React.useRef<Map<string, DirectoryState>>(new Map())
   const generationRef = React.useRef(0)
   const requestIdRef = React.useRef(0)
+  const initialExpandedPathsRef = React.useRef(initialExpandedPaths)
+  initialExpandedPathsRef.current = initialExpandedPaths
   const [branchStates, setBranchStates] = React.useState<Map<string, DirectoryState>>(
     () => new Map(),
   )
-  const [expandedPaths, setExpandedPaths] = React.useState<Set<string>>(() => new Set())
+  const [expandedPaths, setExpandedPaths] = React.useState<Set<string>>(
+    () => prepareExpandedPaths(initialExpandedPaths, caseInsensitivePaths),
+  )
+  const expandedPathsRef = React.useRef(expandedPaths)
   const [focusedPath, setFocusedPath] = React.useState<string | null>(null)
 
   const keyForPath = React.useCallback(
@@ -77,10 +86,15 @@ export function LazyFileTree({
   React.useEffect(() => {
     generationRef.current += 1
     branchStatesRef.current = new Map()
+    const nextExpandedPaths = prepareExpandedPaths(
+      initialExpandedPathsRef.current,
+      caseInsensitivePaths,
+    )
+    expandedPathsRef.current = nextExpandedPaths
     setBranchStates(new Map())
-    setExpandedPaths(new Set())
+    setExpandedPaths(nextExpandedPaths)
     setFocusedPath(null)
-  }, [identity])
+  }, [caseInsensitivePaths, identity])
 
   React.useEffect(
     () => () => {
@@ -136,23 +150,43 @@ export function LazyFileTree({
     [caseInsensitivePaths, keyForPath, loadDirectory, replaceBranchState],
   )
 
+  React.useEffect(() => {
+    if (!canLoad || expandedPathsRef.current.size === 0) return
+
+    const requestExpandedBranches = (siblings: FsEntry[]) => {
+      siblings.forEach((entry) => {
+        if (entry.type !== "directory") return
+        const key = keyForPath(entry.path)
+        if (!expandedPathsRef.current.has(key)) return
+
+        const branch = branchStatesRef.current.get(key)
+        if (!branch) {
+          void requestDirectory(entry)
+          return
+        }
+        if (branch.status === "loaded") requestExpandedBranches(branch.entries)
+      })
+    }
+
+    requestExpandedBranches(rootEntries)
+  }, [branchStates, canLoad, expandedPaths, keyForPath, requestDirectory, rootEntries])
+
   const toggleDirectory = React.useCallback(
     (entry: FsEntry) => {
       const key = keyForPath(entry.path)
-      const isExpanded = expandedPaths.has(key)
-      setExpandedPaths((current) => {
-        const next = new Set(current)
-        if (next.has(key)) next.delete(key)
-        else next.add(key)
-        return next
-      })
+      const isExpanded = expandedPathsRef.current.has(key)
+      const nextExpandedPaths = new Set(expandedPathsRef.current)
+      if (isExpanded) nextExpandedPaths.delete(key)
+      else nextExpandedPaths.add(key)
+      expandedPathsRef.current = nextExpandedPaths
+      setExpandedPaths(nextExpandedPaths)
 
       if (!isExpanded) {
         const state = branchStatesRef.current.get(key)
         if (!state || state.status === "error") void requestDirectory(entry)
       }
     },
-    [expandedPaths, keyForPath, requestDirectory],
+    [keyForPath, requestDirectory],
   )
 
   const visibleTreeItems = React.useCallback(
@@ -266,6 +300,7 @@ export function LazyFileTree({
       const rowStyle = treeIndentStyle(depth)
       const nextAncestorKeys = new Set(ancestorKeys)
       nextAncestorKeys.add(key)
+      const trailing = renderTrailing?.(entry)
 
       return (
         <React.Fragment key={key}>
@@ -286,6 +321,7 @@ export function LazyFileTree({
             data-tree-key={key}
             data-tree-kind={isDirectory ? "directory" : "file"}
             data-tree-parent-key={parentKey}
+            data-has-trailing={renderTrailing ? "true" : undefined}
             style={rowStyle}
             tabIndex={focusedPath === key ? 0 : -1}
             title={entry.name}
@@ -310,6 +346,7 @@ export function LazyFileTree({
               )}
             </span>
             <span className="aa-file-tree-name">{entry.name}</span>
+            {renderTrailing ? <span className="aa-file-tree-trailing">{trailing}</span> : null}
           </button>
 
           {isExpanded ? (
@@ -394,6 +431,10 @@ function prepareEntries(entries: FsEntry[], caseInsensitivePaths: boolean): FsEn
       if (left.type !== "directory" && right.type === "directory") return 1
       return left.name.localeCompare(right.name, undefined, { numeric: true, sensitivity: "base" })
     })
+}
+
+function prepareExpandedPaths(paths: readonly string[], caseInsensitivePaths: boolean): Set<string> {
+  return new Set(paths.map((path) => pathIdentity(path, caseInsensitivePaths)))
 }
 
 function pathIdentity(rawPath: string, caseInsensitive: boolean): string {

@@ -373,6 +373,10 @@
   text-align: left;
 }
 
+.aa-file-tree-row[data-has-trailing="true"] {
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+}
+
 .aa-file-tree-row:hover,
 .aa-file-tree-row.active {
   background: var(--aa-rt-row-hover-bg);
@@ -429,6 +433,14 @@
   line-height: 1;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.aa-file-tree-trailing {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: center;
+  justify-self: end;
 }
 
 .aa-file-tree-group {
