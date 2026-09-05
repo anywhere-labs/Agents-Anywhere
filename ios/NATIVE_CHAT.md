@@ -69,10 +69,12 @@ Semantic error and availability colors remain separate from the primary color.
   patches or format output JSON: expanding mounts the detail subtree, and
   collapsing unmounts it. Active titles shimmer, failures are red and other
   markers use the primary text color; no trailing status badge is shown.
-- The timeline uses lazy row layout. Scroll geometry updates are isolated from
-  the content subtree, and a separate observable structural projection keeps
-  token/tool-output appends from regrouping every historical row. Only status,
-  membership and grouping changes invalidate that projection.
+- The main timeline and interaction surfaces use ordinary stacks to retain
+  actual geometry while Markdown, forms and expanded tools change height.
+  Deferred parsing/rendering is scoped to hidden tool details. Scroll geometry
+  updates are isolated from the content subtree, and a separate observable
+  structural projection keeps token/tool-output appends from regrouping every
+  historical row. Only status, membership and grouping changes invalidate it.
 - Consecutive tools/reasoning/artifacts, child Agent calls and reconnect attempts
   are grouped. Groups retain the first item's identity while growing, and
   disclosure state survives streaming updates. Items targeted by active notices

@@ -21,7 +21,7 @@ struct SessionInteractionDock: View {
         let motionReduced = reduceMotion
         if !items.isEmpty {
             ScrollView(.vertical) {
-                LazyVStack(spacing: 8) {
+                VStack(spacing: 8) {
                     ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
                         SessionInteractionCard(item: item, chat: chat,
                             page: items.count > 1 ? "\(index + 1)/\(items.count)" : nil,

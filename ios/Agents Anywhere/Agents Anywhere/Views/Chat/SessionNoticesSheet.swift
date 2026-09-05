@@ -8,7 +8,7 @@ struct SessionNoticesSheet: View {
         NavigationStack {
             ScrollViewReader { proxy in
                 ScrollView {
-                    LazyVStack(spacing: 16) {
+                    VStack(spacing: 16) {
                         ForEach(model.session.notices.notices.filter(\.isVisible)) { item in
                             SessionInteractionContent(item: item, chat: model).id(item.id)
                         }

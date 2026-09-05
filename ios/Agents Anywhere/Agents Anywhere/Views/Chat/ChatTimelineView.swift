@@ -163,7 +163,9 @@ private struct ChatTimelineContent: View, Equatable {
         let groups = TimelineGrouping.groups(model.timeline.rows, interactionTargets: Set(model.session.notices.notices
             .filter(\.isVisible).compactMap(\.timelineTargetID)))
         let actions = TimelineTurnActions.build(groups: groups, suppressLatest: model.isRunning || model.session.hasNewerItems)
-        LazyVStack(alignment: .leading, spacing: 20) {
+        // Keep actual row geometry available as Markdown grows and tool groups
+        // change height. Hidden tool details own their deferred work separately.
+        VStack(alignment: .leading, spacing: 20) {
             if model.session.hasOlderItems {
                 Button("加载较早的消息", action: onLoadOlder).font(.footnote).disabled(model.session.isLoadingHistory).frame(maxWidth: .infinity)
             }
