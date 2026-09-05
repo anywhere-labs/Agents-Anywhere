@@ -39,6 +39,7 @@ import {
 import { dashboardApi } from "@/features/dashboard/api"
 import type { SessionView } from "@/features/dashboard/types"
 import { apiPath } from "@/lib/api"
+import { openNativeFilePreviewWindow } from "@/lib/file-preview-window"
 import { cn } from "@/lib/utils"
 import { useTranslations } from "next-intl"
 
@@ -174,8 +175,19 @@ function MessageAttachmentItem({
         ...(typeof resolvedSize === "number" ? { size: resolvedSize } : {}),
       }
     : null
-  const openAttachmentPreview = openFilePreview && previewTarget
-    ? () => openFilePreview(previewTarget)
+  const openAttachmentPreview = previewTarget
+    ? () => {
+        if (openFilePreview) {
+          openFilePreview(previewTarget)
+          return
+        }
+        openNativeFilePreviewWindow({
+          token,
+          connectorId: session.connectorId,
+          root: previewTarget.root,
+          file: previewTarget,
+        })
+      }
     : null
 
   if (shouldReadFromDevice && deviceFile.status === "loading") {
@@ -242,7 +254,6 @@ function MessageAttachmentItem({
       attachment={attachment}
       name={resolvedName}
       mediaType={resolvedMediaType}
-      openUrl={openUrl}
       onOpen={openAttachmentPreview ?? undefined}
       size={resolvedSize}
     />
@@ -687,7 +698,6 @@ function FileAttachment({
   attachment,
   name,
   mediaType,
-  openUrl,
   onOpen,
   size,
   state = "done",
@@ -696,7 +706,6 @@ function FileAttachment({
   attachment: ReconcileAttachment
   name: string
   mediaType: string
-  openUrl?: string
   onOpen?: () => void
   size?: number
   state?: "uploading" | "error" | "done"
@@ -724,19 +733,6 @@ function FileAttachment({
             </AttachmentAction>
           </AttachmentActions>
           <AttachmentTrigger aria-label={`Open ${name}`} onClick={onOpen} />
-        </>
-      ) : openUrl ? (
-        <>
-          <AttachmentActions>
-            <AttachmentAction asChild aria-label={`Open ${name}`}>
-              <a href={openUrl} target="_blank" rel="noreferrer">
-                <ExternalLink />
-              </a>
-            </AttachmentAction>
-          </AttachmentActions>
-          <AttachmentTrigger asChild>
-            <a href={openUrl} target="_blank" rel="noreferrer" aria-label={`Open ${name}`} />
-          </AttachmentTrigger>
         </>
       ) : null}
     </Attachment>

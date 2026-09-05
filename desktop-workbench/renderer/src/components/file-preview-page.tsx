@@ -60,20 +60,33 @@ export function FilePreviewPage() {
   const routePath = params.get("path") ?? ""
   const previewToken = params.get("previewToken") ?? ""
   const routeName = params.get("name") ?? ""
+  const sourceUrl = params.get("sourceUrl") ?? ""
+  const sourceMediaType = params.get("mediaType") ?? ""
+  const sourceSize = routeSourceSize(params.get("size"))
   const token = React.useMemo(() => loadStoredSession()?.accessToken ?? null, [])
 
   return (
     <FilePreviewSurface
-      key={`${connectorId}:${root}:${routePath}:${previewToken}`}
+      key={`${connectorId}:${root}:${routePath}:${previewToken}:${sourceUrl}`}
       token={token}
       connectorId={connectorId}
       root={root}
       initialPath={routePath}
       initialName={routeName}
       previewToken={previewToken}
+      sourceUrl={sourceUrl}
+      sourceMediaType={sourceMediaType}
+      sourceSize={sourceSize}
+      readOnly={Boolean(sourceUrl)}
       mode="window"
     />
   )
+}
+
+function routeSourceSize(value: string | null): number | undefined {
+  if (value === null || value === "") return undefined
+  const parsed = Number(value)
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined
 }
 
 type FilePreviewSurfaceProps = {

@@ -601,12 +601,6 @@ export function FilesPanelBody({
             readOnly={selectedFile.source === "attachment"}
             mode="embedded"
             onOpenExternal={() => {
-              if (selectedFile.sourceUrl) {
-                const child = window.open(selectedFile.sourceUrl, "_blank")
-                if (!child) onPopupBlocked?.()
-                else child.focus()
-                return
-              }
               openNativeFilePreviewWindow({
                 token,
                 connectorId,
