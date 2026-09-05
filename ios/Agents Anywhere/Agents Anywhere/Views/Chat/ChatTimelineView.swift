@@ -18,6 +18,9 @@ struct ChatTimelineView: View {
     @State private var latestPromptVisible = false
     @State private var latestLoadRequest: Int?
     @State private var openingLayout: TimelineOpeningLayout?
+    @State private var openingVisibleID: String?
+    @State private var openingAttempt = 0
+    @State private var openingPositionFailed = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ScaledMetric(relativeTo: .caption) private var returnPillHeight: CGFloat = 32
 
@@ -30,11 +33,8 @@ struct ChatTimelineView: View {
             ?? target
     }
     private var openingRequest: OpeningRequest {
-        let layout = openingLayout.flatMap { $0.id == openingTargetID ? $0 : nil }
-        let offset = layout.map { TimelineOpeningPosition.offset(for: $0, viewport: viewport) }
-        return OpeningRequest(prepared: model.isOpeningPrepared, presented: model.timeline.hasPresentedSnapshot,
-            target: openingTargetID, offset: offset, arrived: offset.map { TimelineOpeningPosition.hasArrived(at: $0, viewport: viewport) } ?? false,
-            idle: scrolling.phase == .idle, completed: isInitialPositioned)
+        OpeningRequest(prepared: model.isOpeningPrepared, target: openingTargetID,
+            completed: isInitialPositioned, attempt: openingAttempt)
     }
     var body: some View {
         // A sibling overlay receives taps independently of the scroll view's
@@ -48,7 +48,10 @@ struct ChatTimelineView: View {
                     openingTargetID: openingTargetID,
                     onLoadOlder: loadOlder, onLoadLatest: loadLatest,
                     onHistoryLayout: historyDidLayOut,
-                    onOpeningLayout: { openingLayout = $0 },
+                    onOpeningLayout: { if $0.id == openingTargetID { openingLayout = $0 } },
+                    onOpeningVisibility: { id, visible in
+                        if id == openingTargetID { openingVisibleID = visible ? id : nil }
+                    },
                     onPromptVisibility: { latestPromptVisible = $0 },
                     onOlderPromptVisibility: { olderPromptVisible = $0 },
                     onTailVisibility: { region, visible in scrolling.tailVisibilityChanged(region, visible: visible) })
@@ -62,8 +65,8 @@ struct ChatTimelineView: View {
             .defaultScrollAnchor(.top, for: .initialOffset)
             .defaultScrollAnchor(.top, for: .alignment)
             .defaultScrollAnchor(.top, for: .sizeChanges)
-            .opacity(isInitialPositioned ? 1 : 0)
             .allowsHitTesting(isInitialPositioned)
+            .accessibilityHidden(!isInitialPositioned)
             .onScrollPhaseChange { _, phase, context in
                 let mapped: TimelineScrollState.Phase
                 switch phase {
@@ -110,10 +113,10 @@ struct ChatTimelineView: View {
             }
             .onChange(of: hasInteractions, initial: true) { _, presented in
                 scrolling.setInteractionPresented(presented)
-                if presented || !scrolling.followsTail { position.isPositionedByUser = true }
+                if isInitialPositioned && (presented || !scrolling.followsTail) { position.isPositionedByUser = true }
             }
             .onChange(of: scrolling.returningToBottom) { _, returning in
-                if !returning && hasInteractions { position.isPositionedByUser = true }
+                if isInitialPositioned && !returning && hasInteractions { position.isPositionedByUser = true }
             }
             .task(id: FollowRequest(contentHeight: viewport.contentHeight, visibleHeight: viewport.visibleHeight,
                 followsTail: scrolling.followsTail, userIsScrolling: scrolling.userIsScrolling,
@@ -125,23 +128,33 @@ struct ChatTimelineView: View {
             }
             .task(id: openingRequest) {
                 let request = openingRequest
-                guard !request.completed, request.prepared, request.presented else { return }
-                if request.target == nil {
-                    isInitialPositioned = true; scrolling.browseHistory(); return
+                guard !request.completed, request.prepared else { return }
+                openingPositionFailed = false
+                var opening = TimelineOpeningPosition(targetID: request.target, now: ProcessInfo.processInfo.systemUptime)
+                // A single bounded task survives geometry updates. A failed
+                // native scroll must not rely on a new callback to be retried.
+                while !Task.isCancelled, openingRequest == request {
+                    if model.openingError != nil && !model.timeline.hasPresentedSnapshot { return }
+                    switch opening.advance(presented: model.timeline.hasPresentedSnapshot,
+                        layout: openingLayout, visibleID: openingVisibleID,
+                        viewportHeight: viewport.visibleHeight, isIdle: scrolling.phase == .idle,
+                        now: ProcessInfo.processInfo.systemUptime) {
+                    case .wait: break
+                    case .scrollTo(let id):
+                        var transaction = Transaction(animation: nil)
+                        transaction.disablesAnimations = true
+                        withTransaction(transaction) { position.scrollTo(id: id, anchor: .top) }
+                    case .reveal:
+                        position.isPositionedByUser = true
+                        scrolling.browseHistory()
+                        isInitialPositioned = true
+                        return
+                    case .retry:
+                        openingPositionFailed = true
+                        return
+                    }
+                    do { try await Task.sleep(for: .milliseconds(64)) } catch { return }
                 }
-                guard let offset = request.offset else { return }
-                if !request.arrived {
-                    var transaction = Transaction(animation: nil)
-                    transaction.disablesAnimations = true
-                    withTransaction(transaction) { position.scrollTo(y: offset) }
-                    return
-                }
-                guard request.idle else { return }
-                do { try await Task.sleep(for: .milliseconds(64)) } catch { return }
-                guard !Task.isCancelled, openingRequest == request else { return }
-                position.isPositionedByUser = true
-                scrolling.browseHistory()
-                isInitialPositioned = true
             }
             .task(id: ScrollSettlement(phase: scrolling.phase, tail: scrolling.tail, generation: scrolling.navigationGeneration)) {
                 guard scrolling.needsScrollSettlement else { return }
@@ -195,16 +208,25 @@ struct ChatTimelineView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .overlay {
             if !isInitialPositioned {
-                VStack(spacing: 12) {
-                    if let error = model.openingError, !model.timeline.hasPresentedSnapshot {
-                        Text(error).font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
-                        Button("重试") { Task { await model.prepareOpening() } }
-                    } else {
-                        ProgressView().progressViewStyle(.circular)
+                ZStack {
+                    // Keep the timeline in native layout beneath an opaque mask;
+                    // its visibility probes still acknowledge the actual target.
+                    Color(uiColor: .systemBackground)
+                    VStack(spacing: 12) {
+                        if let error = model.openingError, !model.timeline.hasPresentedSnapshot {
+                            Text(error).font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                            Button("重试") { Task { await model.prepareOpening() } }
+                        } else if openingPositionFailed {
+                            Text("会话已加载，暂时无法定位到最近的消息。")
+                                .font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                            Button("重新定位") { openingPositionFailed = false; openingAttempt += 1 }
+                        } else {
+                            ProgressView().progressViewStyle(.circular).accessibilityLabel("正在加载并定位会话")
+                        }
                     }
+                    .padding(24).frame(maxWidth: 320)
                 }
-                .padding(24).frame(maxWidth: 320)
-                .accessibilityLabel("正在加载并定位会话")
+                .transition(.identity)
             }
         }
     }
@@ -261,12 +283,9 @@ struct ChatTimelineView: View {
     }
     private struct OpeningRequest: Equatable {
         let prepared: Bool
-        let presented: Bool
         let target: String?
-        let offset: CGFloat?
-        let arrived: Bool
-        let idle: Bool
         let completed: Bool
+        let attempt: Int
     }
 }
 
@@ -285,6 +304,7 @@ private struct ChatTimelineContent: View, Equatable {
     let onLoadLatest: () -> Void
     let onHistoryLayout: (TimelineHistoryLayout) -> Void
     let onOpeningLayout: (TimelineOpeningLayout) -> Void
+    let onOpeningVisibility: (String, Bool) -> Void
     let onPromptVisibility: (Bool) -> Void
     let onOlderPromptVisibility: (Bool) -> Void
     let onTailVisibility: (TimelineTailVisibility.Region, Bool) -> Void
@@ -334,12 +354,12 @@ private struct ChatTimelineContent: View, Equatable {
                 SessionTimelineGroupView(group: group, chat: model, onAttachment: onAttachment, onFile: onFile,
                     turnAction: actions[group.id])
                     .id(group.id)
-                    .background {
+                    .overlay(alignment: .top) {
                         if let openingTargetID, group.rows.contains(where: { $0.id == openingTargetID }) {
-                            Color.clear.onGeometryChange(for: TimelineOpeningLayout.self) { geometry in
-                                TimelineOpeningLayout(id: openingTargetID, y: geometry.frame(in: .named("chat.timeline.content")).minY)
-                            } action: { onOpeningLayout($0) }
+                            openingMarker(id: openingTargetID, scrollID: group.id)
                         }
+                    }
+                    .background {
                         if group.id == anchorGroup?.id, let firstRowID = model.timeline.rows.first?.id {
                             Color.clear.onGeometryChange(for: TimelineHistoryLayout.self) { geometry in
                                 let frame = geometry.frame(in: .named("chat.timeline.content"))
@@ -358,11 +378,9 @@ private struct ChatTimelineContent: View, Equatable {
                 PendingMessageRow(pending: pending, chat: model, onAttachment: onAttachment,
                     onDismiss: { model.session.dismissPendingMessage(id: pending.id) })
                     .id(pending.id)
-                    .background {
+                    .overlay(alignment: .top) {
                         if openingTargetID == pending.id {
-                            Color.clear.onGeometryChange(for: TimelineOpeningLayout.self) { geometry in
-                                TimelineOpeningLayout(id: pending.id, y: geometry.frame(in: .named("chat.timeline.content")).minY)
-                            } action: { onOpeningLayout($0) }
+                            openingMarker(id: pending.id, scrollID: pending.id)
                         }
                     }
             }
@@ -401,6 +419,19 @@ private struct ChatTimelineContent: View, Equatable {
         .frame(maxWidth: 760).frame(maxWidth: .infinity)
         .coordinateSpace(name: "chat.timeline.content")
     }
+
+    private func openingMarker(id: String, scrollID: String) -> some View {
+        // Measuring the entire message would prevent a tall message from ever
+        // becoming fully visible. This probe also leaves the row's size intact.
+        Color.clear.frame(height: 2)
+            .onGeometryChange(for: TimelineOpeningLayout.self) { geometry in
+                TimelineOpeningLayout(id: id, scrollID: scrollID, frame: geometry.frame(in: .scrollView(axis: .vertical)))
+            } action: { onOpeningLayout($0) }
+            .onScrollVisibilityChange(threshold: 0.5) { onOpeningVisibility(id, $0) }
+            .allowsHitTesting(false).accessibilityHidden(true)
+            .id(OpeningMarkerID(message: id, group: scrollID))
+    }
+    private struct OpeningMarkerID: Hashable { let message: String; let group: String }
 }
 
 private extension TimelineViewport {

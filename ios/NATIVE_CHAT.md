@@ -41,10 +41,17 @@ Semantic error and availability colors remain separate from the primary color.
   reset the layout generation.
 - Opening a session prepares the latest window and, when a tool-heavy page has
   no user message, reads back until it finds one. The detail column keeps its
-  centered loading indicator while the hidden timeline lays out and positions
-  that latest user message without animation. It reveals content only after
-  native offset/phase measurements confirm arrival and settle; short histories
-  use the scroll view's reachable range. An initial network failure offers Retry.
+  centered loading indicator above an opaque mask while the timeline lays out
+  and scrolls to that latest user message's native ID without animation. Native
+  scrolling owns safe-area insets and end clamping. A two-point probe at the
+  message's start must become visible and settle with an idle viewport for 64 ms
+  before the mask disappears; tall messages need not fit entirely on screen.
+  A bounded positioning task retries unacknowledged requests even without new
+  geometry callbacks and offers “重新定位” after six seconds instead of spinning
+  forever. Retrying positioning reuses the loaded history. Optimistic echoes and
+  recovery snapshots update the target ID while opening. An initial network
+  failure separately offers Retry. Approval state cannot cancel the initial
+  native target before positioning completes.
 - Tail following uses a continuous spring. Scrolling away suspends it, and a
   small borderless “到底部” pill sits centered above the composer. There is no
   animated streaming dot or cursor.
@@ -120,8 +127,8 @@ Semantic error and availability colors remain separate from the primary color.
   windows use `preferredCompactColumn` to show the selected detail; widening
   restores both columns. The balanced style reserves room for the sidebar.
   Explicit split toggles retain smooth animation and respect Reduce Motion.
-  Detail text retains its settled width during changing column proposals and
-  reflows once the width becomes quiet. The phone drawer shadows only its card
+  The detail uses the native split's proposed width immediately, without a
+  frozen width or delayed reflow. The phone drawer shadows only its card
   shape, avoiding an animated compositing layer around the whole conversation. The custom
   sidebar and chat headers suppress empty native navigation bars, retaining the
   system safe area without an additional blank bar above the glass controls.
@@ -297,7 +304,7 @@ than a “server unavailable” alert.
 
 Verified on 2026-09-06, without starting a server or simulator:
 
-- 127 headless Swift tests across eighteen suites pass against production client-core
+- 133 headless Swift tests across nineteen suites pass against production client-core
   sources. They cover API contracts, recovery/cache races, uncertain delivery,
   30 Hz presentation, echo handoff, target preparation, preference scope, schema
   payloads and interaction lifecycle/IME guards. Session-detail checks cover
@@ -313,7 +320,9 @@ Verified on 2026-09-06, without starting a server or simulator:
   Sidebar tests cover regular/compact selection and resize behavior, and confirm
   cached model lookup does not subscribe its caller to historical row payloads.
   Opening/history tests cover delayed presentation, measured offset retention,
-  long-message alignment, pulls, cancellation and loading back to a user message.
+  native marker acknowledgment, inset/clamped positions, missing callbacks,
+  resize settlement, folded targets, optimistic target replacement, bounded
+  positioning retries, pulls, cancellation and loading back to a user message.
   Attachment/delivery tests cover sparse/reordered echoes, bounded caches, FS
   thumbnail reads, offline preview reuse and preserving a newer identical draft.
 - The Python backend contract fixture exporter reports that fixtures are current.

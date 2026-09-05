@@ -47,18 +47,6 @@ import Testing
         #expect(model.isOpeningPrepared && model.openingError != nil && model.openingTargetID == nil)
     }
 
-    @Test func initialPositionRequiresActualArrivalAndClampsShortConversations() {
-        let layout = TimelineOpeningLayout(id: "user", y: 1200)
-        let before = TimelineViewport(contentHeight: 3000, containerHeight: 800, topInset: 80, bottomInset: 100, offsetY: 0)
-        let target = TimelineOpeningPosition.offset(for: layout, viewport: before)
-        #expect(target == 1120 && !TimelineOpeningPosition.hasArrived(at: target, viewport: before))
-        let after = TimelineViewport(contentHeight: 3000, containerHeight: 800, topInset: 80, bottomInset: 100, offsetY: 1120)
-        #expect(TimelineOpeningPosition.hasArrived(at: target, viewport: after))
-        let short = TimelineViewport(contentHeight: 200, containerHeight: 800, topInset: 80, bottomInset: 100, offsetY: -80)
-        let clamped = TimelineOpeningPosition.offset(for: .init(id: "user", y: 160), viewport: short)
-        #expect(clamped == -80 && TimelineOpeningPosition.hasArrived(at: clamped, viewport: short))
-    }
-
     @Test func optimisticAttachmentMetadataAndPreviewsSurviveReorderedOrSparseEchoes() throws {
         let store = ChatAttachmentStore()
         let first = ChatAttachment(id: "a", name: "first.png", data: Data([1]), mediaType: "image/png", previewData: Data([11]))

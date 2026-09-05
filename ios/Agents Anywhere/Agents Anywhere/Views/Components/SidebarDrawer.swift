@@ -474,7 +474,10 @@ private struct SidebarDrawerNativeSplitView<
             .toolbar(.hidden, for: .navigationBar)
             .navigationSplitViewColumnWidth(min: 240, ideal: 300, max: 360)
         } detail: {
-            SidebarDrawerStableDetail(content: mainContent)
+            GeometryReader { geometry in
+                mainContent(geometry.safeAreaInsets)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
         }
         .navigationSplitViewStyle(.balanced)
         .environment(\.sidebarDrawerPresentation, .nativeSidebar)
@@ -509,32 +512,6 @@ private struct SidebarDrawerNativeSplitView<
         withAnimation(reduceMotion ? nil : .smooth(duration: 0.3)) {
             columnVisibility = open ? .all : .detailOnly
             preferredCompactColumn = open ? .sidebar : .detail
-        }
-    }
-}
-
-/// NavigationSplitView may propose a different detail width on every pan frame.
-/// Keep the reading surface at its settled width while the native column slides,
-/// then perform one nonanimated text reflow when the column stops resizing.
-private struct SidebarDrawerStableDetail<Content: View>: View {
-    let content: (EdgeInsets) -> Content
-    @State private var settledWidth: CGFloat?
-    var body: some View {
-        GeometryReader { geometry in
-            content(geometry.safeAreaInsets)
-                .frame(width: settledWidth ?? geometry.size.width, height: geometry.size.height)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-                .clipped()
-                .onAppear { if settledWidth == nil { settledWidth = geometry.size.width } }
-                .task(id: geometry.size.width) {
-                    let width = geometry.size.width
-                    guard width > 0, settledWidth != nil, settledWidth != width else { return }
-                    do { try await Task.sleep(for: .milliseconds(100)) } catch { return }
-                    guard !Task.isCancelled else { return }
-                    var transaction = Transaction(animation: nil)
-                    transaction.disablesAnimations = true
-                    withTransaction(transaction) { settledWidth = width }
-                }
         }
     }
 }

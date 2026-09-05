@@ -17,7 +17,14 @@ final class SessionChatModel {
     var error: String?
     var settingsError: String?
     private(set) var isOpeningPrepared = false
-    private(set) var openingTargetID: String?
+    var openingTargetID: String? {
+        guard isOpeningPrepared else { return nil }
+        // An optimistic message can be replaced by its echo, or a recovery
+        // snapshot can replace the window while native layout is still pending.
+        return session.pendingMessages.last?.id
+            ?? session.timeline.last(where: { $0.value.type == .message && $0.value.role == .user && $0.value.isVisibleInChat })?.id
+            ?? session.timeline.last(where: { $0.value.isVisibleInChat })?.id
+    }
     private(set) var openingError: String?
     private(set) var responseRevision = 0
     @ObservationIgnored let repository: V2SessionRepository
@@ -69,9 +76,6 @@ final class SessionChatModel {
             openingError = error.localizedDescription
         }
         guard session.isValid, !Task.isCancelled else { return }
-        openingTargetID = session.pendingMessages.last?.id
-            ?? session.timeline.last(where: { $0.value.type == .message && $0.value.role == .user && $0.value.isVisibleInChat })?.id
-            ?? session.timeline.last(where: { $0.value.isVisibleInChat })?.id
         isOpeningPrepared = true
     }
 
