@@ -241,6 +241,7 @@ function ReviewWorkspace({
 }) {
   const t = useTranslations("dashboard.session.tools")
   const [selectedPath, setSelectedPath] = React.useState<string | null>(null)
+  const [collapsedPaths, setCollapsedPaths] = React.useState<Set<string>>(() => new Set())
   const fileRefs = React.useRef(new Map<string, HTMLElement>())
   const reviewTree = React.useMemo(
     () => buildReviewTree(review, root, caseInsensitivePaths),
@@ -266,18 +267,33 @@ function ReviewWorkspace({
     ))
   }, [orderedFiles, review.key])
 
+  React.useEffect(() => {
+    setCollapsedPaths(new Set())
+  }, [review.key])
+
   const loadDirectory = React.useCallback(async (path: string) => ({
     path,
     entries: reviewTree.childrenByPath.get(path) ?? [],
     truncated: false,
   }), [reviewTree.childrenByPath])
 
+  const setFileOpen = React.useCallback((path: string, open: boolean) => {
+    setCollapsedPaths((current) => {
+      if (open === !current.has(path)) return current
+      const next = new Set(current)
+      if (open) next.delete(path)
+      else next.add(path)
+      return next
+    })
+  }, [])
+
   const selectFile = React.useCallback((path: string) => {
+    setFileOpen(path, true)
     setSelectedPath(path)
     window.requestAnimationFrame(() => {
       fileRefs.current.get(path)?.scrollIntoView({ block: "start" })
     })
-  }, [])
+  }, [setFileOpen])
 
   return (
     <ResizablePanelGroup direction="horizontal" className="h-full min-h-0">
@@ -293,11 +309,13 @@ function ReviewWorkspace({
                   connectorId={connectorId}
                   root={root}
                   selected={selectedPath === file.path}
+                  open={!collapsedPaths.has(file.path)}
                   sectionRef={(element) => {
                     if (element) fileRefs.current.set(file.path, element)
                     else fileRefs.current.delete(file.path)
                   }}
                   onSelect={() => setSelectedPath(file.path)}
+                  onOpenChange={(open) => setFileOpen(file.path, open)}
                 />
               ))}
             </div>
@@ -357,19 +375,22 @@ function ReviewFileSection({
   connectorId,
   root,
   selected,
+  open,
   sectionRef,
   onSelect,
+  onOpenChange,
 }: {
   file: ReviewFileChange
   token: string | null
   connectorId: string | null
   root: string
   selected: boolean
+  open: boolean
   sectionRef: (element: HTMLElement | null) => void
   onSelect: () => void
+  onOpenChange: (open: boolean) => void
 }) {
   const t = useTranslations("dashboard.session.tools")
-  const [open, setOpen] = React.useState(true)
 
   const openFilePreview = React.useCallback(() => {
     onSelect()
@@ -383,7 +404,7 @@ function ReviewFileSection({
   }, [connectorId, file.name, file.path, onSelect, root, t, token])
 
   return (
-    <Collapsible open={open} onOpenChange={setOpen} asChild>
+    <Collapsible open={open} onOpenChange={onOpenChange} asChild>
       <section
         ref={sectionRef}
         data-review-file-path={file.path}
@@ -391,8 +412,8 @@ function ReviewFileSection({
       >
         <header
           className={cn(
-            "sticky top-0 z-10 flex h-11 min-w-0 items-center border-b border-border bg-background/95 backdrop-blur",
-            selected && "bg-muted/80",
+            "sticky top-0 z-10 flex h-11 min-w-0 items-center border-b border-border bg-background/95 shadow-sm backdrop-blur",
+            (open || selected) && "bg-muted/80",
           )}
         >
           <CollapsibleTrigger asChild>
@@ -402,7 +423,7 @@ function ReviewFileSection({
               aria-label={t(open ? "reviewCollapseFile" : "reviewExpandFile", {
                 file: file.displayPath,
               })}
-              className="h-full min-w-0 flex-1 justify-start gap-2 rounded-none px-3 font-normal hover:bg-muted/50"
+              className="h-full min-w-0 flex-1 justify-start gap-2 rounded-none px-3 font-normal hover:bg-muted/50 aria-expanded:bg-transparent aria-expanded:text-inherit"
               onClick={onSelect}
             >
               <FileTypeIcon name={file.name} className="size-[18px] shrink-0" />
