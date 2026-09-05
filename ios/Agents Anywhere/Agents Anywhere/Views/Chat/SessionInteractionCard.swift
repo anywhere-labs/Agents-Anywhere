@@ -218,6 +218,7 @@ private struct NoticeActionFields: View {
                 .keyboardType(.numbersAndPunctuation)
         case .boolean:
             Toggle(field.title, isOn: Binding(get: { value(field)?.boolValue ?? false }, set: { set(.bool($0), field: field) }))
+                .toggleStyle(.switch).tint(nil).accentColor(nil)
         case let .choice(options):
             ForEach(Array(options.enumerated()), id: \.offset) { _, option in
                 Button { set(option, field: field) } label: {

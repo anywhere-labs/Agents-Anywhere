@@ -8,6 +8,9 @@ struct ChatTimelineView: View {
     @State private var position = ScrollPosition(idType: String.self)
     @State private var scrolling = TimelineScrollState()
     @State private var viewport = TimelineViewport()
+    @State private var latestPull = TimelineLatestPull()
+    @State private var latestPromptVisible = false
+    @State private var latestLoadRequest: Int?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ScaledMetric(relativeTo: .caption) private var returnPillHeight: CGFloat = 32
 
@@ -16,6 +19,8 @@ struct ChatTimelineView: View {
             .filter(\.isVisible).compactMap(\.timelineTargetID)))
     }
     var body: some View {
+        let groups = self.groups
+        let actions = TimelineTurnActions.build(groups: groups, suppressLatest: model.isRunning || model.session.hasNewerItems)
         // A sibling overlay receives taps independently of the scroll view's
         // deceleration recognizer. The explicit return intent survives its callbacks.
         ZStack(alignment: .bottom) {
@@ -29,7 +34,8 @@ struct ChatTimelineView: View {
                         }.font(.footnote).disabled(model.session.isLoadingHistory).frame(maxWidth: .infinity)
                     }
                     ForEach(groups) { group in
-                        SessionTimelineGroupView(group: group, chat: model, onAttachment: onAttachment, onFile: onFile)
+                        SessionTimelineGroupView(group: group, chat: model, onAttachment: onAttachment, onFile: onFile,
+                            turnAction: actions[group.id])
                             .id(group.id)
                     }
                     ForEach(model.session.notices.notices.filter { notice in
@@ -43,10 +49,14 @@ struct ChatTimelineView: View {
                         Text("正在处理任务").font(.subheadline).foregroundStyle(.secondary).frame(height: 40, alignment: .leading)
                     }
                     if model.session.hasNewerItems {
-                        Button("加载最新消息") {
-                            scrolling.requestBottom()
-                            Task { await model.session.loadLatest() }
-                        }.frame(maxWidth: .infinity)
+                        Button(action: loadLatest) {
+                            Group {
+                                if latestLoadRequest != nil { ProgressView("正在加载更新的记录…") }
+                                else { Text(latestPull.isReady ? "松开加载更新的记录" : "继续上拉加载更新的记录") }
+                            }.font(.footnote).frame(maxWidth: .infinity, minHeight: 44)
+                        }
+                        .disabled(model.session.isLoadingHistory || latestLoadRequest != nil)
+                        .onScrollVisibilityChange { latestPromptVisible = $0 }
                     }
                     Color.clear.frame(height: 1).padding(.bottom, 12).id("tail")
                 }
@@ -57,11 +67,12 @@ struct ChatTimelineView: View {
             .scrollPosition($position)
             .scrollDismissesKeyboard(.interactively)
             .scrollIndicators(.hidden)
+            .scrollBounceBehavior(.always, axes: .vertical)
             .scrollEdgeEffectStyle(.soft, for: .top)
             .defaultScrollAnchor(.top, for: .initialOffset)
             .defaultScrollAnchor(.top, for: .alignment)
             .defaultScrollAnchor(.top, for: .sizeChanges)
-            .onScrollPhaseChange { _, phase in
+            .onScrollPhaseChange { _, phase, context in
                 let mapped: TimelineScrollState.Phase
                 switch phase {
                 case .idle: mapped = .idle
@@ -71,12 +82,29 @@ struct ChatTimelineView: View {
                 case .animating: mapped = .animating
                 @unknown default: mapped = .idle
                 }
-                scrolling.phaseChanged(mapped, viewport: viewport)
+                let current = TimelineViewport(geometry: context.geometry)
+                let wasInteracting = scrolling.phase == .interacting
+                viewport = current
+                if scrolling.phaseChanged(mapped, viewport: current) {
+                    // Release ScrollPosition's persistent edge target as soon
+                    // as the user takes over, including interrupted animations.
+                    position.isPositionedByUser = true
+                    latestPull.begin(at: current, promptVisible: latestPromptVisible,
+                        canLoad: model.session.hasNewerItems && !model.session.isLoadingHistory && latestLoadRequest == nil)
+                }
+                if mapped == .interacting { latestPull.update(current) }
+                if mapped == .idle || mapped == .decelerating {
+                    let shouldLoad = latestPull.end()
+                    if wasInteracting && shouldLoad { loadLatest() }
+                } else if mapped == .animating { latestPull.cancel() }
             }
             .onScrollGeometryChange(for: TimelineViewport.self) { geometry in
-                TimelineViewport(contentHeight: geometry.contentSize.height, containerHeight: geometry.containerSize.height,
-                    topInset: geometry.contentInsets.top, bottomInset: geometry.contentInsets.bottom, offsetY: geometry.contentOffset.y)
-            } action: { _, value in viewport = value; scrolling.geometryChanged(value) }
+                TimelineViewport(geometry: geometry)
+            } action: { _, value in
+                viewport = value
+                scrolling.geometryChanged(value)
+                if scrolling.phase == .interacting { latestPull.update(value) }
+            }
             .onChange(of: model.session.pendingMessages.last?.id) { _, id in
                 if id != nil { scrolling.requestBottom() }
             }
@@ -88,14 +116,23 @@ struct ChatTimelineView: View {
             }
             .task(id: FollowRequest(contentHeight: viewport.contentHeight, visibleHeight: viewport.visibleHeight,
                 followsTail: scrolling.followsTail, userIsScrolling: scrolling.userIsScrolling,
-                returnGeneration: scrolling.returnGeneration)) {
+                navigationGeneration: scrolling.navigationGeneration)) {
                 guard scrolling.shouldFollow(viewport) else { return }
                 do { try await Task.sleep(for: .milliseconds(24)) } catch { return }
                 guard !Task.isCancelled, scrolling.shouldFollow(viewport) else { return }
                 scrollToBottom()
             }
-            if !scrolling.followsTail && viewport.hasOverflow {
+            .task(id: latestLoadRequest) {
+                guard let generation = latestLoadRequest else { return }
+                await model.session.loadLatest()
+                guard !Task.isCancelled else { return }
+                // A drag during the fetch must not be undone when it finishes.
+                if scrolling.navigationGeneration == generation { scrolling.requestBottom() }
+                latestLoadRequest = nil
+            }
+            if scrolling.showsBottomButton(viewport) {
                 Button {
+                    latestPull.cancel()
                     scrolling.requestBottom()
                     scrollToBottom()
                 } label: {
@@ -109,6 +146,13 @@ struct ChatTimelineView: View {
             }
         }
     }
+    private func loadLatest() {
+        guard model.session.isValid, model.session.hasNewerItems,
+              !model.session.isLoadingHistory, latestLoadRequest == nil else { return }
+        historyAnchor = nil
+        scrolling.requestBottom()
+        latestLoadRequest = scrolling.navigationGeneration
+    }
     private func scrollToBottom() {
         var transaction = Transaction(animation: reduceMotion ? nil : .interactiveSpring(response: 0.28, dampingFraction: 1, blendDuration: 0.12))
         transaction.isContinuous = true
@@ -119,6 +163,13 @@ struct ChatTimelineView: View {
         let visibleHeight: CGFloat
         let followsTail: Bool
         let userIsScrolling: Bool
-        let returnGeneration: Int
+        let navigationGeneration: Int
+    }
+}
+
+private extension TimelineViewport {
+    init(geometry: ScrollGeometry) {
+        self.init(contentHeight: geometry.contentSize.height, containerHeight: geometry.containerSize.height,
+            topInset: geometry.contentInsets.top, bottomInset: geometry.contentInsets.bottom, offsetY: geometry.contentOffset.y)
     }
 }

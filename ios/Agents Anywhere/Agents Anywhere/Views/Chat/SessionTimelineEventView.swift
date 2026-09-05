@@ -5,14 +5,21 @@ struct SessionTimelineGroupView: View {
     let chat: SessionChatModel
     let onAttachment: (V2AttachmentContent) -> Void
     let onFile: (String) -> Void
+    var turnAction: TimelineTurnAction?
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            content
+            if let turnAction { SessionTurnActions(action: turnAction) }
+        }
+    }
+    @ViewBuilder private var content: some View {
         if group.kind == .single { rows }
         else {
             TimelineFold(id: "group:\(group.id)", title: group.title,
                 symbol: group.kind == .reconnect ? "wifi.slash" : agentGroup ? "person.2" : "hammer",
                 status: group.status, disclosures: chat.disclosures) {
-                rows.padding(.leading, agentGroup ? 18 : 12)
+                rows
             }
         }
     }

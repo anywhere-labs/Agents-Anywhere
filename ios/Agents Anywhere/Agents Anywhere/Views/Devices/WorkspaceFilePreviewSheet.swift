@@ -13,6 +13,9 @@ struct WorkspaceFilePreviewSheet: View {
     @State private var error: String?
     @State private var loading = true
     @State private var attempt = 0
+    @State private var downloadedFile: WorkspaceDownloadedFile?
+    @State private var isDownloading = false
+    @State private var downloadToasts = ChatToastStore()
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
     private var name: String { (path.replacingOccurrences(of: "\\", with: "/") as NSString).lastPathComponent }
@@ -26,7 +29,9 @@ struct WorkspaceFilePreviewSheet: View {
                 if let url {
                     WorkspacePreviewWebView(url: url, onLoaded: { loading = false }, onFailure: {
                         loading = false; error = $0
-                    }, onClose: { dismiss() }, onExternal: { openURL($0) }).id(url)
+                    }, onClose: { dismiss() }, onExternal: { openURL($0) },
+                        onDownload: { downloadedFile = $0 }, onDownloadFailure: downloadFailed,
+                        onDownloading: { isDownloading = $0 }).id(url)
                 }
                 if let error {
                     ContentUnavailableView {
@@ -41,6 +46,7 @@ struct WorkspaceFilePreviewSheet: View {
                     .font(.footnote).foregroundStyle(.secondary).padding(12).frame(maxWidth: .infinity).background(.regularMaterial) }
             }
             .toolbar {
+                if isDownloading { ToolbarItem(placement: .topBarTrailing) { ProgressView().accessibilityLabel("正在下载") } }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("重新加载", systemImage: "arrow.clockwise") { attempt += 1 }.disabled(!canRead || loading)
                 }
@@ -48,10 +54,19 @@ struct WorkspaceFilePreviewSheet: View {
             }
         }
         .presentationDetents([.large]).presentationDragIndicator(.visible)
+        .overlay(alignment: .top) {
+            ChatErrorToasts(store: downloadToasts, isRetrying: false, onRetry: { _ in })
+        }
+        .sheet(item: $downloadedFile) { file in
+            WorkspaceFileActivitySheet(file: file) { error in
+                downloadedFile = nil
+                if let error { downloadFailed(error) }
+            }
+        }
         .task(id: "\(attempt):\(canRead)") {
             guard canRead else { loading = false; return }
             // Reload needs a fresh entry token; the previous token may be consumed.
-            loading = true; error = nil; url = nil
+            loading = true; error = nil; url = nil; isDownloading = false
             do {
                 let entry = V2WorkspaceEntry(name: name, path: path, type: "file", size: nil, modifiedAt: nil)
                 let prepared = try await service.previewURL(connectorId: connectorId, root: root, entry: entry)
@@ -61,6 +76,9 @@ struct WorkspaceFilePreviewSheet: View {
             } catch { if !Task.isCancelled { loading = false; self.error = error.localizedDescription } }
         }
     }
+    private func downloadFailed(_ message: String) {
+        downloadToasts.update(source: "download", failure: V2ClientFailure(kind: .rejected, message: message))
+    }
 }
 
 private struct WorkspacePreviewWebView: UIViewRepresentable {
@@ -69,6 +87,9 @@ private struct WorkspacePreviewWebView: UIViewRepresentable {
     let onFailure: (String) -> Void
     let onClose: () -> Void
     let onExternal: (URL) -> Void
+    let onDownload: (WorkspaceDownloadedFile) -> Void
+    let onDownloadFailure: (String) -> Void
+    let onDownloading: (Bool) -> Void
     func makeCoordinator() -> Coordinator { Coordinator(self) }
     func makeUIView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
@@ -79,13 +100,23 @@ private struct WorkspacePreviewWebView: UIViewRepresentable {
         webView.load(URLRequest(url: url))
         return webView
     }
-    func updateUIView(_ view: WKWebView, context: Context) { context.coordinator.parent = self }
+    func updateUIView(_ view: WKWebView, context: Context) {
+        context.coordinator.parent = self
+        context.coordinator.downloads.onComplete = onDownload
+        context.coordinator.downloads.onFailure = onDownloadFailure
+        context.coordinator.downloads.onLoading = onDownloading
+    }
     static func dismantleUIView(_ view: WKWebView, coordinator: Coordinator) {
+        coordinator.downloads.cancel()
         view.stopLoading(); view.navigationDelegate = nil; view.uiDelegate = nil
     }
     final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
         var parent: WorkspacePreviewWebView
-        init(_ parent: WorkspacePreviewWebView) { self.parent = parent }
+        let downloads: WorkspacePreviewDownloads
+        init(_ parent: WorkspacePreviewWebView) {
+            self.parent = parent
+            downloads = WorkspacePreviewDownloads(onComplete: parent.onDownload, onFailure: parent.onDownloadFailure, onLoading: parent.onDownloading)
+        }
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { parent.onLoaded() }
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { failed(error) }
         func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { failed(error) }
@@ -97,15 +128,20 @@ private struct WorkspacePreviewWebView: UIViewRepresentable {
         func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
             guard let target = action.request.url else { decisionHandler(.cancel); return }
             let scheme = target.scheme?.lowercased() ?? ""
-            if ["about", "blob", "data"].contains(scheme) { decisionHandler(.allow); return }
+            if ["about", "blob", "data"].contains(scheme) { decisionHandler(action.shouldPerformDownload ? .download : .allow); return }
             guard ["http", "https"].contains(scheme) else { decisionHandler(.cancel); return }
             if target.scheme == parent.url.scheme && target.host == parent.url.host && target.port == parent.url.port {
-                decisionHandler(.allow)
+                decisionHandler(action.shouldPerformDownload ? .download : .allow)
             } else {
                 decisionHandler(.cancel)
                 if action.navigationType == .linkActivated { parent.onExternal(target) }
             }
         }
+        func webView(_ webView: WKWebView, decidePolicyFor response: WKNavigationResponse, decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
+            decisionHandler(response.canShowMIMEType ? .allow : .download)
+        }
+        func webView(_ webView: WKWebView, navigationAction: WKNavigationAction, didBecome download: WKDownload) { downloads.attach(download) }
+        func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse, didBecome download: WKDownload) { downloads.attach(download) }
         func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for action: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
             if let url = action.request.url, ["http", "https"].contains(url.scheme ?? "") { parent.onExternal(url) }
             return nil

@@ -31,6 +31,13 @@ struct V2WorkspaceFilesService {
         )
     }
 
+    /// Explicit export/open-in action uses the full binary transfer, including for
+    /// text files. The size-limited Web text preview is never used as a download.
+    func download(connectorId: V2ConnectorID, root: String, entry: V2WorkspaceEntry) async throws -> WorkspaceDownloadedFile {
+        guard entry.isFile else { throw V2BusinessError.workspaceEntryNotPreviewable }
+        return try await connectorAPI.downloadWorkspaceFile(connectorId: connectorId, root: root, path: entry.path)
+    }
+
     /// Creates a one-use scoped token and returns the existing Web file-preview route.
     func previewURL(
         connectorId: V2ConnectorID,

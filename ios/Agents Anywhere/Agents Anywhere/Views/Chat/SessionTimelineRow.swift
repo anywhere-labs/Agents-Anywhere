@@ -7,7 +7,6 @@ struct SessionTimelineRow: View {
     var cwd: String?
     let disclosures: TimelineDisclosureState
     let onFile: (String) -> Void
-    @State private var copied = false
     @ScaledMetric(relativeTo: .body) private var lineHeight: CGFloat = 22
 
     var body: some View {
@@ -20,17 +19,13 @@ struct SessionTimelineRow: View {
                     VStack(alignment: .leading, spacing: 14) {
                         markdown
                         ForEach(Array(message.attachments.enumerated()), id: \.offset) { _, file in attachment(file) }
-                        if row.value.isStreamingText {
-                            Group {
-                                if row.text.isEmpty { Text("正在思考").font(.subheadline).foregroundStyle(.secondary) }
-                                else { Color.clear.accessibilityHidden(true) }
-                            }.frame(height: 40, alignment: .leading)
-                        } else {
+                        if row.value.isStreamingText && row.text.isEmpty {
+                            Text("正在思考").font(.subheadline).foregroundStyle(.secondary)
+                        } else if !row.value.isStreamingText {
                             if row.value.status == .interrupted || row.value.status == .cancelled {
                                 Text("已停止生成").font(.caption).foregroundStyle(.secondary)
                             }
                             if row.value.status == .failed { Text("生成未完成").font(.caption).foregroundStyle(.secondary) }
-                            messageActions
                         }
                     }
                 }
@@ -53,22 +48,6 @@ struct SessionTimelineRow: View {
         ChatMarkdownView(text: row.text, isStreaming: row.isRevealing, resolvesFileReferences: true)
             .id(row.layoutGeneration)
             .frame(minHeight: row.value.isStreamingText ? lineHeight : nil, alignment: .topLeading)
-    }
-    private var messageActions: some View {
-        HStack(spacing: 2) {
-            Button {
-                UIPasteboard.general.string = row.text; copied = true
-            } label: { Image(systemName: copied ? "checkmark" : "document.on.document").frame(width: 44, height: 40) }
-            .accessibilityLabel(copied ? "已复制" : "复制回复")
-            .task(id: copied) {
-                guard copied else { return }
-                do { try await Task.sleep(for: .seconds(2)); copied = false } catch {}
-            }
-            ShareLink(item: row.text) { Image(systemName: "square.and.arrow.up").frame(width: 44, height: 40) }
-                .accessibilityLabel("分享回复")
-        }
-        .disabled(row.text.isEmpty)
-        .buttonStyle(.plain).font(.system(size: 15)).foregroundStyle(.secondary).padding(.leading, -10)
     }
     private func attachment(_ file: V2AttachmentContent) -> some View {
         Button { onAttachment(file) } label: { Label(file.name ?? "附件", systemImage: "doc") }

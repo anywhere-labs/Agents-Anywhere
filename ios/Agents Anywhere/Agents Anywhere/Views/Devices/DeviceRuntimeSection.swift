@@ -166,6 +166,7 @@ private struct DeviceConfiguredRuntimeRow: View {
                     )
                 )
                 .labelsHidden()
+                .toggleStyle(.switch).tint(nil).accentColor(nil)
                 .disabled(!connectorIsOnline)
             }
         }

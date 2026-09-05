@@ -3,6 +3,7 @@ import Foundation
 protocol HTTPTransport {
     func send<Body: Encodable, Response: Decodable>(_ request: HTTPRequest<Body, Response>) async throws -> Response
     func upload<Response: Decodable>(_ request: HTTPUploadRequest<Response>) async throws -> Response
+    func download(_ url: URL) async throws -> URL
 }
 
 struct URLSessionHTTPTransport: HTTPTransport {
@@ -79,6 +80,27 @@ struct URLSessionHTTPTransport: HTTPTransport {
             )
         }
         return try decodeResponse(Response.self, from: data)
+    }
+
+    /// The API returns a transfer URL. Resolve it only against this account's
+    /// server and never forward its credentials to another origin on redirect.
+    func download(_ url: URL) async throws -> URL {
+        guard let target = URL(string: url.relativeString, relativeTo: serverURL)?.absoluteURL,
+              target.hasSameOrigin(as: serverURL) else { throw HTTPError.invalidResponse }
+        guard let token = try await tokenProvider.accessToken(), !token.isEmpty else { throw HTTPError.unauthorized }
+        var request = URLRequest(url: target)
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/octet-stream", forHTTPHeaderField: "Accept")
+        try Task.checkCancellation()
+        let (file, response) = try await urlSession.download(for: request, delegate: DownloadRedirectPolicy(origin: serverURL))
+        do {
+            try Task.checkCancellation()
+            guard let http = response as? HTTPURLResponse else { throw HTTPError.invalidResponse }
+            guard 200..<300 ~= http.statusCode else {
+                throw HTTPError.server(statusCode: http.statusCode, message: HTTPURLResponse.localizedString(forStatusCode: http.statusCode))
+            }
+            return file
+        } catch { try? FileManager.default.removeItem(at: file); throw error }
     }
 
     private func decodeResponse<Response: Decodable>(_ responseType: Response.Type, from data: Data) throws -> Response {

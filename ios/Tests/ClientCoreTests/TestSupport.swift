@@ -60,6 +60,12 @@ func event(_ type: String, seq: Int = 10, id: String? = nil, sessionID: String =
     }
     var calls: [Call] = []
     var respond: ((Call) async throws -> Data)?
+    var onDownload: ((URL) async throws -> URL)?
+
+    func download(_ url: URL) async throws -> URL {
+        guard let onDownload else { throw HTTPError.invalidResponse }
+        return try await onDownload(url)
+    }
 
     func send<Body: Encodable, Response: Decodable>(_ request: HTTPRequest<Body, Response>) async throws -> Response {
         let call = Call(method: request.method, path: request.path, query: request.queryItems,

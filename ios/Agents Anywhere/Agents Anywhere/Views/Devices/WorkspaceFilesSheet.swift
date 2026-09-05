@@ -8,8 +8,26 @@ struct WorkspaceFilesSheet: View {
     let service: V2WorkspaceFilesService
 
     var session: V2SessionModel?
-    @State private var preview: V2WorkspaceEntry?
+    @State private var destination: FileDestination?
+    @State private var transfer: FileTransferRequest?
+    @State private var detent: PresentationDetent = .medium
     @State private var previewErrorMessage: String?
+
+    private enum FileDestination: Identifiable {
+        case preview(V2WorkspaceEntry), save(WorkspaceDownloadedFile), open(WorkspaceDownloadedFile)
+        var id: String {
+            switch self {
+            case .preview(let entry): "preview:" + entry.path
+            case .save(let file): "save:" + file.id.absoluteString
+            case .open(let file): "open:" + file.id.absoluteString
+            }
+        }
+    }
+    private struct FileTransferRequest: Equatable {
+        let id = UUID()
+        let entry: V2WorkspaceEntry
+        let action: WorkspaceFileAction
+    }
 
     var body: some View {
         NavigationStack {
@@ -19,7 +37,8 @@ struct WorkspaceFilesSheet: View {
                 path: ".",
                 title: workspace.name,
                 service: service,
-                onOpenFile: openFile, canRead: canRead
+                onOpenFile: openFile, onFileAction: startTransfer, canRead: canRead,
+                canTransfer: canRead && transfer == nil
             )
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -35,16 +54,46 @@ struct WorkspaceFilesSheet: View {
                     path: route.path,
                     title: route.title,
                     service: service,
-                    onOpenFile: openFile, canRead: canRead
+                    onOpenFile: openFile, onFileAction: startTransfer, canRead: canRead,
+                    canTransfer: canRead && transfer == nil
                 )
             }
+            .safeAreaInset(edge: .bottom) {
+                if let transfer {
+                    HStack(spacing: 12) {
+                        ProgressView()
+                        Text("正在下载 \(transfer.entry.name)…").font(.footnote).lineLimit(1)
+                        Spacer(minLength: 0)
+                        Button("取消") { self.transfer = nil }.font(.footnote)
+                    }
+                    .padding(16).background(.regularMaterial)
+                }
+            }
         }
-        .sheet(item: $preview) { preview in
-            WorkspaceFilePreviewSheet(connectorId: connectorId, root: workspace.path,
-                path: preview.path, service: service, session: session)
+        .presentationDetents([.medium, .large], selection: $detent)
+        .presentationContentInteraction(.resizes).presentationDragIndicator(.visible)
+        .sheet(item: $destination) { destination in
+            switch destination {
+            case .preview(let entry):
+                WorkspaceFilePreviewSheet(connectorId: connectorId, root: workspace.path,
+                    path: entry.path, service: service, session: session)
+            case .save(let file): WorkspaceFileExportPicker(file: file, onFinish: finishTransfer)
+            case .open(let file): WorkspaceFileActivitySheet(file: file, onFinish: finishTransfer)
+            }
         }
-        .alert("Unable to preview file", isPresented: previewErrorBinding) {
-            Button("OK", role: .cancel) {
+        .task(id: transfer) {
+            guard let request = transfer else { return }
+            defer { if transfer?.id == request.id { transfer = nil } }
+            do {
+                let file = try await service.download(connectorId: connectorId, root: workspace.path, entry: request.entry)
+                try Task.checkCancellation()
+                guard transfer?.id == request.id, session?.isValid != false else { return }
+                destination = request.action == .download ? .save(file) : .open(file)
+            } catch { if !Task.isCancelled { previewErrorMessage = error.localizedDescription } }
+        }
+        .onDisappear { transfer = nil }
+        .alert("文件操作失败", isPresented: previewErrorBinding) {
+            Button("好", role: .cancel) {
                 previewErrorMessage = nil
             }
         } message: {
@@ -67,9 +116,20 @@ struct WorkspaceFilesSheet: View {
     }
     private func openFile(_ entry: V2WorkspaceEntry) {
         guard canRead else { previewErrorMessage = "设备或网络已离线，请恢复连接后重试。"; return }
-        preview = entry
+        destination = .preview(entry)
+    }
+    private func startTransfer(_ entry: V2WorkspaceEntry, action: WorkspaceFileAction) {
+        guard canRead, entry.isFile, transfer == nil else { return }
+        previewErrorMessage = nil
+        transfer = FileTransferRequest(entry: entry, action: action)
+    }
+    private func finishTransfer(_ error: String?) {
+        destination = nil
+        if let error { previewErrorMessage = error }
     }
 }
+
+private enum WorkspaceFileAction: Equatable { case download, openIn }
 
 private struct WorkspaceDirectoryRoute: Hashable {
     let path: String
@@ -83,7 +143,9 @@ private struct WorkspaceDirectoryView: View {
     let title: String
     let service: V2WorkspaceFilesService
     let onOpenFile: (V2WorkspaceEntry) -> Void
+    let onFileAction: (V2WorkspaceEntry, WorkspaceFileAction) -> Void
     let canRead: Bool
+    let canTransfer: Bool
 
     @State private var model = WorkspaceDirectoryModel()
 
@@ -123,8 +185,18 @@ private struct WorkspaceDirectoryView: View {
                 ForEach(model.entries) { entry in
                     WorkspaceEntryRow(
                         entry: entry,
-                        onOpenFile: onOpenFile
-                    ).disabled(!canRead && !entry.isDirectory)
+                        onOpenFile: onOpenFile,
+                        canRead: canRead
+                    )
+                    .contextMenu {
+                        Button("复制路径", systemImage: "document.on.document") { UIPasteboard.general.string = entry.path }
+                        if entry.isFile {
+                            Button("下载", systemImage: "arrow.down.to.line") { onFileAction(entry, .download) }
+                                .disabled(!canTransfer)
+                            Button("其他打开方式…", systemImage: "square.and.arrow.up") { onFileAction(entry, .openIn) }
+                                .disabled(!canTransfer)
+                        }
+                    }
                 }
             }
 
@@ -158,6 +230,7 @@ private struct WorkspaceDirectoryView: View {
 private struct WorkspaceEntryRow: View {
     let entry: V2WorkspaceEntry
     let onOpenFile: (V2WorkspaceEntry) -> Void
+    let canRead: Bool
 
     var body: some View {
         if entry.isDirectory {
@@ -170,7 +243,7 @@ private struct WorkspaceEntryRow: View {
             } label: {
                 label
             }
-            .disabled(!entry.isFile)
+            .disabled(!entry.isFile || !canRead)
         }
     }
 

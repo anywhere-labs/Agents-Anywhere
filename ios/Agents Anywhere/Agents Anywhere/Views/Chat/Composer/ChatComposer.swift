@@ -7,6 +7,7 @@ struct ChatComposer: View {
     var canSend = true
     var canStop = true
     var isBusy = false
+    var placeholder = "询问 Agents"
     let maximumEditorHeight: CGFloat
     let controls: ChatControlMetrics
     let onSend: () -> Void
@@ -33,7 +34,7 @@ struct ChatComposer: View {
 
                     ZStack(alignment: .topLeading) {
                         if draft.text.isEmpty {
-                            Text("询问 Agents")
+                            Text(placeholder)
                                 .font(.body)
                                 .lineLimit(1)
                                 .foregroundStyle(.secondary)

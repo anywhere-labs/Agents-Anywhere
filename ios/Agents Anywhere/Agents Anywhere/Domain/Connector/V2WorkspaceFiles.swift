@@ -39,6 +39,18 @@ struct V2WorkspaceFilePreviewToken: Decodable, Hashable {
     let serverTime: String
 }
 
+struct V2WorkspaceFileReadResponse: Decodable {
+    let ok: Bool
+    let result: V2WorkspaceFileTransfer?
+    let error: V2RuntimeError?
+}
+
+struct V2WorkspaceFileTransfer: Decodable {
+    let name: String
+    let size: Int64
+    let downloadUrl: String
+}
+
 struct V2WorkspaceTextRequest: Encodable, Hashable {
     let path: String
     var maxBytes: Int = 1_048_576

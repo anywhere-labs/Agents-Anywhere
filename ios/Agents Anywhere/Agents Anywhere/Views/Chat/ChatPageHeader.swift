@@ -6,12 +6,14 @@ struct ChatPageHeader<Actions: View>: View {
     let controls: ChatControlMetrics
     let onMenu: () -> Void
     @ViewBuilder var actions: () -> Actions
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         GlassEffectContainer(spacing: 8) {
             HStack(spacing: 12) {
                 Button(action: onMenu) {
                     SidebarMenuIcon()
+                        .foregroundStyle(AppTheme.primaryText(colorScheme))
                         .frame(width: controls.diameter, height: controls.diameter)
                         .glassEffect(.regular.interactive(), in: .circle)
                 }.accessibilityLabel("打开侧栏")

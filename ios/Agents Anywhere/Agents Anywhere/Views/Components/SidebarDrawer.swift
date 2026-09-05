@@ -16,7 +16,7 @@ struct SidebarDrawerConfiguration: Sendable {
 
     init(
         revealFraction: CGFloat = 0.75,
-        edgeActivationWidth: CGFloat = 24,
+        edgeActivationWidth: CGFloat = 44,
         sidebarClosedScale: CGFloat = 0.95,
         sidebarOverlayOpacity: CGFloat = 0.5,
         contentOverlayOpacity: CGFloat = 0.14,

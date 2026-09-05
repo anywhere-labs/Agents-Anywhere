@@ -45,6 +45,7 @@ protocol V2ConnectorAPIProtocol {
         root: String,
         request: V2WorkspaceFileReadRequest
     ) async throws -> V2WorkspaceFilePreviewToken
+    func downloadWorkspaceFile(connectorId: V2ConnectorID, root: String, path: String) async throws -> WorkspaceDownloadedFile
 }
 
 struct V2ConnectorAPI: V2ConnectorAPIProtocol {

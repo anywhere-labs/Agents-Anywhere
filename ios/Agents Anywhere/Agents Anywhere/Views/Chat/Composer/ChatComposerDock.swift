@@ -16,6 +16,7 @@ struct ChatComposerDock: View {
     var isStreaming = false
     var canStop = true
     var isBusy = false
+    var placeholder = "询问 Agents"
     var isLoadingSettings = false
     var settingsError: String?
     var sessionChat: SessionChatModel?
@@ -39,6 +40,7 @@ struct ChatComposerDock: View {
     var body: some View {
         ChatComposer(draft: draft, editor: editor, isStreaming: isStreaming,
             canSend: canSend, canStop: canStop, isBusy: isBusy || isSending || importCount > 0,
+            placeholder: placeholder,
             maximumEditorHeight: maximumEditorHeight, controls: controls,
             onSend: send, onStop: { Task { await onStop() } },
             onOptions: { showsOptions = true })

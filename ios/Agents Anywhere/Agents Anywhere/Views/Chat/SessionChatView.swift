@@ -18,8 +18,10 @@ struct SessionChatView: View {
     @State private var isDownloading = false
     @State private var toasts = ChatToastStore()
     @State private var headerHeight: CGFloat = 66
+    @State private var pendingTakeover: Bool?
     @Environment(\.colorScheme) private var colorScheme
     @ScaledMetric(relativeTo: .body) private var bodyLineHeight: CGFloat = 22
+    @ScaledMetric(relativeTo: .footnote) private var takeoverPillHeight: CGFloat = 32
 
     init(session: V2SessionModel, services: V2ClientServices, safeAreaInsets: EdgeInsets,
          onMenu: @escaping () -> Void, onNewSession: @escaping () -> Void) {
@@ -29,6 +31,7 @@ struct SessionChatView: View {
     }
     private var controls: ChatControlMetrics { .init(bodyLineHeight: bodyLineHeight) }
     private var session: V2SessionModel { model.session }
+    private var requiresTakeover: Bool { session.metadata?.takeover == false }
     var body: some View {
         GeometryReader { geometry in
             ChatTimelineView(model: model, onAttachment: openAttachment, onFile: openFile)
@@ -58,6 +61,7 @@ struct SessionChatView: View {
                             }.glassEffect(.regular.interactive(), in: .capsule)
                         }
                         connectionBar
+                        if requiresTakeover { takeoverPill }
                     }
                     .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { headerHeight = $0 }
                 }
@@ -71,7 +75,8 @@ struct SessionChatView: View {
                             canSelectModel: session.runtime.allows("catalog.model"),
                             canSelectPermission: session.runtime.allows("catalog.permission"),
                             isStreaming: model.isRunning, canStop: session.runtime.allows("session.interrupt"),
-                            isBusy: model.isWorking, isLoadingSettings: model.isLoadingSettings,
+                            isBusy: model.isWorking, placeholder: requiresTakeover ? "请先接管" : "询问 Agents",
+                            isLoadingSettings: model.isLoadingSettings,
                             settingsError: model.settingsError, sessionChat: model,
                             onSend: model.send, onStop: model.interrupt, onLoadSettings: model.loadSettings,
                             onApplySettings: model.applySettings, applyError: { model.settingsError })
@@ -84,6 +89,10 @@ struct SessionChatView: View {
                 }
         }
         .modifier(ChatPageSafeArea(insets: safeAreaInsets))
+        .modifier(SessionTakeoverConfirmation(pending: $pendingTakeover) { enabled in
+            model.error = nil
+            if !(await model.setTakeover(enabled)), let error = model.takeoverError { model.error = error }
+        })
         .task { await model.timeline.run(sessionID: session.id, repository: model.repository) }
         .sheet(item: $sheet) { destination in
             switch destination {
@@ -94,7 +103,6 @@ struct SessionChatView: View {
                     WorkspaceFilesSheet(connectorId: meta.connectorId,
                         workspace: V2DeviceWorkspace(path: cwd, name: "会话文件", sessionCount: 1, lastActiveAt: nil),
                         service: fileService, session: session)
-                        .presentationDetents([.large])
                 }
             case .preview(let path):
                 if let meta = session.metadata {
@@ -125,11 +133,23 @@ struct SessionChatView: View {
             status("设备离线，等待重新连接", icon: "desktopcomputer")
         } else if session.failure == nil && (session.connection == .reconnecting || !session.runtime.isFresh) {
             status("正在同步会话状态…", icon: "arrow.triangle.2.circlepath")
-        } else if session.metadata?.takeover == false {
-            status("只读会话 · 在加号菜单中开启接管", icon: "eye")
         } else if let reason = session.runtime.state?.statusReason, !reason.isEmpty {
             status(reason, icon: "info.circle")
         }
+    }
+
+    private var takeoverPill: some View {
+        Button { pendingTakeover = true } label: {
+            Label("接管会话以继续交互", systemImage: "hand.raised")
+                .font(.footnote.weight(.medium))
+                .foregroundStyle(AppTheme.primaryText(colorScheme))
+                .padding(.horizontal, 14).frame(minHeight: takeoverPillHeight)
+                .glassEffect(.regular.interactive(), in: .capsule)
+                .frame(minHeight: 44).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain).disabled(!model.canChangeTakeover)
+        .accessibilityIdentifier("chat.session.takeover")
+        .padding(.horizontal, 20).padding(.bottom, 4)
     }
 
     private func status(_ text: String, icon: String, retry: Bool = false) -> some View {

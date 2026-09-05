@@ -43,7 +43,15 @@ Semantic error and availability colors remain separate from the primary color.
   animated streaming dot or cursor.
 - An explicit return-to-bottom request survives the previous drag's deceleration
   callbacks. The pill is a sibling of the scroll view, and native `ScrollPosition`
-  owns navigation; starting another drag cancels that return intent.
+  owns navigation. A new drag (including a direct transition from animation to
+  interaction) releases its persistent edge target and cancels queued following.
+  The pill hides only when current geometry reaches the bottom, with a two-point
+  tolerance. Stopping near the bottom does not resume following. Phase changes
+  use their own geometry rather than a previous geometry callback's value.
+- When the latest-history prompt is already visible, pulling up another 24 points
+  and releasing loads the latest records once. The prompt changes to “松开加载”;
+  tapping remains available. Inertia and viewport resizing cannot trigger a load.
+  A drag during the fetch cancels its pending return to the bottom.
 
 ## Session presentation and files
 
@@ -57,12 +65,25 @@ Semantic error and availability colors remain separate from the primary color.
   disclosure state survives streaming updates. Items targeted by active notices
   remain individually visible. Hidden items, turn markers, duplicate diff
   artifacts and Claude's interruption/no-response sentinels are filtered like Web.
+- Expanded groups align with the timeline without an extra leading inset. Copy
+  and Share appear once after each completed reply turn, following Web's grouping
+  between user messages. Copy/Share collect that turn's assistant text fragments;
+  reasoning, tools and system text stay out. Active/incomplete latest turns have
+  no footer; individual entries remain copyable from their context menus.
 - The session header uses `safeAreaBar` with the scroll view's native soft edge
   effect. The sidebar icon has three left-aligned strokes, the last shorter.
-  A right-hand glass button group contains New Session and a details menu.
+  A right-hand glass button group contains New Session and a details menu. The
+  phone's left-edge drawer gesture starts within 44 points and still requires
+  horizontal intent so vertical timeline scrolling is not intercepted.
 - The plus sheet includes takeover, its consequences and an explicit confirmation.
   Ambiguous writes require refreshing; a successful takeover followed by a failed
   read retains the confirmed write result.
+- Read-only sessions also show an interactive glass takeover pill below the
+  header, sharing the options sheet's native system Alert. The empty composer says
+  “请先接管” until takeover is enabled; existing drafts remain intact. The sidebar
+  strokes explicitly use AA's primary foreground color in both appearances.
+- Switches use the native switch style with inherited app tint/accent overrides
+  cleared. Their shape, thumb, size and animation are supplied by the system.
 - Details expose session/device/Agent metadata and JSON export. The server export
   paginates independently of the visible history cache, deduplicates revisions,
   and rejects stalled cursors, cancellation and mismatched sessions. Both exports
@@ -74,6 +95,14 @@ Semantic error and availability colors remain separate from the primary color.
   sheet uses an ephemeral WebKit data store and obtains a fresh token on retry.
   Already displayed content remains visible offline, with device/network status.
   Uploaded session attachments retain their separate attachment download flow.
+- File management opens at the medium detent and can expand to large; individual
+  Web previews open large. Long-pressing any directory entry copies its path.
+  Files also offer Download (the system export picker) and Open In (the system
+  activity sheet). Exports use the full binary transfer, validate its byte count,
+  and reject cross-origin credential forwarding. They remain temporary on disk
+  until the system sheet closes; cancellation/failure removes partial files.
+  The Web preview's own download links, including blob URLs, use `WKDownload`
+  and open a system activity sheet on completion.
 - Non-inline session/action errors appear below the header in borderless glass
   toasts with horizontal paging, dismissal and explicit refresh where applicable.
   Toasts overlay content without changing the timeline's height. Dismissing one
