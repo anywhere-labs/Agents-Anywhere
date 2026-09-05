@@ -122,5 +122,8 @@ interception, backend request/route matching, nullable selections, same-sequence
 live transitions, cache invalidation, timeline reset/history races, network
 loss, socket cancellation/overflow/silence, and uncertain message delivery.
 The test target compiles production client-core sources, not a copied model set.
+The complete iOS Debug target also builds for `generic/platform=iOS` with code
+signing disabled, including the existing AppState and SwiftUI pages. This uses
+the checked-in Swift package resolutions and does not start a simulator.
 Live device rendering and real mobile-network behavior still require device
 validation when implementing the next UI.

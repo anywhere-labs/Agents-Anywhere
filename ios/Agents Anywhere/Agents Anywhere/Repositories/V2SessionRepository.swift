@@ -67,7 +67,7 @@ final class V2SessionRepository {
             entry.observers[observerID] = continuation
             continuation.yield(observation(entry))
             continuation.onTermination = { [weak self, weak entry] _ in
-                Task { @MainActor in
+                Task { @MainActor [weak self, weak entry] in
                     guard let self, let entry else { return }
                     entry.observers.removeValue(forKey: observerID)
                     if entry.observers.isEmpty {

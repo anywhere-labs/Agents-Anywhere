@@ -25,7 +25,7 @@ final class V2ConnectivityMonitor {
                 availability: path.status == .satisfied ? .online : .offline,
                 isExpensive: path.isExpensive, isConstrained: path.isConstrained
             )
-            Task { @MainActor in
+            Task { @MainActor [weak self, weak monitor] in
                 guard let self, let monitor, self.monitor === monitor else { return }
                 self.status = status
                 self.onChange?(status)
