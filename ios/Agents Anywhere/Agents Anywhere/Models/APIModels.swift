@@ -111,4 +111,3 @@ struct APIErrorResponse: Decodable {
         return detail.displayString
     }
 }
-
