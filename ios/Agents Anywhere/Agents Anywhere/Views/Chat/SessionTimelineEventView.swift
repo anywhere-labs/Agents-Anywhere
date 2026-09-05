@@ -63,18 +63,9 @@ struct SessionTimelineEventView: View {
                 Rectangle().fill(.quaternary).frame(height: 1)
             }.padding(.vertical, 8)
         case .tool:
-            if value.command != nil || value.output != nil || value.input != nil || !value.changes.isEmpty {
+            if value.hasToolDetails {
                 TimelineFold(id: row.id, title: value.title, symbol: value.symbol, status: row.value.status, disclosures: disclosures) {
-                    VStack(spacing: 0) {
-                        if let command = value.command { TimelineCodePanel(label: "command", code: command) }
-                        if let input = value.input, input != .null && input != .object([:]) {
-                            TimelineCodePanel(label: "input", code: input.formattedJSON)
-                        }
-                        ForEach(value.changes) { change in
-                            TimelineFileChangeView(change: change, onFile: onFile)
-                        }
-                        if let output = value.output { TimelineCodePanel(label: "output", code: output) }
-                    }.clipShape(.rect(cornerRadius: 14))
+                    TimelineToolDetails(row: row, cwd: cwd, onFile: onFile)
                 }
             } else { TimelineMarkerRow(title: value.title, symbol: value.symbol, status: row.value.status) }
         case .artifact:
@@ -108,16 +99,68 @@ struct TimelineMarkerRow: View {
             if let expanded { Image(systemName: expanded ? "chevron.down" : "chevron.right").font(.system(size: 10, weight: .medium)).frame(width: 10) }
             Image(systemName: symbol).font(.system(size: 15)).frame(width: 18)
             Text(title).font(.system(.subheadline, design: .monospaced)).lineLimit(1).truncationMode(.tail)
+                .modifier(TimelineMarkerShimmer(active: status.isActive && !status.isFailure))
                 .frame(maxWidth: .infinity, alignment: .leading)
-            if status.isActive || status.isFailure {
-                Text(status.label).font(.caption2).fixedSize().padding(.horizontal, 6).padding(.vertical, 3)
-                    .background(.quaternary.opacity(0.5), in: .capsule)
-            }
             if let accessory { Image(systemName: accessory).font(.caption) }
         }
-        .foregroundStyle(status.isFailure ? Color.red : .secondary)
+        .foregroundStyle(status.isFailure ? Color.red : .primary)
         .frame(minHeight: 44).contentShape(Rectangle())
         .accessibilityElement(children: .combine)
+        .accessibilityValue(status.label)
+    }
+}
+
+/// This subtree is created only inside the expanded branch of TimelineFold.
+/// Collapsing destroys parsed output, patch rows, code panels and their state.
+private struct TimelineToolDetails: View {
+    let row: ChatTimelineRowModel
+    let cwd: String?
+    let onFile: (String) -> Void
+    var body: some View {
+        let value = TimelineEntryPresentation(item: row.value, cwd: cwd)
+        let changes = value.changes
+        VStack(spacing: 0) {
+            if let command = value.command { TimelineCodePanel(label: "command", code: command) }
+            if let input = value.input, input != .null && input != .object([:]) {
+                TimelineCodePanel(label: "input", code: input.formattedJSON)
+            }
+            ForEach(changes) { change in TimelineFileChangeView(change: change, onFile: onFile) }
+            if let output = value.output { TimelineCodePanel(label: "output", code: output) }
+        }.clipShape(.rect(cornerRadius: 14))
+    }
+}
+
+private struct TimelineMarkerShimmer: ViewModifier {
+    let active: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    func body(content: Content) -> some View {
+        if active && !reduceMotion { content.modifier(ActiveMarkerShimmer()) }
+        else { content }
+    }
+}
+
+/// A local compositor animation; no per-frame timeline/model publications.
+private struct ActiveMarkerShimmer: ViewModifier {
+    @State private var sweeps = false
+    func body(content: Content) -> some View {
+        content.mask {
+            GeometryReader { geometry in
+                LinearGradient(stops: [
+                    .init(color: .white.opacity(0.45), location: 0),
+                    .init(color: .white.opacity(0.45), location: 0.35),
+                    .init(color: .white, location: 0.5),
+                    .init(color: .white.opacity(0.45), location: 0.65),
+                    .init(color: .white.opacity(0.45), location: 1)
+                ], startPoint: .leading, endPoint: .trailing)
+                .frame(width: geometry.size.width * 3)
+                .offset(x: sweeps ? 0 : -geometry.size.width * 2)
+            }
+        }
+        .onAppear {
+            sweeps = false
+            withAnimation(.linear(duration: 1.6).repeatForever(autoreverses: false)) { sweeps = true }
+        }
+        .onDisappear { sweeps = false }
     }
 }
 
@@ -135,7 +178,7 @@ private struct TimelineFold<Content: View>: View {
                 withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.18)) { disclosures.toggle(id) }
             } label: { TimelineMarkerRow(title: title, symbol: symbol, status: status, expanded: disclosures.isExpanded(id)) }
             .buttonStyle(.plain).accessibilityValue(disclosures.isExpanded(id) ? "已展开" : "已折叠")
-            if disclosures.isExpanded(id) { content() }
+            if disclosures.isExpanded(id) { content().transition(.identity) }
         }
     }
 }
@@ -179,7 +222,7 @@ struct TimelineCodePanel: View {
             }.padding(.leading, 12).foregroundStyle(.secondary).background(.quaternary.opacity(0.3))
             ScrollView([.horizontal, .vertical]) {
                 if isDiff {
-                    VStack(alignment: .leading, spacing: 0) {
+                    LazyVStack(alignment: .leading, spacing: 0) {
                         ForEach(TimelineDiff(displayCode).lines) { line in
                             HStack(alignment: .top, spacing: 8) {
                                 Text(line.sign).frame(width: 10)

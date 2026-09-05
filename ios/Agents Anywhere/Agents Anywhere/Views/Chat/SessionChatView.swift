@@ -7,6 +7,7 @@ struct SessionChatView: View {
     let onMenu: () -> Void
     let onNewSession: () -> Void
     @State private var sheet: SessionSheet?
+    @State private var expandedNoticeID: String?
     private let fileService: V2WorkspaceFilesService
     private let detailService: V2SessionDetailService
     private enum SessionSheet: Identifiable {
@@ -68,7 +69,7 @@ struct SessionChatView: View {
                 .safeAreaInset(edge: .bottom, spacing: 0) {
                     VStack(spacing: 0) {
                         SessionInteractionDock(chat: model, maximumHeight: min(360, geometry.size.height * 0.38),
-                            onShowAll: { sheet = .notices })
+                            onShowAll: { expandedNoticeID = $0; sheet = .notices })
                         ChatComposerDock(draft: session.composer, settings: model.settings,
                             maximumEditorHeight: min(160, max(72, geometry.size.height * 0.30)), controls: controls,
                             canSend: session.canSend, canAttach: model.canAttach,
@@ -96,7 +97,7 @@ struct SessionChatView: View {
         .task { await model.timeline.run(sessionID: session.id, repository: model.repository) }
         .sheet(item: $sheet) { destination in
             switch destination {
-            case .notices: SessionNoticesSheet(model: model)
+            case .notices: SessionNoticesSheet(model: model, initialNoticeID: expandedNoticeID)
             case .details: SessionDetailsSheet(chat: model, service: detailService)
             case .files:
                 if let meta = session.metadata, let cwd = meta.cwd {

@@ -45,9 +45,15 @@ Semantic error and availability colors remain separate from the primary color.
   callbacks. The pill is a sibling of the scroll view, and native `ScrollPosition`
   owns navigation. A new drag (including a direct transition from animation to
   interaction) releases its persistent edge target and cancels queued following.
-  The pill hides only when current geometry reaches the bottom, with a two-point
-  tolerance. Stopping near the bottom does not resume following. Phase changes
-  use their own geometry rather than a previous geometry callback's value.
+  The pill hides within 96 points of the bottom and throughout tracking,
+  dragging, deceleration and programmatic scrolling. Exact follow intent keeps
+  its two-point tolerance: stopping near the bottom does not resume following.
+  Phase changes use their own geometry rather than a stale callback's value.
+  Active interactions cancel queued auto-follow and release the native edge
+  target. Explicit return remains available, but ends on arrival while an
+  interaction is present. Removing the card preserves the reading position.
+  A constant 32-point tail spacer provides breathing room without status-driven
+  padding changes.
 - When the latest-history prompt is already visible, pulling up another 24 points
   and releasing loads the latest records once. The prompt changes to “松开加载”;
   tapping remains available. Inertia and viewport resizing cannot trigger a load.
@@ -59,7 +65,14 @@ Semantic error and availability colors remain separate from the primary color.
   MCP calls, web searches, Agent calls and file changes follow Web's payload
   parsing. Expanded commands/outputs have bounded scrolling and copying; unified
   diffs include action colors and old/new line numbers. These panels render
-  timeline payloads, without fetching file contents.
+  timeline payloads, without fetching file contents. The marker does not parse
+  patches or format output JSON: expanding mounts the detail subtree, and
+  collapsing unmounts it. Active titles shimmer, failures are red and other
+  markers use the primary text color; no trailing status badge is shown.
+- The timeline uses lazy row layout. Scroll geometry updates are isolated from
+  the content subtree, and a separate observable structural projection keeps
+  token/tool-output appends from regrouping every historical row. Only status,
+  membership and grouping changes invalidate that projection.
 - Consecutive tools/reasoning/artifacts, child Agent calls and reconnect attempts
   are grouped. Groups retain the first item's identity while growing, and
   disclosure state survives streaming updates. Items targeted by active notices
@@ -140,20 +153,35 @@ recovery policy.
 
 `SessionNoticeStore` exposes stable observable notice objects and keeps form drafts
 separate from authoritative runtime state. Approval, confirmation, execution-error
-and input-request interactions share the same action path. Action IDs, labels,
-styles, blocking scope, status and expiry come from the protocol.
+and input-request interactions share the same action path. Action IDs, styles,
+blocking scope, status and expiry come from the protocol. Known action labels
+are localized like Web; extension actions retain their protocol labels.
 
 - Active interactions blocking this session form a vertically paged stack above
   the composer, with the same horizontal inset as the collapsed composer. The
   selected item survives new arrivals; removing it selects an adjacent item.
-  Short cards pass vertical drags to the pager. Long forms scroll internally;
-  swiping the dock header still changes pages, and Expand opens all interactions.
+  The collapsed surface is a glass card with fixed title, summary, status and
+  action slots; there is no external response prompt. Expand and the optional
+  page count live inside the card. The stack retains its height across notice
+  counts and submission/network hints. Vertical swipes change the selected card.
+  Expand opens the selected notice in the full interaction sheet. Operation
+  Details opens a sheet with context, editable fields and full diagnostic text.
+  Neither entry expands the dock inline.
+- Actions reuse `AppGlassButton`: protocol-primary actions are prominent,
+  secondary/cancel actions regular, and danger actions destructive. Only the
+  selected action shows loading; all actions reject concurrent submissions.
+  Every protocol choice remains accessible, including approve-for-session.
+  An incomplete form action opens the editable sheet from the compact card;
+  the full form cannot submit until valid.
 - Nonblocking interactions are associated with their source/context timeline
   item when present. Unanchored notices appear in the timeline. Ordinary
   notifications do not gain action buttons or block sending.
 - Standard `inputRequest` v1 forms support multiple questions, single/multiple
-  choices and custom answers. Payloads use the protocol's `optionIds` and
-  `customText` structure. All native text inputs guard Chinese IME composition.
+  choices and an explicit Other selector. Single-choice radios remain selected
+  on repeated taps, selecting Other clears the single preset, and multiple
+  presets can coexist with Other. Deselecting Other removes its payload text.
+  Payloads use the protocol's `optionIds` and `customText` structure. All native
+  text inputs guard Chinese IME composition; draft objects survive sheet changes.
 - Other action schemas support native scalar, enum, enum-array and nested-object
   forms with client validation. Arbitrary JSON Schema extensions are not a
   universal supported surface: unsupported required forms fail closed and direct

@@ -1,320 +1,152 @@
 import SwiftUI
 
+/// A fixed-size preview. Draft forms and verbose diagnostics live in sheets,
+/// so acknowledgement/network revisions cannot resize the timeline's inset.
 struct SessionInteractionCard: View {
     let item: SessionNoticeModel
     let chat: SessionChatModel
-    @State private var confirmsRetry = false
-    @Environment(\.colorScheme) private var colorScheme
+    var page: String? = nil
+    var height: CGFloat? = nil
+    var onExpand: (() -> Void)? = nil
+    @State private var destination: Destination?
+    private enum Destination: String, Identifiable {
+        case expanded, details
+        var id: String { rawValue }
+    }
+    var metrics = SessionInteractionMetrics()
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { timeline in
-            VStack(alignment: .leading, spacing: 14) {
-                Label(item.notice.title, systemImage: icon).font(.subheadline.weight(.semibold))
-                    .foregroundStyle(item.notice.severity == "error" ? Color.red : Color.primary)
-                if let message = item.notice.message { Text(message).font(.subheadline).foregroundStyle(.secondary) }
-                if item.notice.context != .object([:]) {
-                    DisclosureGroup("操作详情") {
-                        Text(item.notice.context.readableText)
-                            .font(.system(.footnote, design: .monospaced)).textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading).padding(.top, 6)
-                    }.font(.footnote)
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: item.form == nil ? "checkmark.shield" : "text.bubble")
+                        .font(.subheadline).padding(.top, 3)
+                    Text(item.notice.title).font(.subheadline.weight(.semibold))
+                        .lineLimit(2).frame(maxWidth: .infinity, alignment: .leading)
+                    Button {
+                        if let onExpand { onExpand() } else { destination = .expanded }
+                    } label: {
+                        VStack(spacing: 2) {
+                            Text("展开")
+                            if let page { Text(page).font(.caption2).monospacedDigit() }
+                        }.font(.caption).frame(minWidth: 44, minHeight: 44)
+                    }.buttonStyle(.plain)
                 }
-                if let form = item.form {
-                    ForEach(form.questions) { question in
-                        questionFields(question)
-                    }
-                }
-                ForEach(item.notice.actions.filter { $0.id != item.form?.actionID && $0.input.schema != nil }) { action in
-                    if let schema = action.input.schema,
-                       let form = NoticeActionForm(schema: schema, uiSchema: action.input.uiSchema) {
-                        if !form.fields.isEmpty {
-                            DisclosureGroup(action.label) {
-                                NoticeActionFields(item: item, action: action, form: form).padding(.top, 10)
-                                    .disabled(chat.isWorking || !chat.session.runtime.isFresh
-                                        || ![.open, .failed].contains(item.notice.status) || item.submission != .idle)
-                            }.font(.subheadline)
-                        }
-                    } else if action.input.required {
-                        Text("此操作的表单版本暂未支持，请在 Web 中处理。")
-                            .font(.footnote).foregroundStyle(.secondary)
-                    }
-                }
-                if item.notice.type == "interaction" {
-                    ViewThatFits(in: .horizontal) {
-                        HStack(spacing: 8) { actions }.fixedSize(horizontal: true, vertical: false)
-                        VStack(alignment: .leading, spacing: 8) { actions }
-                    }
-                    .disabled(chat.isWorking || !item.canRespond(fresh: chat.session.runtime.isFresh, at: timeline.date))
-                }
-                submissionStatus(at: timeline.date)
-                if let error = item.error { Text(error).font(.footnote).foregroundStyle(.secondary) }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(16)
-            .background(Color(uiColor: .secondarySystemBackground), in: .rect(cornerRadius: 22))
-        }
-        .confirmationDialog("回应结果尚未确认。再次回应前，请确认 Agent 仍在等待此操作。", isPresented: $confirmsRetry, titleVisibility: .visible) {
-            Button("已检查，允许再次回应") { item.acknowledgeUncertain() }
-            Button("取消", role: .cancel) {}
-        }
-    }
+                .foregroundStyle(item.notice.severity == "error" ? Color.red : Color.primary)
+                .frame(height: metrics.titleHeight, alignment: .top)
 
-    private var icon: String {
-        switch item.notice.interactionType {
-        case "approval": "checkmark.shield"
-        case "input_request": "text.bubble"
-        case "execution_error": "exclamationmark.triangle"
-        case "confirmation": "questionmark.circle"
-        default: item.notice.severity == "error" ? "exclamationmark.circle" : "info.circle"
-        }
-    }
+                Text(summary).font(.subheadline).foregroundStyle(.secondary).lineLimit(2)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading).clipped()
 
-    @ViewBuilder private var actions: some View {
-        ForEach(item.notice.actions) { action in
-            Button(role: action.style == "danger" ? .destructive : nil) {
-                Task { await chat.respond(notice: item, action: action) }
-            } label: {
-                Text(action.label).font(.subheadline.weight(.medium))
-                    .padding(.horizontal, 14).frame(minHeight: 44)
-                    .foregroundStyle(action.style == "primary" ? AppTheme.primaryControlForeground(colorScheme)
-                        : action.style == "danger" ? Color.red : Color.primary)
-                    .background(action.style == "primary" ? AppTheme.primaryControlBackground(colorScheme)
-                        : AppTheme.groupedFill(colorScheme), in: .capsule)
-            }
-            .buttonStyle(.plain)
-            .disabled(!item.hasValidInput(for: action))
-        }
-    }
-
-    private func questionFields(_ question: NoticeInputQuestion) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            if let header = question.header { Text(header).font(.caption).foregroundStyle(.secondary) }
-            Text(question.prompt).font(.subheadline.weight(.medium))
-            ForEach(question.options) { option in
-                Button { item.select(option.id, question: question) } label: {
-                    HStack(spacing: 10) {
-                        Image(systemName: item.choices[question.id]?.contains(option.id) == true
-                            ? (question.multiple ? "checkmark.square.fill" : "checkmark.circle.fill")
-                            : (question.multiple ? "square" : "circle"))
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(option.label).font(.subheadline)
-                            if let detail = option.detail { Text(detail).font(.footnote).foregroundStyle(.secondary) }
-                        }
-                        Spacer(minLength: 0)
-                    }.frame(minHeight: 44).contentShape(Rectangle())
-                }.buttonStyle(.plain)
-            }
-            if question.allowCustom {
-                NoticeTextInput(value: item.custom[question.id] ?? "", placeholder: "填写其他回答",
-                    onChange: { text, marked, editorID in
-                        item.setCustom(text, question: question)
-                        setComposing(marked, id: editorID)
-                    })
-            }
-        }
-        // Do not disable the editor merely because its IME has marked text.
-        .disabled(chat.isWorking || !chat.session.runtime.isFresh || ![.open, .failed].contains(item.notice.status) || item.submission != .idle)
-    }
-    private func setComposing(_ marked: Bool, id: String) {
-        if marked { item.composingFields.insert(id) } else { item.composingFields.remove(id) }
-    }
-
-    @ViewBuilder private func submissionStatus(at now: Date) -> some View {
-        if item.submission == .accepted {
-            Text("回应已提交，等待 Agent 确认").font(.footnote).foregroundStyle(.secondary)
-        } else if case .sending = item.submission {
-            Text("正在提交回应…").font(.footnote).foregroundStyle(.secondary)
-        } else if item.isExpired(at: now) {
-            Text("此交互已过期，等待 Agent 更新状态。")
-                .font(.footnote).foregroundStyle(.secondary)
-        } else if let reason = chat.responseUnavailableReason {
-            Text(reason)
-                .font(.footnote).foregroundStyle(.secondary)
-            if chat.session.network.availability != .offline && chat.session.metadata?.connectorStatus == .online {
-                Button("刷新状态") { Task { await chat.session.refresh() } }
-                    .font(.footnote).disabled(chat.session.isLoading || chat.isWorking)
-            }
-        } else {
-            switch item.submission {
-            case .sending: Text("正在提交回应…").font(.footnote).foregroundStyle(.secondary)
-            case .accepted: Text("回应已提交，等待 Agent 确认").font(.footnote).foregroundStyle(.secondary)
-            case .uncertain:
-                Text("回应结果未确认，不会自动重试。")
-                    .font(.footnote).foregroundStyle(.secondary)
-                Button("重新检查状态") { Task { await chat.session.refresh() } }.font(.footnote)
-                Button("处理未确认的回应") { confirmsRetry = true }.font(.footnote)
-            case .idle:
-                if [.responding, .responseAccepted, .resolving].contains(item.notice.status) {
-                    Text("Agent 正在处理回应…").font(.footnote).foregroundStyle(.secondary)
-                }
-                if item.notice.status == .failed {
-                    Text("上次回应未完成，请检查后重新选择。")
-                        .font(.footnote).foregroundStyle(.secondary)
-                }
-            case .unavailable: EmptyView()
-            }
-        }
-    }
-}
-
-private struct NoticeTextInput: View {
-    let value: String
-    let placeholder: String
-    let onChange: (String, Bool, String) -> Void
-    @State private var editorID = UUID().uuidString
-    @State private var draft = ComposerDraft()
-    @State private var editor = ComposerEditorController()
-
-    var body: some View {
-        ZStack(alignment: .topLeading) {
-            if draft.text.isEmpty { Text(placeholder).foregroundStyle(.secondary).allowsHitTesting(false) }
-            NativeComposerEditor(draft: draft, controller: editor, maximumHeight: 120,
-                onCommandSend: {}, onTextChange: { text, marked in onChange(text, marked, editorID) })
-                .frame(minHeight: 44)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .font(.body).padding(10).background(.quaternary.opacity(0.5), in: .rect(cornerRadius: 12))
-        .onChange(of: value, initial: true) { _, text in
-            if !draft.isComposing, draft.text != text { draft.text = text }
-        }
-        .onDisappear { editor.finishEditing(); onChange(draft.text, false, editorID) }
-    }
-}
-
-private struct NoticeActionFields: View {
-    let item: SessionNoticeModel
-    let action: V2RuntimeNoticeAction
-    let form: NoticeActionForm
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            ForEach(form.fields) { field in
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(field.title).font(.subheadline)
-                    if let detail = field.detail { Text(detail).font(.footnote).foregroundStyle(.secondary) }
-                    input(field)
-                }
-            }
-        }
-    }
-    private func value(_ field: NoticeActionForm.Field) -> JSONValue? {
-        item.fields[action.id]?[field.id] ?? field.defaultValue
-    }
-    private func set(_ value: JSONValue?, field: NoticeActionForm.Field) { item.fields[action.id, default: [:]][field.id] = value }
-    @ViewBuilder private func input(_ field: NoticeActionForm.Field) -> some View {
-        switch field.kind {
-        case let .text(secure):
-            if secure {
-                SecureField(field.title, text: Binding(get: { value(field)?.stringValue ?? "" }, set: { set(.string($0), field: field) }))
-                    .textInputAutocapitalization(.never).autocorrectionDisabled()
-            } else {
-                NoticeTextInput(value: value(field)?.stringValue ?? "", placeholder: field.title, onChange: { text, marked, editorID in
-                    set(text.isEmpty ? nil : .string(text), field: field)
-                    if marked { item.composingFields.insert(editorID) } else { item.composingFields.remove(editorID) }
-                })
-            }
-        case .number:
-            TextField(field.title, text: Binding(get: { value(field)?.displayString ?? "" }, set: { set($0.isEmpty ? nil : .string($0), field: field) }))
-                .keyboardType(.numbersAndPunctuation)
-        case .boolean:
-            Toggle(field.title, isOn: Binding(get: { value(field)?.boolValue ?? false }, set: { set(.bool($0), field: field) }))
-                .toggleStyle(.switch).tint(nil).accentColor(nil)
-        case let .choice(options):
-            ForEach(Array(options.enumerated()), id: \.offset) { _, option in
-                Button { set(option, field: field) } label: {
-                    Label(option.displayString, systemImage: value(field) == option ? "checkmark.circle.fill" : "circle")
-                        .frame(minHeight: 44)
-                }.buttonStyle(.plain)
-            }
-        case let .choices(options):
-            ForEach(Array(options.enumerated()), id: \.offset) { _, option in
-                let selected = value(field)?.arrayValue ?? []
-                Button {
-                    set(.array(selected.contains(option) ? selected.filter { $0 != option } : selected + [option]), field: field)
-                } label: {
-                    Label(option.displayString, systemImage: selected.contains(option) ? "checkmark.square.fill" : "square")
-                        .frame(minHeight: 44)
-                }.buttonStyle(.plain)
-            }
-        }
-    }
-}
-
-struct SessionInteractionDock: View {
-    let chat: SessionChatModel
-    let maximumHeight: CGFloat
-    let onShowAll: () -> Void
-    @State private var selectedID: String?
-    @State private var contentHeights: [String: CGFloat] = [:]
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    private var items: [SessionNoticeModel] { chat.session.notices.notices.filter { $0.blocks(chat.session.id) } }
-    private var selectedIndex: Int { items.firstIndex { $0.id == selectedID } ?? 0 }
-    private var peek: CGFloat { items.count > 1 ? 16 : 0 }
-    private var pageHeight: CGFloat {
-        let measured = items.compactMap { contentHeights[$0.id] }.max() ?? maximumHeight
-        return max(72, min(maximumHeight - peek * 2, max(120, measured)))
-    }
-
-    var body: some View {
-        let motionReduced = reduceMotion
-        if !items.isEmpty {
-            VStack(spacing: 6) {
                 HStack(spacing: 8) {
-                    Text(items.count > 1 ? "需要回应 · \(selectedIndex + 1)/\(items.count)" : "需要你的回应")
-                        .font(.caption.weight(.medium)).foregroundStyle(.secondary)
-                    if items.count > 1 { Text("上下滑动切换").font(.caption2).foregroundStyle(.tertiary) }
+                    Text(status(at: timeline.date)).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                     Spacer(minLength: 0)
-                    Button("展开", action: onShowAll).font(.caption).frame(minHeight: 32)
-                }
-                .padding(.horizontal, 6).contentShape(Rectangle())
-                // Long forms retain their inner scrolling; this header always
-                // provides the same page gesture without stealing text selection.
-                .gesture(DragGesture(minimumDistance: 16).onEnded { value in
-                    guard abs(value.translation.height) > abs(value.translation.width) else { return }
-                    step(value.translation.height < 0 ? 1 : -1)
-                })
-                .accessibilityAction(named: "下一项") { step(1) }
-                .accessibilityAction(named: "上一项") { step(-1) }
+                    Button("操作详情", systemImage: "arrow.up.right.square") { destination = .details }
+                        .font(.caption).fixedSize().frame(minHeight: 44)
+                }.frame(height: 44)
 
-                ScrollView(.vertical) {
-                    VStack(spacing: 8) {
-                        ForEach(items) { item in
-                            ScrollView(.vertical) {
-                                SessionInteractionCard(item: item, chat: chat)
-                                    .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { contentHeights[item.id] = $0 }
-                            }
-                            .scrollDisabled((contentHeights[item.id] ?? 0) <= pageHeight + 1)
-                            .scrollBounceBehavior(.basedOnSize)
-                            .frame(height: pageHeight)
-                            .background(Color(uiColor: .secondarySystemBackground), in: .rect(cornerRadius: 22))
-                            .clipShape(.rect(cornerRadius: 22))
-                            .scrollTransition(.interactive, axis: .vertical) { content, phase in
-                                content.scaleEffect(motionReduced ? 1 : 1 - min(abs(phase.value), 1) * 0.04)
-                                    .opacity(1 - min(abs(phase.value), 1) * 0.3)
-                            }
-                            .id(item.id)
-                        }
-                    }.scrollTargetLayout()
-                }
-                .contentMargins(.vertical, peek, for: .scrollContent)
-                .scrollTargetBehavior(.viewAligned(limitBehavior: .alwaysByOne))
-                .scrollPosition(id: $selectedID, anchor: .center)
-                .scrollIndicators(.hidden).scrollBounceBehavior(.basedOnSize)
-                .frame(height: pageHeight + peek * 2).clipped()
-                .onChange(of: items.map(\.id), initial: true) { old, next in
-                    contentHeights = contentHeights.filter { next.contains($0.key) }
-                    if let selectedID, next.contains(selectedID) { return }
-                    let index = old.firstIndex(of: selectedID ?? "") ?? 0
-                    selectedID = next.isEmpty ? nil : next[min(index, next.count - 1)]
+                if item.notice.type == "interaction" {
+                    SessionInteractionActions(item: item, chat: chat, now: timeline.date, compact: true,
+                        onEdit: { if let onExpand { onExpand() } else { destination = .expanded } })
+                        .frame(height: metrics.actionHeight)
                 }
             }
-            .padding(.horizontal, ChatControlMetrics.collapsedHorizontalInset).padding(.top, 6)
+            .padding(14)
+            .frame(height: height ?? metrics.compactHeight)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .glassEffect(.regular, in: .rect(cornerRadius: 24))
+        }
+        .sheet(item: $destination) { target in
+            switch target {
+            case .expanded: SessionNoticesSheet(model: chat, initialNoticeID: item.id)
+            case .details: SessionInteractionDetailsSheet(item: item, chat: chat)
+            }
         }
     }
-    private func step(_ delta: Int) {
-        let index = selectedIndex + delta
-        guard items.indices.contains(index) else { return }
-        withAnimation(reduceMotion ? nil : .smooth(duration: 0.25)) { selectedID = items[index].id }
+
+    private var summary: String {
+        if let message = item.notice.message, !message.isEmpty { return message }
+        if let question = item.form?.questions.first { return question.prompt }
+        return TimelineText.command(item.notice.context["command"])
+            ?? TimelineText.command(item.notice.context["toolInput"]?["command"]) ?? ""
     }
+    private func status(at now: Date) -> String {
+        switch item.submission {
+        case .sending: return "正在提交…"
+        case .accepted: return "已提交，等待 Agent"
+        case .uncertain: return "结果未确认 · 查看详情"
+        case .unavailable: return "此交互已结束"
+        case .idle: break
+        }
+        if item.isExpired(at: now) { return "此交互已过期" }
+        if item.responseError != nil || item.notice.status == .failed { return "回应失败 · 查看详情" }
+        if chat.responseUnavailableReason != nil { return "连接不可用 · 查看详情" }
+        if [.responding, .responseAccepted, .resolving].contains(item.notice.status) { return "Agent 正在处理…" }
+        if let form = item.form { return "\(form.questions.count) 个问题" }
+        return ""
+    }
+}
+
+struct SessionInteractionActions: View {
+    let item: SessionNoticeModel
+    let chat: SessionChatModel
+    let now: Date
+    var compact = false
+    var onEdit: (() -> Void)? = nil
+
+    var body: some View {
+        if compact && item.notice.actions.count > 2 {
+            ScrollView(.horizontal) {
+                HStack(spacing: 8) { buttons(intrinsic: true) }.padding(.horizontal, 2)
+            }.scrollIndicators(.hidden).scrollClipDisabled()
+        } else if compact {
+            HStack(spacing: 8) { buttons(intrinsic: false) }
+        } else {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) { buttons(intrinsic: true) }.fixedSize(horizontal: true, vertical: false)
+                VStack(spacing: 8) { buttons(intrinsic: false) }
+            }
+        }
+    }
+    @ViewBuilder private func buttons(intrinsic: Bool) -> some View {
+        ForEach(item.notice.actions) { action in
+            let needsInput = !item.hasValidInput(for: action)
+            AppGlassButton(actionTitle(action), systemImage: actionIcon(action),
+                role: action.style == "danger" ? .destructive : nil,
+                style: action.style == "primary" ? .prominent : .regular,
+                isLoading: item.isSending(action),
+                disabled: chat.isWorking || !item.canRespond(fresh: chat.session.runtime.isFresh, at: now)
+                    || (needsInput && onEdit == nil), maxWidth: intrinsic ? nil : .infinity) {
+                    if needsInput, let onEdit { onEdit() }
+                    else { Task { await chat.respond(notice: item, action: action) } }
+                }
+                .accessibilityHint(needsInput && onEdit != nil ? "打开表单，填写后提交" : "")
+        }
+    }
+    private func actionTitle(_ action: V2RuntimeNoticeAction) -> String {
+        switch action.id {
+        case "approve": "批准"
+        case "approve_for_session": "本会话批准"
+        case "reject": "拒绝"
+        case "cancel", "dismiss": "取消"
+        case "submit": "提交"
+        default: action.label
+        }
+    }
+    private func actionIcon(_ action: V2RuntimeNoticeAction) -> String {
+        switch action.id {
+        case "reject", "cancel", "dismiss": "xmark"
+        case "approve_for_session": "checkmark.shield"
+        default: "checkmark"
+        }
+    }
+}
+
+/// Shared scaled slots keep every page aligned, including during loading.
+struct SessionInteractionMetrics: DynamicProperty {
+    @ScaledMetric(relativeTo: .subheadline) var lineHeight: CGFloat = 20
+    @ScaledMetric(relativeTo: .body) var actionHeight: CGFloat = 50
+    var titleHeight: CGFloat { max(44, lineHeight * 2) }
+    var minimumHeight: CGFloat { titleHeight + 44 + actionHeight + 52 }
+    var compactHeight: CGFloat { minimumHeight + lineHeight * 2 }
 }

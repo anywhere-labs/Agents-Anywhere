@@ -8,8 +8,8 @@ import Testing
             topInset: 80, bottomInset: 120, offsetY: height - 680 - distance)
     }
 
-    @Test func buttonStaysDuringReturnAndNewDragLeavesItInHistory() {
-        let far = viewport(distance: 500), bottom = viewport(distance: 0), above = viewport(distance: 30)
+    @Test func buttonHidesDuringReturnAndNewDragLeavesItInHistory() {
+        let far = viewport(distance: 500), bottom = viewport(distance: 0), above = viewport(distance: 140)
         var state = TimelineScrollState()
         state.browseHistory()
         #expect(state.showsBottomButton(far))
@@ -17,7 +17,7 @@ import Testing
         #expect(state.showsBottomButton(far))
         state.phaseChanged(.animating, viewport: far)
         state.geometryChanged(viewport(distance: 15))
-        #expect(state.showsBottomButton(viewport(distance: 15)))
+        #expect(!state.showsBottomButton(viewport(distance: 15)))
         state.geometryChanged(bottom)
         state.phaseChanged(.idle, viewport: bottom)
         #expect(!state.showsBottomButton(bottom) && !state.returningToBottom)
@@ -43,7 +43,7 @@ import Testing
         state.phaseChanged(.interacting, viewport: bottom)
         // No geometry callback has published the new offset before idle.
         state.phaseChanged(.idle, viewport: above)
-        #expect(!state.followsTail && state.showsBottomButton(above))
+        #expect(!state.followsTail && !state.showsBottomButton(above))
         #expect(!state.shouldFollow(above))
     }
 
@@ -87,6 +87,48 @@ import Testing
         #expect(!TimelineViewport().shouldFollowTail(isFollowing: true, userIsScrolling: false))
         #expect(viewport(distance: 1.8).isAtBottom)
         #expect(!viewport(distance: 20).isAtBottom)
+    }
+
+    @Test func pillUsesANearBottomMarginAndHidesDuringEveryScrollPhase() {
+        var state = TimelineScrollState()
+        state.browseHistory()
+        for distance in [0.0, 2, 28, 64, 96] {
+            #expect(!state.showsBottomButton(viewport(distance: distance)))
+            #expect(!state.shouldFollow(viewport(distance: distance)))
+        }
+        let far = viewport(distance: 180)
+        #expect(state.showsBottomButton(far))
+        for phase in [TimelineScrollState.Phase.tracking, .interacting, .decelerating, .animating] {
+            state.phaseChanged(phase, viewport: far)
+            #expect(!state.showsBottomButton(far))
+        }
+        state.phaseChanged(.idle, viewport: far)
+        #expect(state.showsBottomButton(far) && !state.shouldFollow(far))
+    }
+
+    @Test func interactionCancelsQueuedReturnsAndInsetChangesCannotResumeFollowing() {
+        var state = TimelineScrollState()
+        state.requestBottom()
+        let oldRequest = state.navigationGeneration
+        state.setInteractionPresented(true)
+        #expect(state.navigationGeneration != oldRequest && !state.returningToBottom)
+        for distance in [0.0, 32, 240, 400] {
+            let changed = viewport(distance: distance, height: 2000 + distance)
+            state.geometryChanged(changed)
+            #expect(!state.shouldFollow(changed))
+        }
+        state.phaseChanged(.interacting, viewport: viewport(distance: 100))
+        state.phaseChanged(.idle, viewport: viewport(distance: 0))
+        #expect(!state.shouldFollow(viewport(distance: 160)))
+        // A deliberate tap still works, but reaching the bottom ends that intent.
+        state.requestBottom()
+        #expect(state.shouldFollow(viewport(distance: 160)))
+        state.geometryChanged(viewport(distance: 0))
+        #expect(!state.returningToBottom && !state.shouldFollow(viewport(distance: 160)))
+        state.setInteractionPresented(false)
+        #expect(!state.shouldFollow(viewport(distance: 160)))
+        state.requestBottom()
+        #expect(state.shouldFollow(viewport(distance: 160)))
     }
 
     @Test func latestRecordsRequireOneFreshPullOnAnAlreadyVisiblePrompt() {

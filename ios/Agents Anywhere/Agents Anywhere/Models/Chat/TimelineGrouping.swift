@@ -9,20 +9,19 @@ struct ChatTimelineGroup: Identifiable {
     // growing during a stream does not replace the scroll target or its state.
     var id: String { rows[0].id }
     var status: V2TimelineItemStatus {
-        if rows.contains(where: { $0.value.status.isActive }) { return .running }
-        return rows.first(where: { $0.value.status.isFailure })?.value.status ?? .done
+        if rows.contains(where: { $0.structure.status.isActive }) { return .running }
+        return rows.first(where: { $0.structure.status.isFailure })?.structure.status ?? .done
     }
     var title: String {
         switch kind {
         case .single: return ""
         case .agents: return "\(rows.count) 次子 Agent 调用"
         case .reconnect:
-            let attempts = rows.compactMap { TimelineGrouping.reconnectMessage($0.value) }
-                .compactMap { message in message.range(of: "\\d+\\s*/\\s*\\d+", options: .regularExpression).map { String(message[$0]) } }
+            let attempts = rows.compactMap { $0.structure.reconnectAttempt }
             // The full retry messages remain available in the expanded rows.
             return "连接重试 · \(rows.count) 次" + (attempts.last.map { "（\($0)）" } ?? "")
         case .tools:
-            let reasoning = rows.filter { $0.value.isReasoning }.count
+            let reasoning = rows.filter { $0.structure.isReasoning }.count
             let tools = rows.count - reasoning
             return [reasoning > 0 ? "\(reasoning) 段思考" : nil, tools > 0 ? "\(tools) 次工具调用" : nil].compactMap { $0 }.joined(separator: " · ")
         }
@@ -40,14 +39,7 @@ enum TimelineGrouping {
             pending = []
         }
         for row in rows {
-            let item = row.value
-            let kind: ChatTimelineGroup.Kind
-            if interactionTargets.contains(item.id) { kind = .single }
-            else if item.type == .tool, item.raw["content"]?["kind"] == .string("agent_call"),
-                    let parent = TimelineText.first(item.raw["content"]?["parentItemId"]) { kind = .agents(parent) }
-            else if reconnectMessage(item) != nil { kind = .reconnect }
-            else if item.isReasoning || [.tool, .fileChange, .artifact].contains(item.type) { kind = .tools }
-            else { kind = .single }
+            let kind: ChatTimelineGroup.Kind = interactionTargets.contains(row.id) ? .single : row.structure.groupKind
             if kind == .single { flush(); groups.append(ChatTimelineGroup(kind: .single, rows: [row])); continue }
             if pendingKind != kind { flush() }
             pendingKind = kind; pending.append(row)
@@ -65,7 +57,14 @@ enum TimelineGrouping {
 }
 
 @MainActor @Observable final class TimelineDisclosureState {
-    private var expanded: Set<String> = []
-    func isExpanded(_ id: String) -> Bool { expanded.contains(id) }
-    func toggle(_ id: String) { if !expanded.insert(id).inserted { expanded.remove(id) } }
+    @Observable fileprivate final class Entry { var expanded = false }
+    @ObservationIgnored private var entries: [String: Entry] = [:]
+    private func entry(_ id: String) -> Entry {
+        if let existing = entries[id] { return existing }
+        let value = Entry(); entries[id] = value; return value
+    }
+    // Each fold observes its own bit. Toggling one tool must not reconstruct
+    // every other expanded tool's diff and output subtree.
+    func isExpanded(_ id: String) -> Bool { entry(id).expanded }
+    func toggle(_ id: String) { entry(id).expanded.toggle() }
 }

@@ -1,4 +1,6 @@
 import Foundation
+import Observation
+import Synchronization
 import Testing
 @testable import ClientCore
 
@@ -18,6 +20,47 @@ import Testing
         #expect(mcp.title == "docs / search" && mcp.input != nil)
         let agent = TimelineEntryPresentation(item: try item(content: ["kind": "agent_call", "action": "spawn", "description": "Review changes"]), cwd: nil)
         #expect(agent.title == "创建 Agent：Review changes")
+    }
+
+    @Test @MainActor func tokenAndToolOutputUpdatesDoNotInvalidateListStructure() throws {
+        let row = ChatTimelineRowModel(try item("message", status: "running", content: ["text": "a"]))
+        let changed = ObservationFlag()
+        withObservationTracking { _ = row.structure } onChange: { changed.set() }
+        row.flush(try item("message", status: "running", content: ["text": "another token"]), animate: true, now: 1)
+        #expect(!changed.isSet && row.text != "a")
+        row.flush(try item("message", status: "done", content: ["text": "another token"]), animate: true, now: 2)
+        #expect(changed.isSet && row.structure.status == .done)
+
+        let tool = ChatTimelineRowModel(try item(status: "running", content: ["kind": "command", "command": "build", "output": "start"]))
+        let regrouped = ObservationFlag()
+        withObservationTracking { _ = TimelineGrouping.groups([tool], interactionTargets: []) } onChange: { regrouped.set() }
+        tool.flush(try item(status: "running", content: ["kind": "command", "command": "build", "output": String(repeating: "log\n", count: 2000)]), animate: true, now: 3)
+        #expect(!regrouped.isSet)
+    }
+
+    @Test func toolMarkerKeepsSummarySeparateFromDetailedOutputAndChanges() throws {
+        let output = TimelineEntryPresentation(item: try item(content: ["kind": "command", "command": "build", "output": ["result": [1, 2, 3]]]), cwd: nil)
+        #expect(output.title == "执行 build" && output.hasToolDetails)
+        #expect(output.output?.contains("result") == true)
+        let changes = TimelineEntryPresentation(item: try item(content: ["kind": "file_change", "changes": [
+            ["path": "/work/new.swift", "kind": "add", "diff": "let value = 1"],
+            ["path": "/work/old.swift", "kind": "delete", "diff": "old"]
+        ], "output": "must not duplicate the diff"]), cwd: "/work")
+        #expect(changes.title == "已修改文件" && changes.hasToolDetails)
+        #expect(changes.output == nil && changes.changes.count == 2)
+        #expect(changes.changes[1].diff == "-old")
+    }
+
+    @Test @MainActor func collapsingOneToolDoesNotInvalidateOtherMountedDetails() {
+        let disclosures = TimelineDisclosureState()
+        disclosures.toggle("first"); disclosures.toggle("second")
+        let changed = ObservationFlag()
+        withObservationTracking { _ = disclosures.isExpanded("second") } onChange: { changed.set() }
+        disclosures.toggle("first")
+        #expect(!disclosures.isExpanded("first") && disclosures.isExpanded("second"))
+        #expect(!changed.isSet)
+        disclosures.toggle("second")
+        #expect(changed.isSet && !disclosures.isExpanded("second"))
     }
 
     @Test func fileArtifactsUseRealChangePayloadAndRelativePaths() throws {
@@ -110,4 +153,10 @@ import Testing
         #expect(url.host == "example.test" && url.fragment?.hasPrefix("/preview?") == true)
         #expect(transport.calls.count == 1)
     }
+}
+
+nonisolated private final class ObservationFlag: Sendable {
+    private let value = Mutex(false)
+    var isSet: Bool { value.withLock { $0 } }
+    func set() { value.withLock { $0 = true } }
 }

@@ -8,9 +8,27 @@ struct TimelineEntryPresentation: Hashable {
     let title: String
     let symbol: String
     let command: String?
-    let output: String?
+    private let raw: JSONValue
+    private let rawChanges: [JSONValue]
+    private let cwd: String?
     let input: JSONValue?
-    let changes: [TimelineFileChange]
+    // These projections are deliberately evaluated only by the mounted detail
+    // view. The marker never formats output JSON, normalizes patches or diffs.
+    var changes: [TimelineFileChange] {
+        rawChanges.enumerated().map { TimelineFileChange(raw: $0.element, index: $0.offset, cwd: cwd) }
+    }
+    var output: String? {
+        guard rawChanges.isEmpty else { return nil }
+        return TimelineText.first(raw["output"], raw["outputPreview"], raw["outputText"], raw["error"])
+            ?? raw["output"].flatMap { $0 == .null ? nil : $0.formattedJSON }
+    }
+    var hasToolDetails: Bool {
+        command != nil || !rawChanges.isEmpty || input.map { $0 != .null && $0 != .object([:]) } == true
+            || ["output", "outputPreview", "outputText", "error"].contains { key in
+                guard let value = raw[key] else { return false }
+                return value != .null && value != .string("")
+            }
+    }
     let filePath: String?
     let externalURL: URL?
     let detail: JSONValue?
@@ -21,11 +39,9 @@ struct TimelineEntryPresentation: Hashable {
         let toolInput = raw["input"]
         command = TimelineText.command(raw["command"]) ?? TimelineText.command(toolInput?["command"]) ?? TimelineText.command(toolInput?["cmd"])
         let rawChanges = raw["changes"]?.arrayValue?.filter { if case .object = $0 { return true }; return false } ?? []
-        changes = (rawChanges.isEmpty && wireKind == "file_change" && TimelineText.path(raw) != nil ? [raw] : rawChanges)
-            .enumerated().map { TimelineFileChange(raw: $0.element, index: $0.offset, cwd: cwd) }
-        output = changes.isEmpty ? TimelineText.first(raw["output"], raw["outputPreview"], raw["outputText"], raw["error"])
-            ?? raw["output"].flatMap { $0 == .null ? nil : $0.formattedJSON } : nil
-        input = command == nil && changes.isEmpty ? toolInput : nil
+        self.raw = raw; self.cwd = cwd
+        self.rawChanges = rawChanges.isEmpty && wireKind == "file_change" && TimelineText.path(raw) != nil ? [raw] : rawChanges
+        input = command == nil && self.rawChanges.isEmpty ? toolInput : nil
         filePath = TimelineText.path(raw)
         externalURL = TimelineText.first(raw["url"], raw["openUrl"]).flatMap(URL.init(string:))
             .flatMap { ["https", "http"].contains($0.scheme?.lowercased() ?? "") ? $0 : nil }
@@ -47,8 +63,8 @@ struct TimelineEntryPresentation: Hashable {
             let target = targetPath.map { TimelineText.displayPath($0, cwd: cwd) }
                 ?? TimelineText.first(raw["query"], toolInput?["query"], raw["url"], toolInput?["url"])
             if wireKind == "file_change" {
-                let added = !changes.isEmpty && changes.allSatisfy { $0.action == .add }
-                let path = changes.count == 1 ? changes[0].displayPath : nil
+                let added = !self.rawChanges.isEmpty && self.rawChanges.allSatisfy { TimelineFileChange.action($0) == .add }
+                let path = self.rawChanges.count == 1 ? TimelineText.path(self.rawChanges[0]).map { TimelineText.displayPath($0, cwd: cwd) } : nil
                 title = (added ? "已创建" : "已修改") + (path.map { $0.count <= 60 ? " \($0)" : "文件" } ?? "文件")
             } else if wireKind == "command" { title = "执行 \(command ?? "命令")" }
             else if wireKind == "web_search" { title = "搜索 \(TimelineText.first(raw["query"], toolInput?["query"]) ?? "网页")" }
@@ -93,14 +109,7 @@ struct TimelineFileChange: Hashable, Identifiable {
         path = TimelineText.path(raw)
         displayPath = path.map { TimelineText.displayPath($0, cwd: cwd) } ?? "未知文件"
         id = "\(index):\(path ?? "")"
-        let value = TimelineText.first(raw["kind"]?["type"], raw["kind"], raw["action"], raw["type"], raw["status"])?.lowercased() ?? ""
-        switch value {
-        case "add", "added", "create", "created": action = .add
-        case "delete", "deleted", "remove", "removed": action = .delete
-        case "rename", "renamed", "move", "moved": action = .rename
-        case "modify", "modified", "change", "changed", "edit", "edited": action = .modify
-        default: action = .unknown
-        }
+        action = Self.action(raw)
         code = TimelineText.first(raw["diff"], raw["patch"])
         if let code {
             if TimelineDiff.isUnified(code) { diff = code }
@@ -110,6 +119,17 @@ struct TimelineFileChange: Hashable, Identifiable {
             } else { diff = nil }
         } else { diff = nil }
     }
+    static func action(_ raw: JSONValue) -> Action {
+        let value = TimelineText.first(raw["kind"]?["type"], raw["kind"], raw["action"], raw["type"], raw["status"])?.lowercased() ?? ""
+        switch value {
+        case "add", "added", "create", "created": return .add
+        case "delete", "deleted", "remove", "removed": return .delete
+        case "rename", "renamed", "move", "moved": return .rename
+        case "modify", "modified", "change", "changed", "edit", "edited": return .modify
+        default: return .unknown
+        }
+    }
+
 }
 
 nonisolated enum TimelineText {

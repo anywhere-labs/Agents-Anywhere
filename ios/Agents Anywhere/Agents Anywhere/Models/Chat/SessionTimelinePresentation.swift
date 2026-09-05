@@ -5,17 +5,22 @@ import Observation
 final class ChatTimelineRowModel: Identifiable {
     let id: V2TimelineItemID
     private(set) var value: V2TimelineItem
+    private(set) var structure: TimelineRowStructure
     private(set) var text: String
     private(set) var isRevealing = false
     private(set) var layoutGeneration = 0
     @ObservationIgnored private var settlesAt: TimeInterval = 0
+    @ObservationIgnored private var hasFlushed = false
 
     init(_ value: V2TimelineItem, animate: Bool = false) {
         id = value.id; self.value = value
+        structure = TimelineRowStructure(value)
         text = animate ? "" : value.displayText
     }
 
     func flush(_ next: V2TimelineItem, animate: Bool, now: TimeInterval) {
+        if animate && hasFlushed && value == next { settle(now: now); return }
+        hasFlushed = true
         let received = next.displayText
         let appending = received.hasPrefix(text)
         // Snapshots/corrections are authoritative replacements, not token deltas.
@@ -29,6 +34,8 @@ final class ChatTimelineRowModel: Identifiable {
             text = displayed
         }
         if value != next { value = next }
+        let nextStructure = TimelineRowStructure(next)
+        if structure != nextStructure { structure = nextStructure }
         if !animate || (!next.isStreamingText && now >= settlesAt) { isRevealing = false }
     }
 

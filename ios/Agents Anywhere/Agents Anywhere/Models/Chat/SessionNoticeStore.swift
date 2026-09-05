@@ -11,6 +11,7 @@ final class SessionNoticeModel: Identifiable {
     private(set) var error: String?
     var choices: [String: Set<String>] = [:]
     var custom: [String: String] = [:]
+    private(set) var customQuestions: Set<String> = []
     var fields: [String: [String: JSONValue]] = [:]
     var composingFields: Set<String> = []
     @ObservationIgnored private var submittedRevision = 0
@@ -49,7 +50,7 @@ final class SessionNoticeModel: Identifiable {
         // Status revisions keep draft answers; changing the action/schema cannot
         // accidentally submit values collected for an obsolete question set.
         if form != nextForm || notice.actions != next.actions {
-            choices = [:]; custom = [:]; fields = [:]; composingFields = []; submission = .idle; error = nil
+            choices = [:]; custom = [:]; customQuestions = []; fields = [:]; composingFields = []; submission = .idle; error = nil
         }
         if next.revision > submittedRevision && next.status == .failed {
             submission = .idle
@@ -61,18 +62,35 @@ final class SessionNoticeModel: Identifiable {
 
     func select(_ optionID: String, question: NoticeInputQuestion) {
         var selected = choices[question.id] ?? []
-        if selected.contains(optionID) { selected.remove(optionID) }
-        else if question.multiple { selected.insert(optionID) }
-        else { selected = [optionID] }
+        if question.multiple {
+            if !selected.insert(optionID).inserted { selected.remove(optionID) }
+        } else { selected = [optionID] }
         choices[question.id] = selected
-        if !question.multiple { custom[question.id] = nil }
+        if !question.multiple { custom[question.id] = nil; customQuestions.remove(question.id) }
     }
     func setCustom(_ text: String, question: NoticeInputQuestion) {
+        guard question.allowCustom else { return }
+        setCustomSelected(true, question: question)
         custom[question.id] = text
-        if !question.multiple { choices[question.id] = [] }
+    }
+    func setCustomSelected(_ selected: Bool, question: NoticeInputQuestion) {
+        guard question.allowCustom else { return }
+        if selected {
+            customQuestions.insert(question.id)
+            if !question.multiple { choices[question.id] = [] }
+        } else {
+            customQuestions.remove(question.id); custom[question.id] = nil
+        }
+    }
+    func isSending(_ action: V2RuntimeNoticeAction) -> Bool { submission == .sending(action.id) }
+    var responseError: String? {
+        error ?? (notice.status == .failed
+            ? notice.context["error"]?["message"]?.stringValue ?? notice.context["error"]?.stringValue : nil)
     }
     func payload(for action: V2RuntimeNoticeAction) -> JSONValue? {
-        if form?.actionID == action.id { return form?.payload(choices: choices, custom: custom) }
+        if form?.actionID == action.id {
+            return form?.payload(choices: choices, custom: custom.filter { customQuestions.contains($0.key) })
+        }
         if let schema = action.input.schema {
             return NoticeActionForm(schema: schema, uiSchema: action.input.uiSchema)?.payload(fields[action.id] ?? [:])
         }

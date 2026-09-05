@@ -75,6 +75,60 @@ import Testing
         #expect(item.custom["one"] == nil)
     }
 
+    @Test func otherAnswerSelectionMatchesWebRadioAndCheckboxSemantics() throws {
+        let item = SessionNoticeModel(try notice(interaction: "input_request", input: true))
+        let form = try #require(item.form)
+        let single = form.questions[0], multiple = form.questions[1], action = item.notice.actions[0]
+        item.select("a", question: single)
+        item.select("a", question: single)
+        #expect(item.choices["one"] == ["a"])
+        item.setCustomSelected(true, question: single)
+        #expect(item.choices["one"] == [] && item.customQuestions.contains("one"))
+        item.setCustom("中文回答", question: single)
+        item.select("a", question: multiple)
+        item.setCustom("extra", question: multiple)
+        #expect(item.payload(for: action)?["answers"]?["many"]?["customText"] == .string("extra"))
+        item.setCustomSelected(false, question: multiple)
+        #expect(item.choices["many"] == ["a"] && !item.customQuestions.contains("many"))
+        #expect(item.payload(for: action)?["answers"]?["many"]?["customText"] == nil)
+        item.update(try notice(interaction: "input_request", revision: 2, input: true))
+        #expect(item.customQuestions.contains("one") && item.custom["one"] == "中文回答")
+        item.select("a", question: single)
+        #expect(!item.customQuestions.contains("one") && item.custom["one"] == nil)
+    }
+
+    @Test func selectedApprovalShowsLoadingAndOtherChoicesCannotDuplicateTheWrite() async throws {
+        let http = TestHTTPTransport(); let repo = repository(transport: http)
+        defer { repo.reset() }
+        let session = repo.session(id: "session")
+        let observation = Task { await session.connect() }; defer { observation.cancel() }
+        try await eventually { session.runtime.isFresh }
+        var raw = (try fixtureObject("notices")["notices"] as! [[String: Any]])[0]
+        raw["actions"] = ["approve", "approve_for_session", "reject", "cancel"].map { id in
+            ["actionId": id, "label": id, "style": id == "approve" ? "primary" : "secondary", "input": ["required": false]] as [String: Any]
+        }
+        let item = SessionNoticeModel(try decode(raw))
+        let selected = item.notice.actions[1]
+        let chat = SessionChatModel(session: session, repository: repo, attachments: .init(attachmentAPI: V2AttachmentAPI(transport: http)))
+        let gate = TestGate()
+        defer { gate.release() }
+        http.respond = { call in
+            if call.path.hasSuffix("/respond") {
+                #expect(call.body?["actionId"] == .string("approve_for_session"))
+                await gate.wait()
+            }
+            return try http.defaultResponse(call)
+        }
+        let response = Task { await chat.respond(notice: item, action: selected) }
+        try await eventually { item.isSending(selected) }
+        #expect(item.notice.actions.filter { item.isSending($0) }.map(\.id) == ["approve_for_session"])
+        await chat.respond(notice: item, action: item.notice.actions[2])
+        #expect(http.count("respond") == 1)
+        gate.release(); await response.value
+        #expect(item.submission == .accepted && !item.isSending(selected))
+        #expect(!item.canRespond(fresh: true))
+    }
+
     @Test func draftsSurviveStatusRevisionsButNotChangedDefinitions() throws {
         let store = SessionNoticeStore()
         store.update([try notice(interaction: "input_request", input: true)], sessionID: "session")

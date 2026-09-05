@@ -14,55 +14,22 @@ struct ChatTimelineView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ScaledMetric(relativeTo: .caption) private var returnPillHeight: CGFloat = 32
 
-    private var groups: [ChatTimelineGroup] {
-        TimelineGrouping.groups(model.timeline.rows, interactionTargets: Set(model.session.notices.notices
-            .filter(\.isVisible).compactMap(\.timelineTargetID)))
+    private var hasInteractions: Bool {
+        model.session.notices.notices.contains { $0.isVisible && $0.notice.type == "interaction" }
     }
     var body: some View {
-        let groups = self.groups
-        let actions = TimelineTurnActions.build(groups: groups, suppressLatest: model.isRunning || model.session.hasNewerItems)
         // A sibling overlay receives taps independently of the scroll view's
         // deceleration recognizer. The explicit return intent survives its callbacks.
         ZStack(alignment: .bottom) {
             ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    if model.session.hasOlderItems {
-                        Button("加载较早的消息") {
-                            scrolling.browseHistory()
-                            historyAnchor = groups.first?.id
-                            Task { await model.session.loadOlder() }
-                        }.font(.footnote).disabled(model.session.isLoadingHistory).frame(maxWidth: .infinity)
-                    }
-                    ForEach(groups) { group in
-                        SessionTimelineGroupView(group: group, chat: model, onAttachment: onAttachment, onFile: onFile,
-                            turnAction: actions[group.id])
-                            .id(group.id)
-                    }
-                    ForEach(model.session.notices.notices.filter { notice in
-                        notice.isVisible && !notice.blocks(model.session.id)
-                            && !model.timeline.rows.contains(where: { $0.id == notice.timelineTargetID })
-                    }) { item in SessionInteractionCard(item: item, chat: model) }
-                    ForEach(model.timeline.pendingMessages) { pending in
-                        PendingMessageRow(pending: pending, onDismiss: { model.session.dismissPendingMessage(id: pending.id) })
-                    }
-                    if model.isRunning && !model.timeline.rows.contains(where: { $0.value.isStreamingText }) {
-                        Text("正在处理任务").font(.subheadline).foregroundStyle(.secondary).frame(height: 40, alignment: .leading)
-                    }
-                    if model.session.hasNewerItems {
-                        Button(action: loadLatest) {
-                            Group {
-                                if latestLoadRequest != nil { ProgressView("正在加载更新的记录…") }
-                                else { Text(latestPull.isReady ? "松开加载更新的记录" : "继续上拉加载更新的记录") }
-                            }.font(.footnote).frame(maxWidth: .infinity, minHeight: 44)
-                        }
-                        .disabled(model.session.isLoadingHistory || latestLoadRequest != nil)
-                        .onScrollVisibilityChange { latestPromptVisible = $0 }
-                    }
-                    Color.clear.frame(height: 1).padding(.bottom, 12).id("tail")
-                }
-                .scrollTargetLayout()
-                .padding(.horizontal, 24).padding(.top, 16)
-                .frame(maxWidth: 760).frame(maxWidth: .infinity)
+                ChatTimelineContent(model: model, onAttachment: onAttachment, onFile: onFile,
+                    latestPullReady: latestPull.isReady, isLoadingLatest: latestLoadRequest != nil,
+                    onLoadOlder: {
+                        scrolling.browseHistory()
+                        historyAnchor = model.timeline.rows.first?.id
+                        Task { await model.session.loadOlder() }
+                    }, onLoadLatest: loadLatest, onPromptVisibility: { latestPromptVisible = $0 })
+                    .equatable()
             }
             .scrollPosition($position)
             .scrollDismissesKeyboard(.interactively)
@@ -106,20 +73,31 @@ struct ChatTimelineView: View {
                 if scrolling.phase == .interacting { latestPull.update(value) }
             }
             .onChange(of: model.session.pendingMessages.last?.id) { _, id in
-                if id != nil { scrolling.requestBottom() }
+                if id != nil && !hasInteractions { scrolling.requestBottom() }
+            }
+            .onChange(of: hasInteractions, initial: true) { _, presented in
+                scrolling.setInteractionPresented(presented)
+                if presented || !scrolling.followsTail { position.isPositionedByUser = true }
+            }
+            .onChange(of: scrolling.returningToBottom) { _, returning in
+                if !returning && hasInteractions { position.isPositionedByUser = true }
             }
             .onChange(of: model.timeline.rows.map(\.id)) {
-                if let anchor = historyAnchor, groups.first?.id != anchor,
-                   let group = groups.first(where: { $0.rows.contains(where: { $0.id == anchor }) }) {
-                    position.scrollTo(id: group.id, anchor: .top); historyAnchor = nil
+                if let anchor = historyAnchor, model.timeline.rows.first?.id != anchor {
+                    let targets = Set(model.session.notices.notices.filter(\.isVisible).compactMap(\.timelineTargetID))
+                    if let group = TimelineGrouping.groups(model.timeline.rows, interactionTargets: targets)
+                        .first(where: { $0.rows.contains(where: { $0.id == anchor }) }) {
+                        position.scrollTo(id: group.id, anchor: .top)
+                    }
+                    historyAnchor = nil
                 }
             }
             .task(id: FollowRequest(contentHeight: viewport.contentHeight, visibleHeight: viewport.visibleHeight,
                 followsTail: scrolling.followsTail, userIsScrolling: scrolling.userIsScrolling,
-                navigationGeneration: scrolling.navigationGeneration)) {
-                guard scrolling.shouldFollow(viewport) else { return }
+                navigationGeneration: scrolling.navigationGeneration, interactionIsPresented: hasInteractions)) {
+                guard (!hasInteractions || scrolling.returningToBottom), scrolling.shouldFollow(viewport) else { return }
                 do { try await Task.sleep(for: .milliseconds(24)) } catch { return }
-                guard !Task.isCancelled, scrolling.shouldFollow(viewport) else { return }
+                guard !Task.isCancelled, (!hasInteractions || scrolling.returningToBottom), scrolling.shouldFollow(viewport) else { return }
                 scrollToBottom()
             }
             .task(id: latestLoadRequest) {
@@ -164,6 +142,63 @@ struct ChatTimelineView: View {
         let followsTail: Bool
         let userIsScrolling: Bool
         let navigationGeneration: Int
+        let interactionIsPresented: Bool
+    }
+}
+
+private struct ChatTimelineContent: View, Equatable {
+    let model: SessionChatModel
+    let onAttachment: (V2AttachmentContent) -> Void
+    let onFile: (String) -> Void
+    let latestPullReady: Bool
+    let isLoadingLatest: Bool
+    let onLoadOlder: () -> Void
+    let onLoadLatest: () -> Void
+    let onPromptVisibility: (Bool) -> Void
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.model === rhs.model && lhs.latestPullReady == rhs.latestPullReady && lhs.isLoadingLatest == rhs.isLoadingLatest
+    }
+    var body: some View {
+        let groups = TimelineGrouping.groups(model.timeline.rows, interactionTargets: Set(model.session.notices.notices
+            .filter(\.isVisible).compactMap(\.timelineTargetID)))
+        let actions = TimelineTurnActions.build(groups: groups, suppressLatest: model.isRunning || model.session.hasNewerItems)
+        LazyVStack(alignment: .leading, spacing: 20) {
+            if model.session.hasOlderItems {
+                Button("加载较早的消息", action: onLoadOlder).font(.footnote).disabled(model.session.isLoadingHistory).frame(maxWidth: .infinity)
+            }
+            ForEach(groups) { group in
+                SessionTimelineGroupView(group: group, chat: model, onAttachment: onAttachment, onFile: onFile,
+                    turnAction: actions[group.id])
+                    .id(group.id)
+            }
+            ForEach(model.session.notices.notices.filter { notice in
+                notice.isVisible && !notice.blocks(model.session.id)
+                    && !model.timeline.rows.contains(where: { $0.id == notice.timelineTargetID })
+            }) { item in SessionInteractionCard(item: item, chat: model) }
+            ForEach(model.timeline.pendingMessages) { pending in
+                PendingMessageRow(pending: pending, onDismiss: { model.session.dismissPendingMessage(id: pending.id) })
+            }
+            if model.isRunning && !model.timeline.rows.contains(where: { $0.structure.isStreamingText }) {
+                Text("正在处理任务").font(.subheadline).foregroundStyle(.secondary).frame(height: 40, alignment: .leading)
+            }
+            if model.session.hasNewerItems {
+                Button(action: onLoadLatest) {
+                    Group {
+                        if isLoadingLatest { ProgressView("正在加载更新的记录…") }
+                        else { Text(latestPullReady ? "松开加载更新的记录" : "继续上拉加载更新的记录") }
+                    }.font(.footnote).frame(maxWidth: .infinity, minHeight: 44)
+                }
+                .disabled(model.session.isLoadingHistory || isLoadingLatest)
+                .onScrollVisibilityChange { onPromptVisibility($0) }
+            }
+            // Constant breathing room: status text and card counts cannot
+            // change this spacer or create a spurious follow request.
+            Color.clear.frame(height: 32).id("tail")
+        }
+        .scrollTargetLayout()
+        .padding(.horizontal, 24).padding(.top, 16)
+        .frame(maxWidth: 760).frame(maxWidth: .infinity)
     }
 }
 

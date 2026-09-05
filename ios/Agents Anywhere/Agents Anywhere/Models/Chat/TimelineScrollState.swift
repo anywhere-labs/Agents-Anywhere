@@ -8,6 +8,7 @@ nonisolated struct TimelineScrollState: Equatable {
     private(set) var followsTail = true
     private(set) var returningToBottom = false
     private(set) var navigationGeneration = 0
+    private(set) var interactionIsPresented = false
     var userIsScrolling: Bool { [.tracking, .interacting, .decelerating].contains(phase) }
 
     mutating func requestBottom() {
@@ -15,6 +16,14 @@ nonisolated struct TimelineScrollState: Equatable {
     }
     mutating func browseHistory() {
         followsTail = false; returningToBottom = false; navigationGeneration += 1
+    }
+
+    mutating func setInteractionPresented(_ presented: Bool) {
+        guard interactionIsPresented != presented else { return }
+        interactionIsPresented = presented
+        // Invalidate an already queued return before the dock changes the inset.
+        // Removing the card also preserves the reader's current position.
+        browseHistory()
     }
 
     /// Returns whether a new user gesture took ownership of the scroll position.
@@ -40,9 +49,10 @@ nonisolated struct TimelineScrollState: Equatable {
         } else if userIsScrolling { followsTail = viewport.isAtBottom }
     }
     func shouldFollow(_ viewport: TimelineViewport) -> Bool {
-        viewport.shouldFollowTail(isFollowing: followsTail, userIsScrolling: userIsScrolling && !returningToBottom)
+        (!interactionIsPresented || returningToBottom)
+            && viewport.shouldFollowTail(isFollowing: followsTail, userIsScrolling: userIsScrolling && !returningToBottom)
     }
     func showsBottomButton(_ viewport: TimelineViewport) -> Bool {
-        !viewport.isAtBottom && (!followsTail || returningToBottom)
+        phase == .idle && !viewport.isNearBottom && (!followsTail || interactionIsPresented || returningToBottom)
     }
 }

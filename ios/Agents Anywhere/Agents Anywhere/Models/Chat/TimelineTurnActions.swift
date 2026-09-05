@@ -26,16 +26,16 @@ enum TimelineTurnActions {
         }
 
         for group in groups {
-            if group.rows.contains(where: { $0.value.type == .message && $0.value.role == .user }) {
+            if group.rows.contains(where: { $0.structure.type == .message && $0.structure.role == .user }) {
                 commit()
                 turnOpen = true
             }
-            let messages = group.rows.filter { $0.value.type == .message && $0.value.role == .assistant }
+            let messages = group.rows.filter { $0.structure.type == .message && $0.structure.role == .assistant }
             if !messages.isEmpty { turnOpen = true }
             guard turnOpen else { continue }
             endGroupID = group.id
             replies.append(contentsOf: messages)
-            hasActiveItems = hasActiveItems || group.rows.contains { $0.value.status.isActive }
+            hasActiveItems = hasActiveItems || group.rows.contains { $0.structure.status.isActive }
         }
         if !suppressLatest { commit() }
         return actions
