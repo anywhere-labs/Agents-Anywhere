@@ -664,7 +664,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   // ── Fetch data from mock API ──────────────────────────────
   const initialLoadDoneRef = React.useRef(false)
   const lastDashboardSnapshotKeyRef = React.useRef<string | null>(null)
-  const dashboardSnapshotGenerationRef = React.useRef(0)
+  const dashboardDataGenerationRef = React.useRef(0)
 
   const applyDashboardSnapshot = React.useCallback((message: DashboardSnapshotMessage) => {
     const snapshotKey = stableJson({
@@ -675,7 +675,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     })
     if (lastDashboardSnapshotKeyRef.current === snapshotKey) return
     lastDashboardSnapshotKeyRef.current = snapshotKey
-    dashboardSnapshotGenerationRef.current += 1
+    dashboardDataGenerationRef.current += 1
 
     const nextConnectors = message.connectors.map(mapConnector)
     const nextProjects = sortProjectViews(message.projects)
@@ -721,9 +721,13 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   }, [reconcileSessionIndicator, sortSessions])
 
   const fetchData = React.useCallback(async (): Promise<boolean> => {
-    const snapshotGenerationAtStart = dashboardSnapshotGenerationRef.current
+    const requestGeneration = dashboardDataGenerationRef.current + 1
+    dashboardDataGenerationRef.current = requestGeneration
+    let completionGeneration = requestGeneration
     const accessTokenAtStart = authSession?.accessToken ?? null
     let committed = false
+    loadingSessionPagesRef.current = { active: false, archived: false }
+    setLoadingSessionPages({ active: false, archived: false })
     if (!initialLoadDoneRef.current) {
       setIsLoading(true)
     }
@@ -736,9 +740,13 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
           dashboardApi.listSessions(authSession.accessToken, { archived: true, limit: 100 }),
         ])
         if (
-          dashboardSnapshotGenerationRef.current !== snapshotGenerationAtStart ||
+          dashboardDataGenerationRef.current !== requestGeneration ||
           currentAccessTokenRef.current !== accessTokenAtStart
         ) return false
+        dashboardDataGenerationRef.current += 1
+        completionGeneration = dashboardDataGenerationRef.current
+        loadingSessionPagesRef.current = { active: false, archived: false }
+        setLoadingSessionPages({ active: false, archived: false })
         const nextConnectors = connRes.connectors.map(mapConnector)
         const nextProjects = sortProjectViews(projectRes.projects)
         const nextSessions = sortSessions(
@@ -765,9 +773,13 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
         listMockSessions("mock-token"),
       ])
       if (
-        dashboardSnapshotGenerationRef.current !== snapshotGenerationAtStart ||
+        dashboardDataGenerationRef.current !== requestGeneration ||
         currentAccessTokenRef.current !== accessTokenAtStart
       ) return false
+      dashboardDataGenerationRef.current += 1
+      completionGeneration = dashboardDataGenerationRef.current
+      loadingSessionPagesRef.current = { active: false, archived: false }
+      setLoadingSessionPages({ active: false, archived: false })
       const nextSessions = sortSessions(sessRes.sessions)
       setConnectors((current) => sameStableValue(current, connRes.connectors) ? current : connRes.connectors)
       setProjects([])
@@ -783,7 +795,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       return false
     } finally {
       if (
-        dashboardSnapshotGenerationRef.current === snapshotGenerationAtStart &&
+        dashboardDataGenerationRef.current === completionGeneration &&
         currentAccessTokenRef.current === accessTokenAtStart
       ) {
         setIsLoading(false)
@@ -802,7 +814,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     const pageKind = "active" as const
     const page = sessionPages[pageKind]
     if (!token || !page.hasMore || !page.nextCursor || loadingSessionPagesRef.current[pageKind]) return
-    const snapshotGenerationAtStart = dashboardSnapshotGenerationRef.current
+    const dataGenerationAtStart = dashboardDataGenerationRef.current
     const sessionsAtRequestStart = new Map<string, SessionView>()
     for (const cachedSessions of Object.values(projectSessionsByIdRef.current)) {
       for (const session of cachedSessions) sessionsAtRequestStart.set(session.id, session)
@@ -816,7 +828,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
         limit: 100,
         cursor: page.nextCursor,
       })
-      if (dashboardSnapshotGenerationRef.current !== snapshotGenerationAtStart) return
+      if (dashboardDataGenerationRef.current !== dataGenerationAtStart) return
       const incoming = response.sessions.map(mapSession)
       const changedSinceRequest = (session: SessionView) => {
         const startingSession = sessionsAtRequestStart.get(session.id)
@@ -853,7 +865,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     } catch {
       // Keep the current cursor so reaching the sentinel can retry later.
     } finally {
-      if (dashboardSnapshotGenerationRef.current === snapshotGenerationAtStart) {
+      if (dashboardDataGenerationRef.current === dataGenerationAtStart) {
         loadingSessionPagesRef.current[pageKind] = false
         setLoadingSessionPages((current) => ({ ...current, [pageKind]: false }))
       }
@@ -863,9 +875,10 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   React.useEffect(() => {
     initialLoadDoneRef.current = false
     lastDashboardSnapshotKeyRef.current = null
-    dashboardSnapshotGenerationRef.current += 1
+    dashboardDataGenerationRef.current += 1
     firstPageSessionIdsRef.current = { active: new Set(), archived: new Set() }
     loadingSessionPagesRef.current = { active: false, archived: false }
+    setLoadingSessionPages({ active: false, archived: false })
     loadedBeyondFirstPageRef.current = { active: false, archived: false }
     sessionStreamSeqRef.current = new Map()
     pendingSessionIndicatorRef.current = new Map()
