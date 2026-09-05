@@ -441,6 +441,7 @@ private struct SidebarDrawerNativeSplitView<
     @State private var columnVisibility: NavigationSplitViewVisibility
     @State private var preferredCompactColumn: NavigationSplitViewColumn
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     init(
         isOpen: Binding<Bool>,
@@ -510,11 +511,7 @@ private struct SidebarDrawerNativeSplitView<
     }
 
     private func updateColumns(open: Bool) {
-        // Reflow Markdown once at the final column width, rather than inheriting
-        // a sidebar animation that repeatedly lays out the entire eager timeline.
-        var transaction = Transaction(animation: nil)
-        transaction.disablesAnimations = true
-        withTransaction(transaction) {
+        withAnimation(reduceMotion ? nil : .smooth(duration: 0.3)) {
             columnVisibility = open ? .all : .detailOnly
             preferredCompactColumn = open ? .sidebar : .detail
         }

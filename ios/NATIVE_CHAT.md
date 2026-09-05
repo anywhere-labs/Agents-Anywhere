@@ -64,6 +64,11 @@ Semantic error and availability colors remain separate from the primary color.
   available. Only one history request runs at a time. Inertia and viewport/content
   resizing cannot trigger a load. A drag during the fetch cancels pending anchor
   restoration or return to the bottom, preserving the user's new reading intent.
+  Older history shows an explicit circular spinner through the presentation and
+  layout deadline. One measured existing group retains the reading offset when
+  a page is prepended, without counting streamed tail growth or aligning a whole
+  group to the top. The final page keeps the prompt's height as a start-of-session
+  marker, preventing a second jump when loading ends.
 
 ## Session presentation and files
 
@@ -105,7 +110,7 @@ Semantic error and availability colors remain separate from the primary color.
   remains an active read target while the sidebar sits beside it. Narrow iPad
   windows use `preferredCompactColumn` to show the selected detail; widening
   restores both columns. The balanced style reserves room for the sidebar.
-  Explicit split toggles avoid animated intermediate text widths. The custom
+  Explicit split toggles retain smooth animation and respect Reduce Motion. The custom
   sidebar and chat headers suppress empty native navigation bars, retaining the
   system safe area without an additional blank bar above the glass controls.
 - Sidebar indicators follow Web's priority and position, on the title's trailing
