@@ -65,7 +65,9 @@ struct WorkspaceFilesSheet: View {
                         Spacer(minLength: 0)
                         Button(String(localized: "取消")) { self.transfer = nil }.font(.footnote)
                     }
-                    .padding(16).background(.regularMaterial)
+                    .padding(16)
+                    .glassEffect(.regular, in: .capsule)
+                    .padding(.horizontal, 16).padding(.bottom, 8)
                 }
             }
         }
@@ -211,6 +213,9 @@ private struct WorkspaceDirectoryView: View {
                     .foregroundStyle(.secondary)
             }
         }
+        .scrollContentBackground(.hidden)
+        .scrollEdgeEffectStyle(.soft, for: .all)
+        .toolbarBackground(.hidden, for: .navigationBar)
         .safeAreaInset(edge: .top, spacing: 0) {
             VStack(alignment: .leading, spacing: 8) {
                 if onSelectDirectory != nil {
@@ -220,8 +225,10 @@ private struct WorkspaceDirectoryView: View {
                         }.labelStyle(.iconOnly).frame(width: 44, height: 44)
                             .disabled(!canRead || model.isLoading || ProjectWorkspacePath.parent(model.resolvedPath) == nil)
                         TextField(String(localized: "设备上的完整路径"), text: Binding(get: { address ?? currentDirectoryPath }, set: { address = $0 }))
-                            .textFieldStyle(.roundedBorder)
+                            .textFieldStyle(.plain)
                             .font(.system(.footnote, design: .monospaced)).textInputAutocapitalization(.never).autocorrectionDisabled()
+                            .padding(.horizontal, 14).frame(minHeight: 44)
+                            .glassEffect(.regular, in: .capsule)
                             .onSubmit { navigate(address ?? currentDirectoryPath) }
                         Button(String(localized: "打开目录"), appSymbol: "arrow.right") { navigate(address ?? currentDirectoryPath) }
                             .labelStyle(.iconOnly).frame(width: 44, height: 44).disabled(!canRead)
@@ -234,14 +241,13 @@ private struct WorkspaceDirectoryView: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 20).padding(.vertical, 12)
-                    .background(.bar)
                     .accessibilityLabel(String(localized: "当前目录：\(currentDirectoryPath)"))
                     .contextMenu {
                         Button(String(localized: "复制路径"), appSymbol: "document.on.document") {
                             UIPasteboard.general.string = currentDirectoryPath
                         }
                     }
-            }.background(.bar)
+            }
         }
         .safeAreaInset(edge: .bottom) {
             if let onSelectDirectory {
@@ -249,7 +255,7 @@ private struct WorkspaceDirectoryView: View {
                     disabled: !canSelect) {
                     guard canSelect, let path = model.selectablePath else { return }
                     onSelectDirectory(path)
-                }.padding(16).background(.bar)
+                }.padding(16)
             }
         }
         .navigationTitle(title)

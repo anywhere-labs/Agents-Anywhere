@@ -68,6 +68,9 @@ struct ProjectSelectionSheet: View {
                 }
                 if let error = repository.error { Section { Text(error).foregroundStyle(.secondary) } }
             }
+            .scrollContentBackground(.hidden)
+            .scrollEdgeEffectStyle(.soft, for: .all)
+            .toolbarBackground(.hidden, for: .navigationBar)
             .refreshable { await repository.refresh(); await model.resolveHome() }
             .navigationTitle(showsSessionList ? String(localized: "选择工作目录") : String(localized: "选择项目"))
             .navigationBarTitleDisplayMode(.inline)

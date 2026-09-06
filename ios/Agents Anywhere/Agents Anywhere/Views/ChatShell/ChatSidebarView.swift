@@ -28,8 +28,8 @@ struct ChatSidebarView: View {
     @AppStorage(ProjectSidebarPreferences.sessionListKey) private var showsSessionList = false
 
     var body: some View {
-        List {
-            Group {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 6) {
                 ChatSidebarDeviceSection(
                     devices: devices,
                     selectedDeviceId: selectedDeviceId,
@@ -108,11 +108,11 @@ struct ChatSidebarView: View {
                 }
 
             }
-            .listRowSeparator(.hidden)
+            .padding(.leading, safeAreaInsets.leading + 14)
+            .padding(.trailing, safeAreaInsets.trailing + 14)
+            .padding(.top, 10)
+            .padding(.bottom, safeAreaInsets.bottom + 82)
         }
-        .listStyle(.sidebar)
-        .scrollContentBackground(.hidden)
-        .contentMargins(.bottom, safeAreaInsets.bottom + 82, for: .scrollContent)
         .refreshable { await repository?.refresh() }
         .scrollIndicators(.hidden)
         .scrollEdgeEffectStyle(.soft, for: .bottom)
@@ -192,7 +192,9 @@ private struct ChatSidebarDeviceSection: View {
     let onCopyId: (V2ConnectorID) -> Void
 
     var body: some View {
-        Section {
+        VStack(alignment: .leading, spacing: 4) {
+            ChatSidebarSectionLabel(title: "Devices")
+
             if isLoading {
                 ChatSidebarLoadingRow(title: "Loading devices...")
             } else if devices.isEmpty {
@@ -207,8 +209,6 @@ private struct ChatSidebarDeviceSection: View {
                     )
                 }
             }
-        } header: {
-            Text(String(localized: "Devices"))
         }
     }
 }
@@ -226,7 +226,9 @@ private struct ChatSidebarSessionSection: View {
     let onCopyId: (V2SessionID) -> Void
 
     var body: some View {
-        Section {
+        VStack(alignment: .leading, spacing: 4) {
+            if let title { ChatSidebarSectionLabel(title: title) }
+
             if isLoading {
                 ChatSidebarLoadingRow(title: "Loading sessions...")
             } else if sessions.isEmpty {
@@ -244,9 +246,20 @@ private struct ChatSidebarSessionSection: View {
                     )
                 }
             }
-        } header: {
-            if let title { Text(title) }
         }
+    }
+}
+
+private struct ChatSidebarSectionLabel: View {
+    let title: LocalizedStringResource
+
+    var body: some View {
+        Text(title)
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 10)
+            .padding(.top, 20)
+            .padding(.bottom, 6)
     }
 }
 
@@ -269,10 +282,11 @@ private struct ChatSidebarDeviceRow: View {
                     .lineLimit(1)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 10)
             .frame(minHeight: 42)
+            .background(.primary.opacity(isSelected ? 0.08 : 0), in: RoundedRectangle(cornerRadius: 9))
             .contentShape(Rectangle())
         }
-        .listRowBackground(isSelected ? Color.primary.opacity(0.08) : Color.clear)
         .buttonStyle(.plain)
         .contextMenu {
             Button(action: onOpen) {
@@ -289,6 +303,7 @@ private struct ChatSidebarDeviceRow: View {
 struct ChatSidebarSessionRow: View {
     let session: ChatSidebarSession
     let isSelected: Bool
+    var inset = false
     let onOpen: () -> Void
     let onRename: (String) -> Void
     let onTogglePinned: () -> Void
@@ -307,10 +322,14 @@ struct ChatSidebarSessionRow: View {
                 ChatSidebarSessionIndicator(indicator: session.presentation.indicator)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            // Match Web's inset session rows while keeping the selection and
+            // the touch target across the full sidebar width.
+            .padding(.leading, inset ? 36 : 10)
+            .padding(.trailing, 10)
             .frame(minHeight: 42)
+            .background(.primary.opacity(isSelected ? 0.08 : 0), in: RoundedRectangle(cornerRadius: 9))
             .contentShape(Rectangle())
         }
-        .listRowBackground(isSelected ? Color.primary.opacity(0.08) : Color.clear)
         .buttonStyle(.plain)
         .contextMenu {
             Button(action: onOpen) {

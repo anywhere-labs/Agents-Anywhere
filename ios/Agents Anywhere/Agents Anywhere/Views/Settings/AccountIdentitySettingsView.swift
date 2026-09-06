@@ -57,7 +57,7 @@ struct AccountIdentitySettingsView: View {
                 }
             }
         }
-        .textFieldStyle(.roundedBorder)
+        .textFieldStyle(.plain)
         .disabled(draft.isWorking)
         .navigationTitle(title).navigationBarTitleDisplayMode(.inline)
         .toolbar { SheetSaveToolbar(isWorking: draft.isWorking, saveDisabled: !canSave, onSave: save) }

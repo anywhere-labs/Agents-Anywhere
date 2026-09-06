@@ -67,7 +67,12 @@ struct DeviceManagementView: View {
             Group {
                 DeviceAgentSection(model: agents, showsConnectionNotice: false) { report($0, source: "agents") }
                 Group {
-                    Section { contentPicker }
+                    Section {
+                        contentPicker
+                            .listRowBackground(Color.clear)
+                            .listRowSeparator(.hidden)
+                            .listRowInsets(EdgeInsets())
+                    }
                     if tab == .projects {
                         if showsSessionList {
                             DeviceWorkspaceList(workspaces: workspaceChoices, canReadFiles: canReadFiles,
@@ -187,7 +192,8 @@ struct DeviceManagementView: View {
         Picker(String(localized: "Device content"), selection: $tab) {
             Text(collectionTitle).tag(DeviceOverviewTab.projects)
             Text(String(localized: "Sessions")).tag(DeviceOverviewTab.sessions)
-        }.pickerStyle(.menu)
+        }.pickerStyle(.segmented)
+        .labelsHidden()
         .accessibilityLabel(String(localized: "Device content"))
         .accessibilityIdentifier("device.content")
     }

@@ -187,7 +187,7 @@ struct RuntimeSecretInput: View {
 extension View {
     func runtimeConfigInput() -> some View {
         self.textInputAutocapitalization(.never).autocorrectionDisabled()
-            .textFieldStyle(.roundedBorder)
+            .textFieldStyle(.plain)
             .frame(maxWidth: .infinity, alignment: .leading)
     }
 }

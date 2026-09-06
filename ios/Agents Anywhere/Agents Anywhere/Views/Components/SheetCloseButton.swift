@@ -12,13 +12,13 @@ struct SheetCloseButton: View {
     }
 }
 
-/// Browse sheets always close at the trailing edge. A pushed page keeps its
-/// native back button at the leading edge; it never turns into another close.
+/// Sheet dismissal always uses the same leading X. Native navigation continues
+/// to own the separate Back action on pushed pages.
 struct SheetCloseToolbar: ToolbarContent {
     var disabled = false
     let action: () -> Void
     var body: some ToolbarContent {
-        ToolbarItem(placement: .topBarTrailing) {
+        ToolbarItem(placement: .topBarLeading) {
             SheetCloseButton(action: action).disabled(disabled)
         }
     }
@@ -31,10 +31,7 @@ struct SheetEditorToolbar: ToolbarContent {
     let onCancel: () -> Void
     let onSave: () -> Void
     var body: some ToolbarContent {
-        ToolbarItem(placement: .cancellationAction) {
-            Button(String(localized: "Cancel"), action: onCancel)
-                .disabled(isWorking).keyboardShortcut(.cancelAction)
-        }
+        SheetCloseToolbar(disabled: isWorking, action: onCancel)
         SheetSaveToolbar(saveTitle: saveTitle, isWorking: isWorking, saveDisabled: saveDisabled, onSave: onSave)
     }
 }

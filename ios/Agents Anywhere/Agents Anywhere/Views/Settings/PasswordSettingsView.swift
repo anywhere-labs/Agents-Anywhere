@@ -22,7 +22,7 @@ struct PasswordSettingsView: View {
             }
 
         }
-        .textFieldStyle(.roundedBorder)
+        .textFieldStyle(.plain)
         .navigationTitle(String(localized: "Password"))
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {

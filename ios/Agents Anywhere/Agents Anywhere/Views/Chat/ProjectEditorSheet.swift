@@ -48,9 +48,14 @@ struct ProjectEditorSheet: View {
                 }
                 Section {
                     HStack(spacing: 12) {
-                        TextField(String(localized: "设备上的完整路径"), text: Binding(get: { draft.path }, set: updatePath), axis: .vertical)
-                            .font(.system(.body, design: .monospaced))
-                            .textInputAutocapitalization(.never).autocorrectionDisabled().disabled(draft.original != nil || device == nil)
+                        if draft.original != nil {
+                            Text(draft.path).textSelection(.enabled)
+                                .font(.system(.body, design: .monospaced))
+                        } else {
+                            TextField(String(localized: "设备上的完整路径"), text: Binding(get: { draft.path }, set: updatePath), axis: .vertical)
+                                .font(.system(.body, design: .monospaced))
+                                .textInputAutocapitalization(.never).autocorrectionDisabled().disabled(device == nil)
+                        }
                         if draft.original == nil {
                             Button(String(localized: "浏览目录"), appSymbol: "folder") { showsFiles = true }
                                 .labelStyle(.iconOnly).buttonStyle(.borderless).frame(width: 44, height: 44)
@@ -68,7 +73,7 @@ struct ProjectEditorSheet: View {
                 }
                 if let error { Section { Text(error).foregroundStyle(.secondary) } }
             }
-            .textFieldStyle(.roundedBorder)
+            .textFieldStyle(.plain)
             .disabled(saving)
             .navigationTitle(draft.original == nil ? String(localized: "创建项目") : String(localized: "编辑项目"))
             .navigationBarTitleDisplayMode(.inline)
