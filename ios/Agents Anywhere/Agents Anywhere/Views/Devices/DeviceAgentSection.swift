@@ -45,22 +45,23 @@ struct DeviceAgentSection: View {
                 }
                 .padding(.vertical, 6)
                 .contextMenu {
-                    Button(String(localized: "重命名"), appSymbol: "pencil") { proposedName = runtime.name; renaming = runtime }
+                    Button(String(localized: "重命名"), systemImage: "pencil") { proposedName = runtime.name; renaming = runtime }
                         .disabled(!model.connected || model.busyID != nil)
-                    Button(String(localized: "删除配置"), appSymbol: "trash", role: .destructive) { deleting = runtime }
+                    Button(String(localized: "删除配置"), systemImage: "trash", role: .destructive) { deleting = runtime }
                         .disabled(!model.connected || model.busyID != nil)
                 }
             }
-            AppGlassButton(String(localized: "添加更多 Agent"), systemImage: "plus", style: .prominent) {
-                showsAddAgents = true
-            }
-            .listRowBackground(Color.clear)
         } header: {
             HStack {
                 Text(String(localized: "Agent"))
                 Spacer()
                 AgentRediscoveryButton(model: model)
             }
+        } footer: {
+            AppGlassButton(String(localized: "添加更多 Agent"), systemImage: "plus", style: .prominent) {
+                showsAddAgents = true
+            }
+            .font(.body).textCase(nil).padding(.top, 8)
         }
         .task(id: model.connected) { await model.refresh() }
         .sheet(isPresented: $showsAddAgents) { AddDeviceAgentSheet(model: model) }

@@ -41,11 +41,11 @@ struct SessionTimelineRow: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .traceChatLayout("row:\(row.id)", state: "generation=\(row.layoutGeneration), status=\(row.value.status.rawValue)")
         .contextMenu {
-            Button(String(localized: "复制内容"), appSymbol: "document.on.document") {
+            Button(String(localized: "复制内容"), systemImage: "doc.on.doc") {
                 UIPasteboard.general.string = row.text.isEmpty ? row.value.raw["content"]?.formattedJSON : row.text
             }
-            Button(String(localized: "复制条目 ID"), appSymbol: "number") { UIPasteboard.general.string = row.id }
-            Button(String(localized: "复制原始 JSON"), appSymbol: "curlybraces") { UIPasteboard.general.string = row.value.raw.formattedJSON }
+            Button(String(localized: "复制条目 ID"), systemImage: "number") { UIPasteboard.general.string = row.id }
+            Button(String(localized: "复制原始 JSON"), systemImage: "curlybraces") { UIPasteboard.general.string = row.value.raw.formattedJSON }
         }
     }
 

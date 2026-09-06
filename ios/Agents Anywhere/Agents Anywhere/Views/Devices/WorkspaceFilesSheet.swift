@@ -196,11 +196,11 @@ private struct WorkspaceDirectoryView: View {
                         canRead: canRead
                     )
                     .contextMenu {
-                        Button(String(localized: "复制路径"), appSymbol: "document.on.document") { UIPasteboard.general.string = entry.path }
+                        Button(String(localized: "复制路径"), systemImage: "doc.on.doc") { UIPasteboard.general.string = entry.path }
                         if entry.isFile {
-                            Button(String(localized: "下载"), appSymbol: "arrow.down.to.line") { onFileAction(entry, .download) }
+                            Button(String(localized: "下载"), systemImage: "arrow.down.to.line") { onFileAction(entry, .download) }
                                 .disabled(!canTransfer)
-                            Button(String(localized: "其他打开方式…"), appSymbol: "square.and.arrow.up") { onFileAction(entry, .openIn) }
+                            Button(String(localized: "其他打开方式…"), systemImage: "square.and.arrow.up") { onFileAction(entry, .openIn) }
                                 .disabled(!canTransfer)
                         }
                     }
@@ -243,7 +243,7 @@ private struct WorkspaceDirectoryView: View {
                     .padding(.horizontal, 20).padding(.vertical, 12)
                     .accessibilityLabel(String(localized: "当前目录：\(currentDirectoryPath)"))
                     .contextMenu {
-                        Button(String(localized: "复制路径"), appSymbol: "document.on.document") {
+                        Button(String(localized: "复制路径"), systemImage: "doc.on.doc") {
                             UIPasteboard.general.string = currentDirectoryPath
                         }
                     }

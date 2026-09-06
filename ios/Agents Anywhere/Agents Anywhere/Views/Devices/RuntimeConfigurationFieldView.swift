@@ -100,7 +100,7 @@ struct RuntimeConfigurationFieldView: View {
                         }
                         Menu {
                             Toggle(String(localized: "Remove inherited variable"), isOn: $row.removesInherited)
-                            Button(String(localized: "Remove variable"), appSymbol: "trash", role: .destructive) {
+                            Button(String(localized: "Remove variable"), systemImage: "trash", role: .destructive) {
                                 model.environments[field.id]?.removeAll { $0.id == row.id }
                             }
                         } label: { AppSymbol("ellipsis").frame(width: 44, height: 44) }

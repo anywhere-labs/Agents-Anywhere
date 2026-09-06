@@ -63,55 +63,59 @@ struct DeviceManagementView: View {
     }
 
     var body: some View {
-        List {
-            Group {
-                DeviceAgentSection(model: agents, showsConnectionNotice: false) { report($0, source: "agents") }
+        GeometryReader { geometry in
+            List {
                 Group {
-                    Section {
-                        contentSwitcher
-                            .listRowBackground(Color.clear)
-                            .listRowSeparator(.hidden)
-                    }
-                    if tab == .projects {
-                        if showsSessionList {
-                            DeviceWorkspaceList(workspaces: workspaceChoices, canReadFiles: canReadFiles,
-                                onBrowse: { choosesDirectory = true }, onOpen: openWorkspace,
-                                onNewSession: { onNewSession($0.path) })
-                        } else {
-                            DeviceProjectList(projects: deviceProjects, canManage: canManage, canReadFiles: canReadFiles,
-                                onCreate: { createsProject = true }, onOpen: openProjectSessions,
-                                onNewSession: { onNewProjectSession($0.id) }, onFiles: openProjectFiles,
-                                onEdit: { editingProject = $0 },
-                                onPin: { project in perform { try await dashboard.updateProject(project.id, pinned: !project.pinned) } },
-                                onArchive: { pendingProject = $0; projectActionIsDeletion = false },
-                                onDelete: { pendingProject = $0; projectActionIsDeletion = true })
+                    DeviceAgentSection(model: agents, showsConnectionNotice: false) { report($0, source: "agents") }
+                    Group {
+                        Section {
+                            contentSwitcher
+                                .listRowBackground(Color.clear)
+                                .listRowSeparator(.hidden)
                         }
-                    } else {
-                        DeviceSessionList(model: model, projects: deviceProjects, showsProjectNames: !showsSessionList, canManage: canManage,
-                            isWorking: busy || model.isArchiveActionRunning, onNewSession: { onNewSession(nil) },
-                            onOpen: selectSession,
-                            onArchive: { performArchive([$0.id], archived: !$0.archived) },
-                            onArchiveAll: { confirmsArchiveAll = true })
-                        ForEach(pageScopes, id: \.self) { DashboardPageButton(repository: dashboard, scope: $0) }
+                        if tab == .projects {
+                            if showsSessionList {
+                                DeviceWorkspaceList(workspaces: workspaceChoices, canReadFiles: canReadFiles,
+                                    onBrowse: { choosesDirectory = true }, onOpen: openWorkspace,
+                                    onNewSession: { onNewSession($0.path) })
+                            } else {
+                                DeviceProjectList(projects: deviceProjects, canManage: canManage, canReadFiles: canReadFiles,
+                                    onCreate: { createsProject = true }, onOpen: openProjectSessions,
+                                    onNewSession: { onNewProjectSession($0.id) }, onFiles: openProjectFiles,
+                                    onEdit: { editingProject = $0 },
+                                    onPin: { project in perform { try await dashboard.updateProject(project.id, pinned: !project.pinned) } },
+                                    onArchive: { pendingProject = $0; projectActionIsDeletion = false },
+                                    onDelete: { pendingProject = $0; projectActionIsDeletion = true })
+                            }
+                        } else {
+                            DeviceSessionList(model: model, projects: deviceProjects, showsProjectNames: !showsSessionList, canManage: canManage,
+                                isWorking: busy || model.isArchiveActionRunning, onNewSession: { onNewSession(nil) },
+                                onOpen: selectSession,
+                                onArchive: { performArchive([$0.id], archived: !$0.archived) },
+                                onArchiveAll: { confirmsArchiveAll = true })
+                            ForEach(pageScopes, id: \.self) { DashboardPageButton(repository: dashboard, scope: $0) }
+                        }
                     }
                 }
             }
+            .listStyle(.insetGrouped)
+            .scrollContentBackground(.hidden)
+            // Keep the native list attached to the full detail column, as in the
+            // session page. Only its content margins change during split resizing.
+            .contentMargins(.horizontal, max(20, (geometry.size.width - 760) / 2 + 20), for: .scrollContent)
+            .scrollIndicators(.hidden).scrollEdgeEffectStyle(.soft, for: .all)
+            .refreshable { await dashboard.refresh(); await agents.refresh() }
         }
-        .listStyle(.insetGrouped)
-        .scrollContentBackground(.hidden)
-        .frame(maxWidth: 760).frame(maxWidth: .infinity)
-        .scrollIndicators(.hidden).scrollEdgeEffectStyle(.soft, for: .all)
-        .refreshable { await dashboard.refresh(); await agents.refresh() }
         .modifier(ChatPageToolbar(title: connector.name, subtitle: connectionDescription, onMenu: onMenu))
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
-                    Button(String(localized: "New session"), appSymbol: "square.and.pencil") { onNewSession(nil) }
-                    Button(String(localized: "Copy device ID"), appSymbol: "doc.on.doc") { UIPasteboard.general.string = connector.id }
+                    Button(String(localized: "New session"), systemImage: "square.and.pencil") { onNewSession(nil) }
+                    Button(String(localized: "Copy device ID"), systemImage: "doc.on.doc") { UIPasteboard.general.string = connector.id }
                     Divider()
-                    Button(String(localized: "Rename device"), appSymbol: "pencil") { proposedName = connector.name; isRenaming = true }.disabled(!canManage)
-                    Button(String(localized: "Rotate credential"), appSymbol: "key") { confirmsRotation = true }.disabled(!canManage)
-                    Button(String(localized: "Delete device"), appSymbol: "trash", role: .destructive) { confirmsDeletion = true }.disabled(!canManage)
+                    Button(String(localized: "Rename device"), systemImage: "pencil") { proposedName = connector.name; isRenaming = true }.disabled(!canManage)
+                    Button(String(localized: "Rotate credential"), systemImage: "key") { confirmsRotation = true }.disabled(!canManage)
+                    Button(String(localized: "Delete device"), systemImage: "trash", role: .destructive) { confirmsDeletion = true }.disabled(!canManage)
                 } label: {
                     AppSymbol("ellipsis")
                 }.accessibilityLabel(String(localized: "Device actions"))

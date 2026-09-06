@@ -152,7 +152,7 @@ struct ChatSidebarListMenu<Filters: View>: View {
             }
             filters()
             Divider()
-            Button(String(localized: "归档会话"), appSymbol: "archivebox", action: onShowArchives)
+            Button(String(localized: "归档会话"), systemImage: "archivebox", action: onShowArchives)
         } label: {
             Label(String(localized: "列表选项"), appSymbol: "ellipsis")
                 .labelStyle(.iconOnly).frame(width: 44, height: 44)
@@ -290,11 +290,11 @@ private struct ChatSidebarDeviceRow: View {
         .buttonStyle(.plain)
         .contextMenu {
             Button(action: onOpen) {
-                Label(String(localized: "Open"), appSymbol: "folder.fill")
+                Label(String(localized: "Open"), systemImage: "folder.fill")
             }
             Divider()
             Button(action: onCopyId) {
-                Label(String(localized: "Copy device ID"), appSymbol: "doc.on.doc")
+                Label(String(localized: "Copy device ID"), systemImage: "doc.on.doc")
             }
         }
     }
@@ -333,25 +333,25 @@ struct ChatSidebarSessionRow: View {
         .buttonStyle(.plain)
         .contextMenu {
             Button(action: onOpen) {
-                Label(String(localized: "Open"), appSymbol: "folder.fill")
+                Label(String(localized: "Open"), systemImage: "folder.fill")
             }
             Button(action: beginRename) {
-                Label(String(localized: "Rename"), appSymbol: "pencil")
+                Label(String(localized: "Rename"), systemImage: "pencil")
             }.disabled(session.id.hasPrefix("local:"))
             Button(action: onTogglePinned) {
                 if session.pinned {
-                    Label(String(localized: "Unpin"), appSymbol: "pin")
+                    Label(String(localized: "Unpin"), systemImage: "pin")
                 } else {
-                    Label(String(localized: "Pin"), appSymbol: "pin")
+                    Label(String(localized: "Pin"), systemImage: "pin")
                 }
             }
             .disabled(session.id.hasPrefix("local:"))
             Button(action: onArchive) {
-                Label(session.archived ? String(localized: "Restore") : String(localized: "Archive"), appSymbol: "archivebox")
+                Label(session.archived ? String(localized: "Restore") : String(localized: "Archive"), systemImage: "archivebox")
             }.disabled(session.id.hasPrefix("local:"))
             Divider()
             Button(action: onCopyId) {
-                Label(String(localized: "Copy session ID"), appSymbol: "doc.on.doc")
+                Label(String(localized: "Copy session ID"), systemImage: "doc.on.doc")
             }
         }
         .alert(String(localized: "Rename session"), isPresented: $isRenaming) {

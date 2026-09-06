@@ -32,17 +32,17 @@ struct DeviceProjectList: View {
                                     .accessibilityLabel(String(localized: "Files")).disabled(!canReadFiles)
                                 Button { onNewSession(project) } label: { AppSymbol("square.and.pencil").frame(width: 44, height: 44) }
                                     .accessibilityLabel(String(localized: "New session"))
-                                Menu {
-                                    Button(String(localized: "Rename project"), appSymbol: "pencil") { onEdit(project) }.disabled(!canManage)
-                                    Button(project.pinned ? String(localized: "Unpin") : String(localized: "Pin"), appSymbol: "pin") { onPin(project) }.disabled(!canManage)
-                                    Button(String(localized: "Copy path"), appSymbol: "doc.on.doc") { UIPasteboard.general.string = project.workspacePath }
-                                    Divider()
-                                    Button(String(localized: "Archive project sessions"), appSymbol: "archivebox") { onArchive(project) }.disabled(!canManage)
-                                    Button(String(localized: "Delete project"), appSymbol: "trash", role: .destructive) { onDelete(project) }
-                                        .disabled(!canManage || project.sidebarSessionCounts.active + project.sidebarSessionCounts.archived > 0)
-                                } label: { AppSymbol("ellipsis").frame(width: 44, height: 44) }
-                                .accessibilityLabel(String(localized: "Project actions"))
                             }.buttonStyle(.plain)
+                        }
+                        .contentShape(.rect)
+                        .contextMenu {
+                            Button(String(localized: "Rename project"), systemImage: "pencil") { onEdit(project) }.disabled(!canManage)
+                            Button(project.pinned ? String(localized: "Unpin") : String(localized: "Pin"), systemImage: "pin") { onPin(project) }.disabled(!canManage)
+                            Button(String(localized: "Copy path"), systemImage: "doc.on.doc") { UIPasteboard.general.string = project.workspacePath }
+                            Divider()
+                            Button(String(localized: "Archive project sessions"), systemImage: "archivebox") { onArchive(project) }.disabled(!canManage)
+                            Button(String(localized: "Delete project"), systemImage: "trash", role: .destructive) { onDelete(project) }
+                                .disabled(!canManage || project.sidebarSessionCounts.active + project.sidebarSessionCounts.archived > 0)
                         }
                     }
                 }
@@ -81,9 +81,9 @@ struct DeviceWorkspaceList: View {
                                     AppSymbol("square.and.pencil").frame(width: 44, height: 44)
                                 }.accessibilityLabel(String(localized: "New session"))
                                 Menu {
-                                    Button(String(localized: "Files"), appSymbol: "folder") { onOpen(workspace) }
+                                    Button(String(localized: "Files"), systemImage: "folder") { onOpen(workspace) }
                                         .disabled(!canReadFiles)
-                                    Button(String(localized: "Copy path"), appSymbol: "doc.on.doc") {
+                                    Button(String(localized: "Copy path"), systemImage: "doc.on.doc") {
                                         UIPasteboard.general.string = workspace.path
                                     }
                                 } label: { AppSymbol("ellipsis").frame(width: 44, height: 44) }
@@ -170,7 +170,7 @@ struct DeviceSessionList: View {
                 }.pickerStyle(.menu)
                 Spacer(minLength: 8)
                 Menu {
-                    Button(model.isSelectingSessions ? String(localized: "Done") : String(localized: "Select sessions"), appSymbol: "checkmark.circle") {
+                    Button(model.isSelectingSessions ? String(localized: "Done") : String(localized: "Select sessions"), systemImage: "checkmark.circle") {
                         if model.isSelectingSessions { model.stopSelectingSessions() } else { model.startSelectingSessions() }
                     }.disabled(!canManage || model.filteredSessions.isEmpty)
                     if model.isSelectingSessions {
@@ -178,7 +178,7 @@ struct DeviceSessionList: View {
                     }
                     Divider()
                     Button(model.sessionFilter == .archived ? String(localized: "Restore all in scope") : String(localized: "Archive all in scope"),
-                        appSymbol: model.sessionFilter == .archived ? "tray.and.arrow.up" : "archivebox", action: onArchiveAll)
+                        systemImage: model.sessionFilter == .archived ? "tray.and.arrow.up" : "archivebox", action: onArchiveAll)
                         .disabled(!canManage || model.filteredSessions.isEmpty)
                 } label: {
                     AppSymbol("ellipsis").frame(width: 44, height: 44)
@@ -225,11 +225,11 @@ struct DeviceSessionList: View {
                         .listRowBackground(model.selectedSessionIds.contains(session.id) ? Color.primary.opacity(0.08) : Color(uiColor: .secondarySystemGroupedBackground))
                         .buttonStyle(.plain)
                         .contextMenu {
-                            Button(String(localized: "Open"), appSymbol: "arrow.up.right") { onOpen(session.id) }
+                            Button(String(localized: "Open"), systemImage: "arrow.up.right") { onOpen(session.id) }
                             Button(session.archived ? String(localized: "Restore") : String(localized: "Archive"),
-                                appSymbol: session.archived ? "tray.and.arrow.up" : "archivebox") { onArchive(session) }
+                                systemImage: session.archived ? "tray.and.arrow.up" : "archivebox") { onArchive(session) }
                                 .disabled(!canManage || session.id.hasPrefix("local:"))
-                            Button(String(localized: "Copy session ID"), appSymbol: "doc.on.doc") { UIPasteboard.general.string = session.id }
+                            Button(String(localized: "Copy session ID"), systemImage: "doc.on.doc") { UIPasteboard.general.string = session.id }
                         }
                     }
                 }

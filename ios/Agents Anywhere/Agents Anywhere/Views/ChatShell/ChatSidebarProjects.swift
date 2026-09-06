@@ -100,18 +100,11 @@ struct ChatSidebarProjects: View {
                     AppSymbol(expanded.contains(project.id) ? "folder.fill" : "folder", size: 18)
                     Text(project.name).font(.body).lineLimit(1)
                         .frame(maxWidth: .infinity, alignment: .leading)
+                    if busy.contains(project.id) { ProgressView().controlSize(.mini) }
                 }
                 .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading).contentShape(.rect)
             }
             .accessibilityHint(expanded.contains(project.id) ? String(localized: "收起项目") : String(localized: "展开项目"))
-            Menu { projectMenu(project) } label: {
-                ZStack {
-                    if busy.contains(project.id) { ProgressView().controlSize(.mini) }
-                    else { AppSymbol("ellipsis", size: 18) }
-                }.frame(width: 44, height: 44).contentShape(.rect)
-            }
-            .accessibilityLabel(String(localized: "项目选项"))
-            .disabled(busy.contains(project.id))
             Button { onNewSession(project.id) } label: {
                 AppSymbol("square.and.pencil", size: 18).frame(width: 44, height: 44).contentShape(.rect)
             }
@@ -119,6 +112,7 @@ struct ChatSidebarProjects: View {
         }
         .foregroundStyle(.primary)
         .padding(.leading, 10).buttonStyle(.plain)
+        .contentShape(.rect)
         .contextMenu { projectMenu(project) }
     }
 
@@ -126,17 +120,17 @@ struct ChatSidebarProjects: View {
     private func projectMenu(_ project: V2Project) -> some View {
         let deviceName = repository.connectors.first { $0.id == project.connectorId }?.name ?? String(localized: "设备不可用")
         Section(deviceName) {
-            Button(String(localized: "新建会话"), appSymbol: "square.and.pencil") { onNewSession(project.id) }
-            Button(String(localized: "编辑项目"), appSymbol: "pencil") { editing = project }
+            Button(String(localized: "新建会话"), systemImage: "square.and.pencil") { onNewSession(project.id) }
+            Button(String(localized: "编辑项目"), systemImage: "pencil") { editing = project }
                 .disabled(!repository.canWrite || busy.contains(project.id))
-            Button(project.pinned ? String(localized: "取消置顶") : String(localized: "置顶"), appSymbol: "pin") {
+            Button(project.pinned ? String(localized: "取消置顶") : String(localized: "置顶"), systemImage: "pin") {
                 perform(project.id) { try await repository.updateProject(project.id, pinned: !project.pinned) }
             }.disabled(!repository.canWrite || busy.contains(project.id))
         }
         Section {
-            Button(String(localized: "归档项目会话"), appSymbol: "archivebox", role: .destructive) { action = .init(project: project, deletes: false) }
+            Button(String(localized: "归档项目会话"), systemImage: "archivebox", role: .destructive) { action = .init(project: project, deletes: false) }
                 .disabled(!repository.canWrite || busy.contains(project.id))
-            Button(String(localized: "删除项目"), appSymbol: "trash", role: .destructive) { action = .init(project: project, deletes: true) }
+            Button(String(localized: "删除项目"), systemImage: "trash", role: .destructive) { action = .init(project: project, deletes: true) }
                 .disabled(!repository.canWrite || busy.contains(project.id))
         }
     }
