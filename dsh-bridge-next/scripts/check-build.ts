@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { access, readFile } from 'node:fs/promises'
+import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import { runInNewContext } from 'node:vm'
 import ts from 'typescript'
@@ -70,10 +71,32 @@ assert.equal(registrations.length, 1)
 const registration = registrations[0] as { id: string; factory: unknown }
 assert.equal(registration.id, manifest.name)
 assert.equal(typeof registration.factory, 'function')
+const client = (registration.factory as (require: NodeRequire) => { apply: (ctx: unknown) => void; inject: string[] })(createRequire(import.meta.url))
+assert.deepEqual(Array.from(client.inject), ['slots', 'connection'])
+let settingsCount = 0
+const disposers: (() => void)[] = []
+client.apply({
+  connection: { rpc: { call: async () => ({ ok: true, value: null }) } },
+  effect(effect: () => () => void) { disposers.push(effect()) },
+  slots: {
+    inject(name: string, register: () => () => void) { assert.equal(name, 'settings.section'); return register() },
+    register(options: { id: string }, component: unknown) {
+      assert.equal(options.id, 'agents-anywhere-next')
+      assert.equal(typeof component, 'function')
+      settingsCount++
+      return () => { settingsCount-- }
+    },
+  },
+})
+assert.equal(settingsCount, 1)
+for (const dispose of disposers.reverse()) dispose()
+assert.equal(settingsCount, 0, 'Client unload must remove its settings section')
+await access(new URL('lib/bundled-connector/pyproject.toml', root))
+await access(new URL('lib/bundled-connector/connector/cli.py', root))
 
 const allowedClientImports = new Set(['@deepseek-ai/cordis', 'react', 'react/jsx-runtime'])
 for (const match of clientSource.matchAll(/\brequire\(["']([^"']+)["']\)/g)) {
   assert.ok(allowedClientImports.has(match[1]!), `Unexpected client runtime import: ${match[1]}`)
 }
 
-console.log('构建产物检查通过：Host、Client、类型声明和插件清单。')
+console.log('构建产物检查通过：Host、Client 设置页注册与释放、类型声明、插件清单和内部 Connector 源码。')

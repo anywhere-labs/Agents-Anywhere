@@ -1,5 +1,6 @@
 import { createRequire } from 'node:module'
 import { defineConfig } from 'tsdown'
+import ts from 'typescript'
 
 const { name: packageId } = createRequire(import.meta.url)('./package.json') as { name: string }
 
@@ -15,6 +16,19 @@ export default defineConfig([
     clean: false,
     sourcemap: true,
     dts: true,
+    // Oxc currently preserves standard decorators. Lower only the Remote
+    // service with TypeScript so the published Host runs in plain Node.js.
+    plugins: [{
+      name: 'standard-remote-decorators',
+      transform(code, id) {
+        if (!id.endsWith('/rpc/service.ts')) return
+        const output = ts.transpileModule(code, {
+          fileName: id,
+          compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext, sourceMap: true, experimentalDecorators: false },
+        })
+        return { code: output.outputText, map: output.sourceMapText! }
+      },
+    }],
     deps: { neverBundle: true },
     outExtensions: () => ({ js: '.js', dts: '.d.ts' }),
   },

@@ -1,6 +1,8 @@
 # Onboarding 业务方案
 
-状态：已确定流程与职责，待实现。第一期先实现未安装 Agents Anywhere Desktop 的流程。
+状态：无 AA Desktop 的登录、设备上线、Web Agent 配置、可选手机连接和完成页已实现。按最新开发范围，本轮止于 onboarding 结束，不实现 DSH runtime，也不改造 Connector 的 DSH 适配器。
+
+运行与验证说明见 [README](./README.md)。以下同时保留后续 Desktop 和 runtime 的目标设计；尚未接入的部分不代表当前已可用。
 
 ## 1. 名称与前提
 
@@ -204,30 +206,34 @@ Connector 的源码位置、运行环境和数据目录显式配置。源码虚�
 
 Web 统一配置中增加/明确 `desktopDownloadUrl`、`landingPageUrl` 与应用入口地址。下载地址属于固定产品配置，页面读取该配置，不让用户填写或由 URL 参数覆盖。最终发布地址需在接入时核实，不写虚构链接。
 
+当前用户确认两个地址都还没有，因此 `web-next/src/lib/product-links.ts` 中留空。完成页保留禁用的“下载桌面端 · 暂未开放”按钮，底部显示“官网即将上线”；“立即体验”正常进入 Web App。后续有正式地址后只更新这份产品配置。
+
 用户每次从插件重新发起这一流程，都按传入设备继续引导；已有授权和绑定允许复用。普通访问 Web App 不因带过一次引导状态而反复强制跳回引导。
 
-## 7. 可复用内容与当前差距
+## 7. 已接入的内容与后续边界
 
-本次只读取了旧插件和 Web 侧代码，没有读取或修改 `desktop-workbench/`。
+这条工作线参考旧插件、Web、Server 和 Connector 的公开管理接口，没有读取或修改 `desktop-workbench/`。
 
-- `web-next/src/components/agent-setup-provider.tsx` 已有设备维度的快速添加 Agent 与发现逻辑，但 UI 包在 Dialog 中。后续提取页面可用内容，保留原弹窗的调用方式。
-- `web-next/src/components/pages/mobile-signin-panel.tsx` 已有手机下载与扫码登录的分阶段交互，同样需要分离页面内容与 Dialog 外壳。
+- `web-next/src/components/agent-setup-content.tsx` 已提取页面内容，现有 `agent-setup-provider.tsx` 弹窗继续复用同一组件。
+- `web-next/src/components/pages/mobile-signin-panel.tsx` 已导出独立的 `MobileConnectionContent`，下载、扫码与确认在 onboarding 页面内展示，现有 Dialog 保留。
 - `dsh-bridge/src/manager/oauth-client.ts` 可参考本地回调、授权码换 token 和注册 Connector 的流程，但旧实现返回静态成功页，没有完成本方案要求的第二次 Web onboarding 跳转。
-- `web-next/src/components/auth/mobile-oauth-page.tsx` 当前校验手机/桌面固定 client ID 和固定回调。插件 localhost 回调需要独立接入，不能直接假定复用现有 URL 就能成功。
-- 服务端是否已允许插件 OAuth client、回环回调和所需 scope，实施前要核对现有认证实现；有缺口再明确最小接口调整。
+- `web-next/src/components/auth/mobile-oauth-page.tsx` 已支持独立的 `agents-anywhere-dsh-plugin` client，并校验精确回环地址、S256 和 state；登录/注册后保留引导上下文。
+- 服务端已增加插件回环回调规则与按用户隔离的设备注册幂等键；OAuth 授权码只允许消费一次。Web 和插件仍各自持有自己的登录会话。
 - Desktop 的现有组件与自动配对能力按本次产品说明列为复用目标，具体接入由 Desktop 负责方确认，不能把未检查的实现视为已经兼容。
 
-## 8. 下一步：先打通未安装 Desktop 的完整链路
+## 8. 阶段进度与后续工作
 
 | 阶段 | 主要工作 | 验收结果 |
 |---|---|---|
 | A. 本机入口与接口核对 | 实现共享路径解析和只读 Desktop 检测；建立插件引导入口；核对 OAuth、设备注册和 runtime 协议 | 未找到 Desktop 时进入 Web 分支，检测失败可区分；已安装时不启动插件自己的管理进程 |
 | B. 本机授权与设备上线 | 插件 OAuth、localhost 回调、用户凭据、复用/注册设备、内部源码 Connector 启停和状态 | 登录后产生一个可复用的在线设备；重试不重复创建设备；失败可恢复 |
-| C. Web 交接与 Agent 配置 | 本地二次跳转，Web 独立 onboarding 路由，校验 connectorId，提取 Agent 配置内容；接通插件 DSH 端点与薄转发 | Web 显示该设备全部可添加 Agent，能添加目标 DSH；DSH 不可用时明确显示原因 |
+| C. Web 交接与 Agent 配置 | 本地二次跳转，Web 独立 onboarding 路由，校验 connectorId，提取 Agent 配置内容 | 已实现：显示该设备全部可添加 Agent，允许稍后添加；目标 DSH 接入归入 E 阶段 |
 | D. 手机和完成页 | 页面内手机下载、扫码授权、可选跳过及双按钮完成页，集中配置下载/官网地址 | 完整走完流程，立即体验进入 Web App，下载和官网链接正确 |
 | E. DSH 业务与真实验收 | DSH 业务集中迁入插件，按稳定协议收薄 Python 适配器；验证首条消息、实时输出、历史及恢复 | 从引导完成到实际 DSH 对话可用，并验证重启与重复进入 |
 
-优先交付 B 阶段这条可判断的结果：**插件发起授权后，本机获得正确凭据，内部 Connector 在线，页面能够继续交给 Web。** C 阶段接通的 DSH 发现/配置不应被当成完整 Agent 业务已完成，首条对话和其他业务在 E 阶段验收。
+本轮已实现 A 的只读记录检测、B、C 和 D。有效 Desktop 记录会阻止插件启动自己的管理进程；安装器写入和未首启补查仍待 Desktop 接入。D 的桌面端和官网地址按用户确认留空。自动化验证覆盖本机回调、真实 Typert Gateway、进程清理、页面步骤及服务端授权；真实账号与 GUI 联调由用户启动。
+
+下一阶段先手动验收现有 Web 引导链路，再按 E 阶段接入 DSH 端点、运行时业务和 Connector 薄转发。引导完成不要求本轮尚未实现的 DSH runtime 就绪。
 
 Desktop 的启动记录写入、专门 onboarding 页面、协议唤起和首次完成标记作为后续一条工作线；共享文件格式和流程上下文先在本方案锁定，便于 Desktop 负责方接入。
 

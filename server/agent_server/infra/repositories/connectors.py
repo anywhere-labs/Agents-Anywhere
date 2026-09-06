@@ -227,25 +227,38 @@ class ConnectorRepositoryMixin:
         name: str,
         user_id: str,
         connector_kind: ConnectorKind = "cli",
+        installation_id: str | None = None,
     ) -> tuple[ConnectorView, str, str]:
-        connector_id = f"conn_{secrets.token_urlsafe(10)}"
+        # An installation key is scoped to its authenticated owner. A lost
+        # registration response can be retried without creating another device.
+        connector_id = (
+            "conn_" + hashlib.sha256(f"{user_id}:{installation_id}".encode()).hexdigest()[:24]
+            if installation_id else f"conn_{secrets.token_urlsafe(10)}"
+        )
         token = _new_connector_token()
         prefix = token[:12]
         now = utc_now()
-        async with self._engine.begin() as conn:
-            await conn.execute(
-                insert(connectors_t).values(
-                    id=connector_id,
-                    user_id=user_id,
-                    name=name,
-                    connector_kind=connector_kind,
-                    status="offline",
-                    token_hash=_hash_token(token),
-                    token_prefix=prefix,
-                    created_at=now,
-                    updated_at=now,
+        try:
+            async with self._engine.begin() as conn:
+                await conn.execute(
+                    insert(connectors_t).values(
+                        id=connector_id,
+                        user_id=user_id,
+                        name=name,
+                        connector_kind=connector_kind,
+                        status="offline",
+                        token_hash=_hash_token(token),
+                        token_prefix=prefix,
+                        created_at=now,
+                        updated_at=now,
+                    )
                 )
-            )
+        except IntegrityError:
+            if not installation_id:
+                raise
+            # Credentials are deliberately reissued only on an explicit
+            # registration retry. Normal starts reuse the locally saved token.
+            return await self.rotate_connector_token(connector_id, user_id=user_id)
         return await self.get_connector(connector_id), token, prefix
 
 

@@ -1,0 +1,86 @@
+import assert from 'node:assert/strict'
+import test from 'node:test'
+import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { SourceConnector } from '../../src/host/connector/process.js'
+import { readJson } from '../../src/host/storage/files.js'
+
+// A real stdio subprocess, without running Python, Agents or an AA service.
+const fixtureSource = `
+const readline = require('node:readline');
+let running = false;
+const lines = readline.createInterface({ input: process.stdin });
+lines.on('line', line => {
+  if (process.argv[2] === 'stall') return;
+  const request = JSON.parse(line);
+  if (request.method === 'connector.start') running = true;
+  if (request.method === 'connector.stop') running = false;
+  const result = { running, authFailed: false };
+  process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: request.id, result }) + '\\n');
+});
+lines.on('close', () => process.exit(0));
+`
+const binding = { installationId: 'test-installation', name: 'Test device', connectorId: 'conn_test', connectorToken: 'PRIVATE-DEVICE-TOKEN' }
+
+async function fixture(mode = 'normal') {
+  const root = await mkdtemp(join(tmpdir(), 'aa-process-中文 '))
+  const source = join(root, 'source')
+  await mkdir(join(source, 'connector'), { recursive: true })
+  await writeFile(join(source, 'pyproject.toml'), '')
+  await writeFile(join(source, 'connector', 'cli.py'), '')
+  const script = join(root, 'rpc.cjs')
+  await writeFile(script, fixtureSource)
+  let child: ChildProcessWithoutNullStreams | undefined
+  const connector = new SourceConnector({
+    stateRoot: join(root, 'data'), connectorSourceDir: source, uvPath: mode === 'missing' ? join(root, 'missing-uv') : process.execPath,
+    autoStart: false, apiBaseUrl: 'https://api.example.test', webBaseUrl: 'https://app.example.test',
+  }, (command, args, options) => {
+    assert.equal(args[0], 'run')
+    assert.deepEqual(args.slice(1, 5), ['--directory', source, 'anywhere-cli', 'rpc'])
+    assert.equal(args[5], '--config')
+    assert.doesNotMatch(JSON.stringify(args), /PRIVATE-DEVICE-TOKEN/)
+    assert.equal(options.env?.UV_PROJECT_ENVIRONMENT, join(root, 'data', 'connector-venv'))
+    child = spawn(command, [script, mode], options)
+    return child
+  })
+  return {
+    connector, root, get child() { return child },
+    async close() { await connector.stop(); await rm(root, { recursive: true, force: true }) },
+  }
+}
+
+test('source Connector uses stdio RPC and a private config, then exits on plugin stop', async () => {
+  const h = await fixture()
+  try {
+    await h.connector.prepare()
+    await h.connector.start(binding, 'https://api.example.test', new AbortController().signal)
+    await h.connector.assertHealthy()
+    assert.equal(h.connector.running, true)
+    const config = await readJson<{ connectorToken: string }>(join(h.root, 'data', 'connector', 'connector.json'))
+    assert.equal(config?.connectorToken, binding.connectorToken)
+    await Promise.all([h.connector.stop(), h.connector.stop()])
+    assert.equal(h.connector.running, false)
+    assert.equal(h.child?.exitCode, 0)
+    await assert.rejects(h.connector.assertHealthy())
+  } finally { await h.close() }
+})
+
+test('a spawn error releases the child without waiting indefinitely', { timeout: 8000 }, async () => {
+  const h = await fixture('missing')
+  try {
+    await assert.rejects(h.connector.start(binding, 'https://api.example.test', new AbortController().signal), /启动失败|已关闭|已退出/)
+    assert.equal(h.connector.running, false)
+  } finally { await h.close() }
+})
+
+test('cancelling a Connector that has not finished startup closes its owned process', { timeout: 8000 }, async () => {
+  const h = await fixture('stall')
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 100)
+  try {
+    await assert.rejects(h.connector.start(binding, 'https://api.example.test', controller.signal))
+    assert.equal(h.connector.running, false)
+  } finally { clearTimeout(timer); await h.close() }
+})

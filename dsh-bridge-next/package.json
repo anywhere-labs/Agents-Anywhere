@@ -1,7 +1,7 @@
 {
   "name": "@agents-anywhere/dsh-bridge-next",
   "version": "0.1.0-dev.0",
-  "description": "Agents Anywhere plugin scaffold for DeepSeek Harness",
+  "description": "Agents Anywhere login, local Connector management and Web onboarding for DeepSeek Harness",
   "type": "module",
   "main": "./lib/index.js",
   "types": "./lib/index.d.ts",
@@ -28,28 +28,39 @@
     },
     "client": {
       "platform": "web",
-      "inject": []
+      "inject": [
+        "slots",
+        "connection"
+      ]
     }
   },
   "scripts": {
     "clean": "node scripts/clean.ts",
-    "build": "yarn clean && tsdown",
-    "dev": "tsdown --watch",
+    "build": "yarn clean && tsdown && node scripts/bundle-connector.ts",
+    "dev": "node scripts/bundle-connector.ts && tsdown --watch",
     "typecheck": "tsc -p tsconfig.host.json && tsc -p tsconfig.client.json && tsc -p tsconfig.scripts.json",
     "check:build": "node scripts/check-build.ts",
-    "check": "yarn typecheck && yarn build && yarn check:build",
-    "prepack": "yarn check"
+    "check": "yarn typecheck && yarn build && yarn check:build && yarn test",
+    "prepack": "yarn check",
+    "test": "tsx --test tests/unit/*.test.ts tests/integration/*.test.ts"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "4.0.2",
+    "@deepseek-ai/dsh-typert-protocol": "0.1.2-rc.1",
+    "@deepseek-ai/schemastery": "3.18.1",
     "react": "^18.3.1"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "4.0.2",
+    "@deepseek-ai/dsh-api-gateway": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-typert-protocol": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-typert-registry": "0.1.2-rc.1",
+    "@deepseek-ai/schemastery": "3.18.1",
     "@types/node": "^24.13.3",
     "@types/react": "~18.3.31",
     "react": "18.3.1",
     "tsdown": "0.22.14",
+    "tsx": "4.21.0",
     "typescript": "5.9.3"
   },
   "engines": {

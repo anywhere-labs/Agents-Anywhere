@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Annotated, Any, Literal
+from uuid import UUID
 
 from pydantic import (
     AfterValidator,
@@ -104,6 +105,7 @@ class ConnectorView(BaseModel):
 class ConnectorCreateRequest(BaseModel):
     name: str = "Codex Connector"
     connectorKind: ConnectorKind = "cli"
+    installationId: UUID | None = None
 
 
 class ConnectorUpdateRequest(BaseModel):

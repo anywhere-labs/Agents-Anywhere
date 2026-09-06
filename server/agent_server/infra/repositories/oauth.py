@@ -65,11 +65,11 @@ class OAuthRepositoryMixin:
         redirect_uri = _normalize_redirect_uri(redirect_uri)
         first_party_client = first_party_oauth_client(client_id)
         if first_party_client is not None:
-            allowed_redirects = [first_party_client.redirect_uri]
+            allowed = first_party_client.allows_redirect(redirect_uri)
         else:
             client = await self.get_oauth_client(client_id)
-            allowed_redirects = client.redirectUris
-        if redirect_uri not in allowed_redirects:
+            allowed = redirect_uri in client.redirectUris
+        if not allowed:
             raise ValueError("redirect uri is not registered")
         if code_challenge_method != "S256":
             raise ValueError("code challenge method must be S256")
@@ -143,11 +143,16 @@ class OAuthRepositoryMixin:
                 raise ValueError("unsupported code challenge method")
             if _pkce_challenge(code_verifier) != row["code_challenge"]:
                 raise ValueError("invalid code verifier")
-            await conn.execute(
+            consumed = await conn.execute(
                 update(oauth_authorization_codes_t)
-                .where(oauth_authorization_codes_t.c.code_hash == code_hash)
+                .where(
+                    oauth_authorization_codes_t.c.code_hash == code_hash,
+                    oauth_authorization_codes_t.c.consumed_at.is_(None),
+                )
                 .values(consumed_at=now)
             )
+            if consumed.rowcount != 1:
+                raise ValueError("invalid authorization code")
             user_id = row["user_id"]
             scope = row["scope"]
         return await self.get_user(user_id), scope

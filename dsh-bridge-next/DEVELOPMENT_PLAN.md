@@ -8,7 +8,7 @@
 
 预期收益：只要插件与 Connector 之间的协议保持兼容，DSH 官方升级后，通常只需更新插件，无须同步修改 Connector。
 
-当前已建立项目目录、Host / Client 空入口及构建检查脚本。所有业务模块仍为占位，尚未实现设置页、本机端口或 Agent 业务。
+当前已实现无 AA Desktop 的插件登录、设备绑定、内部源码 Connector 管理与 Web onboarding，覆盖到“设置完成”。DSH runtime 保持占位，Python DSH 适配器的薄转发改造尚未开始。运行方法与验证范围见 [README](./README.md)。
 
 最新业务流程见 [Onboarding 业务方案](./ONBOARDING_PLAN.md)。**第一期先实现未安装 Agents Anywhere Desktop 的流程。** 本文的 Desktop 均指 AA Desktop；DSH Desktop 是承载插件的另一应用。
 
@@ -98,8 +98,8 @@ dsh-bridge-next/
 │   │   ├── index.ts            # 模块组装、插件注册和生命周期
 │   │   ├── config.ts           # 配置校验、数据目录和运行路径
 │   │   ├── rpc/                # 向插件设置页提供管理接口
-│   │   ├── desktop/            # 规划新增：共享安装记录检测和打开 Desktop
-│   │   ├── onboarding/         # 规划新增：模式选择、OAuth 后的 Web 交接
+│   │   ├── desktop/            # 已实现共享安装记录检测；打开 Desktop 后续接入
+│   │   ├── onboarding/         # 模式检查、OAuth 回调、设备上线后的 Web 交接
 │   │   ├── account/            # 无 Desktop 时的账号、设备和凭据管理
 │   │   ├── connector/          # 无 Desktop 时的源码 Connector 进程管理
 │   │   ├── storage/            # 通用配置、凭据及文件读写能力
@@ -119,7 +119,7 @@ dsh-bridge-next/
 
 目录按实际实现逐步建立。`dsh-runtime` 内部可以按业务拆分文件，但对外仍由同一个插件提供稳定协议。
 
-`host/desktop/`、`host/onboarding/` 是本次方案新增的规划目录，尚未建立。Desktop 与 Web 的专门页面在各自应用实现；插件管理模块按运行模式启用，不要求为两种模式复制运行时业务。
+`host/desktop/`、`host/onboarding/` 已建立；Web 专门页面位于 `web-next/src/components/onboarding/`。Desktop 的专门页面和唤起能力后续接入；两种模式不复制运行时业务。
 
 `src/contracts/` 是插件内部前后端的共享约定。Python Connector 与插件之间已有的跨进程协议位于仓库根目录 `contracts/dsh-bridge/1.0/`，两者用途不同，不能再维护一份相互漂移的桥接协议。
 
