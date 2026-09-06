@@ -165,7 +165,7 @@ private struct SidebarDrawerInteractive<
                     drawerSystemBackground
 
                     SidebarDrawerSidebar(
-                        width: revealWidth,
+                        size: CGSize(width: revealWidth, height: screenSize.height),
                         safeAreaInsets: safeAreaInsets,
                         scale: sidebarScale,
                         overlayOpacity: sidebarOverlayOpacity,
@@ -584,7 +584,7 @@ private struct SidebarDrawerToolbar<Header: View>: ViewModifier {
 }
 
 private struct SidebarDrawerSidebar<Header: View, Content: View>: View {
-    let width: CGFloat
+    let size: CGSize
     let safeAreaInsets: EdgeInsets
     let scale: CGFloat
     let overlayOpacity: CGFloat
@@ -603,14 +603,16 @@ private struct SidebarDrawerSidebar<Header: View, Content: View>: View {
             // Restore only the stable top inset here. Sidebar content already
             // owns its horizontal margins and bottom controls/home-indicator gap.
             .padding(.top, safeAreaInsets.top)
-            .frame(width: width)
-            .frame(maxHeight: .infinity, alignment: .leading)
+            .frame(width: size.width, height: size.height)
             .background(drawerSystemBackground)
             .overlay {
                 drawerSystemBackground
                     .opacity(overlayOpacity)
                     .allowsHitTesting(false)
             }
+            // Transform one composited sidebar, including the native glass
+            // controls, rather than letting their effects resolve separately.
+            .compositingGroup()
             .modifier(SidebarDrawerScale(scale: scale).ignoredByLayout())
     }
 }

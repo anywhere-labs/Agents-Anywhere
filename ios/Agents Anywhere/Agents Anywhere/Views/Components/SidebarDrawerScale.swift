@@ -14,7 +14,8 @@ nonisolated struct SidebarDrawerScale: GeometryEffect {
     func effectValue(size: CGSize) -> ProjectionTransform {
         ProjectionTransform(CGAffineTransform(
             a: scale, b: 0, c: 0, d: scale,
-            tx: 0, ty: size.height * (1 - scale) / 2
+            tx: size.width * (1 - scale) / 2,
+            ty: size.height * (1 - scale) / 2
         ))
     }
 }
