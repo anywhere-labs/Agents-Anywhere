@@ -4,6 +4,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -23,12 +24,41 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.agentsanywhere.app.R
 import com.composables.icons.lucide.ArrowLeft
+import com.composables.icons.lucide.ChevronLeft
 import com.composables.icons.lucide.CircleAlert
 import com.composables.icons.lucide.Lucide
+
+@Composable
+fun BackIconButton(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+) {
+    val colors = LocalAAColors.current
+    val borderColor = if (colors.canvas == Color(0xFF09090B)) colors.border else Color(0xFFE7E6E2)
+    Box(
+        modifier = modifier
+            .size(40.dp)
+            .clip(CircleShape)
+            .background(colors.raisedSurface)
+            .border(1.dp, borderColor, CircleShape)
+            .noRippleClickable(enabled = enabled, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = Lucide.ChevronLeft,
+            contentDescription = stringResource(R.string.common_back),
+            tint = colors.ink,
+            modifier = Modifier.size(22.dp),
+        )
+    }
+}
 
 @Composable
 fun BackPill(label: String, onClick: () -> Unit) {

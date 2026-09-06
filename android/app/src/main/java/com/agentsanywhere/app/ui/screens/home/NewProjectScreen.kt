@@ -29,7 +29,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.agentsanywhere.app.R
-import com.agentsanywhere.app.ui.designsystem.BackGlyph
+import com.agentsanywhere.app.ui.designsystem.BackIconButton
 import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 import com.agentsanywhere.app.ui.designsystem.ScreenScaffold
 
@@ -62,12 +62,11 @@ internal fun NewProjectScreen(
                     fontSize = 20.sp,
                     fontWeight = FontWeight.ExtraBold,
                 )
-                Box(Modifier.align(Alignment.CenterStart)) {
-                    SmallPill(darkMode = colors.isDark, enabled = !creating, onClick = onBack) {
-                        BackGlyph(color = colors.inkSoft)
-                        Text(stringResource(R.string.common_back), color = colors.inkSoft, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-                    }
-                }
+                BackIconButton(
+                    onClick = onBack,
+                    modifier = Modifier.align(Alignment.CenterStart),
+                    enabled = !creating,
+                )
             }
             Column(
                 modifier = Modifier.fillMaxWidth().weight(1f).padding(start = 18.dp, top = 12.dp, end = 18.dp),
