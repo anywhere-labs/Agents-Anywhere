@@ -23,6 +23,7 @@ import { useTranslations } from "next-intl"
 import { FilesPanelBody } from "@/components/panels/files-panel"
 import { TerminalSessionPanel } from "@/components/panels/terminal-panel"
 import { SessionReviewPanel } from "@/components/session/session-review-panel"
+import type { SessionReviewTarget } from "@/components/session/session-review-model"
 import { DashboardSidebarToggle } from "@/components/dashboard-sidebar-toggle"
 import { useDashboardSidebarControls } from "@/components/dashboard-sidebar-controls"
 import { useAuth } from "@/components/auth/auth-context"
@@ -80,6 +81,7 @@ export type SessionToolSidebarController = SessionToolTabsState & {
   collapseSidebar: () => void
   toggleExpanded: () => void
   openTool: (kind: SessionToolKind) => void
+  openReview: (target?: SessionReviewTarget) => void
   openFilePreview: (target: SessionFilePreviewTarget) => void
   activateTab: (id: string) => void
   closeTab: (id: string) => Promise<boolean>
@@ -119,6 +121,13 @@ export function useSessionToolSidebar({
   const toggleSidebar = React.useCallback(() => dispatch({ type: "toggle-sidebar" }), [dispatch])
   const collapseSidebar = React.useCallback(() => dispatch({ type: "collapse-sidebar" }), [dispatch])
   const toggleExpanded = React.useCallback(() => dispatch({ type: "toggle-expanded" }), [dispatch])
+  const openReview = React.useCallback((target?: SessionReviewTarget) => {
+    if (!sessionId || store.isShuttingDown()) return
+    dispatch({
+      type: "open-tool",
+      tab: { ...createSessionToolTab("review", "review"), reviewTarget: target ?? null },
+    })
+  }, [dispatch, sessionId, store])
   const openTool = React.useCallback((kind: SessionToolKind) => {
     if (!sessionId || store.isShuttingDown()) return
     if (kind !== "terminal") {
@@ -277,6 +286,7 @@ export function useSessionToolSidebar({
       collapseSidebar,
       toggleExpanded,
       openTool,
+      openReview,
       openFilePreview,
       activateTab,
       closeTab,
@@ -290,6 +300,7 @@ export function useSessionToolSidebar({
       collapseSidebar,
       openFilePreview,
       openTool,
+      openReview,
       setTabTitle,
       setPreferredWidth,
       setResizing,
@@ -846,6 +857,7 @@ export function SessionToolSidebar({
                     root={root}
                     connectorDeviceOs={connectorDeviceOs}
                     active={panelActive}
+                    reviewTarget={tab.reviewTarget}
                   />
                 ) : null}
                 {tab.kind === "terminal" ? (

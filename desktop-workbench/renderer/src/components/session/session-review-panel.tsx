@@ -24,8 +24,10 @@ import { useStoredSessionReviewTimeline } from "@/components/session-tool-sideba
 import { DiffPanel } from "@/components/session/session-tool-cards"
 import {
   buildLatestChangedTurnReview,
+  buildTurnReviewAtOrderSeq,
   type ChangedTurnReview,
   type ReviewFileChange,
+  type SessionReviewTarget,
 } from "@/components/session/session-review-model"
 import {
   combineReviewTimeline,
@@ -84,6 +86,7 @@ export function SessionReviewPanel({
   root,
   connectorDeviceOs,
   active,
+  reviewTarget,
 }: {
   sessionId: string
   token: string | null
@@ -91,6 +94,7 @@ export function SessionReviewPanel({
   root: string
   connectorDeviceOs?: string | null
   active: boolean
+  reviewTarget?: SessionReviewTarget | null
 }) {
   const t = useTranslations("dashboard.session.tools")
   const timeline = useStoredSessionReviewTimeline(sessionId)
@@ -124,10 +128,13 @@ export function SessionReviewPanel({
     () => allItems.filter(isVisibleTimelineItem),
     [allItems],
   )
-  const review = React.useMemo(
-    () => buildLatestChangedTurnReview(visibleItems, { root, caseInsensitivePaths }),
-    [caseInsensitivePaths, root, visibleItems],
-  )
+  const review = React.useMemo(() => {
+    const options = { root, caseInsensitivePaths }
+    if (reviewTarget && reviewTarget.resetVersion === timeline?.resetVersion) {
+      return buildTurnReviewAtOrderSeq(visibleItems, reviewTarget.orderSeq, options)
+    }
+    return buildLatestChangedTurnReview(visibleItems, options)
+  }, [caseInsensitivePaths, root, visibleItems, reviewTarget, timeline?.resetVersion])
   const historyHasMore = combinedTimeline?.hasMore ?? false
   const historyError = combinedTimeline?.error ?? null
   const needsOlderTimeline = historyHasMore && (!review || review.key === "prelude")

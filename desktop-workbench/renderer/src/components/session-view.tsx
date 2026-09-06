@@ -32,6 +32,7 @@ import { dashboardApi } from "@/features/dashboard/api"
 import type { Notice, SessionView as SessionViewData, TimelineItem } from "@/features/dashboard/types"
 import { sortTimelineItems } from "@/components/session/session-utils"
 import { SessionSkeleton } from "@/components/session/session-skeleton"
+import type { SessionReviewTarget } from "@/components/session/session-review-model"
 
 const PANEL_IDS: PanelId[] = ["files", "terminal"]
 
@@ -76,9 +77,9 @@ export function SessionView() {
     terminalLabel: t("tools.terminal"),
   })
   const previousToolSidebarExpanded = usePrevious(toolSidebar.expanded)
-  const handleOpenReview = React.useCallback(() => {
-    toolSidebar.openTool("review")
-  }, [toolSidebar.openTool])
+  const handleOpenReview = React.useCallback((target?: SessionReviewTarget) => {
+    toolSidebar.openReview(target)
+  }, [toolSidebar.openReview])
 
   const availablePanelIds = isMobile ? (["files"] satisfies PanelId[]) : PANEL_IDS
   const floatingPanels = availablePanelIds.filter((id) => panels[id] === "floating")
