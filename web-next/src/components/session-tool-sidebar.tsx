@@ -54,6 +54,8 @@ import { isApiError } from "@/lib/api/errors"
 import { createClientId } from "@/lib/id"
 import { cn } from "@/lib/utils"
 import { toast } from "sonner"
+import { openWorkspaceTerminal } from "./session-terminal-lifecycle"
+import type { SessionTerminalPreference } from "./session-terminal-preferences"
 
 export type { SessionToolKind } from "@/components/session-tool-tabs"
 
@@ -99,6 +101,7 @@ type SessionToolSidebarOptions = {
   root: string
   terminalLabel: string
   onTerminalError?: (message: string) => void
+  restoreOnMount?: boolean
 }
 
 export function useSessionToolSidebar({
@@ -109,6 +112,7 @@ export function useSessionToolSidebar({
   root,
   terminalLabel,
   onTerminalError,
+  restoreOnMount = false,
 }: SessionToolSidebarOptions): SessionToolSidebarController {
   const effectiveRoot = root.trim() || "."
   const store = useSessionToolSidebarStore()
@@ -122,6 +126,35 @@ export function useSessionToolSidebar({
   const toggleSidebar = React.useCallback(() => dispatch({ type: "toggle-sidebar" }), [dispatch])
   const collapseSidebar = React.useCallback(() => dispatch({ type: "collapse-sidebar" }), [dispatch])
   const toggleExpanded = React.useCallback(() => dispatch({ type: "toggle-expanded" }), [dispatch])
+  const openTerminal = React.useCallback((restore?: SessionTerminalPreference) => {
+    if (!sessionId || !userId || !token || !connectorId || store.isShuttingDown()) return Promise.resolve()
+    store.setContext(sessionId, {
+      ...store.getContext(sessionId),
+      ownerUserId: userId, connectorId, root: effectiveRoot, terminalLabel,
+    })
+    return openWorkspaceTerminal({
+      store, sessionId, userId, connectorId, root: effectiveRoot, label: terminalLabel, restore,
+      operations: {
+        list: async () => (await dashboardApi.connectorTerminalListV2(token, connectorId)).result.terminals,
+        create: async (label) => (await dashboardApi.connectorTerminalCreateV2(token, connectorId, effectiveRoot, {
+          cols: 80, rows: 24, label,
+        })).result,
+        close: (terminalId) => closeTerminalWithRetry(token, connectorId, terminalId),
+      },
+    })
+  }, [connectorId, effectiveRoot, sessionId, store, terminalLabel, token, userId])
+
+  React.useEffect(() => {
+    if (!restoreOnMount || !sessionId) return
+    const restore = () => {
+      const preference = store.getTerminalPreference(sessionId)
+      if (preference?.connectorId !== connectorId || preference.root !== effectiveRoot) return
+      void openTerminal(preference).catch(() => undefined)
+    }
+    restore()
+    window.addEventListener("online", restore)
+    return () => window.removeEventListener("online", restore)
+  }, [connectorId, effectiveRoot, openTerminal, restoreOnMount, sessionId, store])
   const openReview = React.useCallback((target?: SessionReviewTarget) => {
     if (!sessionId || store.isShuttingDown()) return
     dispatch({
@@ -136,38 +169,10 @@ export function useSessionToolSidebar({
       return
     }
 
-    const tabId = createClientId("terminal_pending")
-    const title = nextTerminalTitle(store.getState(sessionId), terminalLabel)
-    dispatch({ type: "open-tool", tab: createSessionToolTab(tabId, "terminal", title) })
-
-    if (!userId || !token || !connectorId) return
-    const creation = dashboardApi.connectorTerminalCreateV2(token, connectorId, effectiveRoot, {
-      cols: 80,
-      rows: 24,
-      label: title,
-    }).then(async (response) => {
-      const terminal = response.result
-      const tabStillExists = store.getState(sessionId).tabs.some((tab) => tab.id === tabId)
-      if (store.isShuttingDown() || !tabStillExists) {
-        try {
-          await closeTerminalWithRetry(token, connectorId, terminal.terminalId)
-        } catch (error) {
-          if (!store.isShuttingDown()) {
-            dispatch({ type: "open-tool", tab: createSessionToolTab(tabId, "terminal", title) })
-            dispatch({ type: "resolve-terminal", id: tabId, terminal })
-            onTerminalError?.(error instanceof Error ? error.message : String(error))
-          }
-        }
-        return
-      }
-      dispatch({ type: "resolve-terminal", id: tabId, terminal })
-    }).catch((error: unknown) => {
-      if (store.isShuttingDown()) return
-      const message = error instanceof Error ? error.message : String(error)
-      dispatch({ type: "fail-terminal", id: tabId, error: message })
+    void openTerminal().catch((error: unknown) => {
+      if (!store.isShuttingDown()) onTerminalError?.(error instanceof Error ? error.message : String(error))
     })
-    store.trackTerminalTask(creation)
-  }, [connectorId, dispatch, effectiveRoot, onTerminalError, sessionId, store, terminalLabel, token, userId])
+  }, [dispatch, onTerminalError, openTerminal, sessionId, store])
   const openFilePreview = React.useCallback((target: SessionFilePreviewTarget) => {
     if (!sessionId || store.isShuttingDown()) return
     const tabId = createClientId("files_preview")
@@ -193,7 +198,7 @@ export function useSessionToolSidebar({
     const closing = closeTerminalWithRetry(token, connectorId, terminalId)
     try {
       await store.trackTerminalTask(closing)
-      dispatch({ type: "close-tab", id })
+      store.removeTerminal(connectorId, terminalId)
       return true
     } catch (error: unknown) {
       onTerminalError?.(error instanceof Error ? error.message : String(error))
@@ -277,18 +282,6 @@ export async function closeTerminalWithRetry(
 
 function delay(milliseconds: number) {
   return new Promise<void>((resolve) => setTimeout(resolve, milliseconds))
-}
-
-function nextTerminalTitle(state: SessionToolTabsState, baseLabel: string) {
-  const labels = new Set(
-    state.tabs
-      .filter((tab) => tab.kind === "terminal" && tab.title)
-      .map((tab) => tab.title),
-  )
-  if (!labels.has(baseLabel)) return baseLabel
-  let sequence = 2
-  while (labels.has(`${baseLabel} ${sequence}`)) sequence += 1
-  return `${baseLabel} ${sequence}`
 }
 
 function sessionToolSidebarResizeBounds(hostWidth: number) {
@@ -395,6 +388,7 @@ function PersistentSessionToolSidebar({
     root: context?.root ?? ".",
     terminalLabel: context?.terminalLabel ?? "Terminal",
     onTerminalError: handleTerminalError,
+    restoreOnMount: presented,
   })
   const previousExpanded = usePreviousValue(controller.expanded)
   const defaultWidth = sessionToolSidebarWidth(hostWidth)
