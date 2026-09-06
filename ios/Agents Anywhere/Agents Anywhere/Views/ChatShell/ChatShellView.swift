@@ -7,6 +7,7 @@ struct ChatShellView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     @State private var sidebar = ChatSidebarState()
+    @State private var newSessionPresentationID = UUID()
     private var selection: ChatShellSelection {
         get { appState.chatSelection }
         nonmutating set { appState.chatSelection = newValue }
@@ -202,6 +203,7 @@ struct ChatShellView: View {
                     },
                     onRefresh: { await appState.refreshDashboard(); return appState.connectors })
                     .equatable()
+                    .id(newSessionPresentationID)
             }
         } else {
             ChatShellPlaceholderPage(
@@ -220,6 +222,9 @@ struct ChatShellView: View {
     }
 
     private func startNewSession() {
+        // Reselecting this destination must also remount its local presentation
+        // state, including the welcome reveal. The account still owns the draft.
+        newSessionPresentationID = UUID()
         selection = .newSession
         sidebar.selectDestination()
     }

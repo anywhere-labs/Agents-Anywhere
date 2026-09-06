@@ -14,20 +14,36 @@ struct PairDeviceSheet: View {
     @State private var error: String?
     @State private var copied = false
     private enum Step: Hashable { case connectionMethod, desktop, cliConfirm, name, cliMethod, pairCode, token }
-    private var step: Step { path.last ?? .connectionMethod }
 
     var body: some View {
         NavigationStack(path: $path) {
             page(.connectionMethod)
                 .navigationDestination(for: Step.self) { page($0) }
         }
-        .appSheetPresentation(step == .pairCode || step == .token ? .expanded : .compact)
+        .appSheetPresentation(.compact)
         .disabled(isWorking)
         .interactiveDismissDisabled(isWorking)
         .onChange(of: path) { _, _ in error = nil; copied = false }
     }
 
     private func page(_ step: Step) -> some View {
+        Group {
+            if step == .name { nameForm }
+            else if step == .pairCode { pairCodeForm }
+            else { instructionsPage(step) }
+        }
+        .frame(maxWidth: .infinity)
+        .navigationTitle(title(for: step))
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar { SheetCloseToolbar(disabled: isWorking) { dismiss() } }
+        .onAppear {
+            if step == .token, let credential {
+                appState.nativeChatServices?.agentSetup.watch(credential.connector)
+            }
+        }
+    }
+
+    private func instructionsPage(_ step: Step) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 if step == .desktop { desktopInstructions }
@@ -47,15 +63,73 @@ struct PairDeviceSheet: View {
                 if let error { Text(error).font(.footnote).foregroundStyle(.red) }
             }.padding(22).frame(maxWidth: 560)
         }
-        .frame(maxWidth: .infinity)
-        .navigationTitle(title(for: step))
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar { SheetCloseToolbar(disabled: isWorking) { dismiss() } }
-        .onAppear {
-            if step == .token, let credential {
-                appState.nativeChatServices?.agentSetup.watch(credential.connector)
+    }
+
+    private var nameForm: some View {
+        Form {
+            Section {
+                TextField(String(localized: "设备名称"), text: $name)
+                    .textFieldStyle(.plain).autocorrectionDisabled()
+                    .submitLabel(.continue).onSubmit(continuePairing)
+            } header: {
+                Text(String(localized: "为命令行设备命名")).textCase(nil)
             }
+            Section {
+                AppGlassButton(String(localized: "继续"), systemImage: "arrow.right", style: .prominent,
+                    isLoading: isWorking, action: continuePairing)
+                    .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isWorking || !canConnect || creationUncertain)
+            }.listRowBackground(Color.clear).listRowInsets(EdgeInsets())
+            if creationUncertain {
+                Text(String(localized: "服务器是否已创建设备尚未确认。请先关闭此页并刷新设备列表，确认结果后再创建。"))
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+            pairingMessages
         }
+        .scrollContentBackground(.hidden).scrollDismissesKeyboard(.interactively)
+        .frame(maxWidth: 560).frame(maxWidth: .infinity)
+    }
+
+    @ViewBuilder private var pairCodeForm: some View {
+        if let credential, let server = appState.serverURL {
+            Form {
+                if !isReady(credential) {
+                    Section {
+                        Text(String(localized: "先在目标设备运行以下命令，再填写 CLI 显示的配对码。"))
+                            .foregroundStyle(.secondary)
+                        commandBlock(V2PairingCommand.pair(server: server))
+                    } header: {
+                        Text(credential.connector.name).textCase(nil)
+                    }.listRowBackground(Color.clear)
+                    Section {
+                        OneTimeCodeField(code: $code, title: String(localized: "使用配对码"))
+                    }
+                    Section {
+                        AppGlassButton(String(localized: "连接设备"), systemImage: "link", style: .prominent, isLoading: isWorking) {
+                            UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                            Task { await claim(credential) }
+                        }.disabled(code.count != 6 || isWorking || !canConnect)
+                    }.listRowBackground(Color.clear).listRowInsets(EdgeInsets())
+                }
+                pairingStatus(credential)
+                pairingMessages
+            }
+            .scrollContentBackground(.hidden).scrollDismissesKeyboard(.interactively)
+            .frame(maxWidth: 560).frame(maxWidth: .infinity)
+        }
+    }
+
+    @ViewBuilder private var pairingMessages: some View {
+        if !canConnect {
+            Text(String(localized: "连接恢复后可以继续，已填写的内容会保留。"))
+                .font(.footnote).foregroundStyle(.secondary)
+        }
+        if let error { Text(error).font(.footnote).foregroundStyle(.red) }
+    }
+
+    private func continuePairing() {
+        guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+        Task { await Task.yield(); await prepare() }
     }
 
     private func title(for step: Step) -> String {
@@ -97,20 +171,9 @@ struct PairDeviceSheet: View {
     }
 
     @ViewBuilder private func cliInstructions(_ step: Step) -> some View {
-        if step == .name {
-            Text(String(localized: "为命令行设备命名")).font(.title2.bold())
-            TextField(String(localized: "设备名称"), text: $name).textFieldStyle(.roundedBorder).autocorrectionDisabled()
-            AppGlassButton(String(localized: "继续"), systemImage: "arrow.right", style: .prominent, isLoading: isWorking) {
-                UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
-                Task { await Task.yield(); await prepare() }
-            }.disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isWorking || !canConnect || creationUncertain)
-            if creationUncertain {
-                Text(String(localized: "服务器是否已创建设备尚未确认。请先关闭此页并刷新设备列表，确认结果后再创建。"))
-                    .font(.footnote).foregroundStyle(.secondary)
-            }
-        } else if let credential, let server = appState.serverURL {
+        if let credential, let server = appState.serverURL {
             Text(credential.connector.name).font(.title2.bold())
-            if appState.nativeChatServices?.agentSetup.requests.first(where: { $0.id == credential.connector.id })?.ready != true {
+            if !isReady(credential) {
                 if step == .cliMethod {
                     Text(String(localized: "选择配对方式")).foregroundStyle(.secondary)
                     AppGlassButton(String(localized: "使用配对码"), systemImage: "number", style: .prominent) {
@@ -121,16 +184,6 @@ struct PairDeviceSheet: View {
                     AppGlassButton(String(localized: "使用 Token"), systemImage: "key") {
                         path.append(.token)
                     }
-                } else if step == .pairCode {
-                    Text(String(localized: "先在目标设备运行以下命令，再填写 CLI 显示的配对码。"))
-                        .foregroundStyle(.secondary)
-                    commandBlock(V2PairingCommand.pair(server: server))
-                    TextField("000000", text: $code).keyboardType(.numberPad).textContentType(.oneTimeCode)
-                        .font(.title2.monospaced()).textFieldStyle(.roundedBorder)
-                        .onChange(of: code) { _, value in code = String(value.filter { $0.isASCII && $0.isNumber }.prefix(6)) }
-                    AppGlassButton(String(localized: "连接设备"), systemImage: "link", style: .prominent, isLoading: isWorking) {
-                        Task { await claim(credential) }
-                    }.disabled(code.count != 6 || isWorking || !canConnect)
                 } else {
                     Text(String(localized: "在目标设备运行以下命令，然后保持 CLI 运行。即使关闭此页面，我们也会继续等待设备连接。"))
                         .foregroundStyle(.secondary)
@@ -139,24 +192,32 @@ struct PairDeviceSheet: View {
                         .font(.footnote).foregroundStyle(.secondary)
                 }
             }
-            if let setup = appState.nativeChatServices?.agentSetup,
-               let request = setup.requests.first(where: { $0.id == credential.connector.id }) {
-                if request.ready {
-                    Label(String(localized: "设备已连接"), appSymbol: "checkmark.circle").font(.headline)
-                    Text(String(localized: "可以现在配置 Agent，也可以稍后在设备页面添加。"))
-                        .font(.footnote).foregroundStyle(.secondary)
-                    AppGlassButton(String(localized: "配置 Agent"), style: .prominent) { setup.configure(request.id); dismiss() }
-                    AppGlassButton(String(localized: "稍后配置")) { setup.finish(request.id); dismiss() }
-                } else {
-                    HStack {
-                        if request.error == nil { ProgressView() }
-                        Text(request.error ?? String(localized: "等待设备连接…"))
-                    }.font(.subheadline)
-                }
-            }
+            pairingStatus(credential)
         }
         if !canConnect { Text(String(localized: "连接恢复后可以继续，已填写的内容会保留。"))
             .font(.footnote).foregroundStyle(.secondary) }
+    }
+
+    private func isReady(_ credential: V2ConnectorCreateResponse) -> Bool {
+        appState.nativeChatServices?.agentSetup.requests.first(where: { $0.id == credential.connector.id })?.ready == true
+    }
+
+    @ViewBuilder private func pairingStatus(_ credential: V2ConnectorCreateResponse) -> some View {
+        if let setup = appState.nativeChatServices?.agentSetup,
+           let request = setup.requests.first(where: { $0.id == credential.connector.id }) {
+            if request.ready {
+                Label(String(localized: "设备已连接"), appSymbol: "checkmark.circle").font(.headline)
+                Text(String(localized: "可以现在配置 Agent，也可以稍后在设备页面添加。"))
+                    .font(.footnote).foregroundStyle(.secondary)
+                AppGlassButton(String(localized: "配置 Agent"), style: .prominent) { setup.configure(request.id); dismiss() }
+                AppGlassButton(String(localized: "稍后配置")) { setup.finish(request.id); dismiss() }
+            } else {
+                HStack {
+                    if request.error == nil { ProgressView() }
+                    Text(request.error ?? String(localized: "等待设备连接…"))
+                }.font(.subheadline)
+            }
+        }
     }
 
     private func commandBlock(_ command: String) -> some View {
