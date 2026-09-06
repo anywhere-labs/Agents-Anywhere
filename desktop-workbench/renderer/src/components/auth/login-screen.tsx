@@ -32,7 +32,9 @@ export function LoginScreen() {
   return (
     <AuthShell>
       <div className="mb-8 flex flex-col gap-4">
-        <h1 className="text-2xl font-semibold tracking-tight">{t("login.syncTitle")}</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">
+          {t("login.titlePrefix")} <span className="aa-wordmark text-[1.25em]">Agents Anywhere</span>
+        </h1>
         <p className="text-sm leading-6 text-muted-foreground">{t("login.syncDescription")}</p>
       </div>
 

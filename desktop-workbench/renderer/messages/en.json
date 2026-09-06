@@ -1243,7 +1243,6 @@
       "userPlaceholder": "enter your username",
       "signingIn": "Signing in...",
       "submitWithEnter": "Sign in ↵",
-      "syncTitle": "Sign in to stay in sync",
       "syncDescription": "Access your agents, sessions, and workspaces across all your devices.",
       "cloud": "Sign in to Agents Anywhere Cloud",
       "selfHosted": "Connect to your own Agents Anywhere server",
