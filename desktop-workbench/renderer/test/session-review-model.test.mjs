@@ -3,6 +3,8 @@ import test from "node:test"
 
 import {
   buildLatestChangedTurnReview,
+  buildTurnReviewAtOrderSeq,
+  buildTurnReviewDisplay,
   canonicalReviewPath,
   diffLineCounts,
   fileChangeAction,
@@ -234,4 +236,83 @@ test("treats a loaded timeline window that starts mid-turn as a reviewable prelu
 
   assert.equal(review?.key, "prelude")
   assert.equal(review?.files[0]?.displayPath, "src/a.ts")
+})
+
+test("a finished turn replaces its live tag with a card after the final reply", () => {
+  const items = [
+    user("turn-a", 1),
+    fileChange("change-a", 2, [{ path: "src/a.ts", action: "modify", diff: "-old\n+new" }]),
+    item({ id: "answer-a", orderSeq: 3, type: "message", role: "assistant", content: { text: "Done" } }),
+  ]
+  const running = buildTurnReviewDisplay(items, { turnInProgress: true })
+  assert.equal(running.activeReview?.key, "turn-a")
+  assert.equal(running.completedTurns.length, 0)
+
+  const completed = buildTurnReviewDisplay(items, { turnInProgress: false })
+  assert.equal(completed.activeReview, null)
+  assert.equal(completed.completedTurns.length, 1)
+  assert.equal(completed.completedTurns[0].endItemId, "answer-a")
+  assert.equal(completed.completedTurns[0].endOrderSeq, 3)
+  assert.deepEqual(completed.completedTurns[0].review, running.activeReview)
+})
+
+test("a new turn without changes keeps the old card without reviving its tag", () => {
+  const items = [
+    user("turn-a", 1),
+    fileChange("change-a", 2, [{ path: "a.ts", action: "add", diff: "one\n" }]),
+    user("turn-b", 3),
+    item({ id: "thinking-b", orderSeq: 4, type: "reasoning", content: { text: "Thinking" } }),
+  ]
+  const running = buildTurnReviewDisplay(items, { turnInProgress: true })
+  assert.equal(running.activeReview, null)
+  assert.deepEqual(running.completedTurns.map((turn) => turn.review.key), ["turn-a"])
+
+  const withChanges = buildTurnReviewDisplay([
+    ...items,
+    fileChange("change-b", 5, [{ path: "b.ts", action: "add", diff: "two\n" }]),
+  ], { turnInProgress: true })
+  assert.equal(withChanges.activeReview?.key, "turn-b")
+  assert.deepEqual(withChanges.completedTurns.map((turn) => turn.review.key), ["turn-a"])
+})
+
+test("net-zero file changes do not revive an earlier tag or create an empty card", () => {
+  const items = [
+    user("turn-a", 1),
+    fileChange("change-a", 2, [{ path: "kept.ts", action: "add", diff: "keep\n" }]),
+    user("turn-b", 3),
+    fileChange("create-temp", 4, [{ path: "temp.ts", action: "add", diff: "temp\n" }]),
+    fileChange("delete-temp", 5, [{ path: "temp.ts", action: "delete", diff: "temp\n" }]),
+  ]
+  for (const turnInProgress of [true, false]) {
+    const display = buildTurnReviewDisplay(items, { turnInProgress })
+    assert.equal(display.activeReview, null)
+    assert.deepEqual(display.completedTurns.map((turn) => turn.review.key), ["turn-a"])
+  }
+  assert.equal(buildLatestChangedTurnReview(items)?.key, "turn-a")
+})
+
+test("steering messages stay in one card and file-only turns still receive a card", () => {
+  const display = buildTurnReviewDisplay([
+    user("turn-a", 1),
+    fileChange("change-a", 2, [{ path: "a.ts", action: "modify", diff: "-old\n+new" }]),
+    user("steering", 3, { source: { runtime: "codex", itemType: "steeringUserMessage" } }),
+    fileChange("change-b", 4, [{ path: "b.ts", action: "add", diff: "new\n" }]),
+  ], { turnInProgress: false })
+  assert.equal(display.completedTurns.length, 1)
+  assert.equal(display.completedTurns[0].endItemId, "change-b")
+  assert.equal(display.completedTurns[0].review.files.length, 2)
+})
+
+test("reviewing a historical card selects that turn and survives loading its earlier history", () => {
+  const items = [
+    user("turn-a", 1),
+    fileChange("change-a", 2, [{ path: "a.ts", action: "add", diff: "a\n" }]),
+    item({ id: "answer-a", orderSeq: 3, type: "message", role: "assistant" }),
+    user("turn-b", 4),
+    fileChange("change-b", 5, [{ path: "b.ts", action: "add", diff: "b\n" }]),
+  ]
+  assert.equal(buildTurnReviewAtOrderSeq(items.slice(1), 3)?.key, "prelude")
+  assert.equal(buildTurnReviewAtOrderSeq(items, 3)?.key, "turn-a")
+  assert.equal(buildTurnReviewAtOrderSeq(items, 5)?.key, "turn-b")
+  assert.equal(buildTurnReviewAtOrderSeq(items.slice(3), 3), null)
 })

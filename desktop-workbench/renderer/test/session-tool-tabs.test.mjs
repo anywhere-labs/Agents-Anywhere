@@ -106,3 +106,28 @@ test("resolving a pending terminal keeps the tab identity", () => {
   assert.equal(state.tabs[0]?.id, "terminal:pending:1")
   assert.equal(state.tabs[0]?.terminal?.terminalId, "trm_1")
 })
+
+test("review cards switch turns in the same tab and generic review returns to the latest turn", () => {
+  const firstTarget = { orderSeq: 3, resetVersion: 1 }
+  const secondTarget = { orderSeq: 8, resetVersion: 1 }
+  let state = sessionToolTabsReducer(INITIAL_SESSION_TOOL_TABS_STATE, {
+    type: "open-tool",
+    tab: { ...createSessionToolTab("review", "review"), reviewTarget: firstTarget },
+  })
+  state = sessionToolTabsReducer(state, { type: "collapse-sidebar" })
+  state = sessionToolTabsReducer(state, {
+    type: "open-tool",
+    tab: { ...createSessionToolTab("review-again", "review"), reviewTarget: secondTarget },
+  })
+  assert.equal(state.tabs.length, 1)
+  assert.equal(state.activeTabId, "review")
+  assert.equal(state.open, true)
+  assert.deepEqual(state.tabs[0].reviewTarget, secondTarget)
+
+  state = sessionToolTabsReducer(state, {
+    type: "open-tool",
+    tab: createSessionToolTab("review", "review"),
+  })
+  assert.equal(state.tabs.length, 1)
+  assert.equal(state.tabs[0].reviewTarget, null)
+})

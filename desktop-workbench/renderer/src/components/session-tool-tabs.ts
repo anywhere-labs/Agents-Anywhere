@@ -1,5 +1,6 @@
 import type { TerminalView } from "@/features/dashboard/types"
 import type { SessionFilePreviewTarget } from "@/components/session/session-file-preview-context"
+import type { SessionReviewTarget } from "@/components/session/session-review-model"
 
 export type SessionToolKind = "review" | "terminal" | "files"
 
@@ -9,6 +10,7 @@ export type SessionToolTab = {
   title: string | null
   terminal: TerminalView | null
   filePreview: SessionFilePreviewTarget | null
+  reviewTarget?: SessionReviewTarget | null
   error: string | null
 }
 
@@ -96,7 +98,16 @@ export function sessionToolTabsReducer(
         tab.kind === action.tab.kind
         && (tab.kind !== "files" || !tab.filePreview)
       ))
-      if (existing) return { ...state, open: true, activeTabId: existing.id }
+      if (existing) return {
+        ...state,
+        open: true,
+        activeTabId: existing.id,
+        tabs: existing.kind === "review"
+          ? state.tabs.map((tab) => tab.id === existing.id
+            ? { ...tab, reviewTarget: action.tab.reviewTarget ?? null }
+            : tab)
+          : state.tabs,
+      }
     }
     return {
       ...state,

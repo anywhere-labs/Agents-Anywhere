@@ -58,7 +58,8 @@ import {
   timelineClientMessageId,
 } from "@/components/session/optimistic-timeline"
 import { nextTimelineResetVersion } from "@/components/session/session-review-history"
-import { buildLatestChangedTurnReview } from "@/components/session/session-review-model"
+import { buildTurnReviewDisplay, type SessionReviewTarget } from "@/components/session/session-review-model"
+import { SessionReviewCard } from "@/components/session/session-review-card"
 import { SessionReviewTag } from "@/components/session/session-review-tag"
 import { isVisibleTimelineItem, messageText, runtimeLabel, textOf } from "@/components/session/session-utils"
 import { stripInjectedAttachmentMentions } from "@/features/dashboard/attachments"
@@ -70,7 +71,7 @@ type SessionDetailProps = {
   sessionId: string
   fallbackSession: SessionView | null
   connectorDeviceOs?: string | null
-  onOpenReview?: () => void
+  onOpenReview?: (target?: SessionReviewTarget) => void
   onSessionUpdated?: (session: SessionView) => void
   onMemorySnapshotUpdated?: (snapshot: SessionMemorySnapshot | null) => void
   onStreamProgress?: (sessionId: string, nextSeq: number | null) => void
@@ -374,6 +375,11 @@ export function SessionDetail({
   const session = state?.session ?? fallbackSession
   const runtimeState = state?.state ?? null
   const runtimeStatus = effectiveRuntimeStatus(runtimeState, session)
+  const turnInProgress = runtimeStatus === "waiting"
+    || runtimeStatus === "pending"
+    || runtimeStatus === "running"
+    || runtimeStatus === "stopping"
+    || runtimeStatus === "waiting_approval"
   const previousStatusTraceRef = React.useRef<{
     sessionId: string
     sessionStatus: string
@@ -1438,23 +1444,23 @@ export function SessionDetail({
     () => groupTimelineItems((state?.items ?? []).filter(isVisibleTimelineItem), interactionTargetIds),
     [interactionTargetIds, state?.items],
   )
-  const changedFileCount = React.useMemo(() => {
-    if (state?.session.id !== sessionId) return 0
-    return buildLatestChangedTurnReview(state.items.filter(isVisibleTimelineItem), {
-      root: state.session.cwd,
+  const turnReviewDisplay = React.useMemo(() => {
+    return buildTurnReviewDisplay(state?.session.id === sessionId ? state.items.filter(isVisibleTimelineItem) : [], {
+      root: state?.session.cwd,
       caseInsensitivePaths: connectorDeviceOs === "windows",
-    })?.files.length ?? 0
-  }, [connectorDeviceOs, sessionId, state?.items, state?.session.id, state?.session.cwd])
+      turnInProgress,
+    })
+  }, [connectorDeviceOs, sessionId, state?.items, state?.session.id, state?.session.cwd, turnInProgress])
+  const completedTurnReviewsByEndItemId = React.useMemo(
+    () => new Map(turnReviewDisplay.completedTurns.map((turn) => [turn.endItemId, turn])),
+    [turnReviewDisplay.completedTurns],
+  )
   const turnActionsByGroupKey = React.useMemo(
     () => buildTurnActionsByGroupKey(
       timelineGroups,
-      runtimeStatus === "waiting"
-        || runtimeStatus === "pending"
-        || runtimeStatus === "running"
-        || runtimeStatus === "stopping"
-        || runtimeStatus === "waiting_approval",
+      turnInProgress,
     ),
-    [runtimeStatus, timelineGroups],
+    [timelineGroups, turnInProgress],
   )
 
   if (loading && !session) return <SessionSkeleton />
@@ -1574,9 +1580,22 @@ export function SessionDetail({
                 />
               )
               const turnAction = turnActionsByGroupKey.get(groupKey)
+              const completedTurnReview = timelineGroupItems(group)
+                .map((item) => completedTurnReviewsByEndItemId.get(item.id))
+                .find((turn) => turn !== undefined)
               return (
                 <React.Fragment key={groupKey}>
                   {entry}
+                  {completedTurnReview && onOpenReview ? (
+                    <SessionReviewCard
+                      key={completedTurnReview.review.key}
+                      review={completedTurnReview.review}
+                      onReview={() => onOpenReview({
+                        orderSeq: completedTurnReview.endOrderSeq,
+                        resetVersion: state?.timelineResetVersion ?? 0,
+                      })}
+                    />
+                  ) : null}
                   {turnAction ? (
                     <TurnActions
                       token={token}
@@ -1635,8 +1654,8 @@ export function SessionDetail({
           onRespondInteraction={handleRespondInteraction}
         />
         <div ref={composerContainerRef} className="pointer-events-auto relative">
-          {onOpenReview ? (
-            <SessionReviewTag fileCount={changedFileCount} onReview={onOpenReview} />
+          {onOpenReview && turnReviewDisplay.activeReview ? (
+            <SessionReviewTag files={turnReviewDisplay.activeReview.files} onReview={() => onOpenReview()} />
           ) : null}
           <SessionComposer
             token={token}

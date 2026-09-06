@@ -29,6 +29,19 @@ export type ChangedTurnReview = {
   files: ReviewFileChange[]
 }
 
+export type TimelineTurnReview = {
+  review: ChangedTurnReview
+  endItemId: string
+  endOrderSeq: number
+}
+
+export type SessionReviewTarget = {
+  orderSeq: number
+  resetVersion: number
+}
+
+type ReviewOptions = { root?: string | null; caseInsensitivePaths?: boolean }
+
 type MutableReviewFile = {
   path: string
   displayPath: string
@@ -58,20 +71,60 @@ const CLAUDE_INTERRUPTED_REQUEST_MARKERS = new Set([
 
 export function buildLatestChangedTurnReview(
   items: TimelineItem[],
-  options: { root?: string | null; caseInsensitivePaths?: boolean } = {},
+  options: ReviewOptions = {},
 ): ChangedTurnReview | null {
+  return buildTurnReviewTimeline(items, options).reverse().find((turn) => turn.review.files.length > 0)?.review ?? null
+}
+
+export function buildTurnReviewDisplay(
+  items: TimelineItem[],
+  options: ReviewOptions & { turnInProgress: boolean },
+): { activeReview: ChangedTurnReview | null; completedTurns: TimelineTurnReview[] } {
+  const turns = buildTurnReviewTimeline(items, options)
+  const activeTurn = options.turnInProgress ? turns.at(-1) : null
+  return {
+    activeReview: activeTurn?.review.files.length ? activeTurn.review : null,
+    completedTurns: turns.filter((turn) => turn !== activeTurn && turn.review.files.length > 0),
+  }
+}
+
+export function buildTurnReviewAtOrderSeq(
+  items: TimelineItem[],
+  orderSeq: number,
+  options: ReviewOptions = {},
+): ChangedTurnReview | null {
+  return buildTurnReviewTimeline(items, options).find((turn) => (
+    turn.review.startOrderSeq <= orderSeq && turn.endOrderSeq >= orderSeq
+  ))?.review ?? null
+}
+
+function buildTurnReviewTimeline(
+  items: TimelineItem[],
+  options: ReviewOptions,
+): TimelineTurnReview[] {
   const root = options.root?.trim() || "."
   const caseInsensitivePaths = options.caseInsensitivePaths ?? false
   const orderedItems = latestTimelineItemRevisions(items)
   let currentTurn = mutableTurn("prelude", orderedItems[0]?.orderSeq ?? 0)
-  let latestChangedTurn: MutableChangedTurn | null = null
+  const turns: TimelineTurnReview[] = []
+  let lastItem: TimelineItem | undefined
+  const finishCurrentTurn = () => {
+    if (!lastItem) return
+    turns.push({
+      review: finishTurn(currentTurn),
+      endItemId: lastItem.id,
+      endOrderSeq: lastItem.orderSeq,
+    })
+  }
 
   for (const item of orderedItems) {
     if (isVisibleUserTurnBoundary(item)) {
-      if (currentTurn.files.size > 0) latestChangedTurn = currentTurn
+      finishCurrentTurn()
       currentTurn = mutableTurn(textOf(item.source.clientMessageId) ?? item.id, item.orderSeq)
+      lastItem = item
       continue
     }
+    lastItem = item
 
     const changes = timelineItemFileChanges(item)
     if (changes.length === 0) continue
@@ -80,8 +133,8 @@ export function buildLatestChangedTurnReview(
     }
   }
 
-  if (currentTurn.files.size > 0) latestChangedTurn = currentTurn
-  return latestChangedTurn ? finishTurn(latestChangedTurn) : null
+  finishCurrentTurn()
+  return turns
 }
 
 export function fileChangeAction(change: Record<string, unknown>): FileChangeAction {
