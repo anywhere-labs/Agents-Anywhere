@@ -1092,6 +1092,7 @@
       "agentConfiguredAndStarted": "{name} configured and started.",
       "exitTitle": "Device already created",
       "exitDescription": "The device {name} has been created but is not yet paired. If you no longer need it, please delete it manually from the Devices list.",
+      "exitWaitingDescription": "We will keep waiting for {name} after you close this dialog and prompt you to add agents when it comes online. If you no longer need this device, delete it from the Devices list.",
       "continuePairing": "Continue pairing",
       "closeAnyway": "Close anyway",
       "errors": {

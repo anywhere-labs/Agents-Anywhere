@@ -15,7 +15,7 @@ import { useTranslations } from "next-intl"
 import { toast } from "sonner"
 
 import { useAuth } from "@/components/auth/auth-context"
-import { useAgentSetup, type AgentSetupConnector } from "@/components/agent-setup-provider"
+import { useAgentSetupPairing, type AgentSetupConnector } from "@/components/agent-setup-provider"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -183,7 +183,7 @@ export function PairDeviceDialog({
   title,
 }: Props) {
   const { session } = useAuth()
-  const requestAgentSetup = useAgentSetup()
+  const { requestAgentSetup, waitForConnector, readyConnectorIds } = useAgentSetupPairing()
   const t = useTranslations("dashboard.pairDevice")
   const tCommon = useTranslations("common")
   const [step, setStep] = React.useState<Step>(setupCredential ? "linux-method" : "platform")
@@ -195,25 +195,22 @@ export function PairDeviceDialog({
   const [pairCode, setPairCode] = React.useState("")
   const [creating, setCreating] = React.useState(false)
   const [claiming, setClaiming] = React.useState(false)
-  const [polling, setPolling] = React.useState(false)
+  const [waitingOnline, setWaitingOnline] = React.useState(false)
   const [createdThisFlow, setCreatedThisFlow] = React.useState(false)
   const [exitGuardOpen, setExitGuardOpen] = React.useState(false)
-  const pollingRef = React.useRef<number | null>(null)
   const pairingVersionRef = React.useRef(0)
   const suppressCloseGuardRef = React.useRef(false)
   const serverUrl = React.useMemo(resolvePairingServerUrl, [])
 
   const shouldConfirmExit = connectorId !== null && createdThisFlow
 
-  const stopPolling = React.useCallback(() => {
+  const stopWaiting = React.useCallback(() => {
     pairingVersionRef.current += 1
-    if (pollingRef.current) window.clearTimeout(pollingRef.current)
-    pollingRef.current = null
-    setPolling(false)
+    setWaitingOnline(false)
   }, [])
 
   const reset = React.useCallback(() => {
-    stopPolling()
+    stopWaiting()
     setStep(setupCredential ? "linux-method" : "platform")
     setPlatform(setupCredential ? "linux" : null)
     setLinuxMethod(null)
@@ -224,7 +221,7 @@ export function PairDeviceDialog({
     setCreating(false)
     setClaiming(false)
     setCreatedThisFlow(false)
-  }, [setupCredential, stopPolling])
+  }, [setupCredential, stopWaiting])
 
   React.useEffect(() => {
     if (!open || !setupCredential) return
@@ -235,36 +232,30 @@ export function PairDeviceDialog({
     setConnectorToken(setupCredential.connectorToken)
   }, [open, setupCredential])
 
-  React.useEffect(() => () => stopPolling(), [stopPolling])
+  React.useEffect(() => () => { pairingVersionRef.current += 1 }, [])
+
+  const closePairing = React.useCallback(() => {
+    setExitGuardOpen(false)
+    reset()
+    onOpenChange(false)
+  }, [onOpenChange, reset])
 
   const completePairing = React.useCallback((pairedConnector?: AgentSetupConnector) => {
     if (pairedConnector) requestAgentSetup(pairedConnector)
-    reset()
     onConnectorCreated?.()
-    onOpenChange(false)
-  }, [onConnectorCreated, onOpenChange, requestAgentSetup, reset])
+    closePairing()
+  }, [closePairing, onConnectorCreated, requestAgentSetup])
 
-  const startConnectorPolling = React.useCallback((id: string) => {
-    if (!session?.accessToken) return
-    stopPolling()
-    const version = pairingVersionRef.current
-    setPolling(true)
-    const tick = async () => {
-      try {
-        const { connector } = await dashboardApi.getConnector(session.accessToken, id)
-        if (version !== pairingVersionRef.current) return
-        if (connector.status === "online") {
-          completePairing(connector)
-          return
-        }
-        pollingRef.current = window.setTimeout(tick, 2000)
-      } catch {
-        if (version !== pairingVersionRef.current) return
-        pollingRef.current = window.setTimeout(tick, 3000)
-      }
-    }
-    pollingRef.current = window.setTimeout(tick, 1500)
-  }, [completePairing, session?.accessToken, stopPolling])
+  const startConnectorWaiting = (connector: AgentSetupConnector) => {
+    stopWaiting()
+    setWaitingOnline(true)
+    waitForConnector(connector)
+  }
+
+  React.useEffect(() => {
+    if (!open || !waitingOnline || !connectorId || !readyConnectorIds.includes(connectorId)) return
+    closePairing()
+  }, [closePairing, connectorId, open, readyConnectorIds, waitingOnline])
 
   const handleOpenChange = (nextOpen: boolean) => {
     if (!nextOpen && suppressCloseGuardRef.current) return
@@ -277,7 +268,7 @@ export function PairDeviceDialog({
   }
 
   const goBack = () => {
-    stopPolling()
+    stopWaiting()
     if (step === "desktop-install" || step === "linux-method") {
       setStep("platform")
     } else {
@@ -297,7 +288,7 @@ export function PairDeviceDialog({
       return
     }
     setStep(method === "terminal" ? "command" : "pair-code")
-    if (method === "terminal") startConnectorPolling(connectorId)
+    if (method === "terminal") startConnectorWaiting({ id: connectorId, name })
   }
 
   const handleCreate = async () => {
@@ -310,7 +301,7 @@ export function PairDeviceDialog({
       setName(result.connector.name)
       setCreatedThisFlow(true)
       setStep(linuxMethod === "terminal" ? "command" : "pair-code")
-      if (linuxMethod === "terminal") startConnectorPolling(result.connector.id)
+      if (linuxMethod === "terminal") startConnectorWaiting(result.connector)
     } catch (error) {
       toast.error(error instanceof Error ? error.message : t("errors.createFailed"))
     } finally {
@@ -341,10 +332,7 @@ export function PairDeviceDialog({
   }
 
   const handleForceClose = () => {
-    setExitGuardOpen(false)
-    stopPolling()
-    reset()
-    onOpenChange(false)
+    closePairing()
   }
 
   const continuePairing = () => {
@@ -507,7 +495,7 @@ export function PairDeviceDialog({
                   <CodeBlock code={`screen -S anywhere\n${tokenCommand}`} copyLabel={t("copyCommand")} />
                   <p className="pt-2 text-sm text-muted-foreground">{t("linuxDetachHint")}</p>
                   <CodeBlock code="screen -r anywhere" copyLabel={t("copyCommand")} />
-                  {polling ? <PollingIndicator label={t("waitingOnline")} /> : null}
+                  {waitingOnline ? <PollingIndicator label={t("waitingOnline")} /> : null}
                 </div>
                 <DialogFooter>
                   <Button type="button" variant="ghost" size="sm" onClick={goBack} className="gap-1.5">
@@ -578,7 +566,7 @@ export function PairDeviceDialog({
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>{t("exitTitle")}</AlertDialogTitle>
-            <AlertDialogDescription>{t("exitDescription", { name })}</AlertDialogDescription>
+            <AlertDialogDescription>{t(waitingOnline ? "exitWaitingDescription" : "exitDescription", { name })}</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel onClick={continuePairing}>{t("continuePairing")}</AlertDialogCancel>

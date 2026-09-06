@@ -1092,6 +1092,7 @@
       "agentConfiguredAndStarted": "已配置并启动 {name}。",
       "exitTitle": "设备已创建",
       "exitDescription": "设备 {name} 已经创建但尚未完成配对。如果不再需要，请在设备列表中手动删除。",
+      "exitWaitingDescription": "关闭弹窗后仍会等待 {name} 上线，并自动提示你添加 Agent。如果不再需要这台设备，请在设备列表中删除。",
       "continuePairing": "继续配对",
       "closeAnyway": "仍然关闭",
       "errors": {

@@ -10,6 +10,10 @@ const demoSource = readFileSync(
   new URL("../src/components/demo.tsx", import.meta.url),
   "utf8",
 )
+const setupSource = readFileSync(
+  new URL("../src/components/agent-setup-provider.tsx", import.meta.url),
+  "utf8",
+)
 
 function sourceBetween(start, end) {
   const startIndex = source.indexOf(start)
@@ -39,16 +43,28 @@ test("Linux supports both CLI command and pair-code setup", () => {
   assert.match(source, /dashboardApi\.claimPairing/)
 })
 
-test("an online Linux connector requests agent setup and refreshes once", () => {
-  const polling = sourceBetween("const startConnectorPolling", "const handleOpenChange")
-  assert.match(polling, /connector\.status === "online"/)
-  assert.match(polling, /completePairing\(connector\)/)
+test("Linux pairing waits in the app-level Agent setup provider after the form closes", () => {
+  const waiting = sourceBetween("const startConnectorWaiting", "const handleOpenChange")
+  assert.match(waiting, /waitForConnector\(connector\)/)
+  assert.match(waiting, /readyConnectorIds\.includes\(connectorId\)/)
+  assert.match(waiting, /!open \|\| !waitingOnline/)
+  assert.match(waiting, /closePairing\(\)/)
+  assert.doesNotMatch(source, /dashboardApi\.getConnector|pollingRef/)
 
-  const complete = sourceBetween("const completePairing", "const startConnectorPolling")
+  const close = sourceBetween("const closePairing", "const completePairing")
+  assert.match(close, /reset\(\)/)
+  assert.match(close, /onOpenChange\(false\)/)
+  assert.doesNotMatch(close, /removeRequest|watchPairingConnector/)
+  assert.match(setupSource, /<PendingPairing/)
+  assert.match(setupSource, /return watchPairingConnector/)
+  assert.match(setupSource, /queue\.find\(\(item\) => !item\.waitingOnline\)/)
+})
+
+test("pair-code completion still requests Agent setup and refreshes once", () => {
+  const complete = sourceBetween("const completePairing", "const startConnectorWaiting")
   assert.match(complete, /requestAgentSetup\(pairedConnector\)/)
-  assert.match(complete, /reset\(\)/)
+  assert.match(complete, /closePairing\(\)/)
   assert.match(complete, /onConnectorCreated\?\.\(\)/)
-  assert.match(complete, /onOpenChange\(false\)/)
   assert.equal(source.match(/onConnectorCreated\?\.\(\)/g)?.length, 1)
 })
 
