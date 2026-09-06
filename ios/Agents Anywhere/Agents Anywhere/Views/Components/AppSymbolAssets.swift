@@ -86,7 +86,7 @@ enum AppSymbolAssets {
         "qrcode.viewfinder": "aa-ScanQrCode",
         "rectangle.portrait.and.arrow.forward": "aa-LogOut",
         "server.rack": "aa-Server",
-        "sidebar.left": "aa-PanelLeft",
+        "sidebar.left": "aa-TextAlignStart",
         "slider.horizontal.3": "aa-Settings",
         "sparkle": "aa-Sparkles",
         "sparkles": "aa-Sparkles",
