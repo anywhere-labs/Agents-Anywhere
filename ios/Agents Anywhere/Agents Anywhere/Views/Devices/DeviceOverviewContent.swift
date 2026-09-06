@@ -3,7 +3,7 @@ import UIKit
 
 enum DeviceOverviewTab: Hashable { case projects, sessions }
 
-struct DeviceProjectGrid: View {
+struct DeviceProjectList: View {
     let projects: [V2Project]
     let canManage: Bool
     let canReadFiles: Bool
@@ -21,32 +21,22 @@ struct DeviceProjectGrid: View {
             HStack {
                 Text("\(projects.count) projects").font(.subheadline).foregroundStyle(.secondary)
                 Spacer()
-                AppGlassButton(String(localized: "Create project"), systemImage: "folder.badge.plus", disabled: !canManage,
-                    maxWidth: nil, action: onCreate)
+                AppGlassButton(systemImage: "plus", disabled: !canManage, action: onCreate)
+                    .accessibilityLabel(String(localized: "Create project"))
             }
             if projects.isEmpty {
                 ContentUnavailableView(String(localized: "No projects yet"), appSymbol: "folder",
                     description: Text(String(localized: "Create a project to choose where your agents work.")))
             } else {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 260), spacing: 14)], spacing: 14) {
+                LazyVStack(spacing: 10) {
                     ForEach(projects) { project in
-                        VStack(alignment: .leading, spacing: 18) {
-                            Button { onOpen(project) } label: {
-                                HStack(alignment: .top, spacing: 12) {
-                                    AppSymbol("folder.fill", size: 20)
-                                    VStack(alignment: .leading, spacing: 7) {
-                                        Text(project.name).font(.headline).lineLimit(1).foregroundStyle(.primary)
-                                        Text(project.workspacePath).font(.caption.monospaced()).lineLimit(2)
-                                            .foregroundStyle(.secondary).truncationMode(.middle)
-                                    }.frame(maxWidth: .infinity, alignment: .leading)
-                                }.contentShape(.rect)
-                            }.buttonStyle(.plain).accessibilityHint(String(localized: "Show project sessions"))
-                            HStack(spacing: 8) {
-                                Text("\(project.activeSessionCount) sessions").font(.caption).foregroundStyle(.secondary)
-                                Spacer(minLength: 0)
-                                Button { onFiles(project) } label: { AppSymbol("folder").frame(width: 40, height: 40) }
+                        DeviceDirectoryRow(name: project.name, path: project.workspacePath,
+                            sessionCount: project.activeSessionCount, onOpen: { onOpen(project) },
+                            openHint: String(localized: "Show project sessions")) {
+                            HStack(spacing: 0) {
+                                Button { onFiles(project) } label: { AppSymbol("folder").frame(width: 44, height: 44) }
                                     .accessibilityLabel(String(localized: "Files")).disabled(!canReadFiles)
-                                Button { onNewSession(project) } label: { AppSymbol("plus").frame(width: 40, height: 40) }
+                                Button { onNewSession(project) } label: { AppSymbol("square.and.pencil").frame(width: 44, height: 44) }
                                     .accessibilityLabel(String(localized: "New session"))
                                 Menu {
                                     Button(String(localized: "Rename project"), appSymbol: "pencil") { onEdit(project) }.disabled(!canManage)
@@ -56,11 +46,10 @@ struct DeviceProjectGrid: View {
                                     Button(String(localized: "Archive project sessions"), appSymbol: "archivebox") { onArchive(project) }.disabled(!canManage)
                                     Button(String(localized: "Delete project"), appSymbol: "trash", role: .destructive) { onDelete(project) }
                                         .disabled(!canManage || project.sidebarSessionCounts.active + project.sidebarSessionCounts.archived > 0)
-                                } label: { AppSymbol("ellipsis").frame(width: 40, height: 40) }
+                                } label: { AppSymbol("ellipsis").frame(width: 44, height: 44) }
                                 .accessibilityLabel(String(localized: "Project actions"))
                             }.buttonStyle(.plain)
                         }
-                        .padding(18).background(.quaternary.opacity(0.45), in: .rect(cornerRadius: 22))
                     }
                 }
             }
@@ -68,9 +57,99 @@ struct DeviceProjectGrid: View {
     }
 }
 
+struct DeviceWorkspaceList: View {
+    let workspaces: [WorkspaceDirectoryChoice]
+    let canReadFiles: Bool
+    let onBrowse: () -> Void
+    let onOpen: (WorkspaceDirectoryChoice) -> Void
+    let onNewSession: (WorkspaceDirectoryChoice) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                Text("\(workspaces.count) workspaces").font(.subheadline).foregroundStyle(.secondary)
+                Spacer()
+                AppGlassButton(systemImage: "plus", disabled: !canReadFiles, action: onBrowse)
+                    .accessibilityLabel(String(localized: "选择工作目录"))
+            }
+            if workspaces.isEmpty {
+                ContentUnavailableView(String(localized: "No workspaces yet"), appSymbol: "folder",
+                    description: Text(String(localized: "Choose a folder to start a new session.")))
+            } else {
+                LazyVStack(spacing: 10) {
+                    ForEach(workspaces) { workspace in
+                        DeviceDirectoryRow(name: workspace.name, path: workspace.path,
+                            onOpen: { onOpen(workspace) }, openHint: String(localized: "Files"),
+                            canOpen: canReadFiles) {
+                            HStack(spacing: 0) {
+                                Button { onNewSession(workspace) } label: {
+                                    AppSymbol("square.and.pencil").frame(width: 44, height: 44)
+                                }.accessibilityLabel(String(localized: "New session"))
+                                Menu {
+                                    Button(String(localized: "Files"), appSymbol: "folder") { onOpen(workspace) }
+                                        .disabled(!canReadFiles)
+                                    Button(String(localized: "Copy path"), appSymbol: "doc.on.doc") {
+                                        UIPasteboard.general.string = workspace.path
+                                    }
+                                } label: { AppSymbol("ellipsis").frame(width: 44, height: 44) }
+                                .accessibilityLabel(String(localized: "Workspace actions"))
+                            }.buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Both display modes share the same row geometry. Narrow windows move the
+/// actions below the summary so paths and touch targets retain usable space.
+private struct DeviceDirectoryRow<Actions: View>: View {
+    let name: String
+    let path: String
+    var sessionCount: Int? = nil
+    let onOpen: () -> Void
+    let openHint: String
+    var canOpen = true
+    @ViewBuilder let actions: () -> Actions
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 12) {
+                summary.frame(minWidth: 220, maxWidth: .infinity, alignment: .leading)
+                actions().fixedSize(horizontal: true, vertical: false)
+            }
+            VStack(alignment: .leading, spacing: 8) {
+                summary
+                HStack { Spacer(minLength: 0); actions() }
+            }
+        }
+        .padding(16)
+        .background(.quaternary.opacity(0.45), in: .rect(cornerRadius: 22))
+    }
+
+    private var summary: some View {
+        Button(action: onOpen) {
+            HStack(alignment: .top, spacing: 12) {
+                AppSymbol("folder", size: 20).padding(.top, 2)
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(name).font(.headline).lineLimit(2).foregroundStyle(.primary)
+                    Text(path).font(.caption.monospaced()).lineLimit(2)
+                        .foregroundStyle(.secondary).truncationMode(.middle)
+                    if let sessionCount {
+                        Text("\(sessionCount) sessions").font(.caption).foregroundStyle(.secondary)
+                    }
+                }.frame(maxWidth: .infinity, alignment: .leading)
+            }.frame(maxWidth: .infinity, minHeight: 44, alignment: .leading).contentShape(.rect)
+        }
+        .buttonStyle(.plain).disabled(!canOpen).accessibilityHint(openHint)
+    }
+}
+
 struct DeviceSessionList: View {
     @Bindable var model: DeviceManagementModel
     let projects: [V2Project]
+    let showsProjectNames: Bool
     let canManage: Bool
     let isWorking: Bool
     let onNewSession: () -> Void
@@ -82,13 +161,16 @@ struct DeviceSessionList: View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
                 Menu {
-                    Picker(String(localized: "Project"), selection: Binding(get: { model.projectID }, set: model.selectProject)) {
-                        Text(String(localized: "All projects")).tag(String?.none)
-                        ForEach(projects) { Text($0.name).tag(Optional($0.id)) }
+                    Picker(showsProjectNames ? String(localized: "Project") : String(localized: "工作目录"),
+                        selection: Binding(get: { model.projectID }, set: model.selectProject)) {
+                        Text(allScopesTitle).tag(String?.none)
+                        ForEach(projects) {
+                            Text(showsProjectNames ? $0.name : $0.workspacePath).tag(Optional($0.id))
+                        }
                     }
                 } label: {
                     HStack(spacing: 6) {
-                        Text(model.projectID.flatMap { id in projects.first { $0.id == id }?.name } ?? String(localized: "All projects"))
+                        Text(selectedScopeTitle)
                             .lineLimit(1)
                         AppSymbol("chevron.down", size: 14)
                     }.frame(minHeight: 44)
@@ -133,8 +215,8 @@ struct DeviceSessionList: View {
                                         .foregroundStyle(.primary).lineLimit(2)
                                     HStack(spacing: 6) {
                                         Text(session.runtime)
-                                        if let project = projects.first(where: { $0.id == session.projectId }) {
-                                            Text("·"); Text(project.name).lineLimit(1)
+                                        if let subtitle = scopeSubtitle(session) {
+                                            Text("·"); Text(subtitle).lineLimit(1)
                                         }
                                     }.font(.caption).foregroundStyle(.secondary)
                                 }.frame(maxWidth: .infinity, alignment: .leading)
@@ -161,6 +243,18 @@ struct DeviceSessionList: View {
             }
         }
     }
+    private var allScopesTitle: String {
+        showsProjectNames ? String(localized: "All projects") : String(localized: "All workspaces")
+    }
+    private var selectedScopeTitle: String {
+        guard let project = projects.first(where: { $0.id == model.projectID }) else { return allScopesTitle }
+        return showsProjectNames ? project.name : ProjectWorkspacePath.name(project.workspacePath)
+    }
+    private func scopeSubtitle(_ session: V2SessionMeta) -> String? {
+        let project = projects.first { $0.id == session.projectId }
+        if showsProjectNames { return project?.name }
+        return (session.cwd ?? project?.workspacePath).map(ProjectWorkspacePath.name)
+    }
     private func activityDate(_ session: V2SessionMeta) -> Date? {
         guard let raw = session.sortAt ?? session.lastActivityAt ?? session.lastItemAt else { return nil }
         return (try? Date.ISO8601FormatStyle(includingFractionalSeconds: true).parse(raw)) ??
@@ -184,6 +278,6 @@ struct DeviceSessionSelectionDock: View {
                 style: .prominent, isLoading: isWorking, disabled: disabled || count == 0, maxWidth: nil, action: onSubmit)
         }
         .padding(14).glassEffect(.regular, in: .rect(cornerRadius: 24))
-        .padding(.horizontal, 22).padding(.bottom, 12).frame(maxWidth: 1040).frame(maxWidth: .infinity)
+        .padding(.horizontal, 24).padding(.bottom, 12).frame(maxWidth: 760).frame(maxWidth: .infinity)
     }
 }

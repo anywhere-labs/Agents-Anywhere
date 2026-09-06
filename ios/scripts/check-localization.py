@@ -90,7 +90,7 @@ def main():
                 errors.append(f"{language}: runtime metadata copy differs from Web: {key}")
 
     plural_keys = (
-        "%lld projects", "%lld sessions", "%lld 个问题", "%lld 次子 Agent 调用",
+        "%lld projects", "%lld workspaces", "%lld sessions", "%lld 个问题", "%lld 次子 Agent 调用",
         "%lld 次工具调用", "%lld 段思考", "Attach no more than %lld files.", "连接重试 · %lld 次",
     )
     for key in plural_keys:

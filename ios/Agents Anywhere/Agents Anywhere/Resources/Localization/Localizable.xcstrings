@@ -144,6 +144,35 @@
         }
       }
     },
+    "%lld workspaces": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld workspace"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld workspaces"
+                }
+              }
+            }
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld 个工作目录"
+          }
+        }
+      }
+    },
     "%lld 个问题": {
       "extractionState": "manual",
       "localizations": {
@@ -753,6 +782,23 @@
         }
       }
     },
+    "All workspaces": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "All workspaces"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "全部工作目录"
+          }
+        }
+      }
+    },
     "Always use the dark appearance.": {
       "extractionState": "manual",
       "localizations": {
@@ -1118,6 +1164,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "在 iOS 的应用语言设置中选择英语或简体中文。未单独设置时，应用会使用你偏好的系统语言。"
+          }
+        }
+      }
+    },
+    "Choose a folder to start a new session.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choose a folder to start a new session."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "选择一个目录，开始新会话。"
           }
         }
       }
@@ -3243,6 +3306,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "还没有会话"
+          }
+        }
+      }
+    },
+    "No workspaces yet": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No workspaces yet"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "还没有工作目录"
           }
         }
       }
@@ -5844,6 +5924,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "工作区"
+          }
+        }
+      }
+    },
+    "Workspace actions": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Workspace actions"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "工作目录操作"
           }
         }
       }

@@ -43,7 +43,7 @@ struct AppGlassButton: View {
         style: Style = .regular,
         isLoading: Bool = false,
         disabled: Bool = false,
-        maxWidth: CGFloat? = .infinity,
+        maxWidth: CGFloat? = nil,
         action: @escaping () -> Void
     ) {
         self.title = nil
@@ -81,7 +81,7 @@ struct AppGlassButton: View {
                 }
                 .frame(maxWidth: maxWidth)
         }
-        .buttonBorderShape(.capsule)
+        .buttonBorderShape(title == nil ? .circle : .capsule)
         .controlSize(.large)
         .disabled(disabled || isLoading)
         .animation(.easeInOut(duration: 0.18), value: isLoading)

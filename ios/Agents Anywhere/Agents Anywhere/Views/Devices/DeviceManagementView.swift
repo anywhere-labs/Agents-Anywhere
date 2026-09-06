@@ -21,6 +21,7 @@ struct DeviceManagementView: View {
     let onSetSessionsArchived: ([V2SessionID], Bool) async -> Bool
 
     @State private var model = DeviceManagementModel()
+    @AppStorage(ProjectSidebarPreferences.sessionListKey) private var showsSessionList = false
     @State private var tab = DeviceOverviewTab.projects
     @State private var toasts = ChatToastStore()
     @State private var isRenaming = false
@@ -30,6 +31,8 @@ struct DeviceManagementView: View {
     @State private var confirmsArchiveAll = false
     @State private var credential: V2ConnectorRevokeResponse?
     @State private var selectedWorkspace: V2DeviceWorkspace?
+    @State private var choosesDirectory = false
+    @State private var pendingDirectory: String?
     @State private var createsProject = false
     @State private var editingProject: V2Project?
     @State private var pendingProject: V2Project?
@@ -44,6 +47,13 @@ struct DeviceManagementView: View {
     }
     private var canManage: Bool { dashboard.canWrite && !model.isDeviceActionRunning && !model.isArchiveActionRunning && !busy }
     private var canReadFiles: Bool { dashboard.canWrite && connector.status == .online }
+    private var workspaceChoices: [WorkspaceDirectoryChoice] {
+        WorkspaceDirectoryChoice.recent(connectorID: connector.id, deviceOS: connector.deviceOs,
+            home: nil, projects: deviceProjects, sessions: model.sessions)
+    }
+    private var collectionTitle: String {
+        showsSessionList ? String(localized: "工作目录") : String(localized: "Projects")
+    }
     private var pageScopes: [V2SessionListScope] {
         switch model.sessionFilter {
         case .active: [.init(projectID: model.projectID)]
@@ -57,20 +67,23 @@ struct DeviceManagementView: View {
             VStack(alignment: .leading, spacing: 32) {
                 DeviceAgentSection(model: agents, showsConnectionNotice: false) { report($0, source: "agents") }
                 VStack(alignment: .leading, spacing: 20) {
-                    Picker(String(localized: "Device content"), selection: $tab) {
-                        Text(String(localized: "Projects")).tag(DeviceOverviewTab.projects)
-                        Text(String(localized: "Sessions")).tag(DeviceOverviewTab.sessions)
-                    }.pickerStyle(.segmented).accessibilityIdentifier("device.content")
+                    contentPicker
                     if tab == .projects {
-                        DeviceProjectGrid(projects: deviceProjects, canManage: canManage, canReadFiles: canReadFiles,
-                            onCreate: { createsProject = true }, onOpen: openProjectSessions,
-                            onNewSession: { onNewProjectSession($0.id) }, onFiles: openProjectFiles,
-                            onEdit: { editingProject = $0 },
-                            onPin: { project in perform { try await dashboard.updateProject(project.id, pinned: !project.pinned) } },
-                            onArchive: { pendingProject = $0; projectActionIsDeletion = false },
-                            onDelete: { pendingProject = $0; projectActionIsDeletion = true })
+                        if showsSessionList {
+                            DeviceWorkspaceList(workspaces: workspaceChoices, canReadFiles: canReadFiles,
+                                onBrowse: { choosesDirectory = true }, onOpen: openWorkspace,
+                                onNewSession: { onNewSession($0.path) })
+                        } else {
+                            DeviceProjectList(projects: deviceProjects, canManage: canManage, canReadFiles: canReadFiles,
+                                onCreate: { createsProject = true }, onOpen: openProjectSessions,
+                                onNewSession: { onNewProjectSession($0.id) }, onFiles: openProjectFiles,
+                                onEdit: { editingProject = $0 },
+                                onPin: { project in perform { try await dashboard.updateProject(project.id, pinned: !project.pinned) } },
+                                onArchive: { pendingProject = $0; projectActionIsDeletion = false },
+                                onDelete: { pendingProject = $0; projectActionIsDeletion = true })
+                        }
                     } else {
-                        DeviceSessionList(model: model, projects: deviceProjects, canManage: canManage,
+                        DeviceSessionList(model: model, projects: deviceProjects, showsProjectNames: !showsSessionList, canManage: canManage,
                             isWorking: busy || model.isArchiveActionRunning, onNewSession: { onNewSession(nil) },
                             onOpen: selectSession,
                             onArchive: { performArchive([$0.id], archived: !$0.archived) },
@@ -79,8 +92,8 @@ struct DeviceManagementView: View {
                     }
                 }
             }
-            .padding(.horizontal, 22).padding(.top, 18).padding(.bottom, 28)
-            .frame(maxWidth: 1040).frame(maxWidth: .infinity, alignment: .center)
+            .padding(.horizontal, 24).padding(.top, 18).padding(.bottom, 28)
+            .frame(maxWidth: 760).frame(maxWidth: .infinity, alignment: .center)
         }
         .scrollIndicators(.hidden).scrollEdgeEffectStyle(.soft, for: .all)
         .refreshable { await dashboard.refresh(); await agents.refresh() }
@@ -124,6 +137,15 @@ struct DeviceManagementView: View {
             WorkspaceFilesSheet(connectorId: connector.id, deviceName: connector.name, workspace: $0,
                 service: workspaceFilesService, permitsReading: canReadFiles)
         }
+        .sheet(isPresented: $choosesDirectory, onDismiss: startDirectorySession) {
+            WorkspaceFilesSheet(connectorId: connector.id, deviceName: connector.name,
+                workspace: .init(path: "~", name: "", sessionCount: 0, lastActiveAt: nil),
+                service: workspaceFilesService, permitsReading: canReadFiles,
+                onSelectDirectory: { path in
+                    pendingDirectory = path
+                    choosesDirectory = false
+                })
+        }
         .sheet(item: $credential) { ConnectorCredentialSheet(connector: $0.connector, connectorToken: $0.connectorToken, serverURL: serverURL) }
         .alert(String(localized: "Rename device"), isPresented: $isRenaming) {
             TextField(String(localized: "Device name"), text: $proposedName)
@@ -160,6 +182,24 @@ struct DeviceManagementView: View {
         }
     }
 
+    private var contentPicker: some View {
+        Menu {
+            Picker(String(localized: "Device content"), selection: $tab) {
+                Text(collectionTitle).tag(DeviceOverviewTab.projects)
+                Text(String(localized: "Sessions")).tag(DeviceOverviewTab.sessions)
+            }
+        } label: {
+            HStack(spacing: 8) {
+                Text(tab == .projects ? collectionTitle : String(localized: "Sessions"))
+                    .font(.headline)
+                AppSymbol("chevron.down", size: 16)
+            }.frame(minHeight: 44)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(String(localized: "Device content"))
+        .accessibilityIdentifier("device.content")
+    }
+
     private var connectionDescription: String {
         let status = !dashboard.canWrite ? String(localized: "Showing cached content") :
             connector.status == .online ? String(localized: "Online") : String(localized: "Device offline")
@@ -175,6 +215,15 @@ struct DeviceManagementView: View {
     private func openProjectFiles(_ project: V2Project) {
         selectedWorkspace = .init(path: project.workspacePath, name: project.name,
             sessionCount: project.activeSessionCount, lastActiveAt: project.lastActivityAt)
+    }
+    private func openWorkspace(_ workspace: WorkspaceDirectoryChoice) {
+        selectedWorkspace = .init(path: workspace.path, name: workspace.name,
+            sessionCount: 0, lastActiveAt: nil)
+    }
+    private func startDirectorySession() {
+        guard let path = pendingDirectory else { return }
+        pendingDirectory = nil
+        onNewSession(path)
     }
     private func selectSession(_ id: String) {
         if model.isSelectingSessions { model.toggleSessionSelection(id) } else { onOpenSession(id) }
