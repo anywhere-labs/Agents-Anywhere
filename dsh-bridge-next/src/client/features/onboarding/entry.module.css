@@ -34,18 +34,38 @@
 }
 
 .dialog {
-  width: min(560px, 100%);
+  width: min(640px, 100%);
   max-height: calc(100dvh - 48px);
 }
 
 .dialogContent {
+  box-sizing: border-box;
   min-height: 0;
+  padding: 16px 16px 12px;
   overflow-y: auto;
   overscroll-behavior: contain;
+}
+
+.dialog h2 {
+  min-width: 0;
+  font: var(--dsw-font-xl-24);
+  font-weight: 600;
+  letter-spacing: -0.025em;
+  overflow-wrap: anywhere;
+}
+
+.dialogContent > p {
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-s-14);
 }
 
 .trigger :focus-visible,
 .dialog :focus-visible {
   outline: 2px solid var(--dsw-alias-brand-primary);
   outline-offset: 3px;
+}
+
+@media (max-width: 480px) {
+  .dialogContent { padding: 8px 0; }
+  .dialog h2 { font: var(--dsw-font-l-20); font-weight: 600; }
 }

@@ -93,7 +93,7 @@ export async function checkClient(source: string, packageId: string): Promise<vo
         register(options: { name: string; id: string; label: () => string; inject: () => { host: OnboardingHostApi } }, Component: ComponentType<EntryProps>) {
           assert.equal(options.name, 'sidebar.footer.action', 'The entry belongs above Settings, not inside it')
           assert.equal(options.id, 'agents-anywhere-next')
-          assert.equal(options.label(), '插件连接')
+          assert.equal(options.label(), '手机连接')
           entry = { Component, props: options.inject() }
           entryCount++
           return () => { entryCount-- }
@@ -112,9 +112,9 @@ export async function checkClient(source: string, packageId: string): Promise<vo
       assert.ok(element, `Missing button: ${text}`)
       return element
     }
-    const dialog = () => document.querySelector<HTMLElement>('[role="dialog"][aria-label="插件连接"]')
-    const trigger = button('插件连接')
-    assert.equal(trigger.textContent, '插件连接')
+    const dialog = () => document.querySelector<HTMLElement>('[role="dialog"][aria-label="登录以使用手机端远控能力"]')
+    const trigger = button('手机连接')
+    assert.equal(trigger.textContent, '手机连接')
     assert.ok(trigger.querySelector('svg.lucide-smartphone'))
     assert.equal(dialog(), null)
     assert.equal(calls.length, 0, 'A closed connection panel must not poll the Host')
@@ -123,9 +123,11 @@ export async function checkClient(source: string, packageId: string): Promise<vo
     assert.equal(container.contains(dialog()), false, 'Official Modal must portal outside the sidebar')
     assert.equal(container.hasAttribute('inert'), true)
     assert.equal(trigger.getAttribute('aria-expanded'), 'true')
-    assert.equal(document.activeElement, button('关闭插件连接'))
-    assert.equal(button('在浏览器中登录').disabled, false)
-    await act(async () => { button('在浏览器中登录').click() })
+    assert.equal(document.activeElement, button('关闭手机连接'))
+    assert.doesNotMatch(dialog()!.textContent!, /agents anywhere/i)
+    assert.equal(dialog()!.querySelector('input'), null, 'Server fields stay hidden until requested')
+    assert.equal(button('登录云端').disabled, false)
+    await act(async () => { button('登录云端').click() })
     assert.ok(calls.some(call => call.endpoint === 'agentsAnywhereOnboarding/begin'))
     assert.deepEqual(openedUrls, [{ url: 'https://example.com/onboarding', target: '_blank', features: 'noopener,noreferrer' }])
     assert.equal(dialog()!.querySelector('a')?.href, 'https://example.com/onboarding')
@@ -141,12 +143,12 @@ export async function checkClient(source: string, packageId: string): Promise<vo
     assert.ok(calls.some(call => call.endpoint === 'agentsAnywhereOnboarding/cancel'))
     assert.equal(dialog()!.querySelector('a'), null)
 
+    await act(async () => { button('连接到自己的服务实例').click() })
     const inputs = Array.from(dialog()!.querySelectorAll('input'))
     assert.equal(inputs.length, 2)
     assert.ok(inputs.every(input => input.required && input.type === 'url' && input.labels?.length === 1))
     assert.deepEqual(inputs.map(input => input.value), [snapshot.settings.webBaseUrl, snapshot.settings.apiBaseUrl])
     await act(async () => {
-      dialog()!.querySelector('details')!.open = true
       dialog()!.querySelector('form')!.dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }))
     })
     const configure = calls.find(call => call.endpoint === 'agentsAnywhereOnboarding/configure')
@@ -158,8 +160,8 @@ export async function checkClient(source: string, packageId: string): Promise<vo
       saveButton.focus()
       saveButton.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }))
     })
-    assert.equal(document.activeElement, button('关闭插件连接'))
-    await act(async () => { button('关闭插件连接').click() })
+    assert.equal(document.activeElement, button('关闭手机连接'))
+    await act(async () => { button('关闭手机连接').click() })
     assert.equal(dialog(), null)
     await act(async () => { root.render(createElement(Component, { ...props, wide: false })) })
     assert.equal(trigger.textContent, '', 'Collapsed sidebar must keep only the icon and accessible name')

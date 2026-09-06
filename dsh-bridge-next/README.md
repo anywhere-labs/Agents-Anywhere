@@ -7,7 +7,7 @@ Agents Anywhere 的 DSH 插件。当前已实现**没有安装 AA Desktop 时，
 ## 已实现
 
 ```text
-DSH 左侧边栏「设置」上方 → 插件连接 → 在弹窗中点击「在浏览器中登录」
+DSH 左侧边栏「设置」上方 → 手机连接 → 在弹窗中点击「登录云端」
   → Web 登录 / 注册、授权插件
   → 插件 127.0.0.1 回调，交换用户凭据
   → 复用或注册本机设备，启动插件内部的源码 Connector
@@ -38,7 +38,7 @@ DSH_HOME="$HOME/.dsh" npx -y -p @deepseek-ai/dsh@0.1.2-rc.1 \
   dsh plugin --profile desktop add "link:$PWD"
 ```
 
-链接安装方式已在全新临时 `DSH_HOME` / profile 中验证，并通过 `--dump-config` 确认插件层。安装后重启目标 DSH Desktop，点击左侧边栏「设置」上方的 **插件连接**。
+链接安装方式已在全新临时 `DSH_HOME` / profile 中验证，并通过 `--dump-config` 确认插件层。安装后重启目标 DSH Desktop，点击左侧边栏「设置」上方的 **手机连接**。
 
 旧 `dsh-bridge` 如果还在管理同一个账号或设备，应先在 DSH 中停用旧插件，再测试 Next；本项目不会接管旧插件或 Desktop 的进程与凭据。
 
@@ -49,7 +49,7 @@ cd /Users/t4wefan/code/github/Agents-Anywhere
 ./local-up.sh
 ```
 
-该命令默认只启动 Server 和 Web。测试本流程时，Connector 由插件在授权后启动，无需传 `--with-connector`。默认服务地址是 `http://127.0.0.1:8000`，Web 地址是 `http://127.0.0.1:5174`；地址不同可在插件页面的“连接地址”中修改。远程部署使用 HTTPS，浏览器与插件 Host 必须在同一台机器。
+该命令默认只启动 Server 和 Web。测试本流程时，Connector 由插件在授权后启动，无需传 `--with-connector`。默认服务地址是 `http://127.0.0.1:8000`，Web 地址是 `http://127.0.0.1:5174`；地址不同可在插件弹窗的“连接到自己的服务实例”中修改。登录使用已配置的 Web 和服务地址，开发环境仍连接本地服务。远程部署使用 HTTPS，浏览器与插件 Host 必须在同一台机器。
 
 本地扫码还要求手机能够访问服务地址；仅监听回环地址时可先跳过手机步骤。默认本地启动脚本需要 Docker 提供 PostgreSQL 和 Redis。
 
@@ -77,9 +77,11 @@ corepack yarn dev
 
 ## 前端组件与样式
 
-入口通过官方 `sidebar.footer.action` 扩展点挂载，位于左侧边栏「设置」按钮上方。展开时显示 Lucide `Smartphone` 图标和「插件连接」，收起时只显示图标并提供名称提示。点击入口打开官方 `Modal` 弹窗，支持关闭按钮、Esc 和点击遮罩关闭；关闭后保留 Host 的连接状态，再打开时重新检查本机。插件不再向设置页面注册入口。
+入口通过官方 `sidebar.footer.action` 扩展点挂载，位于左侧边栏「设置」按钮上方。展开时显示 Lucide `Smartphone` 图标和「手机连接」，收起时只显示图标并提供名称提示。点击入口打开官方 `Modal` 弹窗，支持关闭按钮、Esc 和点击遮罩关闭；关闭后保留 Host 的连接状态，再打开时重新检查本机。插件不再向设置页面注册入口。
 
 弹窗使用 `@deepseek-ai/dsh-client-ui-primitives` 的 `Modal`、`Tooltip`、`Button`、`Input`、`StateDot`。这些组件由 DSH 的平台模块提供，插件不打包自己的副本；`clsx` 和实际使用的 Lucide 图标内联进 Client bundle。
+
+登录弹窗参考 Desktop 登录页的简洁纵向布局，标题为「登录以使用手机端远控能力」。初始视图只有说明、登录按钮和自建服务入口，不显示品牌、设备编号或状态卡片；账号状态、连接进度和错误只在需要时显示，自建服务表单按需展开。
 
 入口与弹窗布局位于 `src/client/features/onboarding/entry.module.css`，连接内容布局位于同目录的 `section.module.css`，使用 CSS Modules 和官方 `--dsw-alias-*` / `--dsw-font-*` 主题变量。页面跟随 DSH 的明暗主题，不声明全局主题或固定颜色。
 

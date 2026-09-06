@@ -50,6 +50,12 @@ export default defineConfig([
       alwaysBundle: ['clsx', 'lucide-react'],
     },
     plugins: [clientCss(packageId, fileURLToPath(new URL('.', import.meta.url)))],
+    // tsdown selects Node resolution for CJS output. Prefer ESM dependencies
+    // in this browser factory so unused Lucide icons are tree-shaken away.
+    inputOptions: (options, _format, { cjsDts }) => cjsDts ? options : {
+      ...options,
+      resolve: { ...options.resolve, mainFields: ['browser', 'module', 'main'] },
+    },
     outExtensions: () => ({ js: '.js', dts: '.d.ts' }),
     // The browser wrapper must not be applied to the separate declaration build.
     outputOptions: (options, _format, { cjsDts }) => cjsDts ? options : {

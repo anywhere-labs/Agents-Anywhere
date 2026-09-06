@@ -53,29 +53,29 @@ export function ConnectionEntry({ wide, host }: ConnectionEntryProps) {
   }, [open])
 
   return <>
-    <Tooltip label="插件连接" disabled={wide || open} delayMs={500}>
+    <Tooltip label="手机连接" disabled={wide || open} delayMs={500}>
       <span className={clsx(css.trigger, !wide && css.rail)}>
         <Button
           variant="ghost"
           className={css.button}
           icon={<Smartphone size={16} strokeWidth={1.5} />}
-          aria-label="插件连接"
+          aria-label="手机连接"
           aria-haspopup="dialog"
           aria-expanded={open}
           onClick={event => { trigger.current = event.currentTarget; setOpen(true) }}
         >
-          {wide ? <span className={css.label}>插件连接</span> : null}
+          {wide ? <span className={css.label}>手机连接</span> : null}
         </Button>
       </span>
     </Tooltip>
     <Modal
       open={open}
       onClose={close}
-      title="插件连接"
-      closeLabel="关闭插件连接"
-      description="在 Web 和手机上继续使用你的 Agent。"
-      className={css.dialog}
-      contentClassName={css.dialogContent}
+      title="登录以使用手机端远控能力"
+      closeLabel="关闭手机连接"
+      description="在所有设备间访问你的 Agent、会话和工作空间。"
+      className={clsx(css.dialog)}
+      contentClassName={clsx(css.dialogContent)}
     >
       <div ref={content}>
         <OnboardingSection host={host} />

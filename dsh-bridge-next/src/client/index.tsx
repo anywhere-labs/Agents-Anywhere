@@ -24,6 +24,6 @@ export function apply(ctx: Context): void {
   const host = createHostApi(services.connection.rpc)
   ctx.effect(() => services.slots.inject('sidebar.footer.action', () => services.slots.register({
     name: 'sidebar.footer.action', id: 'agents-anywhere-next', order: 26,
-    label: () => '插件连接', inject: () => ({ host }),
+    label: () => '手机连接', inject: () => ({ host }),
   }, ConnectionEntry)), 'agentsAnywhereOnboarding.sidebar')
 }
