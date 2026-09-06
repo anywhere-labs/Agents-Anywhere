@@ -1,83 +1,85 @@
-import { readFile } from 'node:fs/promises'
-import { createRequire } from 'node:module'
-import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
-import type { Agent, ModelSelection } from '@deepseek-ai/dsh-agent'
 import { SessionId } from '@deepseek-ai/dsh-session'
-import type { ApprovalOutcome, ApprovalRequest } from '@deepseek-ai/dsh-user-approval'
-import { Ajv2020 } from 'ajv/dist/2020.js'
-import type { AnySchema } from 'ajv'
-import { describe, expect, it, vi } from 'vitest'
-import { permissionSelectionId } from '../src/projection/identity.js'
-import { InteractionManager } from '../src/runtime/interactions.js'
-import { SessionController } from '../src/runtime/session-controller.js'
-import type { InteractionNotice } from '../src/runtime/types.js'
+import { describe, expect, it } from 'vitest'
+import { InteractionManager } from '../src/bridge/runtime/interactions.js'
+import type { BridgeMuxEnvelope } from '../src/bridge/control/api-frames.js'
+import type { InteractionNotice } from '../src/bridge/wire/protocol.js'
 
-const require = createRequire(import.meta.url)
-const addFormats = require('ajv-formats') as (ajv: Ajv2020) => void
-const noticeSchemaPath = fileURLToPath(new URL('../../contracts/dsh-bridge/1.0/schemas/notice.schema.json', import.meta.url))
+function manager(emitted: InteractionNotice[]): InteractionManager {
+  return new InteractionManager(
+    {} as Context,
+    8,
+    () => undefined,
+    notice => { emitted.push(notice) },
+    () => undefined,
+  )
+}
 
-type ApprovalHandler = (
-  request: ApprovalRequest,
-  next: () => Promise<ApprovalOutcome>,
-) => Promise<ApprovalOutcome>
-
-describe('current Host approval integration', () => {
-  it('accepts only the first valid Bridge response and closes the notice', async () => {
-    let handler: ApprovalHandler | undefined
-    const ctx = {
-      on: (_name: string, candidate: ApprovalHandler) => {
-        handler = candidate
-        return () => undefined
-      },
-    } as unknown as Context
+describe('remote Web interactions', () => {
+  it('projects an approval into AA and prepares the correlated Web response', async () => {
     const emitted: InteractionNotice[] = []
-    const controller = new SessionController(
-      SessionId('external-1'),
-      'platform-1',
-      { provider: 'provider', model: 'model' } satisfies ModelSelection,
-      permissionSelectionId('workspace-write'),
-      () => undefined,
+    const interactions = manager(emitted)
+    const envelope: BridgeMuxEnvelope = {
+      rpcId: 'web-approval-rpc',
+      payload: {
+        type: 'approval/requested',
+        sessionId: SessionId('external-1'),
+        approvalId: 'approval-1',
+        toolName: 'shell',
+        callId: 'call-1',
+      },
+    }
+    await interactions.consumeWebEnvelope('aa-1', envelope)
+    const notice = interactions.notices('aa-1')[0]
+    if (notice === undefined) throw new Error('remote notice was not created')
+
+    const prepared = interactions.prepareRemoteResponse(
+      'aa-1',
+      'external-1',
+      notice.id,
+      'allow_once',
+      undefined,
     )
-    const manager = new InteractionManager(ctx, 4, () => controller, () => true, async notice => {
-      emitted.push(notice)
+    expect(prepared?.message).toEqual({
+      type: 'client-response',
+      sessionId: 'external-1',
+      rpcId: 'web-approval-rpc',
+      result: {
+        ok: true,
+        value: { sessionId: 'external-1', approvalId: 'approval-1', outcome: 'allowed-once' },
+      },
     })
-    manager.register()
-    if (handler === undefined) throw new Error('approval handler was not registered')
-    const decision = handler({
-      agent: {} as Agent,
-      toolName: 'shell',
-      reason: 'write file',
-    }, async () => 'unavailable')
-    await vi.waitFor(() => expect(emitted).toHaveLength(1))
-    const notice = emitted[0]
-    if (notice === undefined) throw new Error('approval notice was not emitted')
-    const ajv = new Ajv2020({ allErrors: true, strict: true, strictTypes: false })
-    addFormats(ajv)
-    const validate = ajv.compile(JSON.parse(await readFile(noticeSchemaPath, 'utf8')) as AnySchema)
-    expect(validate(notice), JSON.stringify(validate.errors)).toBe(true)
-    const first = manager.respond('platform-1', notice.noticeId, 'allow_once')
-    const second = manager.respond('platform-1', notice.noticeId, 'reject')
-    await expect(first).resolves.toEqual({ ok: true, duplicate: false })
-    await expect(second).rejects.toMatchObject({ data: { code: 'INTERACTION_ALREADY_CLOSED' } })
-    await expect(decision).resolves.toBe('allowed-once')
-    expect(emitted.at(-1)).toMatchObject({ status: 'closed', responseRequired: false })
-    expect(validate(emitted.at(-1)), JSON.stringify(validate.errors)).toBe(true)
+    await prepared?.close()
+    expect(interactions.notices('aa-1')).toEqual([])
+    expect(emitted.at(-1)).toMatchObject({ id: notice.id, responseRequired: false, status: 'closed' })
   })
 
-  it('delegates without opening a notice when no Connector owns the Bridge', async () => {
-    let handler: ApprovalHandler | undefined
-    const ctx = {
-      on: (_name: string, candidate: ApprovalHandler) => {
-        handler = candidate
-        return () => undefined
+  it('validates a replicated question before constructing its Web answer', async () => {
+    const interactions = manager([])
+    await interactions.consumeWebEnvelope('aa-2', {
+      rpcId: 'web-question-rpc',
+      payload: {
+        type: 'question/requested',
+        sessionId: SessionId('external-2'),
+        questions: [{
+          id: 'q1',
+          question: 'Choose',
+          options: [{ label: 'A', description: 'first' }],
+        }],
       },
-    } as unknown as Context
-    const manager = new InteractionManager(ctx, 4, () => undefined, () => false, async () => undefined)
-    manager.register()
-    if (handler === undefined) throw new Error('approval handler was not registered')
-    const fallback = vi.fn(async (): Promise<ApprovalOutcome> => 'unavailable')
-    await expect(handler({ agent: {} as Agent, toolName: 'shell' }, fallback)).resolves.toBe('unavailable')
-    expect(fallback).toHaveBeenCalledOnce()
+    })
+    const notice = interactions.notices('aa-2')[0]
+    if (notice === undefined) throw new Error('remote notice was not created')
+
+    expect(() => interactions.prepareRemoteResponse(
+      'aa-2', 'external-2', notice.id, 'submit', { answers: [{ id: 'q1', selected: ['missing'] }] },
+    )).toThrow(/unknown option/)
+    expect(interactions.prepareRemoteResponse(
+      'aa-2', 'external-2', notice.id, 'submit', { answers: [{ id: 'q1', selected: ['A'] }] },
+    )?.message).toMatchObject({
+      sessionId: 'external-2',
+      rpcId: 'web-question-rpc',
+      result: { ok: true, value: { answer: { answers: [{ id: 'q1', selected: ['A'] }] } } },
+    })
   })
 })

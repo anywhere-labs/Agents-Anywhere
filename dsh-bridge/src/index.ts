@@ -1,8 +1,6 @@
-/** Agents Anywhere host bridge for DeepSeek Harness. */
+/** Agents Anywhere gateway host; the browser entry is exported from ./client. */
 export {
-  AgentsAnywhereBridgeService,
+  AgentsAnywhereConnectorService,
   type Config,
   default,
-} from './service.js'
-
-export { MAX_FRAME_BYTES, PROTOCOL_VERSION, RUNTIME_ID } from './wire/protocol.js'
+} from './bridge-service.js'
