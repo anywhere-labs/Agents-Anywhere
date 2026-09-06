@@ -7,7 +7,6 @@ struct NewSessionView: View, Equatable {
     let repository: V2DashboardRepository
     var dashboardLoading = false
     var dashboardError: String?
-    var isSidebarVisible = false
     let onMenu: () -> Void
     let onManageDevice: (String) -> Void
     let onCreated: (V2SessionMeta) -> Void
@@ -25,7 +24,6 @@ struct NewSessionView: View, Equatable {
         lhs.model === rhs.model && lhs.connectors == rhs.connectors && lhs.sessions == rhs.sessions
             && lhs.dashboardLoading == rhs.dashboardLoading
             && lhs.dashboardError == rhs.dashboardError
-            && lhs.isSidebarVisible == rhs.isSidebarVisible
     }
 
     var body: some View {
@@ -33,8 +31,9 @@ struct NewSessionView: View, Equatable {
             GeometryReader { viewport in
                 ScrollView {
                     welcomeContent
+                        .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(24)
-                        .frame(maxWidth: 650)
+                        .frame(maxWidth: 760)
                         .frame(maxWidth: .infinity, minHeight: viewport.size.height)
                 }
                 .scrollDismissesKeyboard(.interactively)
@@ -52,7 +51,7 @@ struct NewSessionView: View, Equatable {
                     onApplySettings: { model.saveSelections(); return true })
             }
         }
-        .modifier(ChatPageToolbar(title: isSidebarVisible ? "" : String(localized: "Agents Anywhere"), onMenu: onMenu))
+        .modifier(ChatPageToolbar(title: "", onMenu: onMenu))
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) { targetButton }
         }
@@ -71,7 +70,7 @@ struct NewSessionView: View, Equatable {
     }
 
     private var welcomeContent: some View {
-        VStack(spacing: 28) {
+        VStack(alignment: .leading, spacing: 28) {
             NewSessionWelcomeView()
             workspaceButton
             connectionStatus
@@ -80,7 +79,7 @@ struct NewSessionView: View, Equatable {
                     .font(.subheadline).foregroundStyle(.secondary)
             }
             if let error = model.error {
-                VStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 12) {
                     Text(error).font(.subheadline).foregroundStyle(.secondary)
                     if model.creationUncertain {
                         Button(String(localized: "查看会话列表"), action: onMenu)
@@ -91,7 +90,7 @@ struct NewSessionView: View, Equatable {
                 }
             }
         }
-        .multilineTextAlignment(.center)
+        .multilineTextAlignment(.leading)
     }
 
     private var workspaceButton: some View {
@@ -121,14 +120,18 @@ struct NewSessionView: View, Equatable {
             showsTarget = true
         } label: {
             HStack(spacing: 8) {
-                VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: 4) {
                     Text(model.runtime?.sessionDisplayName ?? String(localized: "运行目标"))
-                        .font(.subheadline.weight(.semibold)).lineLimit(1)
-                    if horizontalSizeClass == .regular, let device = model.connector {
-                        Text(device.name).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                        .fontWeight(.semibold).layoutPriority(1)
+                    if let device = model.connector {
+                        Text(verbatim: "·").foregroundStyle(.secondary)
+                        Text(verbatim: device.name).foregroundStyle(.secondary)
+                            .truncationMode(.middle)
                     }
                 }
-                .frame(maxWidth: horizontalSizeClass == .regular ? 180 : 112, alignment: .leading)
+                .font(.subheadline)
+                .lineLimit(1)
+                .frame(maxWidth: horizontalSizeClass == .regular ? 280 : 210, alignment: .leading)
                 .fixedSize(horizontal: true, vertical: false)
                 Group {
                     if model.isPreparing { ProgressView().controlSize(.mini) }
@@ -138,7 +141,7 @@ struct NewSessionView: View, Equatable {
         }
         .disabled(model.isCreating)
         .accessibilityLabel(String(localized: "选择设备和 Agent"))
-        .accessibilityValue([model.connector?.name, model.runtime?.sessionDisplayName].compactMap { $0 }.joined(separator: " · "))
+        .accessibilityValue([model.runtime?.sessionDisplayName, model.connector?.name].compactMap { $0 }.joined(separator: " · "))
         .accessibilityIdentifier("chat.new.target")
     }
 
@@ -169,7 +172,7 @@ struct NewSessionView: View, Equatable {
     }
 
     private func status(_ title: String, detail: String, icon: String) -> some View {
-        VStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: 8) {
             Label(title, appSymbol: icon).font(.subheadline.weight(.medium))
             Text(detail).font(.footnote).foregroundStyle(.secondary)
         }
