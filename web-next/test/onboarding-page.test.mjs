@@ -73,6 +73,9 @@ function mockDevice(t, initialRuntimes = []) {
 
 test('onboarding embeds one-click Agent configuration and can continue without connecting a phone', async (t) => {
   const { create } = mockDevice(t)
+  const discovery = dashboardApi.discoverConnectorRuntimeTypes
+  let finishDiscovery
+  t.mock.method(dashboardApi, 'discoverConnectorRuntimeTypes', () => new Promise(resolve => { finishDiscovery = () => resolve(discovery()) }))
   const container = await render(t, h(PluginOnboardingPage))
   await until(() => container.querySelector('[data-slide="welcome"]'))
   assert.ok(container.querySelector('img[src="/images/onboarding/desktop.webp"]'))
@@ -81,7 +84,14 @@ test('onboarding embeds one-click Agent configuration and can continue without c
   assert.equal(document.querySelector('[role="dialog"]'), null)
   assert.equal([...container.querySelectorAll('button')].some(button => button.textContent === '配置 Agent'), false)
   const panel = container.querySelector('[aria-labelledby="agent-setup-title"]')
+  await until(() => finishDiscovery)
+  const next = [...container.querySelectorAll('button')].find(button => button.textContent === '下一步')
+  assert.equal(next.disabled, true)
+  assert.match(panel.textContent, /正在发现/)
+  await act(async () => finishDiscovery())
   await until(() => panel.textContent.includes('Codex'))
+  assert.equal(next.disabled, false)
+  assert.match(panel.textContent, /可添加/)
   await click(panel, '一键配置')
   assert.equal(create.mock.callCount(), 1)
   assert.equal(create.mock.calls[0].arguments[1], 'conn_demo')

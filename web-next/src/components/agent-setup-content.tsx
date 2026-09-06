@@ -106,7 +106,7 @@ export function AgentSetupContent({ connector, onContinue, onSkip, onChanged, co
   const inline = presentation === 'onboarding'
   const rowClassName = inline ? 'flex min-h-20 items-center gap-3 border-b border-border/60 py-5 last:border-b-0' : 'flex items-center gap-3 rounded-lg border p-4'
   const buttonClassName = inline ? 'h-9 rounded-lg px-3' : undefined
-  React.useEffect(() => { onBusyChange?.(busy) }, [busy, onBusyChange])
+  React.useEffect(() => { onBusyChange?.(busy || loading) }, [busy, loading, onBusyChange])
 
   return <div className="flex flex-col gap-6">
     <div className={inline ? 'flex max-h-[55vh] flex-col overflow-y-auto' : 'flex max-h-[55vh] flex-col gap-3 overflow-y-auto'}>
@@ -133,7 +133,7 @@ export function AgentSetupContent({ connector, onContinue, onSkip, onChanged, co
           </div>
         })}
         {addable.map(runtimeType => <div key={runtimeType.runtimeType} className={rowClassName}>
-          <div className="min-w-0 flex-1"><p className={inline ? 'text-base font-medium' : 'text-sm font-medium'}>{runtimeType.displayName}</p>{!inline && runtimeType.description ? <p className="text-xs text-muted-foreground">{runtimeType.description}</p> : null}</div>
+          <div className="min-w-0 flex-1"><p className={inline ? 'text-base font-medium' : 'text-sm font-medium'}>{runtimeType.displayName}</p>{inline ? <p className="text-xs text-muted-foreground">可添加</p> : runtimeType.description ? <p className="text-xs text-muted-foreground">{runtimeType.description}</p> : null}</div>
           <Button size="sm" className={buttonClassName} disabled={busy} onClick={() => void add(runtimeType)}>{addingType === runtimeType.runtimeType ? <Loader2 data-icon="inline-start" className="animate-spin" /> : <Plus data-icon="inline-start" />}{inline ? '一键配置' : t('quickAdd')}</Button>
         </div>)}
         {configured.length === 0 && addable.length === 0 ? <p className="py-4 text-sm text-muted-foreground">{t('noAgentsFound')}</p> : null}

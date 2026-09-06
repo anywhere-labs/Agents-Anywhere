@@ -6,7 +6,7 @@ import { Button } from "@/components/onboarding/reference/components/ui/button"
 import type { SlideProps } from "@/components/onboarding/reference/lib/onboarding"
 
 export function DeviceSlide({ connector, onNext }: SlideProps & { connector: { id: string; name: string } }) {
-  const [busy, setBusy] = useState(false)
+  const [busy, setBusy] = useState(true)
   return (
     <SlideFrame
       id="device"
