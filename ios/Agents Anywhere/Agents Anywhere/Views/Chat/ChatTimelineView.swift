@@ -1,8 +1,10 @@
 import SwiftUI
+#if DEBUG
+import OSLog
+#endif
 
 struct ChatTimelineView: View {
     let model: SessionChatModel
-    let bottomMargin: CGFloat
     let onAttachment: (V2AttachmentContent) -> Void
     let onFile: (String) -> Void
     @State private var historyLayout: TimelineHistoryLayout?
@@ -21,6 +23,9 @@ struct ChatTimelineView: View {
     @Environment(\.sidebarDrawerIsTransitioning) private var sidebarIsTransitioning
     @Environment(\.sidebarDrawerObscuresDetail) private var sidebarObscuresDetail
     @ScaledMetric(relativeTo: .caption) private var returnPillHeight: CGFloat = 32
+#if DEBUG
+    private static let drawerLayoutLog = Logger(subsystem: "agents.anywhere", category: "drawer-layout")
+#endif
 
     private var hasInteractions: Bool {
         model.session.notices.notices.contains { $0.isVisible && $0.notice.type == "interaction" }
@@ -39,7 +44,8 @@ struct ChatTimelineView: View {
                     onLoadOlder: loadOlder, onLoadLatest: loadLatest,
                     onHistoryLayout: historyDidLayOut,
                     onPromptVisibility: { latestPromptVisible = $0 },
-                    onOlderPromptVisibility: { olderPromptVisible = $0 })
+                    onOlderPromptVisibility: { olderPromptVisible = $0 },
+                    onTailVisibility: { region, visible in scrolling.tailVisibilityChanged(region, visible: visible) })
                     .equatable()
             }
             .scrollPosition($position)
@@ -47,7 +53,6 @@ struct ChatTimelineView: View {
             .scrollIndicators(.hidden)
             .scrollBounceBehavior(.always, axes: .vertical)
             .scrollEdgeEffectStyle(.soft, for: .top)
-            .contentMargins(.bottom, bottomMargin, for: .scrollContent)
             .defaultScrollAnchor(.top, for: .initialOffset)
             .defaultScrollAnchor(.top, for: .alignment)
             .defaultScrollAnchor(.top, for: .sizeChanges)
@@ -91,7 +96,18 @@ struct ChatTimelineView: View {
             }
             .onScrollGeometryChange(for: TimelineViewport.self) { geometry in
                 TimelineViewport(geometry: geometry)
-            } action: { _, value in
+            } action: { previous, value in
+#if DEBUG
+                // A device recording cannot distinguish a changed native
+                // offset from an upstream reflow. Record only vertical changes
+                // during drawer navigation, without logging message contents.
+                if navigationIsSuspended,
+                   abs(value.contentHeight - previous.contentHeight) > 1
+                    || abs(value.visibleHeight - previous.visibleHeight) > 1
+                    || abs(value.offsetY - previous.offsetY) > 1 {
+                    Self.drawerLayoutLog.debug("Drawer geometry: content \(previous.contentHeight, privacy: .public) -> \(value.contentHeight, privacy: .public), viewport \(previous.visibleHeight, privacy: .public) -> \(value.visibleHeight, privacy: .public), offset \(previous.offsetY, privacy: .public) -> \(value.offsetY, privacy: .public)")
+                }
+#endif
                 scrolling.geometryChanged(value)
                 if !navigationIsSuspended && scrolling.phase == .interacting { latestPull.update(value); olderPull.update(value) }
             }
@@ -127,6 +143,15 @@ struct ChatTimelineView: View {
                 do { try await Task.sleep(for: .milliseconds(24)) } catch { return }
                 guard !Task.isCancelled, !navigationIsSuspended, let command = scrolling.begin(request) else { return }
                 scrollToBottom(command)
+            }
+            .task(id: UserScrollSettlement(needed: scrolling.needsUserScrollSettlement,
+                tail: scrolling.tail, generation: scrolling.navigationGeneration)) {
+                guard scrolling.needsUserScrollSettlement else { return }
+                // Reconcile visibility after the native phase callback. This
+                // never holds opening behind a spinner or repeats a scroll.
+                do { try await Task.sleep(for: .milliseconds(64)) } catch { return }
+                guard !Task.isCancelled else { return }
+                scrolling.settleUserScroll()
             }
             .task(id: olderLoadRequest) {
                 guard let request = olderLoadRequest else { return }
@@ -167,7 +192,7 @@ struct ChatTimelineView: View {
                         .frame(minHeight: 44).contentShape(Rectangle())
                 }
                 .buttonStyle(.plain).accessibilityIdentifier("chat.timeline.bottom")
-                .padding(.bottom, bottomMargin + 2)
+                .padding(.bottom, 2)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -195,7 +220,10 @@ struct ChatTimelineView: View {
     private func scrollToBottom(_ command: TimelineScrollState.BottomCommand) {
         withAnimation(reduceMotion ? nil : .interactiveSpring(response: 0.28, dampingFraction: 1, blendDuration: 0.12),
             completionCriteria: .removed) {
-            position.scrollTo(y: command.request.bottomOffset)
+            // Let the scroll view resolve its own safe-area/inset coordinate
+            // system. The edge target is released when this animation finishes
+            // or as soon as a gesture/drawer/approval cancels the command.
+            position.scrollTo(edge: .bottom)
         } completion: {
             if scrolling.complete(command) { releaseScrollPosition() }
         }
@@ -219,6 +247,11 @@ struct ChatTimelineView: View {
         let ready: Bool
         let offset: CGFloat?
     }
+    private struct UserScrollSettlement: Equatable {
+        let needed: Bool
+        let tail: TimelineTailVisibility
+        let generation: Int
+    }
 }
 
 private struct ChatTimelineContent: View, Equatable {
@@ -236,6 +269,7 @@ private struct ChatTimelineContent: View, Equatable {
     let onHistoryLayout: (TimelineHistoryLayout) -> Void
     let onPromptVisibility: (Bool) -> Void
     let onOlderPromptVisibility: (Bool) -> Void
+    let onTailVisibility: (TimelineTailVisibility.Region, Bool) -> Void
 
     static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.model === rhs.model && lhs.latestPullReady == rhs.latestPullReady && lhs.isLoadingLatest == rhs.isLoadingLatest
@@ -317,6 +351,16 @@ private struct ChatTimelineContent: View, Equatable {
             // Constant breathing room: status text and card counts cannot
             // change this spacer or create a spurious follow request.
             Color.clear.frame(height: 32)
+                .overlay(alignment: .bottom) {
+                    Color.clear.frame(height: 96)
+                        .onScrollVisibilityChange(threshold: 0.01) { onTailVisibility(.near, $0) }
+                        .allowsHitTesting(false).accessibilityHidden(true)
+                }
+                .overlay(alignment: .bottom) {
+                    Color.clear.frame(height: 2)
+                        .onScrollVisibilityChange(threshold: 0.5) { onTailVisibility(.end, $0) }
+                        .allowsHitTesting(false).accessibilityHidden(true)
+                }
                 .id("tail")
         }
         .padding(.horizontal, 24).padding(.top, 16)

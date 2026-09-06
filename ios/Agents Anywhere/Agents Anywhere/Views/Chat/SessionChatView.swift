@@ -21,7 +21,6 @@ struct SessionChatView: View, Equatable {
     @State private var isDownloading = false
     @State private var toasts = ChatToastStore()
     @State private var headerHeight: CGFloat = 66
-    @State private var composerDockHeight: CGFloat = 66
     @State private var pendingTakeover: Bool?
     @State private var hasStartedLoading = false
     @Environment(\.colorScheme) private var colorScheme
@@ -50,7 +49,7 @@ struct SessionChatView: View, Equatable {
         GeometryReader { geometry in
             Group {
                 if hasStartedLoading {
-                    ChatTimelineView(model: model, bottomMargin: composerDockHeight,
+                    ChatTimelineView(model: model,
                         onAttachment: openAttachment, onFile: openFile)
                 } else {
                     Color.clear.frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -87,7 +86,7 @@ struct SessionChatView: View, Equatable {
                     }
                     .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { headerHeight = $0 }
                 }
-                .overlay(alignment: .bottom) {
+                .safeAreaInset(edge: .bottom, spacing: 0) {
                     VStack(spacing: 0) {
                         SessionInteractionDock(chat: model,
                             onShowAll: { expandedNoticeID = $0; sheet = .notices })
@@ -104,9 +103,8 @@ struct SessionChatView: View, Equatable {
                             onApplySettings: model.applySettings, applyError: { model.settingsError })
                     }
                     .frame(maxWidth: ChatControlMetrics.maximumContentWidth).frame(maxWidth: .infinity)
-                    // One measured inset owns the footer's space. Overlaying it
-                    // keeps the scroll viewport stable while cards/editors resize.
-                    .onGeometryChange(for: CGFloat.self, of: { ceil($0.size.height) }) { composerDockHeight = $0 }
+                    // Native safe-area layout owns both the visible scroll
+                    // region and the dock's space; do not add a second margin.
                 }
                 .overlay(alignment: .top) {
                     ChatErrorToasts(store: toasts, isRetrying: session.isLoading, onRetry: { _ in await session.refresh() })

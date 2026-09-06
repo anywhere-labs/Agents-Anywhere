@@ -11,10 +11,15 @@ import Testing
         let command = state.begin(request)
         return try #require(command)
     }
+    private func visibility(_ state: inout TimelineScrollState, end: Bool, near: Bool? = nil) {
+        state.tailVisibilityChanged(.near, visible: near ?? end)
+        state.tailVisibilityChanged(.end, visible: end)
+    }
 
     private func openedAtBottom() throws -> TimelineScrollState {
         var state = TimelineScrollState()
         state.geometryChanged(viewport(offset: 1320))
+        visibility(&state, end: true)
         state.open()
         let command = try nextCommand(&state)
         let completed = state.complete(command)
@@ -22,35 +27,45 @@ import Testing
         return state
     }
 
-    @Test func nativeInsetsAreCountedOnceForLongShortAndKeyboardLayouts() {
-        #expect(!TimelineViewport().isMeasured)
-        for (content, container, top, bottom, target) in [
-            (2000.0, 800.0, 80.0, 120.0, 1320.0),
-            (2000.0, 500.0, 80.0, 120.0, 1620.0),
-            (2000.0, 800.0, 80.0, 360.0, 1560.0),
-            (200.0, 800.0, 80.0, 120.0, -80.0),
-            (0.0, 800.0, 80.0, 120.0, -80.0)
-        ] {
-            let arrived = TimelineViewport(contentHeight: content, containerHeight: container,
-                topInset: top, bottomInset: bottom, offsetY: target)
-            #expect(arrived.bottomOffset == target && arrived.isAtBottom && arrived.isNearBottom)
-            let rounded = TimelineViewport(contentHeight: content, containerHeight: container,
-                topInset: top, bottomInset: bottom, offsetY: target - 0.5)
-            #expect(rounded.isAtBottom)
+    @Test func actualTailVisibilityWinsOverContentSizeAndInsetEstimates() throws {
+        // The UI supplies real marker visibility. Deliberately vary geometry
+        // without manufacturing an expected native "bottom offset" in the test.
+        for geometry in [viewport(offset: 500), viewport(offset: 900, container: 500),
+            viewport(offset: -80, height: 200), viewport(offset: -80, height: 32)] {
+            var state = try openedAtBottom()
+            state.browseHistory()
+            state.geometryChanged(geometry)
+            visibility(&state, end: true)
+            #expect(!state.showsBottomButton())
+            visibility(&state, end: false, near: true)
+            #expect(!state.showsBottomButton())
+            visibility(&state, end: false)
+            #expect(state.showsBottomButton())
         }
-        #expect(viewport(offset: 1313).isAtBottom)
-        #expect(!viewport(offset: 1280).isAtBottom && viewport(offset: 1280).isNearBottom)
-        #expect(!viewport(offset: 1200).isNearBottom)
+    }
+
+    @Test func endMarkerWinsWhenVisibilityCallbacksArriveInDifferentOrders() {
+        var tail = TimelineTailVisibility()
+        #expect(!tail.isMeasured)
+        tail.update(.end, visible: true)
+        tail.update(.near, visible: false)
+        #expect(tail.isMeasured && tail.isAtBottom && tail.isNearBottom)
+        tail.update(.end, visible: false)
+        #expect(!tail.isAtBottom && !tail.isNearBottom)
+        tail.update(.near, visible: true)
+        #expect(!tail.isAtBottom && tail.isNearBottom)
     }
 
     @Test func openingWaitsForDataAndGeometryThenRequestsOneAnimation() throws {
         var state = TimelineScrollState()
         state.geometryChanged(viewport())
+        visibility(&state, end: false)
         #expect(state.pendingBottomRequest == nil && !state.showsBottomButton())
         state.open()
         let command = try nextCommand(&state)
         let generation = state.navigationGeneration
         state.geometryChanged(viewport(offset: 1320))
+        visibility(&state, end: true)
         let completed = state.complete(command)
         #expect(completed)
         #expect(state.mode == .following && state.pendingBottomRequest == nil && !state.showsBottomButton())
@@ -59,11 +74,18 @@ import Testing
         var unmeasured = TimelineScrollState()
         unmeasured.open()
         #expect(unmeasured.pendingBottomRequest == nil)
+        // With top initial alignment, a long session's end may never have been
+        // onscreen. Opening must scroll without waiting for that callback.
+        unmeasured.geometryChanged(viewport())
+        #expect(unmeasured.pendingBottomRequest != nil)
+        unmeasured.tailVisibilityChanged(.near, visible: false)
+        #expect(unmeasured.pendingBottomRequest != nil)
     }
 
     @Test func offsetCallbacksCannotRestartAnAnimationForUnchangedLayout() throws {
         var state = try openedAtBottom()
         state.geometryChanged(viewport(offset: 1320, height: 2200))
+        visibility(&state, end: false)
         let command = try nextCommand(&state)
         state.phaseChanged(.animating, viewport: viewport(offset: 1320, height: 2200))
         for offset in stride(from: 1325.0, through: 1515.0, by: 5) {
@@ -71,6 +93,7 @@ import Testing
             #expect(state.pendingBottomRequest == nil && !state.showsBottomButton())
         }
         state.phaseChanged(.idle, viewport: viewport(offset: 1520, height: 2200))
+        visibility(&state, end: true)
         let completed = state.complete(command)
         #expect(completed)
         #expect(state.pendingBottomRequest == nil && !state.showsBottomButton())
@@ -79,12 +102,14 @@ import Testing
     @Test func newerStreamingLayoutSupersedesOnlyTheOldAnimation() throws {
         var state = try openedAtBottom()
         state.geometryChanged(viewport(offset: 1320, height: 2200))
+        visibility(&state, end: false)
         let first = try nextCommand(&state)
         state.geometryChanged(viewport(offset: 1400, height: 2400))
         let second = try nextCommand(&state)
         let completedFirst = state.complete(first)
         #expect(!completedFirst && state.activeCommand == second)
         state.geometryChanged(viewport(offset: 1720, height: 2400))
+        visibility(&state, end: true)
         let completedSecond = state.complete(second)
         #expect(completedSecond && state.pendingBottomRequest == nil)
     }
@@ -95,6 +120,10 @@ import Testing
         state.phaseChanged(.interacting, viewport: viewport(offset: 900))
         state.geometryChanged(viewport(offset: 1320)) // Older cached measurement.
         state.phaseChanged(.idle, viewport: viewport(offset: 900))
+        // A phase callback alone must not use the old visible end marker.
+        #expect(state.mode == .reading && state.needsUserScrollSettlement)
+        visibility(&state, end: false)
+        state.settleUserScroll()
         #expect(state.mode == .reading && state.showsBottomButton())
         state.geometryChanged(viewport(offset: 900, height: 2300))
         #expect(state.pendingBottomRequest == nil && state.showsBottomButton())
@@ -105,12 +134,18 @@ import Testing
     }
 
     @Test func aManualArrivalResumesFollowingButTheWiderPillMarginDoesNot() throws {
-        for (offset, expected) in [(1320.0, TimelineScrollState.Mode.following), (1280.0, .reading)] {
+        for (arrived, expected) in [(true, TimelineScrollState.Mode.following), (false, .reading)] {
             var state = try openedAtBottom()
-            state.phaseChanged(.interacting, viewport: viewport(offset: offset))
-            state.phaseChanged(.idle, viewport: viewport(offset: offset))
+            visibility(&state, end: false)
+            state.phaseChanged(.interacting, viewport: viewport(offset: 1000))
+            state.phaseChanged(.idle, viewport: viewport(offset: 1100))
+            // Arrival can be reported after idle. Only the end marker, not
+            // the wider pill margin, may restore following after settlement.
+            visibility(&state, end: arrived, near: true)
+            state.settleUserScroll()
             #expect(state.mode == expected && !state.showsBottomButton())
-            state.geometryChanged(viewport(offset: offset, height: 2200))
+            state.geometryChanged(viewport(offset: 1100, height: 2200))
+            visibility(&state, end: false)
             #expect((state.pendingBottomRequest != nil) == (expected == .following))
         }
     }
@@ -119,6 +154,7 @@ import Testing
         var state = try openedAtBottom()
         state.phaseChanged(.tracking, viewport: viewport(offset: 1000))
         state.phaseChanged(.decelerating, viewport: viewport(offset: 900))
+        visibility(&state, end: false)
         state.requestBottom()
         let command = try nextCommand(&state)
         state.phaseChanged(.idle, viewport: viewport(offset: 850))
@@ -131,9 +167,30 @@ import Testing
         #expect(state.mode == .reading && state.showsBottomButton())
     }
 
+    @Test func bottomPillCanReappearAfterEveryCompletedReturn() throws {
+        var state = try openedAtBottom()
+        for offset in [900.0, 700.0, 1000.0] {
+            state.phaseChanged(.tracking, viewport: viewport(offset: 1320))
+            state.phaseChanged(.interacting, viewport: viewport(offset: offset))
+            visibility(&state, end: false)
+            #expect(!state.showsBottomButton())
+            state.phaseChanged(.idle, viewport: viewport(offset: offset))
+            state.settleUserScroll()
+            #expect(state.showsBottomButton() && state.pendingBottomRequest == nil)
+            state.requestBottom()
+            let command = try nextCommand(&state)
+            state.phaseChanged(.animating, viewport: viewport(offset: offset))
+            visibility(&state, end: true)
+            state.phaseChanged(.idle, viewport: viewport(offset: 1320))
+            let completed = state.complete(command)
+            #expect(completed && !state.showsBottomButton() && state.pendingBottomRequest == nil)
+        }
+    }
+
     @Test func approvalsCancelQueuedFollowingAndReturnAfterTheFooterShrinks() throws {
         var state = try openedAtBottom()
         state.geometryChanged(viewport(offset: 1320, height: 2200))
+        visibility(&state, end: false)
         let queued = try #require(state.pendingBottomRequest)
         state.setInteractionPresented(true)
         let obsolete = state.begin(queued)
@@ -144,6 +201,7 @@ import Testing
         state.requestBottom() // An accepted response with other cards still present.
         let command = try nextCommand(&state)
         state.geometryChanged(.init(contentHeight: 2200, containerHeight: 800, topInset: 80, bottomInset: 360, offsetY: 1760))
+        visibility(&state, end: true)
         let completed = state.complete(command)
         #expect(completed && state.mode == .reading)
         state.geometryChanged(.init(contentHeight: 2250, containerHeight: 800, topInset: 80, bottomInset: 360, offsetY: 1760))
@@ -151,17 +209,19 @@ import Testing
         state.setInteractionPresented(false)
         state.geometryChanged(viewport(offset: 1520, height: 2250))
         let resized = try #require(state.pendingBottomRequest)
-        #expect(resized.bottomOffset == 1570 && state.returningToBottom)
+        #expect(resized.contentHeight == 2250 && state.returningToBottom)
     }
 
     @Test func anExistingApprovalCannotCancelTheInitialOpeningReturn() throws {
         var state = TimelineScrollState()
         state.geometryChanged(viewport())
+        visibility(&state, end: false)
         state.open(interactionPresented: true)
         state.setInteractionPresented(true)
         let command = try nextCommand(&state)
         #expect(state.returningToBottom)
         state.geometryChanged(viewport(offset: 1320))
+        visibility(&state, end: true)
         let completed = state.complete(command)
         #expect(completed && state.mode == .reading)
     }
@@ -173,6 +233,7 @@ import Testing
             let generation = state.navigationGeneration
             state.setNavigationSuspended(true)
             state.geometryChanged(viewport(offset: 1320, height: 2250))
+            visibility(&state, end: false)
             state.phaseChanged(.interacting, viewport: viewport(offset: 1320, height: 2250))
             #expect(state.navigationGeneration == generation)
             #expect(state.pendingBottomRequest == nil && !state.showsBottomButton())
@@ -185,6 +246,7 @@ import Testing
     @Test func closingDrawerCannotLetAnOldCompletionReleaseTheNewAnimation() throws {
         var state = TimelineScrollState()
         state.geometryChanged(viewport())
+        visibility(&state, end: false)
         state.open()
         let first = try nextCommand(&state)
         state.setNavigationSuspended(true)
@@ -208,6 +270,7 @@ import Testing
     @Test func anUnchangedFailedNativeTargetIsNotRetriedInALayoutLoop() throws {
         var state = TimelineScrollState()
         state.geometryChanged(viewport())
+        visibility(&state, end: false)
         state.open()
         let command = try nextCommand(&state)
         let completed = state.complete(command)

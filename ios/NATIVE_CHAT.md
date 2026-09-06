@@ -44,38 +44,46 @@ Semantic error and availability colors remain separate from the primary color.
   animation's completion and another 120 ms; a new selection cancels the pending
   start. A sidebar gesture after loading starts does not restart the connection.
   Opening loads the latest window, reveals it when the initial projection is
-  ready, and animates to the measured bottom offset. It never pages backward to
+  ready, and animates to the native bottom edge. It never pages backward to
   find a user message. Spinner dismissal and the 30 Hz presentation clock do not wait
   for scroll/layout acknowledgements; there is no frozen opening snapshot or
   positioning retry loop. Network failures still offer Retry.
 - `TimelineScrollState` owns three navigation modes: reading, following and
   returning. Opening, sending, accepted responses and the bottom pill all request
-  the same return operation. Each native animation targets one finite offset,
-  rather than leaving a persistent bottom edge to follow layout independently;
-  completion releases that position. Command IDs stop interrupted/old completions
+  the same return operation. SwiftUI resolves the bottom edge in its own inset
+  coordinate system; completion releases the target so it cannot keep pulling
+  later manual reading back down. Command IDs stop interrupted/old completions
   from releasing a newer target. Layout changes are
   coalesced for 24 ms, and offset callbacks cannot reissue the same target. The
   30 Hz token presentation and spring scroll animation remain independent.
-- Native `ScrollGeometry` is the only source of bottom distance. The clamped
-  bottom offset is `max(-topInset, contentHeight + bottomInset - containerHeight)`;
-  no screen visibility probe or duplicate footer inset participates. Arrival has
-  an 8-point tolerance, while the small borderless “到底部” pill stays hidden within
-  96 points. The pill remains centered above the footer and hides during tracking,
+- Two native visibility probes overlap the existing tail spacer. The 2-point end
+  marker decides arrival; the 96-point region hides the small borderless “到底部”
+  pill before the reader reaches the exact end. The end marker wins if callbacks
+  arrive in different orders. Content-size/inset arithmetic cannot override an
+  actually visible tail. Explicit opening does not wait for an offscreen marker
+  to become visible before issuing its first scroll. The pill stays centered
+  above the footer and hides during tracking,
   dragging, deceleration and programmatic scrolling. An interrupted request that
   did not reach its target leaves the pill available instead of endlessly retrying.
-- A new vertical gesture cancels automatic navigation immediately. The idle phase's
-  own geometry decides whether a completed manual scroll reached the bottom;
-  stopping nearby remains reading mode. Explicit returns survive old deceleration
+- A new vertical gesture cancels automatic navigation immediately. After idle,
+  a 64 ms settlement reconciles native phase and visibility callbacks before
+  granting auto-follow; stopping nearby remains reading mode. This never holds
+  opening behind a spinner. Explicit returns survive old deceleration
   callbacks. Active interactions cancel queued following; a requested return with
   remaining cards finishes in reading mode. Removing the last interaction requests
   the new bottom. Loading older history retains its existing measured anchor.
-- The composer and approval dock overlay the scroll view. Their actual, rounded
-  height supplies one bottom content margin; resizing the dock does not also
-  resize the scroll viewport. A constant 32-point spacer provides breathing room.
+- The composer and approval dock use one native bottom `safeAreaInset`, which
+  owns both the dock's space and the scroll view's visible region. There is no
+  measured-height feedback into a second content margin. A constant 32-point
+  spacer provides breathing room.
   The phone drawer applies the untransformed host's safe area (including keyboard)
   once, and suspends navigation throughout motion and while obscuring the detail.
   Resuming preserves reading intent and follows new content only when
-  appropriate. iPad keeps its default native split layout and animation.
+  appropriate. The phone card's `geometryGroup()` precedes its horizontal offset,
+  resolving the pan as one transform instead of propagating fractional positions
+  to individual text/scroll descendants. Controls and glass remain live; there is
+  no bitmap snapshot or deferred width layout. iPad keeps its default native split
+  layout and animation.
 - Both history prompts support a fresh 24-point outward pull and release when
   already visible: pulling past the top loads older messages, and pulling past
   the bottom loads newer records. The prompt changes to “松开加载”; tapping remains
@@ -313,14 +321,15 @@ than a “server unavailable” alert.
 
 Verified on 2026-09-06, without starting a server or simulator:
 
-- 135 headless Swift tests across eighteen suites pass against production client-core
+- 137 headless Swift tests across eighteen suites pass against production client-core
   sources. They cover API contracts, recovery/cache races, uncertain delivery,
   30 Hz presentation, echo handoff, target preparation, preference scope, schema
   payloads and interaction lifecycle/IME guards. Session-detail checks cover
   tool/diff parsing, grouping identity, file routing, export pagination/cancellation,
   OAuth callback validation, local-server classification and waiting-approval
   metadata through an actual repository connection and response. Navigation
-  cases cover native insets, short content, rounding, manual/explicit returns,
+  cases cover actual tail visibility despite conflicting geometry, out-of-order
+  visibility callbacks, opening before tail measurement, manual/explicit returns,
   animation completion ordering, drawer occlusion, interaction changes and both
   history edges. Sidebar status priority/order and compact approval
   grouping are checked against the Web and runtime contracts. Read receipt tests
@@ -417,6 +426,11 @@ keyboard layout and real mobile-network behavior still need manual validation:
     an animated return to bottom. Switch sessions rapidly during drawer motion.
     At the bottom of a long session, slowly open/close the iPhone drawer and leave
     it open; check stable footer spacing and no repeated vertical corrections.
+    Check the two gesture directions separately, especially revealing the session
+    from an already open drawer. Debug builds log vertical geometry changes during
+    drawer navigation under OSLog category `drawer-layout`: content/viewport height
+    and offset distinguish reflow or scrolling from a drawing-only flash. These
+    logs contain no message text and do not require a diagnostics overlay.
     Repeat while reading in the middle and while streaming. Expand/collapse the
     composer, show/dismiss the keyboard and respond to approval cards; check the
     bottom margin is applied once and that a manual upward scroll is respected.
