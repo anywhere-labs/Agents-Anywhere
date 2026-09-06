@@ -66,6 +66,14 @@ export class AccountApi {
     return result.connector
   }
 
+  async devices(token: string, signal: AbortSignal): Promise<Device[]> {
+    const result = await this.request<{ connectors: Device[] }>('/connectors', { headers: this.auth(token) }, signal)
+    if (!Array.isArray(result.connectors) || result.connectors.some(device => !device
+      || typeof device.id !== 'string' || !device.id || typeof device.userId !== 'string'
+      || typeof device.name !== 'string')) throw new Error('设备列表响应无效，请重试。')
+    return result.connectors
+  }
+
   async register(token: string, name: string, installationId: string, signal: AbortSignal): Promise<{ connector: Device; connectorToken: string }> {
     const result = await this.request<{ connector: Device; connectorToken: string }>('/connectors', {
       method: 'POST', headers: { ...this.auth(token), 'Content-Type': 'application/json' },
@@ -86,8 +94,8 @@ export class AccountApi {
   }
 
   async renewConnector(token: string, id: string, signal: AbortSignal): Promise<string> {
-    const result = await this.request<{ connectorToken: string }>(`/connectors/${encodeURIComponent(id)}/revoke`, { method: 'POST', headers: this.auth(token) }, signal)
-    if (!result.connectorToken) throw new Error('无法恢复设备凭据。')
+    const result = await this.request<{ connector: Device; connectorToken: string }>(`/connectors/${encodeURIComponent(id)}/revoke`, { method: 'POST', headers: this.auth(token) }, signal)
+    if (result.connector?.id !== id || !result.connectorToken) throw new Error('无法恢复设备凭据。')
     return result.connectorToken
   }
 

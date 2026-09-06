@@ -17,6 +17,7 @@ interface Dependencies {
   detect?: () => Promise<DesktopDetection>
   api?: (baseUrl: string) => AccountApi
   checkServer?: (baseUrl: string) => Promise<void>
+  readConnectorIds?: () => Promise<string[]>
   onlineTimeoutMs?: number
   pollIntervalMs?: number
 }
@@ -186,7 +187,10 @@ export class OnboardingManager {
     if (!account) throw new Error('请先完成登录。')
     signal.throwIfAborted()
     this.setProgress('pairing', '登录成功，正在连接本机设备…')
-    this.binding = await ensureBinding(this.config.stateRoot, account, api, signal)
+    this.binding = await ensureBinding(this.config.stateRoot, account, api, signal, {
+      ...(this.dependencies.readConnectorIds ? { readConnectorIds: this.dependencies.readConnectorIds } : {}),
+      renew: Boolean(code),
+    })
     signal.throwIfAborted()
     this.setProgress('starting', '正在启动本机连接，首次准备运行环境可能需要几分钟…')
     await this.connector.start(this.binding, this.settings.apiBaseUrl, signal)

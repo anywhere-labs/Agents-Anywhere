@@ -16,6 +16,7 @@ type DesktopDeviceServiceOptions = {
   fetcher: Fetcher;
   defaultServerUrl: () => string;
   apiNamespace: () => string;
+  recordLocalConnector: (connectorId: string) => void;
 };
 
 type ConnectorCredentialResponse = {
@@ -118,6 +119,8 @@ export class DesktopDeviceService {
       manualDisconnected: false,
     };
     try {
+      // Only POST /connectors creates a new local identity. Token rotation never appends one.
+      this.options.recordLocalConnector(credential.connector.id);
       this.options.binding.save(nextBinding);
     } catch (error) {
       const rollbackError = await this.tryRollbackCreatedConnector(

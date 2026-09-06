@@ -16,15 +16,18 @@ class FakeApi extends AccountApi {
   online = false
   validCredential = true
   renewals = 0
+  renewedIds: string[] = []
+  knownDevices: Device[] = []
   override async exchange(): Promise<Account> {
     this.exchanges++
     return { apiBaseUrl: this.baseUrl, userId: 'user-test', displayName: '测试用户', accessToken: 'USER-SECRET', expiresAt: Date.now() + 3600_000 }
   }
   override async me() { return { userId: 'user-test', displayName: '测试用户' } }
   override async device(): Promise<Device> { return { id: 'conn_test', name: 'Test', userId: 'user-test', status: this.online ? 'online' : 'offline' } }
+  override async devices() { return this.registrations ? [...this.knownDevices, await this.device()] : this.knownDevices }
   override async register() { this.registrations++; return { connector: await this.device(), connectorToken: 'CONNECTOR-SECRET' } }
   override async verifyConnector() { return this.validCredential }
-  override async renewConnector() { this.renewals++; this.validCredential = true; return 'RENEWED-SECRET' }
+  override async renewConnector(_token: string, id: string) { this.renewals++; this.renewedIds.push(id); this.validCredential = true; return 'RENEWED-SECRET' }
 }
 
 class FakeConnector implements ConnectorProcess {
@@ -44,6 +47,7 @@ async function fixture() {
   const checkedServers: string[] = []
   let healthError: Error | null = null
   let detection: DesktopDetection = { status: 'absent', message: 'not registered' }
+  let localIds: string[] = []
   const create = () => new OnboardingManager({
     stateRoot: root, connectorSourceDir: root, uvPath: 'uv', autoStart: false,
     apiBaseUrl: api.baseUrl,
@@ -51,12 +55,14 @@ async function fixture() {
     api: base => base === api.baseUrl ? api : new FakeApi(base), connector, detect: async () => detection,
     checkServer: async (base) => { checkedServers.push(base); if (healthError) throw healthError },
     onlineTimeoutMs: 5000, pollIntervalMs: 10,
+    readConnectorIds: async () => localIds,
   })
   let manager = create()
   return {
     root, api, connector, checkedServers,
     get manager() { return manager },
     setDesktop(value: DesktopDetection) { detection = value },
+    setLocalIds(value: string[]) { localIds = value },
     failHealthCheck() { healthError = new Error('无法连接服务器，请检查地址和网络后重试。') },
     async reopen() { await manager.dispose(); manager = create(); return manager },
     async close() { await manager.dispose(); await rm(root, { recursive: true, force: true }) },
@@ -127,6 +133,27 @@ test('cancelled and disposed callbacks cannot register or start a device', async
     assert.equal(h.connector.starts, 0)
     await h.manager.dispose()
     await assert.rejects(h.manager.begin(), /已关闭/)
+  } finally { await h.close() }
+})
+
+test('OAuth resumes the first matching shared Desktop ID with a new token and continues Web onboarding', async () => {
+  const h = await fixture()
+  h.api.online = true
+  h.api.knownDevices = [
+    { id: 'conn_later', userId: 'user-test', name: 'Later', status: 'online' },
+    { id: 'conn_test', userId: 'user-test', name: 'Desktop', status: 'online' },
+  ]
+  h.setLocalIds(['conn_removed', 'conn_test', 'conn_later'])
+  try {
+    const response = await callback((await h.manager.begin()).url)
+    await until(async () => (await h.manager.inspect()).stage === 'ready')
+    assert.equal(h.api.registrations, 0)
+    assert.deepEqual(h.api.renewedIds, ['conn_test'])
+    assert.equal(h.connector.starts, 1)
+    assert.equal((await h.manager.inspect()).connectorId, 'conn_test')
+    const progress = await fetch(`${response.headers.get('location')}/status`).then(response => response.json())
+    assert.match(progress.redirectUrl, /#\/onboarding\?.*connectorId=conn_test/)
+    assert.doesNotMatch(JSON.stringify(progress), /SECRET|token/i)
   } finally { await h.close() }
 })
 

@@ -67,7 +67,7 @@ test('Desktop discovery checks on every call and never rewrites the shared recor
     assert.equal((await detectDesktop(home)).status, 'installed')
     assert.equal((await stat(path)).mtimeMs, before.mtimeMs)
     await writeJson(path, { version: 1, platform: process.platform, executablePath: join(home, 'missing') })
-    assert.equal((await detectDesktop(home)).status, 'error')
+    assert.equal((await detectDesktop(home)).status, 'absent')
     await writeFile(path, '{broken')
     assert.equal((await detectDesktop(home)).status, 'error')
     assert.equal(await readFile(path, 'utf8'), '{broken')

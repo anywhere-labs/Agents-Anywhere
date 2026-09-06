@@ -31,21 +31,21 @@
 
 Desktop 已安装但暂未运行、没有登录或打开失败，不等于未安装。不能因此自动启动第二个由插件管理的 Connector。
 
-## 3. Desktop 安装记录与跨平台路径
+## 3. 本机共享记录与跨平台路径
 
 ### 3.1 固定的是路径规则，不是用户名和磁盘盘符
 
-新共享安装记录统一约定为：
+共享安装信息与本机 Connector ID 历史统一约定为：
 
 ```text
-<当前操作系统用户主目录>/.agentsanywhere/desktop/install.json
+<当前操作系统用户主目录>/.agentsanywhere/machine.json
 ```
 
 典型路径：
 
 ```text
-macOS:   /Users/<用户名>/.agentsanywhere/desktop/install.json
-Windows: C:\Users\<用户名>\.agentsanywhere\desktop\install.json
+macOS:   /Users/<用户名>/.agentsanywhere/machine.json
+Windows: C:\Users\<用户名>\.agentsanywhere\machine.json
 ```
 
 Windows 用户目录可能位于其他盘符，因此不能硬编码 `C:\Users`；macOS 也不能硬编码用户名。两端固定同一组相对路径片段，由操作系统解析用户主目录。
@@ -62,12 +62,14 @@ Windows 用户目录可能位于其他盘符，因此不能硬编码 `C:\Users`�
 
 ### 3.2 记录内容与写入者
 
-记录至少包含版本、平台、Desktop 应用路径和可执行文件路径。macOS 记录 `.app` 与内部可执行文件；Windows 记录实际 `.exe`，不假定安装在默认目录。
+记录包含 `version`、`desktop` 安装信息和有序 `connectorIds` 历史列表。macOS 记录 `.app` 与内部可执行文件；Windows 记录实际 `.exe`，不假定安装在默认目录。开发模式也写入，额外标记 `packaged: false`，保存 Electron 路径与 Desktop 项目启动参数。完整约定见[本机共享记录契约](../contracts/local-machine/1.0/README.md)。
 
 - 正式运行的 Desktop 负责记录自身真实安装地址，不能根据工作目录推测。
 - 记录不放 user token、Connector token 等凭据。
 - 使用原子替换方式更新，避免插件读到半份 JSON。
 - 不记录需要每次启动变化的检查时间戳，以免破坏“内容正确就不重写”的约定。
+- Desktop 只在创建新本机设备成功返回 ID 时追加历史，去重且保持首次记录顺序；已有设备 `/revoke` 重连及远程设备不追加。未来共享字段更新时保留其他字段，不另建相互漂移的文件。
+- Desktop 启动检查、写入和新设备记录均已实现。插件优先读取新文件，新文件不存在时兼容旧 `desktop/install.json`；权限及损坏错误正常报告，可执行文件已不存在时保留 ID 并允许 Web 流程。
 
 ### 3.3 Desktop 每次启动都检查
 
@@ -163,7 +165,7 @@ Connector 的源码位置、运行环境和数据目录显式配置。源码虚�
   → 用户登录并授权
   → 浏览器回到插件 localhost，携带授权码与 state
   → Host 校验回调并换取 user token
-  → 检查/注册本机设备，取得 Connector ID 和 token
+  → 读取本机共享 ID，与当前用户设备列表匹配；有匹配重连，无匹配新建
   → 保存凭据并交给内部 Connector，确认上线
   → 本地回调页面再重定向到 AA Web onboarding，携带 connectorId
   → Web 检查当前账号和设备归属，显示该设备的引导步骤
@@ -174,7 +176,7 @@ Connector 的源码位置、运行环境和数据目录显式配置。源码虚�
 实现约束：
 
 - 本地 OAuth 回调使用回环 HTTP 端点，与供 DSH 转发使用的 TCP/RPC 端点职责分离，不能把两种协议混为一个地址。
-- 复用已有有效本机设备绑定；刷新、重试或重复登录不能创建重复设备。
+- 先用 `GET /api/v2/connectors` 获取当前用户设备列表，与共享 ID 比对；多个匹配取本地记录顺序中的第一个，OAuth 后对该 ID 走 `/revoke` 换新 token。兼容旧插件私有绑定，将其 ID 作为最后一个本机候选。无交集才新建设备，列表/重连请求失败不得降级为新建。普通恢复可复用已验证有效的 token。
 - 本地回调只接受匹配且未消费的 state，授权码一次性消费，并使用 PKCE。
 - 注册设备和启动 Connector 可能耗时，本地回调可显示短暂进度，再跳转；不能先返回“已完成”静态页面并关闭回调，丢失后续跳转。
 - 回到 Web 的 URL 只携带设备 ID、来源和流程标识。user token、Connector token 均不得进入 URL。

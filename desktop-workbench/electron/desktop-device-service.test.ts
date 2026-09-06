@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { DesktopBindingStore } from "./desktop-binding";
 import { DesktopDeviceService } from "./desktop-device-service";
+import { MachineStateStore, machineStatePath } from "./machine-state";
 import type { ConnectorSupervisor } from "./connector-supervisor";
 import type { ConnectorPrivateConfig } from "./connector-types";
 
@@ -48,6 +49,8 @@ test("createAndConnect creates a Desktop connector without exposing its token", 
   assert.equal(result.connectorId, "connector-1");
   assert.equal(result.ownerUserId, "user-1");
   assert.equal("connectorToken" in result, false);
+  assert.deepEqual(harness.shared().connectorIds, ["connector-1"]);
+  assert.doesNotMatch(JSON.stringify(harness.shared()), /connector-secret|user-secret|Token/);
   harness.cleanup();
 });
 
@@ -129,6 +132,7 @@ test("reconnect rotates credentials for an existing local Desktop without creati
   assert.equal(harness.mock.credential?.connectorToken, "rotated-secret");
   assert.equal(harness.mock.restartCalls, 1);
   assert.equal(harness.mock.preflightCalls, 0);
+  assert.equal(harness.shared(), null);
 });
 
 for (const hasCredential of [true, false]) {
@@ -408,6 +412,35 @@ test("disconnectLocal discards the rotated token and keeps the local binding", a
   harness.cleanup();
 });
 
+test("new local IDs persist once and ordinary reuse or token rotation never rewrites the record", async (t) => {
+  const harness = createHarness(async () => Response.json({
+    connector: { id: "connector-1", name: "Local" }, connectorToken: "private",
+  }));
+  t.after(harness.cleanup);
+  const input = { userId: "user-1", userToken: "user-token", name: "Local" };
+  await harness.service.createAndConnect(input);
+  const before = fs.statSync(harness.machineState.filePath).mtimeMs;
+  await harness.service.createAndConnect(input);
+  await harness.service.reconnectAndConnect({ ...input, connectorId: "connector-1" });
+  assert.deepEqual(harness.shared().connectorIds, ["connector-1"]);
+  assert.equal(fs.statSync(harness.machineState.filePath).mtimeMs, before);
+});
+
+test("a failed public ID write rolls back the new device before replacing local credentials", async (t) => {
+  const requests: string[] = [];
+  const harness = createHarness(async (url, init) => {
+    requests.push(`${init?.method} ${new URL(url).pathname}`);
+    return Response.json({ connector: { id: "new-device", name: "Local" }, connectorToken: "private" });
+  });
+  t.after(harness.cleanup);
+  harness.machineState.recordConnectorId = () => { throw new Error("Cannot write machine record"); };
+  await assert.rejects(harness.service.createAndConnect({ userId: "user-1", userToken: "user-token", name: "Local" }), /machine record/);
+  assert.deepEqual(requests, ["POST /api/v2/connectors", "DELETE /api/v2/connectors/new-device"]);
+  assert.equal(harness.binding.get(), null);
+  assert.equal(harness.mock.saveCalls.length, 0);
+  assert.equal(harness.mock.startCalls, 0);
+});
+
 function seedLocalConnector(harness: ReturnType<typeof createHarness>): void {
   harness.binding.save({
     connectorId: "connector-old",
@@ -427,6 +460,7 @@ function seedLocalConnector(harness: ReturnType<typeof createHarness>): void {
 function createHarness(fetcher: (input: string | URL, init?: RequestInit) => Promise<Response>) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "aa-desktop-device-test-"));
   const binding = new DesktopBindingStore(path.join(directory, "binding.json"));
+  const machineState = new MachineStateStore(machineStatePath(directory));
   const mock: ConnectorMock = {
     credential: null,
     running: false,
@@ -480,11 +514,14 @@ function createHarness(fetcher: (input: string | URL, init?: RequestInit) => Pro
     fetcher,
     defaultServerUrl: () => "https://server.example",
     apiNamespace: () => "/api/v2",
+    recordLocalConnector: (id) => machineState.recordConnectorId(id),
   });
   return {
     service,
     binding,
     mock,
+    machineState,
+    shared: () => fs.existsSync(machineState.filePath) ? JSON.parse(fs.readFileSync(machineState.filePath, "utf8")) : null,
     cleanup: () => fs.rmSync(directory, { recursive: true, force: true }),
   };
 }

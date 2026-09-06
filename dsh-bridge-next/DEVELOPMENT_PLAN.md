@@ -8,7 +8,7 @@
 
 预期收益：只要插件与 Connector 之间的协议保持兼容，DSH 官方升级后，通常只需更新插件，无须同步修改 Connector。
 
-当前已实现无 AA Desktop 的插件登录、设备绑定、内部源码 Connector 管理与 Web onboarding，覆盖到“设置完成”。DSH runtime 保持占位，Python DSH 适配器的薄转发改造尚未开始。运行方法与验证范围见 [README](./README.md)。
+当前已实现无 AA Desktop 的插件登录、设备绑定、内部源码 Connector 管理与 Web onboarding，覆盖到“设置完成”。Desktop 启动安装登记、新建本机设备 ID 记录，以及插件 OAuth 后按共享 ID 恢复设备也已接入。DSH runtime 保持占位，Python DSH 适配器的薄转发改造尚未开始。运行方法与验证范围见 [README](./README.md)。
 
 插件入口为 DSH 主侧边栏设置上方的「手机连接」，使用官方扩展点与官方 Modal、Button、Input 等组件。登录文案及云端/自建实例交互与 Desktop 保持一致：自建实例仅输入后端地址，检查后端健康状态后发起 OAuth；本地只保存后端地址，按同源部署及本地开发端口约定推导 Web/OAuth 地址，不再单独配置或保存 OAuth 地址。
 
@@ -135,7 +135,7 @@ dsh-bridge-next/
 - DSH 会话数据仍由 DSH 原生持久化管理；插件只保存自己拥有的关联、幂等及必要同步元数据。
 - 每类状态只有一个维护者：DSH 会话以 DSH 为准；Connector 运行状态根据进程和真实反馈更新；设置页缓存用于展示。
 - 已安装 Desktop 时，账号、设备和 Connector 状态以 Desktop 为准；未安装时由插件拥有。检测到安装状态变化不等于可以自动接管另一个进程。
-- 共享安装记录固定为 `<操作系统用户主目录>/.agentsanywhere/desktop/install.json`。Desktop 每次启动检查，内容正确则不重写；插件每次进入引导重新读取并验证。完整路径、失效处理和兼容约定见 Onboarding 方案。
+- 共享本机记录固定为 `<操作系统用户主目录>/.agentsanywhere/machine.json`，包含安装信息与有序的本机 Connector ID 历史。Desktop 每次启动检查路径，正确则不重写；只在创建新本机设备时追加 ID。插件 OAuth 后将共享 ID 与当前用户设备列表匹配，取本地顺序中的第一个，换取新 token 后继续引导。完整字段与兼容规则见[共享记录契约](../contracts/local-machine/1.0/README.md)。
 
 “后续只更新插件”以协议兼容为前提。新功能超出现有 Connector 协议表达范围时，仍可能需要两端配合更新。
 
@@ -152,7 +152,7 @@ dsh-bridge-next/
 
 后续首期实施涉及新插件、Web onboarding 页面和 Connector 的 DSH 薄转发适配器。认证与设备管理优先复用既有服务端能力；若回环 OAuth 契约有缺口，先明确最小改动。其他运行时不纳入本次重写。
 
-Desktop 端启动登记与 onboarding 是后续独立接入工作。`desktop-workbench/` 仍由其他 Agent 负责，本任务只记录其需要遵守的文件和入口约定，不读取或修改该目录。
+Desktop 启动登记、本机新设备 ID 记录与侧栏设备名称排序已按用户授权接入；Desktop onboarding 页面与插件来源唤起后续实现。
 
 ## 7. 实施顺序与验收
 
@@ -163,12 +163,12 @@ Desktop 端启动登记与 onboarding 是后续独立接入工作。`desktop-wor
 3. **Web 交接与配置**：回调再次跳转到带 connectorId 的 Web 独立引导页，校验设备权限、复用全部 Agent 配置内容，接通 DSH 发现和配置。
 4. **手机与完成页**：页面内下载、扫码、可选跳过，完成页显示“立即体验”“下载桌面端”和官网链接。
 5. **DSH 业务迁移与端到端验证**：在插件实现 Agent 业务，同步收薄 Python 适配器，验证实际对话、历史/实时和重启恢复。
-6. **Desktop 接入**：由 Desktop 负责方接入启动记录、专门引导页、插件来源唤起及普通首启完成标记；最后处理新旧管理模式的显式交接。
+6. **Desktop 接入**：启动记录和新本机设备 ID 记录已实现；继续接入专门引导页、插件来源唤起及普通首启完成标记，最后处理新旧管理模式的显式交接。
 
 ## 8. 开发约定
 
 - 在当前分支工作；如需新分支，先告知用户。
-- `desktop-workbench/` 属于其他 Agent 的工作范围，不读取、修改或纳入本项目的 Git 提交。
+- `desktop-workbench/` 本次获准修改侧栏设备排序、启动记录与新本机设备 ID 登记；其他 Agent 的工作继续保持原样。
 - 开发使用本地链接安装和自动构建，无须每次重新生成安装包。
 - 使用独立测试数据目录及匹配的 Connector 配置，避免新旧插件争用同一端点或业务状态。
 - 核心 Host 逻辑支持无界面运行和测试，不依赖设置页打开或 Electron 窗口存在。

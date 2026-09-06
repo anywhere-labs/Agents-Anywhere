@@ -146,6 +146,23 @@ The build expects signing/notarization credentials to be supplied by release
 CI. `bundle:uv` verifies the upstream archive checksum before copying it into
 `build/uv`.
 
+## Shared local machine record
+
+On every launch, including `yarn dev`, Main checks its current installation and
+publishes `<OS user home>/.agentsanywhere/machine.json`. Correct, unchanged
+records are not rewritten. Development records contain the Electron executable,
+project path and launch arguments; packaged records contain the installed app
+and executable paths.
+
+Only newly created local Connectors append an ID to the ordered `connectorIds`
+history. Reconnecting an existing device does not append an ID. The DSH plugin
+reads this file and verifies ownership against the signed-in user's server
+device list before reusing an ID. Tokens remain private. See the
+[shared record contract](../contracts/local-machine/1.0/README.md).
+
+Sidebar devices use fixed Chinese pinyin/name ordering and an ID tie-breaker,
+so polling, presence changes and same-name devices do not reorder the list.
+
 ## Connector lifecycle
 
 - Successful Desktop login provisions a `connectorKind: "desktop"` device with

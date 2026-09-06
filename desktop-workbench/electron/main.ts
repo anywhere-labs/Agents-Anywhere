@@ -26,6 +26,7 @@ import {
 } from "./desktop-oauth";
 import { DesktopBindingStore } from "./desktop-binding";
 import { DesktopDeviceService } from "./desktop-device-service";
+import { desktopInstallation, MachineStateStore } from "./machine-state";
 import { DesktopSettingsStore } from "./desktop-settings";
 import { ConnectorLogStore } from "./log-store";
 import { readShellEnvironment } from "./shell-environment";
@@ -692,11 +693,20 @@ function requireLogs(): ConnectorLogStore {
 }
 
 async function initializeDesktopServices(): Promise<void> {
+  const machineState = new MachineStateStore();
   serverStore = new DesktopServerStore(path.join(app.getPath("userData"), "desktop-server.json"), activeDesktopServer());
   const dataPath = connectorDataPath();
   fs.mkdirSync(dataPath, { recursive: true, mode: 0o700 });
   settingsStore = new DesktopSettingsStore(desktopSettingsPath());
   logStore = new ConnectorLogStore(connectorLogsPath(), () => requireSettings().get());
+  try {
+    machineState.recordInstallation(desktopInstallation({
+      executablePath: process.platform === "linux" && app.isPackaged && process.env.APPIMAGE ? process.env.APPIMAGE : process.execPath,
+      appPath: app.getAppPath(), packaged: app.isPackaged, platform: process.platform,
+    }));
+  } catch (error) {
+    appendMainLog({ level: "ERROR", message: `Could not record Desktop installation: ${errorMessage(error)}` });
+  }
   bindingStore = new DesktopBindingStore(path.join(dataPath, "desktop-binding.json"));
   const shellEnvironment = await readShellEnvironment();
   connector = new ConnectorSupervisor({
@@ -724,6 +734,7 @@ async function initializeDesktopServices(): Promise<void> {
     fetcher: (input, init) => net.fetch(String(input), init),
     defaultServerUrl: apiOrigin,
     apiNamespace,
+    recordLocalConnector: (connectorId) => machineState.recordConnectorId(connectorId),
   });
   applyLoginItemSettings();
 }
