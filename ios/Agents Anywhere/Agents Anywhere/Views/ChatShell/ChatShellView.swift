@@ -7,8 +7,6 @@ struct ChatShellView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     @State private var sidebar = ChatSidebarState()
-    @State private var isSearching = false
-    @State private var searchText = ""
     @State private var selection = ChatShellSelection.newSession
 
     var body: some View {
@@ -16,16 +14,13 @@ struct ChatShellView: View {
             isOpen: $sidebar.isOpen,
             configuration: .chat
         ) { _ in
-            ChatSidebarHeaderView(
-                searchText: $searchText,
-                isSearching: $isSearching
-            )
+            ChatSidebarHeaderView()
         } sidebar: { safeAreaInsets in
             ChatSidebarView(
                 safeAreaInsets: safeAreaInsets,
                 devices: sidebarDevices,
-                pinnedSessions: matchingSessions.filter(\.pinned),
-                recentSessions: matchingSessions.filter { !$0.pinned },
+                pinnedSessions: sidebarSessions.filter(\.pinned),
+                recentSessions: sidebarSessions.filter { !$0.pinned },
                 account: sidebarAccount,
                 selectedDeviceId: selectedDeviceId,
                 selectedSessionId: selectedSessionId,
@@ -68,13 +63,9 @@ struct ChatShellView: View {
         return ChatSidebarAccount(me: me, avatarSource: appState.accountAvatarSource)
     }
 
-    private var matchingSessions: [ChatSidebarSession] {
-        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        return appState.sessions
+    private var sidebarSessions: [ChatSidebarSession] {
+        appState.sessions
             .filter { !$0.archived }
-            .filter { session in
-                query.isEmpty || session.title?.localizedStandardContains(query) == true
-            }
             .map { session in
                 ChatSidebarSession(session: session)
             }
@@ -156,7 +147,7 @@ struct ChatShellView: View {
                 let connectorID = session.metadata?.connectorId ?? appState.sessions.first { $0.id == id }?.connectorId
                 SessionChatView(session: session, services: services,
                     deviceName: appState.connectors.first { $0.id == connectorID }?.name,
-                    safeAreaInsets: safeAreaInsets, onMenu: toggleSidebar, onNewSession: startNewSession)
+                    safeAreaInsets: safeAreaInsets, onMenu: toggleSidebar)
                     .equatable()
                     .id(id)
             } else {

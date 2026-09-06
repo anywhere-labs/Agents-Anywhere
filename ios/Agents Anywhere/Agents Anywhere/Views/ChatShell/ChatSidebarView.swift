@@ -54,7 +54,7 @@ struct ChatSidebarView: View {
                     sessions: recentSessions,
                     selectedSessionId: selectedSessionId,
                     isLoading: isLoadingSessions,
-                    emptyMessage: "No sessions match",
+                    emptyMessage: "No sessions yet",
                     onOpen: onOpenSession,
                     onRename: onRenameSession,
                     onTogglePinned: onToggleSessionPinned,
@@ -88,56 +88,11 @@ struct ChatSidebarView: View {
 }
 
 struct ChatSidebarHeaderView: View {
-    @Binding var searchText: String
-    @Binding var isSearching: Bool
-
-    @FocusState private var isSearchFocused: Bool
-
     var body: some View {
-        VStack(spacing: 10) {
-            HStack(spacing: 12) {
-                AAWordmark(fontSize: 24)
-
-                Spacer(minLength: 8)
-
-                Button(action: toggleSearch) {
-                    Label(
-                        isSearching ? "Close search" : "Search sessions",
-                        systemImage: isSearching ? "xmark" : "magnifyingglass"
-                    )
-                    .labelStyle(.iconOnly)
-                }
-                .buttonStyle(.glass)
-                .buttonBorderShape(.circle)
-                .controlSize(.large)
-            }
-
-            if isSearching {
-                TextField("Search session titles", text: $searchText)
-                    .focused($isSearchFocused)
-                    .textFieldStyle(.plain)
-                    .submitLabel(.search)
-                    .padding(.horizontal, 12)
-                    .frame(minHeight: 38)
-                    .background(.primary.opacity(0.07), in: Capsule())
-            }
-        }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 10)
-        .onChange(of: isSearching) { _, searching in
-            isSearchFocused = searching
-        }
-    }
-
-    private func toggleSearch() {
-        withAnimation(.snappy(duration: 0.22)) {
-            if isSearching {
-                searchText = ""
-                isSearching = false
-            } else {
-                isSearching = true
-            }
-        }
+        AAWordmark(fontSize: 24)
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            .padding(.horizontal, 18)
+            .padding(.vertical, 10)
     }
 }
 

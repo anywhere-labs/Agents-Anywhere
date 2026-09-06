@@ -7,7 +7,6 @@ struct SessionChatView: View, Equatable {
     let deviceName: String?
     let safeAreaInsets: EdgeInsets
     let onMenu: () -> Void
-    let onNewSession: () -> Void
     @State private var sheet: SessionSheet?
     @State private var expandedNoticeID: String?
     private let fileService: V2WorkspaceFilesService
@@ -29,13 +28,13 @@ struct SessionChatView: View, Equatable {
     @ScaledMetric(relativeTo: .footnote) private var takeoverPillHeight: CGFloat = 32
 
     init(session: V2SessionModel, services: V2ClientServices, deviceName: String?, safeAreaInsets: EdgeInsets,
-         onMenu: @escaping () -> Void, onNewSession: @escaping () -> Void) {
+         onMenu: @escaping () -> Void) {
         _model = State(initialValue: SessionChatModel(session: session, repository: services.sessionRepository, attachments: services.attachments,
             files: services.workspaceFiles))
         sessionIdentity = session
         self.deviceName = deviceName
         fileService = services.workspaceFiles; detailService = services.sessionDetail
-        self.safeAreaInsets = safeAreaInsets; self.onMenu = onMenu; self.onNewSession = onNewSession
+        self.safeAreaInsets = safeAreaInsets; self.onMenu = onMenu
     }
     private var controls: ChatControlMetrics { .init(bodyLineHeight: bodyLineHeight) }
     private var session: V2SessionModel { model.session }
@@ -70,12 +69,11 @@ struct SessionChatView: View, Equatable {
                         status: model.headerStatus, reservesStatusLine: true,
                         controls: controls, onMenu: onMenu) {
                         HStack(spacing: 0) {
-                            Button(action: onNewSession) { ChatHeaderActionLabel(symbol: "square.and.pencil", controls: controls) }
-                                .accessibilityLabel("新建会话")
+                            Button { sheet = .files } label: { ChatHeaderActionLabel(symbol: "folder", controls: controls) }
+                                .accessibilityLabel("文件管理")
+                                .disabled(session.metadata?.cwd?.isEmpty != false)
                             Menu {
                                 Button("会话详情与导出", systemImage: "info.circle") { sheet = .details }
-                                Button("文件管理", systemImage: "folder") { sheet = .files }
-                                    .disabled(session.metadata?.cwd?.isEmpty != false)
                                 Button("复制会话 ID", systemImage: "number") { UIPasteboard.general.string = session.id }
                             } label: { ChatHeaderActionLabel(symbol: "ellipsis", controls: controls) }
                             .accessibilityLabel("会话菜单")
@@ -144,6 +142,7 @@ struct SessionChatView: View, Equatable {
             case .files:
                 if let meta = session.metadata, let cwd = meta.cwd {
                     WorkspaceFilesSheet(connectorId: meta.connectorId,
+                        deviceName: deviceName ?? meta.connectorId,
                         workspace: V2DeviceWorkspace(path: cwd, name: "会话文件", sessionCount: 1, lastActiveAt: nil),
                         service: fileService, session: session)
                 }

@@ -4,6 +4,7 @@ struct WorkspaceFilesSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     let connectorId: V2ConnectorID
+    let deviceName: String
     let workspace: V2DeviceWorkspace
     let service: V2WorkspaceFilesService
 
@@ -35,7 +36,7 @@ struct WorkspaceFilesSheet: View {
                 connectorId: connectorId,
                 root: workspace.path,
                 path: ".",
-                title: workspace.name,
+                title: deviceName,
                 service: service,
                 onOpenFile: openFile, onFileAction: startTransfer, canRead: canRead,
                 canTransfer: canRead && transfer == nil
@@ -52,7 +53,7 @@ struct WorkspaceFilesSheet: View {
                     connectorId: connectorId,
                     root: workspace.path,
                     path: route.path,
-                    title: route.title,
+                    title: deviceName,
                     service: service,
                     onOpenFile: openFile, onFileAction: startTransfer, canRead: canRead,
                     canTransfer: canRead && transfer == nil
@@ -133,7 +134,6 @@ private enum WorkspaceFileAction: Equatable { case download, openIn }
 
 private struct WorkspaceDirectoryRoute: Hashable {
     let path: String
-    let title: String
 }
 
 private struct WorkspaceDirectoryView: View {
@@ -206,6 +206,22 @@ private struct WorkspaceDirectoryView: View {
                     .foregroundStyle(.secondary)
             }
         }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            Text(currentDirectoryPath)
+                .font(.system(.caption, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 20).padding(.vertical, 12)
+                .background(.bar)
+                .accessibilityLabel("当前目录：\(currentDirectoryPath)")
+                .contextMenu {
+                    Button("复制路径", systemImage: "document.on.document") {
+                        UIPasteboard.general.string = currentDirectoryPath
+                    }
+                }
+        }
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
         .refreshable {
@@ -214,6 +230,13 @@ private struct WorkspaceDirectoryView: View {
         .task(id: "\(path):\(canRead)") {
             await loadDirectory()
         }
+    }
+
+    private var currentDirectoryPath: String {
+        // fs/list returns the device's resolved absolute directory. Keep its
+        // POSIX/Windows spelling rather than interpreting it on the iOS host.
+        if !model.resolvedPath.isEmpty { return model.resolvedPath }
+        return path == "." ? root : path
     }
 
     private func loadDirectory() async {
@@ -234,7 +257,7 @@ private struct WorkspaceEntryRow: View {
 
     var body: some View {
         if entry.isDirectory {
-            NavigationLink(value: WorkspaceDirectoryRoute(path: entry.path, title: entry.name)) {
+            NavigationLink(value: WorkspaceDirectoryRoute(path: entry.path)) {
                 label
             }
         } else {

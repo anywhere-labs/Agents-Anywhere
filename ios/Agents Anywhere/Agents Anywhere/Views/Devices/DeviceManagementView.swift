@@ -151,12 +151,10 @@ struct DeviceManagementView: View {
         .sheet(item: $selectedWorkspace) { workspace in
             WorkspaceFilesSheet(
                 connectorId: connector.id,
+                deviceName: connector.name,
                 workspace: workspace,
                 service: workspaceFilesService
             )
-            .presentationDetents([.medium, .large])
-            .presentationContentInteraction(.resizes)
-            .presentationDragIndicator(.visible)
         }
     }
 
