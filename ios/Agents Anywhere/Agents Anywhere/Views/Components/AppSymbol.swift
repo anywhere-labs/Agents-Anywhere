@@ -13,7 +13,7 @@ struct AppSymbol: View {
 
     private var image: Image {
         if let asset = AppSymbolAssets.names[name] { Image(asset) }
-        else { Image(systemName: name) }
+        else { Image("aa-CircleHelp") }
     }
 
     var body: some View {
@@ -35,6 +35,14 @@ extension Label where Title == Text, Icon == AppSymbol {
 extension Button where Label == SwiftUI.Label<Text, AppSymbol> {
     init(_ title: String, appSymbol: String, role: ButtonRole? = nil, action: @escaping () -> Void) {
         self.init(role: role, action: action) { SwiftUI.Label(title, appSymbol: appSymbol) }
+    }
+}
+
+extension ContentUnavailableView where Label == SwiftUI.Label<Text, AppSymbol>, Description == Text?, Actions == EmptyView {
+    init(_ title: String, appSymbol: String, description: Text? = nil) {
+        self.init {
+            SwiftUI.Label { Text(verbatim: title) } icon: { AppSymbol(appSymbol, size: 36) }
+        } description: { description }
     }
 }
 

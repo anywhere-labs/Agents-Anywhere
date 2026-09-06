@@ -40,7 +40,7 @@ struct ProjectSelectionSheet: View {
             }
             .refreshable { await repository.refresh() }
             .navigationTitle(String(localized: "选择项目")).navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button(String(localized: "关闭")) { dismiss() } } }
+            .toolbar { SheetCloseToolbar { dismiss() } }
         }
         .presentationDetents([.large])
         .sheet(isPresented: $createsProject) {
@@ -77,6 +77,8 @@ struct ProjectEditorSheet: View {
     @State private var error: String?
     @State private var reuse: V2Project?
     @State private var showsFiles = false
+    @State private var confirmsDiscard = false
+    @State private var didInitialize = false
 
     private var device: V2Connector? { repository.connectors.first { $0.id == deviceID } }
     private var valid: Bool {
@@ -112,23 +114,29 @@ struct ProjectEditorSheet: View {
                     Text(String(localized: "项目固定在这台设备的这个目录中。会话会使用项目的目录。"))
                 }
                 if let error { Section { Text(error).foregroundStyle(.secondary) } }
-                Section {
-                    AppGlassButton(project == nil ? String(localized: "创建项目") : String(localized: "保存"), systemImage: "checkmark", style: .prominent,
-                        isLoading: saving, disabled: !valid) { Task { await save() } }
-                        .listRowBackground(Color.clear)
-                }
             }
             .disabled(saving)
             .navigationTitle(project == nil ? String(localized: "创建项目") : String(localized: "编辑项目")).navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button(String(localized: "取消")) { dismiss() }.disabled(saving) } }
+            .toolbar {
+                SheetEditorToolbar(saveTitle: project == nil ? String(localized: "Create") : String(localized: "Save"),
+                    isWorking: saving, saveDisabled: !valid,
+                    onCancel: { if hasChanges { confirmsDiscard = true } else { dismiss() } },
+                    onSave: {
+                        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                        Task { await Task.yield(); await save() }
+                    })
+            }
             .onAppear {
+                guard !didInitialize else { return }
+                didInitialize = true
                 name = project?.name ?? ""
                 deviceID = project?.connectorId ?? connectorID
                 path = project?.workspacePath ?? ""
             }
             .onChange(of: deviceID) { old, new in if old != new && project == nil { path = "" } }
         }
-        .presentationDetents([.large]).interactiveDismissDisabled(saving)
+        .presentationDetents([.large]).interactiveDismissDisabled(saving || hasChanges)
+        .confirmDiscardChanges($confirmsDiscard) { dismiss() }
         .alert(String(localized: "这个目录已有项目"), isPresented: Binding(get: { reuse != nil }, set: { if !$0 { reuse = nil } })) {
             Button(String(localized: "取消"), role: .cancel) { reuse = nil }
             Button(String(localized: "使用此项目并保存名称")) {
@@ -146,6 +154,11 @@ struct ProjectEditorSheet: View {
             }
         }
     }
+    private var hasChanges: Bool {
+        name != (project?.name ?? "") || path != (project?.workspacePath ?? "")
+            || deviceID != (project?.connectorId ?? connectorID)
+    }
+
     private func save(reusing id: String? = nil) async {
         guard valid, !saving else { return }
         saving = true; error = nil

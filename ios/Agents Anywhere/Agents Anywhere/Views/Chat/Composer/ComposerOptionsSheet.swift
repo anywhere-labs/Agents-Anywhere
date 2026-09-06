@@ -84,9 +84,7 @@ struct ComposerOptionsSheet: View {
                 }
             }
             .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button(String(localized: "关闭"), appSymbol: "xmark") { dismiss() }
-                }
+                SheetCloseToolbar(disabled: isApplying) { dismiss() }
             }
         }
         .presentationDetents([.medium, .large], selection: $detent)

@@ -37,6 +37,32 @@ final class RuntimeConfigurationModel {
     private(set) var errors: [String: String] = [:]
     private var original: [String: JSONValue]
     private var base: [String: JSONValue]
+    @ObservationIgnored private var initialDraft: DraftSnapshot?
+
+    var hasChanges: Bool { snapshot != initialDraft }
+    private struct DraftSnapshot: Equatable {
+        let base: [String: JSONValue]
+        let text: [String: String]
+        let booleans: [String: Bool]
+        let choices: [String: JSONValue]
+        let gateways: [String: RuntimeGatewayDraft]
+        let environments: [String: [JSONValue]]
+        let models: [String: [JSONValue]]
+    }
+    private var snapshot: DraftSnapshot {
+        // Row IDs are view identity, not an edit. Resetting to the same values
+        // should not produce a discard warning just because rows were rebuilt.
+        .init(base: base, text: textValues, booleans: boolValues, choices: choiceValues,
+            gateways: gateways, environments: environments.mapValues { rows in
+                rows.map { .array([.string($0.key), .string($0.value), .bool($0.removesInherited)]) }
+            }, models: customModels.mapValues { rows in
+                rows.map { row in
+                    .array([.string(row.modelID), .string(row.displayName), .array(row.efforts.map {
+                        .array([.string($0.effortID), .string($0.displayName)])
+                    })])
+                }
+            })
+    }
 
     init(schema: V2RuntimeConfigSchema, config: JSONValue?) {
         self.schema = schema
@@ -44,6 +70,7 @@ final class RuntimeConfigurationModel {
         original = initial
         base = initial
         load(initial)
+        initialDraft = snapshot
     }
 
     func resetDefaults() {

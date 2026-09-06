@@ -25,7 +25,7 @@ struct DeviceProjectGrid: View {
                     maxWidth: nil, action: onCreate)
             }
             if projects.isEmpty {
-                ContentUnavailableView(String(localized: "No projects yet"), systemImage: "folder",
+                ContentUnavailableView(String(localized: "No projects yet"), appSymbol: "folder",
                     description: Text(String(localized: "Create a project to choose where your agents work.")))
             } else {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 260), spacing: 14)], spacing: 14) {
@@ -116,7 +116,7 @@ struct DeviceSessionList: View {
                 ForEach(V2DeviceSessionFilter.allCases) { Text($0.title).tag($0) }
             }.pickerStyle(.segmented)
             if model.filteredSessions.isEmpty {
-                ContentUnavailableView(String(localized: "No sessions here"), systemImage: "bubble.left.and.bubble.right",
+                ContentUnavailableView(String(localized: "No sessions here"), appSymbol: "bubble.left.and.bubble.right",
                     description: Text(String(localized: "Choose another filter or start a new session.")))
             } else {
                 LazyVStack(spacing: 6) {

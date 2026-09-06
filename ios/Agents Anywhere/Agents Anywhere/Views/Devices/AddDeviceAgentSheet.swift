@@ -34,9 +34,7 @@ struct AddDeviceAgentSheet: View {
             .navigationTitle(String(localized: "添加 Agent")).navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) { AgentRediscoveryButton(model: model) }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button(String(localized: "完成")) { dismiss() }.disabled(model.busyID != nil)
-                }
+                SheetCloseToolbar(disabled: model.busyID != nil) { dismiss() }
             }
         }
         .presentationDetents([.large])

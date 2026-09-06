@@ -18,7 +18,7 @@ struct SessionNoticesSheet: View {
             }
             .navigationTitle(String(localized: "交互与通知"))
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button(String(localized: "完成")) { dismiss() } } }
+            .toolbar { SheetCloseToolbar { dismiss() } }
         }
         .presentationDetents([.large])
     }

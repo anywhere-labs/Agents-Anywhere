@@ -66,6 +66,8 @@ final class AppState: ObservableObject {
         return APIClient(serverURL: serverURL)
     }
 
+    var isServerConnected: Bool { cachedServices?.dashboardRepository.canWrite == true }
+
     func accessToken() -> String? {
         try? keychain.readString(account: tokenAccount)
     }

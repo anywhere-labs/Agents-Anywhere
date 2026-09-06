@@ -31,12 +31,12 @@ struct SessionTargetSheet: View {
                     Text(String(localized: "接下来选择这台设备上的 Agent。选完后才会更改当前运行目标。"))
                 }
                 if model.connectors.isEmpty {
-                    ContentUnavailableView(String(localized: "没有设备"), systemImage: "desktopcomputer", description: Text(String(localized: "请先从侧栏添加并连接设备。")))
+                    ContentUnavailableView(String(localized: "没有设备"), appSymbol: "desktopcomputer", description: Text(String(localized: "请先从侧栏添加并连接设备。")))
                 }
             }
             .navigationTitle(String(localized: "运行目标"))
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button(String(localized: "取消")) { dismiss() } } }
+            .toolbar { SheetCloseToolbar { dismiss() } }
             .navigationDestination(for: String.self) { deviceID in agents(on: deviceID) }
         }
         .presentationDetents([.large])

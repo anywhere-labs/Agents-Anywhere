@@ -368,11 +368,59 @@ are validated before token exchange, and the profile is verified before saving
 credentials. Cancelling the browser remains a retryable login outcome rather
 than a “server unavailable” alert.
 
+## Device overview, configuration and settings
+
+The device page uses the same safe-area ownership as chat: the phone drawer
+provides its insets, while an iPad split view owns the native safe area. The
+centered content contains configured Agents and a Projects/Sessions switch.
+Projects use canonical project IDs, with files, new-session, rename, pin,
+archive and delete actions. Session rows reuse the sidebar's unread/running/
+approval presentation and support project filtering, paging and batch actions.
+
+Runtime configuration follows Web's JSON Schema and UI metadata. Gateway,
+environment variables and custom models/efforts have structured editors.
+Environment values preserve the distinction between an empty string and an
+unset (`null`) override. Draft row identities survive edits, incomplete input
+remains editable, field validation precedes saving, and reconnects do not replace
+the draft. Reset preserves named-instance requirements, and leaving an edited
+form offers to discard the draft. Switches use the native green switch style.
+
+Settings opens at the large detent. Account, App, Workspace and About are grouped
+native rows, with separate editors for nickname, email, avatar and password.
+Appearance offers System/Light/Dark; language follows iOS per-app preferences
+and links to the app's system settings. Browse sheets share a trailing glass
+close button; pushed browse pages keep the native back button. Editors share
+leading Cancel and trailing Save/Add with a stable loading indicator. The file
+browser and composer options retain their medium/large detents.
+
+All app-owned copy lives in English/Simplified Chinese string catalogs, including
+errors, accessibility labels and system permission explanations. Localize strings
+before passing them through a `String`-typed wrapper; a plain Swift `String`
+does not get SwiftUI's literal localization automatically. Interpolate complete
+phrases rather than concatenating translated fragments. Runtime metadata keys
+reuse Web's translations; user text, tool output and protocol identifiers are
+kept intact. English count phrases have plural variants.
+
+App icons use native template SVG assets generated from the installed Web Lucide
+package. `AppSymbol` and `AppFileSymbol` centralize action and file-type mappings;
+native controls such as switches, progress indicators and system pickers retain
+their platform drawing. Regenerate or verify the committed vectors after changing
+`ios/Design/Symbols.json` or updating Web's Lucide dependency:
+
+```sh
+node ios/scripts/sync-symbols.mjs
+node ios/scripts/sync-symbols.mjs --check
+```
+
+The generator also accepts a Web `node_modules` directory as its first argument
+when the iOS worktree has no Web dependencies. It never downloads a new package.
+The bundled Lucide license is visible under Settings → About.
+
 ## Verified checks
 
 Verified on 2026-09-06, without starting a server or simulator:
 
-- 170 headless Swift tests across 22 suites pass against production client-core
+- 177 headless Swift tests across 23 suites pass against production client-core
   sources. They cover API contracts, recovery/cache races, uncertain delivery,
   30 Hz presentation, echo handoff, target preparation, preference scope, schema
   payloads and interaction lifecycle/IME guards. Session-detail checks cover
@@ -399,6 +447,13 @@ Verified on 2026-09-06, without starting a server or simulator:
   pulls, cancellation and opening without fetching earlier user messages.
   Attachment/delivery tests cover sparse/reordered echoes, bounded caches, FS
   thumbnail reads, offline preview reuse and preserving a newer identical draft.
+  Configuration tests exercise the real Codex schema, Gateway validation,
+  environment unset/empty values, model/effort validation, reset and draft state.
+- The catalog check covers every compiler-extracted app string, English/Chinese
+  translation completeness, interpolation argument types/order, plural rules,
+  permission dialogs and shared Web runtime metadata. A standalone Foundation
+  probe reads compiled `.lproj` files and checks translations, plural counts
+  0/1/2, reordered arguments and both permission descriptions.
 - The Python backend contract fixture exporter reports that fixtures are current.
 - `Tests/DrawerLayoutProbe.swift` uses the real SwiftUI `ImageRenderer` on macOS,
   without a window or simulator. Across 44 renders at 2x/3x with fractional pan
@@ -417,6 +472,17 @@ From the repository root:
 
 ```sh
 DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer swift test --package-path ios
+uv run --no-project python ios/scripts/check-localization.py
+```
+
+After a successful unsigned build, verify compiler-extracted coverage and the
+actual compiled resources without starting an app:
+
+```sh
+uv run --no-project python ios/scripts/check-localization.py --derived-data ios/.build/xcode
+DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer swift \
+  ios/Tests/LocalizationProbe.swift \
+  'ios/.build/xcode/Build/Products/Debug-iphoneos/Agents Anywhere.app'
 ```
 
 Native transform regression on macOS, without launching the app:

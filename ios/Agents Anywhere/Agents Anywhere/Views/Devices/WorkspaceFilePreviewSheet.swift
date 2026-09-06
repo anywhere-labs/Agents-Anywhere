@@ -46,11 +46,11 @@ struct WorkspaceFilePreviewSheet: View {
                     .font(.footnote).foregroundStyle(.secondary).padding(12).frame(maxWidth: .infinity).background(.regularMaterial) }
             }
             .toolbar {
-                if isDownloading { ToolbarItem(placement: .topBarTrailing) { ProgressView().accessibilityLabel(String(localized: "正在下载")) } }
-                ToolbarItem(placement: .topBarTrailing) {
+                if isDownloading { ToolbarItem(placement: .topBarLeading) { ProgressView().accessibilityLabel(String(localized: "正在下载")) } }
+                ToolbarItem(placement: .topBarLeading) {
                     Button(String(localized: "重新加载"), appSymbol: "arrow.clockwise") { attempt += 1 }.disabled(!canRead || loading)
                 }
-                ToolbarItem(placement: .confirmationAction) { Button(String(localized: "关闭"), appSymbol: "xmark") { dismiss() } }
+                SheetCloseToolbar { dismiss() }
             }
         }
         .presentationDetents([.large]).presentationDragIndicator(.visible)

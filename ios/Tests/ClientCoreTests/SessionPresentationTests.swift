@@ -19,7 +19,7 @@ import Testing
         let mcp = TimelineEntryPresentation(item: try item(content: ["kind": "mcp", "input": ["server": "docs", "tool": "search", "query": "SwiftUI"]]), cwd: nil)
         #expect(mcp.title == "docs / search" && mcp.input != nil)
         let agent = TimelineEntryPresentation(item: try item(content: ["kind": "agent_call", "action": "spawn", "description": "Review changes"]), cwd: nil)
-        #expect(agent.title == "创建 Agent：Review changes")
+        #expect(agent.title == String(localized: "\(String(localized: "创建 Agent")): \("Review changes")"))
     }
 
     @Test @MainActor func tokenAndToolOutputUpdatesDoNotInvalidateListStructure() throws {
@@ -46,7 +46,7 @@ import Testing
             ["path": "/work/new.swift", "kind": "add", "diff": "let value = 1"],
             ["path": "/work/old.swift", "kind": "delete", "diff": "old"]
         ], "output": "must not duplicate the diff"]), cwd: "/work")
-        #expect(changes.title == "已修改文件" && changes.hasToolDetails)
+        #expect(changes.title == String(localized: "Modified \(String(localized: "文件"))") && changes.hasToolDetails)
         #expect(changes.output == nil && changes.changes.count == 2)
         #expect(changes.changes[1].diff == "-old")
     }
@@ -68,7 +68,7 @@ import Testing
             ["filePath": "/work/src/app.swift", "kind": ["type": "add"], "diff": "let value = 1\n"]
         ]])
         let entry = TimelineEntryPresentation(item: value, cwd: "/work")
-        #expect(entry.kind == .tool && entry.title == "已创建 src/app.swift")
+        #expect(entry.kind == .tool && entry.title == String(localized: "Created \("src/app.swift")"))
         #expect(entry.changes.first?.diff == "+let value = 1\n+")
         #expect(TimelineText.displayPath("/workspace/a", cwd: "/work") == "/workspace/a")
         #expect(TimelineText.displayPath("C:\\repo\\src\\a.ts", cwd: "C:\\repo") == "src/a.ts")

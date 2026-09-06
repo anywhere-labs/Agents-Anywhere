@@ -5,7 +5,8 @@ struct PasswordSettingsView: View {
 
     @State private var password = ""
     @State private var confirmation = ""
-    @State private var isShowingSuccess = false
+    @State private var confirmsDiscard = false
+    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         Form {
@@ -18,28 +19,20 @@ struct PasswordSettingsView: View {
                 Text(String(localized: "Use at least 8 characters. Changing the password does not sign out this device."))
             }
 
-            Section {
-                Button(action: savePassword) {
-                    HStack {
-                        Spacer()
-                        if appState.isAccountWorking {
-                            ProgressView()
-                                .controlSize(.small)
-                        }
-                        Text(String(localized: "Save password"))
-                        Spacer()
-                    }
-                }
-                .disabled(password.isEmpty || confirmation.isEmpty || appState.isAccountWorking)
-            }
         }
         .navigationTitle(String(localized: "Password"))
         .navigationBarTitleDisplayMode(.inline)
-        .alert(String(localized: "Password updated"), isPresented: $isShowingSuccess) {
-            Button(String(localized: "OK"), role: .cancel) {}
-        } message: {
-            Text(String(localized: "Your new password will be used the next time you sign in."))
+        .scrollContentBackground(.hidden).background(Color(uiColor: .systemBackground))
+        .navigationBarBackButtonHidden()
+        .toolbar {
+            SheetEditorToolbar(isWorking: appState.isAccountWorking,
+                saveDisabled: password.count < 8 || password != confirmation,
+                onCancel: { if password.isEmpty && confirmation.isEmpty { dismiss() } else { confirmsDiscard = true } },
+                onSave: savePassword)
         }
+        .interactiveDismissDisabled(!password.isEmpty || !confirmation.isEmpty || appState.isAccountWorking)
+        .confirmDiscardChanges($confirmsDiscard) { dismiss() }
+
     }
 
     private func savePassword() {
@@ -51,7 +44,7 @@ struct PasswordSettingsView: View {
             if saved {
                 password = ""
                 confirmation = ""
-                isShowingSuccess = true
+                dismiss()
             }
         }
     }

@@ -5,17 +5,19 @@ struct RuntimeConfigurationSheet: View {
     @Environment(\.dismiss) private var dismiss
     let displayName: String
     let allowsNaming: Bool
+    private let initialName: String
     let startAfterSaving: Bool
     var canSave: Bool
     let onSave: (String, [String: JSONValue]) async throws -> Void
     @State private var model: RuntimeConfigurationModel
     @State private var instanceName: String
     @State private var isSaving = false
+    @State private var confirmsDiscard = false
     @State private var toasts = ChatToastStore()
 
     init(runtime: V2DeviceRuntime, schema: V2RuntimeConfigSchema, startAfterSaving: Bool,
          canSave: Bool = true, onSave: @escaping ([String: JSONValue]) async throws -> Void) {
-        displayName = runtime.sessionDisplayName; allowsNaming = false
+        displayName = runtime.sessionDisplayName; allowsNaming = false; initialName = runtime.name
         self.startAfterSaving = startAfterSaving; self.canSave = canSave
         self.onSave = { _, config in try await onSave(config) }
         _instanceName = State(initialValue: runtime.name)
@@ -23,7 +25,7 @@ struct RuntimeConfigurationSheet: View {
     }
     init(type: V2RuntimeType, schema: V2RuntimeConfigSchema, suggestedName: String,
          canSave: Bool = true, onSave: @escaping (String, [String: JSONValue]) async throws -> Void) {
-        displayName = type.displayName; allowsNaming = true; startAfterSaving = true
+        displayName = type.displayName; allowsNaming = true; startAfterSaving = true; initialName = suggestedName
         self.canSave = canSave; self.onSave = onSave
         _instanceName = State(initialValue: suggestedName)
         _model = State(initialValue: RuntimeConfigurationModel(schema: schema, config: .object(type.defaults)))
@@ -61,7 +63,14 @@ struct RuntimeConfigurationSheet: View {
             .navigationTitle(Text(String(localized: "Configure \(displayName)")))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button(String(localized: "Cancel")) { dismiss() }.disabled(isSaving) }
+                SheetEditorToolbar(saveTitle: allowsNaming ? String(localized: "Add") : String(localized: "Save"),
+                    isWorking: isSaving,
+                    saveDisabled: !canSave || (allowsNaming && instanceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty),
+                    onCancel: { if hasChanges { confirmsDiscard = true } else { dismiss() } },
+                    onSave: {
+                        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                        Task { await Task.yield(); await save() }
+                    })
             }
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 HStack(spacing: 16) {
@@ -72,21 +81,16 @@ struct RuntimeConfigurationSheet: View {
                             .font(.subheadline).lineLimit(2)
                     }.disabled(isSaving)
                     Spacer(minLength: 0)
-                    AppGlassButton(startAfterSaving ? String(localized: "Configure & Start") : String(localized: "Save"), systemImage: "checkmark",
-                        style: .prominent, isLoading: isSaving,
-                        disabled: !canSave || (allowsNaming && instanceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty),
-                        maxWidth: nil) {
-                        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
-                        Task { await Task.yield(); await save() }
-                    }
                 }
                 .padding(18).frame(maxWidth: 720).frame(maxWidth: .infinity)
                 .background(.bar)
             }
             .overlay(alignment: .top) { ChatErrorToasts(store: toasts, isRetrying: false, onRetry: { _ in }) }
         }
-        .presentationDetents([.large]).interactiveDismissDisabled(isSaving)
+        .presentationDetents([.large]).interactiveDismissDisabled(isSaving || hasChanges)
+        .confirmDiscardChanges($confirmsDiscard) { dismiss() }
     }
+    private var hasChanges: Bool { model.hasChanges || instanceName != initialName }
     private func save() async {
         guard canSave, !isSaving else { return }
         do {

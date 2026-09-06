@@ -10,6 +10,7 @@ struct AvatarSettingsView: View {
     @State private var zoom: CGFloat = 1
     @State private var offset = CGSize.zero
     @State private var localError: String?
+    @State private var confirmsDiscard = false
 
     var body: some View {
         Form {
@@ -37,13 +38,6 @@ struct AvatarSettingsView: View {
                         Slider(value: $zoom, in: 1 ... 3)
                     }
 
-                    Button(action: uploadAvatar) {
-                        AccountSettingsActionLabel(
-                            title: "Save profile photo",
-                            isWorking: appState.isAccountWorking
-                        )
-                    }
-                    .disabled(appState.isAccountWorking)
                 }
             }
 
@@ -56,6 +50,14 @@ struct AvatarSettingsView: View {
         }
         .navigationTitle(String(localized: "Profile photo"))
         .navigationBarTitleDisplayMode(.inline)
+        .navigationBarBackButtonHidden()
+        .scrollContentBackground(.hidden).background(Color(uiColor: .systemBackground))
+        .toolbar {
+            SheetEditorToolbar(isWorking: appState.isAccountWorking, saveDisabled: selectedImage == nil,
+                onCancel: { if selectedImage == nil { dismiss() } else { confirmsDiscard = true } }, onSave: uploadAvatar)
+        }
+        .interactiveDismissDisabled(selectedImage != nil || appState.isAccountWorking)
+        .confirmDiscardChanges($confirmsDiscard) { dismiss() }
         .onChange(of: selectedItem) { _, nextItem in
             guard let nextItem else { return }
             Task { await loadImage(nextItem) }
@@ -197,22 +199,5 @@ private struct AvatarEditorPreview: View {
                     )
                 )
             }
-    }
-}
-
-private struct AccountSettingsActionLabel: View {
-    let title: LocalizedStringResource
-    let isWorking: Bool
-
-    var body: some View {
-        HStack {
-            Spacer()
-            if isWorking {
-                ProgressView()
-                    .controlSize(.small)
-            }
-            Text(title)
-            Spacer()
-        }
     }
 }

@@ -43,7 +43,7 @@ struct SessionDetailsSheet: View {
                 if let error { Section { Text(error).foregroundStyle(.secondary) } }
             }
             .navigationTitle(String(localized: "会话详情")).navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button(String(localized: "关闭"), appSymbol: "xmark") { dismiss() } } }
+            .toolbar { SheetCloseToolbar { dismiss() } }
         }
         .presentationDetents([.large])
         .task(id: exportRequest) {

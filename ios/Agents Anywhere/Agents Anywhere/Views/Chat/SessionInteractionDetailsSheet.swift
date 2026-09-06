@@ -11,7 +11,7 @@ struct SessionInteractionDetailsSheet: View {
                 SessionInteractionContent(item: item, chat: chat, showsContext: true).padding(16)
             }
             .navigationTitle(String(localized: "操作详情")).navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button(String(localized: "完成")) { dismiss() } } }
+            .toolbar { SheetCloseToolbar { dismiss() } }
         }.presentationDetents([.large])
     }
 }

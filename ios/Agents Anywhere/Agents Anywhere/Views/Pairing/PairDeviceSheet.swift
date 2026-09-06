@@ -38,10 +38,10 @@ struct PairDeviceSheet: View {
                         Button(String(localized: "返回")) { method = nil; error = nil }.disabled(isWorking)
                     }
                 }
-                ToolbarItem(placement: .confirmationAction) { Button(String(localized: "完成")) { dismiss() }.disabled(isWorking) }
+                SheetCloseToolbar(disabled: isWorking) { dismiss() }
             }
             .interactiveDismissDisabled(isWorking)
-        }
+        }.presentationDetents([.large]).presentationDragIndicator(.visible)
     }
 
     private var desktopInstructions: some View {

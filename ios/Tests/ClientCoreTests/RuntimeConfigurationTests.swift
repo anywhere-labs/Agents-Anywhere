@@ -97,4 +97,23 @@ import Testing
         model.updateSessions(connectorId: "different-device", allSessions: [first, second])
         #expect(model.sessions.isEmpty && model.selectedSessionIds.isEmpty)
     }
+
+    @Test func unsavedDraftTracksIncompleteFieldsAndIgnoresRowIdentity() throws {
+        let config: JSONValue = .object(["environment": .object(["TOKEN": .string("value")])])
+        let draft = RuntimeConfigurationModel(schema: try schema(), config: config)
+        #expect(!draft.hasChanges)
+        draft.environments["environment"] = [.init(key: "TOKEN", value: "value")]
+        #expect(!draft.hasChanges)
+        draft.gateways["modelGateway"]?.baseURL = "https://incomplete.example"
+        #expect(draft.hasChanges)
+        #expect(throws: RuntimeConfigurationValidationError.self) { try draft.makeConfig() }
+        #expect(draft.hasChanges)
+        draft.gateways["modelGateway"]?.baseURL = ""
+        #expect(!draft.hasChanges)
+        draft.resetDefaults()
+        #expect(draft.hasChanges)
+        let defaults = RuntimeConfigurationModel(schema: try schema(), config: nil)
+        defaults.resetDefaults()
+        #expect(!defaults.hasChanges)
+    }
 }

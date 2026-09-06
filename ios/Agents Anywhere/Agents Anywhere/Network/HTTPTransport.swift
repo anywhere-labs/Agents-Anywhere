@@ -233,9 +233,9 @@ extension DecodingError {
         case let .keyNotFound(key, context):
             return String(localized: "The server response is missing '\(v2Path(context.codingPath + [key]))'.")
         case let .typeMismatch(type, context):
-            return String(localized: "The server response has an invalid type at '\(v2Path(context.codingPath))' for \(type).")
+            return String(localized: "The server response has an invalid type at '\(v2Path(context.codingPath))' for \(String(describing: type)).")
         case let .valueNotFound(type, context):
-            return String(localized: "The server response is missing a value at '\(v2Path(context.codingPath))' for \(type).")
+            return String(localized: "The server response is missing a value at '\(v2Path(context.codingPath))' for \(String(describing: type)).")
         case let .dataCorrupted(context):
             return String(localized: "The server response could not be decoded at '\(v2Path(context.codingPath))'.")
         @unknown default:

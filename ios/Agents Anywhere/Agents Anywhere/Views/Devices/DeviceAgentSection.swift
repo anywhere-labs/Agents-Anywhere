@@ -129,9 +129,7 @@ struct AgentSetupSheet: View {
             }
             .navigationTitle(connector.name).navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button(String(localized: "完成"), action: onFinish).disabled(model.busyID != nil)
-                }
+                SheetCloseToolbar(disabled: model.busyID != nil, action: onFinish)
             }
         }
         .presentationDetents([.large]).interactiveDismissDisabled()

@@ -51,9 +51,7 @@ struct ConnectorCredentialSheet: View {
             .navigationTitle(String(localized: "New credential"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button(String(localized: "Done")) { dismiss() }
-                }
+                SheetCloseToolbar { dismiss() }
             }
         }
     }

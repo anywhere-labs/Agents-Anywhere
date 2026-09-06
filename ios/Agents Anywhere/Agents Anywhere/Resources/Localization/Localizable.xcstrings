@@ -52,13 +52,42 @@
         }
       }
     },
-    "%lld projects": {
+    "%@: %@": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "%lld projects"
+            "value": "%@: %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@：%2$@"
+          }
+        }
+      }
+    },
+    "%lld projects": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld project"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld projects"
+                }
+              }
+            }
           }
         },
         "zh-Hans": {
@@ -90,9 +119,21 @@
       "extractionState": "manual",
       "localizations": {
         "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%lld sessions"
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld session"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld sessions"
+                }
+              }
+            }
           }
         },
         "zh-Hans": {
@@ -107,9 +148,21 @@
       "extractionState": "manual",
       "localizations": {
         "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%lld questions"
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld question"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld questions"
+                }
+              }
+            }
           }
         },
         "zh-Hans": {
@@ -124,9 +177,21 @@
       "extractionState": "manual",
       "localizations": {
         "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%lld subagent calls"
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld subagent call"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld subagent calls"
+                }
+              }
+            }
           }
         },
         "zh-Hans": {
@@ -141,9 +206,21 @@
       "extractionState": "manual",
       "localizations": {
         "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%lld tool calls"
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld tool call"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld tool calls"
+                }
+              }
+            }
           }
         },
         "zh-Hans": {
@@ -158,9 +235,21 @@
       "extractionState": "manual",
       "localizations": {
         "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%lld reasoning steps"
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld reasoning step"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld reasoning steps"
+                }
+              }
+            }
           }
         },
         "zh-Hans": {
@@ -324,23 +413,6 @@
         }
       }
     },
-    "Account updated": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Account updated"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "账号已更新"
-          }
-        }
-      }
-    },
     "Active": {
       "extractionState": "manual",
       "localizations": {
@@ -371,6 +443,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "此项目中的活动会话将被归档，之后可以恢复。"
+          }
+        }
+      }
+    },
+    "Add": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Add"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "添加"
           }
         }
       }
@@ -422,23 +511,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "添加变量"
-          }
-        }
-      }
-    },
-    "Address": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Address"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "地址"
           }
         }
       }
@@ -630,6 +702,23 @@
         }
       }
     },
+    "Agents Anywhere · %@": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Agents Anywhere · %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Agents Anywhere · %@"
+          }
+        }
+      }
+    },
     "All": {
       "extractionState": "manual",
       "localizations": {
@@ -694,6 +783,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "始终使用浅色外观。"
+          }
+        }
+      }
+    },
+    "App": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "App"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "应用"
           }
         }
       }
@@ -821,9 +927,21 @@
       "extractionState": "manual",
       "localizations": {
         "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Attach no more than %lld files."
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Attach no more than %lld file."
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Attach no more than %lld files."
+                }
+              }
+            }
           }
         },
         "zh-Hans": {
@@ -987,19 +1105,19 @@
         }
       }
     },
-    "Change the app language in iOS Settings.": {
+    "Choose English or Simplified Chinese in the app's iOS language settings. Without an override, the app follows your preferred system language.": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Change the app language in iOS Settings."
+            "value": "Choose English or Simplified Chinese in the app's iOS language settings. Without an override, the app follows your preferred system language."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "在 iOS 设置中更改应用语言。"
+            "value": "在 iOS 的应用语言设置中选择英语或简体中文。未单独设置时，应用会使用你偏好的系统语言。"
           }
         }
       }
@@ -1242,6 +1360,23 @@
         }
       }
     },
+    "Command": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Command"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "命令"
+          }
+        }
+      }
+    },
     "Complete all required fields in this group.": {
       "extractionState": "manual",
       "localizations": {
@@ -1272,23 +1407,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "配置 %@"
-          }
-        }
-      }
-    },
-    "Configure & Start": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Configure & Start"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "配置并启动"
           }
         }
       }
@@ -1391,6 +1509,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "已连接"
+          }
+        }
+      }
+    },
+    "Connection": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Connection"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "连接"
           }
         }
       }
@@ -1633,6 +1768,23 @@
         }
       }
     },
+    "Create": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Create"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "创建"
+          }
+        }
+      }
+    },
     "Create a project to choose where your agents work.": {
       "extractionState": "manual",
       "localizations": {
@@ -1663,6 +1815,40 @@
           "stringUnit": {
             "state": "translated",
             "value": "创建项目"
+          }
+        }
+      }
+    },
+    "Created %@": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Created %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已创建 %@"
+          }
+        }
+      }
+    },
+    "Current language": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Current language"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "当前语言"
           }
         }
       }
@@ -1803,6 +1989,23 @@
         }
       }
     },
+    "Details": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Details"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "详情"
+          }
+        }
+      }
+    },
     "Device actions": {
       "extractionState": "manual",
       "localizations": {
@@ -1905,19 +2108,36 @@
         }
       }
     },
-    "Disabled": {
+    "Discard changes": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Disabled"
+            "value": "Discard changes"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "已禁用"
+            "value": "放弃修改"
+          }
+        }
+      }
+    },
+    "Discard unsaved changes?": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Discard unsaved changes?"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "放弃未保存的修改？"
           }
         }
       }
@@ -2088,23 +2308,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "文件夹为空"
-          }
-        }
-      }
-    },
-    "English": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "English"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "English"
           }
         }
       }
@@ -2432,6 +2635,23 @@
         }
       }
     },
+    "Input": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Input"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "输入"
+          }
+        }
+      }
+    },
     "Instance name": {
       "extractionState": "manual",
       "localizations": {
@@ -2445,6 +2665,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "实例名称"
+          }
+        }
+      }
+    },
+    "Keep editing": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Keep editing"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "继续编辑"
           }
         }
       }
@@ -2479,23 +2716,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "浅色"
-          }
-        }
-      }
-    },
-    "Link or change email": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Link or change email"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "绑定或更改邮箱"
           }
         }
       }
@@ -2772,6 +2992,23 @@
         }
       }
     },
+    "Modified %@": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Modified %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已修改 %@"
+          }
+        }
+      }
+    },
     "Name": {
       "extractionState": "manual",
       "localizations": {
@@ -2870,23 +3107,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "昵称"
-          }
-        }
-      }
-    },
-    "Nickname and email": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Nickname and email"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "昵称与邮箱"
           }
         }
       }
@@ -3044,6 +3264,23 @@
         }
       }
     },
+    "Offline": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Offline"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "离线"
+          }
+        }
+      }
+    },
     "Online": {
       "extractionState": "manual",
       "localizations": {
@@ -3112,6 +3349,23 @@
         }
       }
     },
+    "Open iOS Settings": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Open iOS Settings"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "打开 iOS 设置"
+          }
+        }
+      }
+    },
     "Open sidebar": {
       "extractionState": "manual",
       "localizations": {
@@ -3125,6 +3379,40 @@
           "stringUnit": {
             "state": "translated",
             "value": "打开侧栏"
+          }
+        }
+      }
+    },
+    "Open-source notices": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Open-source notices"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "开源许可"
+          }
+        }
+      }
+    },
+    "Output": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Output"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "输出"
           }
         }
       }
@@ -3176,23 +3464,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "密码至少需要 8 个字符。"
-          }
-        }
-      }
-    },
-    "Password updated": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Password updated"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "密码已更新"
           }
         }
       }
@@ -3278,23 +3549,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "将摄像头对准 Web 上的二维码"
-          }
-        }
-      }
-    },
-    "Preferences": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Preferences"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "偏好设置"
           }
         }
       }
@@ -3843,74 +4097,6 @@
         }
       }
     },
-    "Save email": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Save email"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "保存邮箱"
-          }
-        }
-      }
-    },
-    "Save nickname": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Save nickname"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "保存昵称"
-          }
-        }
-      }
-    },
-    "Save password": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Save password"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "保存密码"
-          }
-        }
-      }
-    },
-    "Save profile photo": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Save profile photo"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "保存头像"
-          }
-        }
-      }
-    },
     "Scan Agents Anywhere QR": {
       "extractionState": "manual",
       "localizations": {
@@ -4071,23 +4257,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Server Unavailable"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "服务器不可用"
-          }
-        }
-      }
-    },
-    "Server unavailable": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Server unavailable"
           }
         },
         "zh-Hans": {
@@ -5424,23 +5593,6 @@
         }
       }
     },
-    "Use your email address the next time you sign in.": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Use your email address the next time you sign in."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "下次登录时请使用你的邮箱地址。"
-          }
-        }
-      }
-    },
     "User": {
       "extractionState": "manual",
       "localizations": {
@@ -5645,6 +5797,23 @@
         }
       }
     },
+    "Workspace": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Workspace"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "工作区"
+          }
+        }
+      }
+    },
     "You are not signed in.": {
       "extractionState": "manual",
       "localizations": {
@@ -5692,40 +5861,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "此设备已登录，进入工作空间即可继续。"
-          }
-        }
-      }
-    },
-    "Your new password will be used the next time you sign in.": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Your new password will be used the next time you sign in."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "下次登录时请使用新密码。"
-          }
-        }
-      }
-    },
-    "Your nickname has been updated.": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Your nickname has been updated."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "昵称已更新。"
           }
         }
       }
@@ -7111,23 +7246,6 @@
         }
       }
     },
-    "关闭": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Close"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "关闭"
-          }
-        }
-      }
-    },
     "关闭侧栏": {
       "extractionState": "manual",
       "localizations": {
@@ -8420,23 +8538,6 @@
         }
       }
     },
-    "完成": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Done"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "完成"
-          }
-        }
-      }
-    },
     "实例名称": {
       "extractionState": "manual",
       "localizations": {
@@ -8692,23 +8793,6 @@
         }
       }
     },
-    "已修改": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Modified"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "已修改"
-          }
-        }
-      }
-    },
     "已停止生成": {
       "extractionState": "manual",
       "localizations": {
@@ -8722,23 +8806,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "已停止生成"
-          }
-        }
-      }
-    },
-    "已创建": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Created"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "已创建"
           }
         }
       }
@@ -11191,23 +11258,6 @@
         }
       }
     },
-    "简体中文": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Simplified Chinese"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "简体中文"
-          }
-        }
-      }
-    },
     "管理这台设备": {
       "extractionState": "manual",
       "localizations": {
@@ -12198,9 +12248,21 @@
       "extractionState": "manual",
       "localizations": {
         "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Reconnecting · %lld attempts"
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Reconnecting · %lld attempt"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Reconnecting · %lld attempts"
+                }
+              }
+            }
           }
         },
         "zh-Hans": {

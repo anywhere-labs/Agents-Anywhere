@@ -51,9 +51,7 @@ struct AuthScreen<Content: View>: View {
         .background(AppTheme.appBackground(colorScheme))
         .toolbar {
             if showsCancel {
-                ToolbarItem(placement: .cancellationAction) {
-                    SheetCloseButton(action: onCancel)
-                }
+                SheetCloseToolbar(action: onCancel)
             }
         }
     }

@@ -200,7 +200,7 @@ struct ArchivedSessionsSheet: View {
                 DashboardPageButton(repository: repository, scope: .init(archived: true))
             }
             .navigationTitle(String(localized: "归档会话")).navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button(String(localized: "关闭")) { dismiss() } } }
+            .toolbar { SheetCloseToolbar { dismiss() } }
             .refreshable { await repository.loadPage(.init(archived: true), refresh: true) }
             .task { if repository.pages[.init(archived: true)] == nil { await repository.loadPage(.init(archived: true)) } }
         }

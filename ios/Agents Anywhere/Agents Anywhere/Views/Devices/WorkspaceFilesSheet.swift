@@ -44,11 +44,7 @@ struct WorkspaceFilesSheet: View {
                 canTransfer: canRead && transfer == nil, onSelectDirectory: onSelectDirectory
             )
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    SheetCloseButton {
-                        dismiss()
-                    }
-                }
+                SheetCloseToolbar { dismiss() }
             }
             .navigationDestination(for: WorkspaceDirectoryRoute.self) { route in
                 WorkspaceDirectoryView(
@@ -182,7 +178,7 @@ private struct WorkspaceDirectoryView: View {
             } else if model.entries.isEmpty {
                 ContentUnavailableView(
                     String(localized: "Empty Folder"),
-                    systemImage: "folder",
+                    appSymbol: "folder",
                     description: Text(String(localized: "This workspace folder has no files."))
                 )
             } else {
@@ -226,12 +222,12 @@ private struct WorkspaceDirectoryView: View {
                     }
                 }
         }
-        .toolbar {
+        .safeAreaInset(edge: .bottom) {
             if let onSelectDirectory {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button(String(localized: "使用此目录")) { onSelectDirectory(currentDirectoryPath) }
-                        .disabled(!canRead || model.isLoading || model.resolvedPath.isEmpty || model.errorMessage != nil)
-                }
+                AppGlassButton(String(localized: "使用此目录"), style: .prominent,
+                    disabled: !canRead || model.isLoading || model.resolvedPath.isEmpty || model.errorMessage != nil) {
+                    onSelectDirectory(currentDirectoryPath)
+                }.padding(16).background(.bar)
             }
         }
         .navigationTitle(title)
