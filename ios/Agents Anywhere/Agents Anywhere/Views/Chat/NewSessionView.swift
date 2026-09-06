@@ -5,7 +5,6 @@ struct NewSessionView: View, Equatable {
     let connectors: [V2Connector]
     let sessions: [V2SessionMeta]
     let repository: V2DashboardRepository
-    let safeAreaInsets: EdgeInsets
     var dashboardLoading = false
     var dashboardError: String?
     let onMenu: () -> Void
@@ -22,7 +21,7 @@ struct NewSessionView: View, Equatable {
 
     static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.model === rhs.model && lhs.connectors == rhs.connectors && lhs.sessions == rhs.sessions
-            && lhs.safeAreaInsets == rhs.safeAreaInsets && lhs.dashboardLoading == rhs.dashboardLoading
+            && lhs.dashboardLoading == rhs.dashboardLoading
             && lhs.dashboardError == rhs.dashboardError
     }
 
@@ -78,15 +77,8 @@ struct NewSessionView: View, Equatable {
                 .frame(maxWidth: .infinity, alignment: .center)
             }
             .scrollDismissesKeyboard(.interactively)
+            .scrollEdgeEffectStyle(.soft, for: .top)
             .refreshable { await refresh() }
-            .safeAreaInset(edge: .top, spacing: 0) {
-                ChatPageHeader(title: String(localized: "Agents Anywhere"), controls: controls, onMenu: onMenu) {
-                    Button { model.draft.isFocused = true } label: {
-                        ChatHeaderActionLabel(symbol: "square.and.pencil", controls: controls)
-                            .glassEffect(.regular.interactive(), in: .circle)
-                    }.accessibilityLabel(String(localized: "开始新会话"))
-                }
-            }
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 ChatComposerDock(draft: model.draft, settings: model.settings,
                     maximumEditorHeight: min(160, max(72, geometry.size.height * 0.30)), controls: controls,
@@ -98,7 +90,13 @@ struct NewSessionView: View, Equatable {
                     onApplySettings: { model.saveSelections(); return true })
             }
         }
-        .modifier(ChatPageSafeArea(insets: safeAreaInsets))
+        .modifier(ChatPageToolbar(title: String(localized: "Agents Anywhere"), onMenu: onMenu))
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button { model.draft.isFocused = true } label: { AppSymbol("square.and.pencil") }
+                    .accessibilityLabel(String(localized: "开始新会话"))
+            }
+        }
         .onChange(of: model.draft.text) { _, _ in model.saveDraft() }
         .task(id: TargetRefreshKey(connectors: connectors, network: model.network, connectorID: model.connectorID)) { await model.refresh(connectors: connectors) }
         .sheet(isPresented: $showsTarget) {

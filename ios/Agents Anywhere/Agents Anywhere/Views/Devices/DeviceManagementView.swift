@@ -11,7 +11,6 @@ struct DeviceManagementView: View {
     let service: V2DeviceManagementService
     let workspaceFilesService: V2WorkspaceFilesService
     let serverURL: URL
-    let safeAreaInsets: EdgeInsets
     let onMenu: () -> Void
     let onOpenSession: (V2SessionID) -> Void
     let onNewSession: (String?) -> Void
@@ -24,7 +23,6 @@ struct DeviceManagementView: View {
     @State private var model = DeviceManagementModel()
     @State private var tab = DeviceOverviewTab.projects
     @State private var toasts = ChatToastStore()
-    @State private var headerHeight: CGFloat = 76
     @State private var isRenaming = false
     @State private var proposedName = ""
     @State private var confirmsRotation = false
@@ -37,8 +35,6 @@ struct DeviceManagementView: View {
     @State private var pendingProject: V2Project?
     @State private var projectActionIsDeletion = false
     @State private var busy = false
-    @ScaledMetric(relativeTo: .body) private var bodyLineHeight: CGFloat = 22
-    private var controls: ChatControlMetrics { .init(bodyLineHeight: bodyLineHeight) }
     private var deviceProjects: [V2Project] {
         projects.filter { $0.connectorId == connector.id }.sorted {
             if $0.pinned != $1.pinned { return $0.pinned }
@@ -88,8 +84,9 @@ struct DeviceManagementView: View {
         }
         .scrollIndicators(.hidden).scrollEdgeEffectStyle(.soft, for: .all)
         .refreshable { await dashboard.refresh(); await agents.refresh() }
-        .safeAreaInset(edge: .top, spacing: 0) {
-            ChatPageHeader(title: connector.name, subtitle: connectionDescription, controls: controls, onMenu: onMenu) {
+        .modifier(ChatPageToolbar(title: connector.name, subtitle: connectionDescription, onMenu: onMenu))
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
                 Menu {
                     Button(String(localized: "New session"), appSymbol: "square.and.pencil") { onNewSession(nil) }
                     Button(String(localized: "Copy device ID"), appSymbol: "doc.on.doc") { UIPasteboard.general.string = connector.id }
@@ -98,10 +95,9 @@ struct DeviceManagementView: View {
                     Button(String(localized: "Rotate credential"), appSymbol: "key") { confirmsRotation = true }.disabled(!canManage)
                     Button(String(localized: "Delete device"), appSymbol: "trash", role: .destructive) { confirmsDeletion = true }.disabled(!canManage)
                 } label: {
-                    ChatHeaderActionLabel(symbol: "ellipsis", controls: controls)
-                        .glassEffect(.regular.interactive(), in: .circle)
+                    AppSymbol("ellipsis")
                 }.accessibilityLabel(String(localized: "Device actions"))
-            }.onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { headerHeight = $0 }
+            }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             if tab == .sessions && model.isSelectingSessions {
@@ -113,9 +109,8 @@ struct DeviceManagementView: View {
         }
         .overlay(alignment: .top) {
             ChatErrorToasts(store: toasts, isRetrying: dashboard.isLoading, onRetry: { _ in await dashboard.refresh() })
-                .padding(.top, headerHeight)
+                .padding(.top, 8)
         }
-        .modifier(ChatPageSafeArea(insets: safeAreaInsets))
         .onChange(of: allSessions, initial: true) { _, values in model.updateSessions(connectorId: connector.id, allSessions: values) }
         .onChange(of: model.errorMessage, initial: true) { _, error in report(error, source: "device") }
         .onChange(of: dashboard.error, initial: true) { _, error in report(error, source: "sync") }

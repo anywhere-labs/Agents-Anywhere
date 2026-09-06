@@ -42,7 +42,7 @@ struct ChatShellView: View {
                 onCopySessionId: copySessionId
             )
         } content: { safeAreaInsets in
-            mainContent(safeAreaInsets: safeAreaInsets)
+            mainContent.modifier(ChatDetailNavigation(insets: safeAreaInsets))
         }
         .alert(String(localized: "Could not update session"), isPresented: sessionActionErrorBinding) {
             Button(String(localized: "OK"), role: .cancel) {
@@ -136,7 +136,7 @@ struct ChatShellView: View {
     }
 
     @ViewBuilder
-    private func mainContent(safeAreaInsets: EdgeInsets) -> some View {
+    private var mainContent: some View {
         if case let .device(connectorId) = selection,
            let connector = appState.connectors.first(where: { $0.id == connectorId }),
            let clients = appState.nativeChatServices,
@@ -153,7 +153,6 @@ struct ChatShellView: View {
                 service: service,
                 workspaceFilesService: workspaceFilesService,
                 serverURL: serverURL,
-                safeAreaInsets: safeAreaInsets,
                 onMenu: toggleSidebar,
                 onOpenSession: openSession,
                 onNewSession: { path in
@@ -175,12 +174,12 @@ struct ChatShellView: View {
                 let connectorID = session.metadata?.connectorId ?? appState.sessions.first { $0.id == id }?.connectorId
                 SessionChatView(session: session, services: services,
                     deviceName: appState.connectors.first { $0.id == connectorID }?.name,
-                    safeAreaInsets: safeAreaInsets, onMenu: toggleSidebar)
+                    onMenu: toggleSidebar)
                     .equatable()
                     .id(id)
             } else {
                 NewSessionView(model: services.newSession, connectors: appState.connectors, sessions: appState.sessions, repository: services.dashboardRepository,
-                    safeAreaInsets: safeAreaInsets, dashboardLoading: appState.isDashboardLoading,
+                    dashboardLoading: appState.isDashboardLoading,
                     dashboardError: appState.connectorsError,
                     onMenu: toggleSidebar, onManageDevice: openDevice,
                     onCreated: { session in
@@ -271,26 +270,14 @@ private struct ChatShellPlaceholderPage: View {
     let onOpenSidebar: () -> Void
 
     var body: some View {
-        NavigationStack {
-            Color(.systemBackground)
-                .ignoresSafeArea()
-                .overlay {
-                    if isConnecting {
-                        Label(String(localized: "正在连接，首次同步后即可保留本地内容"), appSymbol: "network")
-                            .font(.footnote).foregroundStyle(.secondary).padding(24)
-                    }
+        Color(.systemBackground)
+            .overlay {
+                if isConnecting {
+                    Label(String(localized: "正在连接，首次同步后即可保留本地内容"), appSymbol: "network")
+                        .font(.footnote).foregroundStyle(.secondary).padding(24)
                 }
-                .navigationTitle(title)
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .topBarLeading) {
-                        Button(action: onOpenSidebar) {
-                            AppSymbol("sidebar.left")
-                        }
-                        .accessibilityLabel(String(localized: "Open sidebar"))
-                    }
-                }
-        }
+            }
+            .modifier(ChatPageToolbar(title: title, onMenu: onOpenSidebar))
     }
 }
 

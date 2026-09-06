@@ -139,12 +139,15 @@ Semantic error and availability colors remain separate from the primary color.
   no footer; individual entries remain copyable from their context menus. A local
   pending user message already marks the next turn, so its predecessor's footer
   stays visible through HTTP acceptance and the authoritative echo.
-- The session header uses `safeAreaBar` with the scroll view's native soft edge
-  effect. Its subtitle shows the Agent and device names, using the device ID
-  when its name is not yet available. The sidebar icon has three left-aligned strokes, the last shorter.
-  Session headers reserve one caption-sized status slot, including while idle:
-  syncing, offline/device availability, runtime reasons and approval-waiting
-  feedback update that slot without changing the top inset. Network failures
+- Session, New Session and Device use native SwiftUI navigation bars through
+  `ChatPageToolbar`. The title uses `navigationTitle`; Agent/device names and
+  live status share the native subtitle placement. The subtitle stays one line
+  tall, including while syncing or idle, so status changes cannot resize the
+  timeline. The device ID is used when its name is not yet available. The sidebar
+  action uses the same Lucide PanelLeft icon as Web. Toolbar items get their
+  spacing, hit regions, glass grouping and scroll-edge treatment from the system;
+  there is no custom top `safeAreaBar`, measured header height or compensating
+  toast offset. Network failures
   take precedence over cached runtime status; malformed data remains an error
   toast rather than being mislabeled as offline. Sending/waiting/running feedback
   uses a spinner in the existing fixed 32-point timeline tail slot. That slot
@@ -168,9 +171,13 @@ Semantic error and availability colors remain separate from the primary color.
   Explicit split toggles retain smooth animation and respect Reduce Motion.
   The detail uses the native split's proposed width immediately, without a
   frozen width or delayed reflow. The phone drawer shadows only its card
-  shape, avoiding an animated compositing layer around the whole conversation. The custom
-  sidebar and chat headers suppress empty native navigation bars, retaining the
-  system safe area without an additional blank bar above the glass controls.
+  shape, avoiding an animated compositing layer around the whole conversation.
+  `ChatDetailNavigation` creates a NavigationStack inside the phone's moving
+  card and applies its stable host insets once, including keyboard space. On
+  iPad it reuses the split view's navigation host without another stack or inset.
+  Only the custom sidebar hides its navigation bar. The detail shows a native
+  bar and removes the duplicate system sidebar toggle in favor of its Lucide
+  action. Switching pages does not create a second phone navigation stack.
 - Sidebar indicators follow Web's priority and position, on the title's trailing
   side: a green waiting-approval capsule, a native spinner for running/waiting/
   pending, or a green unread dot for an idle session. Opening an unread session
@@ -557,8 +564,9 @@ keyboard layout and real mobile-network behavior still need manual validation:
     Switch apps and return, and reconnect after going offline; verify read
     synchronization and live status changes without reopening the app.
 13. On iPad, start at regular width and select several sessions, devices and New
-    Session; the sidebar should remain alongside the detail. Check both custom
-    headers against the status bar without an empty navigation bar. Resize to a
+    Session; the sidebar should remain alongside the detail. Check the sidebar
+    header and native detail navigation bar against the status bar, including
+    long titles, large text, light/dark mode and live syncing feedback. Resize to a
     narrow window, select a session, reopen the sidebar and widen again. With a
     long Markdown history, toggle the sidebar and check responsiveness, retained
     reading position and continued streaming while the detail remains visible.

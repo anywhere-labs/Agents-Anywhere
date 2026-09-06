@@ -5,7 +5,6 @@ struct SessionChatView: View, Equatable {
     @State private var model: SessionChatModel
     private let sessionIdentity: V2SessionModel
     let deviceName: String?
-    let safeAreaInsets: EdgeInsets
     let onMenu: () -> Void
     @State private var sheet: SessionSheet?
     @State private var expandedNoticeID: String?
@@ -19,7 +18,6 @@ struct SessionChatView: View, Equatable {
     @State private var previewDirectory: URL?
     @State private var isDownloading = false
     @State private var toasts = ChatToastStore()
-    @State private var headerHeight: CGFloat = 66
     @State private var pendingTakeover: Bool?
     @State private var hasStartedLoading = false
     @Environment(\.colorScheme) private var colorScheme
@@ -27,7 +25,7 @@ struct SessionChatView: View, Equatable {
     @ScaledMetric(relativeTo: .body) private var bodyLineHeight: CGFloat = 22
     @ScaledMetric(relativeTo: .footnote) private var takeoverPillHeight: CGFloat = 32
 
-    init(session: V2SessionModel, services: V2ClientServices, deviceName: String?, safeAreaInsets: EdgeInsets,
+    init(session: V2SessionModel, services: V2ClientServices, deviceName: String?,
          onMenu: @escaping () -> Void) {
         let chat = SessionChatModel(session: session, repository: services.sessionRepository, attachments: services.attachments,
             files: services.workspaceFiles)
@@ -40,7 +38,7 @@ struct SessionChatView: View, Equatable {
         sessionIdentity = session
         self.deviceName = deviceName
         fileService = services.workspaceFiles; detailService = services.sessionDetail
-        self.safeAreaInsets = safeAreaInsets; self.onMenu = onMenu
+        self.onMenu = onMenu
     }
     private var controls: ChatControlMetrics { .init(bodyLineHeight: bodyLineHeight) }
     private var session: V2SessionModel { model.session }
@@ -48,7 +46,7 @@ struct SessionChatView: View, Equatable {
     // Sidebar motion changes the containing card, not the session. Observable
     // model changes and real size/environment changes still update this subtree.
     static func == (lhs: Self, rhs: Self) -> Bool {
-        lhs.sessionIdentity === rhs.sessionIdentity && lhs.safeAreaInsets == rhs.safeAreaInsets && lhs.deviceName == rhs.deviceName
+        lhs.sessionIdentity === rhs.sessionIdentity && lhs.deviceName == rhs.deviceName
     }
     var body: some View {
         GeometryReader { geometry in
@@ -68,26 +66,6 @@ struct SessionChatView: View, Equatable {
                     }
                 }
                 .overlay { if !model.isOpeningReady { openingMask } }
-                .safeAreaBar(edge: .top, spacing: 0) {
-                    ChatPageHeader(title: session.metadata?.title ?? String(localized: "会话"),
-                        subtitle: [session.metadata?.runtimeName ?? session.metadata?.runtime,
-                            deviceName ?? session.metadata?.connectorId].compactMap { $0 }.joined(separator: " · "),
-                        status: model.headerStatus, reservesStatusLine: true,
-                        controls: controls, onMenu: onMenu) {
-                        HStack(spacing: 0) {
-                            Button { sheet = .files } label: { ChatHeaderActionLabel(symbol: "folder", controls: controls) }
-                                .accessibilityLabel(String(localized: "文件管理"))
-                                .disabled(session.metadata?.cwd?.isEmpty != false)
-                            Menu {
-                                Button(String(localized: "会话详情与导出"), appSymbol: "info.circle") { sheet = .details }
-                                Button(String(localized: "复制会话 ID"), appSymbol: "number") { UIPasteboard.general.string = session.id }
-                            } label: { ChatHeaderActionLabel(symbol: "ellipsis", controls: controls) }
-                            .accessibilityLabel(String(localized: "会话菜单"))
-                        }.glassEffect(.regular.interactive(), in: .capsule)
-                    }
-                    .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { headerHeight = $0 }
-                    .traceChatLayout("session-header")
-                }
                 .safeAreaInset(edge: .bottom, spacing: 0) {
                     VStack(spacing: 0) {
                         SessionInteractionDock(chat: model,
@@ -116,10 +94,25 @@ struct SessionChatView: View, Equatable {
                         // float below the header instead of resizing its inset.
                         if requiresTakeover { takeoverPill }
                         ChatErrorToasts(store: toasts, isRetrying: session.isLoading, onRetry: { _ in await session.refresh() })
-                    }.padding(.top, headerHeight)
+                    }.padding(.top, 8)
                 }
         }
-        .modifier(ChatPageSafeArea(insets: safeAreaInsets))
+        .modifier(ChatPageToolbar(title: session.metadata?.title ?? String(localized: "会话"),
+            subtitle: [session.metadata?.runtimeName ?? session.metadata?.runtime ?? String(localized: "Agent"),
+                deviceName ?? session.metadata?.connectorId].compactMap { $0 }.joined(separator: " · "),
+            status: model.headerStatus, onMenu: onMenu))
+        .toolbar {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                Button { sheet = .files } label: { AppSymbol("folder") }
+                    .accessibilityLabel(String(localized: "文件管理"))
+                    .disabled(session.metadata?.cwd?.isEmpty != false)
+                Menu {
+                    Button(String(localized: "会话详情与导出"), appSymbol: "info.circle") { sheet = .details }
+                    Button(String(localized: "复制会话 ID"), appSymbol: "number") { UIPasteboard.general.string = session.id }
+                } label: { AppSymbol("ellipsis") }
+                .accessibilityLabel(String(localized: "会话菜单"))
+            }
+        }
         .modifier(SessionTakeoverConfirmation(pending: $pendingTakeover) { enabled in
             model.error = nil
             if !(await model.setTakeover(enabled)), let error = model.takeoverError { model.error = error }
