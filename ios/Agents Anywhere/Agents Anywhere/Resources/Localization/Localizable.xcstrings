@@ -18,6 +18,24 @@
         }
       }
     },
+    "%@": {
+      "extractionState": "manual",
+      "comment": "A pre-localized attributed text phrase. Preserve its content.",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@"
+          }
+        }
+      }
+    },
     "%@ / %@": {
       "extractionState": "manual",
       "localizations": {
@@ -6992,13 +7010,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Start with a question and find the answer with your Agent."
+            "value": "Start with a question.\nFind an answer with your Agent."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "从一个问题开始，让 Agent 和你一起找到答案。"
+            "value": "从一个问题开始，\n让 Agent 和你一起找到答案。"
           }
         }
       }
@@ -7451,13 +7469,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Fix a bug, build a feature, or explore a new direction."
+            "value": "Fix a bug, build a feature,\nor explore something new."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "修一个问题，做一个功能，或探索新的方向。"
+            "value": "修一个问题，做一个功能，\n或探索新的方向。"
           }
         }
       }
@@ -7672,13 +7690,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Share what you want to do and work out the details with your Agent."
+            "value": "Share what you have in mind.\nWork out the details with an Agent."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "写下想做的事，和 Agent 一起把细节补全。"
+            "value": "写下想做的事，\n和 Agent 一起把细节补全。"
           }
         }
       }
@@ -10086,13 +10104,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Describe your goal. We can work through the details one step at a time."
+            "value": "Describe what you want to do.\nWe can take it step by step."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "描述你的目标，其余的可以一步步来。"
+            "value": "描述你的目标，\n其余的可以一步步来。"
           }
         }
       }
@@ -13107,13 +13125,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Choose your device and tools, and start your next task."
+            "value": "Pick your device and tools.\nStart the next thing on your list."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "选择熟悉的设备和工具，开始下一件想做的事。"
+            "value": "选择熟悉的设备和工具，\n开始下一件想做的事。"
           }
         }
       }
@@ -13158,13 +13176,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Choose a device and an Agent, then tell it what you have in mind."
+            "value": "Choose a device and Agent.\nLeave the task to them."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "选择设备和 Agent，把想做的事交给它。"
+            "value": "选择设备和 Agent，\n把想做的事交给它。"
           }
         }
       }

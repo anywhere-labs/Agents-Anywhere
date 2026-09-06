@@ -3,14 +3,16 @@ import SwiftUI
 struct NewSessionWelcomeView: View {
     private static let revealDuration = 0.4
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.sidebarDrawerIsTransitioning) private var sidebarIsTransitioning
     @Environment(\.sidebarDrawerObscuresDetail) private var sidebarObscuresDetail
     @ScaledMetric(relativeTo: .largeTitle) private var titleSize: CGFloat = 40
     @State private var copy = NewSessionWelcomeCopy.allCases.randomElement() ?? .start
-    @State private var displayedTitle = ""
-    @State private var displayedDetail = ""
+    @State private var titlePhraseCount = 0
+    @State private var detailPhraseCount = 0
     @State private var hasStarted = false
     @State private var isRevealing = false
+    @State private var revealCompletion = 0
     @State private var titleLedger = GlyphRevealLedger(duration: NewSessionWelcomeView.revealDuration)
     @State private var detailLedger = GlyphRevealLedger(duration: NewSessionWelcomeView.revealDuration)
 
@@ -21,29 +23,27 @@ struct NewSessionWelcomeView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             AppSymbol("sparkles", size: 28).foregroundStyle(.primary)
-            streamingText(title, displayed: displayedTitle, ledger: titleLedger)
+            streamingText(title, revealedPhrases: titlePhraseCount, ledger: titleLedger)
                 .font(.system(size: titleSize, weight: .bold))
+                .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
+                .minimumScaleFactor(dynamicTypeSize.isAccessibilitySize ? 1 : 0.65)
                 .accessibilityAddTraits(.isHeader)
-            streamingText(detail, displayed: displayedDetail, ledger: detailLedger)
+            streamingText(detail, revealedPhrases: detailPhraseCount, ledger: detailLedger)
                 .font(.body).foregroundStyle(.secondary)
+                .lineLimit(2...)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .task(id: [canReveal, reduceMotion]) { await reveal() }
+        .sensoryFeedback(.impact(weight: .light, intensity: 0.6), trigger: revealCompletion)
     }
 
-    private func streamingText(_ text: String, displayed: String, ledger: GlyphRevealLedger) -> some View {
-        // The full copy determines layout; only the overlay receives phrases.
-        // It uses exactly the same glyph renderer as streamed Agent messages.
-        Text(verbatim: text)
-            .fixedSize(horizontal: false, vertical: true)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .hidden()
-            .overlay(alignment: .topLeading) {
-                Text(verbatim: displayed)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .modifier(StreamingGlyphReveal(ledger: ledger))
-                    .environment(\.streamingGlyphAnimation, isRevealing)
-            }
+    private func streamingText(_ text: String, revealedPhrases: Int, ledger: GlyphRevealLedger) -> some View {
+        // Future phrases take part in line breaking from the first
+        // frame. The shared renderer alone controls their visibility and reveal.
+        StreamingTextPhrase.text(text)
+            .modifier(StreamingGlyphReveal(ledger: ledger, revealedPhraseCount: revealedPhrases))
+            .environment(\.streamingGlyphAnimation, isRevealing)
+            .multilineTextAlignment(.leading)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(text)
     }
@@ -60,26 +60,28 @@ struct NewSessionWelcomeView: View {
         // Cancellation, leaving the page, and Reduce Motion always settle the
         // complete copy. They cannot leave a partial heading or an active clock.
         defer {
-            displayedTitle = title
-            displayedDetail = detail
+            titlePhraseCount = TextPhraseSequence.chunks(in: title).count
+            detailPhraseCount = TextPhraseSequence.chunks(in: detail).count
             isRevealing = false
         }
-        guard !reduceMotion else { return }
+        guard !reduceMotion else { revealCompletion += 1; return }
         var schedule = ReplyFlushSchedule(start: .now)
         do {
-            for phrase in TextPhraseSequence.chunks(in: title) {
+            for count in TextPhraseSequence.chunks(in: title).indices {
                 try Task.checkCancellation()
-                displayedTitle += phrase
+                titlePhraseCount = count + 1
                 try await Task.sleep(until: schedule.deadline, clock: .continuous)
                 schedule.advance(after: .now)
             }
-            for phrase in TextPhraseSequence.chunks(in: detail) {
+            for count in TextPhraseSequence.chunks(in: detail).indices {
                 try Task.checkCancellation()
-                displayedDetail += phrase
+                detailPhraseCount = count + 1
                 try await Task.sleep(until: schedule.deadline, clock: .continuous)
                 schedule.advance(after: .now)
             }
             try await Task.sleep(for: .seconds(Self.revealDuration + 2 / ReplyPresentation.flushesPerSecond))
+            try Task.checkCancellation()
+            if canReveal { revealCompletion += 1 }
         } catch {
             // The defer completes the presentation if its lifecycle interrupts it.
         }

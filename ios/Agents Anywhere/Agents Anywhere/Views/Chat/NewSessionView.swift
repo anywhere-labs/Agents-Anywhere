@@ -30,51 +30,17 @@ struct NewSessionView: View, Equatable {
 
     var body: some View {
         GeometryReader { geometry in
-            ScrollView {
-                VStack(alignment: .leading, spacing: 28) {
-                    NewSessionWelcomeView().padding(.top, 26)
-
-                    Button { showsWorkspace = true } label: {
-                        HStack(spacing: 6) {
-                            Text(workspaceName).font(.subheadline.weight(.medium)).foregroundStyle(.primary)
-                                .lineLimit(1).layoutPriority(1)
-                            if !model.workspace.isEmpty {
-                                Text(model.workspace).font(.system(.footnote, design: .monospaced))
-                                    .foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
-                            }
-                            if model.loadingHomes.contains(model.connectorID), model.workspace.isEmpty {
-                                ProgressView().controlSize(.mini)
-                            } else { AppSymbol("chevron.down", size: 12).foregroundStyle(.secondary) }
-                        }
-                        .padding(.vertical, 12)
-                        .overlay(alignment: .bottom) { Rectangle().fill(.secondary.opacity(0.35)).frame(height: 1) }
-                        .contentShape(.rect)
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(model.connector == nil || model.isCreating)
-
-                    connectionStatus
-                    if model.isCreating { Label(String(localized: "正在创建会话…"), appSymbol: "arrow.up.circle").font(.subheadline).foregroundStyle(.secondary) }
-                    if let error = model.error {
-                        VStack(alignment: .leading, spacing: 12) {
-                            Text(error).font(.subheadline).foregroundStyle(.secondary)
-                            if model.creationUncertain {
-                                Button(String(localized: "查看会话列表"), action: onMenu)
-                                Button(String(localized: "已检查，重新创建")) { confirmsRetry = true }
-                            } else {
-                                Button(String(localized: "重新连接")) { Task { await refresh() } }
-                            }
-                        }
-                    }
+            GeometryReader { viewport in
+                ScrollView {
+                    welcomeContent
+                        .padding(24)
+                        .frame(maxWidth: 650)
+                        .frame(maxWidth: .infinity, minHeight: viewport.size.height)
                 }
-                .padding(.horizontal, 24)
-                .padding(.bottom, 24)
-                .frame(maxWidth: 650)
-                .frame(maxWidth: .infinity, alignment: .center)
+                .scrollDismissesKeyboard(.interactively)
+                .scrollEdgeEffectStyle(.soft, for: .top)
+                .refreshable { await refresh() }
             }
-            .scrollDismissesKeyboard(.interactively)
-            .scrollEdgeEffectStyle(.soft, for: .top)
-            .refreshable { await refresh() }
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 ChatComposerDock(draft: model.draft, settings: model.settings,
                     maximumEditorHeight: min(160, max(72, geometry.size.height * 0.30)), controls: controls,
@@ -102,6 +68,51 @@ struct NewSessionView: View, Equatable {
             Button(String(localized: "保留草稿并允许重新创建")) { model.acknowledgeUncertainCreation() }
             Button(String(localized: "取消"), role: .cancel) {}
         }
+    }
+
+    private var welcomeContent: some View {
+        VStack(spacing: 28) {
+            NewSessionWelcomeView()
+            workspaceButton
+            connectionStatus
+            if model.isCreating {
+                Label(String(localized: "正在创建会话…"), appSymbol: "arrow.up.circle")
+                    .font(.subheadline).foregroundStyle(.secondary)
+            }
+            if let error = model.error {
+                VStack(spacing: 12) {
+                    Text(error).font(.subheadline).foregroundStyle(.secondary)
+                    if model.creationUncertain {
+                        Button(String(localized: "查看会话列表"), action: onMenu)
+                        Button(String(localized: "已检查，重新创建")) { confirmsRetry = true }
+                    } else {
+                        Button(String(localized: "重新连接")) { Task { await refresh() } }
+                    }
+                }
+            }
+        }
+        .multilineTextAlignment(.center)
+    }
+
+    private var workspaceButton: some View {
+        Button { showsWorkspace = true } label: {
+            HStack(spacing: 6) {
+                Text(workspaceName).font(.subheadline.weight(.medium)).foregroundStyle(.primary)
+                    .lineLimit(1).layoutPriority(1)
+                if !model.workspace.isEmpty {
+                    Text(model.workspace).font(.system(.footnote, design: .monospaced))
+                        .foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                }
+                if model.loadingHomes.contains(model.connectorID), model.workspace.isEmpty {
+                    ProgressView().controlSize(.mini)
+                } else { AppSymbol("chevron.down", size: 12).foregroundStyle(.secondary) }
+            }
+            .padding(.vertical, 12)
+            .overlay(alignment: .bottom) { Rectangle().fill(.secondary.opacity(0.35)).frame(height: 1) }
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .disabled(model.connector == nil || model.isCreating)
     }
 
     private var targetButton: some View {
@@ -158,7 +169,7 @@ struct NewSessionView: View, Equatable {
     }
 
     private func status(_ title: String, detail: String, icon: String) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(spacing: 8) {
             Label(title, appSymbol: icon).font(.subheadline.weight(.medium))
             Text(detail).font(.footnote).foregroundStyle(.secondary)
         }
