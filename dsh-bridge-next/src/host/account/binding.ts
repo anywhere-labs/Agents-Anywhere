@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { hostname } from 'node:os'
 import { join } from 'node:path'
 import { AccountApi, ApiError, type Account } from './api.js'
+import { systemDeviceName } from './device-name.js'
 import { readJson, writeJson } from '../storage/files.js'
 import { readLocalConnectorIds } from '../desktop/machine-state.js'
 
@@ -43,7 +43,7 @@ export async function ensureBinding(root: string, account: Account, api: Account
   // A deleted or other-account ID is never revived. Pending registration keys
   // without an ID still recover a lost POST response idempotently.
   if (binding?.connectorId) binding = null
-  binding ??= { installationId: randomUUID(), name: `${hostname() || '本机设备'} · DSH` }
+  binding ??= { installationId: randomUUID(), name: await systemDeviceName() }
   // Persist the registration key before the request: even a lost response can
   // be recovered without creating a second device on the server.
   await writeJson(path, binding)
