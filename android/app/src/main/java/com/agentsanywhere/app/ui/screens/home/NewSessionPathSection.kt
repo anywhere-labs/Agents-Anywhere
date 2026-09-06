@@ -14,15 +14,22 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -34,6 +41,7 @@ import com.agentsanywhere.app.ui.designsystem.BackGlyph
 import com.agentsanywhere.app.ui.designsystem.CheckGlyph
 import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 import com.agentsanywhere.app.ui.designsystem.noRippleClickable
+import com.composables.icons.lucide.ChevronDown
 import com.composables.icons.lucide.ChevronRight
 import com.composables.icons.lucide.Folder
 import com.composables.icons.lucide.Lucide
@@ -51,13 +59,18 @@ internal fun ChoosePathSection(
     modifier: Modifier,
     onBack: (() -> Unit)?,
     onParent: () -> Unit,
-    onUseCurrent: () -> Unit,
+    onUseCurrent: (() -> Unit)? = null,
     onOpenEntry: (NewSessionPathEntry) -> Unit,
     title: String? = null,
     enabled: Boolean = true,
     currentSelected: Boolean = false,
     onRetry: (() -> Unit)? = null,
+    collapsible: Boolean = false,
 ) {
+    var expanded by rememberSaveable { mutableStateOf(true) }
+    val listExpanded = !collapsible || expanded
+    val listState = rememberLazyListState()
+    val haptic = LocalHapticFeedback.current
     Column(
         modifier = modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -95,13 +108,19 @@ internal fun ChoosePathSection(
             currentSelected = currentSelected,
             onParent = onParent,
             onUseCurrent = onUseCurrent,
+            enabled = enabled,
+            listExpanded = listExpanded,
+            onToggleList = if (collapsible) ({
+                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                expanded = !expanded
+            }) else null,
         )
-        Box(
+        if (listExpanded || loading || error != null) Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f),
         ) {
-            LazyColumn(modifier = Modifier.fillMaxSize()) {
+            LazyColumn(modifier = Modifier.fillMaxSize(), state = listState) {
                 when {
                     loading -> item {
                         PathMessage(stringResource(R.string.new_session_loading_directory), darkMode)
@@ -151,7 +170,10 @@ private fun CurrentDirectoryBar(
     canUseCurrent: Boolean,
     currentSelected: Boolean,
     onParent: () -> Unit,
-    onUseCurrent: () -> Unit,
+    onUseCurrent: (() -> Unit)?,
+    enabled: Boolean,
+    listExpanded: Boolean,
+    onToggleList: (() -> Unit)?,
 ) {
     Row(
         modifier = Modifier
@@ -186,7 +208,24 @@ private fun CurrentDirectoryBar(
                 BackGlyph(color = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF777777))
             }
         }
-        CircleMiniButton(
+        if (onToggleList != null) {
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .noRippleClickable(enabled = enabled, onClick = onToggleList),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = if (listExpanded) Lucide.ChevronDown else Lucide.ChevronRight,
+                    contentDescription = stringResource(
+                        if (listExpanded) R.string.new_session_collapse_directory else R.string.new_session_expand_directory,
+                    ),
+                    tint = LocalAAColors.current.inkSoft,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
+        } else if (onUseCurrent != null) CircleMiniButton(
             darkMode = darkMode,
             selected = currentSelected || (!darkMode && canUseCurrent),
             enabled = canUseCurrent,

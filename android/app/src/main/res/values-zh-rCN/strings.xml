@@ -306,6 +306,8 @@
     <string name="new_session_start_chat">开始聊天</string>
     <string name="new_session_workspace">项目</string>
     <string name="new_session_choose_path">选择路径</string>
+    <string name="new_session_expand_directory">展开目录列表</string>
+    <string name="new_session_collapse_directory">收起目录列表</string>
     <string name="new_session_create_project">新建项目</string>
     <string name="new_session_choose_project">选择项目</string>
     <string name="new_session_no_project">请先选择或新建项目。</string>

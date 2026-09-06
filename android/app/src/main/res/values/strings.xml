@@ -307,6 +307,8 @@
     <string name="new_session_start_chat">Start chat</string>
     <string name="new_session_workspace">Project</string>
     <string name="new_session_choose_path">Choose path</string>
+    <string name="new_session_expand_directory">Expand directory list</string>
+    <string name="new_session_collapse_directory">Collapse directory list</string>
     <string name="new_session_create_project">New project</string>
     <string name="new_session_choose_project">Choose a project</string>
     <string name="new_session_no_project">Create or choose a project to continue.</string>

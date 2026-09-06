@@ -767,18 +767,11 @@ fun NewSessionScreen(
                 error = pathError,
                 darkMode = darkMode,
                 canUseCurrent = directoryReady,
-                currentSelected = directorySelected,
+                collapsible = true,
                 enabled = selectedDevice != null && !projectCreating,
                 modifier = Modifier.weight(1f),
                 onBack = null,
                 onParent = { parent?.let(::browseDirectory) },
-                onUseCurrent = {
-                    if (directoryReady && !projectCreating) {
-                        focusManager.clearFocus()
-                        selectedWorkspacePath = currentPath
-                        projectCreateError = null
-                    }
-                },
                 onOpenEntry = { browseDirectory(it.path) },
                 onRetry = { browseDirectory(retryDirectoryPath) },
             )
