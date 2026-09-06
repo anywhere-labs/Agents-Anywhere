@@ -348,7 +348,15 @@ private struct ChatTimelineContent: View, Equatable {
             }
             // Constant breathing room: status text and card counts cannot
             // change this spacer or create a spurious follow request.
-            Color.clear.frame(height: 32)
+            Group {
+                if let text = model.sendingPlaceholder {
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.small)
+                        Text(text).font(.footnote).foregroundStyle(.secondary).lineLimit(1)
+                        Spacer(minLength: 0)
+                    }
+                } else { Color.clear }
+            }.frame(height: 32)
                 .traceChatLayout("tail-spacer")
                 .overlay(alignment: .bottom) {
                     Color.clear.frame(height: 96)

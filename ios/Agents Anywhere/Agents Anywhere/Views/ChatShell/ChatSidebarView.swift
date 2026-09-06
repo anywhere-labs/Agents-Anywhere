@@ -317,7 +317,7 @@ struct ChatSidebarSessionRow: View {
             }
             Button(action: beginRename) {
                 Label("Rename", systemImage: "pencil")
-            }
+            }.disabled(session.id.hasPrefix("local:"))
             Button(action: onTogglePinned) {
                 if session.pinned {
                     Label("Unpin", systemImage: "pin.slash")
@@ -325,9 +325,10 @@ struct ChatSidebarSessionRow: View {
                     Label("Pin", systemImage: "pin")
                 }
             }
+            .disabled(session.id.hasPrefix("local:"))
             Button(action: onArchive) {
                 Label(session.archived ? "Restore" : "Archive", systemImage: session.archived ? "tray.and.arrow.up" : "archivebox")
-            }
+            }.disabled(session.id.hasPrefix("local:"))
             Divider()
             Button(action: onCopyId) {
                 Label("Copy session ID", systemImage: "doc.on.doc")

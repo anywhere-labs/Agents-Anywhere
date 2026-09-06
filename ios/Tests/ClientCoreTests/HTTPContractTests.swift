@@ -50,6 +50,25 @@ nonisolated private final class InterceptingURLProtocol: URLProtocol, @unchecked
         return URLSession(configuration: config)
     }
 
+    @Test func projectRoutesAndBodiesUseTheLatestBackendContract() async throws {
+        let session = session(); defer { session.invalidateAndCancel() }
+        let api = V2APIClient(serverURL: URL(string: "https://example.test")!, tokenProvider: StaticAuthTokenProvider(token: "test"), urlSession: session)
+        InterceptingURLProtocol.state.reset(try ["projects", "project", "project", "sessions", "archiveAll"].map { .response(200, try fixtureData($0)) })
+        _ = try await api.projects.list()
+        _ = try await api.projects.create(.init(name: "Mobile", connectorId: "device", workspacePath: "/work with spaces"))
+        _ = try await api.projects.update("project", .init(name: nil, pinned: true))
+        _ = try await api.projects.sessions("project", archived: true, cursor: "cursor:+/=&")
+        _ = try await api.projects.archiveSessions("project", archived: false)
+        let requests = InterceptingURLProtocol.state.requests
+        #expect(requests.map(\.httpMethod) == ["GET", "POST", "PATCH", "GET", "POST"])
+        #expect(requests[3].url?.path == "/api/v2/projects/project/sessions")
+        #expect(URLComponents(url: requests[3].url!, resolvingAgainstBaseURL: false)?.queryItems?.contains(.init(name: "cursor", value: "cursor:+/=&")) == true)
+        let body = try JSONDecoder().decode(JSONValue.self, from: requests[1].httpBody!)
+        #expect(body["workspacePath"]?.stringValue == "/work with spaces" && body["connectorId"]?.stringValue == "device")
+        let archive = try JSONDecoder().decode(JSONValue.self, from: requests[4].httpBody!)
+        #expect(archive["scope"]?.stringValue == "archived" && archive["archived"] == .bool(false))
+    }
+
     @Test func requestsUseBackendMethodsPathsBodiesAndQueries() async throws {
         let session = session(); defer { session.invalidateAndCancel() }
         let api = V2APIClient(serverURL: URL(string: "https://example.test/api/v2/?old=true#stale")!, tokenProvider: StaticAuthTokenProvider(token: "test-token"), urlSession: session)

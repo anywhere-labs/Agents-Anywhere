@@ -41,9 +41,3 @@ struct ChatSidebarAccount: Equatable {
         self.avatarSource = avatarSource
     }
 }
-
-enum ChatShellSelection: Equatable {
-    case newSession
-    case device(V2ConnectorID)
-    case session(V2SessionID)
-}

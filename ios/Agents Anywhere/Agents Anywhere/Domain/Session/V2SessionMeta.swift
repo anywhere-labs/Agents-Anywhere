@@ -1,6 +1,6 @@
 import Foundation
 
-enum V2ConnectorPresence: String, Codable, Hashable {
+nonisolated enum V2ConnectorPresence: String, Codable, Hashable {
     case online
     case offline
     case unknown
@@ -11,7 +11,7 @@ enum V2ConnectorPresence: String, Codable, Hashable {
     }
 }
 
-struct V2SessionMeta: Codable, Identifiable, Hashable {
+nonisolated struct V2SessionMeta: Codable, Identifiable, Hashable {
     let id: V2SessionID
     let connectorId: V2ConnectorID
     var projectId: String? = nil
@@ -23,7 +23,7 @@ struct V2SessionMeta: Codable, Identifiable, Hashable {
     let externalSessionId: String?
     let title: String?
     let cwd: String?
-    let status: V2RuntimeStatus
+    var status: V2RuntimeStatus
     let takeover: Bool
     let connectorStatus: V2ConnectorPresence
     let pinned: Bool
@@ -159,6 +159,7 @@ struct V2SessionCreateAndStartRequest: Encodable, Hashable {
 
 struct V2SessionCreateResponse: Decodable, Hashable {
     let session: V2SessionMeta
+    var attachments: [V2CreatedAttachment]? = nil
     let connectorResult: JSONValue?
     let serverTime: String?
 }

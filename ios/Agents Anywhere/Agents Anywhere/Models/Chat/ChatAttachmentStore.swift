@@ -49,8 +49,26 @@ struct ChatMessageAttachment: Identifiable, Equatable {
     func preview(for file: V2AttachmentContent) -> Data? { entry(file.cacheKey).previewData }
     func cache(_ data: Data, for file: V2AttachmentContent) {
         guard data.count <= byteLimit else { return }
-        entry(file.cacheKey).previewData = data
+        let value = entry(file.cacheKey); value.content = file; value.previewData = data
         trim()
+    }
+    nonisolated struct Archive: Codable {
+        struct Item: Codable { let content: JSONValue?; let preview: Data?; let key: String }
+        let items: [Item]
+        let sent: [String: [JSONValue]]
+    }
+    func archived() -> Archive {
+        Archive(items: order.compactMap { key in entries[key].map { Archive.Item(content: $0.content?.raw, preview: $0.previewData, key: key) } },
+            sent: sent.mapValues { $0.map(\.raw) })
+    }
+    func restore(_ value: Archive) {
+        for item in value.items {
+            let content = item.content.map(V2AttachmentContent.init(rawContent:))
+            let entry = entry(content?.cacheKey ?? item.key)
+            entry.content = content; entry.previewData = item.preview
+        }
+        sent = value.sent.mapValues { $0.map(V2AttachmentContent.init(rawContent:)) }
+        sentOrder = Array(sent.keys); trim()
     }
     func clear() { entries = [:]; order = []; sent = [:]; sentOrder = [] }
     private func entry(_ key: String) -> Entry {
@@ -71,7 +89,10 @@ struct ChatMessageAttachment: Identifiable, Equatable {
 extension V2AttachmentContent {
     var devicePath: String? { raw["path"]?.stringValue ?? raw["filePath"]?.stringValue }
     var root: String? { raw["root"]?.stringValue }
-    var readsFromDevice: Bool { devicePath != nil && openUrl == nil && downloadUrl == nil }
+    var readsFromDevice: Bool {
+        devicePath != nil && fileId?.hasPrefix("file_") != true
+            && raw["optimistic"] != .bool(true) && openUrl == nil && downloadUrl == nil
+    }
     var isImage: Bool {
         if mediaType?.hasPrefix("image/") == true { return true }
         let suffix = ((name ?? devicePath ?? "") as NSString).pathExtension.lowercased()

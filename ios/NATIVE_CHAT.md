@@ -143,12 +143,13 @@ Semantic error and availability colors remain separate from the primary color.
   effect. Its subtitle shows the Agent and device names, using the device ID
   when its name is not yet available. The sidebar icon has three left-aligned strokes, the last shorter.
   Session headers reserve one caption-sized status slot, including while idle:
-  syncing, offline/device availability, runtime reasons and working/waiting
+  syncing, offline/device availability, runtime reasons and approval-waiting
   feedback update that slot without changing the top inset. Network failures
   take precedence over cached runtime status; malformed data remains an error
-  toast rather than being mislabeled as offline. The timeline has no temporary
-  working row or first-token thinking label, and empty attachment stacks do not
-  contribute a phantom inter-item gap.
+  toast rather than being mislabeled as offline. Sending/waiting/running feedback
+  uses a spinner in the existing fixed 32-point timeline tail slot. That slot
+  remains the same height when idle, so feedback does not move the scroll anchor.
+  There is no first-token thinking label or phantom empty attachment gap.
   A right-hand glass button group contains Files and a details menu; Files opens
   the shared file manager and is not duplicated in the menu. New Session remains
   in the sidebar. The sidebar header contains the wordmark, with no search button,
@@ -247,30 +248,52 @@ Semantic error and availability colors remain separate from the primary color.
 
 ## New Session and connectivity
 
-`NewSessionModel` owns the account-scoped draft and preparation state. The page
-shows the selected device and configured Agent together, a workspace entry and
-current availability. Its picker first selects a device, then an actual configured
-Agent instance on that device. Only the completed pair changes the target;
-canceling the picker preserves the previous choice.
+`NewSessionModel` owns the account-scoped draft and preparation state. The target
+combines a device, configured Agent instance and project. Selecting another device
+restores that device's saved project; a deleted/invalid project clears selection
+while preserving the draft. The project sheet creates/renames projects and reuses
+the existing half-height file browser to choose a directory. Canonical directory
+reuse requires confirmation before the endpoint can change the existing name.
 
-The model keeps cached inventories for display, but requires an online device,
-a ready Agent, fresh preparation and valid selections before creating. Phone
-connectivity and device availability are separate states. Temporary empty/offline
-inventory does not overwrite saved preferences. Reconnection re-prepares the
-target, and generation checks discard late preparation results.
+Project creation is available for a known device even when that device is offline
+using a typed absolute path; browsing requires it online. Starting a session also
+requires phone connectivity, a ready instance, fresh preparation and valid model/
+permission selections. Projects are re-read before submission to catch deletion,
+device/path changes and stale choices. No draft moves to a replacement target
+silently. Reconnection refreshes reads, never replays creation or messages.
 
-Before creation, capabilities and catalogs are checked again. If the effective
-model or permission choices changed, creation pauses for another explicit send.
-A timeout or other ambiguous write retains the draft and requires checking the
-session list before explicitly enabling another attempt. Reconnection never
-replays creation, messages, uploads or interaction responses.
+The sidebar can switch between projects and all sessions, includes an archive
+view, and pages active/archived/project lists independently. Unread/running/approval
+indicators reuse the existing presentation. Device projects use server project
+records rather than inferring directories from a truncated session list.
 
-Only non-content preferences use `UserDefaults`, namespaced by server and account:
-device/Agent IDs, per-device workspace paths, and per-target opaque selection IDs.
-Session histories, message drafts, attachment bytes and interaction drafts remain
-in memory. They survive view changes and temporary disconnection, but not process
-termination. See [API_ALIGNMENT.md](API_ALIGNMENT.md) for cache limits, retry and
-recovery policy.
+Device management and post-pairing setup share `DeviceAgentModel`: configured
+instances have native switches and configuration/rename/delete actions; available
+types provide quick-add or configuration before add. Every add re-reads inventory,
+and an uncertain create/start recovers a matching existing instance on explicit
+retry. The pairing sheet offers Desktop installation/login or CLI credentials/
+six-digit pairing. Closing it retains account-level waiting; once a watched device
+is online, a separate setup sheet offers Agent types. Offline/background pauses
+polling, and switching accounts invalidates the queue.
+
+New Session stages a local session and bubble as soon as Send is accepted, clears
+the composer and opens that local page. It keeps one clientMessageId through
+preflight, creation and binding to the server ID, with returned attachment IDs and
+local previews preserved. Existing-session sends similarly display the bubble
+before upload. Failure keeps a visible send record and restores an untouched draft;
+uncertain sends require checking before explicit retry. New drafts are not erased
+by an older completion. The bubble's spinner occupies the left gutter.
+
+Launch restores the last device/New Session/session destination and available disk
+content before profile validation. Message history, selected-page state, session
+text/attachment drafts, pending delivery records and thumbnails survive termination
+within the bounded cache. Pending deliveries reopen as uncertain until confirmed
+by an echo; no write is automatically replayed. New Session text/preferences are
+saved separately, while unsent New Session attachment picks and interaction form
+drafts remain process-local. Network failure shows a nonblocking glass notice;
+cached permissions never enable operations. The first run after the memory-only
+version needs a successful sync to populate these records. See
+[API_ALIGNMENT.md](API_ALIGNMENT.md) for precise cache limits and recovery rules.
 
 ## Runtime interaction protocol
 
@@ -349,7 +372,7 @@ than a “server unavailable” alert.
 
 Verified on 2026-09-06, without starting a server or simulator:
 
-- 147 headless Swift tests across nineteen suites pass against production client-core
+- 170 headless Swift tests across 22 suites pass against production client-core
   sources. They cover API contracts, recovery/cache races, uncertain delivery,
   30 Hz presentation, echo handoff, target preparation, preference scope, schema
   payloads and interaction lifecycle/IME guards. Session-detail checks cover
@@ -498,7 +521,7 @@ keyboard layout and real mobile-network behavior still need manual validation:
     With the phone drawer fully open, select several sessions, a device and the
     account button; each sidebar action must receive its own tap. Only tapping
     the exposed main-card strip closes the drawer without changing selection.
-    Check Agent/device names and syncing/offline/working feedback in the header.
+    Check Agent/device names and syncing/offline feedback in the header, and the fixed-height sending/running footer.
     Sync completion and takeover must not move the viewport. Resize the iPad
     split and change Dynamic Type in both directions; blocks should rewrap with
     no reservation from the previous font/column width. Load older pages by tap/pull and check the spinner, retained
@@ -513,3 +536,22 @@ keyboard layout and real mobile-network behavior still need manual validation:
     truncation and support Copy Path. Check file preview/download/open-in actions.
     The sidebar has no search control, and the session's More menu has no second
     Files entry. New Session remains available at the bottom of the sidebar.
+
+16. Load a session, type a draft, background/terminate the app, disconnect the
+    network and reopen. It should show the same page and cached messages without
+    waiting for the server or presenting a blocking sheet. Restore connectivity
+    and confirm background synchronization without clearing/scroll-resetting the
+    visible content. Repeat on a device page and New Session, then sign out and
+    verify that another account/server cannot see the former cache.
+17. Create/select a project, check canonical directory reuse confirmation, change
+    device/Agent, and delete the selected project from another client before Send.
+    Load more than 100 sessions, open project/archived pages, and refresh while a
+    page request is pending. Restore and archive without losing cached pages.
+18. Use Desktop and CLI pairing; close the form while the CLI is offline, then
+    connect it and add/configure an Agent in the resulting sheet. Interrupt one
+    add/start request and retry after refreshing: it should reuse the instance.
+19. Send a photo over a slow connection and create a first session with attachments.
+    Check immediate local navigation/bubble/thumbnail, the left spinner, unchanged
+    client message identity after confirmation, and failure editing/retry. Kill
+    the app during a send: reopen must retain an uncertain record without sending
+    again. Verify that the earlier completed reply keeps Copy/Share throughout.

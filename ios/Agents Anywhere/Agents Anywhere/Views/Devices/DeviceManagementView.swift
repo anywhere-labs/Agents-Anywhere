@@ -55,6 +55,8 @@ struct DeviceManagementView: View {
                         onArchiveSelected: archiveSelectedSessions,
                         onArchiveAll: archiveAllSessions
                     )
+                    if model.sessionFilter != .archived { DashboardPageButton(repository: dashboard, scope: .init()) }
+                    if model.sessionFilter != .active { DashboardPageButton(repository: dashboard, scope: .init(archived: true)) }
                 }
                 .padding(.leading, safeAreaInsets.leading + 18)
                 .padding(.trailing, safeAreaInsets.trailing + 18)
@@ -275,13 +277,6 @@ private struct DeviceManagementToolbarTitle: View {
         }
         .accessibilityElement(children: .combine)
     }
-}
-
-private struct RuntimeConfigurationPresentation: Identifiable {
-    let runtime: V2DeviceRuntime
-    let schema: V2RuntimeConfigSchema
-
-    var id: V2RuntimeID { runtime.id }
 }
 
 private extension V2ConnectorPresence {

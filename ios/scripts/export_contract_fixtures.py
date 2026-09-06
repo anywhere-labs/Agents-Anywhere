@@ -71,6 +71,7 @@ def fixtures() -> dict:
         "snapshot": snapshot,
         "state": m.SessionRuntimeStateResponse(state=state, serverTime=NOW),
         "selectionResponse": m.SessionSelectionPatchResponse(ok=True, state=state, connectorResult={"ok": True}, serverTime=NOW),
+        "archiveAll": m.ArchiveAllResponse(sessions=[session], affected=1, serverTime=NOW),
         "bulk": m.BulkArchiveResponse(sessions=[session], notFound=[], serverTime=NOW),
         "capabilities": p.ProtocolCapabilitiesResponse(connectorId="device", capabilitySet=capabilities, serverTime=NOW),
         "modelCatalog": p.ProtocolModelCatalogResponse(catalog=model, serverTime=NOW),
@@ -92,6 +93,8 @@ def fixtures() -> dict:
     }
     result = {key: value.model_dump(mode="json", by_alias=True) if hasattr(value, "model_dump") else value for key, value in output.items()}
     result["dashboard"] = {"type": "dashboard.snapshot", "connectors": [connector.model_dump()], "projects": [project.model_dump()], "sessions": [session.model_dump()], "sessionPages": {"active": {"hasMore": False, "nextCursor": None}, "archived": {"hasMore": False, "nextCursor": None}}, "serverTime": NOW}
+    result["createdSession"] = {"session": session.model_dump(mode="json"), "connectorResult": {"ok": True},
+        "attachments": [{key: result["upload"]["attachments"][0][key] for key in ("fileId", "name", "mediaType", "size", "sha256")}], "serverTime": NOW}
     requests = {
         "createProject": m.ProjectCreateRequest(name="Workspace", connectorId="device", workspacePath="/workspace"),
         "patchProject": m.ProjectPatchRequest(pinned=True),

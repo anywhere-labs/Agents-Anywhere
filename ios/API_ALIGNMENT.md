@@ -1,6 +1,6 @@
 # iOS API alignment
 
-Backend baseline: `origin/v2` at `c1913284` (2026-09-05).
+Backend baseline: `origin/v2` at `1d0517cd` (2026-09-06).
 
 This document records the transport, typed-resource and business-service
 alignment baseline. The subsequent native chat, New Session and interaction
@@ -12,6 +12,12 @@ integration is documented in [NATIVE_CHAT.md](NATIVE_CHAT.md).
 - Connector discovery distinguishes runtime types from configured instances.
   Instance creation sends a name, configuration, and the requested active state
   in one request; catalog requests target the selected instance.
+- Projects use `/projects` for list/create/rename/pin/delete and project-scoped
+  session pagination/archive-all. Creating a session requires `projectId` and its
+  matching connector/workspace. Reusing the same canonical directory requires an
+  explicit UI confirmation because the create endpoint may rename that project.
+- Dashboard snapshots include projects and separate active/archived first-page
+  cursors. Global and per-project pagination retain independent membership.
 - Session metadata and creation carry the runtime type and instance separately.
   History, runtime state, capabilities, selections, notices, takeover, sync, and
   attachments use their current resource endpoints.
@@ -72,11 +78,24 @@ observable objects. Dashboard reads also reject late results from an old scope.
   Item revisions prevent older history from overwriting streamed content.
   Page `nextSeq` never acknowledges unread events. A required snapshot can reset
   the cursor backwards after the server resets its sequence.
-- Cache and drafts are **process-local**. They survive view switches,
-  background/foreground transitions and temporary disconnection, but not app
-  termination. Cold-launch offline login/history is not implemented here. There
-  is no disk cache or automatic write outbox; a future persistence implementation
-  must have its own account-scoped schema/version and retention policy.
+- Versioned disk archives retain dashboard data, up to 8 sessions and 128 MiB
+  of session data, with a 64 MiB per-record ceiling. Histories keep the existing
+  1,000-item bound; thumbnails use the existing 16 MiB per-session limit. Upload
+  bytes are dropped from persisted attachments after a server file ID is known.
+  Serial atomic writes are coalesced during streaming and flushed on background;
+  pending messages are saved before their non-idempotent send. Records are scoped
+  by normalized server/account, protected on iOS and excluded from backups.
+- Cold launch restores the saved page and available local content before network
+  validation. A unavailable server produces a nonblocking glass notice and read
+  backoff. Cached runtime permissions and pending approvals are not trusted:
+  controls wait for subscription/recovery and fresh runtime state. An interrupted
+  pending send restores as uncertain, then reconciles by clientMessageId; it never
+  replays automatically. Sign-out removes that account's archive and blocks late
+  writes through the invalidated handle. Corrupt/unsupported records are ignored.
+  The first launch after upgrading from the memory-only client must sync once to
+  establish a launch profile and cache. History never fetched remains unavailable
+  offline. Interaction form drafts and unsubmitted New Session attachment picks
+  remain process-local; New Session text is saved in account-scoped preferences.
 - `NWPathMonitor` exposes availability, cellular cost and Low Data Mode. Known
   offline paths pause subscriptions while retaining content. Foreground/network
   recovery obtains a new single-use ticket. After `session.subscribed`, durable
@@ -125,15 +144,11 @@ route decorators without constructing the application or contacting storage.
 On backend contract changes, regenerate the fixture and review the resulting
 diff before adjusting the client tests.
 
-API-alignment baseline validation: 31 headless Swift tests passed, including real URLSession
-interception, backend request/route matching, nullable selections, same-sequence
-live transitions, cache invalidation, timeline reset/history races, network
-loss, socket cancellation/overflow/silence, and uncertain message delivery.
-The test target compiles production client-core sources, not a copied model set.
-The complete iOS Debug target also builds for `generic/platform=iOS` with code
-signing disabled, including the existing AppState and SwiftUI pages. This uses
-the checked-in Swift package resolutions and does not start a simulator.
-The subsequent native integration passes 54 tests across seven suites, and its
-complete unsigned iOS build and backend fixture check pass. Live device rendering
-and real mobile-network behavior still require the manual validation described
-in [NATIVE_CHAT.md](NATIVE_CHAT.md).
+Current validation: 170 headless tests across 22 suites pass against the production
+client core. Added coverage includes project request/query contracts, paginated
+snapshot races, project reuse, stale device inventory, post-pairing queue ownership,
+cold offline cache restoration, account/credential separation, corrupt archives,
+removed-cache write suppression, local-to-server creation handoff and optimistic
+message visibility before upload. The complete unsigned iOS Debug target and
+backend fixture check pass without starting a server or simulator. Manual device
+checks remain in [NATIVE_CHAT.md](NATIVE_CHAT.md).

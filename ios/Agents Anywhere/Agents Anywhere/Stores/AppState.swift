@@ -12,19 +12,18 @@ final class AppState: ObservableObject {
         case signedIn
     }
 
-    enum ServerConnectionIssue: String, Identifiable {
-        case unavailable
-
-        var id: String { rawValue }
-    }
-
     @Published private(set) var route: Route = .loading
     @Published private(set) var serverURL: URL?
     @Published private(set) var me: AuthMe? {
         didSet {
             accountAvatarSource = AccountAvatarImageSource.parse(me?.avatar)
+            if let me, let serverURL, let token = accessToken() { restoration.save(profile: me, server: serverURL, token: token) }
         }
     }
+    @Published var chatSelection = ChatShellSelection.newSession {
+        didSet { if let scope = cachedServices?.scope, scope.accountID == me?.userId { restoration.save(selection: chatSelection, in: scope) } }
+    }
+    @Published private(set) var restoreConnectionError: String?
     @Published private(set) var accountAvatarSource: AccountAvatarImageSource?
     @Published private(set) var connectors: [V2Connector] = []
     @Published private(set) var sessions: [V2SessionMeta] = []
@@ -38,13 +37,16 @@ final class AppState: ObservableObject {
     @Published var sessionsError: String?
     @Published var connectorsError: String?
     @Published var isWorking = false
-    @Published private(set) var serverConnectionIssue: ServerConnectionIssue?
     @Published private(set) var isRetryingServerConnection = false
     @Published private(set) var sessionActionError: String?
     @Published private(set) var isAccountWorking = false
     @Published private(set) var accountError: String?
 
     private let keychain = KeychainStore()
+    private let restoration = V2RestorationStore()
+    private var accountSyncTask: Task<Void, Never>?
+    private var accountSyncID = UUID()
+    private var authenticationEpoch = UUID()
     private let serverDefaultsKey = "agentsAnywhere.serverURL"
     private let tokenAccount = "accessToken"
     private let dashboardClientId = "ios-dashboard-\(UUID().uuidString)"
@@ -69,44 +71,70 @@ final class AppState: ObservableObject {
     }
 
     func restoreSession() async {
-        route = .loading
-        guard
-            let serverValue = UserDefaults.standard.string(forKey: serverDefaultsKey),
-            let serverURL = URL(string: serverValue),
-            let token = try? keychain.readString(account: tokenAccount),
-            !token.isEmpty
-        else {
-            route = .signedOut
-            return
+        let epoch = authenticationEpoch
+        guard let serverValue = UserDefaults.standard.string(forKey: serverDefaultsKey),
+              let url = URL(string: serverValue), let token = accessToken(), !token.isEmpty else {
+            route = .signedOut; return
         }
-
-        self.serverURL = serverURL
-        do {
-            try await restoreAuthenticatedSession(serverURL: serverURL, token: token)
-        } catch {
-            handleSessionRestoreFailure(error)
+        serverURL = url
+        if let profile = restoration.profile(server: url, token: token) {
+            me = profile
+            chatSelection = restoration.selection(in: .init(serverURL: url, accountID: profile.userId))
+            if let services = makeV2Services() { await services.restoreCache(selection: chatSelection) }
         }
+        guard epoch == authenticationEpoch else { return }
+        // Only local reads precede the first page. No HTTP response is needed to
+        // display the saved navigation and durable session content.
+        route = .signedIn
+        startDashboardUpdates()
+        beginAccountSynchronization()
     }
 
-    /// Performs network I/O to restore the saved session after a connection failure.
     func retryServerConnection() async {
-        guard !isRetryingServerConnection else { return }
-        guard
-            let serverURL,
-            let token = try? keychain.readString(account: tokenAccount),
-            !token.isEmpty
-        else {
-            returnToLogin()
-            return
-        }
+        beginAccountSynchronization(force: true)
+        await accountSyncTask?.value
+    }
 
+    private func beginAccountSynchronization(force: Bool = false) {
+        guard !isInBackground, route == .signedIn, let serverURL, let token = accessToken(), !token.isEmpty else { return }
+        if accountSyncTask != nil && !force { return }
+        accountSyncTask?.cancel()
+        let id = UUID(); accountSyncID = id
+        let epoch = authenticationEpoch
         isRetryingServerConnection = true
-        defer { isRetryingServerConnection = false }
-
-        do {
-            try await restoreAuthenticatedSession(serverURL: serverURL, token: token)
-        } catch {
-            handleSessionRestoreFailure(error)
+        accountSyncTask = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                if accountSyncID == id { accountSyncTask = nil; isRetryingServerConnection = false }
+            }
+            var attempt = 0
+            while !Task.isCancelled, authenticationEpoch == epoch, !isInBackground {
+                do {
+                    let profile = try await APIClient(serverURL: serverURL).me(token: token)
+                    guard !Task.isCancelled, authenticationEpoch == epoch, accountSyncID == id else { return }
+                    let accountChanged = me?.userId != profile.userId
+                    if accountChanged {
+                        chatSelection = restoration.selection(in: .init(serverURL: serverURL, accountID: profile.userId))
+                    }
+                    me = profile
+                    if accountChanged, let services = makeV2Services() { await services.restoreCache(selection: chatSelection) }
+                    guard !Task.isCancelled, authenticationEpoch == epoch else { return }
+                    restoreConnectionError = nil
+                    startDashboardUpdates()
+                    await refreshDashboard()
+                    return
+                } catch {
+                    guard !Task.isCancelled, authenticationEpoch == epoch, accountSyncID == id else { return }
+                    if isAuthenticationFailure(error) {
+                        signOut(); authError = error.localizedDescription; return
+                    }
+                    restoreConnectionError = error.localizedDescription
+                    // A transport failure retains the profile, route and cache.
+                    // Backoff performs reads only; pending sends are never replayed.
+                    do { try await Task.sleep(for: .seconds(min(5 * (1 << min(attempt, 3)), 30))) } catch { return }
+                    attempt += 1
+                }
+            }
         }
     }
 
@@ -291,6 +319,8 @@ final class AppState: ObservableObject {
         dashboardError = repository.error
         connectorsError = repository.error
         sessionsError = repository.error
+        services.sessionReads.setActive(!isInBackground)
+        services.sessionReads.updateConnectivity(repository.isFresh ? services.connectivity.status : .init(availability: .offline))
         services.sessionRepository.applyMetadata(sessions)
         services.updateAgentConnections()
         if repository.hasLoaded { services.newSession.updateProjects(projects) }
@@ -316,6 +346,7 @@ final class AppState: ObservableObject {
         }
         do {
             let updated = try await services.dashboard.renameSession(sessionId: sessionId, title: title)
+            guard cachedServices === services else { return false }
             updateSession(updated)
             return true
         } catch {
@@ -327,7 +358,7 @@ final class AppState: ObservableObject {
     func setVisibleSession(_ sessionId: V2SessionID?) {
         guard route == .signedIn else { return }
         visibleSessionID = sessionId
-        makeV2Services()?.sessionReads.setVisibleSession(sessionId)
+        makeV2Services()?.sessionReads.setVisibleSession(sessionId?.hasPrefix("local:") == true ? nil : sessionId)
     }
 
     func setSessionPinned(sessionId: V2SessionID, pinned: Bool) async -> Bool {
@@ -338,6 +369,7 @@ final class AppState: ObservableObject {
         }
         do {
             let updated = try await services.dashboard.setSessionPinned(sessionId: sessionId, pinned: pinned)
+            guard cachedServices === services else { return false }
             updateSession(updated)
             return true
         } catch {
@@ -362,6 +394,7 @@ final class AppState: ObservableObject {
             } else {
                 try await services.dashboard.unarchive(sessionIds: sessionIds)
             }
+            guard cachedServices === services else { return false }
             for updated in updatedSessions {
                 updateSession(updated)
             }
@@ -387,7 +420,9 @@ final class AppState: ObservableObject {
         isAccountWorking = true
         defer { isAccountWorking = false }
         do {
-            me = try await services.account.profile()
+            let profile = try await services.account.profile()
+            guard cachedServices === services else { return false }
+            me = profile
             return true
         } catch {
             accountError = error.localizedDescription
@@ -406,7 +441,9 @@ final class AppState: ObservableObject {
         isAccountWorking = true
         defer { isAccountWorking = false }
         do {
-            me = try await services.account.updateAvatar(dataURL: dataURL)
+            let profile = try await services.account.updateAvatar(dataURL: dataURL)
+            guard cachedServices === services else { return false }
+            me = profile
             return true
         } catch {
             accountError = error.localizedDescription
@@ -425,7 +462,9 @@ final class AppState: ObservableObject {
         isAccountWorking = true
         defer { isAccountWorking = false }
         do {
-            me = try await services.account.clearAvatar()
+            let profile = try await services.account.clearAvatar()
+            guard cachedServices === services else { return false }
+            me = profile
             return true
         } catch {
             accountError = error.localizedDescription
@@ -466,7 +505,9 @@ final class AppState: ObservableObject {
         guard let services = makeV2Services() else {
             throw APIClientError.invalidServerURL
         }
-        me = try await services.account.updateProfile(displayName: displayName)
+        let profile = try await services.account.updateProfile(displayName: displayName)
+        guard cachedServices === services else { throw CancellationError() }
+        me = profile
     }
 
     func sendAccountEmailCode(email: String) async throws -> V2EmailCodeResponse {
@@ -480,7 +521,9 @@ final class AppState: ObservableObject {
         guard let services = makeV2Services() else {
             throw APIClientError.invalidServerURL
         }
-        me = try await services.account.bindEmail(email: email, code: code)
+        let profile = try await services.account.bindEmail(email: email, code: code)
+        guard cachedServices === services else { throw CancellationError() }
+        me = profile
     }
 
     func dismissAccountError() {
@@ -493,6 +536,7 @@ final class AppState: ObservableObject {
             throw V2BusinessError.signedInServerUnavailable
         }
         let response = try await services.devicePairing.createDevice(name: name)
+        guard cachedServices === services else { throw CancellationError() }
         updateConnector(response.connector)
         return response
     }
@@ -514,6 +558,7 @@ final class AppState: ObservableObject {
             connectorId: connectorId,
             connectorToken: connectorToken
         )
+        guard cachedServices === services else { throw CancellationError() }
         updateConnector(connector)
         return connector
     }
@@ -524,6 +569,7 @@ final class AppState: ObservableObject {
             throw V2BusinessError.signedInServerUnavailable
         }
         let connector = try await services.devicePairing.connector(connectorId: connectorId)
+        guard cachedServices === services else { throw CancellationError() }
         updateConnector(connector)
         return connector
     }
@@ -597,9 +643,13 @@ final class AppState: ObservableObject {
         dashboardUpdatesTask?.cancel()
         dashboardUpdatesTask = nil
         try keychain.delete(account: tokenAccount)
-        cachedServices?.shutdown()
+        authenticationEpoch = UUID(); accountSyncID = UUID()
+        accountSyncTask?.cancel(); accountSyncTask = nil; isRetryingServerConnection = false
+        restoration.clear(scope: cachedServices?.scope)
+        cachedServices?.shutdown(removingCache: true)
         cachedServices = nil
         cachedServicesToken = nil
+        chatSelection = .newSession; restoreConnectionError = nil
         visibleSessionID = nil
         me = nil
         serverURL = nil
@@ -617,7 +667,6 @@ final class AppState: ObservableObject {
         isAccountWorking = false
         accountError = nil
         authError = nil
-        serverConnectionIssue = nil
         if showSignedOutRoute {
             route = .signedOut
         }
@@ -634,22 +683,11 @@ final class AppState: ObservableObject {
     }
 
     func activateSignedInRoute() {
-        serverConnectionIssue = nil
         route = .signedIn
         Task {
             await refreshDashboard()
             startDashboardUpdates()
         }
-    }
-
-    /// Performs authenticated network I/O and refreshes the initial signed-in state.
-    private func restoreAuthenticatedSession(serverURL: URL, token: String) async throws {
-        let client = APIClient(serverURL: serverURL)
-        me = try await client.me(token: token)
-        serverConnectionIssue = nil
-        route = .signedIn
-        await refreshDashboard()
-        startDashboardUpdates()
     }
 
     /// Receives server-pushed dashboard snapshots and reconnects after transient failures.
@@ -684,17 +722,6 @@ final class AppState: ObservableObject {
         cachedServices?.dashboardRepository.apply(snapshot)
     }
 
-    private func handleSessionRestoreFailure(_ error: Error) {
-        if isAuthenticationFailure(error) {
-            signOut()
-            authError = error.localizedDescription
-            return
-        }
-
-        route = .loading
-        serverConnectionIssue = .unavailable
-    }
-
     private func isAuthenticationFailure(_ error: Error) -> Bool {
         guard case let APIClientError.server(status, _) = error else { return false }
         return status == 401 || status == 403
@@ -710,12 +737,15 @@ final class AppState: ObservableObject {
         cachedServices?.sessionReads.setActive(!background)
         cachedServices?.agentSetup.setActive(!background)
         if background {
+            accountSyncID = UUID(); accountSyncTask?.cancel(); accountSyncTask = nil; isRetryingServerConnection = false
+            if let services = cachedServices { Task { await services.flushCache() } }
             dashboardUpdatesTask?.cancel()
             dashboardUpdatesTask = nil
             cachedServices?.sessionRepository.suspend()
         } else {
             cachedServices?.sessionRepository.resume()
             startDashboardUpdates()
+            beginAccountSynchronization()
         }
     }
 
@@ -748,6 +778,10 @@ final class AppState: ObservableObject {
             guard let services else { return }
             self?.syncDashboard(services)
         }
+        services.onSelectPage = { [weak self] selection in self?.chatSelection = selection }
+        services.onCreationBound = { [weak self] localID, serverID in
+            if self?.chatSelection == .session(localID) { self?.chatSelection = .session(serverID) }
+        }
         syncDashboard(services)
         services.agentSetup.onOnline = { [weak services] connector in services?.dashboardRepository.upsertConnector(connector) }
         services.agentSetup.setActive(!isInBackground)
@@ -760,7 +794,7 @@ final class AppState: ObservableObject {
                 services.dashboardRepository.upsert([updated])
             }
         }
-        services.sessionReads.setVisibleSession(visibleSessionID)
+        services.sessionReads.setVisibleSession(visibleSessionID?.hasPrefix("local:") == true ? nil : visibleSessionID)
         if isInBackground { services.sessionRepository.suspend() }
         services.onConnectivityChange = { [weak self, weak services] status in
             guard let self, let services, self.cachedServices === services else { return }
@@ -769,12 +803,16 @@ final class AppState: ObservableObject {
                 self.dashboardUpdatesTask = nil
             } else {
                 self.startDashboardUpdates()
+                if self.restoreConnectionError != nil { self.beginAccountSynchronization(force: true) }
             }
         }
         return services
     }
 
     private func saveSession(serverURL: URL, token: String) throws {
+        authenticationEpoch = UUID(); accountSyncID = UUID()
+        accountSyncTask?.cancel(); accountSyncTask = nil; isRetryingServerConnection = false
+        restoreConnectionError = nil
         UserDefaults.standard.set(serverURL.absoluteString, forKey: serverDefaultsKey)
         try keychain.saveString(token, account: tokenAccount)
     }

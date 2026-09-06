@@ -13,6 +13,8 @@ final class V2SessionRepository {
     let scope: V2ClientScope
     private let detail: V2SessionDetailService
     private let interactions: V2RuntimeInteractionService
+    private let localStore: V2LocalStore?
+    private var persistenceTask: Task<Void, Never>?
     private let policy: V2SessionCachePolicy
     private let now: () -> Date
     private let sleep: (Duration) async throws -> Void
@@ -26,6 +28,7 @@ final class V2SessionRepository {
         detail: V2SessionDetailService,
         interactions: V2RuntimeInteractionService,
         policy: V2SessionCachePolicy = V2SessionCachePolicy(),
+        localStore: V2LocalStore? = nil,
         now: @escaping () -> Date = Date.init,
         sleep: @escaping (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
     ) {
@@ -33,6 +36,7 @@ final class V2SessionRepository {
         self.detail = detail
         self.interactions = interactions
         self.policy = policy
+        self.localStore = localStore
         self.now = now
         self.sleep = sleep
     }
@@ -54,9 +58,67 @@ final class V2SessionRepository {
     /// Returns cached durable content immediately. Observe to keep live facts fresh.
     func load(sessionId: V2SessionID) async throws -> V2SessionData {
         let entry = entry(for: sessionId)
+        await restoreCachedSession(id: sessionId)
+        try requireCurrent(entry)
         if let data = entry.projection?.data { return data }
         try requireNetwork()
         return try await hydrate(entry)
+    }
+
+    func stageCreation(_ submission: NewSessionSubmission) {
+        let entry = entry(for: submission.session.id)
+        entry.projection = V2SessionProjection.placeholder(submission.session, maximumItems: policy.maximumTimelineItems)
+        entry.model.stage(submission.pending)
+        emit(entry)
+    }
+
+    func bindCreation(_ submission: NewSessionSubmission, response: V2SessionCreateResponse) {
+        let entry = entry(for: response.session.id)
+        if entry.projection == nil {
+            entry.projection = V2SessionProjection.placeholder(response.session, maximumItems: policy.maximumTimelineItems)
+            entry.needsSnapshot = true
+        }
+        for (attachment, uploaded) in zip(submission.pending.attachments, response.attachments ?? []) {
+            submission.pending.bindUpload(uploaded.reference(sessionID: response.session.id), localID: attachment.id)
+        }
+        submission.pending.update(.accepted)
+        entry.model.stage(submission.pending)
+        emit(entry)
+        remove(sessionIds: [submission.session.id])
+    }
+
+    func restoreCachedSession(id: String) async {
+        guard let localStore else { return }
+        let entry = entry(for: id)
+        guard entry.projection == nil, !entry.hasReadLocal else { return }
+        if entry.localReadTask == nil {
+            entry.localReadTask = Task { await localStore.session(id) }
+        }
+        let saved = await entry.localReadTask?.value
+        guard isCurrent(entry), entry.projection == nil, !entry.hasReadLocal else { return }
+        entry.hasReadLocal = true; entry.localReadTask = nil
+        guard let saved, saved.session.id == id,
+              let projection = try? saved.projection(maximumItems: policy.maximumTimelineItems) else { return }
+        entry.projection = projection
+        entry.model.restoreLocal(saved)
+        emit(entry)
+    }
+
+    func flushCache() async {
+        persistenceTask?.cancel(); persistenceTask = nil
+        guard let localStore else { return }
+        let values = entries.values.sorted { $0.lastAccess < $1.lastAccess }.compactMap { entry in
+            entry.projection.map { V2SessionArchive(data: $0.data, model: entry.model) }
+        }
+        for value in values { await localStore.saveSession(value) }
+    }
+
+    private func schedulePersistence() {
+        guard localStore != nil, persistenceTask == nil else { return }
+        persistenceTask = Task { [weak self] in
+            do { try await Task.sleep(for: .seconds(1)) } catch { return }
+            await self?.flushCache()
+        }
     }
 
     /// Multiple observers share one socket; removing the last observer closes it.
@@ -159,6 +221,8 @@ final class V2SessionRepository {
         entry.catalogTask = task
         return try await task.value
     }
+
+    func draftDidChange() { schedulePersistence() }
 
     func localWorkDidChange(sessionID: V2SessionID) {
         if let entry = entries[sessionID] { emit(entry) }
@@ -292,6 +356,7 @@ final class V2SessionRepository {
 
     func remove(sessionIds: [V2SessionID]) {
         for id in sessionIds {
+            if let localStore { Task { await localStore.removeSession(id) } }
             guard let entry = entries.removeValue(forKey: id) else { continue }
             dispose(entry)
         }
@@ -299,6 +364,7 @@ final class V2SessionRepository {
 
     /// Cancellation plus identity checks prevent late responses from repopulating a signed-out cache.
     func reset() {
+        persistenceTask?.cancel(); persistenceTask = nil
         let old = Array(entries.values)
         entries.removeAll()
         for entry in old { dispose(entry) }
@@ -330,7 +396,7 @@ final class V2SessionRepository {
     }
 
     private func start(_ entry: Entry) {
-        guard isCurrent(entry), !suspended, network.availability != .offline,
+        guard isCurrent(entry), !entry.model.isLocalCreation, !suspended, network.availability != .offline,
               !entry.observers.isEmpty, entry.connectionTask == nil else { return }
         let connectionID = UUID()
         entry.connectionID = connectionID
@@ -345,6 +411,10 @@ final class V2SessionRepository {
                     entry.connection = attempt == 0 ? .connecting : .reconnecting
                     self.emit(entry)
                     _ = try await self.load(sessionId: entry.id)
+                    if entry.needsSnapshot {
+                        _ = try await self.hydrate(entry)
+                        entry.needsSnapshot = false
+                    }
                     let events = try await self.detail.updates(sessionId: entry.id, clientId: "ios-session-\(connectionID)")
                     for try await event in events {
                         try self.requireCurrent(entry)
@@ -485,6 +555,7 @@ final class V2SessionRepository {
         guard isCurrent(entry) else { return }
         entry.model.update(observation(entry), network: network)
         for observer in entry.observers.values { observer.yield(observation(entry)) }
+        schedulePersistence()
     }
 
     private func confirmEchoes(_ event: V2SessionEvent, entry: Entry) {
@@ -541,6 +612,9 @@ final class V2SessionRepository {
 private final class Entry {
     let id: V2SessionID
     let model: V2SessionModel
+    var needsSnapshot = false
+    var hasReadLocal = false
+    var localReadTask: Task<V2SessionArchive?, Never>?
     var projection: V2SessionProjection?
     var connection = V2SessionConnectionState.inactive
     var error: V2ClientFailure?

@@ -36,6 +36,7 @@ enum ChatHeaderStatus: Equatable {
 
 extension SessionChatModel {
     var headerStatus: ChatHeaderStatus? {
+        if session.isLocalCreation { return nil }
         if session.network.availability == .offline || session.connection == .offline { return .networkOffline }
         if session.metadata?.connectorStatus == .offline { return .deviceOffline }
         if !session.runtime.isFresh || session.connection == .reconnecting {
@@ -47,6 +48,6 @@ extension SessionChatModel {
             || session.runtime.state?.status == .waitingApproval { return .waitingForResponse }
         if session.runtime.state?.status == .stopping { return .stopping }
         if let reason = session.runtime.state?.statusReason, !reason.isEmpty { return .information(reason) }
-        return isRunning ? .working : nil
+        return nil
     }
 }

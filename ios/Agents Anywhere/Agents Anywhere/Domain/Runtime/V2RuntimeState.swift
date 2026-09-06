@@ -1,6 +1,6 @@
 import Foundation
 
-enum V2RuntimeStatus: String, Codable, Hashable {
+nonisolated enum V2RuntimeStatus: String, Codable, Hashable {
     case idle
     case waiting
     case waitingApproval = "waiting_approval"

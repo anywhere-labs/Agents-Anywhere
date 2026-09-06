@@ -13,10 +13,13 @@ final class V2DashboardRepository {
     private(set) var pageErrors: [V2SessionListScope: String] = [:]
     private(set) var isLoading = false
     private(set) var hasLoaded = false
+    private(set) var isFresh = false
     private(set) var error: String?
     private(set) var network = V2NetworkStatus()
     @ObservationIgnored var onChange: (() -> Void)?
     @ObservationIgnored var reconcile: (V2SessionMeta) -> V2SessionMeta = { $0 }
+    @ObservationIgnored private let localStore: V2LocalStore?
+    @ObservationIgnored private var persistenceTask: Task<Void, Never>?
     @ObservationIgnored private let service: V2DashboardService
     @ObservationIgnored private var generation = 0
     @ObservationIgnored private var isValid = true
@@ -24,16 +27,42 @@ final class V2DashboardRepository {
     @ObservationIgnored private var projectPageIDs: [V2SessionListScope: Set<String>] = [:]
     @ObservationIgnored private var extendedScopes: Set<V2SessionListScope> = []
 
-    init(service: V2DashboardService) { self.service = service }
-    var canWrite: Bool { isValid && network.availability != .offline }
+    init(service: V2DashboardService, localStore: V2LocalStore? = nil) { self.service = service; self.localStore = localStore }
+    func restoreCache() async {
+        guard let localStore, let value = await localStore.dashboard(), isValid, !hasLoaded else { return }
+        connectors = value.connectors; projects = value.projects; sessions = value.sessions.map(reconcile)
+        pages = Dictionary(value.pages.map { ($0.scope, $0.info) }, uniquingKeysWith: { _, new in new })
+        // Restored rows are retained while the fresh first page is merged. Each
+        // cursor still belongs to its original list, including project pages.
+        firstPageIDs = value.firstPageIDs ?? Set(sessions.map(\.id))
+        extendedScopes = value.extendedScopes ?? []
+        projectPageIDs = Dictionary((value.projectMemberships ?? []).map { ($0.scope, $0.ids) }, uniquingKeysWith: { $0.union($1) })
+        hasLoaded = true; isFresh = false; onChange?()
+    }
+    func flushCache() async {
+        persistenceTask?.cancel(); persistenceTask = nil
+        guard isValid, hasLoaded, let localStore else { return }
+        await localStore.saveDashboard(.init(connectors: connectors, projects: projects, sessions: sessions,
+            pages: pages.map { .init(scope: $0.key, info: $0.value) }, firstPageIDs: firstPageIDs,
+            extendedScopes: extendedScopes, projectMemberships: projectPageIDs.map { .init(scope: $0.key, ids: $0.value) }))
+    }
+    private func changed() {
+        onChange?()
+        guard isValid, hasLoaded, localStore != nil, persistenceTask == nil else { return }
+        persistenceTask = Task { [weak self] in
+            do { try await Task.sleep(for: .milliseconds(500)) } catch { return }
+            await self?.flushCache()
+        }
+    }
+    var canWrite: Bool { isValid && isFresh && network.availability != .offline }
     func updateNetwork(_ network: V2NetworkStatus) { self.network = network }
 
     func refresh() async {
-        guard canWrite, !isLoading else { return }
+        guard isValid, network.availability != .offline, !isLoading else { return }
         generation += 1
         let revision = generation
-        isLoading = true; error = nil; onChange?()
-        defer { isLoading = false; onChange?() }
+        isLoading = true; error = nil; changed()
+        defer { isLoading = false; changed() }
         do {
             let data = try await service.load()
             guard isValid, revision == generation, !Task.isCancelled else { return }
@@ -71,8 +100,8 @@ final class V2DashboardRepository {
         let projectIDs = Set(projects.map(\.id))
         pages = pages.filter { $0.key.projectID.map(projectIDs.contains) ?? true }
         projectPageIDs = projectPageIDs.filter { $0.key.projectID.map(projectIDs.contains) ?? false }
-        hasLoaded = true; error = nil
-        onChange?()
+        hasLoaded = true; isFresh = true; error = nil
+        changed()
     }
 
     func loadPage(_ scope: V2SessionListScope, refresh: Bool = false) async {
@@ -91,7 +120,11 @@ final class V2DashboardRepository {
             } else {
                 response = try await service.sessionAPI.listSessions(archived: scope.archived, cursor: cursor)
             }
-            guard isValid, revision == generation, !Task.isCancelled else { return }
+            guard isValid, !Task.isCancelled else { return }
+            guard revision == generation else {
+                pageErrors[scope] = "列表刚刚更新，请重新加载这一页。"
+                return
+            }
             // Detect broken/repeated cursors rather than issuing the same page forever.
             let next = response.nextCursor
             pages[scope] = .init(hasMore: response.hasMore && next != nil && next != cursor, nextCursor: next)
@@ -101,7 +134,7 @@ final class V2DashboardRepository {
                 projectPageIDs[scope, default: []].formUnion(response.sessions.map(\.id))
             }
             mergeSessions(response.sessions)
-            onChange?()
+            changed()
         } catch {
             if isValid, revision == generation, !Task.isCancelled { pageErrors[scope] = error.localizedDescription }
         }
@@ -109,17 +142,24 @@ final class V2DashboardRepository {
 
     func upsert(_ values: [V2SessionMeta]) {
         guard isValid else { return }
-        generation += 1; mergeSessions(values); onChange?()
+        generation += 1; mergeSessions(values); changed()
     }
+    func removeLocalSession(_ id: String) {
+        guard id.hasPrefix("local:") else { return }
+        sessions.removeAll { $0.id == id }; changed()
+    }
+
     func upsertConnector(_ connector: V2Connector) {
+        guard isValid else { return }
         generation += 1
         connectors.removeAll { $0.id == connector.id }; connectors.append(connector)
-        onChange?()
+        changed()
     }
     func removeConnector(_ id: String) {
+        guard isValid else { return }
         generation += 1
         connectors.removeAll { $0.id == id }; projects.removeAll { $0.connectorId == id }
-        sessions.removeAll { $0.connectorId == id }; onChange?()
+        sessions.removeAll { $0.connectorId == id }; changed()
     }
 
     func createProject(name: String, connectorID: String, path: String, reusing projectID: String? = nil) async throws -> V2Project {
@@ -149,7 +189,7 @@ final class V2DashboardRepository {
         try await service.projectAPI.delete(id)
         try requireValid()
         generation += 1; projects.removeAll { $0.id == id }
-        pages = pages.filter { $0.key.projectID != id }; onChange?()
+        pages = pages.filter { $0.key.projectID != id }; changed()
     }
     func archiveProject(_ id: String, archived: Bool) async throws {
         try requireWritable()
@@ -160,6 +200,7 @@ final class V2DashboardRepository {
     }
 
     func invalidate() {
+        persistenceTask?.cancel(); persistenceTask = nil
         isValid = false; generation += 1; onChange = nil
         sessions = []; connectors = []; projects = []; pages = [:]
         loadingPages = []; pageErrors = [:]
@@ -167,7 +208,7 @@ final class V2DashboardRepository {
     private func upsertProject(_ project: V2Project) {
         if let old = projects.first(where: { $0.id == project.id }), old.updatedAt > project.updatedAt { return }
         generation += 1
-        projects.removeAll { $0.id == project.id }; projects.append(project); onChange?()
+        projects.removeAll { $0.id == project.id }; projects.append(project); changed()
     }
     private func mergeSessions(_ incoming: [V2SessionMeta]) {
         var values = Dictionary(uniqueKeysWithValues: sessions.map { ($0.id, $0) })

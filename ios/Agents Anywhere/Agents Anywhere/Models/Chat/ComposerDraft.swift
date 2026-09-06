@@ -1,7 +1,7 @@
 import Foundation
 import Observation
 
-struct ChatAttachment: Identifiable, Equatable {
+nonisolated struct ChatAttachment: Codable, Identifiable, Equatable {
     let id: String
     let name: String
     let data: Data
@@ -15,7 +15,7 @@ struct ChatAttachment: Identifiable, Equatable {
     }
 
     var isImage: Bool { mediaType.hasPrefix("image/") }
-    var local: V2LocalAttachment {
+    @MainActor var local: V2LocalAttachment {
         V2LocalAttachment(fileId: id, name: name, mediaType: mediaType, data: data, sha256: nil)
     }
 }

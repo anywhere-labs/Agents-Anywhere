@@ -22,7 +22,7 @@ struct PairDeviceSheet: View {
                         if method == .desktop { desktopInstructions } else { cliInstructions }
                     } else {
                         Text("选择设备的连接方式").font(.title2.bold())
-                        AppGlassButton("桌面应用", systemImage: "desktopcomputer", prominent: true) { method = .desktop }
+                        AppGlassButton("桌面应用", systemImage: "desktopcomputer", style: .prominent) { method = .desktop }
                         Text("在电脑上安装桌面应用，并登录同一账号。设备会自动显示在侧栏。").foregroundStyle(.secondary)
                         AppGlassButton("命令行", systemImage: "terminal") { method = .cli }
                         Text("适合通过 CLI 连接远程主机或无界面的设备。").foregroundStyle(.secondary)
@@ -73,7 +73,7 @@ struct PairDeviceSheet: View {
                     TextField("000000", text: $code).keyboardType(.numberPad).textContentType(.oneTimeCode)
                         .font(.title2.monospaced()).textFieldStyle(.roundedBorder)
                         .onChange(of: code) { _, value in code = String(value.filter { $0.isASCII && $0.isNumber }.prefix(6)) }
-                    AppGlassButton("连接设备", systemImage: "link", isLoading: isWorking, prominent: true) {
+                    AppGlassButton("连接设备", systemImage: "link", style: .prominent, isLoading: isWorking) {
                         Task { await claim(credential) }
                     }.disabled(code.count != 6 || isWorking || !canConnect)
                 }.padding(.top, 12)
@@ -87,7 +87,7 @@ struct PairDeviceSheet: View {
         } else {
             Text("为命令行设备命名").font(.title2.bold())
             TextField("设备名称", text: $name).textFieldStyle(.roundedBorder).autocorrectionDisabled()
-            AppGlassButton("继续", systemImage: "arrow.right", isLoading: isWorking, prominent: true) {
+            AppGlassButton("继续", systemImage: "arrow.right", style: .prominent, isLoading: isWorking) {
                 Task { await prepare() }
             }.disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isWorking || !canConnect || creationUncertain)
             if creationUncertain {

@@ -20,6 +20,8 @@ final class SessionChatModel {
     var isOpeningReady: Bool { isOpeningPrepared && timeline.hasPresentedSnapshot }
     private(set) var openingError: String?
     private(set) var responseRevision = 0
+    @ObservationIgnored var onEditCreation: ((V2PendingMessage) -> Void)?
+    @ObservationIgnored var onDiscardCreation: (() -> Void)?
     @ObservationIgnored let repository: V2SessionRepository
     @ObservationIgnored private let attachments: V2AttachmentService
     @ObservationIgnored private let files: V2WorkspaceFilesService?
@@ -27,11 +29,25 @@ final class SessionChatModel {
     init(session: V2SessionModel, repository: V2SessionRepository, attachments: V2AttachmentService, files: V2WorkspaceFilesService? = nil) {
         self.session = session; self.repository = repository; self.attachments = attachments
         self.files = files
+        if let cached = repository.cached(sessionId: session.id) {
+            timeline.presentOpening(cached.items, pendingMessages: session.pendingMessages)
+            isOpeningPrepared = true
+        }
     }
 
     var isRunning: Bool {
         guard let status = session.runtime.state?.status else { return false }
         return [.running, .pending, .waiting, .waitingApproval, .stopping, .blocked].contains(status)
+    }
+    var sendingPlaceholder: String? {
+        let submitting = session.pendingMessages.contains { $0.delivery == .sending || $0.delivery == .accepted }
+        if submitting || session.awaitingReplyID != nil { return session.isLocalCreation ? "正在创建会话…" : "等待 Agent 回应…" }
+        guard session.runtime.isFresh, let status = session.runtime.state?.status else { return nil }
+        switch status {
+        case .waiting, .pending: return "等待 Agent 回应…"
+        case .running: return "Agent 正在处理任务…"
+        default: return nil
+        }
     }
     var responseUnavailableReason: String? {
         if !session.isValid { return "会话已关闭。" }
@@ -53,7 +69,8 @@ final class SessionChatModel {
     }
 
     func prepareOpening() async {
-        isOpeningPrepared = false; openingError = nil
+        if !timeline.hasPresentedSnapshot { isOpeningPrepared = false }
+        openingError = nil
         do {
             let data = try await repository.load(sessionId: session.id)
             // Reopening an older cached window returns to the latest records.
@@ -133,23 +150,16 @@ final class SessionChatModel {
         isWorking = true
         error = nil
         defer { isWorking = false }
-        do {
-            // Retain successful uploads on the draft; retrying a definite send
-            // rejection need not upload the same selected bytes again.
-            for attachment in selected where attachment.uploaded == nil {
-                let uploaded = try await attachments.upload(sessionId: session.id, attachments: [attachment.local])
-                guard session.isValid, !Task.isCancelled else { return }
-                if let index = draft.attachments.firstIndex(where: { $0.id == attachment.id }), let file = uploaded.first {
-                    draft.attachments[index].uploaded = file
+        _ = await session.sendDraft { pending in
+                for attachment in pending.attachments where attachment.uploaded == nil {
+                    let uploaded = try await self.attachments.upload(sessionId: self.session.id, attachments: [attachment.local])
+                    guard self.session.isValid, !Task.isCancelled else { throw CancellationError() }
+                    guard let file = uploaded.first else { throw HTTPError.invalidResponse }
+                    pending.bindUpload(file, localID: attachment.id)
+                    self.session.attachmentPreviews.remember(pending.attachments, clientID: pending.id)
+                    self.repository.draftDidChange()
                 }
-            }
-            guard session.isValid, draft.text == text, draft.attachments.map(\.id) == selected.map(\.id),
-                  !draft.isComposing else { return }
-            let ids = draft.attachments.compactMap { $0.uploaded?.fileId }
-            guard ids.count == selected.count else { return }
-            session.draftAttachmentIDs = ids
-            _ = await session.sendDraft()
-        } catch { if session.isValid { self.error = error.localizedDescription } }
+        }
     }
 
     func interrupt() async {

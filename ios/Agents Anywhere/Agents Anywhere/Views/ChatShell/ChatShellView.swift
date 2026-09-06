@@ -7,7 +7,10 @@ struct ChatShellView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     @State private var sidebar = ChatSidebarState()
-    @State private var selection = ChatShellSelection.newSession
+    private var selection: ChatShellSelection {
+        get { appState.chatSelection }
+        nonmutating set { appState.chatSelection = newValue }
+    }
 
     var body: some View {
         SidebarDrawer(
@@ -187,6 +190,7 @@ struct ChatShellView: View {
             }
         } else {
             ChatShellPlaceholderPage(
+                isConnecting: appState.isRetryingServerConnection,
                 title: selectedContentTitle ?? "Agents Anywhere",
                 onOpenSidebar: openSidebar
             )
@@ -260,6 +264,7 @@ struct ChatShellView: View {
 }
 
 private struct ChatShellPlaceholderPage: View {
+    let isConnecting: Bool
     let title: String
     let onOpenSidebar: () -> Void
 
@@ -267,6 +272,12 @@ private struct ChatShellPlaceholderPage: View {
         NavigationStack {
             Color(.systemBackground)
                 .ignoresSafeArea()
+                .overlay {
+                    if isConnecting {
+                        Label("正在连接，首次同步后即可保留本地内容", systemImage: "network")
+                            .font(.footnote).foregroundStyle(.secondary).padding(24)
+                    }
+                }
                 .navigationTitle(title)
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {

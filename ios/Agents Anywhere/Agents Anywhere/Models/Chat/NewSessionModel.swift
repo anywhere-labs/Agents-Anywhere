@@ -2,6 +2,7 @@ import Foundation
 import Observation
 
 struct NewSessionPreference: Codable {
+    var draftText: String? = nil
     var connectorID = ""
     var runtimeID = ""
     var workspaces: [String: String] = [:] // Legacy directory preference, used only to match an existing project.
@@ -31,6 +32,9 @@ final class NewSessionModel {
     private(set) var creationUncertain = false
     private(set) var network = V2NetworkStatus()
     var error: String?
+    @ObservationIgnored var onStaged: ((NewSessionSubmission) async -> Void)?
+    @ObservationIgnored var onFailed: ((NewSessionSubmission) -> Void)?
+    @ObservationIgnored var onBound: ((NewSessionSubmission, V2SessionCreateResponse) -> Void)?
     @ObservationIgnored private let devices: V2DeviceManagementService
     @ObservationIgnored private let preparation: V2SessionPreparationService
     @ObservationIgnored private let creation: V2SessionCreationService
@@ -50,6 +54,7 @@ final class NewSessionModel {
         preference = defaults.data(forKey: preferenceKey).flatMap { try? JSONDecoder().decode(NewSessionPreference.self, from: $0) } ?? .init()
         connectorID = preference.connectorID; runtimeID = preference.runtimeID
         projectID = preference.projectIDs?[preference.connectorID]
+        draft.text = preference.draftText ?? ""
     }
 
     var connector: V2Connector? { connectors.first { $0.id == connectorID } }
@@ -197,8 +202,22 @@ final class NewSessionModel {
         let files = draft.attachments
         isCreating = true; error = nil
         saveSelections()
-        defer { isCreating = false }
-        let target = (connectorID, runtimeID, project.id)
+        let submission = NewSessionSubmission(project: project, runtime: runtime, text: text, attachments: files)
+        draft.clear(); saveDraft()
+        var completed = false
+        defer {
+            isCreating = false
+            if !completed, isValid {
+                let failure = V2ClientFailure(kind: .unavailable, message: error ?? "未能完成创建，请检查设备连接和运行选项。")
+                submission.pending.update(creationUncertain ? .uncertain(failure) : .rejected(failure))
+                onFailed?(submission)
+                if draft.text.isEmpty, draft.attachments.isEmpty { draft.text = text; draft.attachments = files }
+            }
+            saveDraft()
+        }
+        await onStaged?(submission)
+        guard isValid, !Task.isCancelled else { return nil }
+        let target = (project.connectorId, runtime.id, project.id)
         let chosenSelections = settings.selections
         await prepareTarget()
         guard isValid, !Task.isCancelled, prepared != nil, connectorID == target.0, runtimeID == target.1,
@@ -223,9 +242,10 @@ final class NewSessionModel {
             let response = try await creation.createAndStart(connectorId: connectorID, projectId: project.id, runtime: runtime.runtimeType,
                 runtimeId: runtime.id, title: nil, cwd: project.workspacePath,
                 content: text, selections: settings.selections, attachments: files.map(\.local),
-                clientMessageId: UUID().uuidString)
+                clientMessageId: submission.pending.id)
             guard isValid else { return nil }
-            if draft.text == text, draft.attachments.map(\.id) == files.map(\.id) { draft.clear() }
+            completed = true
+            onBound?(submission, response)
             return response.session
         } catch {
             guard isValid else { return nil }
@@ -235,6 +255,22 @@ final class NewSessionModel {
                 : error.localizedDescription
             return nil
         }
+    }
+
+    func restoreCreationDraft(meta: V2SessionMeta, pending: V2PendingMessage) {
+        guard isValid, !isCreating else { return }
+        if (!draft.text.isEmpty || !draft.attachments.isEmpty),
+           draft.text != pending.content || draft.attachments.map(\.id) != pending.attachments.map(\.id) {
+            error = "新会话中已有其他草稿，已为你保留。请先处理该草稿，再返回这条发送记录。"
+            return
+        }
+        focusDevice(meta.connectorId, workspace: meta.cwd)
+        if let project = meta.projectId { _ = selectProject(project) }
+        runtimeID = meta.effectiveRuntimeId
+        draft.text = pending.content; draft.attachments = pending.attachments
+        if case .uncertain = pending.delivery { creationUncertain = true }
+        error = creationUncertain ? "请先检查会话列表，确认上次创建结果后再发送。" : nil
+        saveDraft()
     }
 
     /// Explicitly reviewed by the user. Network recovery alone never retries creation.
@@ -250,6 +286,8 @@ final class NewSessionModel {
     private var savedSelections: [V2RuntimeSelectionScope: V2SelectionID] {
         Dictionary(uniqueKeysWithValues: (preference.selections[targetKey] ?? [:]).map { (V2RuntimeSelectionScope(rawValue: $0.key), $0.value) })
     }
+    func saveDraft() { preference.draftText = draft.text; persist() }
+
     private func persist() {
         if let data = try? JSONEncoder().encode(preference) { defaults.set(data, forKey: preferenceKey) }
     }

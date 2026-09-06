@@ -42,9 +42,9 @@ final class V2PendingMessage: Identifiable {
     }
     let id: String
     let content: String
-    let attachmentIDs: [V2AttachmentID]
+    private(set) var attachmentIDs: [V2AttachmentID]
     let localAttachmentIDs: [String]
-    let attachments: [ChatAttachment]
+    private(set) var attachments: [ChatAttachment]
     private(set) var delivery: Delivery = .sending
     var didRestoreDraft = false
 
@@ -52,6 +52,12 @@ final class V2PendingMessage: Identifiable {
         self.id = id; self.content = content; self.attachmentIDs = attachmentIDs
         self.localAttachmentIDs = localAttachmentIDs
         self.attachments = attachments
+    }
+
+    func bindUpload(_ file: V2AttachmentReference, localID: String) {
+        guard let index = attachments.firstIndex(where: { $0.id == localID }) else { return }
+        attachments[index].uploaded = file
+        attachmentIDs = attachments.compactMap { $0.uploaded?.fileId }
     }
 
     func update(_ delivery: Delivery) {
@@ -81,6 +87,7 @@ final class V2SessionModel: Identifiable {
     private(set) var isValid = true
     var isPerformingAction = false
     private(set) var pendingMessages: [V2PendingMessage] = []
+    private(set) var awaitingReplyID: String?
     let composer = ComposerDraft()
     let attachmentPreviews = ChatAttachmentStore()
     var draft: String {
@@ -138,14 +145,14 @@ final class V2SessionModel: Identifiable {
 
     /// Explicit user action only. No outbox replay: clientMessageId correlates an echo
     /// but is not a promise of backend idempotency.
-    @discardableResult func sendDraft() async -> V2PendingMessage? {
+    @discardableResult func sendDraft(upload: ((V2PendingMessage) async throws -> Void)? = nil) async -> V2PendingMessage? {
         guard let repository, canSend else {
             failure = V2ClientFailure(kind: .unavailable, message: "Wait for the session to reconnect before sending.")
             return nil
         }
         let content = draft
         let attachments = draftAttachmentIDs
-        guard !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty else {
+        guard !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty || !composer.attachments.isEmpty else {
             failure = V2ClientFailure(V2BusinessError.emptyMessage)
             return nil
         }
@@ -158,20 +165,28 @@ final class V2SessionModel: Identifiable {
         let pending = V2PendingMessage(id: UUID().uuidString, content: content, attachmentIDs: attachments,
                                       localAttachmentIDs: composer.attachments.map(\.id), attachments: composer.attachments)
         attachmentPreviews.remember(pending.attachments, clientID: pending.id)
-        pendingMessages.append(pending)
+        pendingMessages.append(pending); awaitingReplyID = pending.id
         // Commit the local bubble and release the editor immediately. A failed
         // write restores this snapshot only if the user has not started a new draft.
         composer.clear(); draftAttachmentIDs = []
         repository.localWorkDidChange(sessionID: id)
+        var didSubmit = false
         do {
-            _ = try await repository.send(sessionId: id, content: content, attachmentIDs: attachments, clientMessageID: pending.id)
+            try await upload?(pending)
+            guard isValid, !Task.isCancelled else { throw CancellationError() }
+            attachmentPreviews.remember(pending.attachments, clientID: pending.id)
+            await repository.flushCache()
+            guard isValid, !Task.isCancelled else { throw CancellationError() }
+            didSubmit = true
+            _ = try await repository.send(sessionId: id, content: content, attachmentIDs: pending.attachmentIDs, clientMessageID: pending.id)
             guard isValid else { return pending }
             pending.update(.accepted)
             clearDraft(ifMatching: pending)
         } catch {
             guard isValid else { return pending }
+            if awaitingReplyID == pending.id { awaitingReplyID = nil }
             let failure = V2ClientFailure(error)
-            pending.update(V2ClientFailure.isDefiniteWriteRejection(error) ? .rejected(failure) : .uncertain(failure))
+            pending.update(!didSubmit || V2ClientFailure.isDefiniteWriteRejection(error) ? .rejected(failure) : .uncertain(failure))
             if pending.delivery == .confirmed { clearDraft(ifMatching: pending) }
             else {
                 self.failure = failure
@@ -181,6 +196,7 @@ final class V2SessionModel: Identifiable {
                 }
             }
         }
+        repository.localWorkDidChange(sessionID: id)
         return pending
     }
 
@@ -209,6 +225,12 @@ final class V2SessionModel: Identifiable {
         }
         if timeline.map(\.id) != rows.map(\.id) { timeline = rows }
         for item in data?.items ?? [] { confirmEcho(item) }
+        if let id = awaitingReplyID, let data {
+            let agentStarted = data.liveStateIsFresh && [.running, .waiting, .pending, .error].contains(data.state?.status ?? .unknown)
+            let user = data.items.first { $0.role == .user && $0.source["clientMessageId"]?.stringValue == id }
+            let hasReply = user.map { user in data.items.contains { $0.orderSeq > user.orderSeq && $0.role != .user && $0.type != .turnStart } } ?? false
+            if agentStarted || hasReply { awaitingReplyID = nil }
+        }
     }
 
     func confirmEcho(_ item: V2TimelineItem) {
@@ -220,9 +242,40 @@ final class V2SessionModel: Identifiable {
         pendingMessages.removeAll { $0.id == clientID }
     }
 
+    var isLocalCreation: Bool { id.hasPrefix("local:") }
+    func stage(_ pending: V2PendingMessage) {
+        guard isValid, !pendingMessages.contains(where: { $0.id == pending.id }) else { return }
+        pendingMessages.append(pending)
+        attachmentPreviews.remember(pending.attachments, clientID: pending.id)
+        repository?.localWorkDidChange(sessionID: id)
+    }
+    func restoreDraft(from pending: V2PendingMessage) -> Bool {
+        guard isValid, composer.text.isEmpty, composer.attachments.isEmpty else { return false }
+        draft = pending.content; composer.attachments = pending.attachments; draftAttachmentIDs = pending.attachmentIDs
+        pending.didRestoreDraft = true
+        composer.isFocused = true
+        repository?.draftDidChange()
+        return true
+    }
+
+    func restoreLocal(_ archive: V2SessionArchive) {
+        guard isValid, !hasLocalWork else { return }
+        if let previews = archive.previews { attachmentPreviews.restore(previews) }
+        draft = archive.draft; composer.attachments = archive.draftAttachments
+        draftAttachmentIDs = archive.draftAttachments.compactMap { $0.uploaded?.fileId }
+        pendingMessages = archive.pending.map { value in
+            let pending = V2PendingMessage(id: value.id, content: value.content, attachmentIDs: value.attachmentIDs,
+                localAttachmentIDs: value.attachments.map(\.id), attachments: value.attachments)
+            let failure = V2ClientFailure(kind: .unavailable, message: value.error ?? "上次发送的结果尚未确认，正在同步记录。请确认后再重试。")
+            pending.update(value.rejected ? .rejected(failure) : .uncertain(failure))
+            attachmentPreviews.remember(value.attachments, clientID: value.id)
+            return pending
+        }
+    }
+
     func invalidate() {
         runtime.update(nil, connected: false)
-        metadata = nil; timeline = []; pendingMessages = []; draft = ""; draftAttachmentIDs = []
+        metadata = nil; timeline = []; pendingMessages = []; awaitingReplyID = nil; draft = ""; draftAttachmentIDs = []
         composer.invalidate()
         attachmentPreviews.clear()
         notices.clear()

@@ -99,6 +99,7 @@ struct NewSessionView: View, Equatable {
             }
         }
         .modifier(ChatPageSafeArea(insets: safeAreaInsets))
+        .onChange(of: model.draft.text) { _, _ in model.saveDraft() }
         .task(id: TargetRefreshKey(connectors: connectors, network: model.network, connectorID: model.connectorID)) { await model.refresh(connectors: connectors) }
         .sheet(isPresented: $showsTarget) {
             SessionTargetSheet(model: model, onManageDevice: { id in showsTarget = false; onManageDevice(id) })

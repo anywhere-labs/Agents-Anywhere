@@ -106,7 +106,13 @@ struct PendingMessageRow: View {
             onAttachment: onAttachment, loadThumbnail: chat.thumbnail, isPending: pending.delivery == .sending || pending.delivery == .accepted,
             onDeliveryIssue: deliveryIssue == nil ? nil : { confirmsDismiss = true })
         .confirmationDialog(deliveryIssue ?? "", isPresented: $confirmsDismiss, titleVisibility: .visible) {
-            Button("移除此发送记录", action: onDismiss)
+            Button("返回编辑") {
+                if chat.session.isLocalCreation { chat.onEditCreation?(pending) }
+                else { _ = chat.session.restoreDraft(from: pending) }
+            }
+            Button("移除此发送记录") {
+                if chat.session.isLocalCreation { chat.onDiscardCreation?() } else { onDismiss() }
+            }
             Button("取消", role: .cancel) {}
         }
     }

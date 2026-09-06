@@ -1,6 +1,6 @@
 import Foundation
 
-struct V2Project: Codable, Identifiable, Hashable {
+nonisolated struct V2Project: Codable, Identifiable, Hashable {
     let id: String
     let userId: String
     let connectorId: V2ConnectorID
@@ -16,7 +16,7 @@ struct V2Project: Codable, Identifiable, Hashable {
     let updatedAt: String
 }
 
-struct V2ProjectSessionCounts: Codable, Hashable {
+nonisolated struct V2ProjectSessionCounts: Codable, Hashable {
     let active: Int
     let archived: Int
 }
@@ -31,7 +31,7 @@ struct V2ProjectCreateRequest: Encodable {
 }
 struct V2ProjectPatchRequest: Encodable { let name: String?; let pinned: Bool? }
 
-struct V2SessionPageInfo: Codable, Hashable {
+nonisolated struct V2SessionPageInfo: Codable, Hashable {
     var hasMore = false
     var nextCursor: String? = nil
 }
@@ -41,7 +41,7 @@ struct V2DashboardSessionPages: Codable, Hashable {
 }
 
 /// Each list keeps its own cursor; a project page is not a slice of the global page.
-struct V2SessionListScope: Hashable {
+nonisolated struct V2SessionListScope: Codable, Hashable {
     var projectID: String? = nil
     var archived = false
 }

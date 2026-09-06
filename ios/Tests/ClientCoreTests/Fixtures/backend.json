@@ -1,4 +1,46 @@
 {
+  "archiveAll": {
+    "affected": 1,
+    "serverTime": "2026-09-05T12:00:00Z",
+    "sessions": [
+      {
+        "archiveSource": null,
+        "archived": false,
+        "archivedAt": null,
+        "connectorId": "device",
+        "connectorStatus": "online",
+        "cwd": "/workspace",
+        "externalSessionId": null,
+        "id": "session",
+        "lastActivityAt": null,
+        "lastItemAt": null,
+        "lastItemOrderSeq": null,
+        "lastReadSeq": 0,
+        "lastSyncedAt": null,
+        "latestTurnEndSeq": 0,
+        "pinned": false,
+        "pinnedAt": null,
+        "projectId": "project",
+        "runtime": "claude",
+        "runtimeId": "rti_work",
+        "runtimeName": "Work",
+        "runtimeType": "claude",
+        "runtimeTypeDisplayName": null,
+        "sortAt": null,
+        "sourceAvailability": "available",
+        "sourceAvailabilityReason": null,
+        "sourceAvailabilityUpdatedAt": null,
+        "sourceObservationOrigin": null,
+        "sourceObservedAt": null,
+        "status": "idle",
+        "takeover": true,
+        "title": "Task",
+        "unread": false,
+        "updatedSeq": 10,
+        "userArchived": false
+      }
+    ]
+  },
   "authConfig": {
     "emailVerificationRequired": false,
     "needsBootstrap": false,
@@ -122,6 +164,57 @@
       }
     ],
     "serverTime": "2026-09-05T12:00:00Z"
+  },
+  "createdSession": {
+    "attachments": [
+      {
+        "fileId": "file",
+        "mediaType": "text/plain",
+        "name": "test.txt",
+        "sha256": "hash",
+        "size": 5
+      }
+    ],
+    "connectorResult": {
+      "ok": true
+    },
+    "serverTime": "2026-09-05T12:00:00Z",
+    "session": {
+      "archiveSource": null,
+      "archived": false,
+      "archivedAt": null,
+      "connectorId": "device",
+      "connectorStatus": "online",
+      "cwd": "/workspace",
+      "externalSessionId": null,
+      "id": "session",
+      "lastActivityAt": null,
+      "lastItemAt": null,
+      "lastItemOrderSeq": null,
+      "lastReadSeq": 0,
+      "lastSyncedAt": null,
+      "latestTurnEndSeq": 0,
+      "pinned": false,
+      "pinnedAt": null,
+      "projectId": "project",
+      "runtime": "claude",
+      "runtimeId": "rti_work",
+      "runtimeName": "Work",
+      "runtimeType": "claude",
+      "runtimeTypeDisplayName": null,
+      "sortAt": null,
+      "sourceAvailability": "available",
+      "sourceAvailabilityReason": null,
+      "sourceAvailabilityUpdatedAt": null,
+      "sourceObservationOrigin": null,
+      "sourceObservedAt": null,
+      "status": "idle",
+      "takeover": true,
+      "title": "Task",
+      "unread": false,
+      "updatedSeq": 10,
+      "userArchived": false
+    }
   },
   "dashboard": {
     "connectors": [

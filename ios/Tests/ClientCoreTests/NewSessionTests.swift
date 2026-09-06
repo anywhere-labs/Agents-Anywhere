@@ -30,6 +30,25 @@ import Testing
         return [response.connector]
     }
 
+    @Test func creationStagesBeforeNetworkAndKeepsOneClientIDThroughBinding() async throws {
+        let http = transport(); let model = make(http); let gate = TestGate()
+        model.draft.text = "Start now"
+        await model.refresh(connectors: try devices()); _ = model.selectProject("project")
+        var staged: NewSessionSubmission?
+        var boundID: String?
+        model.onStaged = { value in staged = value; await gate.wait() }
+        model.onBound = { value, _ in boundID = value.pending.id }
+        let creation = Task { await model.create(text: "Start now") }
+        try await eventually { staged != nil }
+        #expect(model.draft.text.isEmpty && staged?.pending.content == "Start now")
+        #expect(http.count("create-and-start") == 0)
+        gate.release()
+        #expect(await creation.value?.id == "session")
+        let request = try #require(http.calls.first { $0.path.hasSuffix("create-and-start") })
+        #expect(request.body?["clientMessageId"]?.stringValue == staged?.pending.id)
+        #expect(boundID == staged?.pending.id)
+    }
+
     @Test func offlineDraftAndTargetSurviveAndReconnectRefreshesWithoutWrites() async throws {
         let http = transport(); let model = make(http)
         model.draft.text = "保留这个任务"

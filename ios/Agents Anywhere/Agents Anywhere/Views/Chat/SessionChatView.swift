@@ -29,8 +29,14 @@ struct SessionChatView: View, Equatable {
 
     init(session: V2SessionModel, services: V2ClientServices, deviceName: String?, safeAreaInsets: EdgeInsets,
          onMenu: @escaping () -> Void) {
-        _model = State(initialValue: SessionChatModel(session: session, repository: services.sessionRepository, attachments: services.attachments,
-            files: services.workspaceFiles))
+        let chat = SessionChatModel(session: session, repository: services.sessionRepository, attachments: services.attachments,
+            files: services.workspaceFiles)
+        chat.onEditCreation = { [weak services, weak session] pending in
+            if let session { services?.editCreation(session, pending: pending) }
+        }
+        chat.onDiscardCreation = { [weak services] in services?.discardCreation(session.id) }
+        _model = State(initialValue: chat)
+        _hasStartedLoading = State(initialValue: services.sessionRepository.cached(sessionId: session.id) != nil)
         sessionIdentity = session
         self.deviceName = deviceName
         fileService = services.workspaceFiles; detailService = services.sessionDetail
@@ -131,7 +137,7 @@ struct SessionChatView: View, Equatable {
         .task(id: hasStartedLoading) {
             guard hasStartedLoading else { return }
             // Reattaching a loaded detail only resumes observation.
-            if !model.isOpeningReady { await model.prepareOpening() }
+            await model.prepareOpening()
             guard !Task.isCancelled else { return }
             await model.timeline.run(sessionID: session.id, repository: model.repository)
         }
@@ -160,6 +166,8 @@ struct SessionChatView: View, Equatable {
         .quickLookPreview($previewURL)
         .onChange(of: previewURL) { _, url in if url == nil { cleanPreview() } }
         .onDisappear { if previewURL == nil { cleanPreview() } }
+        .onChange(of: session.composer.text) { _, _ in model.repository.draftDidChange() }
+        .onChange(of: session.composer.attachments) { _, _ in model.repository.draftDidChange() }
         .onChange(of: session.failure, initial: true) { _, failure in
             toasts.update(source: "session", failure: failure, canRetry: failure?.kind != .authentication)
         }

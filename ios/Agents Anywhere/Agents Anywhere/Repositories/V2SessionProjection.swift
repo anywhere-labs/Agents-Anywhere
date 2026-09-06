@@ -15,6 +15,18 @@ struct V2SessionProjection {
         replaceTimeline(snapshot.timeline.items, hasMore: snapshot.timeline.hasMore)
     }
 
+    init(archive: V2SessionSnapshot, hasNewerItems: Bool, maximumItems: Int) {
+        self.init(snapshot: archive, maximumItems: maximumItems)
+        data.hasNewerItems = hasNewerItems
+    }
+
+    static func placeholder(_ session: V2SessionMeta, maximumItems: Int) -> Self {
+        let empty = V2RuntimeCapabilitySnapshot(revision: 0, capabilities: [])
+        return Self(snapshot: .init(session: session, state: nil, timeline: .init(items: [], nextSeq: 0, hasMore: false),
+            approvals: [], notices: [], effectiveCapabilities: empty, runtimeCapabilities: empty, catalogs: [:],
+            eventCursor: "seq:0", serverTime: ""), maximumItems: maximumItems)
+    }
+
     var sequence: Int { Self.sequence(data.cursor) }
 
     static func sequence(_ cursor: String) -> Int {

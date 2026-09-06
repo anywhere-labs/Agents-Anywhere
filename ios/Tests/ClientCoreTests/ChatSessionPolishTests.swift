@@ -11,6 +11,13 @@ import Testing
             attachments: .init(attachmentAPI: V2AttachmentAPI(transport: http)))
     }
 
+    @Test func serverAttachmentIDsNeverFallThroughToDeviceFS() {
+        let file = V2AttachmentContent(rawContent: .object(["fileId": .string("file_uploaded"), "path": .string("photo.png")]))
+        #expect(!file.readsFromDevice)
+        let device = V2AttachmentContent(rawContent: .object(["fileId": .string("device-image"), "path": .string("photo.png")]))
+        #expect(device.readsFromDevice)
+    }
+
     @Test func openingKeepsTheLatestWindowWithoutFetchingAnEarlierUserMessage() async throws {
         let http = TestHTTPTransport()
         http.respond = { call in
@@ -142,6 +149,26 @@ import Testing
         repo.updateConnectivity(.init(availability: .offline))
         #expect(try await model.thumbnail(for: file) == preview)
         #expect(http.count("fs/read") == 1)
+    }
+
+    @Test func attachmentSendIsVisibleBeforeUploadAndUploadFailureNeverSendsAMessage() async throws {
+        let http = TestHTTPTransport(); let repo = repository(transport: http); let gate = TestGate()
+        defer { repo.reset() }
+        let model = repo.session(id: "session")
+        let connection = Task { await model.connect() }; defer { connection.cancel() }
+        try await eventually { model.canSend }
+        let timeline = SessionTimelinePresentation()
+        let presenting = Task { await timeline.run(sessionID: model.id, repository: repo) }
+        defer { presenting.cancel() }
+        model.draft = "Photo"; model.composer.attachments = [.init(name: "photo.png", data: Data([1]), mediaType: "image/png", previewData: Data([2]))]
+        var uploading = false
+        let send = Task { await model.sendDraft { _ in uploading = true; await gate.wait(); throw URLError(.timedOut) } }
+        try await eventually { uploading && timeline.pendingMessages.count == 1 }
+        #expect(model.draft.isEmpty && timeline.pendingMessages[0].attachments.first?.previewData == Data([2]))
+        #expect(http.count("messages") == 0)
+        gate.release(); let pending = try #require(await send.value)
+        guard case .rejected = pending.delivery else { Issue.record("Upload failure must be a definite unsent message"); return }
+        #expect(model.draft == "Photo" && model.composer.attachments.count == 1 && http.count("messages") == 0)
     }
 
     @Test func sendingClearsImmediatelyAndAFailedWriteRestoresTheAttachmentDraft() async throws {
