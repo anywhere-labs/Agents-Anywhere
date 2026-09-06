@@ -35,7 +35,7 @@
     <string name="auth_choose_login">Choose how you want to login.</string>
     <string name="auth_enter_server">Enter Server</string>
     <string name="auth_password_login">Account Password Login</string>
-    <string name="auth_continue_qr">Scan to Login (Recommended)</string>
+    <string name="auth_continue_qr">Scan to Login</string>
     <string name="auth_host_choice_title">Choose a login service</string>
     <string name="auth_host_choice_description">Select the Agents Anywhere service you want to use.</string>
     <string name="auth_official_service">Official Service</string>
@@ -45,7 +45,8 @@
     <string name="auth_coming_soon">Coming soon</string>
     <string name="auth_host_choice_hint">If you do not have a privately deployed backend, choose Official Service.</string>
     <string name="auth_self_host_login_title">Self-host Login</string>
-    <string name="auth_web_login_subtitle">Enter your server address, then sign in with the server\'s web login.</string>
+    <string name="auth_web_login_subtitle">Enter your backend address. We will check the connection and open the sign-in page.</string>
+    <string name="auth_backend_url">Backend address</string>
     <string name="auth_continue_in_web">Continue in Web Login</string>
     <string name="auth_opening_web_login">Opening web login...</string>
     <string name="auth_web_login_help">Use password login or any OAuth provider configured on this server.</string>
@@ -54,7 +55,7 @@
     <string name="qr_camera_permission_required">Camera permission is required to scan QR codes.</string>
     <string name="qr_start_failed">Could not start QR sign-in.</string>
     <string name="qr_help_title">How do I generate a mobile sign-in QR?</string>
-    <string name="qr_help_body">Open Agents Anywhere on the web, then go to Settings - Account - Mobile sign-in and click Generate QR.</string>
+    <string name="qr_help_body">Open Agents Anywhere on desktop or the web, go to Settings - Phone Connection - Start Connecting, then scan the QR code shown.</string>
     <string name="qr_scan_first">Scan a QR code first.</string>
     <string name="qr_status_failed">Could not check QR sign-in status.</string>
     <string name="qr_complete_failed">Could not complete QR sign-in.</string>

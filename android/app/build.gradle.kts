@@ -1,8 +1,23 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
 }
+
+val officialServerUrl = "https://web.agents-anywhere.com"
+val localSettings = Properties().apply {
+    rootProject.file("local.properties").takeIf { it.isFile }?.inputStream()?.use { load(it) }
+}
+val debugServerUrl = providers.gradleProperty("agentsAnywhere.serverUrl")
+    .orElse(localSettings.getProperty("agentsAnywhere.serverUrl", officialServerUrl))
+    .get()
+
+fun String.asBuildConfigString(): String = "\"" + replace("\\", "\\\\")
+    .replace("\"", "\\\"")
+    .replace("\n", "\\n")
+    .replace("\r", "\\r") + "\""
 
 android {
     namespace = "com.agentsanywhere.app"
@@ -14,6 +29,7 @@ android {
         targetSdk = 36
         versionCode = 6
         versionName = "0.1.7.2"
+        buildConfigField("String", "OFFICIAL_SERVER_URL", officialServerUrl.asBuildConfigString())
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         vectorDrawables {
@@ -22,6 +38,9 @@ android {
     }
 
     buildTypes {
+        debug {
+            buildConfigField("String", "OFFICIAL_SERVER_URL", debugServerUrl.asBuildConfigString())
+        }
         release {
             isMinifyEnabled = false
             proguardFiles(
@@ -42,6 +61,7 @@ android {
     }
 
     buildFeatures {
+        buildConfig = true
         compose = true
     }
 }

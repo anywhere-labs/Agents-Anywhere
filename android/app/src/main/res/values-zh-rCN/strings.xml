@@ -35,7 +35,7 @@
     <string name="auth_choose_login">选择登录方式。</string>
     <string name="auth_enter_server">输入服务器</string>
     <string name="auth_password_login">账号密码登录</string>
-    <string name="auth_continue_qr">扫码登录（推荐）</string>
+    <string name="auth_continue_qr">扫码登录</string>
     <string name="auth_host_choice_title">选择登录服务</string>
     <string name="auth_host_choice_description">选择你要使用的 Agents Anywhere 服务。</string>
     <string name="auth_official_service">官方服务</string>
@@ -45,7 +45,8 @@
     <string name="auth_coming_soon">暂未开放</string>
     <string name="auth_host_choice_hint">如果你没有私有化部署后端，请选择官方服务。</string>
     <string name="auth_self_host_login_title">self-host 登录</string>
-    <string name="auth_web_login_subtitle">输入服务器地址，然后使用服务器提供的网页登录。</string>
+    <string name="auth_web_login_subtitle">输入后端地址，验证连接后自动打开登录页面。</string>
+    <string name="auth_backend_url">后端地址</string>
     <string name="auth_continue_in_web">继续打开网页登录</string>
     <string name="auth_opening_web_login">正在打开网页登录...</string>
     <string name="auth_web_login_help">可使用密码登录，或使用此服务器已配置的任意 OAuth 服务。</string>
@@ -54,7 +55,7 @@
     <string name="qr_camera_permission_required">需要相机权限才能扫描二维码。</string>
     <string name="qr_start_failed">无法开始二维码登录。</string>
     <string name="qr_help_title">如何生成移动端登录二维码？</string>
-    <string name="qr_help_body">在网页端打开 Agents Anywhere，进入设置 - 账号 - 移动端登录，然后点击生成二维码。</string>
+    <string name="qr_help_body">打开 Agents Anywhere 桌面端或网页端，进入设置 - 手机连接 - 开始连接，然后扫描页面上的二维码。</string>
     <string name="qr_scan_first">请先扫描二维码。</string>
     <string name="qr_status_failed">无法检查二维码登录状态。</string>
     <string name="qr_complete_failed">无法完成二维码登录。</string>

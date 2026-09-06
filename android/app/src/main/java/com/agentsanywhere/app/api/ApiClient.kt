@@ -37,7 +37,7 @@ class ApiClient(
                 val contentType = response.header("Content-Type").orEmpty()
                 if (!response.isSuccessful || !contentType.contains("text/html", ignoreCase = true)) {
                     throw ApiException(
-                        message = "This address does not host the web login. Enter the Web URL instead of the API URL.",
+                        message = "The web login is unavailable at $origin. Check the server's web login deployment.",
                         statusCode = response.code,
                     )
                 }

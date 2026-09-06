@@ -199,10 +199,7 @@ fun ProfileSettingsDrawer(
                     item("identity") {
                         IdentityCard(
                             account = account,
-                            serviceLabel = if (
-                                AppConfig.OFFICIAL_WEB_LOGIN_URL.isNotBlank() &&
-                                serverUrl.trimEnd('/') == AppConfig.OFFICIAL_WEB_LOGIN_URL.trimEnd('/')
-                            ) {
+                            serviceLabel = if (AppConfig.isOfficialServer(serverUrl)) {
                                 stringResource(R.string.profile_official_service)
                             } else {
                                 stringResource(R.string.profile_self_hosted)

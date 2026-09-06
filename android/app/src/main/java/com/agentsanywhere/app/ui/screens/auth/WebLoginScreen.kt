@@ -336,7 +336,7 @@ private fun ServerEntryScreen(
                 AuthInputRow(
                     value = serverUrl,
                     onValueChange = onServerUrlChanged,
-                    placeholder = stringResource(R.string.common_server_url),
+                    placeholder = stringResource(R.string.auth_backend_url),
                     icon = Lucide.Server,
                     enabled = !checking,
                 )
@@ -397,8 +397,8 @@ private fun EmbeddedWebLogin(
                         if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
                             WebViewCompat.addDocumentStartJavaScript(
                                 this,
-                                webLoginApiOriginBridgeScript(session.serverUrl),
-                                setOf(session.serverUrl),
+                                webLoginApiOriginBridgeScript(session.oauthWebOrigin),
+                                setOf(session.oauthWebOrigin),
                             )
                         } else {
                             onWebError("Update Android System WebView to continue signing in.")

@@ -135,15 +135,17 @@ class AuthController(
     }
 
     suspend fun createWebLoginSession(serverUrl: String): Result<WebLoginSession> {
-        val normalizedServerUrl = normalizeServerUrl(serverUrl)
-            ?: return Result.failure(IllegalArgumentException("Enter a valid server URL."))
+        val server = runCatching { resolveLoginServer(serverUrl) }.getOrElse {
+            return Result.failure(it)
+        }
 
         return withContext(Dispatchers.IO) {
             runCatching {
-                api.authConfig(serverUrl = normalizedServerUrl)
-                api.requireWebLoginHost(serverUrl = normalizedServerUrl)
-                sessionStore.saveServerUrl(normalizedServerUrl)
-                com.agentsanywhere.app.feature.auth.createWebLoginSession(normalizedServerUrl)
+                api.requireHealthyServer(serverUrl = server.serverUrl)
+                api.requireWebLoginHost(webOrigin = server.oauthWebOrigin)
+                currentCoroutineContext().ensureActive()
+                sessionStore.saveServerUrl(server.serverUrl)
+                com.agentsanywhere.app.feature.auth.createWebLoginSession(server)
             }.recoverCatching { error ->
                 if (error is CancellationException) throw error
                 if (error is ApiException) throw error

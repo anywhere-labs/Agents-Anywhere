@@ -13,6 +13,7 @@ import org.json.JSONObject
 
 class WebLoginSession internal constructor(
     val serverUrl: String,
+    val oauthWebOrigin: String,
     val authorizeUrl: String,
     val state: String,
     internal val codeVerifier: String,
@@ -29,13 +30,10 @@ sealed interface WebLoginCallback {
 }
 
 internal fun createWebLoginSession(
-    serverUrl: String,
+    server: LoginServerConnection,
     codeVerifier: String = randomUrlSafeString(32),
     state: String = randomUrlSafeString(24),
 ): WebLoginSession {
-    val origin = requireNotNull(normalizeServerOrigin(serverUrl)) {
-        "Server URL must be an HTTP(S) origin."
-    }
     require(codeVerifier.isNotBlank()) { "PKCE verifier must not be blank." }
     require(state.isNotBlank()) { "OAuth state must not be blank." }
 
@@ -51,8 +49,9 @@ internal fun createWebLoginSession(
         "${name.urlEncoded()}=${value.urlEncoded()}"
     }
     return WebLoginSession(
-        serverUrl = origin,
-        authorizeUrl = "$origin/#/mobile-oauth?$query",
+        serverUrl = server.serverUrl,
+        oauthWebOrigin = server.oauthWebOrigin,
+        authorizeUrl = "${server.oauthWebOrigin}/#/mobile-oauth?$query",
         state = state,
         codeVerifier = codeVerifier,
     )
@@ -106,14 +105,16 @@ internal fun pkceChallenge(codeVerifier: String): String {
     return Base64.getUrlEncoder().withoutPadding().encodeToString(digest)
 }
 
-internal fun webLoginApiOriginBridgeScript(serverUrl: String): String {
-    val origin = requireNotNull(normalizeServerOrigin(serverUrl)) {
-        "Server URL must be an HTTP(S) origin."
+internal fun webLoginApiOriginBridgeScript(webOrigin: String): String {
+    val origin = requireNotNull(normalizeServerOrigin(webOrigin)) {
+        "Web login URL must be an HTTP(S) origin."
     }
+    // Web requests use the login site's API proxy; native requests use serverUrl.
     val legacyApiRoute = usesLegacyApiRoute(origin)
-       return """
+    return """
          (() => {
-           const serverOrigin = ${JSONObject.quote(origin)};
+           const webOrigin = ${JSONObject.quote(origin)};
+           const apiNamespace = "/api/v2";
            const legacyApiRoute = $legacyApiRoute;
            const viewportHeightProperty = "--agents-anywhere-android-viewport-height";
            const installViewportHeightFix = () => {
@@ -147,11 +148,11 @@ internal fun webLoginApiOriginBridgeScript(serverUrl: String): String {
            const rewriteApiUrl = (value) => {
             try {
               const url = new URL(String(value), window.location.href);
-              if (url.pathname !== "/api/v2" && !url.pathname.startsWith("/api/v2/")) return value;
+              if (url.pathname !== apiNamespace && !url.pathname.startsWith(apiNamespace + "/")) return value;
               const pathname = legacyApiRoute
-                ? (url.pathname.substring("/api/v2".length) || "/")
+                ? (url.pathname.substring(apiNamespace.length) || "/")
                 : url.pathname;
-              return serverOrigin + pathname + url.search + url.hash;
+              return webOrigin + pathname + url.search + url.hash;
             } catch (_) {
               return value;
             }

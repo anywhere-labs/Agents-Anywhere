@@ -1,8 +1,15 @@
 package com.agentsanywhere.app.ui.screens.auth
 
 import android.content.res.Configuration
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
+import androidx.compose.foundation.interaction.collectIsHoveredAsState
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,12 +23,17 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
@@ -36,7 +48,6 @@ import com.agentsanywhere.app.ui.designsystem.ScreenScaffold
 import com.agentsanywhere.app.ui.designsystem.noRippleClickable
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.QrCode
-import com.composables.icons.lucide.Server
 
 @Composable
 fun LoginMethodsScreen(navigate: (AppDestination) -> Unit) {
@@ -74,11 +85,12 @@ fun LoginMethodsScreen(navigate: (AppDestination) -> Unit) {
                 LoginMethodButton(
                     label = stringResource(R.string.auth_continue_qr),
                     icon = Lucide.QrCode,
+                    primary = true,
                     onClick = { navigate(AppDestination.QrLogin) },
                 )
                 LoginMethodButton(
                     label = stringResource(R.string.auth_password_login),
-                    icon = Lucide.Server,
+                    primary = false,
                     onClick = { navigate(AppDestination.ServerSetup) },
                 )
             }
@@ -87,27 +99,68 @@ fun LoginMethodsScreen(navigate: (AppDestination) -> Unit) {
 }
 
 @Composable
-private fun LoginMethodButton(label: String, icon: ImageVector, onClick: () -> Unit) {
+private fun LoginMethodButton(
+    label: String,
+    primary: Boolean,
+    icon: ImageVector? = null,
+    onClick: () -> Unit,
+) {
     val colors = LocalAAColors.current
+    val shape = RoundedCornerShape(12.dp)
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
+    val hovered by interactionSource.collectIsHoveredAsState()
+    val focused by interactionSource.collectIsFocusedAsState()
+    val highlighted = pressed || hovered || focused
+    val background by animateColorAsState(
+        targetValue = when {
+            primary -> if (pressed) Color(0xFFD4D4D4) else Color(0xFFE5E5E5)
+            highlighted -> if (colors.isDark) Color(0xFF121212) else Color(0xFFF0F0F0)
+            else -> Color.Transparent
+        },
+        animationSpec = tween(100),
+        label = "loginButtonBackground",
+    )
+    val foreground by animateColorAsState(
+        targetValue = when {
+            primary -> Color(0xFF171717)
+            highlighted -> colors.ink
+            else -> colors.muted
+        },
+        animationSpec = tween(100),
+        label = "loginButtonForeground",
+    )
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(62.dp)
-            .clip(RoundedCornerShape(17.dp))
-            .background(colors.raisedSurface)
-            .border(1.2.dp, colors.border, RoundedCornerShape(17.dp))
-            .noRippleClickable(onClick = onClick)
+            .height(56.dp)
+            .shadow(
+                elevation = if (!primary && highlighted) 3.dp else 0.dp,
+                shape = shape,
+                ambientColor = Color.Black.copy(alpha = 0.12f),
+                spotColor = Color.Black.copy(alpha = 0.12f),
+            )
+            .clip(shape)
+            .background(background)
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                role = Role.Button,
+                onClick = onClick,
+            )
             .padding(horizontal = 18.dp),
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(icon, contentDescription = null, tint = colors.onRaisedSurface, modifier = Modifier.size(22.dp))
+        if (icon != null) {
+            Icon(icon, contentDescription = null, tint = foreground, modifier = Modifier.size(22.dp))
+        }
         Text(
-            modifier = Modifier.padding(start = 10.dp),
+            modifier = Modifier.padding(start = if (icon != null) 10.dp else 0.dp),
             text = label,
-            color = colors.onRaisedSurface,
+            color = foreground,
             fontSize = 15.3.sp,
-            fontWeight = FontWeight.SemiBold,
+            fontWeight = FontWeight.Medium,
             lineHeight = 18.sp,
             textAlign = TextAlign.Center,
         )

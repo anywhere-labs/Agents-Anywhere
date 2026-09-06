@@ -45,7 +45,7 @@ class WebLoginViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun startOfficialLogin() {
-        val officialUrl = AppConfig.OFFICIAL_WEB_LOGIN_URL.trim()
+        val officialUrl = AppConfig.OFFICIAL_SERVER_URL.trim()
         if (officialUrl.isBlank()) {
             state = hostChoiceState()
             return
@@ -176,7 +176,7 @@ class WebLoginViewModel(application: Application) : AndroidViewModel(application
         openingOfficial: Boolean = false,
         errorMessage: String? = null,
     ) = WebLoginState.HostChoice(
-        officialServiceAvailable = AppConfig.OFFICIAL_WEB_LOGIN_URL.isNotBlank(),
+        officialServiceAvailable = AppConfig.OFFICIAL_SERVER_URL.isNotBlank(),
         openingOfficial = openingOfficial,
         errorMessage = errorMessage,
     )
