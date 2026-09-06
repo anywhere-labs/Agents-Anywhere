@@ -24,6 +24,7 @@ import { useDiscardFileChanges } from "@/components/discard-file-changes-dialog"
 import { useAuth } from "@/components/auth/auth-context"
 import { useWorkspace, type PanelId } from "@/components/workspace-context"
 import { Button } from "@/components/ui/button"
+import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -58,11 +59,15 @@ export type { SessionToolKind } from "@/components/session-tool-tabs"
 
 const TOOL_META: Record<
   SessionToolKind,
-  { icon: LucideIcon; labelKey: "review" | "terminal" | "files" }
+  {
+    icon: LucideIcon
+    labelKey: "review" | "terminal" | "files"
+    descriptionKey: "reviewDescription" | "terminalDescription" | "filesDescription"
+  }
 > = {
-  review: { icon: FileDiff, labelKey: "review" },
-  terminal: { icon: SquareTerminal, labelKey: "terminal" },
-  files: { icon: File, labelKey: "files" },
+  review: { icon: FileDiff, labelKey: "review", descriptionKey: "reviewDescription" },
+  terminal: { icon: SquareTerminal, labelKey: "terminal", descriptionKey: "terminalDescription" },
+  files: { icon: File, labelKey: "files", descriptionKey: "filesDescription" },
 }
 
 const TOOL_KINDS: SessionToolKind[] = ["review", "terminal", "files"]
@@ -892,26 +897,41 @@ function ToolLauncher({
   onOpenTool: (kind: SessionToolKind) => void
 }) {
   const t = useTranslations("dashboard.session.tools")
+  const id = React.useId()
 
   return (
-    <nav aria-label={t("navigationLabel")} className="flex h-full items-center justify-center p-8">
-      <div className="flex w-full max-w-md flex-col gap-2">
+    <nav aria-label={t("navigationLabel")} className="flex h-full justify-center overflow-y-auto p-6">
+      <div className="my-auto flex w-full max-w-64 flex-col gap-2">
         {TOOL_KINDS.map((kind, index) => {
           const meta = TOOL_META[kind]
           const Icon = meta.icon
+          const titleId = `${id}-${kind}-title`
+          const descriptionId = `${id}-${kind}-description`
           return (
-            <Button
-              ref={index === 0 ? firstButtonRef : undefined}
+            <Card
               key={kind}
-              type="button"
-              variant="secondary"
-              size="lg"
-              onClick={() => onOpenTool(kind)}
-              className="h-12 w-full justify-start rounded-xl px-4 text-base font-normal"
+              size="sm"
+              className="relative gap-0 py-3 focus-within:ring-2 focus-within:ring-ring/50"
             >
-              <Icon data-icon="inline-start" />
-              {t(meta.labelKey)}
-            </Button>
+              <Button
+                ref={index === 0 ? firstButtonRef : undefined}
+                type="button"
+                variant="ghost"
+                aria-labelledby={titleId}
+                aria-describedby={descriptionId}
+                onClick={() => onOpenTool(kind)}
+                className="absolute inset-0 h-full w-full rounded-[inherit]"
+              />
+              <CardHeader className="pointer-events-none relative gap-1 px-3">
+                <CardTitle id={titleId} className="flex items-center gap-2 text-sm">
+                  <Icon className="size-4 shrink-0" />
+                  {t(meta.labelKey)}
+                </CardTitle>
+                <CardDescription id={descriptionId} className="text-xs">
+                  {t(meta.descriptionKey)}
+                </CardDescription>
+              </CardHeader>
+            </Card>
           )
         })}
       </div>
