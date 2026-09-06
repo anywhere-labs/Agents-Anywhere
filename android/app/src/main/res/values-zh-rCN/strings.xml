@@ -38,12 +38,14 @@
     <string name="auth_continue_qr">扫码登录</string>
     <string name="auth_host_choice_title">选择登录服务</string>
     <string name="auth_host_choice_description">选择你要使用的 Agents Anywhere 服务。</string>
-    <string name="auth_official_service">官方服务</string>
+    <string name="auth_official_service">登录Agents Anywhere Cloud</string>
     <string name="auth_official_service_description">使用 Agents Anywhere 在线服务</string>
-    <string name="auth_self_host_service">Self-host 服务</string>
+    <string name="auth_self_host_service">连接到你自己的服务实例</string>
+    <string name="auth_or">OR</string>
+    <string name="auth_connect_server">连接服务器</string>
     <string name="auth_self_host_service_description">连接你自己部署的服务器</string>
     <string name="auth_coming_soon">暂未开放</string>
-    <string name="auth_host_choice_hint">如果你没有私有化部署后端，请选择官方服务。</string>
+    <string name="auth_host_choice_hint">如果你没有私有化部署后端，请选择 Cloud 登录。</string>
     <string name="auth_self_host_login_title">self-host 登录</string>
     <string name="auth_web_login_subtitle">输入后端地址，验证连接后自动打开登录页面。</string>
     <string name="auth_backend_url">后端地址</string>
