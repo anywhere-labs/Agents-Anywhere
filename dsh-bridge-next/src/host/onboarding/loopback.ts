@@ -100,7 +100,54 @@ export class LoopbackFlow {
 
 function progressHtml(nonce: string, statusPath: string): string {
   return `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>连接设备 · Agents Anywhere</title>
-<style nonce="${nonce}">:root{color-scheme:light dark}body{margin:0;font:16px system-ui;min-height:100vh;display:grid;place-items:center}main{max-width:420px;padding:32px;text-align:center}p{line-height:1.8;opacity:.75}</style>
-<main><h1>正在连接你的设备</h1><p id="status" role="status">授权已收到，正在准备本机连接…</p></main>
-<script nonce="${nonce}">let failures=0;async function tick(){try{const response=await fetch(${JSON.stringify(statusPath)},{cache:'no-store'});if(!response.ok)throw new Error();const result=await response.json();document.getElementById('status').textContent=result.message;failures=0;if(result.stage==='ready'&&result.redirectUrl){location.replace(result.redirectUrl);return}if(result.stage==='error')return}catch{if(++failures>=5){document.getElementById('status').textContent='本机连接已关闭，请回到插件重试。';return}}setTimeout(tick,800)}tick();</script></html>`
+<style nonce="${nonce}">
+:root{color-scheme:light dark;--background:#fff;--foreground:#0a0a0a;--muted:#737373}
+@media(prefers-color-scheme:dark){:root{--background:#0a0a0a;--foreground:#fafafa;--muted:#a1a1a1}}
+*{box-sizing:border-box}
+body{margin:0;min-height:100svh;display:grid;place-items:center;background:var(--background);color:var(--foreground);font-family:"Geist","PingFang SC","Microsoft YaHei",sans-serif;-webkit-font-smoothing:antialiased}
+main{width:100%;max-width:1200px;padding:32px 24px;text-align:center}
+.heading{display:flex;align-items:center;justify-content:center;gap:.32em;font-size:clamp(28px,5.1vw,76px)}
+h1{margin:0;font-size:inherit;font-weight:500;letter-spacing:-.055em;line-height:1.18}
+.spinner{width:.56em;height:.56em;flex:none;color:var(--muted);animation:spin 1s linear infinite}
+p{margin:28px 0 0;font-size:17px;line-height:1.85;color:var(--muted)}
+#error{max-width:560px;margin-inline:auto;color:#ef4444;font-size:14px}
+main[data-state="error"] .spinner{animation-play-state:paused;opacity:.45}
+@keyframes spin{to{transform:rotate(360deg)}}
+@media(max-width:599px){p{font-size:15px;margin-top:26px}}
+@media(prefers-reduced-motion:reduce){.spinner{animation:none}}
+</style>
+<main aria-busy="true" aria-labelledby="title">
+  <div class="heading">
+    <!-- Static markup of shadcn Spinner's Lucide Loader2 icon. -->
+    <svg data-slot="spinner" class="spinner" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+    <h1 id="title">正在连接你的设备</h1>
+  </div>
+  <p id="status" role="status">这可能需要几分钟时间</p>
+  <p id="error" role="alert" hidden></p>
+</main>
+<script nonce="${nonce}">
+let failures=0;
+function showError(message){
+  const main=document.querySelector('main');
+  main.setAttribute('aria-busy','false');
+  main.dataset.state='error';
+  const error=document.getElementById('error');
+  error.textContent=message;
+  error.hidden=false;
+}
+async function tick(){
+  try{
+    const response=await fetch(${JSON.stringify(statusPath)},{cache:'no-store'});
+    if(!response.ok)throw new Error();
+    const result=await response.json();
+    failures=0;
+    if(result.stage==='ready'&&result.redirectUrl){location.replace(result.redirectUrl);return}
+    if(result.stage==='error'){showError(result.message||'连接失败，请回到插件重试。');return}
+  }catch{
+    if(++failures>=5){showError('本机连接已关闭，请回到插件重试。');return}
+  }
+  setTimeout(tick,800);
+}
+tick();
+</script></html>`
 }

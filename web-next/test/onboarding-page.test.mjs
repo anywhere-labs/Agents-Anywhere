@@ -120,12 +120,20 @@ test('phone dialog runs download and QR confirmation before advancing to complet
   assert.equal(document.querySelector('[role="dialog"]'), null)
 })
 
-test('welcome skip preserves the reference flow without creating an Agent or a phone login', async (t) => {
+test('skipping requires confirmation, and continuing the guide restores the skip trigger', async (t) => {
   const { create } = mockDevice(t)
   const qr = t.mock.method(authApi, 'createMobileLoginQr', async () => { throw new Error('must not run') })
   const container = await render(t, h(PluginOnboardingPage))
   await until(() => container.querySelector('[data-slide="welcome"]'))
   await click(container, '跳过引导')
+  assert.equal(container.querySelector('[data-slide="complete"]'), null)
+  assert.match(document.querySelector('[role="dialog"]').textContent, /略过设备与 Agent 的配置引导/)
+  await click(document.querySelector('[role="dialog"]'), '继续引导')
+  assert.ok(container.querySelector('[data-slide="welcome"]'))
+  assert.equal(document.activeElement.textContent, '跳过引导')
+  assert.equal(window.sessionStorage.getItem('agents-anywhere.onboarding:user1:conn_demo:abcdefghijklmnop'), null)
+  await click(container, '跳过引导')
+  await click(document.querySelector('[role="dialog"]'), '确认跳过')
   assert.ok(container.querySelector('[data-slide="complete"]'))
   assert.equal(create.mock.callCount(), 0)
   assert.equal(qr.mock.callCount(), 0)

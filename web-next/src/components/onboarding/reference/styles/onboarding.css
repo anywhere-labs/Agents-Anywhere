@@ -60,6 +60,18 @@
     animation: aa-page-enter 560ms cubic-bezier(.22, 1, .36, 1) both;
   }
 
+  .slide-page-welcome {
+    animation-duration: 1000ms;
+  }
+
+  .slide-page-welcome .reveal-group {
+    animation-duration: 700ms;
+  }
+
+  .slide-page-welcome .reveal-detail {
+    animation-duration: 800ms;
+  }
+
   .slide-layout {
     display: flex;
     align-items: center;
