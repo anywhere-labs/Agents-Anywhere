@@ -27,6 +27,10 @@ function subscribe<T>(channel: string, callback: (value: T) => void): () => void
 
 contextBridge.exposeInMainWorld("desktopWorkbench", {
   platform: process.platform,
+  window: {
+    setTitleBarColors: (colors: { color: string; symbolColor: string }): Promise<void> =>
+      ipcRenderer.invoke("workbench:window:setTitleBarColors", colors),
+  },
   versions: {
     chrome: process.versions.chrome,
     electron: process.versions.electron,
