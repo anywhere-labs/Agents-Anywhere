@@ -7,9 +7,11 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -136,7 +138,7 @@ fun NewSessionScreen(
     var pathLoading by remember { mutableStateOf(false) }
     var pathError by remember { mutableStateOf<String?>(null) }
     var expandedConfiguration by remember { mutableStateOf<NewSessionConfigurationKey?>(null) }
-    var projectListExpanded by rememberSaveable { mutableStateOf(false) }
+    val workspaceListState = rememberLazyListState()
     var creatingProject by rememberSaveable { mutableStateOf(false) }
     val devices = if (creatingProject) onlineDevices else onlineDevices.filter { device ->
         activeNewSessionRuntimes(inventory.results[device.id]?.runtimes.orEmpty()).isNotEmpty()
@@ -193,6 +195,7 @@ fun NewSessionScreen(
 
     fun cancelProjectCreation() {
         if (projectCreating) return
+        keyboard?.hide()
         selectedDeviceId = previousDeviceId
         selectedProjectId = previousProjectId
         selectedWorkspacePath = previousPath
@@ -406,7 +409,6 @@ fun NewSessionScreen(
         }
     }
 
-    val selectedProjectTitle = selectedProject?.name ?: if (selectedWorkspacePath == homePath || selectedWorkspacePath.isBlank()) stringResource(R.string.workspace_home) else workspaceProjectName(selectedWorkspacePath)
     val canUseCurrentPath = isSelectableRemoteDirectory(currentPath, selectedDeviceOs)
     val effectiveWorkspacePath = selectedWorkspacePath
     val catalogsLoading = selectedRuntime != null && (
@@ -454,7 +456,7 @@ fun NewSessionScreen(
                 loading = !creatingProject && inventory.loading,
             ),
         )
-        if (!creatingProject) add(
+        add(
             NewSessionConfigurationField(
                 key = NewSessionConfigurationKey.Agent,
                 label = stringResource(R.string.new_session_agent),
@@ -467,11 +469,11 @@ fun NewSessionScreen(
                         description = runtime.labels.secondary,
                     )
                 },
-                enabled = selectedDevice != null && runtimeSelection.runtimes.isNotEmpty(),
+                enabled = !creatingProject && selectedDevice != null && runtimeSelection.runtimes.isNotEmpty(),
                 loading = selectedDevice != null && runtimeSelection.runtimesLoading,
             ),
         )
-        if (!creatingProject && showModelConfiguration) {
+        if (showModelConfiguration) {
             add(
                 NewSessionConfigurationField(
                     key = NewSessionConfigurationKey.Model,
@@ -489,7 +491,7 @@ fun NewSessionScreen(
                             enabled = enabled,
                         )
                     },
-                    enabled = runtimeSelection.modelCatalog.fresh,
+                    enabled = !creatingProject && runtimeSelection.modelCatalog.fresh,
                     loading = catalogsLoading,
                 ),
             )
@@ -512,12 +514,12 @@ fun NewSessionScreen(
                             enabled = effort.enabled && effort.id.isNotBlank() && effort.selectionId.isNotBlank(),
                         )
                     },
-                    enabled = runtimeSelection.modelCatalog.fresh && reasoningOptions.isNotEmpty(),
+                    enabled = !creatingProject && runtimeSelection.modelCatalog.fresh && reasoningOptions.isNotEmpty(),
                     loading = catalogsLoading,
                 ),
             )
         }
-        if (!creatingProject && showPermissionConfiguration) {
+        if (showPermissionConfiguration) {
             add(
                 NewSessionConfigurationField(
                     key = NewSessionConfigurationKey.Permission,
@@ -543,7 +545,7 @@ fun NewSessionScreen(
                             enabled = permission.enabled && permission.id.isNotBlank() && permission.selectionId.isNotBlank(),
                         )
                     },
-                    enabled = runtimeSelection.permissionCatalog.fresh,
+                    enabled = !creatingProject && runtimeSelection.permissionCatalog.fresh,
                     loading = catalogsLoading,
                 ),
             )
@@ -596,7 +598,6 @@ fun NewSessionScreen(
         previousProjectId = selectedProjectId
         previousPath = selectedWorkspacePath
         selectedWorkspacePath = ""
-        projectListExpanded = false
         nameEdited = false
         projectName = ""
         projectCreateError = null
@@ -617,6 +618,7 @@ fun NewSessionScreen(
         val inputName = projectName.trim()
         val useDirectoryName = !nameEdited
         if (projectCreating || inputPath.isBlank() || inputName.isBlank()) return
+        keyboard?.hide()
         projectCreating = true
         projectCreateError = null
         scope.launch {
@@ -651,7 +653,6 @@ fun NewSessionScreen(
                 selectedDeviceId = project.connectorId
                 selectedWorkspacePath = project.workspacePath
                 currentPath = project.workspacePath
-                projectListExpanded = false
                 creatingProject = false
                 choosePath = false
             } catch (error: CancellationException) {
@@ -681,7 +682,7 @@ fun NewSessionScreen(
 
     ScreenScaffold {
         Column(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.fillMaxSize().imePadding(),
         ) {
             NewSessionHeader(
                 title = title,
@@ -767,6 +768,7 @@ fun NewSessionScreen(
                         onUseCurrent = {
                             if (canUseCurrentPath) {
                                 selectedWorkspacePath = currentPath
+                                projectCreateError = null
                                 if (!creatingProject) selectedProjectId = workspaceProject(projects, selectedDeviceId.orEmpty(), currentPath, selectedDeviceOs)?.id
                                 choosePath = false
                             }
@@ -800,6 +802,7 @@ fun NewSessionScreen(
                         },
                         onChooseDirectory = {
                             if (selectedDevice != null) {
+                                keyboard?.hide()
                                 choosePath = true
                                 val startPath = selectedWorkspacePath.ifBlank { homePath ?: "~" }
                                 scope.launch {
@@ -810,18 +813,11 @@ fun NewSessionScreen(
                                 }
                             }
                         },
-                        onPathChange = { selectedWorkspacePath = it; projectCreateError = null },
                         onCancel = ::cancelProjectCreation,
                         onCreate = { createProject() },
                     )
                 } else {
-                    if (sidebarViewMode == HomeSidebarViewMode.Project && selectedDevice == null && onlineDevices.isNotEmpty() && !inventory.loading) {
-                        TextButton(onClick = ::beginProjectCreation) {
-                            Text(stringResource(R.string.new_session_create_project))
-                        }
-                    }
                     WorkspaceSection(
-                        selectedTitle = selectedProjectTitle,
                         path = selectedWorkspacePath,
                         connectorId = selectedDeviceId,
                         deviceOs = selectedDeviceOs,
@@ -829,13 +825,11 @@ fun NewSessionScreen(
                         projectMode = sidebarViewMode == HomeSidebarViewMode.Project,
                         projects = projects,
                         sessions = sessionsState.sessions + sessionsState.archivedSessions,
-                        open = projectListExpanded,
+                        listState = workspaceListState,
+                        canCreateProject = onlineDevices.isNotEmpty(),
                         modifier = Modifier.weight(1f),
-                        onOpen = { projectListExpanded = true },
-                        onDismiss = { projectListExpanded = false },
                         onCreate = ::beginProjectCreation,
                         onBrowse = {
-                            projectListExpanded = false
                             choosePath = true
                             scope.launch { loadDirectory(selectedWorkspacePath.ifBlank { homePath ?: "~" }) }
                         },
@@ -843,7 +837,6 @@ fun NewSessionScreen(
                             selectedProjectId = choice.projectId
                             selectedWorkspacePath = choice.path
                             currentPath = choice.path
-                            projectListExpanded = false
                         },
                     )
                 }
