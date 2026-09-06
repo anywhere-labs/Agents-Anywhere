@@ -1,11 +1,24 @@
 import { userInfo } from 'node:os'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { hasCode } from '../storage/files.js'
+import { hasCode, writeJson } from '../storage/files.js'
+import { withMachineStateLock } from './machine-state-lock.js'
 
 export const machineStatePath = (home = userInfo().homedir): string => join(home, '.agentsanywhere', 'machine.json')
 
-/** Desktop owns this public record. Keep account and Connector tokens in private storage. */
+export interface LocalMachineRegistry {
+  readConnectorIds(): Promise<string[]>
+  recordConnectorId(id: string): Promise<void>
+}
+
+export function localMachineRegistry(home = userInfo().homedir): LocalMachineRegistry {
+  return {
+    readConnectorIds: () => readLocalConnectorIds(home),
+    recordConnectorId: id => recordLocalConnectorId(id, home),
+  }
+}
+
+/** Desktop owns installation paths; both apps publish IDs without credentials. */
 export async function readMachineState(home = userInfo().homedir): Promise<Record<string, unknown> | null> {
   let value: unknown
   try { value = JSON.parse(await readFile(machineStatePath(home), 'utf8')) }
@@ -20,11 +33,26 @@ export async function readMachineState(home = userInfo().homedir): Promise<Recor
 }
 
 export async function readLocalConnectorIds(home = userInfo().homedir): Promise<string[]> {
-  const state = await readMachineState(home)
+  return connectorIds(await readMachineState(home))
+}
+
+function connectorIds(state: Record<string, unknown> | null): string[] {
   if (!state || state['connectorIds'] === undefined) return []
   const ids = state['connectorIds']
   if (!Array.isArray(ids) || ids.some(id => typeof id !== 'string' || !id.trim())) {
     throw new Error('本机设备记录无效，请打开桌面端修复后重试。')
   }
   return [...new Set((ids as string[]).map(id => id.trim()))]
+}
+
+export async function recordLocalConnectorId(id: string, home = userInfo().homedir): Promise<void> {
+  const connectorId = id.trim()
+  if (!connectorId) throw new Error('本机设备 ID 无效。')
+  const path = machineStatePath(home)
+  await withMachineStateLock(path, async () => {
+    const state = await readMachineState(home) ?? { version: 1, connectorIds: [] }
+    const ids = connectorIds(state)
+    if (ids.includes(connectorId)) return
+    await writeJson(path, { ...state, connectorIds: [...ids, connectorId] })
+  })
 }

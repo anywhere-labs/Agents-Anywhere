@@ -9,6 +9,7 @@ import { checkServer, normalizeServerOrigin, resolveOAuthWebOrigin } from '../ac
 import type { ResolvedConfig } from '../config.js'
 import { SourceConnector, type ConnectorProcess } from '../connector/process.js'
 import { detectDesktop } from '../desktop/detect.js'
+import type { LocalMachineRegistry } from '../desktop/machine-state.js'
 import { acquireManagerLock, readJson, writeJson } from '../storage/files.js'
 import { LoopbackFlow } from './loopback.js'
 
@@ -17,7 +18,7 @@ interface Dependencies {
   detect?: () => Promise<DesktopDetection>
   api?: (baseUrl: string) => AccountApi
   checkServer?: (baseUrl: string) => Promise<void>
-  readConnectorIds?: () => Promise<string[]>
+  machineState?: LocalMachineRegistry
   onlineTimeoutMs?: number
   pollIntervalMs?: number
 }
@@ -188,7 +189,7 @@ export class OnboardingManager {
     signal.throwIfAborted()
     this.setProgress('pairing', '登录成功，正在连接本机设备…')
     this.binding = await ensureBinding(this.config.stateRoot, account, api, signal, {
-      ...(this.dependencies.readConnectorIds ? { readConnectorIds: this.dependencies.readConnectorIds } : {}),
+      ...(this.dependencies.machineState ? { machineState: this.dependencies.machineState } : {}),
       renew: Boolean(code),
     })
     signal.throwIfAborted()

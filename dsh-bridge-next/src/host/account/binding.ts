@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import { AccountApi, ApiError, type Account } from './api.js'
 import { systemDeviceName } from './device-name.js'
 import { readJson, writeJson } from '../storage/files.js'
-import { readLocalConnectorIds } from '../desktop/machine-state.js'
+import { localMachineRegistry, type LocalMachineRegistry } from '../desktop/machine-state.js'
 
 export interface Binding {
   installationId: string
@@ -13,13 +13,14 @@ export interface Binding {
 }
 
 export async function ensureBinding(root: string, account: Account, api: AccountApi, signal: AbortSignal, options: {
-  readConnectorIds?: () => Promise<string[]>
+  machineState?: LocalMachineRegistry
   renew?: boolean
 } = {}): Promise<Required<Binding>> {
   const key = createHash('sha256').update(`${account.apiBaseUrl}\n${account.userId}`).digest('hex')
   const path = join(root, 'bindings', `${key}.json`)
   let binding = await readJson<Binding>(path)
-  const localIds = await (options.readConnectorIds ?? readLocalConnectorIds)()
+  const machine = options.machineState ?? localMachineRegistry()
+  const localIds = await machine.readConnectorIds()
   // Older plugin installations already have a private binding. Keep it as the
   // last local candidate; Desktop's ordered shared IDs always take precedence.
   const candidates = [...new Set([...localIds, ...(binding?.connectorId ? [binding.connectorId] : [])])]
@@ -38,6 +39,9 @@ export async function ensureBinding(root: string, account: Account, api: Account
       connectorId: matchedId, connectorToken,
     }
     await writeJson(path, complete)
+    // Backfill older private bindings only after server ownership and credentials
+    // are verified. A failed publish can retry with this persisted credential.
+    await machine.recordConnectorId(complete.connectorId)
     return complete
   }
   // A deleted or other-account ID is never revived. Pending registration keys
@@ -63,5 +67,8 @@ export async function ensureBinding(root: string, account: Account, api: Account
   if (created.connector.userId !== account.userId) throw new Error('注册设备的账号不一致。')
   const complete = { ...binding, connectorId: created.connector.id, connectorToken: created.connectorToken }
   await writeJson(path, complete)
+  // Do not report pairing success before Desktop can discover the new identity.
+  // Keep the private binding on failure so retry never registers another device.
+  await machine.recordConnectorId(complete.connectorId)
   return complete
 }

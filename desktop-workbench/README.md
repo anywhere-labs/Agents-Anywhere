@@ -154,8 +154,11 @@ records are not rewritten. Development records contain the Electron executable,
 project path and launch arguments; packaged records contain the installed app
 and executable paths.
 
-Only newly created local Connectors append an ID to the ordered `connectorIds`
-history. Reconnecting an existing device does not append an ID. Desktop and the
+Desktop and the DSH plugin append newly created local Connectors to the ordered
+`connectorIds` history. The plugin also publishes missing IDs when recovering a
+verified legacy private binding. Already recorded IDs are not rewritten. Both
+writers acquire the same process-safe lease before reading, merging and atomically
+publishing the file; installation paths remain owned by Desktop. Desktop and the
 DSH plugin verify ownership against the signed-in user's server device list
 before pairing. First-login provisioning and pairing again after a deleted
 device both reuse the first matching ID in local record order and rotate its

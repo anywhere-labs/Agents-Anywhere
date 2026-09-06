@@ -57,7 +57,10 @@ async function fixture(autoStart = false) {
     api: base => base === api.baseUrl ? api : new FakeApi(base), connector, detect: async () => { detections++; return detection },
     checkServer: async (base) => { checkedServers.push(base); if (healthError) throw healthError },
     onlineTimeoutMs: 5000, pollIntervalMs: 10,
-    readConnectorIds: async () => localIds,
+    machineState: {
+      readConnectorIds: async () => localIds,
+      recordConnectorId: async id => { if (!localIds.includes(id)) localIds.push(id) },
+    },
   })
   let manager = create()
   return {

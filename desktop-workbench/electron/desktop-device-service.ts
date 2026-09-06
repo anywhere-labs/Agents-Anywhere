@@ -17,7 +17,7 @@ type DesktopDeviceServiceOptions = {
   defaultServerUrl: () => string;
   apiNamespace: () => string;
   readLocalConnectorIds: () => readonly string[];
-  recordLocalConnector: (connectorId: string) => void;
+  recordLocalConnector: (connectorId: string) => Promise<void>;
 };
 
 type ConnectorCredentialResponse = {
@@ -126,7 +126,7 @@ export class DesktopDeviceService {
     };
     try {
       // Only POST /connectors creates a new local identity. Token rotation never appends one.
-      if (!reusedConnectorId) this.options.recordLocalConnector(credential.connector.id);
+      if (!reusedConnectorId) await this.options.recordLocalConnector(credential.connector.id);
       this.options.binding.save(nextBinding);
     } catch (error) {
       const rollbackError = reusedConnectorId ? null : await this.tryRollbackCreatedConnector(

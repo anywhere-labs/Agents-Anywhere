@@ -2,6 +2,7 @@ import fs from "node:fs";
 import { randomUUID } from "node:crypto";
 import { userInfo } from "node:os";
 import path from "node:path";
+import { withMachineStateLock } from "./machine-state-lock";
 
 export type DesktopInstallation = {
   platform: NodeJS.Platform;
@@ -21,7 +22,7 @@ export function machineStatePath(home = userInfo().homedir): string {
   return path.join(home, ".agentsanywhere", "machine.json");
 }
 
-/** Desktop is the sole writer. Plugins read atomic snapshots, never credentials. */
+/** Both apps append IDs; only Desktop records installation paths. Never credentials. */
 export class MachineStateStore {
   constructor(readonly filePath = machineStatePath()) {}
 
@@ -29,7 +30,7 @@ export class MachineStateStore {
     return this.read().connectorIds;
   }
 
-  recordInstallation(input: DesktopInstallation): void {
+  async recordInstallation(input: DesktopInstallation): Promise<void> {
     if (!path.isAbsolute(input.appPath) || !path.isAbsolute(input.executablePath)) {
       throw new Error("Desktop installation paths must be absolute.");
     }
@@ -37,13 +38,13 @@ export class MachineStateStore {
     const desktop = { ...input, appPath: fs.realpathSync(input.appPath), executablePath: fs.realpathSync(input.executablePath) };
     if (!fs.statSync(desktop.executablePath).isFile()) throw new Error("Desktop executable is not a file.");
     fs.accessSync(desktop.executablePath, input.platform === "win32" ? fs.constants.F_OK : fs.constants.X_OK);
-    this.update(state => ({ ...state, desktop: { ...state.desktop, ...desktop } }));
+    await this.update(state => ({ ...state, desktop: { ...state.desktop, ...desktop } }), true);
   }
 
-  recordConnectorId(id: string): void {
+  async recordConnectorId(id: string): Promise<void> {
     const connectorId = id.trim();
     if (!connectorId) throw new Error("A local Connector ID is required.");
-    this.update(state => state.connectorIds.includes(connectorId) ? state : {
+    await this.update(state => state.connectorIds.includes(connectorId) ? state : {
       ...state, connectorIds: [...state.connectorIds, connectorId],
     });
   }
@@ -78,9 +79,11 @@ export class MachineStateStore {
     return { ...record, version: 1, connectorIds } as MachineState;
   }
 
-  private update(change: (state: MachineState) => MachineState): void {
-    // Synchronous read/modify/write plus Electron's single-instance lock serializes all writers.
-    const next = change(this.read(true));
+  private async update(change: (state: MachineState) => MachineState, repair = false): Promise<void> {
+    await withMachineStateLock(this.filePath, () => this.write(change(this.read(repair))));
+  }
+
+  private write(next: MachineState): void {
     const contents = `${JSON.stringify(next, null, 2)}\n`;
     try { if (fs.readFileSync(this.filePath, "utf8") === contents) return; }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }

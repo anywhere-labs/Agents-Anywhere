@@ -700,7 +700,7 @@ async function initializeDesktopServices(): Promise<void> {
   settingsStore = new DesktopSettingsStore(desktopSettingsPath());
   logStore = new ConnectorLogStore(connectorLogsPath(), () => requireSettings().get());
   try {
-    machineState.recordInstallation(desktopInstallation({
+    await machineState.recordInstallation(desktopInstallation({
       executablePath: process.platform === "linux" && app.isPackaged && process.env.APPIMAGE ? process.env.APPIMAGE : process.execPath,
       appPath: app.getAppPath(), packaged: app.isPackaged, platform: process.platform,
     }));

@@ -12,73 +12,73 @@ function fixture() {
   return { home, store, installation, read: () => JSON.parse(fs.readFileSync(store.filePath, "utf8")), cleanup: () => fs.rmSync(home, { recursive: true, force: true }) };
 }
 
-test("every startup validates the executable but identical records keep their timestamp", () => {
+test("every startup validates the executable but identical records keep their timestamp", async () => {
   const h = fixture();
   try {
-    h.store.recordInstallation(h.installation);
-    h.store.recordConnectorId("conn-first");
+    await h.store.recordInstallation(h.installation);
+    await h.store.recordConnectorId("conn-first");
     const before = fs.statSync(h.store.filePath);
-    h.store.recordInstallation(h.installation);
+    await h.store.recordInstallation(h.installation);
     assert.equal(fs.statSync(h.store.filePath).mtimeMs, before.mtimeMs);
-    assert.throws(() => h.store.recordInstallation({ ...h.installation, executablePath: path.join(h.home, "missing") }), /ENOENT/);
+    await assert.rejects(h.store.recordInstallation({ ...h.installation, executablePath: path.join(h.home, "missing") }), /ENOENT/);
     assert.deepEqual(h.read().connectorIds, ["conn-first"]);
     assert.equal(h.read().desktop.executablePath, fs.realpathSync(process.execPath));
     assert.equal(h.read().desktop.appPath, fs.realpathSync(h.home));
   } finally { h.cleanup(); }
 });
 
-test("an install move repairs paths while preserving ID order and future shared fields", () => {
+test("an install move repairs paths while preserving ID order and future shared fields", async () => {
   const h = fixture();
   try {
-    h.store.recordInstallation(h.installation);
-    h.store.recordConnectorId("conn-first");
-    h.store.recordConnectorId("conn-second");
-    h.store.recordConnectorId("conn-first");
+    await h.store.recordInstallation(h.installation);
+    await h.store.recordConnectorId("conn-first");
+    await h.store.recordConnectorId("conn-second");
+    await h.store.recordConnectorId("conn-first");
     const existing = h.read();
     fs.writeFileSync(h.store.filePath, JSON.stringify({ ...existing, desktop: { ...existing.desktop, executablePath: "/gone", futureDesktopField: true }, future: { value: 1 } }));
-    h.store.recordInstallation(h.installation);
+    await h.store.recordInstallation(h.installation);
     assert.deepEqual(h.read().connectorIds, ["conn-first", "conn-second"]);
     assert.deepEqual(h.read().future, { value: 1 });
     assert.equal(h.read().desktop.futureDesktopField, true);
     const before = fs.statSync(h.store.filePath);
-    h.store.recordConnectorId("conn-second");
+    await h.store.recordConnectorId("conn-second");
     assert.equal(fs.statSync(h.store.filePath).mtimeMs, before.mtimeMs);
     assert.equal(fs.readdirSync(path.dirname(h.store.filePath)).some(name => name.endsWith(".tmp")), false);
   } finally { h.cleanup(); }
 });
 
-test("startup backs up and repairs corrupt JSON, while future schema versions are not overwritten", () => {
+test("startup backs up and repairs corrupt JSON, while future schema versions are not overwritten", async () => {
   const h = fixture();
   try {
     fs.mkdirSync(path.dirname(h.store.filePath), { recursive: true });
     fs.writeFileSync(h.store.filePath, "{broken");
-    h.store.recordInstallation(h.installation);
+    await h.store.recordInstallation(h.installation);
     const backup = fs.readdirSync(path.dirname(h.store.filePath)).find(name => name.includes(".corrupt-"))!;
     assert.equal(fs.readFileSync(path.join(path.dirname(h.store.filePath), backup), "utf8"), "{broken");
     fs.writeFileSync(h.store.filePath, '{"version":2,"connectorIds":["future"]}');
-    assert.throws(() => h.store.recordInstallation(h.installation), /version/);
+    await assert.rejects(h.store.recordInstallation(h.installation), /version/);
     assert.equal(h.read().version, 2);
   } finally { h.cleanup(); }
 });
 
-test("reading local IDs returns fresh ordered snapshots without rewriting the record", (t) => {
+test("reading local IDs returns fresh ordered snapshots without rewriting the record", async (t) => {
   const h = fixture();
   t.after(h.cleanup);
   assert.deepEqual(h.store.readConnectorIds(), []);
   assert.equal(fs.existsSync(h.store.filePath), false);
-  h.store.recordConnectorId("first");
+  await h.store.recordConnectorId("first");
   const contents = JSON.stringify({ ...h.read(), connectorIds: [" first ", "second", "first"] });
   fs.writeFileSync(h.store.filePath, contents);
   assert.deepEqual(h.store.readConnectorIds(), ["first", "second"]);
   assert.equal(fs.readFileSync(h.store.filePath, "utf8"), contents);
-  h.store.recordConnectorId("third");
+  await h.store.recordConnectorId("third");
   assert.deepEqual(h.store.readConnectorIds(), ["first", "second", "third"]);
 });
 
-test("reading invalid shared records fails without treating them as empty history", (t) => {
+test("reading invalid shared records fails without treating them as empty history", async (t) => {
   const h = fixture();
   t.after(h.cleanup);
-  h.store.recordConnectorId("first");
+  await h.store.recordConnectorId("first");
   for (const contents of ["{broken", "null", "[]", '{"version":2}', '{"connectorIds":[]}', '{"version":1,"connectorIds":"first"}', '{"version":1,"connectorIds":[""]}']) {
     fs.writeFileSync(h.store.filePath, contents);
     assert.throws(() => h.store.readConnectorIds(), /record|version/);
@@ -86,7 +86,7 @@ test("reading invalid shared records fails without treating them as empty histor
   }
 });
 
-test("packaged macOS and Windows records identify the app and dev records retain launch arguments", () => {
+test("packaged macOS and Windows records identify the app and dev records retain launch arguments", async () => {
   assert.equal(desktopInstallation({ platform: "darwin", executablePath: "/Applications/Agents Anywhere.app/Contents/MacOS/Agents Anywhere", appPath: "/app.asar", packaged: true }).appPath, "/Applications/Agents Anywhere.app");
   const windows = desktopInstallation({ platform: "win32", executablePath: "D:\\Apps\\Agents Anywhere.exe", appPath: "D:\\Apps\\resources\\app.asar", packaged: true });
   assert.equal(windows.appPath, "D:\\Apps");
