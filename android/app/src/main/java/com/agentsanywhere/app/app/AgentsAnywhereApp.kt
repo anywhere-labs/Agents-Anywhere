@@ -42,6 +42,7 @@ import com.agentsanywhere.app.feature.sessions.SessionsController
 import com.agentsanywhere.app.feature.sessions.SessionsState
 import com.agentsanywhere.app.feature.sessions.NewSessionCreateOutcome
 import com.agentsanywhere.app.feature.sessions.NewSessionDraft
+import com.agentsanywhere.app.feature.sessions.NewSessionPreferenceStore
 import com.agentsanywhere.app.feature.sessions.beginSessionRequest
 import com.agentsanywhere.app.feature.sessions.mergedWithRefresh
 import com.agentsanywhere.app.feature.sessions.replacedByDashboardSnapshot
@@ -755,6 +756,11 @@ fun AgentsAnywhereApp(
             } else {
                 val refresh = sessionsState.beginSessionRequest()
                 sessionsState = refresh.state
+                NewSessionPreferenceStore(context, sessionStore.readServerUrl(), sessionStore.readUserId()).save(
+                    connectorId = draft.connectorId,
+                    runtimeId = draft.runtimeId,
+                    selections = draft.selections,
+                )
                 val outcome = sessionsController.createAndStartSession(
                     draft = draft,
                     devices = sessionsState.devices,

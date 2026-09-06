@@ -49,6 +49,7 @@ import com.agentsanywhere.app.feature.sessions.NewSessionRuntimeSelectionState
 import com.agentsanywhere.app.feature.sessions.SessionsState
 import com.agentsanywhere.app.model.AgentProject
 import com.agentsanywhere.app.feature.sessions.availableProjectName
+import com.agentsanywhere.app.feature.sessions.activeNewSessionRuntimes
 import com.agentsanywhere.app.feature.sessions.workspaceProject
 import com.agentsanywhere.app.feature.sessions.workspaceProjectName
 import com.agentsanywhere.app.api.ApiException
@@ -69,6 +70,8 @@ import kotlinx.coroutines.launch
 fun NewSessionScreen(
     navigate: (AppDestination) -> Unit,
     sessionsState: SessionsState,
+    serverUrl: String,
+    userId: String,
     sidebarViewMode: String = HomeSidebarViewMode.Project,
     onLoadProjects: suspend () -> Result<List<AgentProject>> = { Result.success(sessionsState.projects) },
     onListDirectory: suspend (String, String, String) -> Result<NewSessionDirectory>,
@@ -85,15 +88,21 @@ fun NewSessionScreen(
     val colors = LocalAAColors.current
     val darkMode = colors.canvas == Color(0xFF09090B)
     val context = LocalContext.current
-    val preferenceStore = remember(context) { NewSessionPreferenceStore(context) }
+    val preferenceStore = remember(context, serverUrl, userId) { NewSessionPreferenceStore(context, serverUrl, userId) }
     val initialPreference = remember(preferenceStore) { preferenceStore.read() }
+    var preference by remember(preferenceStore) { mutableStateOf(initialPreference) }
     val defaultTitle = stringResource(R.string.new_session_title)
     val scope = rememberCoroutineScope()
     val keyboard = LocalSoftwareKeyboardController.current
     val focusRequester = remember { FocusRequester() }
-    val devices = remember(sessionsState.devices) {
+    val onlineDevices = remember(sessionsState.devices) {
         sessionsState.devices.filter { it.online }
     }
+    val inventory = rememberNewSessionRuntimeInventory(
+        connectorIds = onlineDevices.map { it.id },
+        onLoad = onListRuntimes,
+        loadError = stringResource(R.string.new_session_runtime_load_failed),
+    )
     var localProject by remember { mutableStateOf<AgentProject?>(null) }
     val projects = remember(sessionsState.projects, localProject) {
         val local = localProject
@@ -107,7 +116,9 @@ fun NewSessionScreen(
     var editingTitle by rememberSaveable { mutableStateOf(false) }
     var selectedProjectId by rememberSaveable(initialProjectId) { mutableStateOf(initialProjectId) }
     var pendingInitialProjectId by rememberSaveable(initialProjectId) { mutableStateOf(initialProjectId) }
-    var selectedDeviceId by rememberSaveable { mutableStateOf(initialPreference?.connectorId) }
+    var selectedDeviceId by rememberSaveable {
+        mutableStateOf(sessionsState.projects.firstOrNull { it.id == initialProjectId }?.connectorId ?: initialPreference?.connectorId)
+    }
     var runtimeSelection by remember {
         mutableStateOf(
             NewSessionRuntimeSelectionState(
@@ -127,6 +138,9 @@ fun NewSessionScreen(
     var expandedConfiguration by remember { mutableStateOf<NewSessionConfigurationKey?>(null) }
     var projectListExpanded by rememberSaveable { mutableStateOf(false) }
     var creatingProject by rememberSaveable { mutableStateOf(false) }
+    val devices = if (creatingProject) onlineDevices else onlineDevices.filter { device ->
+        activeNewSessionRuntimes(inventory.results[device.id]?.runtimes.orEmpty()).isNotEmpty()
+    }
     var projectName by rememberSaveable { mutableStateOf("") }
     var projectCreating by remember { mutableStateOf(false) }
     var projectCreateError by remember { mutableStateOf<String?>(null) }
@@ -138,18 +152,43 @@ fun NewSessionScreen(
     var directoryRequestId by remember { mutableStateOf(0L) }
     val selectedProject = projects.firstOrNull { it.id == selectedProjectId && (selectedDeviceId == null || it.connectorId == selectedDeviceId) }
 
-    fun selectDevice(id: String?) {
-        if (selectedDeviceId == id) return
-        selectedDeviceId = id
-        selectedProjectId = null
-        selectedWorkspacePath = ""
-        currentPath = ""
-        homePath = null
-        directoryRequestId++
-        pathEntries = emptyList()
-        pathLoading = false
-        projectCreateError = null
-        choosePath = false
+    fun persistSelection(key: NewSessionConfigurationKey) {
+        val connectorId = runtimeSelection.connectorId?.takeIf { it == selectedDeviceId } ?: return
+        val runtimeId = runtimeSelection.selectedRuntime?.id ?: return
+        preference = when (key) {
+            NewSessionConfigurationKey.Device, NewSessionConfigurationKey.Agent ->
+                preferenceStore.saveTarget(connectorId, runtimeId)
+            NewSessionConfigurationKey.Model, NewSessionConfigurationKey.Effort ->
+                runtimeSelection.selectedModelSelectionId?.takeIf { runtimeSelection.modelCatalog.fresh }?.let {
+                    preferenceStore.saveModel(connectorId, runtimeId, it)
+                }
+            NewSessionConfigurationKey.Permission ->
+                runtimeSelection.selectedPermissionSelectionId?.takeIf { runtimeSelection.permissionCatalog.fresh }?.let {
+                    preferenceStore.savePermission(connectorId, runtimeId, it)
+                }
+        } ?: preference
+    }
+
+    fun selectDevice(id: String?, persist: Boolean = false) {
+        if (selectedDeviceId != id) {
+            selectedDeviceId = id
+            selectedProjectId = null
+            selectedWorkspacePath = ""
+            currentPath = ""
+            homePath = null
+            directoryRequestId++
+            pathEntries = emptyList()
+            pathLoading = false
+            projectCreateError = null
+            choosePath = false
+        }
+        if (id != null) {
+            val next = runtimeSelection.beginRuntimeInventory(id)
+            runtimeSelection = inventory.results[id]?.let {
+                next.replaceRuntimeInventory(it, preference?.runtimeId?.takeIf { preference?.connectorId == id })
+            } ?: next
+            if (persist) persistSelection(NewSessionConfigurationKey.Device)
+        }
     }
 
     fun cancelProjectCreation() {
@@ -179,6 +218,10 @@ fun NewSessionScreen(
         if (requested != null) selectedDeviceId = requested.connectorId
         if (next?.id != selectedProjectId) {
             selectedProjectId = next?.id
+            if (next == null && !creatingProject) {
+                selectedWorkspacePath = homePath.orEmpty()
+                currentPath = selectedWorkspacePath
+            }
         }
         if (requested != null || sessionsState.hasLoaded) {
             pendingInitialProjectId = null
@@ -193,13 +236,17 @@ fun NewSessionScreen(
         }
     }
 
-    LaunchedEffect(devices, sessionsState.hasLoaded, creatingProject, selectedProject?.id) {
-        if (!creatingProject && selectedProject != null) {
-            selectedDeviceId = selectedProject.connectorId
-        } else if (devices.isNotEmpty() && devices.none { it.id == selectedDeviceId }) {
-            selectDevice(devices.firstOrNull()?.id)
-        } else if (devices.isEmpty() && sessionsState.hasLoaded) {
-            selectDevice(null)
+    LaunchedEffect(devices, sessionsState.hasLoaded, inventory.hasLoaded, creatingProject, selectedProject?.id, preference?.connectorId) {
+        val projectTarget = projects.firstOrNull { it.id == selectedProjectId }
+        if (!creatingProject && projectTarget != null) {
+            selectedDeviceId = projectTarget.connectorId
+        } else {
+            val preferred = preference?.connectorId?.takeIf { id -> devices.any { it.id == id } }
+            val current = selectedDeviceId?.takeIf { id -> devices.any { it.id == id } }
+            val next = (if (creatingProject) current ?: preferred else preferred ?: current) ?: devices.firstOrNull()?.id
+            if (next != selectedDeviceId && (next != null || (sessionsState.hasLoaded && inventory.hasLoaded))) {
+                selectDevice(next)
+            }
         }
     }
 
@@ -208,26 +255,13 @@ fun NewSessionScreen(
     val isWindowsDevice = isWindowsDeviceOs(selectedDeviceOs)
     val selectedRuntime = runtimeSelection.selectedRuntime
 
-    suspend fun loadRuntimeInventory(connectorId: String) {
-        runtimeSelection = runtimeSelection.beginRuntimeInventory(connectorId)
-        onListRuntimes(connectorId)
-            .onSuccess { result ->
-                runtimeSelection = runtimeSelection.replaceRuntimeInventory(result)
-            }
-            .onFailure { error ->
-                runtimeSelection = runtimeSelection.failRuntimeInventory(
-                    connectorId,
-                    error.message ?: context.getString(R.string.new_session_runtime_load_failed),
-                )
-            }
-    }
-
     suspend fun loadRuntimeDetails() {
         val connectorId = runtimeSelection.connectorId ?: return
         val runtimeId = runtimeSelection.selectedRuntimeId ?: return
         runtimeSelection = runtimeSelection.beginRuntimeDetails()
         val requestKey = runtimeSelection.requestKey ?: return
         val capabilities = onLoadRuntimeCapabilities(connectorId, runtimeId).getOrElse {
+            if (it is CancellationException) throw it
             runtimeSelection = runtimeSelection.failCapabilities(
                 requestKey,
                 context.getString(R.string.new_session_capabilities_failed),
@@ -271,19 +305,26 @@ fun NewSessionScreen(
         }
     }
 
-    LaunchedEffect(selectedDevice?.id, sessionsState.hasLoaded) {
+    LaunchedEffect(selectedDevice?.id, inventory.results[selectedDevice?.id], inventory.errors[selectedDevice?.id], preference?.connectorId, preference?.runtimeId) {
         val connectorId = selectedDevice?.id
         if (connectorId == null) {
-            if (sessionsState.hasLoaded) {
-                runtimeSelection = NewSessionRuntimeSelectionState()
-            }
+            runtimeSelection = NewSessionRuntimeSelectionState(
+                generation = runtimeSelection.generation,
+                selectionHints = runtimeSelection.selectionHints,
+            )
         } else {
-            loadRuntimeInventory(connectorId)
+            val next = runtimeSelection.beginRuntimeInventory(connectorId)
+            runtimeSelection = inventory.results[connectorId]?.let {
+                next.replaceRuntimeInventory(it, preference?.runtimeId?.takeIf { preference?.connectorId == connectorId })
+            } ?: next
+            inventory.errors[connectorId]?.let {
+                runtimeSelection = runtimeSelection.failRuntimeInventory(connectorId, it)
+            }
         }
     }
 
-    LaunchedEffect(selectedDevice?.id, selectedRuntime?.id) {
-        if (selectedDevice != null && selectedRuntime != null) {
+    LaunchedEffect(selectedDevice?.id, runtimeSelection.connectorId, selectedRuntime?.id, selectedRuntime?.type) {
+        if (selectedDevice != null && selectedRuntime != null && runtimeSelection.connectorId == selectedDevice.id) {
             loadRuntimeDetails()
         }
     }
@@ -410,6 +451,7 @@ fun NewSessionScreen(
                     NewSessionConfigurationOption(id = device.id, label = device.name)
                 },
                 enabled = devices.isNotEmpty() && !projectCreating,
+                loading = !creatingProject && inventory.loading,
             ),
         )
         if (!creatingProject) add(
@@ -563,9 +605,9 @@ fun NewSessionScreen(
         creatingProject = true
         expandedConfiguration = null
         val preferredDeviceId = selectedDeviceId
-            ?.takeIf { id -> devices.any { it.id == id } }
-            ?: initialPreference?.connectorId?.takeIf { id -> devices.any { it.id == id } }
-            ?: devices.firstOrNull()?.id
+            ?.takeIf { id -> onlineDevices.any { it.id == id } }
+            ?: preference?.connectorId?.takeIf { id -> onlineDevices.any { it.id == id } }
+            ?: onlineDevices.firstOrNull()?.id
         selectedDeviceId = preferredDeviceId
     }
 
@@ -604,6 +646,7 @@ fun NewSessionScreen(
                 }
                 val project = onCreateProject(attemptedName, device.id, path).getOrThrow()
                 localProject = project
+                selectDevice(project.connectorId, persist = true)
                 selectedProjectId = project.id
                 selectedDeviceId = project.connectorId
                 selectedWorkspacePath = project.workspacePath
@@ -664,17 +707,12 @@ fun NewSessionScreen(
                     expanded = expandedConfiguration,
                     onToggle = { key ->
                         expandedConfiguration = if (expandedConfiguration == key) null else key
-                        if (key == NewSessionConfigurationKey.Agent) {
-                            selectedDevice?.id?.let { connectorId ->
-                                scope.launch { loadRuntimeInventory(connectorId) }
-                            }
-                        }
                     },
                     onDismiss = { expandedConfiguration = null },
                     onSelect = { key, id ->
                         when (key) {
                             NewSessionConfigurationKey.Device -> {
-                                selectDevice(id)
+                                selectDevice(id, persist = !creatingProject)
                             }
                             NewSessionConfigurationKey.Agent -> {
                                 runtimeSelection = runtimeSelection.selectRuntime(id)
@@ -689,6 +727,7 @@ fun NewSessionScreen(
                                 runtimeSelection = runtimeSelection.selectPermission(id)
                             }
                         }
+                        if (key != NewSessionConfigurationKey.Device) persistSelection(key)
                     },
                 )
 
@@ -776,6 +815,11 @@ fun NewSessionScreen(
                         onCreate = { createProject() },
                     )
                 } else {
+                    if (sidebarViewMode == HomeSidebarViewMode.Project && selectedDevice == null && onlineDevices.isNotEmpty() && !inventory.loading) {
+                        TextButton(onClick = ::beginProjectCreation) {
+                            Text(stringResource(R.string.new_session_create_project))
+                        }
+                    }
                     WorkspaceSection(
                         selectedTitle = selectedProjectTitle,
                         path = selectedWorkspacePath,
@@ -813,7 +857,10 @@ fun NewSessionScreen(
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                 val runtimeError = when {
-                    devices.isEmpty() -> stringResource(R.string.new_session_no_online_agent)
+                    inventory.loading -> null
+                    onlineDevices.isEmpty() -> stringResource(R.string.new_session_no_online_agent)
+                    devices.isEmpty() -> inventory.errors.values.firstOrNull()
+                        ?: stringResource(R.string.new_session_no_attached_agents)
                     runtimeSelection.runtimesErrorMessage != null -> runtimeSelection.runtimesErrorMessage
                     !runtimeSelection.runtimesLoading && runtimeSelection.runtimes.isEmpty() ->
                         stringResource(R.string.new_session_no_attached_agents)
@@ -846,7 +893,7 @@ fun NewSessionScreen(
                             lineHeight = 17.sp,
                             modifier = Modifier.weight(1f),
                         )
-                        if (selectedDevice != null) {
+                        if (onlineDevices.isNotEmpty()) {
                             Text(
                                 text = stringResource(R.string.common_retry),
                                 color = colors.primaryAction,
@@ -854,10 +901,10 @@ fun NewSessionScreen(
                                 fontWeight = FontWeight.Bold,
                                 modifier = Modifier.noRippleClickable {
                                     scope.launch {
-                                        if (runtimeSelection.runtimesErrorMessage != null ||
+                                        if (selectedDevice == null || runtimeSelection.runtimesErrorMessage != null ||
                                             runtimeSelection.runtimes.isEmpty()
                                         ) {
-                                            loadRuntimeInventory(selectedDevice.id)
+                                            inventory.refresh()
                                         } else if (
                                             runtimeSelection.capabilities.errorMessage != null ||
                                             runtimeSelection.modelCatalog.errorMessage != null ||

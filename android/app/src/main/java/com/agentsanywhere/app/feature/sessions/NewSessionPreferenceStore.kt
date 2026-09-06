@@ -10,25 +10,49 @@ internal data class NewSessionPreference(
     val selections: Map<NewSessionRuntimeScope, NewSessionSelections> = emptyMap(),
 )
 
-internal class NewSessionPreferenceStore(context: Context) {
+internal class NewSessionPreferenceStore(context: Context, serverUrl: String, userId: String) {
     private val preferences = context.applicationContext.getSharedPreferences(
         PREFERENCES_NAME,
         Context.MODE_PRIVATE,
     )
+    private val key = if (serverUrl.isNotBlank() && userId.isNotBlank()) {
+        "last-selection-v2:" + JSONArray(listOf(serverUrl.trim().trimEnd('/'), userId)).toString()
+    } else null
 
     fun read(): NewSessionPreference? {
-        val raw = preferences.getString(KEY_PREFERENCE, null) ?: return null
-        return decodeNewSessionPreference(raw)
+        val storageKey = key ?: return null
+        preferences.getString(storageKey, null)?.let { return decodeNewSessionPreference(it) }
+        val legacy = preferences.getString(KEY_PREFERENCE, null)?.let(::decodeNewSessionPreference) ?: return null
+        // Adopt the old unscoped preference once, for the account performing the upgrade.
+        preferences.edit().putString(storageKey, encodeNewSessionPreference(legacy)).remove(KEY_PREFERENCE).apply()
+        return legacy
     }
+
+    fun saveTarget(connectorId: String, runtimeId: String): NewSessionPreference? =
+        update(connectorId, runtimeId) { it }
+
+    fun saveModel(connectorId: String, runtimeId: String, model: String): NewSessionPreference? =
+        update(connectorId, runtimeId) { it.copy(model = model) }
+
+    fun savePermission(connectorId: String, runtimeId: String, permission: String): NewSessionPreference? =
+        update(connectorId, runtimeId) { it.copy(permission = permission) }
 
     fun save(
         connectorId: String,
         runtimeId: String,
         selections: NewSessionSelections,
-    ) {
-        if (connectorId.isBlank() || runtimeId.isBlank()) return
+    ): NewSessionPreference? = update(connectorId, runtimeId) { selections }
+
+    private fun update(
+        connectorId: String,
+        runtimeId: String,
+        transform: (NewSessionSelections) -> NewSessionSelections,
+    ): NewSessionPreference? {
+        val storageKey = key ?: return null
+        if (connectorId.isBlank() || runtimeId.isBlank()) return null
         val scope = NewSessionRuntimeScope(connectorId, runtimeId)
         val previous = read()?.selections.orEmpty()
+        val selections = transform(previous[scope] ?: NewSessionSelections())
         val nextSelections = if (selections.model == null && selections.permission == null) {
             previous - scope
         } else {
@@ -40,8 +64,9 @@ internal class NewSessionPreferenceStore(context: Context) {
             selections = nextSelections,
         )
         preferences.edit()
-            .putString(KEY_PREFERENCE, encodeNewSessionPreference(preference))
+            .putString(storageKey, encodeNewSessionPreference(preference))
             .apply()
+        return preference
     }
 
     private companion object {

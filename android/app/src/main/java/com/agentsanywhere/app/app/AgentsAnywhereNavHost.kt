@@ -228,9 +228,11 @@ internal fun AgentsAnywhereNavHost(
                     deviceAgentPreviews = deviceAgentPreviews,
                     onPairDevice = { navigate(AppDestination.DeviceSetup) },
                 )
-                AppDestination.NewSession -> NewSessionScreen(
+                AppDestination.NewSession -> androidx.compose.runtime.key(serverUrl, userId) { NewSessionScreen(
                     navigate = navigate,
                     sessionsState = sessionsState,
+                    serverUrl = serverUrl,
+                    userId = userId,
                     onListDirectory = onListDirectory,
                     onListRuntimes = onListNewSessionRuntimes,
                     onLoadRuntimeCapabilities = onLoadNewSessionRuntimeCapabilities,
@@ -241,7 +243,7 @@ internal fun AgentsAnywhereNavHost(
                     sidebarViewMode = sidebarViewMode,
                     onLoadProjects = onLoadProjects,
                     onCreateProject = onCreateProject,
-                )
+                ) }
                 AppDestination.SessionDetail -> SessionDetailScreen(
                     navigate = navigate,
                     sessionId = selectedSessionId,
