@@ -1,4 +1,5 @@
 import { ApiClient, apiClient, apiPath } from "@/lib/api";
+import { shouldAuthorizeDownloadUrl } from "@/lib/api/download-auth";
 import type {
   AdminDashboardOverviewResponse,
   AdminDashboardSettings,
@@ -535,7 +536,7 @@ export class DashboardApi {
 
   async downloadBlob(token: string | null, url: string): Promise<Blob> {
     const headers: HeadersInit = {};
-    if (token) headers.authorization = `Bearer ${token}`;
+    if (token && shouldAuthorizeDownloadUrl(url)) headers.authorization = `Bearer ${token}`;
     const response = await fetch(url, {
       headers,
     });
@@ -611,10 +612,11 @@ export class DashboardApi {
     token: string,
     connectorId: string,
     terminalId: string,
+    signal?: AbortSignal,
   ): Promise<RpcResponse<unknown>> {
     return this.client.delete<RpcResponse<unknown>>(
       `/connectors/${encodeURIComponent(connectorId)}/terminals-v2/${encodeURIComponent(terminalId)}`,
-      { token },
+      { token, signal },
     );
   }
 
@@ -627,6 +629,19 @@ export class DashboardApi {
     return this.client.patch<RpcResponse<TerminalResponse["terminal"]>>(
       `/connectors/${encodeURIComponent(connectorId)}/terminals-v2/${encodeURIComponent(terminalId)}`,
       { label },
+      { token },
+    );
+  }
+
+  connectorTerminalSetPersistenceV2(
+    token: string,
+    connectorId: string,
+    terminalId: string,
+    persistent: boolean,
+  ): Promise<RpcResponse<TerminalResponse["terminal"]>> {
+    return this.client.patch<RpcResponse<TerminalResponse["terminal"]>>(
+      `/connectors/${encodeURIComponent(connectorId)}/terminals-v2/${encodeURIComponent(terminalId)}/persistence`,
+      { persistent },
       { token },
     );
   }

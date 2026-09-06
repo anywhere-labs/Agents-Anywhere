@@ -19,6 +19,7 @@ import {
   DropdownMenuSubTrigger,
 } from "@/components/ui/dropdown-menu"
 import { CascadingSelector } from "@/components/cascading-selector"
+import { useSessionToolSidebarStore } from "@/components/session-tool-sidebar-state"
 import { DashboardSidebarToggle } from "@/components/dashboard-sidebar-toggle"
 import { AgentSelectionDrawer } from "@/components/session/agent-selection-drawer"
 import { SelectionSettingsDrawer } from "@/components/session/selection-settings-drawer"
@@ -150,6 +151,7 @@ type NewSessionTitleKey = (typeof NEW_SESSION_TITLE_KEYS)[number]
 type MobileNewSessionTitleKey = (typeof MOBILE_NEW_SESSION_TITLE_KEYS)[number]
 
 export function TaskComposer() {
+  const toolSidebarStore = useSessionToolSidebarStore()
   const { session: authSession } = useAuth()
   const { isMobile, state: sidebarState } = useSidebar()
   const {
@@ -776,6 +778,7 @@ export function TaskComposer() {
           : undefined,
         clientMessageId,
       })
+      toolSidebarStore.migrateSession(localSessionId, created.session.id)
       bindOptimisticSession(localSessionId, created.session, created.attachments)
     } catch (err) {
       const message = err instanceof Error ? err.message : t("createFailed")

@@ -1,14 +1,12 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
-    "rootDir": "src",
-    "outDir": "lib",
     "declaration": true,
     "declarationDir": "lib/types",
-    "sourceMap": false,
-    "declarationMap": false,
-    "types": ["node"]
+    "outDir": "lib",
+    "rootDir": "src",
+    "sourceMap": true
   },
   "include": ["src/**/*.ts"],
-  "exclude": ["tests/**"]
+  "exclude": ["tests", "src/client/**"]
 }

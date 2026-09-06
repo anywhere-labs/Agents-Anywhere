@@ -38,7 +38,7 @@ import {
 } from "@/features/dashboard/attachments"
 import { dashboardApi } from "@/features/dashboard/api"
 import type { SessionView } from "@/features/dashboard/types"
-import { apiPath } from "@/lib/api"
+import { apiUrl } from "@/lib/api"
 import { openNativeFilePreviewWindow } from "@/lib/file-preview-window"
 import { cn } from "@/lib/utils"
 import { useTranslations } from "next-intl"
@@ -744,7 +744,7 @@ function attachmentDetails(mediaType: string, size: number | undefined): string 
 }
 
 function attachmentOpenUrl(sessionId: string, fileId: string, token: string): string {
-  return `${apiPath(`/sessions/${encodeURIComponent(sessionId)}/attachments/${encodeURIComponent(fileId)}/open`)}?token=${encodeURIComponent(token)}`
+  return `${apiUrl(`/sessions/${encodeURIComponent(sessionId)}/attachments/${encodeURIComponent(fileId)}/open`)}?token=${encodeURIComponent(token)}`
 }
 
 function mediaTypeForName(name: string): string {

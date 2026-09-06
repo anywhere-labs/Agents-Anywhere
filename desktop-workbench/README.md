@@ -35,6 +35,39 @@ yarn dev
 By default, the embedded web app talks to `https://web.agents-anywhere.com`.
 The desktop shell uses the `/api/v2` API namespace by default.
 
+## Login and server configuration
+
+The login page offers **Agents Anywhere Cloud** and an expandable self-hosted
+server form. Both check `GET /api/v2/health` and require `status: "ok"` before
+opening sign-in. HTTP errors, invalid responses, and a 10-second timeout stay on
+the login page so the address can be corrected and retried.
+
+`config.json` is the shared source for the official Cloud backend/Web origins,
+API namespace, health timeout, and Desktop OAuth client settings. The build and
+development launchers read the same file. The OAuth protocol must also match the
+registered scheme in `package.json` and the server's first-party client registry.
+
+Like iOS, Desktop assumes a self-hosted server exposes its Web app at the same
+origin. It opens `WEB_ORIGIN/#/desktop-oauth` with `response_type=code`, the
+Desktop client ID/redirect URI, a random `state`, and an S256 PKCE challenge.
+After `agents-anywhere-desktop://oauth/callback`, Main verifies `state` and
+exchanges the code and original verifier at the selected backend's
+`/api/v2/oauth/token`. Health does not provide or discover the Web origin.
+
+The packaged app uses the system browser. Development uses a separate Web
+window with the same OAuth flow, intercepting the callback without installing
+an OS protocol handler. After sign-in succeeds, the server is remembered in
+`desktop-server.json` in Electron's user-data directory; API requests, downloads,
+and WebSockets follow that server. Cloud sign-in always selects the official
+Cloud address, regardless of a previously entered self-hosted address.
+
+For separate API/Web deployments, set `WORKBENCH_API_ORIGIN` and
+`WORKBENCH_OAUTH_WEB_ORIGIN` to the matching pair, then enter that API origin in
+the self-hosted form. The override applies only to that backend. In development,
+loopback API port `8000` defaults to Web port `5174`.
+
+## Renderer startup
+
 To point Electron at an already running web app:
 
 ```bash

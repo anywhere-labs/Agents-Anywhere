@@ -1,5 +1,6 @@
 {
   "compilerOptions": {
+    "allowImportingTsExtensions": true,
     "target": "ES2022",
     "lib": [
       "DOM",
@@ -31,9 +32,6 @@
     "paths": {
       "@/*": [
         "./src/*"
-      ],
-      "@desktop-login-action": [
-        "./src/components/auth/login-action.tsx"
       ]
     }
   },

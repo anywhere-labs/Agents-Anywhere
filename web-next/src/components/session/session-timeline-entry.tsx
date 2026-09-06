@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/context-menu"
 import { Marker, MarkerContent, MarkerIcon } from "@/components/ui/marker"
 import { JsonBlock, TimelineStatusBadge, ToolCard } from "@/components/session/session-tool-cards"
+import { useSessionFilePreviewOpener } from "@/components/session/session-file-preview-context"
 import { openSessionFilePreview } from "@/components/markdown-text"
 import { cn } from "@/lib/utils"
 import { copyText } from "@/lib/clipboard"
@@ -359,6 +360,7 @@ function ArtifactCard({
   item: TimelineItem
   readOnly: boolean
 }) {
+  const openFilePreview = useSessionFilePreviewOpener()
   const kind = textOf(item.content.kind) || "artifact"
   if (kind === "diff") return null
   const path = firstTextOf(item.content.path, item.content.filePath, item.content.file, item.content.uri)
@@ -377,7 +379,7 @@ function ArtifactCard({
           if (!path || readOnly) return
           event.preventDefault()
           event.stopPropagation()
-          openSessionFilePreview(token, session, path)
+          openSessionFilePreview(token, session, path, openFilePreview)
         }}
       >
         {title}

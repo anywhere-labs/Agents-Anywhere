@@ -1201,7 +1201,11 @@
       "generic": "Something went wrong.",
       "oauth": "OAuth sign-in failed.",
       "loginFailed": "Sign in failed.",
-      "registerFailed": "Registration failed."
+      "registerFailed": "Registration failed.",
+      "invalidServer": "Enter a valid HTTP or HTTPS server address without credentials or a page path.",
+      "serverUnavailable": "Could not reach the server. Check the address and your connection, then try again.",
+      "invalidHealth": "This address did not return a healthy Agents Anywhere server. Check the backend address.",
+      "serverTimeout": "The connection timed out. Check the address and your connection, then try again."
     },
     "bootstrap": {
       "description": "Fresh install. The account you create here becomes the instance admin.",
@@ -1238,7 +1242,14 @@
       "titlePrefix": "Sign in to",
       "userPlaceholder": "enter your username",
       "signingIn": "Signing in...",
-      "submitWithEnter": "Sign in ↵"
+      "submitWithEnter": "Sign in ↵",
+      "syncDescription": "Access your agents, sessions, and workspaces across all your devices.",
+      "cloud": "Sign in to Agents Anywhere Cloud",
+      "selfHosted": "Connect to your own Agents Anywhere server",
+      "serverPlaceholder": "Server address, e.g. https://your-server.com",
+      "connectServer": "Connect to server",
+      "connecting": "Connecting…",
+      "browserOpened": "Sign-in is open. You will return here automatically when it is complete."
     },
     "signedOut": {
       "description": "Your local credentials have been cleared. You can safely close this page, or open the sign-in page to continue.",

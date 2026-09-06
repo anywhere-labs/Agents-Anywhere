@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { Smartphone, SquarePen } from "lucide-react"
+import { Plus, Smartphone } from "lucide-react"
 import { toast } from "sonner"
 
 import { useAuth } from "@/components/auth/auth-context"
@@ -30,8 +30,6 @@ import { SidebarAccountFooter } from "@/components/sidebar/sidebar-account-foote
 import {
   Sidebar,
   SidebarContent,
-  SidebarGroup,
-  SidebarGroupContent,
   SidebarHeader,
   SidebarMenu,
   SidebarMenuButton,
@@ -195,46 +193,40 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
 
   return (
     <Sidebar contained={contained} className="border-sidebar-border">
-      <SidebarHeader className="gap-0 px-4 pb-2 pt-3">
-        <div className="mb-3 mt-1 flex items-center">
-          <button type="button" onClick={goHome} className="aa-wordmark min-w-0 pr-px text-left text-xl leading-none">
+      <SidebarHeader className="gap-0 px-4 pb-2 pt-4">
+        <div className="flex min-h-7 items-center justify-between">
+          <button type="button" onClick={goHome} className="aa-wordmark min-w-0 text-left text-xl">
             Agents Anywhere
           </button>
         </div>
 
-        <SidebarMenu>
+        <SidebarMenu className="mt-3">
           <SidebarMenuItem>
             <SidebarMenuButton
-              className="h-9 font-medium"
+              className="h-10 font-medium"
               isActive={page === "home"}
               onClick={goHome}
             >
-              <SquarePen />
+              <Plus />
               <span>{t("actions.newSession")}</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
+          {mobileConnectionsSidebarVisible ? (
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                className="h-10 font-medium"
+                isActive={page === "mobile-connections"}
+                onClick={() => navigate("mobile-connections")}
+              >
+                <Smartphone />
+                <span>{t("actions.mobileConnections")}</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          ) : null}
         </SidebarMenu>
       </SidebarHeader>
 
       <SidebarContent className="px-2">
-        {mobileConnectionsSidebarVisible ? (
-          <SidebarGroup className="pb-0 pt-0">
-            <SidebarGroupContent>
-              <SidebarMenu>
-                <SidebarMenuItem>
-                  <SidebarMenuButton
-                    className="h-9 font-medium"
-                    isActive={page === "mobile-connections"}
-                    onClick={() => navigate("mobile-connections")}
-                  >
-                    <Smartphone />
-                    <span>{t("actions.mobileConnections")}</span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              </SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
-        ) : null}
 
         <DevicesSection
           connectors={connectors}

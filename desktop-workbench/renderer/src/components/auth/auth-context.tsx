@@ -10,6 +10,7 @@ import {
 import type { AuthMe, StoredSession } from "@/features/auth/types"
 import { normalizeAuthMe, normalizeDesktopOAuthMe } from "@/features/auth/normalize-me"
 import { getDesktopWorkbenchBridge } from "@/features/desktop/bridge"
+import { getDesktopServerConnection, setDesktopServerConnection } from "@/features/desktop/server-connection"
 import { useTranslations } from "next-intl"
 
 export type AuthScreen = "login" | "signed-out" | "preview" | "app"
@@ -25,7 +26,9 @@ type AuthState = {
   emailVerificationRequired: boolean
   refreshConfig: () => Promise<void>
   navigate: (screen: AuthScreen) => void
-  startDesktopOAuth: () => Promise<void>
+  oauthStatus: "idle" | "opening" | "waiting"
+  startDesktopOAuth: (serverUrl?: string) => Promise<void>
+  clearError: () => void
   refreshMe: () => Promise<AuthMe | null>
   signOut: () => void
 }
@@ -76,6 +79,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [me, setMe] = React.useState<AuthMe | null>(null)
   const [loading, setLoading] = React.useState(true)
   const [error, setError] = React.useState<string | null>(null)
+  const [oauthStatus, setOAuthStatus] = React.useState<"idle" | "opening" | "waiting">("idle")
+  const startingOAuth = React.useRef(false)
+  const receivedOAuthResult = React.useRef(false)
   const [emailVerificationRequired, setEmailVerificationRequired] = React.useState(false)
   const refreshConfig = React.useCallback(async () => {
     const config = await authApi.config()
@@ -89,6 +95,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const nextScreen = hashToScreen(window.location.hash)
 
     async function boot() {
+      try {
+        const bridge = getDesktopWorkbenchBridge()?.auth
+        if (bridge) setDesktopServerConnection(await bridge.getServer())
+      } catch {
+        if (!cancelled) {
+          setError(t("errors.config", { detail: "" }))
+          setLoading(false)
+        }
+        return
+      }
+      if (cancelled) return
       if (!stored) {
         if (!cancelled) {
           setScreenState(nextScreen === "app" ? "login" : nextScreen)
@@ -99,6 +116,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       setSession(stored)
       try {
+        if (stored.serverUrl && stored.serverUrl !== getDesktopServerConnection()?.serverUrl) {
+          throw new Error("The saved session belongs to a different server.")
+        }
         const currentUser = normalizeAuthMe(await authApi.me(stored.accessToken), stored)
         if (cancelled) return
         setMe(currentUser)
@@ -134,6 +154,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       accessToken,
       userId: currentUser.userId,
       role: currentUser.role,
+      serverUrl: getDesktopServerConnection()?.serverUrl,
     }
     saveStoredSession(nextSession)
     setSession(nextSession)
@@ -144,23 +165,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   React.useEffect(() => {
-    if (!desktopAuthBridge) return
+    if (!desktopAuthBridge || loading) return
     let cancelled = false
     let consuming = false
 
     const consumeResult = async () => {
       if (consuming) return
       consuming = true
+      let received = false
       try {
         const result = await desktopAuthBridge.consumeOAuthResult()
         if (!result || cancelled) return
+        received = true
+        receivedOAuthResult.current = true
         if (result.status === "error") {
           setError(result.error)
+          setOAuthStatus("idle")
           setScreenState("login")
           return
         }
 
-        setLoading(true)
+        setDesktopServerConnection(result.server)
+        setOAuthStatus("opening")
         setError(null)
         await finishDesktopOAuth(result.accessToken)
       } catch (err) {
@@ -170,7 +196,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
       } finally {
         consuming = false
-        if (!cancelled) setLoading(false)
+        if (received && !cancelled) setOAuthStatus("idle")
       }
     }
 
@@ -180,19 +206,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       cancelled = true
       if (typeof unsubscribe === "function") unsubscribe()
     }
-  }, [desktopAuthBridge, finishDesktopOAuth, t])
+  }, [desktopAuthBridge, finishDesktopOAuth, loading, t])
 
-  const startDesktopOAuth = React.useCallback(async () => {
-    if (!desktopAuthBridge) return
-    setLoading(true)
+  const startDesktopOAuth = React.useCallback(async (serverUrl?: string) => {
+    if (!desktopAuthBridge || startingOAuth.current) return
+    startingOAuth.current = true
+    receivedOAuthResult.current = false
+    setOAuthStatus("opening")
     setError(null)
     try {
-      await desktopAuthBridge.startOAuth()
+      const result = await desktopAuthBridge.startOAuth(serverUrl === undefined ? undefined : { serverUrl })
+      if (result.status === "error") {
+        setError(t(`errors.${result.code}`))
+        setOAuthStatus("idle")
+        return
+      }
+      if (!receivedOAuthResult.current) setOAuthStatus("waiting")
     } catch (err) {
       setError(err instanceof Error ? err.message : t("errors.oauth"))
-      throw err
+      setOAuthStatus("idle")
     } finally {
-      setLoading(false)
+      startingOAuth.current = false
     }
   }, [desktopAuthBridge, t])
 
@@ -228,6 +262,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         refreshConfig,
         navigate,
         startDesktopOAuth,
+        oauthStatus,
+        clearError: () => setError(null),
         refreshMe,
         signOut,
       }}

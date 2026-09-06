@@ -95,6 +95,7 @@ export type StoredSession = {
   accessToken: string;
   userId: string;
   role: UserRole;
+  serverUrl?: string;
 };
 
 // ─── Mobile sign-in ──────────────────────────────────────────────

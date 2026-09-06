@@ -27,10 +27,19 @@ import {
 } from "@/components/ui/attachment"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
-import type { ReconcileAttachment } from "@/features/dashboard/attachments"
+import {
+  type OpenSessionFilePreview,
+  useSessionFilePreviewOpener,
+} from "@/components/session/session-file-preview-context"
+import {
+  attachmentIsImage,
+  attachmentShouldReadFromDevice,
+  type ReconcileAttachment,
+} from "@/features/dashboard/attachments"
 import { dashboardApi } from "@/features/dashboard/api"
 import type { SessionView } from "@/features/dashboard/types"
 import { apiPath } from "@/lib/api"
+import { openNativeFilePreviewWindow } from "@/lib/file-preview-window"
 import { cn } from "@/lib/utils"
 import { useTranslations } from "next-intl"
 
@@ -57,6 +66,7 @@ export function MessageAttachments({
   attachmentUrl,
 }: MessageAttachmentsProps) {
   const t = useTranslations("dashboard.new")
+  const openFilePreview = useSessionFilePreviewOpener()
   const [previewImages, setPreviewImages] = useState<Record<string, PreviewImage>>({})
   const [activePreviewId, setActivePreviewId] = useState<string | null>(null)
 
@@ -102,6 +112,7 @@ export function MessageAttachments({
             session={session}
             attachment={attachment}
             attachmentUrl={attachmentUrl}
+            openFilePreview={openFilePreview}
             onImageReady={registerPreviewImage}
             onPreview={openPreview}
           />
@@ -121,6 +132,7 @@ function MessageAttachmentItem({
   session,
   attachment,
   attachmentUrl,
+  openFilePreview,
   onImageReady,
   onPreview,
 }: {
@@ -128,6 +140,7 @@ function MessageAttachmentItem({
   session: SessionView
   attachment: ReconcileAttachment
   attachmentUrl?: (fileId: string) => string
+  openFilePreview: OpenSessionFilePreview | null
   onImageReady: (image: PreviewImage) => void
   onPreview: (image: PreviewImage) => void
 }) {
@@ -136,9 +149,8 @@ function MessageAttachmentItem({
   const sessionAttachmentUrl = attachmentUrl?.(attachment.fileId)
     ?? attachmentOpenUrl(session.id, attachment.fileId, token)
   const presetUrl = attachment.openUrl || attachment.downloadUrl
-  const shouldReadFromDevice = Boolean(
-    !attachmentUrl && attachment.path && !attachment.optimistic && !presetUrl,
-  )
+  const persistentAttachment = Boolean(attachmentUrl || attachment.fileId.startsWith("file_"))
+  const shouldReadFromDevice = attachmentShouldReadFromDevice(attachment, Boolean(attachmentUrl))
   const deviceFile = useDeviceAttachmentFile({
     token,
     connectorId: session.connectorId,
@@ -146,12 +158,37 @@ function MessageAttachmentItem({
     path: shouldReadFromDevice ? attachment.path : undefined,
     fallbackName: name,
   })
-  const openUrl = deviceFile.objectUrl
-    || (attachment.fileId.startsWith("file_") ? sessionAttachmentUrl : presetUrl || sessionAttachmentUrl)
+  const sourceUrl = persistentAttachment ? sessionAttachmentUrl : presetUrl || sessionAttachmentUrl
+  const openUrl = deviceFile.objectUrl || sourceUrl
   const resolvedName = deviceFile.name || name
   const resolvedMediaType = deviceFile.mediaType || mediaType
   const resolvedSize = deviceFile.size ?? attachment.size
-  const isImage = isImageAttachment(attachment)
+  const isImage = attachmentIsImage(resolvedName, resolvedMediaType)
+  const previewTarget = attachment.path || openUrl
+    ? {
+        source: "attachment" as const,
+        name: resolvedName,
+        path: attachment.path || resolvedName,
+        root: attachment.root || session.cwd || ".",
+        ...(!shouldReadFromDevice && sourceUrl ? { sourceUrl } : {}),
+        ...(resolvedMediaType ? { mediaType: resolvedMediaType } : {}),
+        ...(typeof resolvedSize === "number" ? { size: resolvedSize } : {}),
+      }
+    : null
+  const openAttachmentPreview = previewTarget
+    ? () => {
+        if (openFilePreview) {
+          openFilePreview(previewTarget)
+          return
+        }
+        openNativeFilePreviewWindow({
+          token,
+          connectorId: session.connectorId,
+          root: previewTarget.root,
+          file: previewTarget,
+        })
+      }
+    : null
 
   if (shouldReadFromDevice && deviceFile.status === "loading") {
     return (
@@ -217,7 +254,7 @@ function MessageAttachmentItem({
       attachment={attachment}
       name={resolvedName}
       mediaType={resolvedMediaType}
-      openUrl={openUrl}
+      onOpen={openAttachmentPreview ?? undefined}
       size={resolvedSize}
     />
   )
@@ -661,7 +698,7 @@ function FileAttachment({
   attachment,
   name,
   mediaType,
-  openUrl,
+  onOpen,
   size,
   state = "done",
   statusText,
@@ -669,7 +706,7 @@ function FileAttachment({
   attachment: ReconcileAttachment
   name: string
   mediaType: string
-  openUrl?: string
+  onOpen?: () => void
   size?: number
   state?: "uploading" | "error" | "done"
   statusText?: string
@@ -688,18 +725,14 @@ function FileAttachment({
           {[details, pending ? "Pending" : null, statusText].filter(Boolean).join(" · ")}
         </AttachmentDescription>
       </AttachmentContent>
-      {openUrl ? (
+      {onOpen ? (
         <>
           <AttachmentActions>
-            <AttachmentAction asChild aria-label={`Open ${name}`}>
-              <a href={openUrl} target="_blank" rel="noreferrer">
-                <ExternalLink />
-              </a>
+            <AttachmentAction aria-label={`Open ${name}`} onClick={onOpen}>
+              <ExternalLink />
             </AttachmentAction>
           </AttachmentActions>
-          <AttachmentTrigger asChild>
-            <a href={openUrl} target="_blank" rel="noreferrer" aria-label={`Open ${name}`} />
-          </AttachmentTrigger>
+          <AttachmentTrigger aria-label={`Open ${name}`} onClick={onOpen} />
         </>
       ) : null}
     </Attachment>
@@ -712,13 +745,6 @@ function attachmentDetails(mediaType: string, size: number | undefined): string 
 
 function attachmentOpenUrl(sessionId: string, fileId: string, token: string): string {
   return `${apiPath(`/sessions/${encodeURIComponent(sessionId)}/attachments/${encodeURIComponent(fileId)}/open`)}?token=${encodeURIComponent(token)}`
-}
-
-function isImageAttachment(attachment: ReconcileAttachment): boolean {
-  const mediaType = attachment.mediaType?.toLowerCase() ?? ""
-  if (mediaType.startsWith("image/")) return true
-  const name = attachment.name?.toLowerCase() ?? ""
-  return /\.(png|apng|jpe?g|gif|webp|avif|svg)$/.test(name)
 }
 
 function mediaTypeForName(name: string): string {

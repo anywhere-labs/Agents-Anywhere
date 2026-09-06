@@ -189,6 +189,13 @@ body {
   -webkit-app-region: drag;
 }
 
+/* Hallmark · studied: yes · source: user login reference · existing Geist tokens
+ * Pre-emit critique: P5 H5 E4 S5 R5 V4. The native window owns the chrome.
+ */
+.dark .aa-auth-shell {
+  --background: oklch(0 0 0);
+}
+
 .aa-window-no-drag,
 .aa-window-no-drag * {
   -webkit-app-region: no-drag;

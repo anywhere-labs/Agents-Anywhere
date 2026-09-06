@@ -758,7 +758,14 @@
         "pathAddedToComposer": "已添加到 Composer",
         "pathCopied": "已复制路径",
         "binaryUnavailable": "二进制文件（{size} 字节），无法预览。",
-        "truncated": "已截断"
+        "truncated": "已截断",
+        "retry": "重试",
+        "fileTree": "文件树",
+        "resizeTree": "调整文件树宽度",
+        "showTree": "打开文件树",
+        "hideTree": "隐藏文件树",
+        "openFile": "打开文件",
+        "openFileDescription": "从右侧文件树中选择文件"
       },
       "terminal": {
         "title": "Shell",
@@ -977,7 +984,44 @@
       "fileChangeUnknown": "变更",
       "showCode": "显示代码",
       "hideCode": "隐藏代码",
-      "loadCodeFailed": "无法加载代码"
+      "loadCodeFailed": "无法加载代码",
+      "tools": {
+        "sidebarLabel": "会话工具",
+        "tabsLabel": "工具标签页",
+        "navigationLabel": "打开工具",
+        "review": "审阅",
+        "reviewFilesChanged": "{count} 个文件已更改",
+        "reviewFilesEdited": "已编辑 {count} 个文件",
+        "reviewShowMoreFiles": "再显示 {count} 个文件",
+        "reviewCollapseFiles": "收起文件",
+        "terminal": "终端",
+        "files": "文件",
+        "newTab": "打开新标签页",
+        "closeTab": "关闭“{title}”",
+        "expand": "全屏显示工具侧栏",
+        "restore": "退出全屏",
+        "collapse": "收起工具侧栏",
+        "toggle": "打开工具侧栏",
+        "visibilityToggle": "显示/隐藏侧边面板",
+        "reviewEmptyTitle": "暂无文件修改",
+        "reviewEmptyDescription": "最近一次有文件修改的对话轮次会显示在这里。",
+        "reviewHistoryFailed": "无法加载更早的文件修改。",
+        "reviewRetry": "重试",
+        "reviewDiffUnavailable": "这项修改暂时没有可预览的 diff。",
+        "reviewResizeTree": "调整变更文件树宽度",
+        "reviewFileTree": "变更文件",
+        "reviewTreeLoading": "正在加载变更文件……",
+        "reviewTreeTruncated": "部分变更文件未显示。",
+        "reviewFolderChanged": "包含变更文件",
+        "reviewFileAdded": "新增文件",
+        "reviewFileDeleted": "删除文件",
+        "reviewFileModified": "修改文件",
+        "reviewCollapseFile": "折叠 {file} 的 diff",
+        "reviewExpandFile": "展开 {file} 的 diff",
+        "reviewOpenFilePreview": "打开 {file} 的完整文件预览",
+        "reviewPreviewBlocked": "文件预览窗口被浏览器拦截了。",
+        "reviewDiffCard": "第 {index}/{count} 次修改"
+      }
     },
     "sessionStatus": {
       "idle": "空闲",
@@ -1640,6 +1684,11 @@
     "saveBeforeLeavingEdit": "请先保存或刷新，再退出编辑模式。",
     "saveBeforeClose": "请先保存或刷新，再关闭预览。",
     "emptyDirectory": "文件夹为空",
-    "binaryUnavailable": "无法预览"
+    "binaryUnavailable": "无法预览",
+    "openWindow": "在独立窗口打开",
+    "discardTitle": "放弃未保存的修改？",
+    "discardDescription": "此文件的修改尚未保存，继续操作会放弃这些修改。",
+    "keepEditing": "继续编辑",
+    "discardChanges": "放弃修改"
   }
 }
