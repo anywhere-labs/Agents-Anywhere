@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import { useSessionFilePreviewOpener } from "@/components/session/session-file-preview-context"
 import { useCompactPanel } from "@/hooks/use-compact-panel"
 import {
   ChevronDown,
@@ -421,10 +422,15 @@ function ReviewFileSection({
   onSelect: () => void
   onOpenChange: (open: boolean) => void
 }) {
+  const openInSidebar = useSessionFilePreviewOpener()
   const t = useTranslations("dashboard.session.tools")
 
   const openFilePreview = React.useCallback(() => {
     onSelect()
+    if (openInSidebar) {
+      openInSidebar({ source: "workspace", root, name: file.name, path: file.path })
+      return
+    }
     openNativeFilePreviewWindow({
       token,
       connectorId,
@@ -432,7 +438,7 @@ function ReviewFileSection({
       file: { name: file.name, path: file.path },
       onBlocked: () => toast.error(t("reviewPreviewBlocked")),
     })
-  }, [connectorId, file.name, file.path, onSelect, root, t, token])
+  }, [connectorId, file.name, file.path, onSelect, openInSidebar, root, t, token])
 
   return (
     <Collapsible open={open} onOpenChange={onOpenChange} asChild>

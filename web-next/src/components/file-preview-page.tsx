@@ -179,6 +179,8 @@ export function FilePreviewSurface({
 }: FilePreviewSurfaceProps) {
   const t = useTranslations("preview")
   const tCommon = useTranslations("common")
+  const tokenRef = React.useRef(token)
+  tokenRef.current = token
   const routePath = initialPath
   const [previewSession, setPreviewSession] = React.useState<FsPreviewSessionResponse | null>(null)
   const [path, setPath] = React.useState(routePath)
@@ -212,6 +214,7 @@ export function FilePreviewSurface({
   }, [])
 
   const loadFile = React.useCallback(async () => {
+    const token = tokenRef.current
     const requestId = ++loadRequestIdRef.current
     const requestIsCurrent = () => requestId === loadRequestIdRef.current
     revokeObjectUrl()
@@ -354,7 +357,6 @@ export function FilePreviewSurface({
     sourceSize,
     sourceUrl,
     t,
-    token,
   ])
 
   React.useEffect(() => {
@@ -578,7 +580,7 @@ export function FilePreviewSurface({
                 variant="ghost"
                 size="icon-sm"
                 type="button"
-                aria-label={t("copy")}
+                aria-label={copied ? tCommon("copied") : t("copy")}
                 disabled={state.kind !== "text"}
                 onClick={copyText}
               >

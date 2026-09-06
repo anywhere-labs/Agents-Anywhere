@@ -103,6 +103,8 @@ export function FilesPanelBody({
   const { ref: panelRef, compact } = useCompactPanel()
   const t = useTranslations("dashboard.panels.files")
   const { appendPathToComposer } = useWorkspace()
+  const tokenRef = React.useRef(token)
+  tokenRef.current = token
   const effectiveRoot = root?.trim() || "."
   const treeAllowed = sessionFileTreeAllowed(initialFile)
   const [path, setPath] = React.useState(".")
@@ -176,6 +178,7 @@ export function FilesPanelBody({
   )
 
   React.useEffect(() => {
+    const token = tokenRef.current
     const requestId = ++loadRequestIdRef.current
     const initialPath = isWindowsConnector ? "" : effectiveRoot
     setPath(initialPath)
@@ -332,7 +335,7 @@ export function FilesPanelBody({
     }
 
     void initialize()
-  }, [canLoad, connectorId, effectiveRoot, initialFile, isWindowsConnector, token, treeAllowed])
+  }, [canLoad, connectorId, effectiveRoot, initialFile, isWindowsConnector, treeAllowed])
 
   const parentPath = React.useMemo(
     () => sessionFileParentPath(currentPath || path),

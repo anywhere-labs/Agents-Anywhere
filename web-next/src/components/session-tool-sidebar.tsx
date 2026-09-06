@@ -45,6 +45,7 @@ import {
   useStoredSessionToolSidebarIds,
   useStoredSessionToolSidebarState,
 } from "@/components/session-tool-sidebar-state"
+import { SessionFilePreviewProvider } from "@/components/session/session-file-preview-context"
 import type { SessionFilePreviewTarget } from "@/components/session/session-file-preview-context"
 import { dashboardApi } from "@/features/dashboard/api"
 import { useIsMobile } from "@/hooks/use-mobile"
@@ -143,7 +144,15 @@ export function useSessionToolSidebar({
       const terminal = response.result
       const tabStillExists = store.getState(sessionId).tabs.some((tab) => tab.id === tabId)
       if (store.isShuttingDown() || !tabStillExists) {
-        await closeTerminalWithRetry(token, connectorId, terminal.terminalId)
+        try {
+          await closeTerminalWithRetry(token, connectorId, terminal.terminalId)
+        } catch (error) {
+          if (!store.isShuttingDown()) {
+            dispatch({ type: "open-tool", tab: createSessionToolTab(tabId, "terminal", title) })
+            dispatch({ type: "resolve-terminal", id: tabId, terminal })
+            onTerminalError?.(error instanceof Error ? error.message : String(error))
+          }
+        }
         return
       }
       dispatch({ type: "resolve-terminal", id: tabId, terminal })
@@ -153,7 +162,7 @@ export function useSessionToolSidebar({
       dispatch({ type: "fail-terminal", id: tabId, error: message })
     })
     store.trackTerminalTask(creation)
-  }, [connectorId, dispatch, effectiveRoot, sessionId, store, terminalLabel, token, userId])
+  }, [connectorId, dispatch, effectiveRoot, onTerminalError, sessionId, store, terminalLabel, token, userId])
   const openFilePreview = React.useCallback((target: SessionFilePreviewTarget) => {
     if (!sessionId || store.isShuttingDown()) return
     const tabId = createClientId("files_preview")
@@ -579,7 +588,7 @@ export function SessionToolSidebar({
       inert={!presented || !controller.open ? true : undefined}
       className={cn(
         "fixed inset-y-0 z-30 flex min-w-0 flex-col overflow-hidden border-l border-border bg-background text-foreground",
-        presented ? "visible" : "invisible",
+        presented && controller.open ? "visible" : "invisible",
         presented && controller.open ? "pointer-events-auto" : "pointer-events-none",
         motionEnabled && !fillsMain
           ? "will-change-transform transition-transform duration-[220ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none"
@@ -747,6 +756,7 @@ export function SessionToolSidebar({
                 )}
               >
                 {tab.kind === "review" ? (
+                  <SessionFilePreviewProvider onOpenFilePreview={controller.openFilePreview}>
                   <SessionReviewPanel
                     sessionId={sessionId}
                     token={token}
@@ -756,6 +766,7 @@ export function SessionToolSidebar({
                     active={panelActive}
                     reviewTarget={tab.reviewTarget}
                   />
+                  </SessionFilePreviewProvider>
                 ) : null}
                 {tab.kind === "terminal" ? (
                   <TerminalSessionPanel
