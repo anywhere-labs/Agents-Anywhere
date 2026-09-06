@@ -11,7 +11,7 @@ export const steps = [
   { id: "complete", label: "准备就绪" },
 ] as const
 
-export type DialogKind = "agent" | "phone" | "skip"
+export type DialogKind = "phone" | "skip"
 
 export type SlideProps = {
   onNext: () => void

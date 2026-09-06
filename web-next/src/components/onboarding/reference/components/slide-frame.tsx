@@ -10,19 +10,20 @@ type SlideFrameProps = {
   details?: ReactNode
   artwork?: ReactNode
   artworkLayout?: "phone" | "desktop"
+  sideContent?: ReactNode
   actions: ReactNode
   englishTitle?: boolean
 }
 
 export function SlideFrame({
-  id, title, titleSuffix, description, details, artwork, artworkLayout = "phone", actions, englishTitle,
+  id, title, titleSuffix, description, details, artwork, artworkLayout = "phone", sideContent, actions, englishTitle,
 }: SlideFrameProps) {
   const descriptionDelay = revealEnd(title, 120) - 90
   const detailDelay = revealEnd(description, descriptionDelay) - 30
 
   return (
     <section
-      className={cn("slide-layout", artwork && "slide-layout-with-artwork", artwork && artworkLayout === "desktop" && "slide-layout-desktop")}
+      className={cn("slide-layout", artwork && "slide-layout-with-artwork", artwork && artworkLayout === "desktop" && "slide-layout-desktop", sideContent && "slide-layout-with-panel")}
       aria-labelledby={`${id}-title`}
       data-slide={id}
     >
@@ -37,10 +38,14 @@ export function SlideFrame({
             {details}
           </div>
         )}
-        <div className="slide-actions">
+        {!sideContent && <div className="slide-actions">
           {actions}
-        </div>
+        </div>}
       </div>
+      {sideContent && <>
+        <div className="slide-panel reveal-detail" style={{ "--reveal-delay": "240ms" } as CSSProperties}>{sideContent}</div>
+        <div className="slide-actions">{actions}</div>
+      </>}
       {artwork && (
         <div className="slide-artwork reveal-detail" style={{ "--reveal-delay": "240ms" } as CSSProperties} aria-hidden="true">
           {artwork}

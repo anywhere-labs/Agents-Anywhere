@@ -1,13 +1,10 @@
 import { useState } from "react"
-import { AgentSetupContent } from "@/components/agent-setup-content"
 import { MobileConnectionContent } from "@/components/pages/mobile-signin-panel"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/onboarding/reference/components/ui/dialog"
 import { Button } from "@/components/onboarding/reference/components/ui/button"
 import type { DialogKind } from "@/components/onboarding/reference/lib/onboarding"
-import type { ConnectorView } from "@/features/dashboard/types"
 
 type OnboardingDialogsProps = {
-  connector: ConnectorView
   token: string
   userId: string
   kind: DialogKind
@@ -18,7 +15,7 @@ type OnboardingDialogsProps = {
   onRestoreFocus: () => void
 }
 
-export function OnboardingDialogs({ connector, token, userId, kind, open, onOpenChange, onPhoneConnected, onConfirmSkip, onRestoreFocus }: OnboardingDialogsProps) {
+export function OnboardingDialogs({ token, userId, kind, open, onOpenChange, onPhoneConnected, onConfirmSkip, onRestoreFocus }: OnboardingDialogsProps) {
   const [busy, setBusy] = useState(false)
   const close = () => { if (!busy) onOpenChange(false) }
 
@@ -28,13 +25,6 @@ export function OnboardingDialogs({ connector, token, userId, kind, open, onOpen
         onEscapeKeyDown={(event) => { if (busy) event.preventDefault() }}
         onPointerDownOutside={(event) => { if (busy) event.preventDefault() }}
         onCloseAutoFocus={(event) => { event.preventDefault(); onRestoreFocus() }}>
-        {kind === "agent" && <>
-          <DialogHeader>
-            <DialogTitle>配置 Agent</DialogTitle>
-            <DialogDescription>在 {connector.name} 上选择和设置 Agent。</DialogDescription>
-          </DialogHeader>
-          <AgentSetupContent connector={connector} onContinue={close} onSkip={close} continueLabel="完成配置" />
-        </>}
         {kind === "phone" && <>
           <DialogHeader>
             <DialogTitle>连接手机</DialogTitle>

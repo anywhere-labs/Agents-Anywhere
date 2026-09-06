@@ -22,7 +22,7 @@ export function App({ connector, token, userId, initialPage, onPageChange }: Pro
   const [page, setPage] = useState(initialPage)
   const [transitioning, setTransitioning] = useState(false)
   const [direction, setDirection] = useState(1)
-  const [dialog, setDialog] = useState<{ kind: DialogKind; open: boolean }>({ kind: "agent", open: false })
+  const [dialog, setDialog] = useState<{ kind: DialogKind; open: boolean }>({ kind: "phone", open: false })
   const pageRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const navigationLock = useRef(false)
@@ -86,13 +86,13 @@ export function App({ connector, token, userId, initialPage, onPageChange }: Pro
       <OnboardingShell artwork={page === 0 ? "desktop" : page === 2 ? "phone" : undefined}>
         <div key={page} ref={pageRef} className={page === 0 ? "slide-page slide-page-welcome" : "slide-page"} inert={transitioning} style={{ "--entry-x": `${direction * 22}px` } as CSSProperties}>
           {page === 0 && <WelcomeSlide onNext={next} onSkip={(trigger) => openDialog("skip", trigger)} />}
-          {page === 1 && <DeviceSlide deviceName={connector.name} onNext={next} onConfigure={(trigger) => openDialog("agent", trigger)} />}
+          {page === 1 && <DeviceSlide connector={connector} onNext={next} />}
           {page === 2 && <PhoneSlide onNext={next} onConnect={(trigger) => openDialog("phone", trigger)} />}
           {page === 3 && <CompleteSlide onExperience={() => { window.location.href = PRODUCT_LINKS.webAppHref }} />}
         </div>
       </OnboardingShell>
       <OnboardingDialogs
-        connector={connector} token={token} userId={userId}
+        token={token} userId={userId}
         kind={dialog.kind} open={dialog.open}
         onOpenChange={(open) => setDialog((current) => ({ ...current, open }))}
         onRestoreFocus={() => { if (triggerRef.current?.isConnected) triggerRef.current.focus({ preventScroll: true }) }}

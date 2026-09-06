@@ -15,12 +15,14 @@ import { isApiError } from '@/lib/api/errors'
 import { isTransientHttpStatus } from '@/lib/retry'
 
 /** Page content shared by onboarding and the existing quick-add dialog. */
-export function AgentSetupContent({ connector, onContinue, onSkip, onChanged, continueLabel = '下一步' }: {
+export function AgentSetupContent({ connector, onContinue, onSkip, onChanged, continueLabel = '下一步', presentation = 'default', onBusyChange }: {
   connector: { id: string; name: string }
   onContinue: () => void
   onSkip: () => void
   onChanged?: () => void
   continueLabel?: string
+  presentation?: 'default' | 'onboarding'
+  onBusyChange?: (busy: boolean) => void
 }) {
   const { session } = useAuth()
   const t = useTranslations('dashboard.pairDevice')
@@ -101,31 +103,46 @@ export function AgentSetupContent({ connector, onContinue, onSkip, onChanged, co
   const configured = configuredRuntimeInstances(overview.runtimes)
   const addable = addableRuntimeTypes(overview.runtimeTypes, overview.runtimes)
   const busy = addingType !== null
+  const inline = presentation === 'onboarding'
+  const rowClassName = inline ? 'flex min-h-20 items-center gap-3 border-b border-border/60 py-5 last:border-b-0' : 'flex items-center gap-3 rounded-lg border p-4'
+  const buttonClassName = inline ? 'h-9 rounded-lg px-3' : undefined
+  React.useEffect(() => { onBusyChange?.(busy) }, [busy, onBusyChange])
 
   return <div className="flex flex-col gap-6">
-    <div className="flex max-h-[55vh] flex-col gap-3 overflow-y-auto">
-      <p className="text-sm text-muted-foreground">{t('agentsDescription')}</p>
+    <div className={inline ? 'flex max-h-[55vh] flex-col overflow-y-auto' : 'flex max-h-[55vh] flex-col gap-3 overflow-y-auto'}>
+      {!inline ? <p className="text-sm text-muted-foreground">{t('agentsDescription')}</p> : null}
       {error ? <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert> : null}
       {loading ? <div className="flex items-center gap-2 py-8 text-sm text-muted-foreground" role="status"><Loader2 className="size-4 animate-spin" />{t(waitingOnline ? 'waitingReconnectTitle' : 'discoveringAgents')}</div> : null}
       {!loading && !loadFailed ? <>
-        {configured.map(runtime => <div key={runtime.runtimeId} className="flex items-center gap-3 rounded-lg border p-4">
-          <CheckCircle2 className="size-5 shrink-0 text-primary" />
-          <div className="min-w-0 flex-1"><p className="truncate text-sm font-medium">{runtimeInstanceName(runtime)}</p><p className="text-xs text-muted-foreground">{t(runtime.status === 'running' ? 'agentRunning' : 'agentConfigured')}</p></div>
-          {!runtime.active || runtime.status === 'error' || runtime.status === 'stopped' ? <Button size="sm" variant="outline" disabled={busy} onClick={() => void start(runtime)}>
-            {addingType === runtime.runtimeType ? <Loader2 data-icon="inline-start" className="animate-spin" /> : null}{tDevice('activateRuntime', { name: runtimeInstanceName(runtime) })}
-          </Button> : null}
-        </div>)}
-        {addable.map(runtimeType => <div key={runtimeType.runtimeType} className="flex items-center gap-3 rounded-lg border p-4">
-          <div className="min-w-0 flex-1"><p className="text-sm font-medium">{runtimeType.displayName}</p>{runtimeType.description ? <p className="text-xs text-muted-foreground">{runtimeType.description}</p> : null}</div>
-          <Button size="sm" disabled={busy} onClick={() => void add(runtimeType)}>{addingType === runtimeType.runtimeType ? <Loader2 data-icon="inline-start" className="animate-spin" /> : <Plus data-icon="inline-start" />}{t('quickAdd')}</Button>
+        {configured.map(runtime => {
+          const ready = runtime.active && runtime.status === 'running'
+          const starting = runtime.active && runtime.status === 'starting'
+          const needsSetup = inline ? !ready && !starting : !runtime.active || runtime.status === 'error' || runtime.status === 'stopped'
+          return <div key={runtime.runtimeId} className={rowClassName}>
+            {!inline ? <CheckCircle2 className="size-5 shrink-0 text-primary" /> : null}
+            <div className="min-w-0 flex-1">
+              <p className={inline ? 'truncate text-base font-medium' : 'truncate text-sm font-medium'}>{runtimeInstanceName(runtime)}</p>
+              <p className="text-xs text-muted-foreground">{inline ? ready ? '已就绪' : starting ? '正在启动' : '未就绪' : t(runtime.status === 'running' ? 'agentRunning' : 'agentConfigured')}</p>
+            </div>
+            {inline && ready ? <CheckCircle2 className="size-5 shrink-0 text-[var(--success)]" /> : null}
+            {inline && starting ? <Loader2 className="size-4 shrink-0 animate-spin text-muted-foreground" /> : null}
+            {needsSetup ? <Button size="sm" variant={inline ? 'default' : 'outline'} className={buttonClassName} disabled={busy} onClick={() => void start(runtime)}>
+              {addingType === runtime.runtimeType ? <Loader2 data-icon="inline-start" className="animate-spin" /> : inline ? <Plus data-icon="inline-start" /> : null}
+              {inline ? '一键配置' : tDevice('activateRuntime', { name: runtimeInstanceName(runtime) })}
+            </Button> : null}
+          </div>
+        })}
+        {addable.map(runtimeType => <div key={runtimeType.runtimeType} className={rowClassName}>
+          <div className="min-w-0 flex-1"><p className={inline ? 'text-base font-medium' : 'text-sm font-medium'}>{runtimeType.displayName}</p>{!inline && runtimeType.description ? <p className="text-xs text-muted-foreground">{runtimeType.description}</p> : null}</div>
+          <Button size="sm" className={buttonClassName} disabled={busy} onClick={() => void add(runtimeType)}>{addingType === runtimeType.runtimeType ? <Loader2 data-icon="inline-start" className="animate-spin" /> : <Plus data-icon="inline-start" />}{inline ? '一键配置' : t('quickAdd')}</Button>
         </div>)}
         {configured.length === 0 && addable.length === 0 ? <p className="py-4 text-sm text-muted-foreground">{t('noAgentsFound')}</p> : null}
       </> : null}
       {loadFailed ? <Button variant="outline" onClick={() => setReload(value => value + 1)}><RefreshCw data-icon="inline-start" />重新检测</Button> : null}
     </div>
-    <div className="flex flex-wrap justify-end gap-3">
+    {!inline ? <div className="flex flex-wrap justify-end gap-3">
       <Button variant="ghost" disabled={busy || loading || loadFailed} onClick={onSkip}>{t('skipAgents')}</Button>
       <Button disabled={busy || loading || loadFailed} onClick={onContinue}>{continueLabel}</Button>
-    </div>
+    </div> : null}
   </div>
 }

@@ -89,6 +89,20 @@
     grid-template-columns: minmax(0, 1fr) minmax(0, 56%);
   }
 
+  .slide-layout-with-panel {
+    display: grid;
+    grid-template-columns: minmax(0, 1.3fr) minmax(300px, .85fr);
+    grid-template-areas: "copy panel" "actions panel";
+    align-content: center;
+    column-gap: clamp(32px, 5vw, 80px);
+  }
+
+  .slide-layout-with-panel > .slide-copy { grid-area: copy; }
+  .slide-layout-with-panel > .slide-actions { grid-area: actions; }
+  .slide-panel { grid-area: panel; min-width: 0; }
+  .onboarding-agent-panel { width: 100%; }
+  .onboarding-agent-panel h2 { margin: 0 0 12px; font-size: 20px; font-weight: 500; letter-spacing: -.025em; }
+
   .slide-copy {
     min-width: 0;
   }
@@ -236,6 +250,8 @@
   .onboarding-main.onboarding-main-artwork { padding-block: 76px; }
   .slide-layout { min-height: 400px; }
   .slide-layout-with-artwork { grid-template-columns: minmax(0, 1fr); }
+  .slide-layout-with-panel { grid-template-columns: minmax(0, 1fr); grid-template-areas: "copy" "panel" "actions"; }
+  .slide-panel { margin-top: 36px; }
   .slide-artwork { display: none; }
   .slide-title { font-size: clamp(40px, 6.8vw, 60px); }
   .slide-title-english { font-size: clamp(66px, 10vw, 92px); }

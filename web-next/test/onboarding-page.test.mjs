@@ -54,8 +54,8 @@ async function click(container, label) {
   await act(async () => { button.click(); await delay(10) })
 }
 
-function mockDevice(t) {
-  let runtimes = []
+function mockDevice(t, initialRuntimes = []) {
+  let runtimes = [...initialRuntimes]
   const types = ['Codex', 'Claude'].map(name => ({
     runtimeType: name.toLowerCase(), displayName: name, present: true, available: true,
     schema: {}, defaults: {}, instancePolicy: 'single', maxInstances: 1,
@@ -71,7 +71,7 @@ function mockDevice(t) {
   return { create }
 }
 
-test('reference onboarding opens real Agent configuration, restores focus, and can skip phone', async (t) => {
+test('onboarding embeds one-click Agent configuration and can continue without connecting a phone', async (t) => {
   const { create } = mockDevice(t)
   const container = await render(t, h(PluginOnboardingPage))
   await until(() => container.querySelector('[data-slide="welcome"]'))
@@ -79,14 +79,15 @@ test('reference onboarding opens real Agent configuration, restores focus, and c
   await click(container, '下一页')
   assert.match(container.querySelector('h1').textContent, /测试电脑/)
   assert.equal(document.querySelector('[role="dialog"]'), null)
-  await click(container, '配置 Agent')
-  await until(() => document.querySelector('[role="dialog"]')?.textContent.includes('Codex'))
-  await click(document.querySelector('[role="dialog"]'), '快速添加')
+  assert.equal([...container.querySelectorAll('button')].some(button => button.textContent === '配置 Agent'), false)
+  const panel = container.querySelector('[aria-labelledby="agent-setup-title"]')
+  await until(() => panel.textContent.includes('Codex'))
+  await click(panel, '一键配置')
   assert.equal(create.mock.callCount(), 1)
   assert.equal(create.mock.calls[0].arguments[1], 'conn_demo')
-  await click(document.querySelector('[role="dialog"]'), '完成配置')
+  assert.equal(create.mock.calls[0].arguments[2].active, true)
+  assert.match(panel.textContent, /已就绪/)
   assert.equal(document.querySelector('[role="dialog"]'), null)
-  assert.equal(document.activeElement.textContent, '配置 Agent')
   await click(container, '下一步')
   assert.ok(container.querySelector('[data-slide="phone"]'))
   await click(container, '下一步')
@@ -96,6 +97,29 @@ test('reference onboarding opens real Agent configuration, restores focus, and c
   assert.equal(document.querySelector('[role="dialog"]'), null)
   await click(container, '立刻体验')
   assert.equal(window.location.hash, '#/')
+})
+
+test('one-click setup reuses a stopped Claude configuration and blocks continuation while starting', async (t) => {
+  const runtime = { runtimeId: 'rti-claude', runtimeType: 'claude', name: 'Claude', configured: true, active: false, status: 'stopped', config: { model: 'existing-model' } }
+  const { create } = mockDevice(t, [runtime])
+  const saveConfig = t.mock.method(dashboardApi, 'putConnectorRuntimeConfig', async () => { throw new Error('must not overwrite the saved configuration') })
+  let finishStarting
+  const activate = t.mock.method(dashboardApi, 'setConnectorRuntimeActive', () => new Promise(resolve => { finishStarting = resolve }))
+  const container = await render(t, h(PluginOnboardingPage))
+  await until(() => container.querySelector('[data-slide="welcome"]'))
+  await click(container, '下一页')
+  const panel = container.querySelector('[aria-labelledby="agent-setup-title"]')
+  await until(() => panel.textContent.includes('Claude'))
+  assert.doesNotMatch(panel.textContent, /激活/)
+  await click(panel, '一键配置')
+  assert.deepEqual(activate.mock.calls[0].arguments, ['test-session', 'conn_demo', 'rti-claude', true])
+  assert.equal([...container.querySelectorAll('button')].find(button => button.textContent === '下一步').disabled, true)
+  assert.equal(create.mock.callCount(), 0)
+  assert.equal(saveConfig.mock.callCount(), 0)
+  await act(async () => finishStarting({ ...runtime, active: true, status: 'running' }))
+  assert.match(panel.textContent, /已就绪/)
+  await click(container, '下一步')
+  assert.ok(container.querySelector('[data-slide="phone"]'))
 })
 
 test('phone dialog runs download and QR confirmation before advancing to completion', async (t) => {
