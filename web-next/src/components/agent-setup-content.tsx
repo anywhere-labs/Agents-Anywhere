@@ -125,7 +125,7 @@ export function AgentSetupContent({ connector, onContinue, onSkip, onChanged, co
               <p className="text-xs text-muted-foreground">{inline ? ready ? '已就绪' : starting ? '正在启动' : '未就绪' : t(runtime.status === 'running' ? 'agentRunning' : 'agentConfigured')}</p>
             </div>
             {inline && ready ? <CheckCircle2 className="size-5 shrink-0 text-[var(--success)]" /> : null}
-            {inline && starting ? <Loader2 className="size-4 shrink-0 animate-spin text-muted-foreground" /> : null}
+            {inline && starting ? <Loader2 className="mx-1 size-4 shrink-0 animate-spin text-muted-foreground" /> : null}
             {needsSetup ? <Button size="sm" variant={inline ? 'default' : 'outline'} className={buttonClassName} disabled={busy} onClick={() => void start(runtime)}>
               {addingType === runtime.runtimeType ? <Loader2 data-icon="inline-start" className="animate-spin" /> : inline ? <Plus data-icon="inline-start" /> : null}
               {inline ? '一键配置' : tDevice('activateRuntime', { name: runtimeInstanceName(runtime) })}
