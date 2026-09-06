@@ -4,6 +4,7 @@ import UIKit
 struct PairDeviceSheet: View {
     @EnvironmentObject private var appState: AppState
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.openURL) private var openURL
     @State private var path: [Step] = []
     @State private var name = String(localized: "New device")
     @State private var code = ""
@@ -34,13 +35,13 @@ struct PairDeviceSheet: View {
                 else if step != .connectionMethod { cliInstructions(step) }
                 else {
                     Text(String(localized: "选择设备的连接方式")).font(.title2.bold())
-                    NavigationLink(value: Step.desktop) {
-                        Label(String(localized: "桌面应用"), appSymbol: "desktopcomputer").frame(maxWidth: .infinity)
-                    }.buttonStyle(.glassProminent).controlSize(.large)
+                    AppGlassButton(String(localized: "桌面应用"), systemImage: "desktopcomputer", style: .prominent) {
+                        path.append(.desktop)
+                    }
                     Text(String(localized: "在电脑上安装桌面应用，并登录同一账号。设备会自动显示在侧栏。")).foregroundStyle(.secondary)
-                    NavigationLink(value: Step.cliConfirm) {
-                        Label(String(localized: "命令行"), appSymbol: "terminal").frame(maxWidth: .infinity)
-                    }.buttonStyle(.glass).controlSize(.large)
+                    AppGlassButton(String(localized: "命令行"), systemImage: "terminal") {
+                        path.append(.cliConfirm)
+                    }
                     Text(String(localized: "适合通过 CLI 连接远程主机或无界面的设备。")).foregroundStyle(.secondary)
                 }
                 if let error { Text(error).font(.footnote).foregroundStyle(.red) }
@@ -74,8 +75,9 @@ struct PairDeviceSheet: View {
             Label(String(localized: "Agents Anywhere Desktop"), appSymbol: "desktopcomputer").font(.title2.bold())
             Text(String(localized: "在电脑上安装桌面应用，使用以下服务器地址登录当前账号。连接后，可以在设备管理中添加 Agent。"))
             Text(appState.serverURL?.absoluteString ?? "").font(.callout.monospaced()).textSelection(.enabled)
-            Link(String(localized: "下载桌面应用"), destination: URL(string: "https://github.com/anywhere-labs/Agents-Anywhere/releases/latest")!)
-                .buttonStyle(.glassProminent)
+            AppGlassButton(String(localized: "下载桌面应用"), style: .prominent) {
+                openURL(URL(string: "https://github.com/anywhere-labs/Agents-Anywhere/releases/latest")!)
+            }
         }
     }
 
@@ -85,12 +87,12 @@ struct PairDeviceSheet: View {
             Text(String(localized: "此方式需要会使用终端以及 uv / uvx 命令行工具。"))
             Text(String(localized: "如果使用 Windows 或 macOS，桌面程序的连接和日常使用更方便。"))
                 .foregroundStyle(.secondary)
-            NavigationLink(value: Step.name) {
-                Text(String(localized: "继续使用命令行")).frame(maxWidth: .infinity)
-            }.buttonStyle(.glassProminent).controlSize(.large)
-            NavigationLink(value: Step.desktop) {
-                Text(String(localized: "使用桌面程序")).frame(maxWidth: .infinity)
-            }.buttonStyle(.glass).controlSize(.large)
+            AppGlassButton(String(localized: "继续使用命令行"), style: .prominent) {
+                path.append(.name)
+            }
+            AppGlassButton(String(localized: "使用桌面程序")) {
+                path.append(.desktop)
+            }
         }
     }
 
@@ -111,14 +113,14 @@ struct PairDeviceSheet: View {
             if appState.nativeChatServices?.agentSetup.requests.first(where: { $0.id == credential.connector.id })?.ready != true {
                 if step == .cliMethod {
                     Text(String(localized: "选择配对方式")).foregroundStyle(.secondary)
-                    NavigationLink(value: Step.pairCode) {
-                        Label(String(localized: "使用配对码"), appSymbol: "number").frame(maxWidth: .infinity)
-                    }.buttonStyle(.glassProminent).controlSize(.large)
+                    AppGlassButton(String(localized: "使用配对码"), systemImage: "number", style: .prominent) {
+                        path.append(.pairCode)
+                    }
                     Text(String(localized: "在设备上运行命令，将生成的六位配对码填回这里。"))
                         .font(.footnote).foregroundStyle(.secondary)
-                    NavigationLink(value: Step.token) {
-                        Label(String(localized: "使用 Token"), appSymbol: "key").frame(maxWidth: .infinity)
-                    }.buttonStyle(.glass).controlSize(.large)
+                    AppGlassButton(String(localized: "使用 Token"), systemImage: "key") {
+                        path.append(.token)
+                    }
                 } else if step == .pairCode {
                     Text(String(localized: "先在目标设备运行以下命令，再填写 CLI 显示的配对码。"))
                         .foregroundStyle(.secondary)

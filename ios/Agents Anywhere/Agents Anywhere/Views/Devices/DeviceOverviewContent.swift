@@ -222,7 +222,6 @@ struct DeviceSessionList: View {
                             }.padding(.vertical, 8).frame(maxWidth: .infinity, alignment: .leading)
                                 .contentShape(.rect)
                         }
-                        .listRowBackground(model.selectedSessionIds.contains(session.id) ? Color.primary.opacity(0.08) : Color(uiColor: .secondarySystemGroupedBackground))
                         .buttonStyle(.plain)
                         .contextMenu {
                             Button(String(localized: "Open"), systemImage: "arrow.up.right") { onOpen(session.id) }

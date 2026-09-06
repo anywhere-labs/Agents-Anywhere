@@ -122,13 +122,16 @@ struct AgentSetupSheet: View {
     let onFinish: () -> Void
     var body: some View {
         NavigationStack {
-            List {
-                Section {
-                    Text(String(localized: "添加你要使用的 Agent")).font(.title2.bold())
-                    Text(String(localized: "设备已连接。选择 Agent 后，就可以在项目中开始任务。"))
-                        .foregroundStyle(.secondary)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 24) {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text(String(localized: "添加你要使用的 Agent")).font(.title2.bold())
+                        Text(String(localized: "设备已连接。选择 Agent 后，就可以在项目中开始任务。"))
+                            .foregroundStyle(.secondary)
+                    }
+                    DeviceOverviewSections { DeviceAgentSection(model: model) }
                 }
-                DeviceAgentSection(model: model)
+                .padding(22).frame(maxWidth: 560).frame(maxWidth: .infinity)
             }
             .navigationTitle(connector.name).navigationBarTitleDisplayMode(.inline)
             .toolbar {

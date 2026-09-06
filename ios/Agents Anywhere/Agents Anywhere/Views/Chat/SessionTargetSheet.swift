@@ -2,7 +2,6 @@ import SwiftUI
 
 struct SessionTargetSheet: View {
     @Bindable var model: NewSessionModel
-    let onManageDevice: (String) -> Void
     @State private var expandedDeviceID: String?
     @State private var applying: TargetSelection?
     @State private var selectionError: String?
@@ -54,7 +53,6 @@ struct SessionTargetSheet: View {
         let inventory = instances(on: device.id)
         let loading = model.loadingDevices.contains(device.id)
         let error = model.inventoryErrors[device.id]
-        Text(String(localized: "Agent")).font(.caption.weight(.medium)).foregroundStyle(.secondary)
         if loading || (connected(device) && model.inventories[device.id] == nil && error == nil) {
             ProgressView(String(localized: "正在检查 Agent…"))
         } else if inventory.isEmpty, error == nil, connected(device) {
@@ -77,7 +75,6 @@ struct SessionTargetSheet: View {
             Button(String(localized: "重新加载")) { Task { await model.loadInventory(device.id) } }
                 .disabled(!connected(device) || loading)
         }
-        Button(String(localized: "管理这台设备"), appSymbol: "slider.horizontal.3") { onManageDevice(device.id) }
     }
 
     private func connected(_ device: V2Connector) -> Bool {

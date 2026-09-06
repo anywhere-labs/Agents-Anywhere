@@ -8,7 +8,6 @@ struct NewSessionView: View, Equatable {
     var dashboardLoading = false
     var dashboardError: String?
     let onMenu: () -> Void
-    let onManageDevice: (String) -> Void
     let onCreated: (V2SessionMeta) -> Void
     let onRefresh: () async -> [V2Connector]
     @State private var showsTarget = false
@@ -58,7 +57,7 @@ struct NewSessionView: View, Equatable {
         .onChange(of: model.draft.text) { _, _ in model.saveDraft() }
         .task(id: TargetRefreshKey(connectors: connectors, network: model.network, connectorID: model.connectorID)) { await model.refresh(connectors: connectors) }
         .sheet(isPresented: $showsTarget) {
-            SessionTargetSheet(model: model, onManageDevice: { id in showsTarget = false; onManageDevice(id) })
+            SessionTargetSheet(model: model)
         }
         .sheet(isPresented: $showsWorkspace) {
             ProjectSelectionSheet(model: model, repository: repository)
