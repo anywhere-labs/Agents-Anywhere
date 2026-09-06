@@ -23,27 +23,7 @@ function sourceBetween(start, end) {
   return source.slice(startIndex, endIndex)
 }
 
-test("pairing starts with the Desktop-or-Linux platform flow", () => {
-  assert.match(source, /type Platform = "macos" \| "windows" \| "linux"/)
-  assert.match(source, /type Step =[\s\S]*\| "platform"[\s\S]*\| "desktop-install"[\s\S]*\| "linux-method"/)
-  assert.match(source, /step === "platform"/)
-  assert.match(source, /selectPlatform\("macos"\)/)
-  assert.match(source, /selectPlatform\("windows"\)/)
-  assert.match(source, /selectPlatform\("linux"\)/)
-  assert.match(source, /DESKTOP_DOWNLOAD_URL/)
-})
-
-test("Linux supports both CLI command and pair-code setup", () => {
-  assert.match(source, /type LinuxMethod = "terminal" \| "pair-code"/)
-  assert.match(source, /routeToLinuxMethod\("terminal"\)/)
-  assert.match(source, /routeToLinuxMethod\("pair-code"\)/)
-  assert.match(source, /dashboardApi\.createConnector/)
-  assert.match(source, /uvx anywhere-cli start/)
-  assert.match(source, /uvx anywhere-cli pair/)
-  assert.match(source, /dashboardApi\.claimPairing/)
-})
-
-test("Linux pairing waits in the app-level Agent setup provider after the form closes", () => {
+test("CLI pairing waits in the app-level Agent setup provider after the form closes", () => {
   const waiting = sourceBetween("const startConnectorWaiting", "const handleOpenChange")
   assert.match(waiting, /waitForConnector\(connector\)/)
   assert.match(waiting, /readyConnectorIds\.includes\(connectorId\)/)
@@ -86,7 +66,7 @@ test("workspace refresh does not manually close the pairing dialog", () => {
   assert.doesNotMatch(callback, /closePairDeviceDialog\(\)/)
 })
 
-test("closing after creating a Linux credential asks for confirmation", () => {
+test("closing after creating a CLI credential asks for confirmation", () => {
   assert.match(source, /const shouldConfirmExit = connectorId !== null && createdThisFlow/)
   const closeHandler = sourceBetween("const handleOpenChange", "const goBack")
   assert.match(closeHandler, /if \(!nextOpen && shouldConfirmExit\)/)
