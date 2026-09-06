@@ -122,7 +122,7 @@ internal fun HomeList(
             onButtonClick = onPairDevice,
             contentOffsetY = (-32).dp,
         )
-        sessions.isEmpty() && !hasAnySessions -> AppEmptyState(
+        sessions.isEmpty() && (tab == HomeTab.Active || !hasAnySessions) -> AppEmptyState(
             message = stringResource(if (tab == HomeTab.Active) R.string.home_no_active_sessions_create else R.string.home_no_archived_sessions_yet),
             buttonLabel = stringResource(R.string.home_create_new_session),
             buttonIcon = Lucide.Plus,

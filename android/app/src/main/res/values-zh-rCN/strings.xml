@@ -99,6 +99,9 @@
     <string name="home_pair_new_device">配对新设备</string>
     <string name="home_create_new_session">新建会话</string>
     <string name="home_no_active_sessions_create">还没有活跃会话。准备好后创建一个吧。</string>
+    <string name="home_no_active_projects_create">还没有活跃项目。准备好后创建一个吧。</string>
+    <string name="home_no_archived_projects_yet">还没有包含已归档会话的项目。</string>
+    <string name="home_no_projects_create">还没有项目。准备好后创建一个吧。</string>
     <string name="home_no_archived_sessions_yet">还没有已归档会话。</string>
     <string name="home_no_active_sessions">没有活跃会话。</string>
     <string name="home_no_archived_sessions">没有已归档会话。</string>

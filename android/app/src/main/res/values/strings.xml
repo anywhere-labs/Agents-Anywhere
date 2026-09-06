@@ -99,6 +99,9 @@
     <string name="home_pair_new_device">Pair a new device</string>
     <string name="home_create_new_session">Create a new session</string>
     <string name="home_no_active_sessions_create">No active sessions yet. Create one when you\'re ready.</string>
+    <string name="home_no_active_projects_create">No active projects yet. Create one when you\'re ready.</string>
+    <string name="home_no_archived_projects_yet">No projects with archived sessions yet.</string>
+    <string name="home_no_projects_create">No projects yet. Create one when you\'re ready.</string>
     <string name="home_no_archived_sessions_yet">No archived sessions yet.</string>
     <string name="home_no_active_sessions">No active sessions.</string>
     <string name="home_no_archived_sessions">No archived sessions.</string>

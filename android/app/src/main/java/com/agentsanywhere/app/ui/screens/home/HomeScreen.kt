@@ -493,7 +493,7 @@ private fun HomeContent(
             onTerminalClick = { navigate(AppDestination.Terminal) },
             onFilesClick = { navigate(AppDestination.Files) },
         )
-        if (sidebarViewMode == HomeSidebarViewMode.Session) {
+        if (sidebarViewMode == HomeSidebarViewMode.Session && state.devices.isNotEmpty() && state.sessions.isNotEmpty()) {
             HomeSessionsHeader(onMarkAllRead = onMarkAllRead)
         }
         PullToRefreshBox(
@@ -604,6 +604,7 @@ private fun HomeProjectModeList(
             }
             HomeProjectList(
                 projects = state.projects.filter { projectHasVisibleSessions(it, allSessions, projectSessionStatus) },
+                hasProjectsInOtherStatuses = state.projects.any { projectHasVisibleSessions(it, allSessions, ProjectSessionStatusFilter.All) },
                 allSessions = allSessions,
                 projectPreferences = projectPreferences,
                 projectSessionStatus = projectSessionStatus,

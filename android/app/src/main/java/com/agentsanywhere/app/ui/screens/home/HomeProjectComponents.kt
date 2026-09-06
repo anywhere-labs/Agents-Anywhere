@@ -68,6 +68,7 @@ import com.agentsanywhere.app.feature.sessions.ProjectSessionStatusFilter
 import com.agentsanywhere.app.model.AgentProject
 import com.agentsanywhere.app.model.AgentSession
 import com.agentsanywhere.app.ui.designsystem.LocalAAColors
+import com.agentsanywhere.app.ui.screens.common.AppEmptyState
 import com.composables.icons.lucide.Archive
 import com.composables.icons.lucide.ChevronDown
 import com.composables.icons.lucide.Folder
@@ -90,6 +91,7 @@ internal data class HomeProjectActionMenu(
 @Composable
 internal fun HomeProjectList(
     projects: List<AgentProject>,
+    hasProjectsInOtherStatuses: Boolean,
     allSessions: List<AgentSession>,
     projectPreferences: HomeProjectPreferences,
     projectSessionStatus: ProjectSessionStatusFilter,
@@ -116,7 +118,28 @@ internal fun HomeProjectList(
     val pinnedProjects = ordered.filter(AgentProject::pinned)
     val regularProjects = ordered.filterNot(AgentProject::pinned)
 
-    LazyColumn(
+    if (projects.isEmpty() && pinnedSessions.isEmpty()) {
+        Box(Modifier.fillMaxSize()) {
+            AppEmptyState(
+                message = stringResource(
+                    when (projectSessionStatus) {
+                        ProjectSessionStatusFilter.Active -> R.string.home_no_active_projects_create
+                        ProjectSessionStatusFilter.Archived -> R.string.home_no_archived_projects_yet
+                        ProjectSessionStatusFilter.All -> R.string.home_no_projects_create
+                    },
+                ),
+                buttonLabel = stringResource(R.string.new_session_create_project),
+                buttonIcon = Lucide.Plus,
+                onButtonClick = onCreateProject,
+            )
+            // Keep a way out of an empty filter without restoring the section title.
+            if (hasProjectsInOtherStatuses) Box(Modifier.align(Alignment.TopEnd)) {
+                HomeProjectIconButton(Lucide.Ellipsis, stringResource(R.string.home_project_filter_sessions)) {
+                    filterAnchor = it
+                }
+            }
+        }
+    } else LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(bottom = 96.dp),
     ) {
