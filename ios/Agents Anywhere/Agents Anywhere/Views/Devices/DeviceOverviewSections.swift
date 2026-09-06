@@ -2,7 +2,8 @@ import SwiftUI
 
 /// Reuse the existing section content and actions in the page's scroll column.
 /// GroupBox supplies its system appearance without a nested, independently
-/// scrolling List or custom card backgrounds.
+/// scrolling List or custom card backgrounds. The shared contour matches the
+/// larger grouped surfaces used elsewhere instead of GroupBox's compact corners.
 struct DeviceOverviewSections<Content: View>: View {
     @ViewBuilder let content: () -> Content
 
@@ -26,6 +27,7 @@ struct DeviceOverviewSections<Content: View>: View {
                         }
                     }
                     .frame(maxWidth: .infinity)
+                    .clipShape(.rect(cornerRadius: 28, style: .continuous))
                 }
                 section.footer
                     .frame(maxWidth: .infinity, alignment: .leading)
