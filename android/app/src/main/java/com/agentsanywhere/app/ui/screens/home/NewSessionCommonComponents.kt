@@ -31,6 +31,7 @@ import com.agentsanywhere.app.ui.designsystem.noRippleClickable
 internal fun SmallPill(
     darkMode: Boolean,
     onClick: () -> Unit,
+    enabled: Boolean = true,
     content: @Composable RowScope.() -> Unit,
 ) {
     Row(
@@ -39,7 +40,7 @@ internal fun SmallPill(
             .clip(CircleShape)
             .background(if (darkMode) LocalAAColors.current.subtle else Color(0xFFFBFBFB))
             .border(1.dp, if (darkMode) Color(0xFF27272A) else Color(0xFFECECEC), CircleShape)
-            .noRippleClickable(onClick = onClick)
+            .noRippleClickable(enabled = enabled, onClick = onClick)
             .padding(horizontal = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(5.dp),

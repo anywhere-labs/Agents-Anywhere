@@ -1,3 +1,4 @@
+// Previous inline project editor, replaced by NewProjectScreen.
 package com.agentsanywhere.app.ui.screens.home
 
 import androidx.compose.animation.core.animateDpAsState

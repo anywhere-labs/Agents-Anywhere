@@ -2,6 +2,7 @@ package com.agentsanywhere.app.ui.screens.home
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -48,10 +49,14 @@ internal fun ChoosePathSection(
     darkMode: Boolean,
     canUseCurrent: Boolean,
     modifier: Modifier,
-    onBack: () -> Unit,
+    onBack: (() -> Unit)?,
     onParent: () -> Unit,
     onUseCurrent: () -> Unit,
     onOpenEntry: (NewSessionPathEntry) -> Unit,
+    title: String? = null,
+    enabled: Boolean = true,
+    currentSelected: Boolean = false,
+    onRetry: (() -> Unit)? = null,
 ) {
     Column(
         modifier = modifier.fillMaxWidth(),
@@ -65,13 +70,13 @@ internal fun ChoosePathSection(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                text = stringResource(R.string.new_session_choose_path),
+                text = title ?: stringResource(R.string.new_session_choose_path),
                 color = LocalAAColors.current.ink,
                 fontSize = 17.sp,
                 fontWeight = FontWeight.ExtraBold,
                 lineHeight = 21.sp,
             )
-            SmallPill(darkMode = darkMode, onClick = onBack) {
+            if (onBack != null) SmallPill(darkMode = darkMode, onClick = onBack, enabled = enabled) {
                 BackGlyph(color = if (darkMode) Color(0xFFA1A1AA) else Color(0xFF555555))
                 Text(
                     text = stringResource(R.string.common_back),
@@ -85,8 +90,9 @@ internal fun ChoosePathSection(
         CurrentDirectoryBar(
             currentPath = currentPathLabel,
             darkMode = darkMode,
-            canGoParent = parentPath != null,
-            canUseCurrent = canUseCurrent,
+            canGoParent = parentPath != null && enabled && !loading,
+            canUseCurrent = canUseCurrent && enabled && !loading && error == null,
+            currentSelected = currentSelected,
             onParent = onParent,
             onUseCurrent = onUseCurrent,
         )
@@ -101,12 +107,21 @@ internal fun ChoosePathSection(
                         PathMessage(stringResource(R.string.new_session_loading_directory), darkMode)
                     }
                     error != null -> item {
-                        PathMessage(error, darkMode)
+                        Column {
+                            PathMessage(error, darkMode)
+                            onRetry?.let { retry ->
+                                Text(
+                                    text = stringResource(R.string.common_retry),
+                                    color = LocalAAColors.current.inkSoft,
+                                    modifier = Modifier.clickable(enabled = enabled, onClick = retry).padding(vertical = 12.dp),
+                                )
+                            }
+                        }
                     }
                     else -> {
                         if (parentPath != null) {
                             item(key = "$currentPath/..") {
-                                PathRow(name = "..", icon = Lucide.Folder, darkMode = darkMode, onClick = onParent)
+                                PathRow(name = "..", icon = Lucide.Folder, darkMode = darkMode, enabled = enabled, onClick = onParent)
                             }
                         }
                         if (entries.isEmpty()) {
@@ -117,6 +132,7 @@ internal fun ChoosePathSection(
                                 name = entry.name,
                                 icon = Lucide.Folder,
                                 darkMode = darkMode,
+                                enabled = enabled,
                                 onClick = { onOpenEntry(entry) },
                             )
                         }
@@ -133,6 +149,7 @@ private fun CurrentDirectoryBar(
     darkMode: Boolean,
     canGoParent: Boolean,
     canUseCurrent: Boolean,
+    currentSelected: Boolean,
     onParent: () -> Unit,
     onUseCurrent: () -> Unit,
 ) {
@@ -171,12 +188,13 @@ private fun CurrentDirectoryBar(
         }
         CircleMiniButton(
             darkMode = darkMode,
-            selected = !darkMode && canUseCurrent,
+            selected = currentSelected || (!darkMode && canUseCurrent),
             enabled = canUseCurrent,
             onClick = onUseCurrent,
         ) {
             val checkColor = when {
                 !canUseCurrent -> if (darkMode) Color(0xFF52525B) else Color(0xFFBDBDBD)
+                currentSelected -> Color(0xFF16A34A)
                 darkMode -> Color(0xFFA1A1AA)
                 else -> Color(0xFF16A34A)
             }
@@ -190,6 +208,7 @@ private fun PathRow(
     name: String,
     icon: ImageVector,
     darkMode: Boolean,
+    enabled: Boolean = true,
     onClick: () -> Unit,
 ) {
     Row(
@@ -197,7 +216,7 @@ private fun PathRow(
             .fillMaxWidth()
             .height(58.dp)
             .clip(RoundedCornerShape(12.dp))
-            .noRippleClickable(onClick = onClick)
+            .noRippleClickable(enabled = enabled, onClick = onClick)
             .padding(horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(14.dp),

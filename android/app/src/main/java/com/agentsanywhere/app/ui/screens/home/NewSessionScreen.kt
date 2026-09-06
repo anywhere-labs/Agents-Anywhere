@@ -26,6 +26,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -54,6 +55,7 @@ import com.agentsanywhere.app.feature.sessions.availableProjectName
 import com.agentsanywhere.app.feature.sessions.activeNewSessionRuntimes
 import com.agentsanywhere.app.feature.sessions.workspaceProject
 import com.agentsanywhere.app.feature.sessions.workspaceProjectName
+import com.agentsanywhere.app.feature.sessions.workspacePathKey
 import com.agentsanywhere.app.api.ApiException
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.TextButton
@@ -97,6 +99,7 @@ fun NewSessionScreen(
     val defaultTitle = stringResource(if (projectOnly) R.string.new_session_create_project else R.string.new_session_title)
     val scope = rememberCoroutineScope()
     val keyboard = LocalSoftwareKeyboardController.current
+    val focusManager = LocalFocusManager.current
     val focusRequester = remember { FocusRequester() }
     val onlineDevices = remember(sessionsState.devices) {
         sessionsState.devices.filter { it.online }
@@ -152,6 +155,8 @@ fun NewSessionScreen(
     var previousDeviceId by rememberSaveable { mutableStateOf<String?>(null) }
     var previousProjectId by rememberSaveable { mutableStateOf<String?>(null) }
     var previousPath by rememberSaveable { mutableStateOf("") }
+    var previousRuntimeSelection by remember { mutableStateOf<NewSessionRuntimeSelectionState?>(null) }
+    var retryDirectoryPath by rememberSaveable { mutableStateOf("~") }
     var directoryRequestId by remember { mutableStateOf(0L) }
     val selectedProject = projects.firstOrNull { it.id == selectedProjectId && (selectedDeviceId == null || it.connectorId == selectedDeviceId) }
 
@@ -196,6 +201,7 @@ fun NewSessionScreen(
 
     fun cancelProjectCreation() {
         if (projectCreating) return
+        focusManager.clearFocus()
         keyboard?.hide()
         if (projectOnly) {
             navigate(AppDestination.Sessions)
@@ -204,6 +210,9 @@ fun NewSessionScreen(
         selectedDeviceId = previousDeviceId
         selectedProjectId = previousProjectId
         selectedWorkspacePath = previousPath
+        currentPath = previousPath
+        previousRuntimeSelection?.let { runtimeSelection = it }
+        expandedConfiguration = null
         creatingProject = false
         projectCreateError = null
         workspaceConflict = null
@@ -313,7 +322,8 @@ fun NewSessionScreen(
         }
     }
 
-    LaunchedEffect(selectedDevice?.id, inventory.results[selectedDevice?.id], inventory.errors[selectedDevice?.id], preference?.connectorId, preference?.runtimeId) {
+    LaunchedEffect(selectedDevice?.id, inventory.results[selectedDevice?.id], inventory.errors[selectedDevice?.id], preference?.connectorId, preference?.runtimeId, creatingProject) {
+        if (creatingProject) return@LaunchedEffect
         val connectorId = selectedDevice?.id
         if (connectorId == null) {
             runtimeSelection = NewSessionRuntimeSelectionState(
@@ -331,8 +341,8 @@ fun NewSessionScreen(
         }
     }
 
-    LaunchedEffect(selectedDevice?.id, runtimeSelection.connectorId, selectedRuntime?.id, selectedRuntime?.type) {
-        if (selectedDevice != null && selectedRuntime != null && runtimeSelection.connectorId == selectedDevice.id) {
+    LaunchedEffect(selectedDevice?.id, runtimeSelection.connectorId, selectedRuntime?.id, selectedRuntime?.type, creatingProject) {
+        if (!creatingProject && selectedDevice != null && selectedRuntime != null && runtimeSelection.connectorId == selectedDevice.id) {
             loadRuntimeDetails()
         }
     }
@@ -349,9 +359,15 @@ fun NewSessionScreen(
             fallbackRoot = fallbackRoot,
         )
         val requestId = ++directoryRequestId
+        retryDirectoryPath = targetPath
         pathLoading = true
         pathError = null
-        onListDirectory(device.id, request.root, request.path)
+        val result = try {
+            withTimeout(8_000) { onListDirectory(device.id, request.root, request.path) }
+        } catch (error: kotlinx.coroutines.TimeoutCancellationException) {
+            Result.failure(IllegalStateException(context.getString(R.string.new_session_load_directory_failed), error))
+        }
+        result
             .onSuccess { directory ->
                 if (requestId != directoryRequestId || selectedDeviceId != device.id) return@onSuccess
                 val nextPath = canonicalRemoteDirectoryPath(
@@ -376,13 +392,18 @@ fun NewSessionScreen(
         if (requestId == directoryRequestId && selectedDeviceId == device.id) pathLoading = false
     }
 
-    LaunchedEffect(selectedDevice?.id) {
+    LaunchedEffect(selectedDevice?.id, creatingProject) {
         val deviceId = selectedDevice?.id
+        val startPath = currentPath.ifBlank { homePath ?: "~" }
         homePath = null
         directoryRequestId++
         pathEntries = emptyList()
         pathLoading = false
         if (deviceId == null) return@LaunchedEffect
+        if (creatingProject) {
+            loadDirectory(startPath, fallbackRoot = selectedWorkspacePath)
+            return@LaunchedEffect
+        }
         val result = try {
             withTimeout(8_000) { onListDirectory(deviceId, "~", ".") }
         } catch (error: kotlinx.coroutines.TimeoutCancellationException) {
@@ -599,9 +620,17 @@ fun NewSessionScreen(
     }
 
     fun beginProjectCreation() {
+        focusManager.clearFocus()
+        keyboard?.hide()
+        editingTitle = false
         previousDeviceId = selectedDeviceId
         previousProjectId = selectedProjectId
         previousPath = selectedWorkspacePath
+        previousRuntimeSelection = runtimeSelection
+        currentPath = homePath ?: "~"
+        directoryRequestId++
+        pathEntries = emptyList()
+        pathError = null
         selectedWorkspacePath = ""
         nameEdited = false
         projectName = ""
@@ -623,6 +652,7 @@ fun NewSessionScreen(
         val inputName = projectName.trim()
         val useDirectoryName = !nameEdited
         if (projectCreating || inputPath.isBlank() || inputName.isBlank()) return
+        focusManager.clearFocus()
         keyboard?.hide()
         projectCreating = true
         projectCreateError = null
@@ -658,6 +688,7 @@ fun NewSessionScreen(
                 selectedDeviceId = project.connectorId
                 selectedWorkspacePath = project.workspacePath
                 currentPath = project.workspacePath
+                expandedConfiguration = null
                 if (projectOnly) navigate(AppDestination.Sessions) else creatingProject = false
                 choosePath = false
             } catch (error: CancellationException) {
@@ -683,6 +714,75 @@ fun NewSessionScreen(
             confirmButton = { TextButton(onClick = { workspaceConflict = null; createProject(confirmRename = true) }) { Text(stringResource(R.string.project_rename_existing)) } },
             dismissButton = { TextButton(onClick = { workspaceConflict = null }) { Text(stringResource(R.string.common_cancel)) } },
         )
+    }
+
+    if (creatingProject) {
+        val parent = remoteParentPath(currentPath, selectedDeviceOs, allowWindowsDriveOverview = isWindowsDevice)
+        val currentPathLabel = displayRemotePath(
+            root = selectedWorkspacePath,
+            rawPath = currentPath,
+            deviceOs = selectedDeviceOs,
+            windowsDriveOverviewLabel = stringResource(R.string.files_windows_drives),
+        )
+        val directorySelected = selectedWorkspacePath.isNotBlank() &&
+            workspacePathKey(selectedWorkspacePath, selectedDeviceOs) == workspacePathKey(currentPath, selectedDeviceOs)
+        val directoryReady = selectedDevice != null && canUseCurrentPath && !pathLoading && pathError == null
+        fun browseDirectory(path: String) {
+            if (projectCreating) return
+            focusManager.clearFocus()
+            keyboard?.hide()
+            selectedWorkspacePath = ""
+            projectCreateError = null
+            scope.launch { loadDirectory(path, fallbackRoot = currentPath) }
+        }
+        NewProjectScreen(
+            deviceField = configurationFields.first { it.key == NewSessionConfigurationKey.Device },
+            deviceMenuExpanded = expandedConfiguration == NewSessionConfigurationKey.Device,
+            onToggleDevice = {
+                focusManager.clearFocus()
+                expandedConfiguration = if (expandedConfiguration == NewSessionConfigurationKey.Device) null else NewSessionConfigurationKey.Device
+            },
+            onDismissDevice = { expandedConfiguration = null },
+            onSelectDevice = { selectDevice(it) },
+            name = projectName,
+            onNameChange = {
+                nameEdited = true
+                projectName = it
+                projectCreateError = null
+            },
+            creating = projectCreating,
+            canCreate = projectName.isNotBlank() && directoryReady && directorySelected && !projectCreating,
+            error = projectCreateError,
+            onBack = ::cancelProjectCreation,
+            onCreate = { createProject() },
+        ) {
+            ChoosePathSection(
+                title = stringResource(R.string.new_session_project_directory),
+                currentPath = currentPath,
+                currentPathLabel = currentPathLabel,
+                parentPath = parent,
+                entries = pathEntries,
+                loading = pathLoading,
+                error = pathError,
+                darkMode = darkMode,
+                canUseCurrent = directoryReady,
+                currentSelected = directorySelected,
+                enabled = selectedDevice != null && !projectCreating,
+                modifier = Modifier.weight(1f),
+                onBack = null,
+                onParent = { parent?.let(::browseDirectory) },
+                onUseCurrent = {
+                    if (directoryReady && !projectCreating) {
+                        focusManager.clearFocus()
+                        selectedWorkspacePath = currentPath
+                        projectCreateError = null
+                    }
+                },
+                onOpenEntry = { browseDirectory(it.path) },
+                onRetry = { browseDirectory(retryDirectoryPath) },
+            )
+        }
+        return
     }
 
     ScreenScaffold {
@@ -787,40 +887,6 @@ fun NewSessionScreen(
                                 )
                             }
                         },
-                    )
-                } else if (creatingProject) {
-                    CreateProjectSection(
-                        name = projectName,
-                        workspacePath = selectedWorkspacePath,
-                        canBrowse = selectedDevice != null && !projectCreating,
-                        canCreate = projectName.isNotBlank() &&
-                            selectedDevice != null &&
-                            selectedWorkspacePath.isNotBlank() &&
-                            !projectCreating,
-                        creating = projectCreating,
-                        error = projectCreateError,
-                        darkMode = darkMode,
-                        modifier = Modifier.weight(1f),
-                        onNameChange = {
-                            nameEdited = true
-                            projectName = it
-                            projectCreateError = null
-                        },
-                        onChooseDirectory = {
-                            if (selectedDevice != null) {
-                                keyboard?.hide()
-                                choosePath = true
-                                val startPath = selectedWorkspacePath.ifBlank { homePath ?: "~" }
-                                scope.launch {
-                                    loadDirectory(
-                                        targetPath = startPath,
-                                        fallbackRoot = selectedWorkspacePath,
-                                    )
-                                }
-                            }
-                        },
-                        onCancel = ::cancelProjectCreation,
-                        onCreate = { createProject() },
                     )
                 } else {
                     WorkspaceSection(

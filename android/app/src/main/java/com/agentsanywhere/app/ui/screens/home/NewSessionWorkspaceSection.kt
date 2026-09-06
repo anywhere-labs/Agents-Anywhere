@@ -1,7 +1,10 @@
 package com.agentsanywhere.app.ui.screens.home
 
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -17,9 +20,12 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
@@ -82,6 +88,7 @@ internal fun WorkspaceSection(
                     title = stringResource(R.string.new_session_create_project),
                     icon = Lucide.Plus,
                     enabled = canCreateProject,
+                    raised = true,
                     onClick = onCreate,
                 )
             }
@@ -129,21 +136,34 @@ private fun WorkspaceOptionRow(title: String, path: String, selected: Boolean, e
         Icon(Lucide.Folder, null, tint = colors.muted, modifier = Modifier.size(20.dp))
         Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
             Text(title, color = colors.ink, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(path.ifBlank { stringResource(R.string.workspace_resolving_home) }, color = colors.muted, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            WorkspaceMarqueeText(
+                text = path.ifBlank { stringResource(R.string.workspace_resolving_home) },
+                selected = selected,
+                style = MaterialTheme.typography.bodySmall.copy(color = colors.muted),
+            )
         }
         if (selected) Icon(Lucide.Check, stringResource(R.string.workspace_selected), tint = colors.ink, modifier = Modifier.size(20.dp))
     }
 }
 
 @Composable
-private fun WorkspaceActionRow(title: String, icon: ImageVector, enabled: Boolean, onClick: () -> Unit) {
+private fun WorkspaceActionRow(title: String, icon: ImageVector, enabled: Boolean, raised: Boolean = false, onClick: () -> Unit) {
     val colors = LocalAAColors.current
     val tint = colors.inkSoft.copy(alpha = if (enabled) 1f else 0.45f)
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
+    val elevation by animateDpAsState(
+        targetValue = if (!raised || !enabled) 0.dp else if (pressed) 3.dp else 10.dp,
+        label = "create-project-shadow",
+    )
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .padding(vertical = if (raised) 6.dp else 0.dp)
+            .shadow(elevation, RoundedCornerShape(16.dp), ambientColor = colors.appShadow, spotColor = colors.appShadow)
             .clip(RoundedCornerShape(16.dp))
-            .clickable(enabled = enabled, onClick = onClick)
+            .background(if (raised) colors.raisedSurface else Color.Transparent)
+            .clickable(enabled = enabled, interactionSource = interactionSource, indication = null, onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 16.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
