@@ -28,7 +28,7 @@ import { dashboardApi } from "@/features/dashboard/api"
 import { useTranslations } from "next-intl"
 import { FileBrowserDialog } from "@/components/workspace-file-browser-dialog"
 import { Separator } from "@/components/ui/separator"
-import { workspaceName, workspacePathKey } from "@/features/dashboard/project-workspaces"
+import { findWorkspaceProject, workspaceName, workspacePathKey } from "@/features/dashboard/project-workspaces"
 
 // ── Types ─────────────────────────────────────────────────────
 
@@ -139,8 +139,14 @@ export function WorkspacePicker({
   )
 
   const homeWorkspace: WorkspaceEntry = React.useMemo(() => {
+    const project = activeConnectorId && resolvedHomePath
+      ? findWorkspaceProject(availableProjects, activeConnectorId, resolvedHomePath, activeConnector?.deviceOs)
+      : undefined
+    if (project) {
+      return { label: project.name, path: project.workspacePath, connectorId: project.connectorId, projectId: project.id }
+    }
     return { label: t("home"), path: resolvedHomePath, connectorId: activeConnectorId }
-  }, [activeConnectorId, resolvedHomePath, t])
+  }, [activeConnectorId, activeConnector?.deviceOs, availableProjects, resolvedHomePath, t])
 
   const [internalWorkspace, setInternalWorkspace] = React.useState<WorkspaceEntry>(homeWorkspace)
   const [dialogOpen, setDialogOpen] = React.useState(false)
@@ -172,8 +178,8 @@ export function WorkspacePicker({
     }
   }, [activeConnectorId, homeWorkspace, onChange, value])
 
-  const selectedProject = includeProjects && workspace.projectId
-    ? projects.find((project) => project.id === workspace.projectId)
+  const selectedProject = includeProjects && activeConnectorId
+    ? findWorkspaceProject(availableProjects, activeConnectorId, workspace.path, activeConnector?.deviceOs)
     : null
   const isProject = Boolean(selectedProject)
   const isHome = Boolean(!isProject && homeWorkspace.path && workspace.path === homeWorkspace.path)
@@ -284,17 +290,21 @@ export function WorkspacePicker({
         <DropdownMenuContent align="start" className="w-80 max-w-[calc(100vw-2rem)]">
           {includeProjects ? (
             <>
-              <DropdownMenuGroup>
-                <DropdownMenuItem disabled={!homeWorkspace.path} onSelect={() => updateWorkspace(homeWorkspace)}>
-                  <Home />
-                  <span className="flex min-w-0 flex-1 flex-col">
-                    <span>{t("home")}</span>
-                    <span className="truncate code-mono text-xs text-muted-foreground">{homeWorkspace.path || t("resolvingHome")}</span>
-                  </span>
-                  {isHome ? <Check /> : null}
-                </DropdownMenuItem>
-              </DropdownMenuGroup>
-              <DropdownMenuSeparator />
+              {!homeWorkspace.projectId ? (
+                <>
+                  <DropdownMenuGroup>
+                    <DropdownMenuItem disabled={!homeWorkspace.path} onSelect={() => updateWorkspace(homeWorkspace)}>
+                      <Home />
+                      <span className="flex min-w-0 flex-1 flex-col">
+                        <span>{t("home")}</span>
+                        <span className="truncate code-mono text-xs text-muted-foreground">{homeWorkspace.path || t("resolvingHome")}</span>
+                      </span>
+                      {isHome ? <Check /> : null}
+                    </DropdownMenuItem>
+                  </DropdownMenuGroup>
+                  <DropdownMenuSeparator />
+                </>
+              ) : null}
               <DropdownMenuLabel>{t("projects")}</DropdownMenuLabel>
               <ScrollArea className="max-h-56" viewportProps={{ className: "max-h-56" }}>
                 <DropdownMenuGroup className="pr-1">
@@ -320,7 +330,7 @@ export function WorkspacePicker({
                           className="block code-mono text-xs text-muted-foreground"
                         />
                       </span>
-                      {workspace.projectId === project.id ? <Check className="ml-auto" /> : null}
+                      {selectedProject?.id === project.id ? <Check className="ml-auto" /> : null}
                     </DropdownMenuItem>
                   )) : (
                     <DropdownMenuItem disabled className="justify-center py-6 text-muted-foreground">

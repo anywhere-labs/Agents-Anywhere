@@ -18,7 +18,6 @@ import type {
   DashboardSnapshotMessage,
   ProjectCreateRequest,
   ProjectPatchRequest,
-  ProjectResolveRequest,
   ProjectView,
   SessionLocalTimelineState,
   SessionPageInfo,
@@ -361,7 +360,7 @@ export type WorkspaceState = {
   renameSession: (id: string, title: string) => Promise<boolean>
   loadProjectSessions: (projectId: string) => Promise<boolean>
   createProject: (payload: ProjectCreateRequest) => Promise<ProjectView | null>
-  resolveProject: (payload: ProjectResolveRequest) => Promise<ProjectView>
+  resolveProject: (payload: Pick<ProjectCreateRequest, "connectorId" | "workspacePath">) => Promise<ProjectView>
   updateProject: (projectId: string, patch: ProjectPatchRequest) => Promise<ProjectView | null>
   deleteProject: (projectId: string) => Promise<boolean>
   archiveProjectSessions: (projectId: string) => Promise<boolean>
@@ -1218,7 +1217,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     }
   }, [authSession?.accessToken, upsertProject])
 
-  const resolveProject = React.useCallback(async (payload: ProjectResolveRequest): Promise<ProjectView> => {
+  const resolveProject = React.useCallback(async (payload: Pick<ProjectCreateRequest, "connectorId" | "workspacePath">): Promise<ProjectView> => {
     const token = authSession?.accessToken
     if (!token) throw new Error("Authentication required")
     let path = payload.workspacePath.trim()
@@ -1232,7 +1231,8 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       connectorId: payload.connectorId,
       path,
       deviceOs: connectors.find((connector) => connector.id === payload.connectorId)?.deviceOs,
-      resolve: async (body) => (await dashboardApi.resolveProject(token, body)).project,
+      list: async () => (await dashboardApi.listProjects(token)).projects,
+      create: async (body) => (await dashboardApi.createProject(token, body)).project,
     })
     upsertProject(project)
     return project

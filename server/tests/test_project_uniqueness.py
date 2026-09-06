@@ -104,7 +104,7 @@ def test_project_create_reuses_workspace_and_rejects_duplicate_name(tmp_path) ->
     )
 
 
-def test_project_resolve_reuses_names_and_creates_automatic_projects(tmp_path) -> None:
+def test_project_create_supports_automatic_projects_without_renaming(tmp_path) -> None:
     client, headers = _authenticated_client(tmp_path)
     connector_id = client.post(
         "/connectors", headers=headers, json={"name": "dev"}
@@ -119,42 +119,66 @@ def test_project_resolve_reuses_names_and_creates_automatic_projects(tmp_path) -
         },
     ).json()["project"]
 
-    def resolve(path):
+    def create_automatic(path, name):
         response = client.post(
-            "/projects/resolve",
+            "/projects",
             headers=headers,
-            json={"connectorId": connector_id, "workspacePath": path},
+            json={
+                "name": name,
+                "connectorId": connector_id,
+                "workspacePath": path,
+                "manuallyCreated": False,
+            },
         )
         assert response.status_code == 200, response.text
         return response.json()["project"]
 
-    reused = resolve("/repo/./")
-    assert reused["id"] == manual["id"]
-    assert reused["name"] == "Custom name"
-    assert reused["manuallyCreated"] is True
-    automatic = resolve("/work/repo")
+    reused = create_automatic("/repo/./", "repo")
+    assert reused == manual
+    automatic = create_automatic("/work/repo", "repo")
     assert automatic["name"] == "repo"
     assert automatic["manuallyCreated"] is False
-    again = resolve("/work/repo/")
-    assert again["id"] == automatic["id"]
-    assert again["manuallyCreated"] is False
-    other = resolve("/other/repo")
+    # A stale client may propose a name belonging to a different workspace.
+    # Reusing the path must preserve the original name and manual flag anyway.
+    again = create_automatic("/work/repo/", "Custom name")
+    assert again == automatic
+    collision = client.post(
+        "/projects",
+        headers=headers,
+        json={
+            "name": "repo",
+            "connectorId": connector_id,
+            "workspacePath": "/other/repo",
+            "manuallyCreated": False,
+        },
+    )
+    assert collision.status_code == 409
+    assert collision.json()["detail"]["code"] == "project_name_conflict"
+    other = create_automatic("/other/repo", "repo (1)")
     assert other["id"] != automatic["id"]
     assert other["name"] == "repo (1)"
+    assert other["manuallyCreated"] is False
     assert len(client.get("/projects", headers=headers).json()["projects"]) == 3
 
 
-def test_project_resolve_validates_ownership_paths_and_revocation(tmp_path) -> None:
+def test_automatic_project_create_validates_ownership_paths_and_revocation(
+    tmp_path,
+) -> None:
     client, headers = _authenticated_client(tmp_path)
     connector_id = client.post(
         "/connectors", headers=headers, json={"name": "dev"}
     ).json()["connector"]["id"]
-    body = {"connectorId": connector_id, "workspacePath": "/repo"}
-    assert client.post("/projects/resolve", json=body).status_code == 401
+    body = {
+        "name": "repo",
+        "connectorId": connector_id,
+        "workspacePath": "/repo",
+        "manuallyCreated": False,
+    }
+    assert client.post("/projects", json=body).status_code == 401
     for invalid in ("", "relative/path", "~"):
         assert (
             client.post(
-                "/projects/resolve",
+                "/projects",
                 headers=headers,
                 json={**body, "workspacePath": invalid},
             ).status_code
@@ -162,7 +186,7 @@ def test_project_resolve_validates_ownership_paths_and_revocation(tmp_path) -> N
         )
     assert (
         client.post(
-            "/projects/resolve",
+            "/projects",
             headers=headers,
             json={**body, "connectorId": "missing"},
         ).status_code
@@ -179,16 +203,11 @@ def test_project_resolve_validates_ownership_paths_and_revocation(tmp_path) -> N
     )
     assert other.status_code == 200, other.text
     other_headers = {"Authorization": f"Bearer {other.json()['accessToken']}"}
-    assert (
-        client.post("/projects/resolve", headers=other_headers, json=body).status_code
-        == 404
-    )
+    assert client.post("/projects", headers=other_headers, json=body).status_code == 404
     assert client.get("/projects", headers=headers).json()["projects"] == []
     revoked = client.delete(f"/connectors/{connector_id}", headers=headers)
     assert revoked.status_code == 204, revoked.text
-    assert (
-        client.post("/projects/resolve", headers=headers, json=body).status_code == 404
-    )
+    assert client.post("/projects", headers=headers, json=body).status_code == 404
 
 
 def test_project_auto_names_fit_the_name_limit_with_suffixes() -> None:

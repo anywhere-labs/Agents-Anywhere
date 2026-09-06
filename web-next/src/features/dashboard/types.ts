@@ -308,15 +308,11 @@ export type ProjectCreateRequest = {
   name: string;
   connectorId: string;
   workspacePath: string;
+  manuallyCreated?: boolean;
 };
 
 export type ProjectCreateResponse = ProjectResponse & {
   attachedSessions: number;
-};
-
-export type ProjectResolveRequest = {
-  connectorId: string;
-  workspacePath: string;
 };
 
 export type ProjectPatchRequest = {

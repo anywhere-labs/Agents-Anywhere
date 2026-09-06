@@ -1,4 +1,5 @@
-import type { ProjectView } from "./types"
+import { isApiError } from "../../lib/api/errors.ts"
+import type { ProjectCreateRequest, ProjectView } from "./types"
 
 export function isWindowsWorkspace(path: string, deviceOs?: string | null): boolean {
   return deviceOs === "windows" || /^[a-z]:[\\/]/i.test(path) || path.startsWith("\\\\")
@@ -49,15 +50,34 @@ export function findWorkspaceProject(
 }
 
 export async function resolveWorkspaceProject({
-  projects, connectorId, path, deviceOs, resolve,
+  projects, connectorId, path, deviceOs, list, create,
 }: {
   projects: ProjectView[]
   connectorId: string
   path: string
   deviceOs?: string | null
-  resolve: (payload: { connectorId: string; workspacePath: string }) => Promise<ProjectView>
+  list: () => Promise<ProjectView[]>
+  create: (payload: ProjectCreateRequest) => Promise<ProjectView>
 }): Promise<ProjectView> {
   if (!connectorId || !path.trim()) throw new Error("A device and workspace are required")
-  return findWorkspaceProject(projects, connectorId, path, deviceOs)
-    ?? await resolve({ connectorId, workspacePath: path.trim() })
+  const existing = findWorkspaceProject(projects, connectorId, path, deviceOs)
+  if (existing) return existing
+
+  let currentProjects = await list()
+  for (let attempt = 0; ; attempt++) {
+    const current = findWorkspaceProject(currentProjects, connectorId, path, deviceOs)
+    if (current) return current
+    try {
+      return await create({
+        name: availableProjectName(workspaceName(path), currentProjects),
+        connectorId,
+        workspacePath: path.trim(),
+        manuallyCreated: false,
+      })
+    } catch (error) {
+      if (attempt >= 2 || !isApiError(error) || error.status !== 409 || error.code !== "project_name_conflict") throw error
+      // Another client may have created this workspace or claimed its name.
+      currentProjects = await list()
+    }
+  }
 }
