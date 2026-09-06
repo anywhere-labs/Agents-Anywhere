@@ -673,12 +673,11 @@ private struct SidebarDrawerMainCard<Content: View>: View {
                     )
                     .allowsHitTesting(false)
             }
-            // Move the card as one geometry. Without this boundary SwiftUI
-            // propagates the pan's fractional position to individual text and
-            // scroll descendants, even though the card's width is unchanged.
-            // This is not a snapshot: native controls and glass stay live.
-            .geometryGroup()
-            .offset(x: offset)
+            // Ordinary offset still participates in descendant coordinates:
+            // subpixel motion can round this 402-point column to 402 1/3 and
+            // change paragraph wrapping. Keep the whole translation out of
+            // layout, including every interpolated frame of the spring.
+            .modifier(SidebarDrawerTranslation(x: offset).ignoredByLayout())
     }
 }
 

@@ -83,11 +83,13 @@ Semantic error and availability colors remain separate from the primary color.
   The phone drawer applies the untransformed host's safe area (including keyboard)
   once, and suspends navigation throughout motion and while obscuring the detail.
   Resuming preserves reading intent and follows new content only when
-  appropriate. The phone card's `geometryGroup()` precedes its horizontal offset,
-  resolving the pan as one transform instead of propagating fractional positions
-  to individual text/scroll descendants. Controls and glass remain live; there is
-  no bitmap snapshot or deferred width layout. iPad keeps its default native split
-  layout and animation.
+  appropriate. The phone card uses `SidebarDrawerTranslation.ignoredByLayout()`:
+  horizontal movement only changes rendering, including every interpolated
+  spring frame. It cannot move the layout origin and vary the column width by a
+  physical pixel (observed as 402/402.33 points with two paragraphs changing lines).
+  `geometryGroup()` plus a normal offset was insufficient for this case. Controls
+  and glass remain live; there is no bitmap snapshot, width freeze or gesture
+  quantization. iPad keeps its default native split layout and animation.
 - Both history prompts support a fresh 24-point outward pull and release when
   already visible: pulling past the top loads older messages, and pulling past
   the bottom loads newer records. The prompt changes to “松开加载”; tapping remains
@@ -142,7 +144,10 @@ Semantic error and availability colors remain separate from the primary color.
   toast rather than being mislabeled as offline. The timeline has no temporary
   working row or first-token thinking label, and empty attachment stacks do not
   contribute a phantom inter-item gap.
-  A right-hand glass button group contains New Session and a details menu. The
+  A right-hand glass button group contains Files and a details menu; Files opens
+  the shared file manager and is not duplicated in the menu. New Session remains
+  in the sidebar. The sidebar header contains the wordmark, with no search button,
+  search field or hidden session-title filter. The
   phone's left-edge drawer gesture starts within 44 points and still requires
   horizontal intent so vertical timeline scrolling is not intercepted.
   The sliding card uses the host's original horizontal safe-area insets instead
@@ -216,7 +221,12 @@ Semantic error and availability colors remain separate from the primary color.
   Failed or uncertain writes restore the draft only if the editor is still empty,
   never overwrite a newer draft, and never replay automatically. A compact issue
   icon opens the existing explicit failure/uncertain-delivery actions.
-- File management opens at the medium detent and can expand to large; individual
+- Session and device-workspace entry points use the same `WorkspaceFilesSheet`.
+  Its title remains the device name while navigating directories. A pinned,
+  wrapping, selectable path above the list shows the device's resolved absolute
+  directory (`fs/list`), with a Copy Path context menu; no local iOS path conversion
+  is applied to remote POSIX/Windows paths. The shared sheet owns its detents and
+  opens at medium, with expansion to large; individual
   Web previews open large. Long-pressing any directory entry copies its path.
   Files also offer Download (the system export picker) and Open In (the system
   activity sheet). Exports use the full binary transfer, validate its byte count,
@@ -360,6 +370,12 @@ Verified on 2026-09-06, without starting a server or simulator:
   Attachment/delivery tests cover sparse/reordered echoes, bounded caches, FS
   thumbnail reads, offline preview reuse and preserving a newer identical draft.
 - The Python backend contract fixture exporter reports that fixtures are current.
+- `Tests/DrawerLayoutProbe.swift` uses the real SwiftUI `ImageRenderer` on macOS,
+  without a window or simulator. Across 44 renders at 2x/3x with fractional pan
+  positions, the old geometry-group/offset control changes its reported origin;
+  the new transform retains origin zero and size 402x200 while rendered images
+  move. This isolates the transform contract; on-device text, touch and glass
+  behavior still require the manual drawer checks below.
 - The complete unsigned iOS Debug target builds for `generic/platform=iOS`, using
   the checked-in package resolutions and the Xcode beta toolchain. The app's
   existing iOS 26.5 deployment target remains unchanged.
@@ -368,6 +384,15 @@ From the repository root:
 
 ```sh
 DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer swift test --package-path ios
+```
+
+Native transform regression on macOS, without launching the app:
+
+```sh
+DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer xcrun swiftc -parse-as-library \
+  'ios/Agents Anywhere/Agents Anywhere/Views/Components/SidebarDrawerTranslation.swift' \
+  ios/Tests/DrawerLayoutProbe.swift -o /tmp/aa-drawer-layout-probe
+/tmp/aa-drawer-layout-probe
 ```
 
 From `server/`:
@@ -456,6 +481,9 @@ keyboard layout and real mobile-network behavior still need manual validation:
     Repeat while reading in the middle and while streaming. Expand/collapse the
     composer, show/dismiss the keyboard and respond to approval cards; check the
     bottom margin is applied once and that a manual upward scroll is respected.
+    The column width should remain constant during fractional drawer movement;
+    check both the live drag and spring settlement, then tap the visible card to
+    close the drawer and verify normal text selection, scrolling and composer taps.
     Check Agent/device names and syncing/offline/working feedback in the header.
     Sync completion and takeover must not move the viewport. Resize the iPad
     split and change Dynamic Type in both directions; blocks should rewrap with
@@ -464,3 +492,10 @@ keyboard layout and real mobile-network behavior still need manual validation:
     composer thumbnails, the bubble's left spinner and unchanged preview/text
     geometry after echoes. Read a device-path image online, then reopen it offline
     from cache. Verify the previous completed reply's Copy/Share stays available.
+15. Open Files from the session's top-right folder button and from a device's
+    workspace. Both should open the same medium sheet, show the device name as
+    the navigation title and keep the current full path above the list. Enter
+    subdirectories and go back; long POSIX/Windows paths must wrap without
+    truncation and support Copy Path. Check file preview/download/open-in actions.
+    The sidebar has no search control, and the session's More menu has no second
+    Files entry. New Session remains available at the bottom of the sidebar.
