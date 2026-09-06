@@ -53,6 +53,8 @@ cd /Users/t4wefan/code/github/Agents-Anywhere
 
 本地扫码还要求手机能够访问服务地址；仅监听回环地址时可先跳过手机步骤。默认本地启动脚本需要 Docker 提供 PostgreSQL 和 Redis。
 
+若更新后 Web 报 `oauth client not found`，先确认正在运行的后端已加载新增的 `agents-anywhere-dsh-plugin` 内置 OAuth client。没有启用源码重载的旧进程需要重启；使用本仓库 Dev Control 时，可在仓库根目录执行 `./dev-control.sh restart server`，然后回插件重新发起登录。无需手动创建数据库中的 OAuth client。
+
 ## 开发模式
 
 ```bash

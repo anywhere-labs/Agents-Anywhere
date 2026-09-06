@@ -34,8 +34,16 @@ export async function checkClient(source: string, packageId: string): Promise<vo
     const require = createRequire(import.meta.url)
     type Client = { apply: (ctx: unknown) => void; inject: string[] }
     const registrations: { id: string; factory: (require: NodeRequire) => Client }[] = []
+    const openedUrls: { url: string; target: string; features: string }[] = []
     runInNewContext(source, {
-      window: { __ModuleLoader__: { load: (registration: typeof registrations[number]) => registrations.push(registration) }, open: () => null },
+      window: {
+        __ModuleLoader__: { load: (registration: typeof registrations[number]) => registrations.push(registration) },
+        open: (url: string, target: string, features: string) => {
+          openedUrls.push({ url, target, features })
+          // Electron opens external HTTP(S) URLs and returns no renderer window.
+          return null
+        },
+      },
       document, setTimeout, clearTimeout, Error,
     }, { timeout: 1_000 })
     assert.equal(registrations.length, 1)
@@ -103,6 +111,7 @@ export async function checkClient(source: string, packageId: string): Promise<vo
     assert.equal(button('在浏览器中登录').disabled, false)
     await act(async () => { button('在浏览器中登录').click() })
     assert.ok(calls.some(call => call.endpoint === 'agentsAnywhereOnboarding/begin'))
+    assert.deepEqual(openedUrls, [{ url: 'https://example.com/onboarding', target: '_blank', features: 'noopener,noreferrer' }])
     assert.equal(container.querySelector('a')?.href, 'https://example.com/onboarding')
     assert.equal(container.querySelector('[data-state]')?.getAttribute('data-state'), 'ongoing')
     await act(async () => { button('取消本次连接').click() })

@@ -46,16 +46,13 @@ export function OnboardingSection({ host }: { host: OnboardingHostApi }) {
   }
 
   const begin = () => {
-    // Create the tab during the gesture so async Host RPC cannot trigger a
-    // popup blocker. The fallback link remains available in embedded clients.
-    const tab = window.open('about:blank', '_blank')
-    if (tab) tab.opener = null
     void run(async () => {
-      try {
-        const result = await host.begin()
-        setLink(result.url)
-        if (tab) tab.location.replace(result.url)
-      } catch (error) { tab?.close(); throw error }
+      const result = await host.begin()
+      setLink(result.url)
+      // DSH Desktop forwards HTTP(S) window targets to the system browser and
+      // denies the renderer window. An about:blank placeholder is discarded.
+      // Keep the link available when a regular browser blocks an async popup.
+      window.open(result.url, '_blank', 'noopener,noreferrer')
     })
   }
 
