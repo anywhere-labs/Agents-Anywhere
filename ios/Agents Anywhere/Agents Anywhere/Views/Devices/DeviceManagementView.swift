@@ -68,10 +68,9 @@ struct DeviceManagementView: View {
                 DeviceAgentSection(model: agents, showsConnectionNotice: false) { report($0, source: "agents") }
                 Group {
                     Section {
-                        contentPicker
+                        contentSwitcher
                             .listRowBackground(Color.clear)
                             .listRowSeparator(.hidden)
-                            .listRowInsets(EdgeInsets())
                     }
                     if tab == .projects {
                         if showsSessionList {
@@ -196,6 +195,20 @@ struct DeviceManagementView: View {
         .labelsHidden()
         .accessibilityLabel(String(localized: "Device content"))
         .accessibilityIdentifier("device.content")
+    }
+
+    private var contentSwitcher: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 16) {
+                Text(String(localized: "Device content")).font(.headline).fixedSize()
+                Spacer(minLength: 0)
+                contentPicker.fixedSize(horizontal: true, vertical: false)
+            }
+            VStack(alignment: .leading, spacing: 12) {
+                Text(String(localized: "Device content")).font(.headline)
+                contentPicker
+            }
+        }.padding(.vertical, 4)
     }
 
     private var connectionDescription: String {

@@ -17,9 +17,10 @@ struct ComposerOptionsSheet: View {
     @State private var isApplying = false
     @State private var showsApplyError = false
     @State private var path: [Page] = []
+    @State private var expandedModelID: String?
     @Environment(\.dismiss) private var dismiss
 
-    private enum Page: Hashable { case models, reasoning(String), permissions }
+    private enum Page: Hashable { case models, permissions }
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -79,7 +80,6 @@ struct ComposerOptionsSheet: View {
                 switch page {
                 case .models: models
                 case .permissions: permissions
-                case .reasoning(let id): reasoning(for: id)
                 }
             }
             .toolbar {
@@ -130,13 +130,24 @@ struct ComposerOptionsSheet: View {
             Section {
                 ForEach(settings.catalog.models) { model in
                     if model.reasoning.isEmpty {
-                        Button {
+                        InlineSelectionButton(title: model.option.title, detail: detail(model.option),
+                            isSelected: settings.modelID == model.id) {
                             apply { settings.selectModel(model.id) }
-                        } label: { selectionRow(model.option, selected: settings.modelID == model.id) }
+                        }
                         .disabled(!model.option.isEnabled)
                     } else {
-                        NavigationLink(value: Page.reasoning(model.id)) {
-                            selectionRow(model.option, selected: settings.modelID == model.id)
+                        InlineSelectionGroup(title: model.option.title, detail: detail(model.option),
+                            isSelected: settings.modelID == model.id,
+                            isExpanded: Binding(get: { expandedModelID == model.id }, set: { expandedModelID = $0 ? model.id : nil })) {
+                            Text(String(localized: "思考强度"))
+                                .font(.caption.weight(.medium)).foregroundStyle(.secondary)
+                            ForEach(model.reasoning) { option in
+                                InlineSelectionButton(title: option.title, detail: detail(option),
+                                    isSelected: settings.modelID == model.id && settings.reasoningID == option.id) {
+                                    apply { settings.selectModel(model.id, reasoning: option.id) }
+                                }
+                                .disabled(!option.isEnabled)
+                            }
                         }
                         .disabled(!model.option.isEnabled)
                     }
@@ -145,60 +156,32 @@ struct ComposerOptionsSheet: View {
                 Text(String(localized: "选择模型后，可继续选择它支持的思考强度。"))
             }
         }
+        .disabled(isLoading || !canSelectModel)
         .navigationTitle(String(localized: "模型"))
         .navigationBarTitleDisplayMode(.inline)
-    }
-
-    @ViewBuilder private func reasoning(for id: String) -> some View {
-        if let model = settings.catalog.models.first(where: { $0.id == id }) {
-            List {
-                Section(model.option.title) {
-                    ForEach(model.reasoning) { option in
-                        Button {
-                            apply { settings.selectModel(id, reasoning: option.id) }
-                        } label: {
-                            selectionRow(option, selected: settings.modelID == id && settings.reasoningID == option.id)
-                        }
-                        .disabled(!model.option.isEnabled || !option.isEnabled)
-                    }
-                }
-            }
-            .navigationTitle(String(localized: "思考强度"))
-            .navigationBarTitleDisplayMode(.inline)
-        }
     }
 
     private var permissions: some View {
         List {
             Section {
                 ForEach(settings.catalog.permissions) { option in
-                    Button {
+                    InlineSelectionButton(title: option.title, detail: detail(option),
+                        isSelected: settings.permissionID == option.id) {
                         apply { settings.selectPermission(option.id) }
-                    } label: { selectionRow(option, selected: settings.permissionID == option.id) }
+                    }
                     .disabled(!option.isEnabled)
                 }
             } footer: {
                 Text(String(localized: "用于这个对话接下来发送的消息。"))
             }
         }
+        .disabled(isLoading || !canSelectPermission)
         .navigationTitle(String(localized: "权限"))
         .navigationBarTitleDisplayMode(.inline)
     }
 
-    private func selectionRow(_ option: CatalogOption, selected: Bool) -> some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text(option.title).foregroundStyle(.primary)
-                let detail = option.isEnabled ? option.detail : option.disabledReason ?? option.detail
-                if !detail.isEmpty { Text(detail).font(.footnote).foregroundStyle(.secondary) }
-            }
-            Spacer(minLength: 8)
-            if selected { AppSymbol("checkmark").fontWeight(.semibold).foregroundStyle(.primary) }
-        }
-        .padding(.vertical, 7)
-        .opacity(option.isEnabled ? 1 : 0.5)
-        .contentShape(Rectangle())
-        .accessibilityAddTraits(selected ? .isSelected : [])
+    private func detail(_ option: CatalogOption) -> String {
+        option.isEnabled ? option.detail : option.disabledReason ?? option.detail
     }
 
     private func apply(_ selection: () -> Bool) {
@@ -213,7 +196,7 @@ struct ComposerOptionsSheet: View {
 }
 
 /// The root glass sheet uses fill contrast to distinguish its cards.
-/// Pushed selection pages retain their standard system list appearance.
+/// Selection pages use shared inline rows with the system list appearance.
 private struct ComposerOptionSurface: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.colorSchemeContrast) private var contrast

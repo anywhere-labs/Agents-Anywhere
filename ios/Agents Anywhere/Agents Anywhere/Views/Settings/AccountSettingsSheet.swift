@@ -26,7 +26,7 @@ struct AccountSettingsSheet: View {
                             }
                             Spacer(minLength: 0)
                         }.padding(.vertical, 12)
-                    }.listRowBackground(Color.clear).listRowSeparator(.hidden)
+                    }.listRowSeparator(.hidden)
 
                     Section(String(localized: "Account")) {
                         NavigationLink { AccountIdentitySettingsView(mode: .nickname, draft: $drafts.nickname) } label: {
@@ -56,7 +56,8 @@ struct AccountSettingsSheet: View {
                         get: { !showsSessionList },
                         set: { showsSessionList = !$0 }
                     )) {
-                        SettingsRow(title: String(localized: "Project mode"), symbol: "folder")
+                        Label(String(localized: "Project mode"), appSymbol: "folder")
+                            .labelStyle(.titleAndIcon)
                     }.tint(.green)
                 }
                 Section(String(localized: "Workspace")) {

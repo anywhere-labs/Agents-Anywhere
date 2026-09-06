@@ -15,11 +15,13 @@ struct SettingsRow: View {
     let symbol: String
     var value: String?
     var body: some View {
-        LabeledContent {
-            if let value, !value.isEmpty {
+        if let value, !value.isEmpty {
+            LabeledContent {
                 Text(value).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+            } label: {
+                Label(title, appSymbol: symbol)
             }
-        } label: {
+        } else {
             Label(title, appSymbol: symbol)
         }
     }

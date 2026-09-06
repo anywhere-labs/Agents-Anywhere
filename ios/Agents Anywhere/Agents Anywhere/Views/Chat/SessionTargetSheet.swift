@@ -3,107 +3,108 @@ import SwiftUI
 struct SessionTargetSheet: View {
     @Bindable var model: NewSessionModel
     let onManageDevice: (String) -> Void
-    @State private var connectorID: String
-    @State private var runtimeID: String
-    @State private var applying = false
+    @State private var expandedDeviceID: String?
+    @State private var applying: TargetSelection?
+    @State private var selectionError: String?
     @Environment(\.dismiss) private var dismiss
 
-    init(model: NewSessionModel, onManageDevice: @escaping (String) -> Void) {
-        self.model = model
-        self.onManageDevice = onManageDevice
-        _connectorID = State(initialValue: model.connectorID)
-        _runtimeID = State(initialValue: model.runtimeID)
-    }
-
-    private var device: V2Connector? { model.connectors.first { $0.id == connectorID } }
-    private var connected: Bool { device?.status == .online && model.network.availability != .offline }
-    private var instances: [V2DeviceRuntime] {
-        (model.inventories[connectorID] ?? []).sorted {
-            ($0.isReadyForSession ? 0 : 1, $0.sessionDisplayName) < ($1.isReadyForSession ? 0 : 1, $1.sessionDisplayName)
+    private var devices: [V2Connector] {
+        model.connectors.sorted {
+            ($0.status == .online ? 0 : 1, $0.name, $0.id) < ($1.status == .online ? 0 : 1, $1.name, $1.id)
         }
-    }
-    private var canApply: Bool {
-        connected && instances.contains { $0.id == runtimeID && $0.isReadyForSession }
     }
 
     var body: some View {
         NavigationStack {
-            Form {
-                Section {
-                    Picker(String(localized: "设备"), selection: $connectorID) {
-                        Text(String(localized: "选择设备")).tag("")
-                        ForEach(model.connectors.sorted { ($0.status == .online ? 0 : 1, $0.name) < ($1.status == .online ? 0 : 1, $1.name) }) { device in
-                            Text(verbatim: device.name).tag(device.id)
-                        }
-                    }.pickerStyle(.navigationLink)
-                } footer: {
-                    if !connected {
-                        Text(model.network.availability == .offline ? String(localized: "手机网络已断开") : String(localized: "目标设备离线"))
-                    }
+            List {
+                if devices.isEmpty {
+                    ContentUnavailableView(String(localized: "No devices"), appSymbol: "desktopcomputer")
                 }
                 Section {
-                    Picker(String(localized: "Agent"), selection: $runtimeID) {
-                        Text(String(localized: "选择 Agent")).tag("")
-                        ForEach(instances) { runtime in
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(verbatim: runtime.sessionDisplayName)
-                                if let reason = runtime.sessionUnavailableReason {
-                                    Text(reason).font(.footnote).foregroundStyle(.secondary)
-                                }
-                            }.tag(runtime.id).disabled(!runtime.isReadyForSession)
+                    ForEach(devices) { device in
+                        InlineSelectionGroup(title: device.name, detail: deviceDetail(device),
+                            isSelected: model.connectorID == device.id,
+                            isExpanded: Binding(get: { expandedDeviceID == device.id }, set: { expandedDeviceID = $0 ? device.id : nil })) {
+                            agents(on: device)
                         }
-                    }.pickerStyle(.navigationLink).disabled(device == nil || instances.isEmpty)
-                    if model.loadingDevices.contains(connectorID) {
-                        ProgressView(String(localized: "正在检查 Agent…"))
-                    } else if instances.isEmpty {
-                        Text(String(localized: "这台设备尚无已配置的 Agent。")).foregroundStyle(.secondary)
-                    }
-                    if let error = model.inventoryErrors[connectorID] {
-                        Text(error).font(.footnote).foregroundStyle(.secondary)
-                        Button(String(localized: "重新加载")) { Task { await loadInstances() } }.disabled(!connected)
+                        .task(id: TargetInventoryKey(id: device.id, isExpanded: expandedDeviceID == device.id, connected: connected(device))) {
+                            guard expandedDeviceID == device.id else { return }
+                            await model.loadInventory(device.id)
+                        }
                     }
                 } footer: {
                     Text(String(localized: "同一种 Agent 可以有不同实例；这里显示的是设备上的实际实例名称。"))
                 }
-                if device != nil {
-                    Section {
-                        Button(String(localized: "管理这台设备"), appSymbol: "slider.horizontal.3") { onManageDevice(connectorID) }
-                    }
-                }
-                if let error = model.error {
+                if let error = selectionError ?? model.error {
                     Section { Text(error).font(.footnote).foregroundStyle(.secondary) }
                 }
             }
             .navigationTitle(String(localized: "运行目标")).navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                SheetEditorToolbar(saveTitle: String(localized: "Done"), isWorking: applying, saveDisabled: !canApply,
-                    onCancel: { dismiss() }, onSave: apply)
+            .toolbar { SheetCloseToolbar(disabled: applying != nil) { dismiss() } }
+            .refreshable {
+                if let id = expandedDeviceID { await model.loadInventory(id) }
             }
-            .onChange(of: connectorID) { _, id in runtimeID = id == model.connectorID ? model.runtimeID : "" }
-            .task(id: TargetInventoryKey(id: connectorID, connected: connected)) { await loadInstances() }
-            .refreshable { await loadInstances() }
         }
         .appSheetPresentation(.compact)
-        .interactiveDismissDisabled(applying)
-        .disabled(applying)
+        .interactiveDismissDisabled(applying != nil)
+        .disabled(applying != nil)
     }
 
-    private func loadInstances() async {
-        guard device != nil else { return }
-        let requestedID = connectorID
-        await model.loadInventory(requestedID)
-        guard !Task.isCancelled, connectorID == requestedID, runtimeID.isEmpty else { return }
-        runtimeID = instances.first(where: \.isReadyForSession)?.id ?? ""
+    @ViewBuilder private func agents(on device: V2Connector) -> some View {
+        let inventory = instances(on: device.id)
+        let loading = model.loadingDevices.contains(device.id)
+        let error = model.inventoryErrors[device.id]
+        Text(String(localized: "Agent")).font(.caption.weight(.medium)).foregroundStyle(.secondary)
+        if loading || (connected(device) && model.inventories[device.id] == nil && error == nil) {
+            ProgressView(String(localized: "正在检查 Agent…"))
+        } else if inventory.isEmpty, error == nil, connected(device) {
+            Text(String(localized: "这台设备尚无已配置的 Agent。")).font(.footnote).foregroundStyle(.secondary)
+        }
+        ForEach(inventory) { runtime in
+            InlineSelectionButton(title: runtime.sessionDisplayName, detail: runtime.sessionUnavailableReason,
+                isSelected: model.connectorID == device.id && model.runtimeID == runtime.id,
+                isWorking: applying == TargetSelection(connectorID: device.id, runtimeID: runtime.id)) {
+                apply(device: device, runtime: runtime)
+            }
+            .disabled(!connected(device) || !runtime.isReadyForSession || !model.isValid || model.isCreating)
+        }
+        if !connected(device) {
+            Text(model.network.availability == .offline ? String(localized: "手机网络已断开") : String(localized: "目标设备离线"))
+                .font(.footnote).foregroundStyle(.secondary)
+        }
+        if let error {
+            Text(error).font(.footnote).foregroundStyle(.secondary)
+            Button(String(localized: "重新加载")) { Task { await model.loadInventory(device.id) } }
+                .disabled(!connected(device) || loading)
+        }
+        Button(String(localized: "管理这台设备"), appSymbol: "slider.horizontal.3") { onManageDevice(device.id) }
     }
-    private func apply() {
-        guard canApply, !applying else { return }
-        applying = true
+
+    private func connected(_ device: V2Connector) -> Bool {
+        device.status == .online && model.network.availability != .offline
+    }
+    private func deviceDetail(_ device: V2Connector) -> String {
+        let status = model.network.availability == .offline ? String(localized: "手机网络已断开") :
+            device.status == .online ? String(localized: "Online") : String(localized: "Offline")
+        return [device.deviceOs, status].compactMap { $0 }.joined(separator: " · ")
+    }
+    private func instances(on id: String) -> [V2DeviceRuntime] {
+        (model.inventories[id] ?? []).sorted {
+            ($0.isReadyForSession ? 0 : 1, $0.sessionDisplayName, $0.id) < ($1.isReadyForSession ? 0 : 1, $1.sessionDisplayName, $1.id)
+        }
+    }
+    private func apply(device: V2Connector, runtime: V2DeviceRuntime) {
+        guard applying == nil, connected(device), runtime.isReadyForSession else { return }
+        let target = TargetSelection(connectorID: device.id, runtimeID: runtime.id)
+        applying = target; selectionError = nil
         Task { @MainActor in
-            let applied = await model.selectTarget(connectorID: connectorID, runtimeID: runtimeID)
-            applying = false
-            if applied { dismiss() }
+            let accepted = await model.selectTarget(connectorID: target.connectorID, runtimeID: target.runtimeID)
+            applying = nil
+            if accepted { dismiss() }
+            else { selectionError = model.error ?? String(localized: "当前设置未保存，请稍后重试。") }
         }
     }
 }
 
-private struct TargetInventoryKey: Equatable { let id: String; let connected: Bool }
+private struct TargetSelection: Equatable { let connectorID: String; let runtimeID: String }
+private struct TargetInventoryKey: Equatable { let id: String; let isExpanded: Bool; let connected: Bool }
