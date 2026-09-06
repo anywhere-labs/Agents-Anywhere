@@ -14,7 +14,6 @@ struct WorkspaceFilesSheet: View {
     var initialPath = "."
     @State private var destination: FileDestination?
     @State private var transfer: FileTransferRequest?
-    @State private var detent: PresentationDetent = .medium
     @State private var previewErrorMessage: String?
 
     private enum FileDestination: Identifiable {
@@ -70,8 +69,7 @@ struct WorkspaceFilesSheet: View {
                 }
             }
         }
-        .presentationDetents([.medium, .large], selection: $detent)
-        .presentationContentInteraction(.resizes).presentationDragIndicator(.visible)
+        .appSheetPresentation(.compact)
         .sheet(item: $destination) { destination in
             switch destination {
             case .preview(let entry):
@@ -222,6 +220,7 @@ private struct WorkspaceDirectoryView: View {
                         }.labelStyle(.iconOnly).frame(width: 44, height: 44)
                             .disabled(!canRead || model.isLoading || ProjectWorkspacePath.parent(model.resolvedPath) == nil)
                         TextField(String(localized: "设备上的完整路径"), text: Binding(get: { address ?? currentDirectoryPath }, set: { address = $0 }))
+                            .textFieldStyle(.roundedBorder)
                             .font(.system(.footnote, design: .monospaced)).textInputAutocapitalization(.never).autocorrectionDisabled()
                             .onSubmit { navigate(address ?? currentDirectoryPath) }
                         Button(String(localized: "打开目录"), appSymbol: "arrow.right") { navigate(address ?? currentDirectoryPath) }

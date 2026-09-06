@@ -45,7 +45,7 @@ struct SessionDetailsSheet: View {
             .navigationTitle(String(localized: "会话详情")).navigationBarTitleDisplayMode(.inline)
             .toolbar { SheetCloseToolbar { dismiss() } }
         }
-        .presentationDetents([.large])
+        .appSheetPresentation(.expanded)
         .task(id: exportRequest) {
             guard let source = exportRequest, let meta = chat.session.metadata else { return }
             error = nil

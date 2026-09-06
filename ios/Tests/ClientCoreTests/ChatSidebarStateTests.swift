@@ -2,12 +2,9 @@ import Testing
 @testable import ClientCore
 
 @Suite struct ChatSidebarStateTests {
-    @Test func systemSizeClassDeterminesIPadSidebarAvailability() {
-        #expect(ChatSidebarState.Layout.resolve(isPad: true, hasRegularWidth: true) == .regularSplit)
-        #expect(ChatSidebarState.Layout.resolve(isPad: true, hasRegularWidth: false) == .drawer)
-        for hasRegularWidth in [true, false] {
-            #expect(ChatSidebarState.Layout.resolve(isPad: false, hasRegularWidth: hasRegularWidth) == .drawer)
-        }
+    @Test func currentWindowSizeClassDeterminesSidebarAvailability() {
+        #expect(ChatSidebarState.Layout.resolve(hasRegularWidth: true) == .regularSplit)
+        #expect(ChatSidebarState.Layout.resolve(hasRegularWidth: false) == .drawer)
     }
 
     @Test func regularSplitStartsOpenAndNavigationKeepsBothColumnsVisible() {
@@ -20,16 +17,14 @@ import Testing
         }
     }
 
-    @Test func phoneAndCompactIPadDismissTheOverlayAfterSelection() {
-        for isPad in [false, true] {
-            let layout = ChatSidebarState.Layout.resolve(isPad: isPad, hasRegularWidth: false)
-            var sidebar = ChatSidebarState()
-            sidebar.setLayout(layout)
-            sidebar.isOpen = true
-            #expect(sidebar.obscuresDetail)
-            sidebar.selectDestination()
-            #expect(!sidebar.isOpen && !sidebar.obscuresDetail)
-        }
+    @Test func compactWindowDismissesTheOverlayAfterSelection() {
+        let layout = ChatSidebarState.Layout.resolve(hasRegularWidth: false)
+        var sidebar = ChatSidebarState()
+        sidebar.setLayout(layout)
+        sidebar.isOpen = true
+        #expect(sidebar.obscuresDetail)
+        sidebar.selectDestination()
+        #expect(!sidebar.isOpen && !sidebar.obscuresDetail)
     }
 
     @Test func resizingRestoresRegularSplitWithoutUndoingAnExplicitToggle() {

@@ -63,11 +63,11 @@ struct DeviceManagementView: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 32) {
+        List {
+            Group {
                 DeviceAgentSection(model: agents, showsConnectionNotice: false) { report($0, source: "agents") }
-                VStack(alignment: .leading, spacing: 20) {
-                    contentPicker
+                Group {
+                    Section { contentPicker }
                     if tab == .projects {
                         if showsSessionList {
                             DeviceWorkspaceList(workspaces: workspaceChoices, canReadFiles: canReadFiles,
@@ -92,9 +92,10 @@ struct DeviceManagementView: View {
                     }
                 }
             }
-            .padding(.horizontal, 24).padding(.top, 18).padding(.bottom, 28)
-            .frame(maxWidth: 760).frame(maxWidth: .infinity, alignment: .center)
         }
+        .listStyle(.insetGrouped)
+        .scrollContentBackground(.hidden)
+        .frame(maxWidth: 760).frame(maxWidth: .infinity)
         .scrollIndicators(.hidden).scrollEdgeEffectStyle(.soft, for: .all)
         .refreshable { await dashboard.refresh(); await agents.refresh() }
         .modifier(ChatPageToolbar(title: connector.name, subtitle: connectionDescription, onMenu: onMenu))
@@ -183,19 +184,10 @@ struct DeviceManagementView: View {
     }
 
     private var contentPicker: some View {
-        Menu {
-            Picker(String(localized: "Device content"), selection: $tab) {
-                Text(collectionTitle).tag(DeviceOverviewTab.projects)
-                Text(String(localized: "Sessions")).tag(DeviceOverviewTab.sessions)
-            }
-        } label: {
-            HStack(spacing: 8) {
-                Text(tab == .projects ? collectionTitle : String(localized: "Sessions"))
-                    .font(.headline)
-                AppSymbol("chevron.down", size: 16)
-            }.frame(minHeight: 44)
-        }
-        .buttonStyle(.plain)
+        Picker(String(localized: "Device content"), selection: $tab) {
+            Text(collectionTitle).tag(DeviceOverviewTab.projects)
+            Text(String(localized: "Sessions")).tag(DeviceOverviewTab.sessions)
+        }.pickerStyle(.menu)
         .accessibilityLabel(String(localized: "Device content"))
         .accessibilityIdentifier("device.content")
     }

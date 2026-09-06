@@ -15,9 +15,8 @@ struct ChatShellView: View {
     var body: some View {
         // NavigationSplitView adapts to a single stack in a compact system size
         // class. Use that same system trait for the drawer fallback, never a
-        // device-screen measurement or a custom window-width breakpoint.
+        // device model, screen measurement or custom window-width breakpoint.
         let layout = ChatSidebarState.Layout.resolve(
-            isPad: UIDevice.current.userInterfaceIdiom == .pad,
             hasRegularWidth: horizontalSizeClass == .regular
         )
         sidebarLayout(layout)

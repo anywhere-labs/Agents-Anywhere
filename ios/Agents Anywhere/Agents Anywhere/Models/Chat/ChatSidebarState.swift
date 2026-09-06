@@ -5,8 +5,8 @@ nonisolated struct ChatSidebarState: Equatable {
     enum Layout {
         case drawer, regularSplit
 
-        static func resolve(isPad: Bool, hasRegularWidth: Bool) -> Layout {
-            isPad && hasRegularWidth ? .regularSplit : .drawer
+        static func resolve(hasRegularWidth: Bool) -> Layout {
+            hasRegularWidth ? .regularSplit : .drawer
         }
     }
     private(set) var layout = Layout.drawer

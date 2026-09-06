@@ -17,7 +17,6 @@ struct ComposerOptionsSheet: View {
     @State private var isApplying = false
     @State private var showsApplyError = false
     @State private var path: [Page] = []
-    @State private var detent: PresentationDetent = .medium
     @Environment(\.dismiss) private var dismiss
 
     private enum Page: Hashable { case models, reasoning(String), permissions }
@@ -87,8 +86,7 @@ struct ComposerOptionsSheet: View {
                 SheetCloseToolbar(disabled: isApplying) { dismiss() }
             }
         }
-        .presentationDetents([.medium, .large], selection: $detent)
-        .presentationDragIndicator(.visible)
+        .appSheetPresentation(.compact)
         .disabled(isApplying)
         .interactiveDismissDisabled(isApplying)
         .modifier(SessionTakeoverConfirmation(pending: $pendingTakeover) { enabled in
@@ -97,9 +95,6 @@ struct ComposerOptionsSheet: View {
         .alert(String(localized: "无法更改设置"), isPresented: $showsApplyError) {
             Button(String(localized: "好"), role: .cancel) {}
         } message: { Text(applyError() ?? String(localized: "当前设置未保存，请稍后重试。")) }
-        .onChange(of: path) { _, pages in
-            withAnimation(.smooth(duration: 0.25)) { detent = pages.isEmpty ? .medium : .large }
-        }
     }
 
     private func attachmentTile(_ title: String, icon: String, action: @escaping () -> Void) -> some View {

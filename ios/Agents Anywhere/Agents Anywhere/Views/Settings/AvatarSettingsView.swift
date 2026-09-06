@@ -5,12 +5,8 @@ struct AvatarSettingsView: View {
     @EnvironmentObject private var appState: AppState
     @Environment(\.dismiss) private var dismiss
 
-    @State private var selectedItem: PhotosPickerItem?
-    @State private var selectedImage: UIImage?
-    @State private var zoom: CGFloat = 1
-    @State private var offset = CGSize.zero
+    @Binding var draft: AccountAvatarDraft
     @State private var localError: String?
-    @State private var confirmsDiscard = false
 
     var body: some View {
         Form {
@@ -18,24 +14,24 @@ struct AvatarSettingsView: View {
                 AvatarEditorPreview(
                     displayName: appState.me?.accountLabel ?? "?",
                     currentSource: appState.accountAvatarSource,
-                    selectedImage: selectedImage,
-                    zoom: $zoom,
-                    offset: $offset
+                    selectedImage: draft.selectedImage,
+                    zoom: $draft.zoom,
+                    offset: $draft.offset
                 )
                 .frame(maxWidth: .infinity)
                 .listRowBackground(Color.clear)
             }
 
             Section {
-                PhotosPicker(selection: $selectedItem, matching: .images) {
+                PhotosPicker(selection: $draft.selectedItem, matching: .images) {
                     Label(String(localized: "Choose photo"), appSymbol: "photo.on.rectangle")
                 }
 
-                if selectedImage != nil {
+                if draft.selectedImage != nil {
                     VStack(alignment: .leading, spacing: 10) {
                         Text(String(localized: "Zoom"))
                             .font(.subheadline)
-                        Slider(value: $zoom, in: 1 ... 3)
+                        Slider(value: $draft.zoom, in: 1 ... 3)
                     }
 
                 }
@@ -50,23 +46,20 @@ struct AvatarSettingsView: View {
         }
         .navigationTitle(String(localized: "Profile photo"))
         .navigationBarTitleDisplayMode(.inline)
-        .navigationBarBackButtonHidden()
         .toolbar {
-            SheetEditorToolbar(isWorking: appState.isAccountWorking, saveDisabled: selectedImage == nil,
-                onCancel: { if selectedImage == nil { dismiss() } else { confirmsDiscard = true } }, onSave: uploadAvatar)
+            SheetSaveToolbar(isWorking: appState.isAccountWorking, saveDisabled: draft.selectedImage == nil, onSave: uploadAvatar)
         }
-        .interactiveDismissDisabled(selectedImage != nil || appState.isAccountWorking)
-        .confirmDiscardChanges($confirmsDiscard) { dismiss() }
-        .onChange(of: selectedItem) { _, nextItem in
+        .disabled(appState.isAccountWorking)
+        .onChange(of: draft.selectedItem) { _, nextItem in
             guard let nextItem else { return }
             Task { await loadImage(nextItem) }
         }
-        .onChange(of: zoom) { _, nextZoom in
-            guard let selectedImage else { return }
-            offset = AccountAvatarProcessor.clampedOffset(
+        .onChange(of: draft.zoom) { _, nextZoom in
+            guard let selectedImage = draft.selectedImage else { return }
+            draft.offset = AccountAvatarProcessor.clampedOffset(
                 image: selectedImage,
                 zoom: nextZoom,
-                candidate: offset
+                candidate: draft.offset
             )
         }
         .alert(String(localized: "Could not use photo"), isPresented: localErrorBinding) {
@@ -92,26 +85,29 @@ struct AvatarSettingsView: View {
             guard let data = try await item.loadTransferable(type: Data.self) else {
                 throw AccountAvatarProcessingError.invalidImage
             }
-            selectedImage = try AccountAvatarProcessor.image(from: data)
-            zoom = 1
-            offset = .zero
+            guard draft.selectedItem == item else { return }
+            draft.selectedImage = try AccountAvatarProcessor.image(from: data)
+            draft.zoom = 1
+            draft.offset = .zero
             localError = nil
         } catch {
-            selectedImage = nil
+            guard draft.selectedItem == item else { return }
+            draft.selectedImage = nil
             localError = error.localizedDescription
         }
     }
 
     private func uploadAvatar() {
-        guard let selectedImage else { return }
+        guard let selectedImage = draft.selectedImage else { return }
         do {
             let dataURL = try AccountAvatarProcessor.dataURL(
                 image: selectedImage,
-                zoom: zoom,
-                offset: offset
+                zoom: draft.zoom,
+                offset: draft.offset
             )
             Task {
                 if await appState.updateAccountAvatar(dataURL: dataURL) {
+                    draft = AccountAvatarDraft()
                     dismiss()
                 }
             }
@@ -123,10 +119,7 @@ struct AvatarSettingsView: View {
     private func removeAvatar() {
         Task {
             if await appState.clearAccountAvatar() {
-                selectedImage = nil
-                selectedItem = nil
-                zoom = 1
-                offset = .zero
+                draft = AccountAvatarDraft()
             }
         }
     }

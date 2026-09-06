@@ -17,12 +17,7 @@ struct DeviceAgentSection: View {
         var id: String { runtime.id }
     }
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack {
-                Text(String(localized: "Agent")).font(.headline)
-                Spacer()
-                AgentRediscoveryButton(model: model)
-            }
+        Section {
             if showsConnectionNotice && !model.connected {
                 Label(String(localized: "设备或网络已离线，连接恢复后可继续。"), appSymbol: "wifi.slash")
                     .font(.footnote).foregroundStyle(.secondary)
@@ -48,7 +43,7 @@ struct DeviceAgentSection: View {
                         .disabled(!model.connected || model.busyID != nil)
                     }
                 }
-                .padding(16).background(.quaternary.opacity(0.45), in: .rect(cornerRadius: 18))
+                .padding(.vertical, 6)
                 .contextMenu {
                     Button(String(localized: "重命名"), appSymbol: "pencil") { proposedName = runtime.name; renaming = runtime }
                         .disabled(!model.connected || model.busyID != nil)
@@ -58,6 +53,13 @@ struct DeviceAgentSection: View {
             }
             AppGlassButton(String(localized: "添加更多 Agent"), systemImage: "plus", style: .prominent) {
                 showsAddAgents = true
+            }
+            .listRowBackground(Color.clear)
+        } header: {
+            HStack {
+                Text(String(localized: "Agent"))
+                Spacer()
+                AgentRediscoveryButton(model: model)
             }
         }
         .task(id: model.connected) { await model.refresh() }
@@ -119,19 +121,19 @@ struct AgentSetupSheet: View {
     let onFinish: () -> Void
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 24) {
+            List {
+                Section {
                     Text(String(localized: "添加你要使用的 Agent")).font(.title2.bold())
                     Text(String(localized: "设备已连接。选择 Agent 后，就可以在项目中开始任务。"))
                         .foregroundStyle(.secondary)
-                    DeviceAgentSection(model: model)
-                }.padding(22)
+                }
+                DeviceAgentSection(model: model)
             }
             .navigationTitle(connector.name).navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 SheetCloseToolbar(disabled: model.busyID != nil, action: onFinish)
             }
         }
-        .presentationDetents([.large]).interactiveDismissDisabled()
+        .appSheetPresentation(.compact).interactiveDismissDisabled(model.busyID != nil)
     }
 }

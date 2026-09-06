@@ -39,7 +39,7 @@ struct ProjectEditorSheet: View {
                             ForEach(repository.connectors.filter { $0.status == .online || $0.id == draft.connectorID }) { device in
                                 Text(device.name).tag(device.id).disabled(device.status != .online)
                             }
-                        }
+                        }.pickerStyle(.navigationLink)
                         if device?.status != .online {
                             Text(String(localized: "请选择在线设备后创建项目。"))
                                 .font(.footnote).foregroundStyle(.secondary)
@@ -68,6 +68,7 @@ struct ProjectEditorSheet: View {
                 }
                 if let error { Section { Text(error).foregroundStyle(.secondary) } }
             }
+            .textFieldStyle(.roundedBorder)
             .disabled(saving)
             .navigationTitle(draft.original == nil ? String(localized: "创建项目") : String(localized: "编辑项目"))
             .navigationBarTitleDisplayMode(.inline)
@@ -82,7 +83,7 @@ struct ProjectEditorSheet: View {
             }
             .onChange(of: repository.projects) { _, projects in draft.suggestName(projects: projects, deviceOS: device?.deviceOs) }
         }
-        .presentationDetents([.large]).interactiveDismissDisabled(saving || draft.hasChanges)
+        .appSheetPresentation(.compact).interactiveDismissDisabled(saving || draft.hasChanges)
         .confirmDiscardChanges($confirmsDiscard) { dismiss() }
         .alert(String(localized: "这个目录已有项目"), isPresented: Binding(get: { reuse != nil }, set: { if !$0 { reuse = nil } })) {
             Button(String(localized: "取消"), role: .cancel) { reuse = nil }

@@ -15,14 +15,13 @@ struct SettingsRow: View {
     let symbol: String
     var value: String?
     var body: some View {
-        HStack(spacing: 14) {
-            AppSymbol(symbol).frame(width: 24)
-            Text(title)
-            Spacer(minLength: 12)
+        LabeledContent {
             if let value, !value.isEmpty {
                 Text(value).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
             }
-        }.frame(minHeight: 32)
+        } label: {
+            Label(title, appSymbol: symbol)
+        }
     }
 }
 

@@ -74,7 +74,7 @@ struct ProjectSelectionSheet: View {
             .toolbar { SheetCloseToolbar { dismiss() } }
             .task(id: model.connectorID) { await model.resolveHome() }
         }
-        .presentationDetents([.large])
+        .appSheetPresentation(.compact)
         .sheet(isPresented: $createsProject, onDismiss: finishSelection) {
             ProjectEditorSheet(repository: repository, connectorID: model.connectorID) { project in
                 model.updateProjects(repository.projects)

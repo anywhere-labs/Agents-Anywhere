@@ -17,18 +17,12 @@ struct DeviceProjectList: View {
     let onDelete: (V2Project) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack {
-                Text("\(projects.count) projects").font(.subheadline).foregroundStyle(.secondary)
-                Spacer()
-                AppGlassButton(systemImage: "plus", disabled: !canManage, action: onCreate)
-                    .accessibilityLabel(String(localized: "Create project"))
-            }
+        Section {
             if projects.isEmpty {
                 ContentUnavailableView(String(localized: "No projects yet"), appSymbol: "folder",
                     description: Text(String(localized: "Create a project to choose where your agents work.")))
             } else {
-                LazyVStack(spacing: 10) {
+                Group {
                     ForEach(projects) { project in
                         DeviceDirectoryRow(name: project.name, path: project.workspacePath,
                             sessionCount: project.activeSessionCount, onOpen: { onOpen(project) },
@@ -53,6 +47,13 @@ struct DeviceProjectList: View {
                     }
                 }
             }
+        } header: {
+            HStack {
+                Text("\(projects.count) projects")
+                Spacer()
+                Button(String(localized: "Create project"), appSymbol: "plus", action: onCreate)
+                    .labelStyle(.iconOnly).disabled(!canManage)
+            }
         }
     }
 }
@@ -65,18 +66,12 @@ struct DeviceWorkspaceList: View {
     let onNewSession: (WorkspaceDirectoryChoice) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack {
-                Text("\(workspaces.count) workspaces").font(.subheadline).foregroundStyle(.secondary)
-                Spacer()
-                AppGlassButton(systemImage: "plus", disabled: !canReadFiles, action: onBrowse)
-                    .accessibilityLabel(String(localized: "选择工作目录"))
-            }
+        Section {
             if workspaces.isEmpty {
                 ContentUnavailableView(String(localized: "No workspaces yet"), appSymbol: "folder",
                     description: Text(String(localized: "Choose a folder to start a new session.")))
             } else {
-                LazyVStack(spacing: 10) {
+                Group {
                     ForEach(workspaces) { workspace in
                         DeviceDirectoryRow(name: workspace.name, path: workspace.path,
                             onOpen: { onOpen(workspace) }, openHint: String(localized: "Files"),
@@ -97,6 +92,13 @@ struct DeviceWorkspaceList: View {
                         }
                     }
                 }
+            }
+        } header: {
+            HStack {
+                Text("\(workspaces.count) workspaces")
+                Spacer()
+                Button(String(localized: "选择工作目录"), appSymbol: "plus", action: onBrowse)
+                    .labelStyle(.iconOnly).disabled(!canReadFiles)
             }
         }
     }
@@ -124,8 +126,7 @@ private struct DeviceDirectoryRow<Actions: View>: View {
                 HStack { Spacer(minLength: 0); actions() }
             }
         }
-        .padding(16)
-        .background(.quaternary.opacity(0.45), in: .rect(cornerRadius: 22))
+        .padding(.vertical, 6)
     }
 
     private var summary: some View {
@@ -158,23 +159,15 @@ struct DeviceSessionList: View {
     let onArchiveAll: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        Section {
             HStack {
-                Menu {
-                    Picker(showsProjectNames ? String(localized: "Project") : String(localized: "工作目录"),
-                        selection: Binding(get: { model.projectID }, set: model.selectProject)) {
-                        Text(allScopesTitle).tag(String?.none)
-                        ForEach(projects) {
-                            Text(showsProjectNames ? $0.name : $0.workspacePath).tag(Optional($0.id))
-                        }
+                Picker(showsProjectNames ? String(localized: "Project") : String(localized: "工作目录"),
+                    selection: Binding(get: { model.projectID }, set: model.selectProject)) {
+                    Text(allScopesTitle).tag(String?.none)
+                    ForEach(projects) {
+                        Text(showsProjectNames ? $0.name : $0.workspacePath).tag(Optional($0.id))
                     }
-                } label: {
-                    HStack(spacing: 6) {
-                        Text(selectedScopeTitle)
-                            .lineLimit(1)
-                        AppSymbol("chevron.down", size: 14)
-                    }.frame(minHeight: 44)
-                }
+                }.pickerStyle(.menu)
                 Spacer(minLength: 8)
                 Menu {
                     Button(model.isSelectingSessions ? String(localized: "Done") : String(localized: "Select sessions"), appSymbol: "checkmark.circle") {
@@ -201,7 +194,7 @@ struct DeviceSessionList: View {
                 ContentUnavailableView(String(localized: "No sessions here"), appSymbol: "bubble.left.and.bubble.right",
                     description: Text(String(localized: "Choose another filter or start a new session.")))
             } else {
-                LazyVStack(spacing: 6) {
+                Group {
                     ForEach(model.filteredSessions) { session in
                         Button { onOpen(session.id) } label: {
                             HStack(spacing: 12) {
@@ -226,10 +219,10 @@ struct DeviceSessionList: View {
                                         Text(date, format: .dateTime.month(.abbreviated).day()).font(.caption2).foregroundStyle(.secondary)
                                     }
                                 }
-                            }.padding(14).frame(maxWidth: .infinity, alignment: .leading)
-                                .background(.quaternary.opacity(model.selectedSessionIds.contains(session.id) ? 0.85 : 0.35),
-                                    in: .rect(cornerRadius: 18)).contentShape(.rect)
+                            }.padding(.vertical, 8).frame(maxWidth: .infinity, alignment: .leading)
+                                .contentShape(.rect)
                         }
+                        .listRowBackground(model.selectedSessionIds.contains(session.id) ? Color.primary.opacity(0.08) : Color(uiColor: .secondarySystemGroupedBackground))
                         .buttonStyle(.plain)
                         .contextMenu {
                             Button(String(localized: "Open"), appSymbol: "arrow.up.right") { onOpen(session.id) }
@@ -245,10 +238,6 @@ struct DeviceSessionList: View {
     }
     private var allScopesTitle: String {
         showsProjectNames ? String(localized: "All projects") : String(localized: "All workspaces")
-    }
-    private var selectedScopeTitle: String {
-        guard let project = projects.first(where: { $0.id == model.projectID }) else { return allScopesTitle }
-        return showsProjectNames ? project.name : ProjectWorkspacePath.name(project.workspacePath)
     }
     private func scopeSubtitle(_ session: V2SessionMeta) -> String? {
         let project = projects.first { $0.id == session.projectId }

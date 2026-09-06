@@ -53,7 +53,7 @@ struct WorkspaceFilePreviewSheet: View {
                 SheetCloseToolbar { dismiss() }
             }
         }
-        .presentationDetents([.large]).presentationDragIndicator(.visible)
+        .appSheetPresentation(.expanded)
         .overlay(alignment: .top) {
             ChatErrorToasts(store: downloadToasts, isRetrying: false, onRetry: { _ in })
         }

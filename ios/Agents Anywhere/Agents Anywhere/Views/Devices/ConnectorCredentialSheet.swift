@@ -54,6 +54,7 @@ struct ConnectorCredentialSheet: View {
                 SheetCloseToolbar { dismiss() }
             }
         }
+        .appSheetPresentation(.expanded)
     }
 
     private func copy(_ value: String, field: ConnectorCredentialField) {

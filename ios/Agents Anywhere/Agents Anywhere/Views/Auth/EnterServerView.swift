@@ -37,6 +37,7 @@ struct EnterServerView: View {
                 }
             }
         }
+        .appSheetPresentation(.compact)
     }
 }
 

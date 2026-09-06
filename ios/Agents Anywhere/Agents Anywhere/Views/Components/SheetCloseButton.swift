@@ -4,15 +4,11 @@ struct SheetCloseButton: View {
     let action: () -> Void
 
     var body: some View {
-        Button(action: action) {
-            AppSymbol("xmark", size: 18)
-                .frame(width: 36, height: 36)
-                .glassEffect(.regular.interactive(), in: .circle)
+        Button(role: .close, action: action) {
+            Label(String(localized: "Close"), appSymbol: "xmark")
         }
-        .buttonStyle(.plain)
-        .frame(width: 44, height: 44).contentShape(.circle)
+        .labelStyle(.iconOnly)
         .keyboardShortcut(.cancelAction)
-        .accessibilityLabel(String(localized: "Close"))
     }
 }
 
@@ -24,7 +20,7 @@ struct SheetCloseToolbar: ToolbarContent {
     var body: some ToolbarContent {
         ToolbarItem(placement: .topBarTrailing) {
             SheetCloseButton(action: action).disabled(disabled)
-        }.sharedBackgroundVisibility(.hidden)
+        }
     }
 }
 
@@ -39,12 +35,23 @@ struct SheetEditorToolbar: ToolbarContent {
             Button(String(localized: "Cancel"), action: onCancel)
                 .disabled(isWorking).keyboardShortcut(.cancelAction)
         }
+        SheetSaveToolbar(saveTitle: saveTitle, isWorking: isWorking, saveDisabled: saveDisabled, onSave: onSave)
+    }
+}
+
+/// Pushed editors keep the system Back button and interactive pop gesture.
+struct SheetSaveToolbar: ToolbarContent {
+    var saveTitle = String(localized: "Save")
+    var isWorking = false
+    var saveDisabled = false
+    let onSave: () -> Void
+
+    var body: some ToolbarContent {
         ToolbarItem(placement: .confirmationAction) {
-            Button(action: onSave) {
+            Button(role: .confirm, action: onSave) {
                 Text(saveTitle).opacity(isWorking ? 0 : 1)
                     .overlay { if isWorking { ProgressView().controlSize(.small) } }
             }
-            .buttonStyle(.glassProminent).buttonBorderShape(.capsule)
             .disabled(isWorking || saveDisabled).keyboardShortcut("s", modifiers: .command)
         }
     }

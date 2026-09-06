@@ -9,27 +9,22 @@ struct RuntimeConfigurationFieldView: View {
     private var description: String? { RuntimeConfigCopy.description(field, locale: locale) }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        Section {
             if field.kind == .boolean {
-                Toggle(isOn: binding(model.boolValues[field.id] ?? false) { model.boolValues[field.id] = $0 }) {
-                    heading
-                }.toggleStyle(.switch).tint(.green)
+                Toggle(title, isOn: binding(model.boolValues[field.id] ?? false) { model.boolValues[field.id] = $0 })
+                    .toggleStyle(.switch).tint(.green)
             } else {
-                heading
                 editor
             }
             if let error = model.errors[field.id] {
                 Label(error, appSymbol: "exclamationmark.circle")
                     .font(.footnote).foregroundStyle(.red).accessibilityIdentifier("configuration.error.\(field.id)")
             }
-        }
-    }
-
-    private var heading: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title + (field.isRequired ? " *" : "")).font(.headline)
+        } header: {
+            if field.kind != .boolean { Text(title + (field.isRequired ? " *" : "")) }
+        } footer: {
             if let description, !description.isEmpty {
-                Text(description).font(.subheadline).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                Text(description)
             }
         }
     }
@@ -60,7 +55,7 @@ struct RuntimeConfigurationFieldView: View {
         case .json:
             TextEditor(text: binding(model.textValues[field.id] ?? "") { model.textValues[field.id] = $0 })
                 .font(.footnote.monospaced()).frame(minHeight: 140)
-                .scrollContentBackground(.hidden).runtimeConfigInput().accessibilityLabel(title)
+                .runtimeConfigInput().accessibilityLabel(title)
         case .boolean: EmptyView()
         }
     }
@@ -192,8 +187,8 @@ struct RuntimeSecretInput: View {
 extension View {
     func runtimeConfigInput() -> some View {
         self.textInputAutocapitalization(.never).autocorrectionDisabled()
-            .padding(12).frame(maxWidth: .infinity, alignment: .leading)
-            .background(.quaternary.opacity(0.5), in: .rect(cornerRadius: 14))
+            .textFieldStyle(.roundedBorder)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

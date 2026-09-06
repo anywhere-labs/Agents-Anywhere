@@ -4,7 +4,7 @@ import UIKit
 struct PairDeviceSheet: View {
     @EnvironmentObject private var appState: AppState
     @Environment(\.dismiss) private var dismiss
-    @State private var step = Step.connectionMethod
+    @State private var path: [Step] = []
     @State private var name = String(localized: "New device")
     @State private var code = ""
     @State private var credential: V2ConnectorCreateResponse?
@@ -12,37 +12,61 @@ struct PairDeviceSheet: View {
     @State private var creationUncertain = false
     @State private var error: String?
     @State private var copied = false
-    private enum Step { case connectionMethod, desktop, cliConfirm, name, cliMethod, pairCode, token }
+    private enum Step: Hashable { case connectionMethod, desktop, cliConfirm, name, cliMethod, pairCode, token }
+    private var step: Step { path.last ?? .connectionMethod }
 
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 22) {
-                    if step == .desktop { desktopInstructions }
-                    else if step == .cliConfirm { cliConfirmation }
-                    else if step != .connectionMethod { cliInstructions }
-                    else {
-                        Text(String(localized: "选择设备的连接方式")).font(.title2.bold())
-                        AppGlassButton(String(localized: "桌面应用"), systemImage: "desktopcomputer", style: .prominent) { step = .desktop }
-                        Text(String(localized: "在电脑上安装桌面应用，并登录同一账号。设备会自动显示在侧栏。")).foregroundStyle(.secondary)
-                        AppGlassButton(String(localized: "命令行"), systemImage: "terminal") { step = .cliConfirm }
-                        Text(String(localized: "适合通过 CLI 连接远程主机或无界面的设备。")).foregroundStyle(.secondary)
-                    }
-                    if let error { Text(error).font(.footnote).foregroundStyle(.red) }
-                }.padding(22).frame(maxWidth: 560)
-            }.frame(maxWidth: .infinity)
-            .navigationTitle(String(localized: "添加设备"))
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    if step != .connectionMethod {
-                        Button(String(localized: "返回"), appSymbol: "chevron.left", action: goBack).disabled(isWorking)
-                    }
+        NavigationStack(path: $path) {
+            page(.connectionMethod)
+                .navigationDestination(for: Step.self) { page($0) }
+        }
+        .appSheetPresentation(step == .pairCode || step == .token ? .expanded : .compact)
+        .disabled(isWorking)
+        .interactiveDismissDisabled(isWorking)
+        .onChange(of: path) { _, _ in error = nil; copied = false }
+    }
+
+    private func page(_ step: Step) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 22) {
+                if step == .desktop { desktopInstructions }
+                else if step == .cliConfirm { cliConfirmation }
+                else if step != .connectionMethod { cliInstructions(step) }
+                else {
+                    Text(String(localized: "选择设备的连接方式")).font(.title2.bold())
+                    NavigationLink(value: Step.desktop) {
+                        Label(String(localized: "桌面应用"), appSymbol: "desktopcomputer").frame(maxWidth: .infinity)
+                    }.buttonStyle(.glassProminent).controlSize(.large)
+                    Text(String(localized: "在电脑上安装桌面应用，并登录同一账号。设备会自动显示在侧栏。")).foregroundStyle(.secondary)
+                    NavigationLink(value: Step.cliConfirm) {
+                        Label(String(localized: "命令行"), appSymbol: "terminal").frame(maxWidth: .infinity)
+                    }.buttonStyle(.glass).controlSize(.large)
+                    Text(String(localized: "适合通过 CLI 连接远程主机或无界面的设备。")).foregroundStyle(.secondary)
                 }
-                SheetCloseToolbar(disabled: isWorking) { dismiss() }
+                if let error { Text(error).font(.footnote).foregroundStyle(.red) }
+            }.padding(22).frame(maxWidth: 560)
+        }
+        .frame(maxWidth: .infinity)
+        .navigationTitle(title(for: step))
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar { SheetCloseToolbar(disabled: isWorking) { dismiss() } }
+        .onAppear {
+            if step == .token, let credential {
+                appState.nativeChatServices?.agentSetup.watch(credential.connector)
             }
-            .interactiveDismissDisabled(isWorking)
-        }.presentationDetents([.large]).presentationDragIndicator(.visible)
+        }
+    }
+
+    private func title(for step: Step) -> String {
+        switch step {
+        case .connectionMethod: String(localized: "添加设备")
+        case .desktop: String(localized: "桌面应用")
+        case .cliConfirm: String(localized: "命令行")
+        case .name: String(localized: "设备名称")
+        case .cliMethod: String(localized: "选择配对方式")
+        case .pairCode: String(localized: "使用配对码")
+        case .token: String(localized: "使用 Token")
+        }
     }
 
     private var desktopInstructions: some View {
@@ -61,12 +85,16 @@ struct PairDeviceSheet: View {
             Text(String(localized: "此方式需要会使用终端以及 uv / uvx 命令行工具。"))
             Text(String(localized: "如果使用 Windows 或 macOS，桌面程序的连接和日常使用更方便。"))
                 .foregroundStyle(.secondary)
-            AppGlassButton(String(localized: "继续使用命令行"), style: .prominent) { step = .name }
-            AppGlassButton(String(localized: "使用桌面程序")) { step = .desktop }
+            NavigationLink(value: Step.name) {
+                Text(String(localized: "继续使用命令行")).frame(maxWidth: .infinity)
+            }.buttonStyle(.glassProminent).controlSize(.large)
+            NavigationLink(value: Step.desktop) {
+                Text(String(localized: "使用桌面程序")).frame(maxWidth: .infinity)
+            }.buttonStyle(.glass).controlSize(.large)
         }
     }
 
-    @ViewBuilder private var cliInstructions: some View {
+    @ViewBuilder private func cliInstructions(_ step: Step) -> some View {
         if step == .name {
             Text(String(localized: "为命令行设备命名")).font(.title2.bold())
             TextField(String(localized: "设备名称"), text: $name).textFieldStyle(.roundedBorder).autocorrectionDisabled()
@@ -83,13 +111,14 @@ struct PairDeviceSheet: View {
             if appState.nativeChatServices?.agentSetup.requests.first(where: { $0.id == credential.connector.id })?.ready != true {
                 if step == .cliMethod {
                     Text(String(localized: "选择配对方式")).foregroundStyle(.secondary)
-                    AppGlassButton(String(localized: "使用配对码"), systemImage: "number", style: .prominent) { step = .pairCode }
+                    NavigationLink(value: Step.pairCode) {
+                        Label(String(localized: "使用配对码"), appSymbol: "number").frame(maxWidth: .infinity)
+                    }.buttonStyle(.glassProminent).controlSize(.large)
                     Text(String(localized: "在设备上运行命令，将生成的六位配对码填回这里。"))
                         .font(.footnote).foregroundStyle(.secondary)
-                    AppGlassButton(String(localized: "使用 Token"), systemImage: "key") {
-                        step = .token
-                        appState.nativeChatServices?.agentSetup.watch(credential.connector)
-                    }
+                    NavigationLink(value: Step.token) {
+                        Label(String(localized: "使用 Token"), appSymbol: "key").frame(maxWidth: .infinity)
+                    }.buttonStyle(.glass).controlSize(.large)
                 } else if step == .pairCode {
                     Text(String(localized: "先在目标设备运行以下命令，再填写 CLI 显示的配对码。"))
                         .foregroundStyle(.secondary)
@@ -138,19 +167,10 @@ struct PairDeviceSheet: View {
             }
         }.onChange(of: command) { _, _ in copied = false }
     }
-    private func goBack() {
-        error = nil; copied = false
-        switch step {
-        case .pairCode, .token: step = .cliMethod
-        case .cliMethod: step = .name
-        case .name: step = .cliConfirm
-        default: step = .connectionMethod
-        }
-    }
-
     private var canConnect: Bool { appState.nativeChatServices?.dashboardRepository.canWrite == true }
     private func prepare() async {
         guard !isWorking, !creationUncertain, canConnect else { return }
+        let submittedPath = path
         isWorking = true; error = nil
         defer { isWorking = false }
         do {
@@ -162,7 +182,7 @@ struct PairDeviceSheet: View {
                     credential = .init(connector: connector, connectorToken: previous.connectorToken, tokenPrefix: previous.tokenPrefix)
                 }
             } else { credential = try await appState.createDevicePairing(name: name) }
-            step = .cliMethod
+            if path == submittedPath { path.append(.cliMethod) }
         } catch {
             creationUncertain = credential == nil && !V2ClientFailure.isDefiniteWriteRejection(error)
             self.error = error.localizedDescription
