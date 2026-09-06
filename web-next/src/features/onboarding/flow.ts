@@ -1,4 +1,4 @@
-export type OnboardingStep = 'agents' | 'mobile-choice' | 'mobile' | 'complete'
+export type OnboardingStep = 'welcome' | 'device' | 'phone' | 'complete'
 export interface OnboardingTarget { connectorId: string; flowId: string }
 
 export function readOnboardingTarget(params: { get(name: string): string | null }): OnboardingTarget | null {
@@ -13,9 +13,12 @@ const keyFor = (target: OnboardingTarget, userId: string) => `agents-anywhere.on
 export function restoreOnboardingStep(target: OnboardingTarget, userId: string, storage: Pick<Storage, 'getItem'>): OnboardingStep {
   try {
     const step = storage.getItem(keyFor(target, userId))
-    if (step === 'mobile-choice' || step === 'mobile' || step === 'complete') return step
+    if (step === 'welcome' || step === 'device' || step === 'phone' || step === 'complete') return step
+    // Keep existing flows resumable after adopting the four-page onboarding.
+    if (step === 'agents') return 'device'
+    if (step === 'mobile-choice' || step === 'mobile') return 'phone'
   } catch { /* A restricted browser can still run the flow without persistence. */ }
-  return 'agents'
+  return 'welcome'
 }
 
 export function saveOnboardingStep(target: OnboardingTarget, userId: string, step: OnboardingStep, storage: Pick<Storage, 'setItem'>): void {

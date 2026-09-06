@@ -5,10 +5,12 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { JSDOM } from 'jsdom'
 import { registerSource } from './helpers/onboarding-source.mjs'
 
-const dom = new JSDOM('<!doctype html><html><body></body></html>', { url: 'https://app.example.test/' })
-for (const name of ['window', 'document', 'navigator', 'HTMLElement', 'Element', 'Node', 'MutationObserver', 'getComputedStyle']) {
+const dom = new JSDOM('<!doctype html><html><body></body></html>', { url: 'https://app.example.test/', pretendToBeVisual: true })
+for (const name of ['window', 'document', 'navigator', 'HTMLElement', 'HTMLInputElement', 'Element', 'Node', 'NodeFilter', 'CustomEvent', 'MutationObserver', 'getComputedStyle', 'requestAnimationFrame', 'cancelAnimationFrame']) {
   Object.defineProperty(globalThis, name, { configurable: true, value: dom.window[name] })
 }
+window.matchMedia = () => ({ matches: true, addEventListener() {}, removeEventListener() {} })
+window.HTMLElement.prototype.scrollTo = function () { this.scrollTop = 0 }
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 const { createElement: h, act } = await import('react')
 const { createRoot } = await import('react-dom/client')
@@ -69,42 +71,65 @@ function mockDevice(t) {
   return { create }
 }
 
-test('Web onboarding configures available Agents and can skip phone to finish without any Dialog', async (t) => {
+test('reference onboarding opens real Agent configuration, restores focus, and can skip phone', async (t) => {
   const { create } = mockDevice(t)
   const container = await render(t, h(PluginOnboardingPage))
-  await until(() => container.textContent.includes('Codex') && container.textContent.includes('Claude'))
-  assert.equal(container.querySelector('[role="dialog"]'), null)
-  await click(container, '快速添加')
+  await until(() => container.querySelector('[data-slide="welcome"]'))
+  assert.ok(container.querySelector('img[src="/images/onboarding/desktop.webp"]'))
+  await click(container, '下一页')
+  assert.match(container.querySelector('h1').textContent, /测试电脑/)
+  assert.equal(document.querySelector('[role="dialog"]'), null)
+  await click(container, '配置 Agent')
+  await until(() => document.querySelector('[role="dialog"]')?.textContent.includes('Codex'))
+  await click(document.querySelector('[role="dialog"]'), '快速添加')
   assert.equal(create.mock.callCount(), 1)
   assert.equal(create.mock.calls[0].arguments[1], 'conn_demo')
+  await click(document.querySelector('[role="dialog"]'), '完成配置')
+  assert.equal(document.querySelector('[role="dialog"]'), null)
+  assert.equal(document.activeElement.textContent, '配置 Agent')
   await click(container, '下一步')
-  assert.match(container.textContent, /也在手机上使用/)
-  await click(container, '暂时跳过')
-  assert.match(container.textContent, /设置完成/)
-  assert.equal([...container.querySelectorAll('a')].find(a => a.textContent.includes('立即体验')).getAttribute('href'), '#/')
-  assert.ok([...container.querySelectorAll('button')].find(button => button.textContent.includes('下载桌面端')).disabled)
-  assert.match(container.textContent, /官网即将上线/)
-  assert.equal(container.querySelector('[role="dialog"]'), null)
+  assert.ok(container.querySelector('[data-slide="phone"]'))
+  await click(container, '下一步')
+  assert.ok(container.querySelector('[data-slide="complete"]'))
+  assert.match(container.textContent, /You are\nall set\./)
+  assert.equal([...container.querySelectorAll('a')].find(a => a.textContent.includes('下载桌面程序')).getAttribute('href'), 'https://github.com/anywhere-labs/Agents-Anywhere/releases')
+  assert.equal(document.querySelector('[role="dialog"]'), null)
+  await click(container, '立刻体验')
+  assert.equal(window.location.hash, '#/')
 })
 
-test('Web onboarding embeds download and scan pages and requires phone confirmation before completion', async (t) => {
+test('phone dialog runs download and QR confirmation before advancing to completion', async (t) => {
   mockDevice(t)
   t.mock.method(authApi, 'createMobileLoginQr', async () => ({ userId: 'user1', loginToken: 'QR-TEST', expiresAt: new Date(Date.now() + 60_000).toISOString() }))
   t.mock.method(authApi, 'mobileLoginStatus', async () => ({ status: 'pending_web_confirm' }))
   const confirmation = t.mock.method(authApi, 'confirmMobileLogin', async () => ({ status: 'consumed' }))
   const container = await render(t, h(PluginOnboardingPage))
-  await until(() => container.textContent.includes('Codex'))
+  await until(() => container.querySelector('[data-slide="welcome"]'))
+  await click(container, '下一页')
   await click(container, '下一步')
   await click(container, '连接手机')
-  assert.match(container.textContent, /下载移动端 App/)
-  await click(container, '我已安装，继续')
-  await until(() => container.textContent.includes('确认这次手机连接'))
-  assert.doesNotMatch(container.textContent, /设置完成/)
-  await click(container, '确认连接')
+  const dialog = document.querySelector('[role="dialog"]')
+  assert.match(dialog.textContent, /下载移动端 App/)
+  await click(dialog, '我已安装，继续')
+  await until(() => dialog.textContent.includes('确认这次手机连接'))
+  assert.equal(container.querySelector('[data-slide="complete"]'), null)
+  await click(dialog, '确认连接')
   assert.equal(confirmation.mock.calls[0].arguments[2], true)
-  await click(container, '完成')
-  assert.match(container.textContent, /设置完成/)
-  assert.equal(container.querySelector('[role="dialog"]'), null)
+  await click(dialog, '完成')
+  assert.ok(container.querySelector('[data-slide="complete"]'))
+  assert.equal(document.querySelector('[role="dialog"]'), null)
+})
+
+test('welcome skip preserves the reference flow without creating an Agent or a phone login', async (t) => {
+  const { create } = mockDevice(t)
+  const qr = t.mock.method(authApi, 'createMobileLoginQr', async () => { throw new Error('must not run') })
+  const container = await render(t, h(PluginOnboardingPage))
+  await until(() => container.querySelector('[data-slide="welcome"]'))
+  await click(container, '跳过引导')
+  assert.ok(container.querySelector('[data-slide="complete"]'))
+  assert.equal(create.mock.callCount(), 0)
+  assert.equal(qr.mock.callCount(), 0)
+  assert.equal(window.sessionStorage.getItem('agents-anywhere.onboarding:user1:conn_demo:abcdefghijklmnop'), 'complete')
 })
 
 test('an unauthorized target never triggers Agent discovery', async (t) => {

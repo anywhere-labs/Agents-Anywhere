@@ -41,8 +41,15 @@ test('onboarding restores per account, device and flow; a new plugin launch star
   const store = storage()
   saveOnboardingStep(target, 'user1', 'complete', store)
   assert.equal(restoreOnboardingStep(target, 'user1', store), 'complete')
-  assert.equal(restoreOnboardingStep(target, 'user2', store), 'agents')
-  assert.equal(restoreOnboardingStep({ ...target, flowId: 'new-flow-id-1234567' }, 'user1', store), 'agents')
+  assert.equal(restoreOnboardingStep(target, 'user2', store), 'welcome')
+  assert.equal(restoreOnboardingStep({ ...target, flowId: 'new-flow-id-1234567' }, 'user1', store), 'welcome')
   params.set('connectorId', '../another-device')
   assert.equal(readOnboardingTarget(params), null)
+})
+
+test('the four-page onboarding resumes both current and previously saved steps', () => {
+  const target = { connectorId: 'conn_demo', flowId: 'abcdefghijklmnop' }
+  for (const [saved, expected] of [['welcome', 'welcome'], ['device', 'device'], ['phone', 'phone'], ['agents', 'device'], ['mobile-choice', 'phone'], ['mobile', 'phone'], ['unknown', 'welcome']]) {
+    assert.equal(restoreOnboardingStep(target, 'user1', { getItem: () => saved }), expected)
+  }
 })
