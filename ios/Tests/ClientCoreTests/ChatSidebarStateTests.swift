@@ -2,6 +2,14 @@ import Testing
 @testable import ClientCore
 
 @Suite struct ChatSidebarStateTests {
+    @Test func systemSizeClassDeterminesIPadSidebarAvailability() {
+        #expect(ChatSidebarState.Layout.resolve(isPad: true, hasRegularWidth: true) == .regularSplit)
+        #expect(ChatSidebarState.Layout.resolve(isPad: true, hasRegularWidth: false) == .drawer)
+        for hasRegularWidth in [true, false] {
+            #expect(ChatSidebarState.Layout.resolve(isPad: false, hasRegularWidth: hasRegularWidth) == .drawer)
+        }
+    }
+
     @Test func regularSplitStartsOpenAndNavigationKeepsBothColumnsVisible() {
         var sidebar = ChatSidebarState()
         sidebar.setLayout(.regularSplit)
@@ -13,7 +21,8 @@ import Testing
     }
 
     @Test func phoneAndCompactIPadDismissTheOverlayAfterSelection() {
-        for layout in [ChatSidebarState.Layout.drawer, .compactSplit] {
+        for isPad in [false, true] {
+            let layout = ChatSidebarState.Layout.resolve(isPad: isPad, hasRegularWidth: false)
             var sidebar = ChatSidebarState()
             sidebar.setLayout(layout)
             sidebar.isOpen = true
@@ -30,13 +39,26 @@ import Testing
         sidebar.setLayout(.regularSplit)
         sidebar.selectDestination()
         #expect(!sidebar.isOpen && !sidebar.obscuresDetail)
-        sidebar.setLayout(.compactSplit)
+        sidebar.setLayout(.drawer)
         sidebar.isOpen = true
         #expect(sidebar.obscuresDetail)
         sidebar.setLayout(.regularSplit)
         #expect(sidebar.isOpen && !sidebar.obscuresDetail)
-        sidebar.setLayout(.compactSplit)
+        sidebar.setLayout(.drawer)
         #expect(!sidebar.isOpen)
+    }
+
+    @Test func resizedHostGetsItsOpenStateBeforeTheLayoutChangeIsCommitted() {
+        var sidebar = ChatSidebarState()
+        sidebar.setLayout(.regularSplit)
+        #expect(!sidebar.isOpen(in: .drawer))
+        sidebar.setLayout(.drawer)
+        #expect(!sidebar.isOpen)
+        #expect(sidebar.isOpen(in: .regularSplit))
+        sidebar.setLayout(.regularSplit)
+        #expect(sidebar.isOpen)
+        sidebar.isOpen = false
+        #expect(!sidebar.isOpen(in: .regularSplit))
     }
 
     @Test func openPhoneDrawerDisablesTheUntranslatedPageAndEnablesSidebarActions() {

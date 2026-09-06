@@ -160,9 +160,8 @@ struct ChatSidebarListMenu<Filters: View>: View {
 struct ChatSidebarHeaderView: View {
     var body: some View {
         AAWordmark(fontSize: 24)
-            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-            .padding(.horizontal, 18)
-            .padding(.vertical, 10)
+            .foregroundStyle(.primary)
+            .accessibilityAddTraits(.isHeader)
     }
 }
 

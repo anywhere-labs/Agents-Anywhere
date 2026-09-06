@@ -13,37 +13,15 @@ struct ChatShellView: View {
     }
 
     var body: some View {
-        SidebarDrawer(
-            isOpen: $sidebar.isOpen,
-            configuration: .chat
-        ) { _ in
-            ChatSidebarHeaderView()
-        } sidebar: { safeAreaInsets in
-            ChatSidebarView(
-                safeAreaInsets: safeAreaInsets,
-                devices: sidebarDevices,
-                pinnedSessions: sidebarSessions.filter(\.pinned),
-                recentSessions: sidebarSessions.filter { !$0.pinned },
-                repository: appState.nativeChatServices?.dashboardRepository,
-                onNewProjectSession: startProjectSession,
-                onRestoreSession: { await appState.setSessionArchived(sessionId: $0, archived: false) },
-                account: sidebarAccount,
-                selectedDeviceId: selectedDeviceId,
-                selectedSessionId: selectedSessionId,
-                isLoadingDevices: appState.isDashboardLoading && !appState.hasLoadedConnectors,
-                isLoadingSessions: appState.isDashboardLoading && !appState.hasLoadedSessions,
-                onNewSession: startNewSession,
-                onOpenDevice: openDevice,
-                onOpenSession: openSession,
-                onRenameSession: renameSession,
-                onToggleSessionPinned: setSessionPinned,
-                onArchiveSession: archiveSession,
-                onCopyDeviceId: copyDeviceId,
-                onCopySessionId: copySessionId
-            )
-        } content: { safeAreaInsets in
-            mainContent.modifier(ChatDetailNavigation(insets: safeAreaInsets))
-        }
+        // NavigationSplitView adapts to a single stack in a compact system size
+        // class. Use that same system trait for the drawer fallback, never a
+        // device-screen measurement or a custom window-width breakpoint.
+        let layout = ChatSidebarState.Layout.resolve(
+            isPad: UIDevice.current.userInterfaceIdiom == .pad,
+            hasRegularWidth: horizontalSizeClass == .regular
+        )
+        sidebarLayout(layout)
+        .onChange(of: layout, initial: true) { _, next in sidebar.setLayout(next) }
         .alert(String(localized: "Could not update session"), isPresented: sessionActionErrorBinding) {
             Button(String(localized: "OK"), role: .cancel) {
                 appState.dismissSessionActionError()
@@ -62,7 +40,6 @@ struct ChatShellView: View {
         .onChange(of: visibleSessionID, initial: true) { _, id in
             appState.setVisibleSession(id)
         }
-        .onChange(of: sidebarLayout, initial: true) { _, layout in sidebar.setLayout(layout) }
         .onDisappear { appState.setVisibleSession(nil) }
     }
 
@@ -98,9 +75,46 @@ struct ChatShellView: View {
         scenePhase == .active && !sidebar.obscuresDetail ? selectedSessionId : nil
     }
 
-    private var sidebarLayout: ChatSidebarState.Layout {
-        guard UIDevice.current.userInterfaceIdiom == .pad else { return .drawer }
-        return horizontalSizeClass == .compact ? .compactSplit : .regularSplit
+    private func sidebarLayout(_ layout: ChatSidebarState.Layout) -> some View {
+        SidebarDrawer(
+            isOpen: sidebarBinding(for: layout),
+            presentation: layout == .regularSplit ? .nativeSidebar : .drawer,
+            configuration: .chat
+        ) { _ in
+            ChatSidebarHeaderView()
+        } sidebar: { safeAreaInsets in
+            ChatSidebarView(
+                safeAreaInsets: safeAreaInsets,
+                devices: sidebarDevices,
+                pinnedSessions: sidebarSessions.filter(\.pinned),
+                recentSessions: sidebarSessions.filter { !$0.pinned },
+                repository: appState.nativeChatServices?.dashboardRepository,
+                onNewProjectSession: startProjectSession,
+                onRestoreSession: { await appState.setSessionArchived(sessionId: $0, archived: false) },
+                account: sidebarAccount,
+                selectedDeviceId: selectedDeviceId,
+                selectedSessionId: selectedSessionId,
+                isLoadingDevices: appState.isDashboardLoading && !appState.hasLoadedConnectors,
+                isLoadingSessions: appState.isDashboardLoading && !appState.hasLoadedSessions,
+                onNewSession: startNewSession,
+                onOpenDevice: openDevice,
+                onOpenSession: openSession,
+                onRenameSession: renameSession,
+                onToggleSessionPinned: setSessionPinned,
+                onArchiveSession: archiveSession,
+                onCopyDeviceId: copyDeviceId,
+                onCopySessionId: copySessionId
+            )
+        } content: { safeAreaInsets in
+            mainContent.modifier(ChatDetailNavigation(insets: safeAreaInsets))
+        }
+    }
+
+    private func sidebarBinding(for layout: ChatSidebarState.Layout) -> Binding<Bool> {
+        Binding(get: { sidebar.isOpen(in: layout) }, set: { isOpen in
+            sidebar.setLayout(layout)
+            sidebar.isOpen = isOpen
+        })
     }
 
     private var selectedDeviceId: V2ConnectorID? {
