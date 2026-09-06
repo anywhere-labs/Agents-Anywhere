@@ -1,0 +1,10 @@
+node_modules/
+lib/
+.yarn/
+.pnp.*
+coverage/
+*.tsbuildinfo
+*.tgz
+.env
+.env.*
+!.env.example
