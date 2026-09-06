@@ -368,6 +368,7 @@ export function FilesPanelBody({
   )
 
   const openEntry = async (entry: FsEntry) => {
+    if (variant === "tab" && entry.path === selectedFile?.path) return
     if (entry.path !== selectedFile?.path && dirtyRef.current && !await confirmDiscard()) return
     if (entry.type === "directory") {
       void loadDir(entry.path)

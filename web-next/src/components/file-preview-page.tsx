@@ -181,6 +181,8 @@ export function FilePreviewSurface({
   const tCommon = useTranslations("common")
   const tokenRef = React.useRef(token)
   tokenRef.current = token
+  const translationRef = React.useRef(t)
+  translationRef.current = t
   const routePath = initialPath
   const [previewSession, setPreviewSession] = React.useState<FsPreviewSessionResponse | null>(null)
   const [path, setPath] = React.useState(routePath)
@@ -215,6 +217,7 @@ export function FilePreviewSurface({
 
   const loadFile = React.useCallback(async () => {
     const token = tokenRef.current
+    const t = translationRef.current
     const requestId = ++loadRequestIdRef.current
     const requestIsCurrent = () => requestId === loadRequestIdRef.current
     revokeObjectUrl()
@@ -356,7 +359,6 @@ export function FilePreviewSurface({
     sourceMediaType,
     sourceSize,
     sourceUrl,
-    t,
   ])
 
   React.useEffect(() => {

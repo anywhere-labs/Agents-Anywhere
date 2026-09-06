@@ -12,5 +12,5 @@ export function FileTypeIcon({ name, className }: { name: string; className?: st
     : /^(csv|xlsx?)$/.test(extension) ? FileSpreadsheet
     : /^(ts|tsx|js|jsx|json|py|rs|go|java|c|cpp|h|css|html|vue|sh|yaml|yml|toml|swift)$/.test(extension) ? FileCode
     : /^(md|mdx|txt|log|pdf)$/.test(extension) ? FileText : File
-  return <Icon aria-hidden="true" className={cn("shrink-0 text-muted-foreground", className)} />
+  return <Icon aria-hidden="true" className={cn("aa-file-type-icon shrink-0 text-muted-foreground", className)} />
 }

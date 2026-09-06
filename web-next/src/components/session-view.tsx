@@ -119,7 +119,9 @@ export function SessionView() {
   }, [detailSessionId, toolSidebarStore])
 
   React.useLayoutEffect(() => {
-    if (!session) return
+    // A remounted page has no measured width on its first render. Keep the
+    // previous host bounds until measurement so mounted editors/terminals survive.
+    if (!session || viewBounds.width <= 0) return
     updateSessionToolSidebarHostBounds(toolSidebarStore, viewBounds)
   }, [session, toolSidebarStore, viewBounds])
 

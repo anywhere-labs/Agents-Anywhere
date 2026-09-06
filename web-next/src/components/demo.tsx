@@ -55,10 +55,10 @@ export function Demo() {
     <WorkspaceProvider>
       <AgentSetupProvider>
         <SessionToolSidebarStateProvider key={session?.userId ?? "signed-out"}>
-        <SidebarProvider>
-          <DashboardShell />
-          <SessionToolSidebarsHost />
-        </SidebarProvider>
+          <SidebarProvider>
+            <DashboardShell />
+            <SessionToolSidebarsHost />
+          </SidebarProvider>
         </SessionToolSidebarStateProvider>
       </AgentSetupProvider>
     </WorkspaceProvider>
