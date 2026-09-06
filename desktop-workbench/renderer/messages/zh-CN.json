@@ -1201,7 +1201,11 @@
       "generic": "操作失败。",
       "oauth": "OAuth 登录失败。",
       "loginFailed": "登录失败。",
-      "registerFailed": "注册失败。"
+      "registerFailed": "注册失败。",
+      "invalidServer": "请输入有效的 HTTP 或 HTTPS 服务器地址，不要包含账号、密码或页面路径。",
+      "serverUnavailable": "无法连接服务器，请检查地址和网络后重试。",
+      "invalidHealth": "该地址未返回正常的 Agents Anywhere 服务，请检查后端地址。",
+      "serverTimeout": "连接服务器超时，请检查地址和网络后重试。"
     },
     "bootstrap": {
       "description": "全新安装。这里创建的账号会成为实例管理员。",
@@ -1238,7 +1242,15 @@
       "titlePrefix": "登录",
       "userPlaceholder": "输入用户名",
       "signingIn": "正在登录...",
-      "submitWithEnter": "登录 ↵"
+      "submitWithEnter": "登录 ↵",
+      "syncTitle": "登录以实现跨设备同步",
+      "syncDescription": "在所有设备间访问你的 Agent、会话和工作空间。",
+      "cloud": "登录 Agents Anywhere Cloud",
+      "selfHosted": "连接到你自己的 Agents Anywhere 服务实例",
+      "serverPlaceholder": "输入服务器地址，例如 https://your-server.com",
+      "connectServer": "连接服务器",
+      "connecting": "正在连接…",
+      "browserOpened": "已打开登录页面，完成登录后将自动返回。"
     },
     "signedOut": {
       "description": "你的本地登录凭据已经清除。可以安全关闭这个页面，或重新打开登录页面继续使用。",

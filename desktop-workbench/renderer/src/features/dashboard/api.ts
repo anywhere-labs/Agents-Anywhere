@@ -1,4 +1,5 @@
-import { ApiClient, apiClient, apiPath } from "@/lib/api";
+import { ApiClient, apiClient, apiWebSocketUrl } from "@/lib/api";
+import { desktopDownloadUrl } from "@/features/desktop/server-connection";
 import { shouldAuthorizeDownloadUrl } from "@/lib/api/download-auth";
 import type {
   AdminDashboardOverviewResponse,
@@ -430,19 +431,11 @@ export class DashboardApi {
   }
 
   sessionWebSocketUrl(sessionId: string, ticket: string): string {
-    const path = `${apiPath(`/sessions/${encodeURIComponent(sessionId)}/ws`)}?ticket=${encodeURIComponent(ticket)}`;
-    if (typeof window === "undefined") return path;
-    const url = new URL(path, window.location.origin);
-    url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-    return url.toString();
+    return apiWebSocketUrl(`/sessions/${encodeURIComponent(sessionId)}/ws?ticket=${encodeURIComponent(ticket)}`);
   }
 
   dashboardWebSocketUrl(ticket: string): string {
-    const path = `${apiPath("/dashboard/ws")}?ticket=${encodeURIComponent(ticket)}`;
-    if (typeof window === "undefined") return path;
-    const url = new URL(path, window.location.origin);
-    url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-    return url.toString();
+    return apiWebSocketUrl(`/dashboard/ws?ticket=${encodeURIComponent(ticket)}`);
   }
 
   connectorFsList(
@@ -535,6 +528,7 @@ export class DashboardApi {
   }
 
   async downloadBlob(token: string | null, url: string): Promise<Blob> {
+    url = desktopDownloadUrl(url);
     const headers: HeadersInit = {};
     if (token && shouldAuthorizeDownloadUrl(url)) headers.authorization = `Bearer ${token}`;
     const response = await fetch(url, {

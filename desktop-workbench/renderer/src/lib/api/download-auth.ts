@@ -1,7 +1,9 @@
+import { DESKTOP_API_PROXY_ORIGIN, getDesktopServerConnection } from "../../features/desktop/server-connection.ts"
+
 export function shouldAuthorizeDownloadUrl(
   rawUrl: string,
   browserOrigin = typeof window === "undefined" ? "" : window.location.origin,
-  apiBase = process.env.NEXT_PUBLIC_AGENTS_ANYWHERE_API ?? "",
+  apiBase = getDesktopServerConnection()?.serverUrl ?? process.env.NEXT_PUBLIC_AGENTS_ANYWHERE_API ?? "",
 ) {
   const url = rawUrl.trim()
   if (!url) return false
@@ -12,6 +14,10 @@ export function shouldAuthorizeDownloadUrl(
     target = new URL(url, fallbackOrigin)
   } catch {
     return false
+  }
+  if (target.protocol === "aa-workbench:") {
+    return Boolean(getDesktopServerConnection()) && target.host === "web" &&
+      !target.username && !target.password && url.startsWith(`${DESKTOP_API_PROXY_ORIGIN}/`)
   }
   if (target.protocol !== "http:" && target.protocol !== "https:") return false
 
