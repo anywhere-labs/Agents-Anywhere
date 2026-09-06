@@ -250,11 +250,49 @@ test('an existing local account without settings survives the new cloud default'
   await writeJson(join(root, 'account.json'), account)
   const manager = new OnboardingManager({
     stateRoot: root, connectorSourceDir: root, uvPath: 'uv', autoStart: false, apiBaseUrl: CLOUD_API_BASE_URL,
-  }, { connector: new FakeConnector(), detect: async () => ({ status: 'absent', message: 'not registered' }) })
+  }, { api: () => api, connector: new FakeConnector(), detect: async () => ({ status: 'absent', message: 'not registered' }) })
   try {
     const snapshot = await manager.inspect()
     assert.equal(snapshot.account?.userId, account.userId)
     assert.deepEqual(snapshot.settings, { apiBaseUrl: 'http://127.0.0.1:8000' })
     assert.deepEqual(await readJson(join(root, 'settings.json')), snapshot.settings)
   } finally { await manager.dispose(); await rm(root, { recursive: true, force: true }) }
+})
+
+test('signed-in snapshots expose a direct Web destination and live Connector process state without credentials', async () => {
+  const h = await fixture()
+  h.api.online = true
+  try {
+    await callback((await h.manager.begin()).url)
+    await until(async () => (await h.manager.inspect()).stage === 'ready')
+    let snapshot = await h.manager.inspect()
+    assert.equal(snapshot.webAppUrl, 'https://api.example.test/#/')
+    assert.equal(snapshot.connectorRunning, true)
+    h.connector.running = false
+    snapshot = await h.manager.inspect()
+    assert.equal(snapshot.connectorRunning, false, 'A completed flow must not make a dead Connector look running')
+    assert.doesNotMatch(JSON.stringify(snapshot), /USER-SECRET|CONNECTOR-SECRET|accessToken|connectorToken/)
+    assert.doesNotMatch(snapshot.webAppUrl, /oauth|onboarding|code=|state=/)
+  } finally { await h.close() }
+})
+
+test('saved accounts get profile details in the background, and late results cannot undo logout', async () => {
+  const h = await fixture()
+  let complete!: (profile: { userId: string; displayName: string; email: string; avatar: null }) => void
+  h.api.me = () => new Promise(resolve => { complete = resolve })
+  try {
+    await writeJson(join(h.root, 'account.json'), await h.api.exchange())
+    const snapshot = await h.manager.inspect()
+    assert.equal(snapshot.account?.userId, 'user-test', 'Panel inspection must not wait for the profile request')
+    complete({ userId: 'user-test', displayName: 'BensonWang', email: 'benson@example.test', avatar: null })
+    await until(async () => (await h.manager.inspect()).account?.email === 'benson@example.test')
+    assert.equal((await h.manager.inspect()).account?.displayName, 'BensonWang')
+
+    await h.reopen()
+    await h.manager.inspect()
+    await h.manager.logout()
+    complete({ userId: 'user-test', displayName: 'Stale', email: 'stale@example.test', avatar: null })
+    await h.manager.dispose()
+    assert.equal(await readJson(join(h.root, 'account.json')), null)
+  } finally { await h.close() }
 })

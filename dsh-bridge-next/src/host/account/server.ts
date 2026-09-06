@@ -1,5 +1,7 @@
 const API_NAMESPACE = '/api/v2'
 
+export { resolveOAuthWebOrigin } from '../../contracts/web-address.js'
+
 /** Match Desktop's origin-only server input, including bare hosts and /api/v2. */
 export function normalizeServerOrigin(value: string): string {
   try {
@@ -13,13 +15,6 @@ export function normalizeServerOrigin(value: string): string {
   } catch {
     throw new Error('请输入有效的 HTTP 或 HTTPS 服务器地址，不要包含账号、密码或页面路径。')
   }
-}
-
-/** Web is served from the backend origin; local development follows Desktop's port convention. */
-export function resolveOAuthWebOrigin(apiBaseUrl: string): string {
-  const url = new URL(normalizeServerOrigin(apiBaseUrl))
-  if (['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname) && url.port === '8000') url.port = '5174'
-  return url.origin
 }
 
 /** Check the selected backend before replacing any active account or connection. */

@@ -44,7 +44,7 @@ export async function checkClient(source: string, packageId: string): Promise<vo
           return null
         },
       },
-      document, setTimeout, clearTimeout, Error,
+      document, setTimeout, clearTimeout, Error, URL,
     }, { timeout: 1_000 })
     assert.equal(registrations.length, 1)
     const registration = registrations[0]!
@@ -69,11 +69,14 @@ export async function checkClient(source: string, packageId: string): Promise<vo
     let snapshot: OnboardingSnapshot = {
       desktop: { status: 'absent', message: '未找到 Desktop 安装记录。' },
       settings: { apiBaseUrl: 'http://127.0.0.1:8000' },
+      webAppUrl: 'http://127.0.0.1:5174/#/',
       stage: 'idle', message: '登录后连接这台电脑。', account: null,
       connectorId: null, connectorRunning: false, flowId: null,
     }
     const calls: { endpoint: string; payload: unknown }[] = []
     let failNextBegin = false
+    let failInspect = false
+    let failLogout = false
     type EntryProps = { host: OnboardingHostApi; wide: boolean }
     let entry: { Component: ComponentType<EntryProps>; props: { host: OnboardingHostApi } } | undefined
     let entryCount = 0
@@ -81,12 +84,17 @@ export async function checkClient(source: string, packageId: string): Promise<vo
       connection: { rpc: { call: async (channel: string, endpoint: string, payload: unknown) => {
         assert.equal(channel, '/api')
         calls.push({ endpoint, payload })
+        if (endpoint.endsWith('/inspect') && failInspect) return { ok: false, error: { message: '读取状态失败。' } }
         if (endpoint.endsWith('/begin')) {
           if (failNextBegin) { failNextBegin = false; return { ok: false, error: { message: '无法连接服务器，请检查地址和网络后重试。' } } }
           snapshot = { ...snapshot, stage: 'authorizing' }
           return { ok: true, value: { url: 'https://example.com/onboarding' } }
         }
         if (endpoint.endsWith('/cancel')) snapshot = { ...snapshot, stage: 'idle' }
+        if (endpoint.endsWith('/logout')) {
+          if (failLogout) return { ok: false, error: { message: '退出失败，请重试。' } }
+          snapshot = { ...snapshot, account: null, stage: 'idle', connectorRunning: false, connectorId: null, flowId: null }
+        }
         return { ok: true, value: snapshot }
       } } },
       effect(effect: () => () => void) { disposers.push(effect()) },
@@ -114,7 +122,7 @@ export async function checkClient(source: string, packageId: string): Promise<vo
       assert.ok(element, `Missing button: ${text}`)
       return element
     }
-    const dialog = () => document.querySelector<HTMLElement>('[role="dialog"][aria-label="登录到 Agents Anywhere"]')
+    const dialog = () => document.querySelector<HTMLElement>('[role="dialog"]')
     const trigger = button('手机连接')
     assert.equal(trigger.textContent, '手机连接')
     assert.ok(trigger.querySelector('svg.lucide-smartphone'))
@@ -122,6 +130,7 @@ export async function checkClient(source: string, packageId: string): Promise<vo
     assert.equal(calls.length, 0, 'A closed connection panel must not poll the Host')
     await act(async () => { trigger.click() })
     assert.ok(dialog())
+    assert.equal(dialog()!.getAttribute('aria-label'), '登录到 Agents Anywhere')
     assert.equal(container.contains(dialog()), false, 'Official Modal must portal outside the sidebar')
     assert.equal(container.hasAttribute('inert'), true)
     assert.equal(trigger.getAttribute('aria-expanded'), 'true')
@@ -197,6 +206,72 @@ export async function checkClient(source: string, packageId: string): Promise<vo
     assert.equal(dialog(), null, 'Mask click must close the dialog')
     assert.equal(container.hasAttribute('inert'), false)
     await act(async () => { trigger.click() })
+
+    const avatar = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jL1sAAAAASUVORK5CYII='
+    snapshot = {
+      ...snapshot, stage: 'ready', connectorRunning: true, connectorId: 'conn_test',
+      account: { userId: 'user-test', displayName: 'BensonWang', email: 'benson@example.test', avatar },
+    }
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 1_600)) })
+    assert.equal(dialog()!.getAttribute('aria-label'), '已登录', 'Login completion replaces the entire form without reopening the panel')
+    assert.equal(dialog()!.querySelector('input'), null)
+    assert.match(dialog()!.textContent!, /BensonWang/)
+    assert.match(dialog()!.textContent!, /benson@example.test/)
+    assert.match(dialog()!.textContent!, /Connector运行中/)
+    assert.equal(dialog()!.querySelector('[data-state]')?.getAttribute('data-state'), 'done')
+    assert.doesNotMatch(dialog()!.textContent!, /连接手机|继续设置|连接服务器|浏览器没有打开|登录 Agents Anywhere Cloud|OR/)
+    assert.deepEqual(Array.from(dialog()!.querySelectorAll('button')).map(element => element.textContent).filter(Boolean), ['打开 Web', '退出登录'])
+    const avatarImage = dialog()!.querySelector('img')!
+    assert.equal(avatarImage.getAttribute('src'), avatar)
+    await act(async () => { avatarImage.dispatchEvent(new dom.window.Event('error')) })
+    assert.equal(dialog()!.querySelector('img'), null, 'Broken avatars fall back to the official user icon')
+    assert.ok(dialog()!.querySelector('[aria-label="账号信息"] svg'))
+
+    const beginsBeforeOpeningWeb = calls.filter(call => call.endpoint.endsWith('/begin')).length
+    await act(async () => { button('打开 Web').click() })
+    assert.equal(openedUrls.at(-1)?.url, snapshot.webAppUrl)
+    assert.equal(calls.filter(call => call.endpoint.endsWith('/begin')).length, beginsBeforeOpeningWeb, 'Opening Web must not restart OAuth or pairing')
+
+    // An older Host lacks webAppUrl while the linked Client has already hot-reloaded.
+    const { webAppUrl: _webAppUrl, ...legacySnapshot } = snapshot
+    snapshot = legacySnapshot as OnboardingSnapshot
+    await act(async () => { button('关闭手机连接').click() })
+    await act(async () => { trigger.click() })
+    assert.equal(button('打开 Web').disabled, false)
+    await act(async () => { button('打开 Web').click() })
+    assert.equal(openedUrls.at(-1)?.url, 'http://127.0.0.1:5174/#/')
+    snapshot = { ...snapshot, webAppUrl: _webAppUrl }
+
+    const reopen = async () => {
+      await act(async () => { button('关闭手机连接').click() })
+      await act(async () => { trigger.click() })
+    }
+    snapshot = { ...snapshot, connectorRunning: false }
+    await reopen()
+    assert.match(dialog()!.textContent!, /Connector未运行/)
+    assert.equal(dialog()!.querySelector('[data-state]')?.getAttribute('data-state'), 'warning')
+    snapshot = { ...snapshot, stage: 'starting', message: '正在准备运行环境…' }
+    await reopen()
+    assert.match(dialog()!.textContent!, /Connector正在启动/)
+    snapshot = { ...snapshot, stage: 'error', message: 'Connector 意外退出。' }
+    await reopen()
+    assert.match(dialog()!.textContent!, /Connector运行异常/)
+    assert.equal(dialog()!.querySelector('[data-state]')?.getAttribute('data-state'), 'error')
+    failInspect = true
+    await reopen()
+    assert.match(dialog()!.textContent!, /状态暂不可用/)
+    failInspect = false
+    await reopen()
+
+    failLogout = true
+    await act(async () => { button('退出登录').click() })
+    assert.equal(dialog()!.getAttribute('aria-label'), '已登录')
+    assert.match(dialog()!.querySelector('[role="alert"]')!.textContent!, /退出失败/)
+    failLogout = false
+    await act(async () => { button('退出登录').click() })
+    assert.equal(dialog()!.getAttribute('aria-label'), '登录到 Agents Anywhere')
+    assert.equal(button('登录 Agents Anywhere Cloud').disabled, false)
+    assert.doesNotMatch(dialog()!.textContent!, /BensonWang|benson@example.test|退出登录/)
 
     await act(async () => { unmount!(); unmount = undefined })
     for (const dispose of disposers.splice(0).reverse()) dispose()

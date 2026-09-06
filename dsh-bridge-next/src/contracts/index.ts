@@ -16,13 +16,21 @@ export interface ConnectionSettings {
 
 export type LoginRequest = { target: 'cloud' } | { target: 'server'; serverUrl: string }
 
+export interface AccountProfile {
+  userId: string
+  displayName: string
+  email?: string | null
+  avatar?: string | null
+}
+
 /** Public snapshots never contain account or Connector credentials. */
 export interface OnboardingSnapshot {
   desktop: DesktopDetection
   settings: ConnectionSettings
   stage: FlowStage
   message: string
-  account: { userId: string; displayName: string } | null
+  account: AccountProfile | null
+  webAppUrl: string
   connectorId: string | null
   connectorRunning: boolean
   flowId: string | null

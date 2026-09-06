@@ -2,7 +2,8 @@ import { rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { CLOUD_API_BASE_URL, type ConnectionSettings, type DesktopDetection, type FlowStage, type LoginRequest, type OnboardingSnapshot } from '../../contracts/index.js'
-import { AccountApi, ApiError, type Account } from '../account/api.js'
+import { resolveWebAppUrl } from '../../contracts/web-address.js'
+import { AccountApi, ApiError, publicProfile, type Account } from '../account/api.js'
 import { ensureBinding, type Binding } from '../account/binding.js'
 import { checkServer, normalizeServerOrigin, resolveOAuthWebOrigin } from '../account/server.js'
 import type { ResolvedConfig } from '../config.js'
@@ -31,6 +32,9 @@ export class OnboardingManager {
   private controller: AbortController | null = null
   private work: Promise<void> | null = null
   private beginning: { key: string; promise: Promise<{ url: string }> } | null = null
+  private profileRefresh: Promise<void> | null = null
+  private profileCheckedAt = 0
+  private readonly profileController = new AbortController()
   private releaseLock: (() => Promise<void>) | null = null
   private initialized: Promise<void> | null = null
   private disposed = false
@@ -88,7 +92,24 @@ export class OnboardingManager {
   async inspect(): Promise<OnboardingSnapshot> {
     await this.initialize()
     this.desktop = await this.detect()
+    this.refreshProfile()
     return this.snapshot()
+  }
+
+  private refreshProfile(): void {
+    const account = this.account
+    if (this.disposed || !account || this.profileRefresh || Date.now() - this.profileCheckedAt < 60_000) return
+    this.profileCheckedAt = Date.now()
+    // Keep the panel responsive when the server is offline. A profile response
+    // from an old login must never recreate an account after logout or switching.
+    this.profileRefresh = this.apiFactory(account.apiBaseUrl).me(account.accessToken, this.profileController.signal)
+      .then(user => this.serial(async () => {
+        if (this.disposed || this.account !== account || user.userId !== account.userId) return
+        this.account = { ...account, ...publicProfile(user) }
+        await writeJson(join(this.config.stateRoot, 'account.json'), this.account)
+      }))
+      .catch(() => undefined)
+      .finally(() => { this.profileRefresh = null })
   }
 
   begin(input?: LoginRequest): Promise<{ url: string }> {
@@ -129,6 +150,9 @@ export class OnboardingManager {
       try {
         const user = await this.apiFactory(this.settings.apiBaseUrl).me(this.account.accessToken, controller.signal)
         if (user.userId !== this.account.userId) throw new Error('账号发生变化，请重新登录。')
+        this.account = { ...this.account, ...publicProfile(user) }
+        this.profileCheckedAt = Date.now()
+        await writeJson(join(this.config.stateRoot, 'account.json'), this.account)
         this.launch(flow, controller)
         return { url: flow.progressUrl }
       } catch (error) {
@@ -155,6 +179,7 @@ export class OnboardingManager {
       signal.throwIfAborted()
       if (this.account?.userId !== account.userId) await this.connector.stop()
       this.account = account
+      this.profileCheckedAt = Date.now()
       await writeJson(join(this.config.stateRoot, 'account.json'), account)
     }
     const account = this.account
@@ -211,6 +236,7 @@ export class OnboardingManager {
     await this.cancelFlow()
     await this.connector.stop()
     this.account = null
+    this.profileCheckedAt = 0
     this.binding = null
     await rm(join(this.config.stateRoot, 'account.json'), { force: true })
     this.setProgress('idle', '已退出登录，本机连接已停止。')
@@ -219,6 +245,8 @@ export class OnboardingManager {
   async dispose(): Promise<void> {
     this.disposed = true
     this.controller?.abort()
+    this.profileController.abort()
+    await this.profileRefresh
     await this.serial(async () => {
       await this.initialized?.catch(() => undefined)
       try { await this.cancelFlow(); await this.connector.stop() } finally { await this.releaseLock?.(); this.releaseLock = null }
@@ -228,6 +256,7 @@ export class OnboardingManager {
   private loseOwnership(): void {
     this.disposed = true
     this.controller?.abort()
+    this.profileController.abort()
     this.releaseLock = null
     const report = () => this.setProgress('error', '本机管理锁已失效，连接已停止。请重新加载插件。')
     void this.serial(async () => {
@@ -254,7 +283,8 @@ export class OnboardingManager {
   private snapshot(): OnboardingSnapshot {
     return {
       desktop: this.desktop, settings: { ...this.settings }, stage: this.stage, message: this.message,
-      account: this.account ? { userId: this.account.userId, displayName: this.account.displayName } : null,
+      account: this.account ? publicProfile(this.account) : null,
+      webAppUrl: resolveWebAppUrl(this.settings.apiBaseUrl),
       connectorId: this.binding?.connectorId ?? null, connectorRunning: this.connector.running, flowId: this.flow?.id ?? null,
     }
   }

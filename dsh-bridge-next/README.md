@@ -87,11 +87,15 @@ corepack yarn dev
 
 登录弹窗沿用 Desktop 的中文登录文案和简洁纵向布局。初始视图显示标题「登录到 Agents Anywhere」、说明、云端登录按钮和自建服务入口；展开后显示 OR 分隔、带服务器图标的单个地址输入框和「连接服务器」按钮。账号状态、连接进度和错误只在需要时显示。
 
+登录成功后，整个弹窗切换为紧凑的「已登录」面板：账号头像、昵称、邮箱（有设置时）、当前服务器，Connector 运行状态，以及「打开 Web」「退出登录」两个按钮。头像来自账号接口；未设置或图片加载失败时显示 DSH 官方用户图标。旧账号的头像、邮箱会在打开面板时后台补全，读取失败时保留已有资料。
+
+Connector 状态使用当前进程存活状态和启动阶段，显示运行中、正在启动、未运行或运行异常；无法读取 Host 时显示状态暂不可用。「打开 Web」直接进入当前服务器的 Web 应用，不重复发起 OAuth 或设备配对。「退出登录」停止本机连接并切回登录表单；失败时保留账号面板并显示错误。
+
 入口与弹窗布局位于 `src/client/features/onboarding/entry.module.css`，连接内容布局位于同目录的 `section.module.css`，使用 CSS Modules 和官方 `--dsw-alias-*` / `--dsw-font-*` 主题变量。页面跟随 DSH 的明暗主题，不声明全局主题或固定颜色。
 
 外部插件无法直接使用官方仓库未发布的构建 helper，因此 `scripts/client-css.ts` 按其输出契约处理 CSS：监听源文件、生成局部类名，在 Client factory 执行时注入带 `data-plugin` / `data-plugin-css` 的样式，供 DSH HMR 清理和重新加载。实现参考官方 `docs/web-styling.zh.md` 与 `packages/client/tsdown.client.ts`。
 
-`check:build` 在 headless DOM 中加载真实官方组件，验证侧边栏展开/收起、弹窗打开/关闭/焦点恢复、云端与自建服务登录、单地址输入校验、取消，以及卸载时弹窗与入口清理；同时检查样式去重及 HMR 清理后的重新注入。Node 中的 CSS loader 仅用于验证，不进入插件产物。
+`check:build` 在 headless DOM 中加载真实官方组件，验证侧边栏展开/收起、弹窗打开/关闭/焦点恢复、云端与自建服务登录、单地址输入校验、取消、登录后面板切换、头像回退、Connector 状态、打开 Web 和退出登录，以及卸载时弹窗与入口清理；同时检查样式去重及 HMR 清理后的重新注入。Node 中的 CSS loader 仅用于验证，不进入插件产物。
 
 ## 配置与本地状态
 

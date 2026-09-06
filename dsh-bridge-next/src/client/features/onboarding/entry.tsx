@@ -4,6 +4,8 @@ import { Smartphone } from 'lucide-react'
 import clsx from 'clsx'
 import type { OnboardingHostApi } from '../../../contracts/index.js'
 import { OnboardingSection } from './section.js'
+import { AccountPanel } from './account-panel.js'
+import { useOnboardingState } from './state.js'
 import css from './entry.module.css'
 
 export interface ConnectionEntryProps {
@@ -13,6 +15,8 @@ export interface ConnectionEntryProps {
 
 export function ConnectionEntry({ wide, host }: ConnectionEntryProps) {
   const [open, setOpen] = useState(false)
+  const state = useOnboardingState(host, open)
+  const snapshot = state.snapshot
   const trigger = useRef<HTMLButtonElement | null>(null)
   const content = useRef<HTMLDivElement | null>(null)
   const close = useCallback(() => setOpen(false), [])
@@ -71,14 +75,15 @@ export function ConnectionEntry({ wide, host }: ConnectionEntryProps) {
     <Modal
       open={open}
       onClose={close}
-      title="登录到 Agents Anywhere"
+      title={snapshot?.account ? '已登录' : '登录到 Agents Anywhere'}
       closeLabel="关闭手机连接"
-      description="在所有设备间访问你的 Agent、会话和工作空间。"
-      className={clsx(css.dialog)}
+      {...(!snapshot?.account ? { description: '在所有设备间访问你的 Agent、会话和工作空间。' } : {})}
+      className={clsx(css.dialog, snapshot?.account && css.accountDialog)}
       contentClassName={clsx(css.dialogContent)}
     >
       <div ref={content}>
-        <OnboardingSection host={host} />
+        {snapshot?.account ? <AccountPanel key={`${snapshot.settings.apiBaseUrl}:${snapshot.account.userId}`} host={host} state={state} snapshot={snapshot} account={snapshot.account} />
+          : <OnboardingSection host={host} state={state} />}
       </div>
     </Modal>
   </>

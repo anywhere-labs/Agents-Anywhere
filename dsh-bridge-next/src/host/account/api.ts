@@ -1,11 +1,20 @@
-import { OAUTH_CLIENT_ID } from '../../contracts/index.js'
+import { OAUTH_CLIENT_ID, type AccountProfile } from '../../contracts/index.js'
 
-export interface Account {
+export interface Account extends AccountProfile {
   apiBaseUrl: string
-  userId: string
-  displayName: string
   accessToken: string
   expiresAt: number
+}
+
+/** Only display fields cross the public RPC boundary; avatars follow the server's data-image contract. */
+export function publicProfile(user: AccountProfile): AccountProfile {
+  return {
+    userId: user.userId,
+    displayName: user.displayName?.trim() || user.userId,
+    email: typeof user.email === 'string' ? user.email : null,
+    avatar: typeof user.avatar === 'string' && user.avatar.length <= 256 * 1024
+      && /^data:image\/(png|jpeg|jpg|webp|gif);base64,[A-Za-z0-9+/=]+$/.test(user.avatar) ? user.avatar : null,
+  }
 }
 
 export interface Device {
@@ -42,13 +51,13 @@ export class AccountApi {
     }, signal)
     if (!token.access_token || !Number.isFinite(token.expires_in)) throw new Error('授权服务没有返回有效凭据。')
     const user = await this.me(token.access_token, signal)
-    return { apiBaseUrl: this.baseUrl, userId: user.userId, displayName: user.displayName ?? user.userId, accessToken: token.access_token, expiresAt: Date.now() + token.expires_in * 1000 }
+    return { ...user, apiBaseUrl: this.baseUrl, accessToken: token.access_token, expiresAt: Date.now() + token.expires_in * 1000 }
   }
 
-  async me(token: string, signal?: AbortSignal): Promise<{ userId: string; displayName?: string }> {
-    const user = await this.request<{ userId: string; displayName?: string }>('/auth/me', { headers: this.auth(token) }, signal)
+  async me(token: string, signal?: AbortSignal): Promise<AccountProfile> {
+    const user = await this.request<AccountProfile>('/auth/me', { headers: this.auth(token) }, signal)
     if (!user.userId) throw new Error('无法确认当前账号。')
-    return user
+    return publicProfile(user)
   }
 
   async device(token: string, id: string, signal?: AbortSignal): Promise<Device> {

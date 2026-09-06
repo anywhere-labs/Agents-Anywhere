@@ -38,6 +38,8 @@
   max-height: calc(100dvh - 48px);
 }
 
+.accountDialog { width: min(480px, 100%); }
+
 .dialogContent {
   box-sizing: border-box;
   min-height: 0;
