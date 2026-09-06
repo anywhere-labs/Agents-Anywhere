@@ -15,12 +15,12 @@ struct ChatMessageAttachments: View {
                 } else {
                     Button { onOpen(file.content) } label: {
                         HStack(spacing: 12) {
-                            Image(systemName: "doc.text").font(.title2).frame(width: 30)
+                            AppSymbol(AppFileSymbol.name(for: file.content.name ?? ""), size: 24).frame(width: 30)
                             VStack(alignment: .leading, spacing: 3) {
-                                Text(file.content.name ?? "附件").font(.subheadline.weight(.medium)).lineLimit(2)
+                                Text(file.content.name ?? String(localized: "附件")).font(.subheadline.weight(.medium)).lineLimit(2)
                                 Text(description(file.content)).font(.caption).foregroundStyle(.secondary)
                             }.frame(maxWidth: .infinity, alignment: .leading)
-                            Image(systemName: "arrow.up.right").font(.caption).foregroundStyle(.secondary)
+                            AppSymbol("arrow.up.right", size: 14).foregroundStyle(.secondary)
                         }.padding(12).frame(maxWidth: 320, alignment: .leading)
                             .background(.quaternary.opacity(0.6), in: .rect(cornerRadius: 16))
                             .contentShape(.rect(cornerRadius: 16))
@@ -31,7 +31,7 @@ struct ChatMessageAttachments: View {
     }
     private func description(_ file: V2AttachmentContent) -> String {
         let ext = ((file.name ?? "") as NSString).pathExtension.uppercased()
-        return [ext.isEmpty ? "文件" : ext, file.size.map { ByteCountFormatter.string(fromByteCount: Int64($0), countStyle: .file) }]
+        return [ext.isEmpty ? String(localized: "文件") : ext, file.size.map { ByteCountFormatter.string(fromByteCount: Int64($0), countStyle: .file) }]
             .compactMap { $0 }.joined(separator: " · ")
     }
 }
@@ -55,7 +55,7 @@ private struct ChatMessageImage: View {
                 if let image {
                     Image(uiImage: image).resizable().scaledToFit()
                 } else if failed {
-                    Label("轻点重试预览", systemImage: "arrow.clockwise").font(.caption).foregroundStyle(.secondary)
+                    Label(String(localized: "轻点重试预览"), appSymbol: "arrow.clockwise").font(.caption).foregroundStyle(.secondary)
                 } else {
                     ProgressView().progressViewStyle(.circular)
                 }
@@ -66,7 +66,7 @@ private struct ChatMessageImage: View {
             .clipShape(.rect(cornerRadius: 16))
             .contentShape(.rect(cornerRadius: 16))
         }
-        .buttonStyle(.plain).accessibilityLabel(file.content.name ?? "图片附件")
+        .buttonStyle(.plain).accessibilityLabel(file.content.name ?? String(localized: "图片附件"))
         .onAppear { if image == nil, let data = file.previewData { image = UIImage(data: data) } }
         .onScrollVisibilityChange(threshold: 0.01) { visible = $0 }
         .task(id: Request(visible: visible, key: file.content.cacheKey, retry: retry)) {
@@ -92,11 +92,11 @@ struct ChatComposerAttachment: View {
                 ZStack {
                     RoundedRectangle(cornerRadius: 12).fill(.quaternary)
                     if let image { Image(uiImage: image).resizable().scaledToFill() }
-                    else { Image(systemName: "photo").foregroundStyle(.secondary) }
+                    else { AppSymbol("photo").foregroundStyle(.secondary) }
                 }.frame(width: 72, height: 72).clipShape(.rect(cornerRadius: 12))
             } else {
                 HStack(spacing: 8) {
-                    Image(systemName: "doc.text").font(.title3)
+                    AppSymbol(AppFileSymbol.name(for: attachment.name), size: 20)
                     VStack(alignment: .leading, spacing: 3) {
                         Text(attachment.name).font(.caption.weight(.medium)).lineLimit(2)
                         Text(ByteCountFormatter.string(fromByteCount: Int64(attachment.data.count), countStyle: .file))
@@ -108,10 +108,10 @@ struct ChatComposerAttachment: View {
         }
         .overlay(alignment: .topTrailing) {
             Button(action: onRemove) {
-                Image(systemName: "xmark.circle.fill").symbolRenderingMode(.palette)
+                AppSymbol("xmark.circle.fill").symbolRenderingMode(.palette)
                     .foregroundStyle(.white, .black.opacity(0.7)).font(.system(size: 19))
                     .frame(width: 44, height: 44).contentShape(Rectangle())
-            }.buttonStyle(.plain).offset(x: 9, y: -9).accessibilityLabel("移除 \(attachment.name)")
+            }.buttonStyle(.plain).offset(x: 9, y: -9).accessibilityLabel(String(localized: "移除 \(attachment.name)"))
         }
         .task(id: attachment.id) {
             if let data = attachment.previewData { image = UIImage(data: data) }

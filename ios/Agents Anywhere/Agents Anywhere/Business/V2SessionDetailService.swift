@@ -89,7 +89,7 @@ struct V2SessionDetailService {
         )
         guard response.ok else {
             throw V2RuntimeError(code: response.connectorResult?["error"]?["code"]?.stringValue,
-                message: response.connectorResult?["error"]?["message"]?.stringValue ?? "The runtime did not accept this selection.")
+                message: response.connectorResult?["error"]?["message"]?.stringValue ?? String(localized: "The runtime did not accept this selection."))
         }
         return response.state
     }

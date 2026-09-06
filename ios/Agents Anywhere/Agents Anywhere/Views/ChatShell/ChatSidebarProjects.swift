@@ -27,14 +27,14 @@ struct ChatSidebarProjects: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
-                Text("项目").font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
+                Text(String(localized: "项目")).font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
                 Spacer()
                 ChatSidebarListMenu(showsSessionList: $showsSessionList, onShowArchives: onShowArchives) {
-                    Picker("会话", selection: $filter) {
+                    Picker(String(localized: "会话"), selection: $filter) {
                         ForEach(V2DeviceSessionFilter.allCases) { Text($0.title).tag($0) }
                     }
                 }
-                Button("创建项目", systemImage: "folder.badge.plus") { createsProject = true }
+                Button(String(localized: "创建项目"), appSymbol: "folder.badge.plus") { createsProject = true }
                     .labelStyle(.iconOnly).frame(width: 44, height: 44).disabled(!repository.canWrite)
             }.padding(.horizontal, 10).padding(.top, 16)
             ForEach(ProjectSidebarPresentation.projects(repository.projects, filter: filter)) { project in
@@ -45,7 +45,7 @@ struct ChatSidebarProjects: View {
             }
             if repository.isLoading && repository.projects.isEmpty { ProgressView().padding(12) }
             if repository.hasLoaded && repository.projects.isEmpty {
-                Text("创建一个项目，开始新的任务。")
+                Text(String(localized: "创建一个项目，开始新的任务。"))
                     .font(.footnote).foregroundStyle(.secondary).padding(10)
             }
         }
@@ -53,10 +53,10 @@ struct ChatSidebarProjects: View {
             ProjectEditorSheet(repository: repository) { expanded.insert($0.id) }
         }
         .sheet(item: $editing) { ProjectEditorSheet(repository: repository, project: $0) }
-        .alert(action?.deletes == true ? "删除项目？" : "归档这个项目的会话？", isPresented: Binding(
+        .alert(action?.deletes == true ? String(localized: "删除项目？") : String(localized: "归档这个项目的会话？"), isPresented: Binding(
             get: { action != nil }, set: { if !$0 { action = nil } })) {
-            Button("取消", role: .cancel) { action = nil }
-            Button(action?.deletes == true ? "删除" : "归档", role: .destructive) {
+            Button(String(localized: "取消"), role: .cancel) { action = nil }
+            Button(action?.deletes == true ? String(localized: "删除") : String(localized: "归档"), role: .destructive) {
                 guard let pending = action else { return }
                 action = nil
                 perform(pending.project.id) {
@@ -65,10 +65,10 @@ struct ChatSidebarProjects: View {
                 }
             }
         } message: {
-            Text(action?.deletes == true ? "只有没有会话的项目可以删除，设备上的文件会保留。" : "当前活动会话将移到归档列表，可从归档中恢复。")
+            Text(action?.deletes == true ? String(localized: "只有没有会话的项目可以删除，设备上的文件会保留。") : String(localized: "当前活动会话将移到归档列表，可从归档中恢复。"))
         }
-        .alert("操作未完成", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
-            Button("好") { error = nil }
+        .alert(String(localized: "操作未完成"), isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
+            Button(String(localized: "好")) { error = nil }
         } message: { Text(error ?? "") }
     }
 
@@ -76,40 +76,40 @@ struct ChatSidebarProjects: View {
         HStack(spacing: 0) {
             Button { toggleProject(project.id) } label: {
                 HStack(spacing: 10) {
-                    Image(systemName: expanded.contains(project.id) ? "folder.fill" : "folder")
+                    AppSymbol(expanded.contains(project.id) ? "folder.fill" : "folder")
                     VStack(alignment: .leading, spacing: 3) {
                         Text(project.name).lineLimit(1)
-                        Text(repository.connectors.first { $0.id == project.connectorId }?.name ?? "设备不可用")
+                        Text(repository.connectors.first { $0.id == project.connectorId }?.name ?? String(localized: "设备不可用"))
                             .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
                     }
                     Spacer(minLength: 0)
                     if busy.contains(project.id) { ProgressView().controlSize(.mini) }
-                    else if project.pinned { Image(systemName: "pin.fill").font(.caption2) }
+                    else if project.pinned { AppSymbol("pin.fill", size: 12) }
                 }
                 .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading).contentShape(.rect)
             }
             Button { onNewSession(project.id) } label: {
-                Image(systemName: "plus").frame(width: 44, height: 48).contentShape(.rect)
+                AppSymbol("plus").frame(width: 44, height: 48).contentShape(.rect)
             }
-            .accessibilityLabel(Text("在 \(project.name) 中新建会话"))
+            .accessibilityLabel(Text(String(localized: "在 \(project.name) 中新建会话")))
             Button { toggleProject(project.id) } label: {
-                Image(systemName: "chevron.right").font(.caption2)
+                AppSymbol("chevron.right", size: 12)
                     .rotationEffect(.degrees(expanded.contains(project.id) ? 90 : 0))
                     .frame(width: 44, height: 48).contentShape(.rect)
             }
-            .accessibilityLabel(expanded.contains(project.id) ? "收起项目" : "展开项目")
+            .accessibilityLabel(expanded.contains(project.id) ? String(localized: "收起项目") : String(localized: "展开项目"))
         }
         .padding(.leading, 10).buttonStyle(.plain)
         .contextMenu {
-            Button("新建会话", systemImage: "square.and.pencil") { onNewSession(project.id) }
-            Button(project.pinned ? "取消置顶" : "置顶", systemImage: "pin") {
+            Button(String(localized: "新建会话"), appSymbol: "square.and.pencil") { onNewSession(project.id) }
+            Button(project.pinned ? String(localized: "取消置顶") : String(localized: "置顶"), appSymbol: "pin") {
                 perform(project.id) { try await repository.updateProject(project.id, pinned: !project.pinned) }
             }.disabled(!repository.canWrite || busy.contains(project.id))
-            Button("编辑项目", systemImage: "pencil") { editing = project }
+            Button(String(localized: "编辑项目"), appSymbol: "pencil") { editing = project }
                 .disabled(!repository.canWrite || busy.contains(project.id))
-            Button("归档项目会话", systemImage: "archivebox") { action = .init(project: project, deletes: false) }
+            Button(String(localized: "归档项目会话"), appSymbol: "archivebox") { action = .init(project: project, deletes: false) }
                 .disabled(!repository.canWrite || busy.contains(project.id))
-            Button("删除项目", systemImage: "trash", role: .destructive) { action = .init(project: project, deletes: true) }
+            Button(String(localized: "删除项目"), appSymbol: "trash", role: .destructive) { action = .init(project: project, deletes: true) }
                 .disabled(!repository.canWrite || busy.contains(project.id))
         }
     }
@@ -154,14 +154,14 @@ struct DashboardPageButton: View {
     let scope: V2SessionListScope
     var body: some View {
         if repository.loadingPages.contains(scope) {
-            ProgressView("加载会话…").font(.footnote).padding(10)
+            ProgressView(String(localized: "加载会话…")).font(.footnote).padding(10)
         } else if let error = repository.pageErrors[scope] {
             VStack(alignment: .leading, spacing: 6) {
                 Text(error).font(.caption).foregroundStyle(.secondary)
-                Button("重试") { Task { await repository.loadPage(scope) } }.disabled(!repository.canWrite)
+                Button(String(localized: "重试")) { Task { await repository.loadPage(scope) } }.disabled(!repository.canWrite)
             }.padding(10)
         } else if repository.pages[scope]?.hasMore == true {
-            Button(scope.archived ? "加载更多归档会话" : "加载更多会话") { Task { await repository.loadPage(scope) } }
+            Button(scope.archived ? String(localized: "加载更多归档会话") : String(localized: "加载更多会话")) { Task { await repository.loadPage(scope) } }
                 .font(.footnote).padding(10).disabled(!repository.canWrite)
         }
     }
@@ -181,7 +181,7 @@ struct ArchivedSessionsSheet: View {
                     HStack {
                         Button { dismiss(); onOpen(session.id) } label: {
                             VStack(alignment: .leading, spacing: 5) {
-                                Text(session.title ?? "未命名会话").foregroundStyle(.primary).lineLimit(2)
+                                Text(session.title ?? String(localized: "未命名会话")).foregroundStyle(.primary).lineLimit(2)
                                 Text(repository.projects.first { $0.id == session.projectId }?.name ?? session.cwd ?? "")
                                     .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                             }
@@ -192,19 +192,19 @@ struct ArchivedSessionsSheet: View {
                             Task { let restored = await onRestore(session.id); busy.remove(session.id); restoreError = !restored }
                         } label: {
                             if busy.contains(session.id) { ProgressView() }
-                            else { Image(systemName: "tray.and.arrow.up") }
+                            else { AppSymbol("tray.and.arrow.up") }
                         }.buttonStyle(.borderless).disabled(busy.contains(session.id) || !repository.canWrite)
-                            .accessibilityLabel("恢复会话")
+                            .accessibilityLabel(String(localized: "恢复会话"))
                     }
                 }
                 DashboardPageButton(repository: repository, scope: .init(archived: true))
             }
-            .navigationTitle("归档会话").navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("关闭") { dismiss() } } }
+            .navigationTitle(String(localized: "归档会话")).navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button(String(localized: "关闭")) { dismiss() } } }
             .refreshable { await repository.loadPage(.init(archived: true), refresh: true) }
             .task { if repository.pages[.init(archived: true)] == nil { await repository.loadPage(.init(archived: true)) } }
         }
         .presentationDetents([.large])
-        .alert("无法恢复会话，请稍后重试。", isPresented: $restoreError) { Button("好", role: .cancel) {} }
+        .alert(String(localized: "无法恢复会话，请稍后重试。"), isPresented: $restoreError) { Button(String(localized: "好"), role: .cancel) {} }
     }
 }

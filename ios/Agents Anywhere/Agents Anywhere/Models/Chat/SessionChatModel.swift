@@ -41,22 +41,22 @@ final class SessionChatModel {
     }
     var sendingPlaceholder: String? {
         let submitting = session.pendingMessages.contains { $0.delivery == .sending || $0.delivery == .accepted }
-        if submitting || session.awaitingReplyID != nil { return session.isLocalCreation ? "正在创建会话…" : "等待 Agent 回应…" }
+        if submitting || session.awaitingReplyID != nil { return session.isLocalCreation ? String(localized: "正在创建会话…") : String(localized: "等待 Agent 回应…") }
         guard session.runtime.isFresh, let status = session.runtime.state?.status else { return nil }
         switch status {
-        case .waiting, .pending: return "等待 Agent 回应…"
-        case .running: return "Agent 正在处理任务…"
+        case .waiting, .pending: return String(localized: "等待 Agent 回应…")
+        case .running: return String(localized: "Agent 正在处理任务…")
         default: return nil
         }
     }
     var responseUnavailableReason: String? {
-        if !session.isValid { return "会话已关闭。" }
-        if session.network.availability == .offline || session.connection == .offline { return "网络已断开，已填写的内容会保留。" }
-        if session.metadata?.connectorStatus == .offline { return "设备已离线，已填写的内容会保留。" }
+        if !session.isValid { return String(localized: "会话已关闭。") }
+        if session.network.availability == .offline || session.connection == .offline { return String(localized: "网络已断开，已填写的内容会保留。") }
+        if session.metadata?.connectorStatus == .offline { return String(localized: "设备已离线，已填写的内容会保留。") }
         if session.runtime.isFresh { return nil }
-        if session.failure?.kind == .invalidResponse { return "会话数据暂时无法解析，请刷新状态后回应。已填写的内容会保留。" }
-        if session.failure?.kind == .authentication { return "登录状态需要重新验证，已填写的内容会保留。" }
-        return "正在确认 Agent 的最新状态，已填写的内容会保留。"
+        if session.failure?.kind == .invalidResponse { return String(localized: "会话数据暂时无法解析，请刷新状态后回应。已填写的内容会保留。") }
+        if session.failure?.kind == .authentication { return String(localized: "登录状态需要重新验证，已填写的内容会保留。") }
+        return String(localized: "正在确认 Agent 的最新状态，已填写的内容会保留。")
     }
     var canAttach: Bool { session.runtime.allows("runtime.attachment") }
     var canChangeTakeover: Bool {
@@ -95,7 +95,7 @@ final class SessionChatModel {
         catch {
             guard session.isValid else { return false }
             takeoverUncertain = !V2ClientFailure.isDefiniteWriteRejection(error)
-            takeoverError = takeoverUncertain ? "接管状态尚未确认，请先刷新状态，避免重复操作。" : error.localizedDescription
+            takeoverError = takeoverUncertain ? String(localized: "接管状态尚未确认，请先刷新状态，避免重复操作。") : error.localizedDescription
             return false
         }
     }
@@ -107,7 +107,7 @@ final class SessionChatModel {
 
     func loadSettings() async {
         guard !isLoadingSettings, session.isValid else { return }
-        guard session.runtime.isFresh else { settingsError = "连接恢复后可更改对话选项。"; return }
+        guard session.runtime.isFresh else { settingsError = String(localized: "连接恢复后可更改对话选项。"); return }
         isLoadingSettings = true
         settingsError = nil
         defer { isLoadingSettings = false }
@@ -129,7 +129,7 @@ final class SessionChatModel {
         do {
             for (scope, value) in settings.selections where currentSelections[scope] != value {
                 guard session.runtime.allows(scope == .model ? "catalog.model" : "catalog.permission") else {
-                    throw V2ClientFailure(kind: .unavailable, message: "This selection is currently unavailable.")
+                    throw V2ClientFailure(kind: .unavailable, message: String(localized: "This selection is currently unavailable."))
                 }
                 try await repository.setSelection(sessionId: session.id, scope: scope, selectionId: value)
             }
@@ -200,7 +200,7 @@ final class SessionChatModel {
         let preview: Data?
         if file.readsFromDevice, let path = file.devicePath, let files, let meta = session.metadata {
             guard meta.connectorStatus == .online, session.network.availability != .offline else {
-                throw V2ClientFailure(kind: .offline, message: "设备或网络已离线")
+                throw V2ClientFailure(kind: .offline, message: String(localized: "设备或网络已离线"))
             }
             let downloaded = try await files.download(connectorId: meta.connectorId, root: file.root ?? meta.cwd ?? ".",
                 entry: V2WorkspaceEntry(name: file.name ?? (path as NSString).lastPathComponent, path: path, type: "file", size: file.size, modifiedAt: nil))

@@ -43,7 +43,7 @@ struct NoticeActionForm {
 
     private static func read(_ schema: JSONValue, ui: JSONValue?, path: [String], fields: inout [Field]) -> Bool {
         guard path.count < 8, case let .object(properties) = schema["properties"] else { return false }
-        let permitted: Set<String> = ["type", "title", "description", "properties", "required", "additionalProperties", "$schema"]
+        let permitted: Set<String> = ["type", "title", "description", "properties", "required", "additionalProperties", "$schema", "metadata"]
         guard keys(schema).isSubset(of: permitted), schema["additionalProperties"] == nil || schema["additionalProperties"] == .bool(false) else { return false }
         for key in properties.keys.sorted() {
             guard let value = properties[key] else { continue }
@@ -52,7 +52,7 @@ struct NoticeActionForm {
                 continue
             }
             let allowed: Set<String> = ["type", "title", "description", "default", "enum", "minLength", "maxLength", "pattern",
-                "minimum", "maximum", "items", "minItems", "maxItems", "uniqueItems"]
+                "minimum", "maximum", "items", "minItems", "maxItems", "uniqueItems", "metadata"]
             guard keys(value).isSubset(of: allowed) else { return false }
             let kind: Kind
             if let options = value["enum"]?.arrayValue { kind = .choice(options) }
@@ -67,8 +67,10 @@ struct NoticeActionForm {
                 default: return false
                 }
             }
-            fields.append(.init(path: path + [key], title: value["title"]?.stringValue ?? key,
-                detail: value["description"]?.stringValue, kind: kind, defaultValue: value["default"]))
+            let metadata = value["metadata"] ?? .object([:])
+            fields.append(.init(path: path + [key], title: RuntimeLocalizedCopy.text(value["title"]?.stringValue ?? key, metadata: metadata),
+                detail: value["description"]?.stringValue.map { RuntimeLocalizedCopy.text($0, metadata: metadata, field: "descriptionKey") },
+                kind: kind, defaultValue: value["default"]))
         }
         return true
     }

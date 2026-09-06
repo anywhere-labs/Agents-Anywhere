@@ -122,7 +122,7 @@ final class V2DashboardRepository {
             }
             guard isValid, !Task.isCancelled else { return }
             guard revision == generation else {
-                pageErrors[scope] = "列表刚刚更新，请重新加载这一页。"
+                pageErrors[scope] = String(localized: "列表刚刚更新，请重新加载这一页。")
                 return
             }
             // Detect broken/repeated cursors rather than issuing the same page forever.
@@ -168,7 +168,7 @@ final class V2DashboardRepository {
         try requireWritable()
         let os = connectors.first { $0.id == connectorID }?.deviceOs
         guard let key = ProjectWorkspacePath.key(path, deviceOS: os) else {
-            throw V2BusinessError.workspaceFilesUnavailable(message: "请输入设备上的完整绝对路径。")
+            throw V2BusinessError.workspaceFilesUnavailable(message: String(localized: "请输入设备上的完整绝对路径。"))
         }
         if let existing = latest.projects.first(where: { $0.connectorId == connectorID && ProjectWorkspacePath.key($0.workspacePath, deviceOS: os) == key }), existing.id != projectID {
             throw ProjectReuseRequired(project: existing)

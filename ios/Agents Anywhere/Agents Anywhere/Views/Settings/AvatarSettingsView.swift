@@ -27,12 +27,12 @@ struct AvatarSettingsView: View {
 
             Section {
                 PhotosPicker(selection: $selectedItem, matching: .images) {
-                    Label("Choose photo", systemImage: "photo.on.rectangle")
+                    Label(String(localized: "Choose photo"), appSymbol: "photo.on.rectangle")
                 }
 
                 if selectedImage != nil {
                     VStack(alignment: .leading, spacing: 10) {
-                        Text("Zoom")
+                        Text(String(localized: "Zoom"))
                             .font(.subheadline)
                         Slider(value: $zoom, in: 1 ... 3)
                     }
@@ -49,12 +49,12 @@ struct AvatarSettingsView: View {
 
             if appState.me?.avatar != nil {
                 Section {
-                    Button("Remove profile photo", role: .destructive, action: removeAvatar)
+                    Button(String(localized: "Remove profile photo"), role: .destructive, action: removeAvatar)
                         .disabled(appState.isAccountWorking)
                 }
             }
         }
-        .navigationTitle("Profile photo")
+        .navigationTitle(String(localized: "Profile photo"))
         .navigationBarTitleDisplayMode(.inline)
         .onChange(of: selectedItem) { _, nextItem in
             guard let nextItem else { return }
@@ -68,8 +68,8 @@ struct AvatarSettingsView: View {
                 candidate: offset
             )
         }
-        .alert("Could not use photo", isPresented: localErrorBinding) {
-            Button("OK", role: .cancel) {
+        .alert(String(localized: "Could not use photo"), isPresented: localErrorBinding) {
+            Button(String(localized: "OK"), role: .cancel) {
                 localError = nil
             }
         } message: {

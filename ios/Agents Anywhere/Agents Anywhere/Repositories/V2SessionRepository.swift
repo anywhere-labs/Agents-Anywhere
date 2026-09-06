@@ -350,7 +350,7 @@ final class V2SessionRepository {
 
     private func requireNetwork() throws {
         if network.availability == .offline {
-            throw V2ClientFailure(kind: .offline, message: "You are offline. Cached content is still available.")
+            throw V2ClientFailure(kind: .offline, message: String(localized: "You are offline. Cached content is still available."))
         }
     }
 
@@ -642,8 +642,8 @@ private enum CacheError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .invalidated: "The session request no longer belongs to the active cache."
-        case .connectionClosed: "The session connection closed."
+        case .invalidated: String(localized: "The session request no longer belongs to the active cache.")
+        case .connectionClosed: String(localized: "The session connection closed.")
         }
     }
 }

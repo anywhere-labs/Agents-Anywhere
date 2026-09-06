@@ -147,7 +147,7 @@ final class V2SessionModel: Identifiable {
     /// but is not a promise of backend idempotency.
     @discardableResult func sendDraft(upload: ((V2PendingMessage) async throws -> Void)? = nil) async -> V2PendingMessage? {
         guard let repository, canSend else {
-            failure = V2ClientFailure(kind: .unavailable, message: "Wait for the session to reconnect before sending.")
+            failure = V2ClientFailure(kind: .unavailable, message: String(localized: "Wait for the session to reconnect before sending."))
             return nil
         }
         let content = draft
@@ -266,7 +266,7 @@ final class V2SessionModel: Identifiable {
         pendingMessages = archive.pending.map { value in
             let pending = V2PendingMessage(id: value.id, content: value.content, attachmentIDs: value.attachmentIDs,
                 localAttachmentIDs: value.attachments.map(\.id), attachments: value.attachments)
-            let failure = V2ClientFailure(kind: .unavailable, message: value.error ?? "上次发送的结果尚未确认，正在同步记录。请确认后再重试。")
+            let failure = V2ClientFailure(kind: .unavailable, message: value.error ?? String(localized: "上次发送的结果尚未确认，正在同步记录。请确认后再重试。"))
             pending.update(value.rejected ? .rejected(failure) : .uncertain(failure))
             attachmentPreviews.remember(value.attachments, clientID: value.id)
             return pending

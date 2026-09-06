@@ -48,13 +48,13 @@ struct ChatSidebarView: View {
                             if request.error == nil { ProgressView().controlSize(.small) }
                             VStack(alignment: .leading) {
                                 Text(request.connector.name).font(.subheadline)
-                                Text(request.error ?? "等待设备连接…").font(.caption).foregroundStyle(.secondary)
+                                Text(request.error ?? String(localized: "等待设备连接…")).font(.caption).foregroundStyle(.secondary)
                             }
                             Spacer(minLength: 0)
                             Menu {
-                                if request.error != nil { Button("重试") { setup.retry(request.id) } }
-                                Button("停止等待") { setup.finish(request.id) }
-                            } label: { Image(systemName: "ellipsis").frame(width: 36, height: 36) }
+                                if request.error != nil { Button(String(localized: "重试")) { setup.retry(request.id) } }
+                                Button(String(localized: "停止等待")) { setup.finish(request.id) }
+                            } label: { AppSymbol("ellipsis").frame(width: 36, height: 36) }
                         }.padding(.horizontal, 10).padding(.vertical, 8)
                     }
                 }
@@ -143,15 +143,15 @@ struct ChatSidebarListMenu<Filters: View>: View {
 
     var body: some View {
         Menu {
-            Picker("侧栏显示", selection: $showsSessionList) {
-                Text("按项目").tag(false)
-                Text("全部会话").tag(true)
+            Picker(String(localized: "侧栏显示"), selection: $showsSessionList) {
+                Text(String(localized: "按项目")).tag(false)
+                Text(String(localized: "全部会话")).tag(true)
             }
             filters()
             Divider()
-            Button("归档会话", systemImage: "archivebox", action: onShowArchives)
+            Button(String(localized: "归档会话"), appSymbol: "archivebox", action: onShowArchives)
         } label: {
-            Label("列表选项", systemImage: "ellipsis")
+            Label(String(localized: "列表选项"), appSymbol: "ellipsis")
                 .labelStyle(.iconOnly).frame(width: 44, height: 44)
         }
     }
@@ -171,7 +171,7 @@ private struct ChatSidebarPairDeviceButton: View {
 
     var body: some View {
         Button(action: action) {
-            Label("Pair device", systemImage: "plus")
+            Label(String(localized: "Pair device"), appSymbol: "plus")
                 .font(.body.weight(.semibold))
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 10)
@@ -288,11 +288,11 @@ private struct ChatSidebarDeviceRow: View {
         .buttonStyle(.plain)
         .contextMenu {
             Button(action: onOpen) {
-                Label("Open", systemImage: "folder")
+                Label(String(localized: "Open"), appSymbol: "folder")
             }
             Divider()
             Button(action: onCopyId) {
-                Label("Copy device ID", systemImage: "doc.on.doc")
+                Label(String(localized: "Copy device ID"), appSymbol: "doc.on.doc")
             }
         }
     }
@@ -327,31 +327,31 @@ struct ChatSidebarSessionRow: View {
         .buttonStyle(.plain)
         .contextMenu {
             Button(action: onOpen) {
-                Label("Open", systemImage: "folder")
+                Label(String(localized: "Open"), appSymbol: "folder")
             }
             Button(action: beginRename) {
-                Label("Rename", systemImage: "pencil")
+                Label(String(localized: "Rename"), appSymbol: "pencil")
             }.disabled(session.id.hasPrefix("local:"))
             Button(action: onTogglePinned) {
                 if session.pinned {
-                    Label("Unpin", systemImage: "pin.slash")
+                    Label(String(localized: "Unpin"), appSymbol: "pin.slash")
                 } else {
-                    Label("Pin", systemImage: "pin")
+                    Label(String(localized: "Pin"), appSymbol: "pin")
                 }
             }
             .disabled(session.id.hasPrefix("local:"))
             Button(action: onArchive) {
-                Label(session.archived ? "Restore" : "Archive", systemImage: session.archived ? "tray.and.arrow.up" : "archivebox")
+                Label(session.archived ? String(localized: "Restore") : String(localized: "Archive"), appSymbol: session.archived ? "tray.and.arrow.up" : "archivebox")
             }.disabled(session.id.hasPrefix("local:"))
             Divider()
             Button(action: onCopyId) {
-                Label("Copy session ID", systemImage: "doc.on.doc")
+                Label(String(localized: "Copy session ID"), appSymbol: "doc.on.doc")
             }
         }
-        .alert("Rename session", isPresented: $isRenaming) {
-            TextField("Session title", text: $titleDraft)
-            Button("Cancel", role: .cancel) {}
-            Button("Save", action: submitRename)
+        .alert(String(localized: "Rename session"), isPresented: $isRenaming) {
+            TextField(String(localized: "Session title"), text: $titleDraft)
+            Button(String(localized: "Cancel"), role: .cancel) {}
+            Button(String(localized: "Save"), action: submitRename)
                 .disabled(titleDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
     }
@@ -373,15 +373,15 @@ struct ChatSidebarSessionIndicator: View {
     var body: some View {
         switch indicator {
         case .waitingApproval:
-            Text("等待批准").font(.system(size: 11, weight: .medium))
+            Text(String(localized: "等待批准")).font(.system(size: 11, weight: .medium))
                 .foregroundStyle(.mint).padding(.horizontal, 8).padding(.vertical, 3)
                 .background(.mint.opacity(0.16), in: .capsule)
-                .fixedSize().accessibilityLabel("等待批准")
+                .fixedSize().accessibilityLabel(String(localized: "等待批准"))
         case .running:
             ProgressView().controlSize(.mini).tint(.primary)
-                .frame(width: 14, height: 14).accessibilityLabel("运行中")
+                .frame(width: 14, height: 14).accessibilityLabel(String(localized: "运行中"))
         case .unread:
-            Circle().fill(.green).frame(width: 8, height: 8).accessibilityLabel("未读")
+            Circle().fill(.green).frame(width: 8, height: 8).accessibilityLabel(String(localized: "未读"))
         case .none:
             EmptyView()
         }
@@ -425,7 +425,7 @@ private struct ChatSidebarBottomControls: View {
     var body: some View {
         HStack(spacing: 10) {
             AppGlassButton(
-                "New session",
+                String(localized: "New session"),
                 systemImage: "square.and.pencil",
                 style: .prominent,
                 maxWidth: nil,
@@ -441,7 +441,7 @@ private struct ChatSidebarBottomControls: View {
             }
             .buttonStyle(.glass)
             .buttonBorderShape(.circle)
-            .accessibilityLabel("Account")
+            .accessibilityLabel(String(localized: "Account"))
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .sheet(isPresented: $isShowingSettings) {

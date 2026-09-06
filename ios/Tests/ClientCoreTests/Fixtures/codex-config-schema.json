@@ -1,0 +1,171 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "environment": {
+      "type": "object",
+      "title": "Environment variables",
+      "description": "Environment overrides for the Codex SDK runtime.",
+      "propertyNames": {
+        "pattern": "^[^=\\u0000]+$"
+      },
+      "additionalProperties": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "default": {}
+    },
+    "useSystemCodex": {
+      "type": "boolean",
+      "title": "Use System Codex",
+      "description": "Use the Codex executable found in the user's login shell PATH. If it is unavailable, fall back to the bundled Codex executable. Turn this off to always use the bundled Codex executable.",
+      "metadata": {
+        "i18n": {
+          "labelKey": "dashboard.device.runtimeConfigFields.useSystemCodex.label",
+          "descriptionKey": "dashboard.device.runtimeConfigFields.useSystemCodex.description"
+        }
+      },
+      "default": true
+    },
+    "codexExecutablePath": {
+      "type": "string",
+      "title": "Codex executable path",
+      "description": "Optional path to a Codex executable. When set, this executable is always used and the Use System Codex setting is ignored. Leave this empty to use the automatic binary selection.",
+      "metadata": {
+        "i18n": {
+          "labelKey": "dashboard.device.runtimeConfigFields.codexExecutablePath.label",
+          "descriptionKey": "dashboard.device.runtimeConfigFields.codexExecutablePath.description"
+        }
+      }
+    },
+    "codexHome": {
+      "type": "string",
+      "title": "Codex Home",
+      "description": "Optional directory used by this Codex instance for configuration, credentials, and session history. Leave it empty to use CODEX_HOME or ~/.codex.",
+      "metadata": {
+        "i18n": {
+          "labelKey": "dashboard.device.runtimeConfigFields.codexHome.label",
+          "descriptionKey": "dashboard.device.runtimeConfigFields.codexHome.description"
+        }
+      },
+      "maxLength": 4096
+    },
+    "modelGateway": {
+      "type": "object",
+      "title": "Model gateway",
+      "description": "Route model requests through a compatible gateway instead of the runtime's default model endpoint.",
+      "metadata": {
+        "i18n": {
+          "labelKey": "dashboard.device.runtimeConfigComponents.modelGateway.label",
+          "descriptionKey": "dashboard.device.runtimeConfigComponents.modelGateway.description"
+        }
+      },
+      "required": [
+        "baseUrl",
+        "apiKey"
+      ],
+      "properties": {
+        "baseUrl": {
+          "type": "string",
+          "title": "Gateway URL",
+          "description": "The HTTP or HTTPS base URL of the model gateway.",
+          "metadata": {
+            "i18n": {
+              "labelKey": "dashboard.device.runtimeConfigFields.modelGatewayBaseUrl.label",
+              "descriptionKey": "dashboard.device.runtimeConfigFields.modelGatewayBaseUrl.description"
+            }
+          },
+          "minLength": 1,
+          "maxLength": 2048,
+          "pattern": "^https?://"
+        },
+        "apiKey": {
+          "type": "string",
+          "title": "Gateway API key",
+          "description": "The API key sent to the model gateway.",
+          "metadata": {
+            "i18n": {
+              "labelKey": "dashboard.device.runtimeConfigFields.modelGatewayApiKey.label",
+              "descriptionKey": "dashboard.device.runtimeConfigFields.modelGatewayApiKey.description"
+            }
+          },
+          "minLength": 1,
+          "maxLength": 8192,
+          "pattern": "^[^\\u0000\\r\\n]+$"
+        }
+      },
+      "additionalProperties": false
+    },
+    "customModels": {
+      "type": "array",
+      "title": "Custom models",
+      "description": "Additional model IDs to show in the model catalog for this runtime.",
+      "maxItems": 64,
+      "items": {
+        "type": "object",
+        "required": [
+          "modelId",
+          "displayName"
+        ],
+        "properties": {
+          "modelId": {
+            "type": "string",
+            "title": "Model ID",
+            "description": "The exact model ID passed to the runtime.",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^[^\\u0000\\r\\n]+$"
+          },
+          "displayName": {
+            "type": "string",
+            "title": "Display model name",
+            "description": "The name shown in model pickers.",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "efforts": {
+            "type": "array",
+            "title": "Efforts",
+            "description": "Optional reasoning efforts to show under this model.",
+            "maxItems": 16,
+            "items": {
+              "type": "object",
+              "required": [
+                "effortId",
+                "displayName"
+              ],
+              "properties": {
+                "effortId": {
+                  "type": "string",
+                  "title": "Effort ID",
+                  "description": "The exact effort ID passed to the runtime.",
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "pattern": "^[^\\u0000\\r\\n]+$"
+                },
+                "displayName": {
+                  "type": "string",
+                  "title": "Display effort name",
+                  "description": "The name shown in effort pickers.",
+                  "minLength": 1,
+                  "maxLength": 128
+                }
+              },
+              "additionalProperties": false
+            },
+            "default": []
+          }
+        },
+        "additionalProperties": false
+      },
+      "default": []
+    }
+  },
+  "additionalProperties": false
+}

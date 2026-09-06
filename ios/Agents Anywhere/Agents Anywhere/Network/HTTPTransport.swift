@@ -231,15 +231,15 @@ extension DecodingError {
     var v2Description: String {
         switch self {
         case let .keyNotFound(key, context):
-            return "The server response is missing '\(v2Path(context.codingPath + [key]))'."
+            return String(localized: "The server response is missing '\(v2Path(context.codingPath + [key]))'.")
         case let .typeMismatch(type, context):
-            return "The server response has an invalid type at '\(v2Path(context.codingPath))' for \(type)."
+            return String(localized: "The server response has an invalid type at '\(v2Path(context.codingPath))' for \(type).")
         case let .valueNotFound(type, context):
-            return "The server response is missing a value at '\(v2Path(context.codingPath))' for \(type)."
+            return String(localized: "The server response is missing a value at '\(v2Path(context.codingPath))' for \(type).")
         case let .dataCorrupted(context):
-            return "The server response could not be decoded at '\(v2Path(context.codingPath))'."
+            return String(localized: "The server response could not be decoded at '\(v2Path(context.codingPath))'.")
         @unknown default:
-            return "The server response could not be decoded."
+            return String(localized: "The server response could not be decoded.")
         }
     }
 

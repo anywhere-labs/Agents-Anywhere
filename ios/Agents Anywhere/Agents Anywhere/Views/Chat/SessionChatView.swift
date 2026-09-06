@@ -63,26 +63,26 @@ struct SessionChatView: View, Equatable {
                 .overlay {
                     if model.isOpeningReady && model.timeline.rows.isEmpty && model.timeline.pendingMessages.isEmpty {
                         VStack(spacing: 12) {
-                            Text("在这里继续你的任务").foregroundStyle(.secondary)
+                            Text(String(localized: "在这里继续你的任务")).foregroundStyle(.secondary)
                         }.allowsHitTesting(false)
                     }
                 }
                 .overlay { if !model.isOpeningReady { openingMask } }
                 .safeAreaBar(edge: .top, spacing: 0) {
-                    ChatPageHeader(title: session.metadata?.title ?? "会话",
+                    ChatPageHeader(title: session.metadata?.title ?? String(localized: "会话"),
                         subtitle: [session.metadata?.runtimeName ?? session.metadata?.runtime,
                             deviceName ?? session.metadata?.connectorId].compactMap { $0 }.joined(separator: " · "),
                         status: model.headerStatus, reservesStatusLine: true,
                         controls: controls, onMenu: onMenu) {
                         HStack(spacing: 0) {
                             Button { sheet = .files } label: { ChatHeaderActionLabel(symbol: "folder", controls: controls) }
-                                .accessibilityLabel("文件管理")
+                                .accessibilityLabel(String(localized: "文件管理"))
                                 .disabled(session.metadata?.cwd?.isEmpty != false)
                             Menu {
-                                Button("会话详情与导出", systemImage: "info.circle") { sheet = .details }
-                                Button("复制会话 ID", systemImage: "number") { UIPasteboard.general.string = session.id }
+                                Button(String(localized: "会话详情与导出"), appSymbol: "info.circle") { sheet = .details }
+                                Button(String(localized: "复制会话 ID"), appSymbol: "number") { UIPasteboard.general.string = session.id }
                             } label: { ChatHeaderActionLabel(symbol: "ellipsis", controls: controls) }
-                            .accessibilityLabel("会话菜单")
+                            .accessibilityLabel(String(localized: "会话菜单"))
                         }.glassEffect(.regular.interactive(), in: .capsule)
                     }
                     .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { headerHeight = $0 }
@@ -99,7 +99,7 @@ struct SessionChatView: View, Equatable {
                             canSelectModel: session.runtime.allows("catalog.model"),
                             canSelectPermission: session.runtime.allows("catalog.permission"),
                             isStreaming: model.isRunning, canStop: session.runtime.allows("session.interrupt"),
-                            isBusy: model.isWorking || !model.isOpeningReady, placeholder: requiresTakeover ? "请先接管" : "询问 Agents",
+                            isBusy: model.isWorking || !model.isOpeningReady, placeholder: requiresTakeover ? String(localized: "请先接管") : String(localized: "询问 Agents"),
                             isLoadingSettings: model.isLoadingSettings,
                             settingsError: model.settingsError, sessionChat: model,
                             onSend: model.send, onStop: model.interrupt, onLoadSettings: model.loadSettings,
@@ -149,7 +149,7 @@ struct SessionChatView: View, Equatable {
                 if let meta = session.metadata, let cwd = meta.cwd {
                     WorkspaceFilesSheet(connectorId: meta.connectorId,
                         deviceName: deviceName ?? meta.connectorId,
-                        workspace: V2DeviceWorkspace(path: cwd, name: "会话文件", sessionCount: 1, lastActiveAt: nil),
+                        workspace: V2DeviceWorkspace(path: cwd, name: String(localized: "会话文件"), sessionCount: 1, lastActiveAt: nil),
                         service: fileService, session: session)
                 }
             case .preview(let path, let root):
@@ -185,9 +185,9 @@ struct SessionChatView: View, Equatable {
             VStack(spacing: 12) {
                 if let error = model.openingError, !model.timeline.hasPresentedSnapshot {
                     Text(error).font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
-                    Button("重试") { Task { await model.prepareOpening() } }
+                    Button(String(localized: "重试")) { Task { await model.prepareOpening() } }
                 } else {
-                    ProgressView().progressViewStyle(.circular).accessibilityLabel("正在加载会话")
+                    ProgressView().progressViewStyle(.circular).accessibilityLabel(String(localized: "正在加载会话"))
                 }
             }
             .padding(24).frame(maxWidth: 320)
@@ -197,7 +197,7 @@ struct SessionChatView: View, Equatable {
 
     private var takeoverPill: some View {
         Button { pendingTakeover = true } label: {
-            Label("接管会话以继续交互", systemImage: "hand.raised")
+            Label(String(localized: "接管会话以继续交互"), appSymbol: "hand.raised")
                 .font(.footnote.weight(.medium))
                 .foregroundStyle(AppTheme.primaryText(colorScheme))
                 .padding(.horizontal, 14).frame(minHeight: takeoverPillHeight)
@@ -226,8 +226,8 @@ struct SessionChatView: View, Equatable {
                 guard session.isValid, sheet == nil else { return }
                 cleanPreview()
                 let directory = FileManager.default.temporaryDirectory.appendingPathComponent("aa-preview-\(UUID().uuidString)", isDirectory: true)
-                let name = (file.name ?? "Attachment") as NSString
-                let safeName = name.lastPathComponent.isEmpty ? "Attachment" : name.lastPathComponent
+                let name = (file.name ?? String(localized: "Attachment")) as NSString
+                let safeName = name.lastPathComponent.isEmpty ? String(localized: "Attachment") : name.lastPathComponent
                 let url = directory.appendingPathComponent(safeName)
                 try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
                 try data.write(to: url, options: [.atomic, .completeFileProtection])

@@ -10,7 +10,7 @@ struct SessionInteractionContent: View {
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { timeline in
             VStack(alignment: .leading, spacing: 14) {
-                Label(item.notice.title, systemImage: icon).font(.subheadline.weight(.semibold))
+                Label(item.notice.title, appSymbol: icon).font(.subheadline.weight(.semibold))
                     .foregroundStyle(item.notice.severity == "error" ? Color.red : Color.primary)
                 if let message = item.notice.message { Text(message).font(.subheadline).foregroundStyle(.secondary) }
                 if showsContext {
@@ -20,7 +20,7 @@ struct SessionInteractionContent: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 } else {
-                    Button("操作详情", systemImage: "arrow.up.right.square") { showsDetails = true }
+                    Button(String(localized: "操作详情"), appSymbol: "arrow.up.right.square") { showsDetails = true }
                         .font(.footnote).frame(minHeight: 44)
                 }
                 if let form = item.form {
@@ -40,7 +40,7 @@ struct SessionInteractionContent: View {
                             }
                         }
                     } else if action.input.required {
-                        Text("此操作的表单版本暂未支持，请在 Web 中处理。")
+                        Text(String(localized: "此操作的表单版本暂未支持，请在 Web 中处理。"))
                             .font(.footnote).foregroundStyle(.secondary)
                     }
                 }
@@ -55,9 +55,9 @@ struct SessionInteractionContent: View {
             .background(Color(uiColor: .secondarySystemBackground), in: .rect(cornerRadius: 22))
         }
         .sheet(isPresented: $showsDetails) { SessionInteractionDetailsSheet(item: item, chat: chat) }
-        .confirmationDialog("回应结果尚未确认。再次回应前，请确认 Agent 仍在等待此操作。", isPresented: $confirmsRetry, titleVisibility: .visible) {
-            Button("已检查，允许再次回应") { item.acknowledgeUncertain() }
-            Button("取消", role: .cancel) {}
+        .confirmationDialog(String(localized: "回应结果尚未确认。再次回应前，请确认 Agent 仍在等待此操作。"), isPresented: $confirmsRetry, titleVisibility: .visible) {
+            Button(String(localized: "已检查，允许再次回应")) { item.acknowledgeUncertain() }
+            Button(String(localized: "取消"), role: .cancel) {}
         }
     }
 
@@ -78,7 +78,7 @@ struct SessionInteractionContent: View {
             ForEach(question.options) { option in
                 Button { item.select(option.id, question: question) } label: {
                     HStack(spacing: 10) {
-                        Image(systemName: item.choices[question.id]?.contains(option.id) == true
+                        AppSymbol(item.choices[question.id]?.contains(option.id) == true
                             ? (question.multiple ? "checkmark.square.fill" : "checkmark.circle.fill")
                             : (question.multiple ? "square" : "circle"))
                         VStack(alignment: .leading, spacing: 4) {
@@ -95,14 +95,14 @@ struct SessionInteractionContent: View {
                     Button {
                         item.setCustomSelected(question.multiple ? !selected : true, question: question)
                     } label: {
-                        Image(systemName: selected
+                        AppSymbol(selected
                             ? (question.multiple ? "checkmark.square.fill" : "checkmark.circle.fill")
                             : (question.multiple ? "square" : "circle"))
                             .frame(width: 28, height: 44)
                     }
-                    .buttonStyle(.plain).accessibilityLabel("其他回答")
+                    .buttonStyle(.plain).accessibilityLabel(String(localized: "其他回答"))
                     .accessibilityAddTraits(selected ? .isSelected : [])
-                    NoticeTextInput(value: item.custom[question.id] ?? "", placeholder: "其他回答",
+                    NoticeTextInput(value: item.custom[question.id] ?? "", placeholder: String(localized: "其他回答"),
                         onFocus: { item.setCustomSelected(true, question: question) },
                         onEditingEnded: { setComposing(false, id: $0) },
                         onChange: { text, marked, editorID in
@@ -121,34 +121,34 @@ struct SessionInteractionContent: View {
 
     @ViewBuilder private func submissionStatus(at now: Date) -> some View {
         if item.submission == .accepted {
-            Text("回应已提交，等待 Agent 确认").font(.footnote).foregroundStyle(.secondary)
+            Text(String(localized: "回应已提交，等待 Agent 确认")).font(.footnote).foregroundStyle(.secondary)
         } else if case .sending = item.submission {
-            Text("正在提交回应…").font(.footnote).foregroundStyle(.secondary)
+            Text(String(localized: "正在提交回应…")).font(.footnote).foregroundStyle(.secondary)
         } else if item.isExpired(at: now) {
-            Text("此交互已过期，等待 Agent 更新状态。")
+            Text(String(localized: "此交互已过期，等待 Agent 更新状态。"))
                 .font(.footnote).foregroundStyle(.secondary)
         } else if let reason = chat.responseUnavailableReason {
             Text(reason)
                 .font(.footnote).foregroundStyle(.secondary)
             if chat.session.network.availability != .offline && chat.session.metadata?.connectorStatus == .online {
-                Button("刷新状态") { Task { await chat.session.refresh() } }
+                Button(String(localized: "刷新状态")) { Task { await chat.session.refresh() } }
                     .font(.footnote).disabled(chat.session.isLoading || chat.isWorking)
             }
         } else {
             switch item.submission {
-            case .sending: Text("正在提交回应…").font(.footnote).foregroundStyle(.secondary)
-            case .accepted: Text("回应已提交，等待 Agent 确认").font(.footnote).foregroundStyle(.secondary)
+            case .sending: Text(String(localized: "正在提交回应…")).font(.footnote).foregroundStyle(.secondary)
+            case .accepted: Text(String(localized: "回应已提交，等待 Agent 确认")).font(.footnote).foregroundStyle(.secondary)
             case .uncertain:
-                Text("回应结果未确认，不会自动重试。")
+                Text(String(localized: "回应结果未确认，不会自动重试。"))
                     .font(.footnote).foregroundStyle(.secondary)
-                Button("重新检查状态") { Task { await chat.session.refresh() } }.font(.footnote)
-                Button("处理未确认的回应") { confirmsRetry = true }.font(.footnote)
+                Button(String(localized: "重新检查状态")) { Task { await chat.session.refresh() } }.font(.footnote)
+                Button(String(localized: "处理未确认的回应")) { confirmsRetry = true }.font(.footnote)
             case .idle:
                 if [.responding, .responseAccepted, .resolving].contains(item.notice.status) {
-                    Text("Agent 正在处理回应…").font(.footnote).foregroundStyle(.secondary)
+                    Text(String(localized: "Agent 正在处理回应…")).font(.footnote).foregroundStyle(.secondary)
                 }
                 if item.notice.status == .failed {
-                    Text("上次回应未完成，请检查后重新选择。")
+                    Text(String(localized: "上次回应未完成，请检查后重新选择。"))
                         .font(.footnote).foregroundStyle(.secondary)
                 }
             case .unavailable: EmptyView()
@@ -228,7 +228,7 @@ private struct NoticeActionFields: View {
         case let .choice(options):
             ForEach(Array(options.enumerated()), id: \.offset) { _, option in
                 Button { set(option, field: field) } label: {
-                    Label(option.displayString, systemImage: value(field) == option ? "checkmark.circle.fill" : "circle")
+                    Label(option.displayString, appSymbol: value(field) == option ? "checkmark.circle.fill" : "circle")
                         .frame(minHeight: 44)
                 }.buttonStyle(.plain)
             }
@@ -238,7 +238,7 @@ private struct NoticeActionFields: View {
                 Button {
                     set(.array(selected.contains(option) ? selected.filter { $0 != option } : selected + [option]), field: field)
                 } label: {
-                    Label(option.displayString, systemImage: selected.contains(option) ? "checkmark.square.fill" : "square")
+                    Label(option.displayString, appSymbol: selected.contains(option) ? "checkmark.square.fill" : "square")
                         .frame(minHeight: 44)
                 }.buttonStyle(.plain)
             }

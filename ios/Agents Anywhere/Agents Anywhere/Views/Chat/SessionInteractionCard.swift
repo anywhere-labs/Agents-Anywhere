@@ -19,17 +19,17 @@ struct SessionInteractionCard: View {
         TimelineView(.periodic(from: .now, by: 1)) { timeline in
             VStack(alignment: .leading, spacing: 6) {
                 HStack(alignment: .center, spacing: 8) {
-                    Image(systemName: item.form == nil ? "checkmark.shield" : "text.bubble")
+                    AppSymbol(item.form == nil ? "checkmark.shield" : "text.bubble")
                         .font(.subheadline)
                     Text(title).font(.subheadline.weight(.semibold))
                         .lineLimit(2).frame(maxWidth: .infinity, alignment: .leading)
-                    Button("操作详情") { destination = .details }
+                    Button(String(localized: "操作详情")) { destination = .details }
                         .font(.caption).fixedSize().frame(minHeight: 44)
                     Button {
                         if let onExpand { onExpand() } else { destination = .expanded }
                     } label: {
                         VStack(spacing: 2) {
-                            Text("展开")
+                            Text(String(localized: "展开"))
                             if let page { Text(page).font(.caption2).monospacedDigit() }
                         }.font(.caption).frame(minWidth: 44, minHeight: 44)
                     }.buttonStyle(.plain)
@@ -67,10 +67,10 @@ struct SessionInteractionCard: View {
 
     private var title: String {
         switch item.notice.title {
-        case "Codex wants to run a command": "Codex 请求执行命令"
-        case "Codex wants to edit files": "Codex 请求修改文件"
-        case "Codex requests additional permissions": "Codex 请求额外权限"
-        case "Claude wants to use a tool": "Claude 请求使用工具"
+        case "Codex wants to run a command": String(localized: "Codex 请求执行命令")
+        case "Codex wants to edit files": String(localized: "Codex 请求修改文件")
+        case "Codex requests additional permissions": String(localized: "Codex 请求额外权限")
+        case "Claude wants to use a tool": String(localized: "Claude 请求使用工具")
         default: item.notice.title
         }
     }
@@ -82,17 +82,17 @@ struct SessionInteractionCard: View {
     }
     private func status(at now: Date) -> String {
         switch item.submission {
-        case .sending: return "正在提交…"
-        case .accepted: return "已提交，等待 Agent"
-        case .uncertain: return "结果未确认 · 查看详情"
-        case .unavailable: return "此交互已结束"
+        case .sending: return String(localized: "正在提交…")
+        case .accepted: return String(localized: "已提交，等待 Agent")
+        case .uncertain: return String(localized: "结果未确认 · 查看详情")
+        case .unavailable: return String(localized: "此交互已结束")
         case .idle: break
         }
-        if item.isExpired(at: now) { return "此交互已过期" }
-        if item.responseError != nil || item.notice.status == .failed { return "回应失败 · 查看详情" }
-        if chat.responseUnavailableReason != nil { return "连接不可用 · 查看详情" }
-        if [.responding, .responseAccepted, .resolving].contains(item.notice.status) { return "Agent 正在处理…" }
-        if let form = item.form { return "\(form.questions.count) 个问题" }
+        if item.isExpired(at: now) { return String(localized: "此交互已过期") }
+        if item.responseError != nil || item.notice.status == .failed { return String(localized: "回应失败 · 查看详情") }
+        if chat.responseUnavailableReason != nil { return String(localized: "连接不可用 · 查看详情") }
+        if [.responding, .responseAccepted, .resolving].contains(item.notice.status) { return String(localized: "Agent 正在处理…") }
+        if let form = item.form { return String(localized: "\(form.questions.count) 个问题") }
         return ""
     }
 }
@@ -113,13 +113,13 @@ struct SessionInteractionActions: View {
                     Menu {
                         ForEach(layout.more) { action in
                             Button(NoticeActionPresentation.title(action, notice: item.notice),
-                                systemImage: NoticeActionPresentation.symbol(action), role: action.style == "danger" ? .destructive : nil) {
+                                appSymbol: NoticeActionPresentation.symbol(action), role: action.style == "danger" ? .destructive : nil) {
                                     respond(action)
                                 }
                                 .disabled(isDisabled(action))
                         }
                     } label: {
-                        Label("更多", systemImage: "ellipsis")
+                        Label(String(localized: "更多"), appSymbol: "ellipsis")
                             .opacity(layout.more.contains(where: item.isSending) ? 0 : 1)
                             .overlay {
                                 if layout.more.contains(where: item.isSending) { ProgressView().controlSize(.small) }
@@ -147,7 +147,7 @@ struct SessionInteractionActions: View {
                     respond(action)
                 }
                 .font(.subheadline)
-                .accessibilityHint(!item.hasValidInput(for: action) && onEdit != nil ? "打开表单，填写后提交" : "")
+                .accessibilityHint(!item.hasValidInput(for: action) && onEdit != nil ? String(localized: "打开表单，填写后提交") : "")
         }
     }
     private func isDisabled(_ action: V2RuntimeNoticeAction) -> Bool {

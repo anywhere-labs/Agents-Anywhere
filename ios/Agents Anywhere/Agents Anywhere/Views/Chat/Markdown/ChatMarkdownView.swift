@@ -155,12 +155,12 @@ private struct CodeBlockCard: View {
                     configuration.codeBlock.copyToPasteboard()
                     copied = true
                 } label: {
-                    Label(copied ? "已复制" : "复制代码", systemImage: copied ? "checkmark" : "document.on.document")
+                    Label(copied ? String(localized: "已复制") : String(localized: "复制代码"), appSymbol: copied ? "checkmark" : "document.on.document")
                         .font(.caption)
                         .padding(.vertical, 8)
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel(copied ? "代码已复制" : "复制代码")
+                .accessibilityLabel(copied ? String(localized: "代码已复制") : String(localized: "复制代码"))
                 .task(id: copied) {
                     guard copied else { return }
                     do { try await Task.sleep(for: .seconds(2)); copied = false } catch {}
@@ -203,7 +203,7 @@ nonisolated private struct WorkspaceImageAttachment: Attachment {
     let description: String
     @MainActor var body: some View {
         Link(destination: url) {
-            Label(description.isEmpty ? "查看图片" : description, systemImage: "photo")
+            Label(description.isEmpty ? String(localized: "查看图片") : description, appSymbol: "photo")
                 .font(.subheadline).lineLimit(2).padding(12).frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(Color(uiColor: .secondarySystemBackground), in: .rect(cornerRadius: 14))
         }.buttonStyle(.plain)

@@ -5,9 +5,9 @@ struct SheetCloseButton: View {
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: "xmark")
+            AppSymbol("xmark")
                 .font(.body.weight(.semibold))
         }
-        .accessibilityLabel("Close")
+        .accessibilityLabel(String(localized: "Close"))
     }
 }

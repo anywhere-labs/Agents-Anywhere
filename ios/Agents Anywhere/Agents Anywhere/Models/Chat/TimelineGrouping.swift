@@ -15,15 +15,15 @@ struct ChatTimelineGroup: Identifiable {
     var title: String {
         switch kind {
         case .single: return ""
-        case .agents: return "\(rows.count) 次子 Agent 调用"
+        case .agents: return String(localized: "\(rows.count) 次子 Agent 调用")
         case .reconnect:
             let attempts = rows.compactMap { $0.structure.reconnectAttempt }
             // The full retry messages remain available in the expanded rows.
-            return "连接重试 · \(rows.count) 次" + (attempts.last.map { "（\($0)）" } ?? "")
+            return String(localized: "连接重试 · \(rows.count) 次") + (attempts.last.map { "（\($0)）" } ?? "")
         case .tools:
             let reasoning = rows.filter { $0.structure.isReasoning }.count
             let tools = rows.count - reasoning
-            return [reasoning > 0 ? "\(reasoning) 段思考" : nil, tools > 0 ? "\(tools) 次工具调用" : nil].compactMap { $0 }.joined(separator: " · ")
+            return [reasoning > 0 ? String(localized: "\(reasoning) 段思考") : nil, tools > 0 ? String(localized: "\(tools) 次工具调用") : nil].compactMap { $0 }.joined(separator: " · ")
         }
     }
 }

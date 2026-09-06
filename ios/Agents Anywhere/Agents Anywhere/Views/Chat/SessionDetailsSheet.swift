@@ -13,37 +13,37 @@ struct SessionDetailsSheet: View {
         NavigationStack {
             List {
                 if let meta = chat.session.metadata {
-                    Section("会话") {
-                        row("标题", meta.title ?? "未命名会话")
-                        row("设备", meta.connectorId)
-                        row("Agent", meta.runtimeName ?? meta.runtime)
-                        row("Agent 类型", meta.runtimeTypeDisplayName ?? meta.runtimeType ?? meta.runtime)
-                        row("状态", chat.session.runtime.state?.status.rawValue ?? meta.status.rawValue)
-                        row("工作目录", meta.cwd ?? "无")
-                        row("接管", meta.takeover ? "已开启" : "只读")
+                    Section(String(localized: "会话")) {
+                        row(String(localized: "标题"), meta.title ?? String(localized: "未命名会话"))
+                        row(String(localized: "设备"), meta.connectorId)
+                        row(String(localized: "Agent"), meta.runtimeName ?? meta.runtime)
+                        row(String(localized: "Agent 类型"), meta.runtimeTypeDisplayName ?? meta.runtimeType ?? meta.runtime)
+                        row(String(localized: "状态"), (chat.session.runtime.state?.status ?? meta.status).displayName)
+                        row(String(localized: "工作目录"), meta.cwd ?? String(localized: "无"))
+                        row(String(localized: "接管"), meta.takeover ? String(localized: "已开启") : String(localized: "只读"))
                     }
-                    Section("标识与时间线") {
-                        row("Session ID", meta.id)
-                        row("外部 Session ID", meta.externalSessionId ?? "无")
-                        row("已加载条目", String(chat.session.timeline.count))
-                        row("待回应交互", String(chat.session.notices.notices.filter { $0.isVisible && $0.notice.type == "interaction" }.count))
+                    Section(String(localized: "标识与时间线")) {
+                        row(String(localized: "Session ID"), meta.id)
+                        row(String(localized: "外部 Session ID"), meta.externalSessionId ?? String(localized: "无"))
+                        row(String(localized: "已加载条目"), String(chat.session.timeline.count))
+                        row(String(localized: "待回应交互"), String(chat.session.notices.notices.filter { $0.isVisible && $0.notice.type == "interaction" }.count))
                     }
                     Section {
-                        Button { exportRequest = "memory" } label: { Label("导出已加载时间线 JSON", systemImage: "square.and.arrow.up") }
+                        Button { exportRequest = "memory" } label: { Label(String(localized: "导出已加载时间线 JSON"), appSymbol: "square.and.arrow.up") }
                             .disabled(exportRequest != nil)
-                        Button { exportRequest = "remote" } label: { Label("导出服务器时间线 JSON", systemImage: "arrow.down.document") }
+                        Button { exportRequest = "remote" } label: { Label(String(localized: "导出服务器时间线 JSON"), appSymbol: "arrow.down.document") }
                             .disabled(exportRequest != nil || chat.session.network.availability == .offline)
                         if exportRequest != nil {
-                            HStack { ProgressView(); Text("正在准备导出…"); Spacer(); Button("取消") { exportRequest = nil } }
+                            HStack { ProgressView(); Text(String(localized: "正在准备导出…")); Spacer(); Button(String(localized: "取消")) { exportRequest = nil } }
                         }
                     } footer: {
-                        Text("已加载导出保留当前缓存窗口；服务器导出会单独分页读取完整时间线，不改变你正在查看的位置。")
+                        Text(String(localized: "已加载导出保留当前缓存窗口；服务器导出会单独分页读取完整时间线，不改变你正在查看的位置。"))
                     }
                 }
                 if let error { Section { Text(error).foregroundStyle(.secondary) } }
             }
-            .navigationTitle("会话详情").navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("关闭", systemImage: "xmark") { dismiss() } } }
+            .navigationTitle(String(localized: "会话详情")).navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button(String(localized: "关闭"), appSymbol: "xmark") { dismiss() } } }
         }
         .presentationDetents([.large])
         .task(id: exportRequest) {

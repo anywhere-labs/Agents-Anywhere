@@ -19,7 +19,7 @@ struct ChatPageHeader<Actions: View>: View {
                         .foregroundStyle(AppTheme.primaryText(colorScheme))
                         .frame(width: controls.diameter, height: controls.diameter)
                         .glassEffect(.regular.interactive(), in: .circle)
-                }.accessibilityLabel("打开侧栏")
+                }.accessibilityLabel(String(localized: "打开侧栏"))
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title).font(.headline).lineLimit(1, reservesSpace: true)
                     if let subtitle { Text(subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1, reservesSpace: true) }
@@ -32,7 +32,7 @@ struct ChatPageHeader<Actions: View>: View {
                                     Group {
                                         if status.isProgress {
                                             ProgressView().progressViewStyle(.circular).controlSize(.mini)
-                                        } else { Image(systemName: status.symbol) }
+                                        } else { AppSymbol(status.symbol) }
                                     }.frame(width: statusLineHeight, height: statusLineHeight)
                                     Text(status.title).lineLimit(1)
                                 }
@@ -53,11 +53,8 @@ struct ChatPageHeader<Actions: View>: View {
 
 struct SidebarMenuIcon: View {
     var body: some View {
-        VStack(alignment: .leading, spacing: 4.5) {
-            Capsule().frame(width: 21, height: 2)
-            Capsule().frame(width: 21, height: 2)
-            Capsule().frame(width: 13, height: 2)
-        }.frame(width: 24, height: 24).accessibilityHidden(true)
+        AppSymbol("sidebar.left", size: 22)
+            .frame(width: 24, height: 24).accessibilityHidden(true)
     }
 }
 
@@ -65,7 +62,7 @@ struct ChatHeaderActionLabel: View {
     let symbol: String
     let controls: ChatControlMetrics
     var body: some View {
-        Image(systemName: symbol).font(.system(size: 19, weight: .regular))
+        AppSymbol(symbol, size: 19)
             .frame(width: controls.diameter, height: controls.diameter).contentShape(Rectangle())
     }
 }

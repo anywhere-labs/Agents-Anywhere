@@ -10,12 +10,12 @@ struct PasswordSettingsView: View {
     var body: some View {
         Form {
             Section {
-                SecureField("New password", text: $password)
+                SecureField(String(localized: "New password"), text: $password)
                     .textContentType(.newPassword)
-                SecureField("Confirm password", text: $confirmation)
+                SecureField(String(localized: "Confirm password"), text: $confirmation)
                     .textContentType(.newPassword)
             } footer: {
-                Text("Use at least 8 characters. Changing the password does not sign out this device.")
+                Text(String(localized: "Use at least 8 characters. Changing the password does not sign out this device."))
             }
 
             Section {
@@ -26,19 +26,19 @@ struct PasswordSettingsView: View {
                             ProgressView()
                                 .controlSize(.small)
                         }
-                        Text("Save password")
+                        Text(String(localized: "Save password"))
                         Spacer()
                     }
                 }
                 .disabled(password.isEmpty || confirmation.isEmpty || appState.isAccountWorking)
             }
         }
-        .navigationTitle("Password")
+        .navigationTitle(String(localized: "Password"))
         .navigationBarTitleDisplayMode(.inline)
-        .alert("Password updated", isPresented: $isShowingSuccess) {
-            Button("OK", role: .cancel) {}
+        .alert(String(localized: "Password updated"), isPresented: $isShowingSuccess) {
+            Button(String(localized: "OK"), role: .cancel) {}
         } message: {
-            Text("Your new password will be used the next time you sign in.")
+            Text(String(localized: "Your new password will be used the next time you sign in."))
         }
     }
 

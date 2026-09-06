@@ -16,7 +16,7 @@ struct ChatComposerDock: View {
     var isStreaming = false
     var canStop = true
     var isBusy = false
-    var placeholder = "询问 Agents"
+    var placeholder = String(localized: "询问 Agents")
     var isLoadingSettings = false
     var settingsError: String?
     var sessionChat: SessionChatModel?
@@ -68,8 +68,8 @@ struct ChatComposerDock: View {
             editor.finishEditing()
             draft.isFocused = false
         }
-        .alert("无法添加附件", isPresented: Binding(get: { attachmentError != nil }, set: { if !$0 { attachmentError = nil } })) {
-            Button("好", role: .cancel) { attachmentError = nil }
+        .alert(String(localized: "无法添加附件"), isPresented: Binding(get: { attachmentError != nil }, set: { if !$0 { attachmentError = nil } })) {
+            Button(String(localized: "好"), role: .cancel) { attachmentError = nil }
         } message: { Text(attachmentError ?? "") }
     }
 
@@ -94,9 +94,9 @@ struct ChatComposerDock: View {
 
     private func append(name: String, data: Data, mediaType: String) async {
         guard draft.isValid else { return }
-        guard draft.attachments.count < 5 else { attachmentError = "每条消息最多添加 5 个附件。"; return }
-        guard !data.isEmpty else { attachmentError = "文件为空。"; return }
-        guard data.count <= 25 * 1024 * 1024 else { attachmentError = "单个附件请控制在 25 MiB 以内。"; return }
+        guard draft.attachments.count < 5 else { attachmentError = String(localized: "每条消息最多添加 5 个附件。"); return }
+        guard !data.isEmpty else { attachmentError = String(localized: "文件为空。"); return }
+        guard data.count <= 25 * 1024 * 1024 else { attachmentError = String(localized: "单个附件请控制在 25 MiB 以内。"); return }
         let preview = mediaType.hasPrefix("image/")
             ? await Task.detached(priority: .utility) { ChatImageThumbnail.make(data: data) }.value : nil
         guard draft.isValid, draft.attachments.count < 5 else { return }
@@ -131,7 +131,7 @@ struct ChatComposerDock: View {
                         await append(name: file.name, data: file.data, mediaType: file.mediaType)
                     } catch { attachmentError = error.localizedDescription }
                 }
-                if urls.count > 5 { attachmentError = "每条消息最多添加 5 个附件。" }
+                if urls.count > 5 { attachmentError = String(localized: "每条消息最多添加 5 个附件。") }
             }
         } catch { attachmentError = error.localizedDescription }
     }

@@ -148,7 +148,7 @@ struct V2SessionProjection {
 
     private func payload<Value: Decodable>(_ key: String, in event: V2SessionEvent) throws -> Value {
         guard let raw = event.payload[key] else {
-            throw HTTPError.decoding(message: "Missing '\(key)' in \(event.type).")
+            throw HTTPError.decoding(message: String(localized: "Missing '\(key)' in \(event.type)."))
         }
         do { return try decoder.decode(Value.self, from: JSONEncoder().encode(raw)) }
         catch let error as DecodingError {

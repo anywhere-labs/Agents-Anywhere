@@ -199,7 +199,7 @@ private struct SidebarDrawerInteractive<
                         .onTapGesture(perform: closeFromOverlay)
                         .allowsHitTesting(interaction.acceptsSidebarTouches)
                         .accessibilityHidden(!interaction.acceptsSidebarTouches)
-                        .accessibilityLabel("关闭侧栏")
+                        .accessibilityLabel(String(localized: "关闭侧栏"))
                         .accessibilityAddTraits(.isButton)
 
 #if !canImport(UIKit)

@@ -9,14 +9,14 @@ struct SessionTurnActions: View {
         HStack(spacing: 2) {
             Button {
                 UIPasteboard.general.string = text; copied = true
-            } label: { Image(systemName: copied ? "checkmark" : "document.on.document").frame(width: 44, height: 44) }
-            .accessibilityLabel(copied ? "已复制" : "复制回复")
+            } label: { AppSymbol(copied ? "checkmark" : "document.on.document").frame(width: 44, height: 44) }
+            .accessibilityLabel(copied ? String(localized: "已复制") : String(localized: "复制回复"))
             .task(id: copied) {
                 guard copied else { return }
                 do { try await Task.sleep(for: .seconds(2)); copied = false } catch {}
             }
-            ShareLink(item: text) { Image(systemName: "square.and.arrow.up").frame(width: 44, height: 44) }
-                .accessibilityLabel("分享回复")
+            ShareLink(item: text) { AppSymbol("square.and.arrow.up").frame(width: 44, height: 44) }
+                .accessibilityLabel(String(localized: "分享回复"))
         }
         .disabled(text.isEmpty)
         .buttonStyle(.plain).font(.system(size: 15)).foregroundStyle(.secondary).padding(.leading, -10)

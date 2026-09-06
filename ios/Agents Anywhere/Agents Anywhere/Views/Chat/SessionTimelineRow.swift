@@ -27,9 +27,9 @@ struct SessionTimelineRow: View {
                         // extra placeholder row would disappear on the first token.
                         if !row.value.isStreamingText {
                             if row.value.status == .interrupted || row.value.status == .cancelled {
-                                Text("已停止生成").font(.caption).foregroundStyle(.secondary)
+                                Text(String(localized: "已停止生成")).font(.caption).foregroundStyle(.secondary)
                             }
-                            if row.value.status == .failed { Text("生成未完成").font(.caption).foregroundStyle(.secondary) }
+                            if row.value.status == .failed { Text(String(localized: "生成未完成")).font(.caption).foregroundStyle(.secondary) }
                         }
                     }
                 }
@@ -41,11 +41,11 @@ struct SessionTimelineRow: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .traceChatLayout("row:\(row.id)", state: "generation=\(row.layoutGeneration), status=\(row.value.status.rawValue)")
         .contextMenu {
-            Button("复制内容", systemImage: "document.on.document") {
+            Button(String(localized: "复制内容"), appSymbol: "document.on.document") {
                 UIPasteboard.general.string = row.text.isEmpty ? row.value.raw["content"]?.formattedJSON : row.text
             }
-            Button("复制条目 ID", systemImage: "number") { UIPasteboard.general.string = row.id }
-            Button("复制原始 JSON", systemImage: "curlybraces") { UIPasteboard.general.string = row.value.raw.formattedJSON }
+            Button(String(localized: "复制条目 ID"), appSymbol: "number") { UIPasteboard.general.string = row.id }
+            Button(String(localized: "复制原始 JSON"), appSymbol: "curlybraces") { UIPasteboard.general.string = row.value.raw.formattedJSON }
         }
     }
 
@@ -83,11 +83,11 @@ struct UserMessageBubble: View {
                 // echo never changes text wrapping or attachment width.
                 if isPending {
                     ProgressView().progressViewStyle(.circular).controlSize(.small)
-                        .frame(width: 18, height: 44).offset(x: -26).accessibilityLabel("正在发送消息")
+                        .frame(width: 18, height: 44).offset(x: -26).accessibilityLabel(String(localized: "正在发送消息"))
                 } else if let onDeliveryIssue {
                     Button(action: onDeliveryIssue) {
-                        Image(systemName: "exclamationmark.circle").foregroundStyle(.red).frame(width: 24, height: 44)
-                    }.buttonStyle(.plain).offset(x: -30).accessibilityLabel("查看发送问题")
+                        AppSymbol("exclamationmark.circle").foregroundStyle(.red).frame(width: 24, height: 44)
+                    }.buttonStyle(.plain).offset(x: -30).accessibilityLabel(String(localized: "查看发送问题"))
                 }
             }
         }
@@ -106,19 +106,19 @@ struct PendingMessageRow: View {
             onAttachment: onAttachment, loadThumbnail: chat.thumbnail, isPending: pending.delivery == .sending || pending.delivery == .accepted,
             onDeliveryIssue: deliveryIssue == nil ? nil : { confirmsDismiss = true })
         .confirmationDialog(deliveryIssue ?? "", isPresented: $confirmsDismiss, titleVisibility: .visible) {
-            Button("返回编辑") {
+            Button(String(localized: "返回编辑")) {
                 if chat.session.isLocalCreation { chat.onEditCreation?(pending) }
                 else { _ = chat.session.restoreDraft(from: pending) }
             }
-            Button("移除此发送记录") {
+            Button(String(localized: "移除此发送记录")) {
                 if chat.session.isLocalCreation { chat.onDiscardCreation?() } else { onDismiss() }
             }
-            Button("取消", role: .cancel) {}
+            Button(String(localized: "取消"), role: .cancel) {}
         }
     }
     private var deliveryIssue: String? {
         switch pending.delivery {
-        case .uncertain: "发送结果尚未确认，草稿已保留。请先检查会话是否已收到消息；移除记录后再次发送可能产生重复消息。"
+        case .uncertain: String(localized: "发送结果尚未确认，草稿已保留。请先检查会话是否已收到消息；移除记录后再次发送可能产生重复消息。")
         case let .rejected(error): error.message
         default: nil
         }

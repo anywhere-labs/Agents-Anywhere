@@ -61,9 +61,9 @@ struct DeviceManagementView: View {
             VStack(alignment: .leading, spacing: 32) {
                 DeviceAgentSection(model: agents, showsConnectionNotice: false) { report($0, source: "agents") }
                 VStack(alignment: .leading, spacing: 20) {
-                    Picker("Device content", selection: $tab) {
-                        Text("Projects").tag(DeviceOverviewTab.projects)
-                        Text("Sessions").tag(DeviceOverviewTab.sessions)
+                    Picker(String(localized: "Device content"), selection: $tab) {
+                        Text(String(localized: "Projects")).tag(DeviceOverviewTab.projects)
+                        Text(String(localized: "Sessions")).tag(DeviceOverviewTab.sessions)
                     }.pickerStyle(.segmented).accessibilityIdentifier("device.content")
                     if tab == .projects {
                         DeviceProjectGrid(projects: deviceProjects, canManage: canManage, canReadFiles: canReadFiles,
@@ -91,16 +91,16 @@ struct DeviceManagementView: View {
         .safeAreaInset(edge: .top, spacing: 0) {
             ChatPageHeader(title: connector.name, subtitle: connectionDescription, controls: controls, onMenu: onMenu) {
                 Menu {
-                    Button("New session", systemImage: "square.and.pencil") { onNewSession(nil) }
-                    Button("Copy device ID", systemImage: "doc.on.doc") { UIPasteboard.general.string = connector.id }
+                    Button(String(localized: "New session"), appSymbol: "square.and.pencil") { onNewSession(nil) }
+                    Button(String(localized: "Copy device ID"), appSymbol: "doc.on.doc") { UIPasteboard.general.string = connector.id }
                     Divider()
-                    Button("Rename device", systemImage: "pencil") { proposedName = connector.name; isRenaming = true }.disabled(!canManage)
-                    Button("Rotate credential", systemImage: "key") { confirmsRotation = true }.disabled(!canManage)
-                    Button("Delete device", systemImage: "trash", role: .destructive) { confirmsDeletion = true }.disabled(!canManage)
+                    Button(String(localized: "Rename device"), appSymbol: "pencil") { proposedName = connector.name; isRenaming = true }.disabled(!canManage)
+                    Button(String(localized: "Rotate credential"), appSymbol: "key") { confirmsRotation = true }.disabled(!canManage)
+                    Button(String(localized: "Delete device"), appSymbol: "trash", role: .destructive) { confirmsDeletion = true }.disabled(!canManage)
                 } label: {
                     ChatHeaderActionLabel(symbol: "ellipsis", controls: controls)
                         .glassEffect(.regular.interactive(), in: .circle)
-                }.accessibilityLabel("Device actions")
+                }.accessibilityLabel(String(localized: "Device actions"))
             }.onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { headerHeight = $0 }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
@@ -130,37 +130,38 @@ struct DeviceManagementView: View {
                 service: workspaceFilesService, permitsReading: canReadFiles)
         }
         .sheet(item: $credential) { ConnectorCredentialSheet(connector: $0.connector, connectorToken: $0.connectorToken, serverURL: serverURL) }
-        .alert("Rename device", isPresented: $isRenaming) {
-            TextField("Device name", text: $proposedName)
-            Button("Cancel", role: .cancel) {}
-            Button("Save") { Task { await renameDevice() } }
+        .alert(String(localized: "Rename device"), isPresented: $isRenaming) {
+            TextField(String(localized: "Device name"), text: $proposedName)
+            Button(String(localized: "Cancel"), role: .cancel) {}
+            Button(String(localized: "Save")) { Task { await renameDevice() } }
                 .disabled(proposedName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !canManage)
         }
-        .alert("Rotate connector credential?", isPresented: $confirmsRotation) {
-            Button("Cancel", role: .cancel) {}
-            Button("Rotate credential", role: .destructive) { Task { await rotateCredential() } }
-        } message: { Text("The current desktop Connector will disconnect. Replace its saved token with the new credential before reconnecting.") }
-        .alert("Delete this device?", isPresented: $confirmsDeletion) {
-            Button("Cancel", role: .cancel) {}
-            Button("Delete device", role: .destructive) { Task { await deleteDevice() } }
-        } message: { Text("The device and its server-owned metadata will be removed. This action cannot be undone.") }
-        .alert(model.sessionFilter == .archived ? "Restore these sessions?" : "Archive these sessions?", isPresented: $confirmsArchiveAll) {
-            Button("Cancel", role: .cancel) {}
-            Button(model.sessionFilter == .archived ? "Restore" : "Archive") { archiveAll() }
-        } message: { Text("This applies to all sessions in the selected scope, including those not loaded yet.") }
-        .alert(projectActionIsDeletion ? "Delete project?" : "Archive project sessions?", isPresented: Binding(
+        .alert(String(localized: "Rotate connector credential?"), isPresented: $confirmsRotation) {
+            Button(String(localized: "Cancel"), role: .cancel) {}
+            Button(String(localized: "Rotate credential"), role: .destructive) { Task { await rotateCredential() } }
+        } message: { Text(String(localized: "The current desktop Connector will disconnect. Replace its saved token with the new credential before reconnecting.")) }
+        .alert(String(localized: "Delete this device?"), isPresented: $confirmsDeletion) {
+            Button(String(localized: "Cancel"), role: .cancel) {}
+            Button(String(localized: "Delete device"), role: .destructive) { Task { await deleteDevice() } }
+        } message: { Text(String(localized: "The device and its server-owned metadata will be removed. This action cannot be undone.")) }
+        .alert(model.sessionFilter == .archived ? String(localized: "Restore these sessions?") : String(localized: "Archive these sessions?"), isPresented: $confirmsArchiveAll) {
+            Button(String(localized: "Cancel"), role: .cancel) {}
+            Button(model.sessionFilter == .archived ? String(localized: "Restore") : String(localized: "Archive")) { archiveAll() }
+        } message: { Text(String(localized: "This applies to all sessions in the selected scope, including those not loaded yet.")) }
+        .alert(projectActionIsDeletion ? String(localized: "Delete project?") : String(localized: "Archive project sessions?"), isPresented: Binding(
             get: { pendingProject != nil }, set: { if !$0 { pendingProject = nil } })) {
-            Button("Cancel", role: .cancel) { pendingProject = nil }
-            Button(projectActionIsDeletion ? "Delete" : "Archive", role: .destructive) {
+            Button(String(localized: "Cancel"), role: .cancel) { pendingProject = nil }
+            Button(projectActionIsDeletion ? String(localized: "Delete") : String(localized: "Archive"), role: .destructive) {
                 guard let project = pendingProject else { return }; pendingProject = nil
+                let deletesProject = projectActionIsDeletion
                 perform {
-                    if projectActionIsDeletion { try await dashboard.deleteProject(project.id) }
+                    if deletesProject { try await dashboard.deleteProject(project.id) }
                     else { try await dashboard.archiveProject(project.id, archived: true) }
                 }
             }
         } message: {
-            Text(projectActionIsDeletion ? "Only empty projects can be deleted. Files on the device are kept." :
-                "Active sessions in this project will be archived. You can restore them later.")
+            Text(projectActionIsDeletion ? String(localized: "Only empty projects can be deleted. Files on the device are kept.") :
+                String(localized: "Active sessions in this project will be archived. You can restore them later."))
         }
     }
 

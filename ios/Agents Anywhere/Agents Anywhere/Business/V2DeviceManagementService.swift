@@ -106,7 +106,7 @@ struct V2DeviceManagementService {
     func addRuntime(connectorId: String, type: V2RuntimeType, name: String?, config: [String: JSONValue], newInstance: Bool = false) async throws -> V2DeviceRuntime {
         let inventory = try await inventory(connectorId: connectorId)
         guard let currentType = inventory.types.first(where: { $0.id == type.id }), currentType.present else {
-            throw V2BusinessError.workspaceFilesUnavailable(message: "这个 Agent 已不可用，请刷新设备。")
+            throw V2BusinessError.workspaceFilesUnavailable(message: String(localized: "这个 Agent 已不可用，请刷新设备。"))
         }
         let configured = inventory.configuredInstances.first { $0.runtimeType == type.runtimeType }
         // A named create retry can recover exactly that instance without adding another.
@@ -120,7 +120,7 @@ struct V2DeviceManagementService {
             return try await setRuntimeActive(connectorId: connectorId, runtimeId: existing.id, active: true)
         }
         guard inventory.canAdd(currentType) else {
-            throw V2BusinessError.workspaceFilesUnavailable(message: "这个 Agent 的实例数量已达上限。")
+            throw V2BusinessError.workspaceFilesUnavailable(message: String(localized: "这个 Agent 的实例数量已达上限。"))
         }
         let names = Set(inventory.instances.map { $0.name.lowercased() })
         var suggestion = currentType.displayName

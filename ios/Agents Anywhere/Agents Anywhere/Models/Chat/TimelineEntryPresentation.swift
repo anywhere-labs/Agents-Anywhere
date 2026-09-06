@@ -48,13 +48,13 @@ struct TimelineEntryPresentation: Hashable {
         if item.isReasoning {
             kind = .reasoning; symbol = "sparkles"
             let text = TimelineText.reasoning(raw)
-            if let summary = TimelineText.inlineSummary(text), !summary.isEmpty { title = "思考：\(summary)" }
-            else { title = item.status.isActive ? "正在思考" : "思考过程" }
+            if let summary = TimelineText.inlineSummary(text), !summary.isEmpty { title = String(localized: "思考：\(summary)") }
+            else { title = item.status.isActive ? String(localized: "正在思考") : String(localized: "思考过程") }
             detail = nil
         } else if wireKind == "compact" && [.system, .marker].contains(item.type) {
             kind = .compact; symbol = "line.3.horizontal.decrease"
             let active = ["started", "running", "inProgress"].contains(raw["state"]?.stringValue ?? "") || item.status.isActive
-            title = item.status == .failed || raw["state"] == .string("failed") ? "上下文压缩失败" : active ? "正在压缩上下文" : "上下文已压缩"
+            title = item.status == .failed || raw["state"] == .string("failed") ? String(localized: "上下文压缩失败") : active ? String(localized: "正在压缩上下文") : String(localized: "上下文已压缩")
             detail = item.status == .failed ? raw : nil
         } else if item.type == .tool || wireKind == "file_change" || item.type == .fileChange {
             kind = .tool
@@ -65,14 +65,15 @@ struct TimelineEntryPresentation: Hashable {
             if wireKind == "file_change" {
                 let added = !self.rawChanges.isEmpty && self.rawChanges.allSatisfy { TimelineFileChange.action($0) == .add }
                 let path = self.rawChanges.count == 1 ? TimelineText.path(self.rawChanges[0]).map { TimelineText.displayPath($0, cwd: cwd) } : nil
-                title = (added ? "已创建" : "已修改") + (path.map { $0.count <= 60 ? " \($0)" : "文件" } ?? "文件")
-            } else if wireKind == "command" { title = "执行 \(command ?? "命令")" }
-            else if wireKind == "web_search" { title = "搜索 \(TimelineText.first(raw["query"], toolInput?["query"]) ?? "网页")" }
+                let target = path.flatMap { $0.count <= 60 ? $0 : nil } ?? String(localized: "文件")
+                title = added ? String(localized: "Created \(target)") : String(localized: "Modified \(target)")
+            } else if wireKind == "command" { title = String(localized: "执行 \(command ?? String(localized: "命令"))") }
+            else if wireKind == "web_search" { title = String(localized: "搜索 \(TimelineText.first(raw["query"], toolInput?["query"]) ?? String(localized: "网页"))") }
             else if wireKind == "mcp" {
-                title = "\(TimelineText.first(raw["server"], toolInput?["server"]) ?? "MCP") / \(TimelineText.first(raw["tool"], toolInput?["tool"]) ?? "工具")"
+                title = String(localized: "\(TimelineText.first(raw["server"], toolInput?["server"]) ?? "MCP") / \(TimelineText.first(raw["tool"], toolInput?["tool"]) ?? String(localized: "工具"))")
             } else if wireKind == "agent_call" {
-                let action = ["invoke": "调用 Agent", "spawn": "创建 Agent", "send_input": "向 Agent 发送消息", "resume": "恢复 Agent", "wait": "等待 Agent", "close": "结束 Agent"][raw["action"]?.stringValue ?? ""] ?? "Agent 调用"
-                title = action + (TimelineText.first(raw["description"], raw["title"]).map { "：\($0)" } ?? "")
+                let action = ["invoke": String(localized: "调用 Agent"), "spawn": String(localized: "创建 Agent"), "send_input": String(localized: "向 Agent 发送消息"), "resume": String(localized: "恢复 Agent"), "wait": String(localized: "等待 Agent"), "close": String(localized: "结束 Agent")][raw["action"]?.stringValue ?? ""] ?? String(localized: "Agent 调用")
+                title = TimelineText.first(raw["description"], raw["title"]).map { String(localized: "\(action): \($0)") } ?? action
             } else {
                 title = [TimelineText.first(raw["toolName"], raw["name"], raw["tool"], raw["title"]), target].compactMap { $0 }.joined(separator: " ").nonempty ?? wireKind
             }
@@ -96,7 +97,7 @@ struct TimelineEntryPresentation: Hashable {
 
 struct TimelineFileChange: Hashable, Identifiable {
     enum Action: String { case add, modify, delete, rename, unknown
-        var label: String { switch self { case .add: "新增"; case .modify: "修改"; case .delete: "删除"; case .rename: "重命名"; case .unknown: "变更" } }
+        var label: String { switch self { case .add: String(localized: "新增"); case .modify: String(localized: "修改"); case .delete: String(localized: "删除"); case .rename: String(localized: "重命名"); case .unknown: String(localized: "变更") } }
     }
     let id: String
     let path: String?
@@ -107,7 +108,7 @@ struct TimelineFileChange: Hashable, Identifiable {
 
     init(raw: JSONValue, index: Int, cwd: String?) {
         path = TimelineText.path(raw)
-        displayPath = path.map { TimelineText.displayPath($0, cwd: cwd) } ?? "未知文件"
+        displayPath = path.map { TimelineText.displayPath($0, cwd: cwd) } ?? String(localized: "未知文件")
         id = "\(index):\(path ?? "")"
         action = Self.action(raw)
         code = TimelineText.first(raw["diff"], raw["patch"])
@@ -182,9 +183,9 @@ extension V2TimelineItemStatus {
     var isFailure: Bool { [.failed, .cancelled, .interrupted].contains(self) }
     var label: String {
         switch self {
-        case .pending: "等待中"; case .running: "进行中"; case .waitingApproval: "等待回应"
-        case .done: "已完成"; case .failed: "失败"; case .cancelled: "已取消"; case .interrupted: "已中断"
-        case .hidden: "已隐藏"; case .unknown: "未知状态"
+        case .pending: String(localized: "等待中"); case .running: String(localized: "进行中"); case .waitingApproval: String(localized: "等待回应")
+        case .done: String(localized: "已完成"); case .failed: String(localized: "失败"); case .cancelled: String(localized: "已取消"); case .interrupted: String(localized: "已中断")
+        case .hidden: String(localized: "已隐藏"); case .unknown: String(localized: "未知状态")
         }
     }
 }

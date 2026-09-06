@@ -30,7 +30,7 @@ struct V2AttachmentService {
     func download(sessionId: V2SessionID, fileId: V2AttachmentID) async throws -> Data {
         let response = try await attachmentAPI.download(sessionId: sessionId, fileId: fileId)
         guard let data = Data(base64Encoded: response.contentBase64) else {
-            throw HTTPError.decoding(message: "The attachment content is not valid Base64 data.")
+            throw HTTPError.decoding(message: String(localized: "The attachment content is not valid Base64 data."))
         }
         return data
     }

@@ -16,7 +16,7 @@ extension V2ConnectorAPI {
         try Task.checkCancellation()
         let bytes = try temporary.resourceValues(forKeys: [.fileSizeKey]).fileSize
         guard bytes.map(Int64.init) == transfer.size else {
-            throw HTTPError.decoding(message: "文件下载不完整，请重新下载。")
+            throw HTTPError.decoding(message: String(localized: "文件下载不完整，请重新下载。"))
         }
         return try WorkspaceDownloadedFile(moving: temporary, name: transfer.name)
     }

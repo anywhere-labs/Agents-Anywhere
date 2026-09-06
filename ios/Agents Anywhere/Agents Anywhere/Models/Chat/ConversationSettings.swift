@@ -42,7 +42,8 @@ struct ChatSettingsCatalog: Equatable {
 
     private static func option(id: String, title: String, detail: String?, selection: String?,
                                isDefault: Bool, enabled: Bool?, reason: String?, metadata: JSONValue) -> CatalogOption {
-        CatalogOption(id: id, title: title, detail: detail ?? "", selectionID: selection,
+        CatalogOption(id: id, title: RuntimeLocalizedCopy.text(title, metadata: metadata),
+            detail: RuntimeLocalizedCopy.text(detail ?? "", metadata: metadata, field: "descriptionKey"), selectionID: selection,
             isDefault: isDefault, isEnabled: enabled ?? metadata["enabled"]?.boolValue ?? true,
             disabledReason: reason ?? metadata["disabledReason"]?.stringValue)
     }
@@ -61,7 +62,7 @@ final class ConversationSettings {
     var permission: CatalogOption? { catalog.permissions.first { $0.id == permissionID } }
     var modelLabel: String {
         let parts = [model?.option.title, reasoning?.title].compactMap { $0 }
-        return parts.isEmpty ? "默认模型" : parts.joined(separator: " · ")
+        return parts.isEmpty ? String(localized: "默认模型") : parts.joined(separator: " · ")
     }
     var selections: [V2RuntimeSelectionScope: V2SelectionID] {
         var result: [V2RuntimeSelectionScope: V2SelectionID] = [:]

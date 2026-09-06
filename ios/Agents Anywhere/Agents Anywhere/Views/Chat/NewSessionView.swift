@@ -31,26 +31,26 @@ struct NewSessionView: View, Equatable {
             ScrollView {
                 VStack(alignment: .leading, spacing: 28) {
                     VStack(alignment: .leading, spacing: 12) {
-                        Image(systemName: "sparkles").font(.system(size: 28)).foregroundStyle(.primary)
-                        Text("从这里开始").font(.largeTitle.bold())
-                        Text("选择运行任务的设备和 Agent，\n把想做的事交给它。")
+                        AppSymbol("sparkles", size: 28).foregroundStyle(.primary)
+                        Text(String(localized: "从这里开始")).font(.largeTitle.bold())
+                        Text(String(localized: "选择运行任务的设备和 Agent，\n把想做的事交给它。"))
                             .font(.body).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     }
                     .padding(.top, 26)
 
                     VStack(alignment: .leading, spacing: 12) {
-                        Text("运行目标").font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
+                        Text(String(localized: "运行目标")).font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
                         targetCard
                         Button { showsWorkspace = true } label: {
                             HStack(spacing: 14) {
-                                Image(systemName: "folder").font(.title3).foregroundStyle(.primary).frame(width: 24)
+                                AppSymbol("folder", size: 20).foregroundStyle(.primary).frame(width: 24)
                                 VStack(alignment: .leading, spacing: 5) {
-                                    Text("项目").font(.subheadline.weight(.medium)).foregroundStyle(.primary)
-                                    Text(model.project.map { $0.name + " · " + $0.workspacePath } ?? "选择已有项目或创建项目")
+                                    Text(String(localized: "项目")).font(.subheadline.weight(.medium)).foregroundStyle(.primary)
+                                    Text(model.project.map { $0.name + " · " + $0.workspacePath } ?? String(localized: "选择已有项目或创建项目"))
                                         .font(.footnote).foregroundStyle(.secondary).lineLimit(2)
                                 }
                                 Spacer(minLength: 8)
-                                Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                                AppSymbol("chevron.right", size: 14).foregroundStyle(.secondary)
                             }
                             .padding(18).background(.quaternary.opacity(0.5), in: .rect(cornerRadius: 22))
                         }
@@ -59,15 +59,15 @@ struct NewSessionView: View, Equatable {
                     }
 
                     connectionStatus
-                    if model.isCreating { Label("正在创建会话…", systemImage: "arrow.up.circle").font(.subheadline).foregroundStyle(.secondary) }
+                    if model.isCreating { Label(String(localized: "正在创建会话…"), appSymbol: "arrow.up.circle").font(.subheadline).foregroundStyle(.secondary) }
                     if let error = model.error {
                         VStack(alignment: .leading, spacing: 12) {
                             Text(error).font(.subheadline).foregroundStyle(.secondary)
                             if model.creationUncertain {
-                                Button("查看会话列表", action: onMenu)
-                                Button("已检查，重新创建") { confirmsRetry = true }
+                                Button(String(localized: "查看会话列表"), action: onMenu)
+                                Button(String(localized: "已检查，重新创建")) { confirmsRetry = true }
                             } else {
-                                Button("重新连接") { Task { await refresh() } }
+                                Button(String(localized: "重新连接")) { Task { await refresh() } }
                             }
                         }
                     }
@@ -80,11 +80,11 @@ struct NewSessionView: View, Equatable {
             .scrollDismissesKeyboard(.interactively)
             .refreshable { await refresh() }
             .safeAreaInset(edge: .top, spacing: 0) {
-                ChatPageHeader(title: "Agents Anywhere", controls: controls, onMenu: onMenu) {
+                ChatPageHeader(title: String(localized: "Agents Anywhere"), controls: controls, onMenu: onMenu) {
                     Button { model.draft.isFocused = true } label: {
                         ChatHeaderActionLabel(symbol: "square.and.pencil", controls: controls)
                             .glassEffect(.regular.interactive(), in: .circle)
-                    }.accessibilityLabel("开始新会话")
+                    }.accessibilityLabel(String(localized: "开始新会话"))
                 }
             }
             .safeAreaInset(edge: .bottom, spacing: 0) {
@@ -107,9 +107,9 @@ struct NewSessionView: View, Equatable {
         .sheet(isPresented: $showsWorkspace) {
             ProjectSelectionSheet(model: model, repository: repository)
         }
-        .confirmationDialog("创建结果仍未确认，再次创建可能产生重复会话。", isPresented: $confirmsRetry, titleVisibility: .visible) {
-            Button("保留草稿并允许重新创建") { model.acknowledgeUncertainCreation() }
-            Button("取消", role: .cancel) {}
+        .confirmationDialog(String(localized: "创建结果仍未确认，再次创建可能产生重复会话。"), isPresented: $confirmsRetry, titleVisibility: .visible) {
+            Button(String(localized: "保留草稿并允许重新创建")) { model.acknowledgeUncertainCreation() }
+            Button(String(localized: "取消"), role: .cancel) {}
         }
     }
 
@@ -117,21 +117,21 @@ struct NewSessionView: View, Equatable {
         Button { showsTarget = true } label: {
             VStack(alignment: .leading, spacing: 16) {
                 HStack(spacing: 14) {
-                    Image(systemName: "desktopcomputer").font(.system(size: 24)).foregroundStyle(.primary).frame(width: 32)
+                    AppSymbol("desktopcomputer", size: 24).foregroundStyle(.primary).frame(width: 32)
                     VStack(alignment: .leading, spacing: 5) {
-                        Text(model.connector?.name ?? "选择设备").font(.headline).foregroundStyle(.primary)
-                        Text(model.connector?.status == .online ? "在线" : model.connector == nil ? "你的任务将在所选设备上运行" : "设备离线")
+                        Text(model.connector?.name ?? String(localized: "选择设备")).font(.headline).foregroundStyle(.primary)
+                        Text(model.connector?.status == .online ? String(localized: "在线") : model.connector == nil ? String(localized: "你的任务将在所选设备上运行") : String(localized: "设备离线"))
                             .font(.footnote).foregroundStyle(model.connector?.status == .online ? .green : .secondary)
                     }
                     Spacer()
-                    Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                    AppSymbol("chevron.right", size: 14).foregroundStyle(.secondary)
                 }
                 Divider()
                 HStack(spacing: 14) {
-                    Image(systemName: "sparkle").font(.system(size: 23)).foregroundStyle(.primary).frame(width: 32)
+                    AppSymbol("sparkle", size: 23).foregroundStyle(.primary).frame(width: 32)
                     VStack(alignment: .leading, spacing: 5) {
-                        Text(model.runtime?.sessionDisplayName ?? "选择 Agent").font(.headline).foregroundStyle(.primary)
-                        Text(model.runtime?.typeDisplayName ?? "从这台设备已配置的实例中选择")
+                        Text(model.runtime?.sessionDisplayName ?? String(localized: "选择 Agent")).font(.headline).foregroundStyle(.primary)
+                        Text(model.runtime?.typeDisplayName ?? String(localized: "从这台设备已配置的实例中选择"))
                             .font(.footnote).foregroundStyle(.secondary)
                     }
                     Spacer()
@@ -143,33 +143,33 @@ struct NewSessionView: View, Equatable {
         }
         .buttonStyle(.plain)
         .disabled(model.isCreating)
-        .accessibilityLabel("选择设备和 Agent")
+        .accessibilityLabel(String(localized: "选择设备和 Agent"))
         .accessibilityIdentifier("chat.new.target")
     }
 
     @ViewBuilder private var connectionStatus: some View {
         if model.network.availability == .offline {
-            status("手机网络已断开", detail: "草稿和运行目标已保留，网络恢复后会重新检查。", icon: "wifi.slash")
+            status(String(localized: "手机网络已断开"), detail: String(localized: "草稿和运行目标已保留，网络恢复后会重新检查。"), icon: "wifi.slash")
         } else if dashboardLoading && connectors.isEmpty {
-            ProgressView("正在查找设备…")
+            ProgressView(String(localized: "正在查找设备…"))
         } else if connectors.isEmpty {
-            status("还没有可用设备", detail: dashboardError ?? "从侧栏添加设备，连接后即可开始。", icon: "desktopcomputer")
-            Button("打开侧栏", action: onMenu)
+            status(String(localized: "还没有可用设备"), detail: dashboardError ?? String(localized: "从侧栏添加设备，连接后即可开始。"), icon: "desktopcomputer")
+            Button(String(localized: "打开侧栏"), action: onMenu)
         } else if model.connector?.status != .online {
-            status("目标设备离线", detail: "等待它重新连接，或选择其他在线设备。草稿会继续保留。", icon: "bolt.horizontal.circle")
-            Button("选择其他设备") { showsTarget = true }
+            status(String(localized: "目标设备离线"), detail: String(localized: "等待它重新连接，或选择其他在线设备。草稿会继续保留。"), icon: "bolt.horizontal.circle")
+            Button(String(localized: "选择其他设备")) { showsTarget = true }
         } else if model.project == nil {
-            status("选择任务所属的项目", detail: "项目决定会话使用的工作目录。", icon: "folder")
-            Button("选择项目") { showsWorkspace = true }
+            status(String(localized: "选择任务所属的项目"), detail: String(localized: "项目决定会话使用的工作目录。"), icon: "folder")
+            Button(String(localized: "选择项目")) { showsWorkspace = true }
         } else if !model.isPreparing && model.runtime?.isReadyForSession != true {
-            status("选择一个已就绪的 Agent", detail: "可在设备管理中配置或启动实例。", icon: "sparkle")
-            Button("选择 Agent") { showsTarget = true }
+            status(String(localized: "选择一个已就绪的 Agent"), detail: String(localized: "可在设备管理中配置或启动实例。"), icon: "sparkle")
+            Button(String(localized: "选择 Agent")) { showsTarget = true }
         }
     }
 
     private func status(_ title: String, detail: String, icon: String) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Label(title, systemImage: icon).font(.subheadline.weight(.medium))
+            Label(title, appSymbol: icon).font(.subheadline.weight(.medium))
             Text(detail).font(.footnote).foregroundStyle(.secondary)
         }
     }

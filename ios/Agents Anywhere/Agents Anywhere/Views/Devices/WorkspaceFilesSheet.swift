@@ -65,9 +65,9 @@ struct WorkspaceFilesSheet: View {
                 if let transfer {
                     HStack(spacing: 12) {
                         ProgressView()
-                        Text("正在下载 \(transfer.entry.name)…").font(.footnote).lineLimit(1)
+                        Text(String(localized: "正在下载 \(transfer.entry.name)…")).font(.footnote).lineLimit(1)
                         Spacer(minLength: 0)
-                        Button("取消") { self.transfer = nil }.font(.footnote)
+                        Button(String(localized: "取消")) { self.transfer = nil }.font(.footnote)
                     }
                     .padding(16).background(.regularMaterial)
                 }
@@ -95,8 +95,8 @@ struct WorkspaceFilesSheet: View {
             } catch { if !Task.isCancelled { previewErrorMessage = error.localizedDescription } }
         }
         .onDisappear { transfer = nil }
-        .alert("文件操作失败", isPresented: previewErrorBinding) {
-            Button("好", role: .cancel) {
+        .alert(String(localized: "文件操作失败"), isPresented: previewErrorBinding) {
+            Button(String(localized: "好"), role: .cancel) {
                 previewErrorMessage = nil
             }
         } message: {
@@ -119,7 +119,7 @@ struct WorkspaceFilesSheet: View {
         return session.isValid && session.network.availability != .offline && session.metadata?.connectorStatus == .online
     }
     private func openFile(_ entry: V2WorkspaceEntry) {
-        guard canRead else { previewErrorMessage = "设备或网络已离线，请恢复连接后重试。"; return }
+        guard canRead else { previewErrorMessage = String(localized: "设备或网络已离线，请恢复连接后重试。"); return }
         destination = .preview(entry)
     }
     private func startTransfer(_ entry: V2WorkspaceEntry, action: WorkspaceFileAction) {
@@ -156,7 +156,7 @@ private struct WorkspaceDirectoryView: View {
     var body: some View {
         List {
             if !canRead {
-                Label("设备或网络已离线，已加载的目录仍可查看。", systemImage: "wifi.slash")
+                Label(String(localized: "设备或网络已离线，已加载的目录仍可查看。"), appSymbol: "wifi.slash")
                     .font(.footnote).foregroundStyle(.secondary)
             }
             if let error = model.errorMessage, !model.entries.isEmpty {
@@ -165,25 +165,25 @@ private struct WorkspaceDirectoryView: View {
             if model.isLoading && model.entries.isEmpty {
                 HStack(spacing: 12) {
                     ProgressView()
-                    Text("Loading files...")
+                    Text(String(localized: "Loading files..."))
                         .foregroundStyle(.secondary)
                 }
             } else if let errorMessage = model.errorMessage, model.entries.isEmpty {
                 ContentUnavailableView {
-                    Label("Unable to Load Files", systemImage: "exclamationmark.triangle")
+                    Label(String(localized: "Unable to Load Files"), appSymbol: "exclamationmark.triangle")
                 } description: {
                     Text(errorMessage)
                 } actions: {
-                    Button("Retry") {
+                    Button(String(localized: "Retry")) {
                         Task { await loadDirectory() }
                     }
                     .buttonStyle(.borderedProminent).disabled(!canRead)
                 }
             } else if model.entries.isEmpty {
                 ContentUnavailableView(
-                    "Empty Folder",
+                    String(localized: "Empty Folder"),
                     systemImage: "folder",
-                    description: Text("This workspace folder has no files.")
+                    description: Text(String(localized: "This workspace folder has no files."))
                 )
             } else {
                 ForEach(model.entries) { entry in
@@ -193,11 +193,11 @@ private struct WorkspaceDirectoryView: View {
                         canRead: canRead
                     )
                     .contextMenu {
-                        Button("复制路径", systemImage: "document.on.document") { UIPasteboard.general.string = entry.path }
+                        Button(String(localized: "复制路径"), appSymbol: "document.on.document") { UIPasteboard.general.string = entry.path }
                         if entry.isFile {
-                            Button("下载", systemImage: "arrow.down.to.line") { onFileAction(entry, .download) }
+                            Button(String(localized: "下载"), appSymbol: "arrow.down.to.line") { onFileAction(entry, .download) }
                                 .disabled(!canTransfer)
-                            Button("其他打开方式…", systemImage: "square.and.arrow.up") { onFileAction(entry, .openIn) }
+                            Button(String(localized: "其他打开方式…"), appSymbol: "square.and.arrow.up") { onFileAction(entry, .openIn) }
                                 .disabled(!canTransfer)
                         }
                     }
@@ -205,7 +205,7 @@ private struct WorkspaceDirectoryView: View {
             }
 
             if model.isTruncated {
-                Label("Some files are not shown.", systemImage: "ellipsis.circle")
+                Label(String(localized: "Some files are not shown."), appSymbol: "ellipsis.circle")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
@@ -219,9 +219,9 @@ private struct WorkspaceDirectoryView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 20).padding(.vertical, 12)
                 .background(.bar)
-                .accessibilityLabel("当前目录：\(currentDirectoryPath)")
+                .accessibilityLabel(String(localized: "当前目录：\(currentDirectoryPath)"))
                 .contextMenu {
-                    Button("复制路径", systemImage: "document.on.document") {
+                    Button(String(localized: "复制路径"), appSymbol: "document.on.document") {
                         UIPasteboard.general.string = currentDirectoryPath
                     }
                 }
@@ -229,7 +229,7 @@ private struct WorkspaceDirectoryView: View {
         .toolbar {
             if let onSelectDirectory {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("使用此目录") { onSelectDirectory(currentDirectoryPath) }
+                    Button(String(localized: "使用此目录")) { onSelectDirectory(currentDirectoryPath) }
                         .disabled(!canRead || model.isLoading || model.resolvedPath.isEmpty || model.errorMessage != nil)
                 }
             }
@@ -284,7 +284,7 @@ private struct WorkspaceEntryRow: View {
 
     private var label: some View {
         HStack(spacing: 12) {
-            Image(systemName: entry.isDirectory ? "folder" : "doc")
+            AppSymbol(entry.isDirectory ? "folder" : AppFileSymbol.name(for: entry.name))
                 .foregroundStyle(.secondary)
                 .frame(width: 24)
 

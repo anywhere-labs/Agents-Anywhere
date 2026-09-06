@@ -21,10 +21,10 @@ struct ChatToast: Identifiable, Equatable {
         guard let failure, failure.kind != .cancelled else { return }
         let heading: String
         switch failure.kind {
-        case .invalidResponse: heading = "会话数据格式不兼容"
-        case .authentication: heading = "登录状态需要验证"
-        case .offline: heading = "网络已断开"
-        default: heading = "操作未完成"
+        case .invalidResponse: heading = String(localized: "会话数据格式不兼容")
+        case .authentication: heading = String(localized: "登录状态需要验证")
+        case .offline: heading = String(localized: "网络已断开")
+        default: heading = String(localized: "操作未完成")
         }
         items.append(ChatToast(id: source, title: title ?? heading, message: failure.message, canRetry: canRetry))
     }

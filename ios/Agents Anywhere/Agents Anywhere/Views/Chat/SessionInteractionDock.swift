@@ -29,8 +29,8 @@ struct SessionInteractionDock: View {
                                 content.scaleEffect(motionReduced ? 1 : 1 - min(abs(phase.value), 1) * 0.04)
                                     .opacity(1 - min(abs(phase.value), 1) * 0.3)
                             }
-                            .accessibilityAction(named: "下一项") { step(1) }
-                            .accessibilityAction(named: "上一项") { step(-1) }
+                            .accessibilityAction(named: String(localized: "下一项")) { step(1) }
+                            .accessibilityAction(named: String(localized: "上一项")) { step(-1) }
                             .id(item.id)
                     }
                 }.scrollTargetLayout()

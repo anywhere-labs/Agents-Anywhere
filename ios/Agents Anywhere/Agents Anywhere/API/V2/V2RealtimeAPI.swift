@@ -100,7 +100,7 @@ struct V2RealtimeAPI: V2RealtimeAPIProtocol {
                     }
                     continuation.finish()
                 } catch let error as DecodingError {
-                    continuation.finish(throwing: HTTPError.decoding(message: "实时更新：\(error.v2Description)"))
+                    continuation.finish(throwing: HTTPError.decoding(message: String(localized: "实时更新：\(error.v2Description)")))
                 } catch {
                     continuation.finish(throwing: error)
                 }

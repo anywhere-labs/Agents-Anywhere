@@ -186,7 +186,7 @@ struct ChatTimelineView: View {
                     historyPosition?.cancelRestoration()
                     scrolling.requestBottom()
                 } label: {
-                    Label("到底部", systemImage: "arrow.down").font(.caption.weight(.medium)).foregroundStyle(.primary)
+                    Label(String(localized: "到底部"), appSymbol: "arrow.down").font(.caption.weight(.medium)).foregroundStyle(.primary)
                         .padding(.horizontal, 12).frame(height: returnPillHeight)
                         .glassEffect(.regular.interactive(), in: .capsule)
                         .frame(minHeight: 44).contentShape(Rectangle())
@@ -295,18 +295,18 @@ private struct ChatTimelineContent: View, Equatable {
                     if isLoadingOlder {
                         HStack(spacing: 8) {
                             ProgressView().progressViewStyle(.circular).controlSize(.small)
-                            Text("正在加载较早的消息…")
+                            Text(String(localized: "正在加载较早的消息…"))
                         }.accessibilityElement(children: .combine)
                     } else if model.session.hasOlderItems {
                         Button(action: onLoadOlder) {
-                            Text(olderPullReady ? "松开加载较早的消息" : "加载较早的消息")
+                            Text(olderPullReady ? String(localized: "松开加载较早的消息") : String(localized: "加载较早的消息"))
                                 .frame(maxWidth: .infinity, minHeight: 44)
                                 .contentShape(Rectangle())
                         }.disabled(model.session.isLoadingHistory || isLoadingLatest)
                     } else {
                         // Retain the prompt's footprint on the final page; removing
                         // it after restoring would move the reader by another row.
-                        Text("已到达会话开头").foregroundStyle(.secondary)
+                        Text(String(localized: "已到达会话开头")).foregroundStyle(.secondary)
                     }
                 }
                 .font(.footnote).frame(maxWidth: .infinity, minHeight: 44)
@@ -339,8 +339,8 @@ private struct ChatTimelineContent: View, Equatable {
             if model.session.hasNewerItems {
                 Button(action: onLoadLatest) {
                     Group {
-                        if isLoadingLatest { ProgressView("正在加载更新的记录…") }
-                        else { Text(latestPullReady ? "松开加载更新的记录" : "继续上拉加载更新的记录") }
+                        if isLoadingLatest { ProgressView(String(localized: "正在加载更新的记录…")) }
+                        else { Text(latestPullReady ? String(localized: "松开加载更新的记录") : String(localized: "继续上拉加载更新的记录")) }
                     }.font(.footnote).frame(maxWidth: .infinity, minHeight: 44)
                 }
                 .disabled(model.session.isLoadingHistory || isLoadingLatest || isLoadingOlder)

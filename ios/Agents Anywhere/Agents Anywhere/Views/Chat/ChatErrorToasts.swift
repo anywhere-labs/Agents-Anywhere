@@ -17,22 +17,22 @@ struct ChatErrorToasts: View {
                     ForEach(Array(store.items.enumerated()), id: \.element.id) { index, item in
                         VStack(alignment: .leading, spacing: 4) {
                             HStack(spacing: 8) {
-                                Image(systemName: "exclamationmark.circle").foregroundStyle(.secondary)
+                                AppSymbol("exclamationmark.circle").foregroundStyle(.secondary)
                                 Text(item.title).font(.subheadline.weight(.medium)).lineLimit(1)
                                 Spacer(minLength: 0)
                                 if store.items.count > 1 {
                                     Text("\(index + 1)/\(store.items.count)").font(.caption2).monospacedDigit().foregroundStyle(.secondary)
                                 }
                                 Button { store.dismiss(item.id) } label: {
-                                    Image(systemName: "xmark").font(.system(size: 11, weight: .medium)).frame(width: 44, height: 44)
-                                }.buttonStyle(.plain).accessibilityLabel("关闭此提示")
+                                    AppSymbol("xmark", size: 11).frame(width: 44, height: 44)
+                                }.buttonStyle(.plain).accessibilityLabel(String(localized: "关闭此提示"))
                             }
                             ScrollView(.vertical) {
                                 Text(item.message).font(.footnote).foregroundStyle(.secondary)
                                     .frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled)
                             }.scrollBounceBehavior(.basedOnSize)
                             if item.canRetry {
-                                Button(isRetrying ? "正在刷新…" : "刷新状态") { Task { await onRetry(item.id) } }
+                                Button(isRetrying ? String(localized: "正在刷新…") : String(localized: "刷新状态")) { Task { await onRetry(item.id) } }
                                     .font(.footnote.weight(.medium)).frame(minHeight: 36).disabled(isRetrying)
                             }
                         }
@@ -53,7 +53,7 @@ struct ChatErrorToasts: View {
             .onChange(of: store.items.map(\.id), initial: true) { _, ids in
                 if selected == nil || !ids.contains(selected ?? "") { selected = ids.first }
             }
-            .accessibilityHint(store.items.count > 1 ? "左右滑动查看其他提示" : "")
+            .accessibilityHint(store.items.count > 1 ? String(localized: "左右滑动查看其他提示") : "")
         }
     }
 }

@@ -6,7 +6,7 @@ struct AppearanceSettingsView: View {
     var body: some View {
         Form {
             Section {
-                Picker("Appearance", selection: $appearanceValue) {
+                Picker(String(localized: "Appearance"), selection: $appearanceValue) {
                     ForEach(AppAppearance.allCases) { appearance in
                         Text(appearance.title)
                             .tag(appearance.rawValue)
@@ -17,7 +17,7 @@ struct AppearanceSettingsView: View {
                 Text(selectedAppearance.description)
             }
         }
-        .navigationTitle("Appearance")
+        .navigationTitle(String(localized: "Appearance"))
         .navigationBarTitleDisplayMode(.inline)
     }
 

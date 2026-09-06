@@ -26,15 +26,15 @@ struct AccountSettingsSheet: View {
                 AccountSettingsAboutSection()
 
                 Section {
-                    Button("Sign out", role: .destructive) {
+                    Button(String(localized: "Sign out"), role: .destructive) {
                         isConfirmingSignOut = true
                     }
                 }
             }
-            .navigationTitle("Settings")
+            .navigationTitle(String(localized: "Settings"))
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") {
+                    Button(String(localized: "Done")) {
                         dismiss()
                     }
                 }
@@ -42,8 +42,8 @@ struct AccountSettingsSheet: View {
             .refreshable {
                 _ = await appState.refreshAccount()
             }
-            .alert("Account update failed", isPresented: accountErrorBinding) {
-                Button("OK", role: .cancel) {
+            .alert(String(localized: "Account update failed"), isPresented: accountErrorBinding) {
+                Button(String(localized: "OK"), role: .cancel) {
                     appState.dismissAccountError()
                 }
             } message: {
@@ -85,14 +85,13 @@ private struct SignOutConfirmationSheet: View {
             VStack(spacing: 20) {
                 Spacer()
 
-                Image(systemName: "rectangle.portrait.and.arrow.forward")
-                    .font(.system(size: 42, weight: .medium))
+                AppSymbol("rectangle.portrait.and.arrow.forward", size: 42)
                     .foregroundStyle(.secondary)
 
-                Text("Sign out?")
+                Text(String(localized: "Sign out?"))
                     .font(.largeTitle.bold())
 
-                Text("Your saved credentials will be removed from this device. You will need to sign in again to reconnect.")
+                Text(String(localized: "Your saved credentials will be removed from this device. You will need to sign in again to reconnect."))
                     .font(.body)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
@@ -101,7 +100,7 @@ private struct SignOutConfirmationSheet: View {
                 Spacer()
 
                 Button(role: .destructive, action: confirmSignOut) {
-                    Label("Sign out", systemImage: "rectangle.portrait.and.arrow.forward")
+                    Label(String(localized: "Sign out"), appSymbol: "rectangle.portrait.and.arrow.forward")
                         .font(.headline)
                         .frame(maxWidth: .infinity)
                 }
@@ -112,7 +111,7 @@ private struct SignOutConfirmationSheet: View {
                 .foregroundStyle(.white)
 
                 Button(action: dismiss.callAsFunction) {
-                    Text("Cancel")
+                    Text(String(localized: "Cancel"))
                         .frame(maxWidth: .infinity)
                 }
                     .buttonStyle(.glass)
@@ -120,11 +119,11 @@ private struct SignOutConfirmationSheet: View {
                     .controlSize(.large)
             }
             .padding(24)
-            .navigationTitle("Sign out")
+            .navigationTitle(String(localized: "Sign out"))
             .navigationBarTitleDisplayMode(.inline)
         }
-        .alert("Could not sign out", isPresented: $isShowingError) {
-            Button("OK", role: .cancel) {}
+        .alert(String(localized: "Could not sign out"), isPresented: $isShowingError) {
+            Button(String(localized: "OK"), role: .cancel) {}
         } message: {
             Text(errorMessage)
         }
@@ -166,20 +165,20 @@ private struct AccountSettingsProfileSection: View {
                             .foregroundStyle(.secondary)
                     }
                     if role == .admin {
-                        Text("Administrator")
+                        Text(String(localized: "Administrator"))
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                     } else {
-                        Text("Member")
+                        Text(String(localized: "Member"))
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                     }
                     if disabled {
-                        Label("Disabled", systemImage: "xmark.circle.fill")
+                        Label(String(localized: "Disabled"), appSymbol: "xmark.circle.fill")
                             .font(.caption)
                             .foregroundStyle(.red)
                     } else {
-                        Label("Active", systemImage: "checkmark.circle.fill")
+                        Label(String(localized: "Active"), appSymbol: "checkmark.circle.fill")
                             .font(.caption)
                             .foregroundStyle(.green)
                     }
@@ -191,33 +190,45 @@ private struct AccountSettingsProfileSection: View {
 }
 
 private struct AccountSettingsNavigationSection: View {
+    @Environment(\.openURL) private var openURL
     var body: some View {
-        Section("Account") {
+        Section(String(localized: "Account")) {
             NavigationLink {
                 AccountIdentitySettingsView()
             } label: {
-                Label("Nickname and email", systemImage: "person.text.rectangle")
+                Label(String(localized: "Nickname and email"), appSymbol: "person.text.rectangle")
             }
 
             NavigationLink {
                 AvatarSettingsView()
             } label: {
-                Label("Profile photo", systemImage: "person.crop.circle")
+                Label(String(localized: "Profile photo"), appSymbol: "person.crop.circle")
             }
 
             NavigationLink {
                 PasswordSettingsView()
             } label: {
-                Label("Password", systemImage: "key")
+                Label(String(localized: "Password"), appSymbol: "key")
             }
         }
 
-        Section("Preferences") {
+        Section(String(localized: "Preferences")) {
             NavigationLink {
                 AppearanceSettingsView()
             } label: {
-                Label("Appearance", systemImage: "circle.lefthalf.filled")
+                Label(String(localized: "Appearance"), appSymbol: "circle.lefthalf.filled")
             }
+            Button {
+                if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
+            } label: {
+                HStack {
+                    Label(String(localized: "Language"), appSymbol: "globe")
+                    Spacer()
+                    Text(Bundle.main.preferredLocalizations.first?.hasPrefix("zh") == true ? "简体中文" : "English")
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .accessibilityHint(String(localized: "Change the app language in iOS Settings."))
         }
     }
 }
@@ -226,10 +237,10 @@ private struct AccountSettingsServerSection: View {
     let serverURL: URL?
 
     var body: some View {
-        Section("Server") {
+        Section(String(localized: "Server")) {
             if let serverURL {
-                LabeledContent("Status", value: "Connected")
-                LabeledContent("Address") {
+                LabeledContent(String(localized: "Status"), value: String(localized: "Connected"))
+                LabeledContent(String(localized: "Address")) {
                     Text(serverURL.absoluteString)
                         .font(.caption.monospaced())
                         .foregroundStyle(.secondary)
@@ -238,11 +249,11 @@ private struct AccountSettingsServerSection: View {
                 Button {
                     UIPasteboard.general.string = serverURL.absoluteString
                 } label: {
-                    Label("Copy server address", systemImage: "doc.on.doc")
+                    Label(String(localized: "Copy server address"), appSymbol: "doc.on.doc")
                 }
             } else {
                 ContentUnavailableView(
-                    "Server unavailable",
+                    String(localized: "Server unavailable"),
                     systemImage: "network.slash"
                 )
             }
@@ -252,9 +263,9 @@ private struct AccountSettingsServerSection: View {
 
 private struct AccountSettingsAboutSection: View {
     var body: some View {
-        Section("About") {
-            LabeledContent("Version", value: version)
-            LabeledContent("Build", value: build)
+        Section(String(localized: "About")) {
+            LabeledContent(String(localized: "Version"), value: version)
+            LabeledContent(String(localized: "Build"), value: build)
         }
     }
 

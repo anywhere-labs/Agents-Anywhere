@@ -44,8 +44,8 @@ struct ChatShellView: View {
         } content: { safeAreaInsets in
             mainContent(safeAreaInsets: safeAreaInsets)
         }
-        .alert("Could not update session", isPresented: sessionActionErrorBinding) {
-            Button("OK", role: .cancel) {
+        .alert(String(localized: "Could not update session"), isPresented: sessionActionErrorBinding) {
+            Button(String(localized: "OK"), role: .cancel) {
                 appState.dismissSessionActionError()
             }
         } message: {
@@ -193,7 +193,7 @@ struct ChatShellView: View {
         } else {
             ChatShellPlaceholderPage(
                 isConnecting: appState.isRetryingServerConnection,
-                title: selectedContentTitle ?? "Agents Anywhere",
+                title: selectedContentTitle ?? String(localized: "Agents Anywhere"),
                 onOpenSidebar: openSidebar
             )
         }
@@ -276,7 +276,7 @@ private struct ChatShellPlaceholderPage: View {
                 .ignoresSafeArea()
                 .overlay {
                     if isConnecting {
-                        Label("正在连接，首次同步后即可保留本地内容", systemImage: "network")
+                        Label(String(localized: "正在连接，首次同步后即可保留本地内容"), appSymbol: "network")
                             .font(.footnote).foregroundStyle(.secondary).padding(24)
                     }
                 }
@@ -285,9 +285,9 @@ private struct ChatShellPlaceholderPage: View {
                 .toolbar {
                     ToolbarItem(placement: .topBarLeading) {
                         Button(action: onOpenSidebar) {
-                            Image(systemName: "sidebar.left")
+                            AppSymbol("sidebar.left")
                         }
-                        .accessibilityLabel("Open sidebar")
+                        .accessibilityLabel(String(localized: "Open sidebar"))
                     }
                 }
         }

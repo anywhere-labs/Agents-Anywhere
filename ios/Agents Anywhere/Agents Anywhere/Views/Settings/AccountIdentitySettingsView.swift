@@ -34,10 +34,10 @@ struct AccountIdentitySettingsView: View {
 
     var body: some View {
         Form {
-            Section("Nickname") {
-                TextField("Nickname", text: $displayName)
+            Section(String(localized: "Nickname")) {
+                TextField(String(localized: "Nickname"), text: $displayName)
                     .textContentType(.nickname)
-                Button("Save nickname", action: saveDisplayName)
+                Button(String(localized: "Save nickname"), action: saveDisplayName)
                     .disabled(!(1...64).contains(normalizedDisplayName.count) || isWorking)
             }
 
@@ -45,11 +45,11 @@ struct AccountIdentitySettingsView: View {
                 if let me = appState.me,
                    let savedEmail = me.email,
                    normalizedEmail.lowercased() == savedEmail.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
-                    LabeledContent("Email status") {
-                        Text(me.emailVerified ? "Verified" : "Not verified")
+                    LabeledContent(String(localized: "Email status")) {
+                        Text(me.emailVerified ? String(localized: "Verified") : String(localized: "Not verified"))
                     }
                 }
-                TextField("Email", text: $email)
+                TextField(String(localized: "Email"), text: $email)
                     .textContentType(.emailAddress)
                     .keyboardType(.emailAddress)
                     .textInputAutocapitalization(.never)
@@ -60,13 +60,13 @@ struct AccountIdentitySettingsView: View {
                     }
 
                 if isLoadingConfig {
-                    ProgressView("Loading email settings…")
+                    ProgressView(String(localized: "Loading email settings…"))
                 } else if config == nil {
-                    Button("Retry loading email settings") {
+                    Button(String(localized: "Retry loading email settings")) {
                         Task { await loadConfig() }
                     }
                 } else if verificationRequired {
-                    TextField("Email verification code", text: $code)
+                    TextField(String(localized: "Email verification code"), text: $code)
                         .textContentType(.oneTimeCode)
                         .keyboardType(.numberPad)
                         .onChange(of: code) {
@@ -74,25 +74,25 @@ struct AccountIdentitySettingsView: View {
                         }
                     Button(action: sendCode) {
                         if cooldown > 0 {
-                            Text("Resend in \(cooldown) s")
+                            Text(String(localized: "Resend in \(cooldown) s"))
                         } else {
-                            Text("Send verification code")
+                            Text(String(localized: "Send verification code"))
                         }
                     }
                     .disabled(!validEmail || cooldown > 0 || isWorking)
                     if codeSent {
-                        Text("Code sent. Check your inbox.")
+                        Text(String(localized: "Code sent. Check your inbox."))
                             .foregroundStyle(.secondary)
                     }
                 }
 
-                Button("Save email", action: saveEmail)
+                Button(String(localized: "Save email"), action: saveEmail)
                     .disabled(config == nil || !validEmail || isWorking || (verificationRequired && code.count != 6))
             } header: {
-                Text("Link or change email")
+                Text(String(localized: "Link or change email"))
             } footer: {
                 if let config, !config.emailVerificationRequired {
-                    Text("This service accepts email without a verification code.")
+                    Text(String(localized: "This service accepts email without a verification code."))
                 }
             }
 
@@ -101,7 +101,7 @@ struct AccountIdentitySettingsView: View {
             }
         }
         .disabled(isWorking)
-        .navigationTitle("Nickname and email")
+        .navigationTitle(String(localized: "Nickname and email"))
         .navigationBarTitleDisplayMode(.inline)
         .task {
             displayName = appState.me?.displayName ?? ""
@@ -115,13 +115,13 @@ struct AccountIdentitySettingsView: View {
                 cooldown -= 1
             } catch {}
         }
-        .alert("Account update failed", isPresented: $isShowingError) {
-            Button("OK", role: .cancel) {}
+        .alert(String(localized: "Account update failed"), isPresented: $isShowingError) {
+            Button(String(localized: "OK"), role: .cancel) {}
         } message: {
             Text(errorMessage ?? "")
         }
-        .alert("Account updated", isPresented: $isShowingSuccess) {
-            Button("OK", role: .cancel) {}
+        .alert(String(localized: "Account updated"), isPresented: $isShowingSuccess) {
+            Button(String(localized: "OK"), role: .cancel) {}
         } message: {
             Text(successMessage)
         }

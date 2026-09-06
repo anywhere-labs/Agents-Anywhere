@@ -29,5 +29,5 @@ nonisolated enum ProjectWorkspacePath {
 
 struct ProjectReuseRequired: LocalizedError {
     let project: V2Project
-    var errorDescription: String? { "这个目录已属于项目「\(project.name)」。" }
+    var errorDescription: String? { String(localized: "这个目录已属于项目「\(project.name)」。") }
 }

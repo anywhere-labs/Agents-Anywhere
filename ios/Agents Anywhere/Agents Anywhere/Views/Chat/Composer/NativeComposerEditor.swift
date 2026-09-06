@@ -39,7 +39,7 @@ final class ComposerTextView: UITextView {
     var commandSend: (() -> Void)?
 
     override var keyCommands: [UIKeyCommand]? {
-        let send = UIKeyCommand(title: "发送", action: #selector(sendWithCommandReturn), input: "\r", modifierFlags: .command)
+        let send = UIKeyCommand(title: String(localized: "发送"), action: #selector(sendWithCommandReturn), input: "\r", modifierFlags: .command)
         send.wantsPriorityOverSystemBehavior = true
         return (super.keyCommands ?? []) + [send]
     }
@@ -76,8 +76,8 @@ struct NativeComposerEditor: UIViewRepresentable {
         view.showsVerticalScrollIndicator = true
         view.keyboardDismissMode = .none
         view.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        view.accessibilityLabel = "消息"
-        view.accessibilityHint = "回车换行，Command 加回车发送。"
+        view.accessibilityLabel = String(localized: "消息")
+        view.accessibilityHint = String(localized: "回车换行，Command 加回车发送。")
         view.accessibilityIdentifier = "chat.composer.editor"
         controller.textView = view; controller.draft = draft
         return view

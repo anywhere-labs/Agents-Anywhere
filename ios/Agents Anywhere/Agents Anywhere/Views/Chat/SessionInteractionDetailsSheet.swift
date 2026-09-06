@@ -10,8 +10,8 @@ struct SessionInteractionDetailsSheet: View {
             ScrollView {
                 SessionInteractionContent(item: item, chat: chat, showsContext: true).padding(16)
             }
-            .navigationTitle("操作详情").navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { dismiss() } } }
+            .navigationTitle(String(localized: "操作详情")).navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button(String(localized: "完成")) { dismiss() } } }
         }.presentationDetents([.large])
     }
 }

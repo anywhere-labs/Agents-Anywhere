@@ -27,27 +27,27 @@ struct ComposerOptionsSheet: View {
             ScrollView {
                 VStack(spacing: 22) {
                     HStack(spacing: 12) {
-                        attachmentTile("照片", icon: "photo.on.rectangle", action: onPhotos)
-                        attachmentTile("文件", icon: "doc", action: onFiles)
+                        attachmentTile(String(localized: "照片"), icon: "photo.on.rectangle", action: onPhotos)
+                        attachmentTile(String(localized: "文件"), icon: "doc", action: onFiles)
                     }
                     .disabled(!canAttach)
                     .opacity(canAttach ? 1 : 0.5)
                     if !canAttach {
-                        Text("当前运行状态不支持添加附件").font(.footnote).foregroundStyle(.secondary)
+                        Text(String(localized: "当前运行状态不支持添加附件")).font(.footnote).foregroundStyle(.secondary)
                     }
-                    if isLoading { ProgressView("加载对话选项…") }
+                    if isLoading { ProgressView(String(localized: "加载对话选项…")) }
                     if let loadingError {
                         Text(loadingError).font(.footnote).foregroundStyle(.secondary)
-                        Button("重新加载") { Task { await onReload() } }
+                        Button(String(localized: "重新加载")) { Task { await onReload() } }
                     }
                     VStack(spacing: 0) {
                         NavigationLink(value: Page.models) {
-                            optionRow("模型", icon: "sparkles", value: settings.modelLabel)
+                            optionRow(String(localized: "模型"), icon: "sparkles", value: settings.modelLabel)
                         }
                         .disabled(isLoading || !canSelectModel || settings.catalog.models.isEmpty)
                         Divider().padding(.leading, 52)
                         NavigationLink(value: Page.permissions) {
-                            optionRow("权限", icon: "checkmark.shield", value: settings.permission?.title ?? "默认")
+                            optionRow(String(localized: "权限"), icon: "checkmark.shield", value: settings.permission?.title ?? String(localized: "默认"))
                         }
                         .disabled(isLoading || !canSelectPermission || settings.catalog.permissions.isEmpty)
                     }
@@ -55,17 +55,17 @@ struct ComposerOptionsSheet: View {
                     if let chat = sessionChat, let meta = chat.session.metadata {
                         VStack(alignment: .leading, spacing: 10) {
                             Toggle(isOn: Binding(get: { meta.takeover }, set: { pendingTakeover = $0 })) {
-                                Label("接管会话", systemImage: "hand.raised")
+                                Label(String(localized: "接管会话"), appSymbol: "hand.raised")
                             }
                             .toggleStyle(.switch).tint(nil).accentColor(nil)
                             .disabled(!chat.canChangeTakeover)
-                            Text(meta.takeover ? "已开启，可从 Agents Anywhere 继续操作。" : "只读模式，开启接管后可以继续发送消息。")
+                            Text(meta.takeover ? String(localized: "已开启，可从 Agents Anywhere 继续操作。") : String(localized: "只读模式，开启接管后可以继续发送消息。"))
                                 .font(.footnote).foregroundStyle(.secondary)
                             if let error = chat.takeoverError {
                                 Text(error).font(.footnote).foregroundStyle(.secondary)
                             }
                             if chat.takeoverUncertain || !chat.session.runtime.isFresh {
-                                Button("刷新接管状态") { Task { await chat.refreshTakeover() } }
+                                Button(String(localized: "刷新接管状态")) { Task { await chat.refreshTakeover() } }
                                     .font(.footnote).disabled(chat.isWorking || chat.session.network.availability == .offline)
                             }
                         }.padding(16).background { ComposerOptionSurface() }
@@ -74,7 +74,7 @@ struct ComposerOptionsSheet: View {
                 .padding(20)
             }
             .buttonStyle(.plain)
-            .navigationTitle("对话选项")
+            .navigationTitle(String(localized: "对话选项"))
             .navigationBarTitleDisplayMode(.inline)
             .navigationDestination(for: Page.self) { page in
                 switch page {
@@ -85,7 +85,7 @@ struct ComposerOptionsSheet: View {
             }
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("关闭", systemImage: "xmark") { dismiss() }
+                    Button(String(localized: "关闭"), appSymbol: "xmark") { dismiss() }
                 }
             }
         }
@@ -96,9 +96,9 @@ struct ComposerOptionsSheet: View {
         .modifier(SessionTakeoverConfirmation(pending: $pendingTakeover) { enabled in
             if let chat = sessionChat { _ = await chat.setTakeover(enabled) }
         })
-        .alert("无法更改设置", isPresented: $showsApplyError) {
-            Button("好", role: .cancel) {}
-        } message: { Text(applyError() ?? "当前设置未保存，请稍后重试。") }
+        .alert(String(localized: "无法更改设置"), isPresented: $showsApplyError) {
+            Button(String(localized: "好"), role: .cancel) {}
+        } message: { Text(applyError() ?? String(localized: "当前设置未保存，请稍后重试。")) }
         .onChange(of: path) { _, pages in
             withAnimation(.smooth(duration: 0.25)) { detent = pages.isEmpty ? .medium : .large }
         }
@@ -107,25 +107,25 @@ struct ComposerOptionsSheet: View {
     private func attachmentTile(_ title: String, icon: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             VStack(spacing: 12) {
-                Image(systemName: icon).font(.system(size: 27, weight: .regular)).foregroundStyle(.primary)
+                AppSymbol(icon, size: 27).foregroundStyle(.primary)
                 Text(title).font(.subheadline.weight(.medium)).foregroundStyle(.primary)
             }
             .frame(maxWidth: .infinity)
             .frame(height: 104)
             .background { ComposerOptionSurface() }
         }
-        .accessibilityIdentifier(title == "照片" ? "chat.options.photos" : "chat.options.files")
+        .accessibilityIdentifier(title == String(localized: "照片") ? "chat.options.photos" : "chat.options.files")
     }
 
     private func optionRow(_ title: String, icon: String, value: String) -> some View {
         HStack(spacing: 14) {
-            Image(systemName: icon).font(.system(size: 20)).frame(width: 23)
+            AppSymbol(icon, size: 20).frame(width: 23)
             VStack(alignment: .leading, spacing: 5) {
                 Text(title).font(.body)
                 Text(value).font(.subheadline).foregroundStyle(.secondary).lineLimit(2)
             }
             Spacer(minLength: 8)
-            Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+            AppSymbol("chevron.right", size: 14).foregroundStyle(.secondary)
         }
         .foregroundStyle(.primary)
         .padding(16)
@@ -149,10 +149,10 @@ struct ComposerOptionsSheet: View {
                     }
                 }
             } footer: {
-                Text("选择模型后，可继续选择它支持的思考强度。")
+                Text(String(localized: "选择模型后，可继续选择它支持的思考强度。"))
             }
         }
-        .navigationTitle("模型")
+        .navigationTitle(String(localized: "模型"))
         .navigationBarTitleDisplayMode(.inline)
     }
 
@@ -170,7 +170,7 @@ struct ComposerOptionsSheet: View {
                     }
                 }
             }
-            .navigationTitle("思考强度")
+            .navigationTitle(String(localized: "思考强度"))
             .navigationBarTitleDisplayMode(.inline)
         }
     }
@@ -185,10 +185,10 @@ struct ComposerOptionsSheet: View {
                     .disabled(!option.isEnabled)
                 }
             } footer: {
-                Text("用于这个对话接下来发送的消息。")
+                Text(String(localized: "用于这个对话接下来发送的消息。"))
             }
         }
-        .navigationTitle("权限")
+        .navigationTitle(String(localized: "权限"))
         .navigationBarTitleDisplayMode(.inline)
     }
 
@@ -200,7 +200,7 @@ struct ComposerOptionsSheet: View {
                 if !detail.isEmpty { Text(detail).font(.footnote).foregroundStyle(.secondary) }
             }
             Spacer(minLength: 8)
-            if selected { Image(systemName: "checkmark").fontWeight(.semibold).foregroundStyle(.primary) }
+            if selected { AppSymbol("checkmark").fontWeight(.semibold).foregroundStyle(.primary) }
         }
         .padding(.vertical, 7)
         .opacity(option.isEnabled ? 1 : 0.5)

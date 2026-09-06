@@ -16,9 +16,9 @@ struct SessionNoticesSheet: View {
                 }
                 .onAppear { if let initialNoticeID { proxy.scrollTo(initialNoticeID, anchor: .top) } }
             }
-            .navigationTitle("交互与通知")
+            .navigationTitle(String(localized: "交互与通知"))
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { dismiss() } } }
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button(String(localized: "完成")) { dismiss() } } }
         }
         .presentationDetents([.large])
     }

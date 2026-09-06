@@ -21,9 +21,9 @@ struct EnterServerView: View {
                 switch route {
                 case .success:
                     AuthResultView(
-                        title: "Login Success",
-                        message: "Your iPhone is signed in. Go to your dashboard to continue.",
-                        buttonTitle: "Go to Dashboard",
+                        title: String(localized: "Login Success"),
+                        message: String(localized: "Your iPhone is signed in. Go to your dashboard to continue."),
+                        buttonTitle: String(localized: "Go to Dashboard"),
                         buttonSystemImage: "arrow.right",
                         symbolName: "checkmark.circle.fill",
                         symbolColor: .green,
@@ -57,12 +57,12 @@ private struct ServerAddressView: View {
     @State private var alertMessage: String?
     @State private var loginRequest: UUID?
     @State private var statusMessage: String?
-    @State private var alertTitle = "Sign In Failed"
+    @State private var alertTitle = String(localized: "Sign In Failed")
 
     var body: some View {
         AuthScreen(
-            title: "Enter Server",
-            subtitle: "Enter your server address, then sign in with the server's web login.",
+            title: String(localized: "Enter Server"),
+            subtitle: String(localized: "Enter your server address, then sign in with the server's web login."),
             onCancel: onCancel,
         ) {
             VStack(alignment: .leading, spacing: 16) {
@@ -79,7 +79,7 @@ private struct ServerAddressView: View {
                 )
 
                 AuthPrimaryButton(
-                    title: "Continue in Browser",
+                    title: String(localized: "Continue in Browser"),
                     isLoading: isChecking || isSigningIn,
                     disabled: !canContinue,
                 ) {
@@ -87,11 +87,11 @@ private struct ServerAddressView: View {
                 }
 
                 if isChecking || isSigningIn {
-                    Button("Cancel Sign In") { loginRequest = nil; oauthLogin.cancel() }
+                    Button(String(localized: "Cancel Sign In")) { loginRequest = nil; oauthLogin.cancel() }
                         .font(.subheadline)
                 }
                 if let statusMessage { Text(statusMessage).font(.footnote).foregroundStyle(.secondary) }
-                Text("The server login opens in a secure web session. You can use password login or any OAuth provider configured on that server.")
+                Text(String(localized: "The server login opens in a secure web session. You can use password login or any OAuth provider configured on that server."))
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -106,13 +106,13 @@ private struct ServerAddressView: View {
             set: { if !$0 { alertMessage = nil } },
         )) {
             if appState.authNeedsLocalNetworkSettings {
-                Button("Open Settings") {
+                Button(String(localized: "Open Settings")) {
                     if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
                 }
             }
-            Button("OK", role: .cancel) {}
+            Button(String(localized: "OK"), role: .cancel) {}
         } message: {
-            Text(alertMessage ?? "The server could not be reached.")
+            Text(alertMessage ?? String(localized: "The server could not be reached."))
         }
     }
 
@@ -126,8 +126,8 @@ private struct ServerAddressView: View {
         defer { isChecking = false; isSigningIn = false }
         guard let url = await appState.checkServer(serverText) else {
             guard !Task.isCancelled else { return }
-            alertTitle = appState.authNeedsLocalNetworkSettings ? "Local Network Access" : "Server Unavailable"
-            alertMessage = appState.authError ?? "The server could not be reached."
+            alertTitle = appState.authNeedsLocalNetworkSettings ? String(localized: "Local Network Access") : String(localized: "Server Unavailable")
+            alertMessage = appState.authError ?? String(localized: "The server could not be reached.")
             return
         }
         guard !Task.isCancelled else { return }
@@ -138,12 +138,12 @@ private struct ServerAddressView: View {
             await appState.completeOAuthLogin(serverURL: url, token: token, showSignedInRoute: false)
             try Task.checkCancellation()
             if appState.authError == nil, appState.me != nil { onSignedIn() }
-            else { alertTitle = "Sign In Failed"; alertMessage = appState.authError ?? "The login could not be completed." }
+            else { alertTitle = String(localized: "Sign In Failed"); alertMessage = appState.authError ?? String(localized: "The login could not be completed.") }
         } catch is CancellationError { }
         catch OAuthLoginError.cancelled { statusMessage = OAuthLoginError.cancelled.localizedDescription }
         catch {
             guard !Task.isCancelled else { return }
-            alertTitle = "Sign In Failed"; alertMessage = error.localizedDescription
+            alertTitle = String(localized: "Sign In Failed"); alertMessage = error.localizedDescription
         }
     }
 }

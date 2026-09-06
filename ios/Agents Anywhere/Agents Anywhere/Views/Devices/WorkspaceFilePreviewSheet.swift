@@ -35,22 +35,22 @@ struct WorkspaceFilePreviewSheet: View {
                 }
                 if let error {
                     ContentUnavailableView {
-                        Label("无法预览文件", systemImage: "doc.badge.ellipsis")
-                    } description: { Text(error) } actions: { Button("重试") { attempt += 1 }.disabled(!canRead) }
+                        Label(String(localized: "无法预览文件"), appSymbol: "doc.badge.ellipsis")
+                    } description: { Text(error) } actions: { Button(String(localized: "重试")) { attempt += 1 }.disabled(!canRead) }
                     .background(Color(uiColor: .systemBackground))
-                } else if loading { ProgressView("加载预览…").padding(20).background(.regularMaterial, in: .rect(cornerRadius: 18)) }
+                } else if loading { ProgressView(String(localized: "加载预览…")).padding(20).background(.regularMaterial, in: .rect(cornerRadius: 18)) }
             }
-            .navigationTitle(name.isEmpty ? "文件预览" : name).navigationBarTitleDisplayMode(.inline)
+            .navigationTitle(name.isEmpty ? String(localized: "文件预览") : name).navigationBarTitleDisplayMode(.inline)
             .safeAreaInset(edge: .bottom, spacing: 0) {
-                if !canRead { Text("设备或网络已离线，恢复连接后可重新加载。")
+                if !canRead { Text(String(localized: "设备或网络已离线，恢复连接后可重新加载。"))
                     .font(.footnote).foregroundStyle(.secondary).padding(12).frame(maxWidth: .infinity).background(.regularMaterial) }
             }
             .toolbar {
-                if isDownloading { ToolbarItem(placement: .topBarTrailing) { ProgressView().accessibilityLabel("正在下载") } }
+                if isDownloading { ToolbarItem(placement: .topBarTrailing) { ProgressView().accessibilityLabel(String(localized: "正在下载")) } }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("重新加载", systemImage: "arrow.clockwise") { attempt += 1 }.disabled(!canRead || loading)
+                    Button(String(localized: "重新加载"), appSymbol: "arrow.clockwise") { attempt += 1 }.disabled(!canRead || loading)
                 }
-                ToolbarItem(placement: .confirmationAction) { Button("关闭", systemImage: "xmark") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) { Button(String(localized: "关闭"), appSymbol: "xmark") { dismiss() } }
             }
         }
         .presentationDetents([.large]).presentationDragIndicator(.visible)
@@ -120,7 +120,7 @@ private struct WorkspacePreviewWebView: UIViewRepresentable {
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { parent.onLoaded() }
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { failed(error) }
         func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { failed(error) }
-        func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { parent.onFailure("预览页面已退出，请重新加载。") }
+        func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { parent.onFailure(String(localized: "预览页面已退出，请重新加载。")) }
         func webViewDidClose(_ webView: WKWebView) { parent.onClose() }
         private func failed(_ error: Error) {
             if (error as? URLError)?.code != .cancelled { parent.onFailure(error.localizedDescription) }

@@ -7,7 +7,7 @@ struct ChatComposer: View {
     var canSend = true
     var canStop = true
     var isBusy = false
-    var placeholder = "询问 Agents"
+    var placeholder = String(localized: "询问 Agents")
     let maximumEditorHeight: CGFloat
     let controls: ChatControlMetrics
     let onSend: () -> Void
@@ -23,13 +23,12 @@ struct ChatComposer: View {
                 if !draft.attachments.isEmpty { attachmentTray }
                 ComposerLayout(expanded: draft.isExpanded, maximumEditorHeight: maximumEditorHeight, controls: controls) {
                     Button(action: onOptions) {
-                        Image(systemName: "plus")
-                            .font(.system(size: 24, weight: .regular))
+                        AppSymbol("plus", size: 24)
                             .frame(width: controls.touchTarget, height: controls.touchTarget)
                             .contentShape(Circle())
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel("附件与对话选项")
+                    .accessibilityLabel(String(localized: "附件与对话选项"))
                     .accessibilityIdentifier("chat.composer.options")
 
                     ZStack(alignment: .topLeading) {
@@ -44,8 +43,7 @@ struct ChatComposer: View {
                     }
 
                     Button(action: isStreaming ? onStop : onSend) {
-                        Image(systemName: isStreaming ? "stop.fill" : "arrow.up")
-                            .font(.system(size: isStreaming ? 13 : 18, weight: .regular))
+                        AppSymbol(isStreaming ? "stop.fill" : "arrow.up", size: isStreaming ? 13 : 18)
                             .contentTransition(.symbolEffect(.replace))
                             .foregroundStyle(AppTheme.primaryControlForeground(colorScheme))
                             .frame(width: controls.sendDiameter, height: controls.sendDiameter)
@@ -55,8 +53,8 @@ struct ChatComposer: View {
                     }
                     .buttonStyle(.plain)
                     .disabled(isBusy || (isStreaming ? !canStop : !canSend || !draft.canAttemptSend))
-                    .accessibilityLabel(isStreaming ? "停止生成" : "发送消息")
-                    .accessibilityHint(draft.isComposing ? "请先确认输入法候选文字" : "")
+                    .accessibilityLabel(isStreaming ? String(localized: "停止生成") : String(localized: "发送消息"))
+                    .accessibilityHint(draft.isComposing ? String(localized: "请先确认输入法候选文字") : "")
                     .accessibilityIdentifier("chat.composer.send")
                 }
             }

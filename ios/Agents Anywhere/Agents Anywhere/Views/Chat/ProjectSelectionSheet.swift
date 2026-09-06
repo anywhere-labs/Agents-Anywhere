@@ -10,12 +10,12 @@ struct ProjectSelectionSheet: View {
         NavigationStack {
             List {
                 Section {
-                    Label(model.connector?.name ?? "选择设备", systemImage: "desktopcomputer")
+                    Label(model.connector?.name ?? String(localized: "选择设备"), appSymbol: "desktopcomputer")
                     if model.network.availability == .offline {
-                        Label("网络已断开，保留上次加载的项目。", systemImage: "wifi.slash").foregroundStyle(.secondary)
+                        Label(String(localized: "网络已断开，保留上次加载的项目。"), appSymbol: "wifi.slash").foregroundStyle(.secondary)
                     }
                 }
-                Section("这台设备上的项目") {
+                Section(String(localized: "这台设备上的项目")) {
                     ForEach(model.availableProjects) { project in
                         Button {
                             if model.selectProject(project.id) { dismiss() }
@@ -23,15 +23,15 @@ struct ProjectSelectionSheet: View {
                             HStack {
                                 ProjectSummaryLabel(project: project)
                                 Spacer(minLength: 8)
-                                if model.projectID == project.id { Image(systemName: "checkmark") }
+                                if model.projectID == project.id { AppSymbol("checkmark") }
                             }.padding(.vertical, 6).contentShape(.rect)
                         }.buttonStyle(.plain)
                     }
                     if model.availableProjects.isEmpty {
-                        Text(repository.hasLoaded ? "还没有项目，可以创建一个项目并选择工作目录。" : "正在加载项目…")
+                        Text(repository.hasLoaded ? String(localized: "还没有项目，可以创建一个项目并选择工作目录。") : String(localized: "正在加载项目…"))
                             .foregroundStyle(.secondary)
                     }
-                    Button("创建项目", systemImage: "folder.badge.plus") { createsProject = true }
+                    Button(String(localized: "创建项目"), appSymbol: "folder.badge.plus") { createsProject = true }
                         .disabled(!repository.canWrite || model.connector == nil)
                 }
                 if let error = repository.error {
@@ -39,8 +39,8 @@ struct ProjectSelectionSheet: View {
                 }
             }
             .refreshable { await repository.refresh() }
-            .navigationTitle("选择项目").navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("关闭") { dismiss() } } }
+            .navigationTitle(String(localized: "选择项目")).navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button(String(localized: "关闭")) { dismiss() } } }
         }
         .presentationDetents([.large])
         .sheet(isPresented: $createsProject) {
@@ -86,41 +86,41 @@ struct ProjectEditorSheet: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("项目名称") {
-                    TextField("例如 Agents Anywhere", text: $name)
+                Section(String(localized: "项目名称")) {
+                    TextField(String(localized: "例如 Agents Anywhere"), text: $name)
                         .textInputAutocapitalization(.never).autocorrectionDisabled()
                 }
-                Section("运行设备") {
-                    Picker("设备", selection: $deviceID) {
-                        Text("选择设备").tag("")
+                Section(String(localized: "运行设备")) {
+                    Picker(String(localized: "设备"), selection: $deviceID) {
+                        Text(String(localized: "选择设备")).tag("")
                         ForEach(repository.connectors) { device in Text(device.name).tag(device.id) }
                     }.disabled(project != nil)
                     if device?.status != .online {
-                        Text("设备离线时可填写路径保存项目，连接恢复后才能运行会话。")
+                        Text(String(localized: "设备离线时可填写路径保存项目，连接恢复后才能运行会话。"))
                             .font(.footnote).foregroundStyle(.secondary)
                     }
                 }
                 Section {
-                    TextField("设备上的完整路径", text: $path, axis: .vertical)
+                    TextField(String(localized: "设备上的完整路径"), text: $path, axis: .vertical)
                         .font(.system(.body, design: .monospaced))
                         .textInputAutocapitalization(.never).autocorrectionDisabled().disabled(project != nil)
                     if project == nil {
-                        Button("浏览目录", systemImage: "folder") { showsFiles = true }
+                        Button(String(localized: "浏览目录"), appSymbol: "folder") { showsFiles = true }
                             .disabled(device?.status != .online || !repository.canWrite)
                     }
-                } header: { Text("工作目录") } footer: {
-                    Text("项目固定在这台设备的这个目录中。会话会使用项目的目录。")
+                } header: { Text(String(localized: "工作目录")) } footer: {
+                    Text(String(localized: "项目固定在这台设备的这个目录中。会话会使用项目的目录。"))
                 }
                 if let error { Section { Text(error).foregroundStyle(.secondary) } }
                 Section {
-                    AppGlassButton(project == nil ? "创建项目" : "保存", systemImage: "checkmark", style: .prominent,
+                    AppGlassButton(project == nil ? String(localized: "创建项目") : String(localized: "保存"), systemImage: "checkmark", style: .prominent,
                         isLoading: saving, disabled: !valid) { Task { await save() } }
                         .listRowBackground(Color.clear)
                 }
             }
             .disabled(saving)
-            .navigationTitle(project == nil ? "创建项目" : "编辑项目").navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() }.disabled(saving) } }
+            .navigationTitle(project == nil ? String(localized: "创建项目") : String(localized: "编辑项目")).navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button(String(localized: "取消")) { dismiss() }.disabled(saving) } }
             .onAppear {
                 name = project?.name ?? ""
                 deviceID = project?.connectorId ?? connectorID
@@ -129,13 +129,13 @@ struct ProjectEditorSheet: View {
             .onChange(of: deviceID) { old, new in if old != new && project == nil { path = "" } }
         }
         .presentationDetents([.large]).interactiveDismissDisabled(saving)
-        .alert("这个目录已有项目", isPresented: Binding(get: { reuse != nil }, set: { if !$0 { reuse = nil } })) {
-            Button("取消", role: .cancel) { reuse = nil }
-            Button("使用此项目并保存名称") {
+        .alert(String(localized: "这个目录已有项目"), isPresented: Binding(get: { reuse != nil }, set: { if !$0 { reuse = nil } })) {
+            Button(String(localized: "取消"), role: .cancel) { reuse = nil }
+            Button(String(localized: "使用此项目并保存名称")) {
                 let id = reuse?.id; reuse = nil
                 Task { await save(reusing: id) }
             }
-        } message: { Text("将使用「\(reuse?.name ?? "")」，并将名称更新为「\(name)」。已有会话会保留。") }
+        } message: { Text(String(localized: "将使用「\(reuse?.name ?? "")」，并将名称更新为「\(name)」。已有会话会保留。")) }
         .sheet(isPresented: $showsFiles) {
             if let device, let service = appState.workspaceFilesService {
                 WorkspaceFilesSheet(connectorId: device.id, deviceName: device.name,

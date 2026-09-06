@@ -3,7 +3,7 @@ import Network
 
 enum LocalNetworkAccessError: LocalizedError {
     case denied
-    var errorDescription: String? { "Local Network access is disabled. Enable it for Agents Anywhere in Settings, then try again." }
+    var errorDescription: String? { String(localized: "Local Network access is disabled. Enable it for Agents Anywhere in Settings, then try again.") }
 }
 
 /// Trigger local-network privacy with a real connection to the server the user

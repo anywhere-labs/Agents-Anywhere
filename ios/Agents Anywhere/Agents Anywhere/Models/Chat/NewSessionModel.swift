@@ -69,7 +69,7 @@ final class NewSessionModel {
         // A removed selection stays unresolved; never silently send a draft to a different project.
         if let projectID, !values.contains(where: { $0.id == projectID && $0.connectorId == connectorID }) {
             self.projectID = nil
-            error = "原来选择的项目已不可用，请重新选择。草稿已保留。"
+            error = String(localized: "原来选择的项目已不可用，请重新选择。草稿已保留。")
         }
     }
 
@@ -181,7 +181,7 @@ final class NewSessionModel {
             let value = try await preparation.prepare(connectorId: connectorID, runtimeId: runtimeID)
             guard isValid, version == preparationVersion, !Task.isCancelled else { return }
             guard value.runtime.isReadyForSession else {
-                error = value.runtime.sessionUnavailableReason ?? "Agent 尚未就绪"
+                error = value.runtime.sessionUnavailableReason ?? String(localized: "Agent 尚未就绪")
                 return
             }
             prepared = value
@@ -208,7 +208,7 @@ final class NewSessionModel {
         defer {
             isCreating = false
             if !completed, isValid {
-                let failure = V2ClientFailure(kind: .unavailable, message: error ?? "未能完成创建，请检查设备连接和运行选项。")
+                let failure = V2ClientFailure(kind: .unavailable, message: error ?? String(localized: "未能完成创建，请检查设备连接和运行选项。"))
                 submission.pending.update(creationUncertain ? .uncertain(failure) : .rejected(failure))
                 onFailed?(submission)
                 if draft.text.isEmpty, draft.attachments.isEmpty { draft.text = text; draft.attachments = files }
@@ -223,7 +223,7 @@ final class NewSessionModel {
         guard isValid, !Task.isCancelled, prepared != nil, connectorID == target.0, runtimeID == target.1,
               connector?.status == .online, network.availability != .offline else { return nil }
         guard settings.hasValidSelections, chosenSelections == settings.selections else {
-            error = "可用选项已变化，请检查模型和权限后再次发送。"
+            error = String(localized: "可用选项已变化，请检查模型和权限后再次发送。")
             return nil
         }
         var didSubmit = false
@@ -235,7 +235,7 @@ final class NewSessionModel {
                   let current = self.project, current.connectorId == target.0,
                   current.workspacePath == project.workspacePath,
                   network.availability != .offline, connector?.status == .online else {
-                error = "项目或设备状态已变化，请检查运行目标后再次发送。草稿已保留。"
+                error = String(localized: "项目或设备状态已变化，请检查运行目标后再次发送。草稿已保留。")
                 return nil
             }
             didSubmit = true
@@ -251,7 +251,7 @@ final class NewSessionModel {
             guard isValid else { return nil }
             creationUncertain = didSubmit && !V2ClientFailure.isDefiniteWriteRejection(error)
             self.error = creationUncertain
-                ? "创建结果尚未确认。请先检查会话列表，避免重复创建。草稿已保留。\n\(error.localizedDescription)"
+                ? String(localized: "创建结果尚未确认。请先检查会话列表，避免重复创建。草稿已保留。\n\(error.localizedDescription)")
                 : error.localizedDescription
             return nil
         }
@@ -261,7 +261,7 @@ final class NewSessionModel {
         guard isValid, !isCreating else { return }
         if (!draft.text.isEmpty || !draft.attachments.isEmpty),
            draft.text != pending.content || draft.attachments.map(\.id) != pending.attachments.map(\.id) {
-            error = "新会话中已有其他草稿，已为你保留。请先处理该草稿，再返回这条发送记录。"
+            error = String(localized: "新会话中已有其他草稿，已为你保留。请先处理该草稿，再返回这条发送记录。")
             return
         }
         focusDevice(meta.connectorId, workspace: meta.cwd)
@@ -269,7 +269,7 @@ final class NewSessionModel {
         runtimeID = meta.effectiveRuntimeId
         draft.text = pending.content; draft.attachments = pending.attachments
         if case .uncertain = pending.delivery { creationUncertain = true }
-        error = creationUncertain ? "请先检查会话列表，确认上次创建结果后再发送。" : nil
+        error = creationUncertain ? String(localized: "请先检查会话列表，确认上次创建结果后再发送。") : nil
         saveDraft()
     }
 
@@ -296,11 +296,11 @@ final class NewSessionModel {
 extension V2DeviceRuntime {
     var isReadyForSession: Bool { configured && active && available && status == .running }
     var sessionUnavailableReason: String? {
-        if !configured { return "尚未配置" }
-        if !active { return "未启用，请在设备管理中启动" }
+        if !configured { return String(localized: "尚未配置") }
+        if !active { return String(localized: "未启用，请在设备管理中启动") }
         if let reason, !reason.isEmpty { return reason }
-        if status != .running { return "尚未就绪 · \(status.rawValue)" }
-        return available ? nil : "当前不可用"
+        if status != .running { return String(localized: "尚未就绪 · \(status.displayName)") }
+        return available ? nil : String(localized: "当前不可用")
     }
     var sessionDisplayName: String { name.isEmpty ? displayName : name }
 }
