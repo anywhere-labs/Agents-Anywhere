@@ -3,7 +3,6 @@
 import * as React from "react"
 import {
   ArrowLeft,
-  ArrowRight,
   Check,
   Copy,
   ExternalLink,
@@ -193,13 +192,12 @@ function ChoiceCard({
       className="h-auto w-full min-w-0 justify-start gap-3 whitespace-normal px-4 py-4 text-left"
     >
       <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-muted text-foreground">
-        <Icon data-icon="inline-start" />
+        <Icon className="size-5" />
       </span>
-      <span className="flex min-w-0 flex-1 flex-col gap-1">
-        <span className="block text-base font-medium">{title}</span>
-        <span className="block break-words text-sm font-normal leading-relaxed text-muted-foreground">{description}</span>
+      <span className="min-w-0">
+        <span className="block font-medium">{title}</span>
+        <span className="mt-0.5 block break-words text-sm font-normal text-muted-foreground">{description}</span>
       </span>
-      <ArrowRight data-icon="inline-end" />
     </Button>
   )
 }
@@ -382,15 +380,15 @@ export function PairDeviceDialog({
         <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-2xl">
           <div
             key={step}
-            className="flex min-w-0 flex-col gap-6 motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-right-4 motion-safe:duration-200"
+            className="grid min-w-0 gap-4 motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-right-4 motion-safe:duration-200"
           >
             {step === "connection-method" ? (
               <>
-                <DialogHeader className="gap-3 pr-6">
-                  <DialogTitle className="text-2xl leading-tight sm:text-3xl">{title ?? t("connectionTitle")}</DialogTitle>
+                <DialogHeader>
+                  <DialogTitle className="text-lg">{title ?? t("connectionTitle")}</DialogTitle>
                   <DialogDescription>{t("connectionDescription")}</DialogDescription>
                 </DialogHeader>
-                <div className="flex flex-col gap-3">
+                <div className="grid gap-3 py-2">
                   <ChoiceCard
                     icon={Laptop}
                     title={t("desktopTitle")}
@@ -409,33 +407,27 @@ export function PairDeviceDialog({
 
             {step === "desktop-install" ? (
               <>
-                <DialogHeader className="gap-3 pr-6">
-                  <DialogTitle className="text-2xl leading-tight">{t("desktopInstallTitle")}</DialogTitle>
+                <DialogHeader>
+                  <DialogTitle>{t("desktopInstallTitle")}</DialogTitle>
                   <DialogDescription>{t("desktopInstallDescription")}</DialogDescription>
                 </DialogHeader>
-                <Button size="lg" className="w-full sm:w-fit" asChild>
-                  <a href={DESKTOP_DOWNLOAD_URL} target="_blank" rel="noopener noreferrer">
-                    {t("githubReleases")}
-                    <ExternalLink data-icon="inline-end" />
-                  </a>
-                </Button>
-                <ol className="flex list-decimal flex-col gap-5 pl-5 text-sm marker:text-muted-foreground">
-                  <li className="pl-1">
+                <ol className="grid gap-3 py-2 text-sm">
+                  <li className="rounded-xl border bg-muted/25 p-4">
                     <div className="flex flex-col gap-1">
                       <p className="font-medium">{t("desktopDownloadTitle")}</p>
-                      <p className="leading-relaxed text-muted-foreground">{t("desktopInstallStepDownload")}</p>
+                      <p className="text-muted-foreground">{t("desktopInstallStepDownload")}</p>
                     </div>
                   </li>
-                  <li className="pl-1">
+                  <li className="rounded-xl border bg-muted/25 p-4">
                     <div className="flex flex-col gap-1">
                       <p className="font-medium">{t("desktopLoginTitle")}</p>
-                      <p className="leading-relaxed text-muted-foreground">{t("desktopInstallStepLogin")}</p>
+                      <p className="text-muted-foreground">{t("desktopInstallStepLogin")}</p>
                     </div>
                   </li>
-                  <li className="pl-1">
+                  <li className="rounded-xl border bg-muted/25 p-4">
                     <div className="flex flex-col gap-1">
                       <p className="font-medium">{t("desktopOnlineTitle")}</p>
-                      <p className="leading-relaxed text-muted-foreground">{t("desktopInstallStepOnline")}</p>
+                      <p className="text-muted-foreground">{t("desktopInstallStepOnline")}</p>
                     </div>
                   </li>
                 </ol>
@@ -444,18 +436,26 @@ export function PairDeviceDialog({
                     <ArrowLeft data-icon="inline-start" />
                     {tCommon("back")}
                   </Button>
-                  <Button type="button" variant="outline" onClick={() => completePairing()}>{tCommon("done")}</Button>
+                  <div className="flex flex-col gap-2 sm:flex-row">
+                    <Button type="button" variant="outline" asChild>
+                      <a href={DESKTOP_DOWNLOAD_URL} target="_blank" rel="noopener noreferrer">
+                        {t("githubReleases")}
+                        <ExternalLink data-icon="inline-end" />
+                      </a>
+                    </Button>
+                    <Button type="button" onClick={() => completePairing()}>{tCommon("done")}</Button>
+                  </div>
                 </DialogFooter>
               </>
             ) : null}
 
             {step === "cli-confirm" ? (
               <>
-                <DialogHeader className="gap-3 pr-6">
-                  <DialogTitle className="text-2xl leading-tight">{t("commandWarningTitle")}</DialogTitle>
+                <DialogHeader>
+                  <DialogTitle>{t("commandWarningTitle")}</DialogTitle>
                   <DialogDescription>{t("commandWarningDescription")}</DialogDescription>
                 </DialogHeader>
-                <p className="text-sm leading-relaxed text-muted-foreground">{t("commandWarningFallback")}</p>
+                <p className="text-sm text-muted-foreground">{t("commandWarningFallback")}</p>
                 <DialogFooter className="gap-2 sm:justify-between">
                   <Button type="button" variant="ghost" size="sm" onClick={goBack}>
                     <ArrowLeft data-icon="inline-start" />
@@ -475,11 +475,11 @@ export function PairDeviceDialog({
 
             {step === "cli-method" ? (
               <>
-                <DialogHeader className="gap-3 pr-6">
-                  <DialogTitle className="text-2xl leading-tight">{t("methodTitle")}</DialogTitle>
+                <DialogHeader>
+                  <DialogTitle>{t("methodTitle")}</DialogTitle>
                   <DialogDescription>{t("methodDescription", { name })}</DialogDescription>
                 </DialogHeader>
-                <div className="flex flex-col gap-3">
+                <div className="grid gap-3 py-2">
                   <ChoiceCard
                     icon={Hash}
                     title={t("pairCodeTitle")}
@@ -504,18 +504,19 @@ export function PairDeviceDialog({
 
             {step === "name" ? (
               <>
-                <DialogHeader className="gap-3 pr-6">
-                  <DialogTitle className="text-2xl leading-tight">{t("nameTitle")}</DialogTitle>
+                <DialogHeader>
+                  <DialogTitle>{t("nameTitle")}</DialogTitle>
                   <DialogDescription>{t("nameDescription")}</DialogDescription>
                 </DialogHeader>
                 <FieldGroup className="py-2">
-                  <Field data-disabled={creating}>
+                  <Field data-disabled={creating} className="gap-2">
                     <FieldLabel htmlFor="device-name">{t("nameLabel")}</FieldLabel>
                     <Input
                       id="device-name"
                       value={name}
                       onChange={(event) => setName(event.target.value)}
                       placeholder={t("namePlaceholder")}
+                      className="code-mono"
                       disabled={creating}
                       onKeyDown={(event) => {
                         if (event.key === "Enter" && !event.nativeEvent.isComposing) void handleCreate()
@@ -539,8 +540,8 @@ export function PairDeviceDialog({
 
             {step === "command" ? (
               <>
-                <DialogHeader className="gap-3 pr-6">
-                  <DialogTitle className="text-2xl leading-tight">{t("commandStepTitle")}</DialogTitle>
+                <DialogHeader>
+                  <DialogTitle>{t("commandStepTitle")}</DialogTitle>
                   <DialogDescription>{t("commandStepDescription", { name })}</DialogDescription>
                 </DialogHeader>
                 <div className="flex flex-col gap-3 py-2">
@@ -562,8 +563,8 @@ export function PairDeviceDialog({
 
             {step === "pair-code" ? (
               <>
-                <DialogHeader className="gap-3 pr-6">
-                  <DialogTitle className="text-2xl leading-tight">{t("codeStepTitle")}</DialogTitle>
+                <DialogHeader>
+                  <DialogTitle>{t("codeStepTitle")}</DialogTitle>
                   <DialogDescription>{t("codeStepDescription", { name })}</DialogDescription>
                 </DialogHeader>
                 <div className="flex flex-col gap-4 py-2">
@@ -575,7 +576,7 @@ export function PairDeviceDialog({
                     <p className="mt-3 text-muted-foreground">{t("pairCommandHint")}</p>
                   </div>
                   <FieldGroup>
-                    <Field data-disabled={claiming}>
+                    <Field data-disabled={claiming} className="gap-2">
                       <FieldLabel htmlFor="device-pair-code">{t("codeLabel")}</FieldLabel>
                       <InputOTP
                         id="device-pair-code"
