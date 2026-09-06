@@ -97,6 +97,12 @@ export type DesktopConnectorConfigPatch = Partial<Pick<
   | "syncIntervalSeconds"
 >>
 
+export type DesktopServerConnection = {
+  serverUrl: string
+  apiNamespace: string
+  oauthWebOrigin: string
+}
+
 export type DesktopWorkbenchBridge = {
   platform: string
   versions: {
@@ -106,9 +112,13 @@ export type DesktopWorkbenchBridge = {
   }
   openExternal: (url: string) => Promise<void>
   auth?: {
-    startOAuth: () => Promise<{ authorizeUrl: string }>
+    getServer: () => Promise<DesktopServerConnection>
+    startOAuth: (input?: { serverUrl?: string }) => Promise<
+      | { status: "opened"; authorizeUrl: string }
+      | { status: "error"; code: "invalidServer" | "serverUnavailable" | "invalidHealth" | "serverTimeout" | "oauth"; error: string }
+    >
     consumeOAuthResult: () => Promise<
-      | { status: "success"; accessToken: string }
+      | { status: "success"; accessToken: string; server: DesktopServerConnection }
       | { status: "error"; error: string }
       | null
     >

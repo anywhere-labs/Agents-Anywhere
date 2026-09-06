@@ -1,11 +1,11 @@
 import type { NextConfig } from "next";
 import path from "node:path";
+import desktopConfig from "../config.json";
 
-const apiTarget = process.env.AGENTS_ANYWHERE_API ?? "http://127.0.0.1:8000";
-const apiNamespace = process.env.AGENTS_ANYWHERE_API_NAMESPACE ?? "/api/v2";
+const apiTarget = process.env.AGENTS_ANYWHERE_API ?? desktopConfig.cloud.serverUrl;
+const apiNamespace = process.env.AGENTS_ANYWHERE_API_NAMESPACE ?? desktopConfig.apiNamespace;
 const proxyClientMaxBodySize = 100 * 1024 * 1024;
 const staticExport = process.env.NEXT_OUTPUT === "export";
-const developmentLogin = process.env.NEXT_PUBLIC_WORKBENCH_DEV_LOGIN === "1";
 const browserApiTarget = staticExport ? "" : apiTarget;
 const apiRoutePrefixes = [
   "/admin",
@@ -27,11 +27,6 @@ const nextConfig: NextConfig = {
   trailingSlash: staticExport,
   turbopack: {
     root: path.resolve(__dirname, ".."),
-    resolveAlias: {
-      "@desktop-login-action": developmentLogin
-        ? "./src/components/auth/development-login-action.tsx"
-        : "./src/components/auth/login-action.tsx",
-    },
   },
   env: {
     NEXT_PUBLIC_AGENTS_ANYWHERE_API: browserApiTarget,

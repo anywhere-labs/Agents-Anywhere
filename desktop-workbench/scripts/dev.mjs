@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 import http from "node:http";
 import net from "node:net";
@@ -8,8 +9,9 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const rendererPackage = "agents-anywhere-desktop-renderer";
 const explicitWebUrl = process.env.WORKBENCH_WEB_URL?.trim();
 const explicitWebPort = parsePort(process.env.WORKBENCH_WEB_PORT);
-const apiOrigin = process.env.WORKBENCH_API_ORIGIN?.trim() || process.env.AGENTS_ANYWHERE_API?.trim() || "https://web.agents-anywhere.com";
-const apiNamespace = process.env.WORKBENCH_API_NAMESPACE ?? process.env.AGENTS_ANYWHERE_API_NAMESPACE ?? "/api/v2";
+const desktopConfig = JSON.parse(readFileSync(new URL("../config.json", import.meta.url), "utf8"));
+const apiOrigin = process.env.WORKBENCH_API_ORIGIN?.trim() || process.env.AGENTS_ANYWHERE_API?.trim() || desktopConfig.cloud.serverUrl;
+const apiNamespace = process.env.WORKBENCH_API_NAMESPACE ?? process.env.AGENTS_ANYWHERE_API_NAMESPACE ?? desktopConfig.apiNamespace;
 const usesShell = process.platform === "win32";
 const host = "127.0.0.1";
 const yarnCommand = process.platform === "win32" ? "yarn.cmd" : "yarn";
@@ -29,7 +31,6 @@ if (!explicitWebUrl) {
       ...process.env,
       AGENTS_ANYWHERE_API: apiOrigin,
       AGENTS_ANYWHERE_API_NAMESPACE: apiNamespace,
-      NEXT_PUBLIC_WORKBENCH_DEV_LOGIN: "1",
     },
     shell: usesShell,
   });
@@ -45,7 +46,6 @@ try {
     env: {
       ...process.env,
       WORKBENCH_WEB_URL: devUrl,
-      NEXT_PUBLIC_WORKBENCH_DEV_LOGIN: "1",
     },
     shell: usesShell,
   });

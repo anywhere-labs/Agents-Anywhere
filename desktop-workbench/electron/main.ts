@@ -17,10 +17,9 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { ConnectorSupervisor } from "./connector-supervisor";
 import {
-  DESKTOP_OAUTH_CLIENT_ID,
   DESKTOP_OAUTH_PROTOCOL,
-  DESKTOP_OAUTH_REDIRECT_URI,
   createDesktopOAuthRequest,
+  exchangeDesktopOAuthCode,
   desktopOAuthCodeFromCallback,
   desktopOAuthUrlFromArgv,
   type DesktopOAuthPending,
@@ -31,6 +30,16 @@ import { DesktopDeviceService } from "./desktop-device-service";
 import { DesktopSettingsStore } from "./desktop-settings";
 import { ConnectorLogStore } from "./log-store";
 import { readShellEnvironment } from "./shell-environment";
+import config from "../config.json";
+import { proxyDesktopApi } from "./api-proxy";
+import {
+  checkDesktopServer,
+  DesktopServerError,
+  DesktopServerStore,
+  resolveDesktopServer,
+  type DesktopOAuthStartResult,
+  type DesktopServerConnection,
+} from "./desktop-server";
 import type {
   ConnectorConfigPatch,
   ConnectorLogEntry,
@@ -49,8 +58,6 @@ const APP_NAME = "Agents Anywhere";
 const APP_ID = "dev.agentsanywhere.workbench";
 const WEB_PROTOCOL = "aa-workbench";
 const WEB_HOST = "web";
-const DEFAULT_API_ORIGIN = "https://web.agents-anywhere.com";
-const DEFAULT_API_NAMESPACE = "/api/v2";
 const LOGIN_ITEM_HIDDEN_ARG = "--hidden";
 const RENDERER_QUIT_CLEANUP_TIMEOUT_MS = 20_000;
 const TERMINAL_CLEANUP_ATTEMPT_TIMEOUT_MS = 4_000;
@@ -85,7 +92,10 @@ let terminalLeaseRenewTimer: NodeJS.Timeout | null = null;
 const trackedTerminals = new Map<string, TrackedTerminal>();
 const latestTerminalTokensByUser = new Map<string, string>();
 const activeNotifications = new Set<Notification>();
-let pendingDesktopOAuth: DesktopOAuthPending | null = null;
+let serverStore: DesktopServerStore | null = null;
+let startingDesktopOAuth = false;
+let desktopOAuthAttempt = 0;
+let pendingDesktopOAuth: (DesktopOAuthPending & { server: DesktopServerConnection; attempt: number }) | null = null;
 let desktopOAuthResult: DesktopOAuthResult | null = null;
 const pendingDesktopOAuthCallbacks: string[] = [];
 let desktopOAuthDrainPromise: Promise<void> | null = null;
@@ -132,34 +142,18 @@ function staticWorkbenchUrl(route = "/"): string {
 }
 
 function apiOrigin(): string {
-  return (
-    process.env.WORKBENCH_API_ORIGIN ||
-    process.env.AGENTS_ANYWHERE_API ||
-    DEFAULT_API_ORIGIN
-  ).replace(/\/+$/, "");
+  return activeDesktopServer().serverUrl;
 }
 
 function apiNamespace(): string {
-  return normalizeApiNamespace(
-    process.env.WORKBENCH_API_NAMESPACE ??
-      process.env.AGENTS_ANYWHERE_API_NAMESPACE ??
-      DEFAULT_API_NAMESPACE,
-  );
+  return activeDesktopServer().apiNamespace;
 }
 
-function desktopOAuthWebOrigin(): string {
-  const explicit = process.env.WORKBENCH_OAUTH_WEB_ORIGIN?.trim();
-  if (explicit) return explicit.replace(/\/+$/, "");
-
-  const apiUrl = new URL(apiOrigin());
-  if (
-    !app.isPackaged &&
-    (apiUrl.hostname === "127.0.0.1" || apiUrl.hostname === "localhost") &&
-    apiUrl.port === "8000"
-  ) {
-    apiUrl.port = "5174";
-  }
-  return apiUrl.origin;
+function activeDesktopServer(): DesktopServerConnection {
+  return serverStore?.get() ?? resolveDesktopServer(
+    process.env.WORKBENCH_API_ORIGIN?.trim() || process.env.AGENTS_ANYWHERE_API?.trim() || config.cloud.serverUrl,
+    { env: process.env, development: !app.isPackaged },
+  );
 }
 
 function registerDesktopOAuthProtocol(): void {
@@ -187,57 +181,26 @@ function drainDesktopOAuthCallbacks(): Promise<void> {
 }
 
 async function handleDesktopOAuthCallback(rawUrl: string): Promise<void> {
+  const pending = pendingDesktopOAuth;
+  if (!pending) return;
   showMainWindow();
   try {
-    const pending = pendingDesktopOAuth;
     const code = desktopOAuthCodeFromCallback(rawUrl, pending);
-    if (!pending) throw new Error("Desktop login request expired. Start sign-in again.");
     pendingDesktopOAuth = null;
-    const accessToken = await exchangeDesktopOAuthCode(code, pending.verifier);
-    publishDesktopOAuthResult({ status: "success", accessToken });
+    const accessToken = await exchangeDesktopOAuthCode(code, pending.verifier, pending.server, (url, init) => net.fetch(String(url), init));
+    if (pending.attempt !== desktopOAuthAttempt) return;
+    if (!serverStore) throw new Error("Desktop server settings are not ready.");
+    serverStore.save(pending.server);
+    publishDesktopOAuthResult({ status: "success", accessToken, server: pending.server });
   } catch (error) {
+    if (pending.attempt !== desktopOAuthAttempt) return;
     publishDesktopOAuthResult({ status: "error", error: errorMessage(error) });
-  }
-}
-
-async function exchangeDesktopOAuthCode(code: string, verifier: string): Promise<string> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 15_000);
-  try {
-    const response = await net.fetch(`${apiOrigin()}${apiNamespace()}/oauth/token`, {
-      method: "POST",
-      headers: { "content-type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        grant_type: "authorization_code",
-        code,
-        client_id: DESKTOP_OAUTH_CLIENT_ID,
-        redirect_uri: DESKTOP_OAUTH_REDIRECT_URI,
-        code_verifier: verifier,
-      }).toString(),
-      signal: controller.signal,
-    });
-    const payload = await response.json() as { access_token?: unknown; detail?: unknown };
-    if (!response.ok) {
-      throw new Error(typeof payload.detail === "string" ? payload.detail : `Desktop login failed (${response.status}).`);
-    }
-    if (typeof payload.access_token !== "string" || !payload.access_token) {
-      throw new Error("Desktop login token response was invalid.");
-    }
-    return payload.access_token;
-  } finally {
-    clearTimeout(timeout);
   }
 }
 
 function publishDesktopOAuthResult(result: DesktopOAuthResult): void {
   desktopOAuthResult = result;
   sendToRenderer("workbench:auth:oauthResultReady");
-}
-
-function normalizeApiNamespace(value: string): string {
-  const trimmed = value.trim();
-  if (!trimmed || trimmed === "/") return "";
-  return `/${trimmed.replace(/^\/+|\/+$/g, "")}`;
 }
 
 function shouldProxyApiPath(pathname: string): boolean {
@@ -254,11 +217,12 @@ function registerStaticWebProtocol(): void {
     if (url.hostname !== WEB_HOST) return new Response("Not found", { status: 404 });
 
     if (shouldProxyApiPath(url.pathname)) {
-      return net.fetch(`${apiOrigin()}${url.pathname}${url.search}`, {
-        method: request.method,
-        headers: request.headers,
-        body: request.body,
-      });
+      return proxyDesktopApi(
+        request,
+        apiOrigin(),
+        [`${WEB_PROTOCOL}://${WEB_HOST}`, ...(devOrigin ? [devOrigin] : [])],
+        (input, init) => net.fetch(String(input), init),
+      );
     }
 
     const outDir = webOutDir();
@@ -538,24 +502,46 @@ function registerIpcHandlers(): void {
     if (!/^https?:\/\//i.test(url)) throw new Error("Only http(s) URLs can be opened externally.");
     await shell.openExternal(url);
   });
-  ipcMain.handle("workbench:auth:startOAuth", async (event) => {
+  ipcMain.handle("workbench:auth:getServer", (event) => {
     assertTrustedRenderer(event);
-    desktopOAuthResult = null;
-    if (!app.isPackaged) {
-      const { openDevelopmentLoginWindow } = await import("./development-login.js");
-      const loginUrl = await openDevelopmentLoginWindow({
-        parent: mainWindow,
-        webOrigin: desktopOAuthWebOrigin(),
-        onAccessToken: (accessToken) => {
-          publishDesktopOAuthResult({ status: "success", accessToken });
-        },
+    return activeDesktopServer();
+  });
+  ipcMain.handle("workbench:auth:startOAuth", async (event, input?: { serverUrl?: string }): Promise<DesktopOAuthStartResult> => {
+    assertTrustedRenderer(event);
+    if (startingDesktopOAuth) throw new Error("A sign-in request is already starting.");
+    startingDesktopOAuth = true;
+    desktopOAuthAttempt += 1;
+    pendingDesktopOAuth = null;
+    try {
+      const server = resolveDesktopServer(input?.serverUrl ?? config.cloud.serverUrl, {
+        env: process.env,
+        development: !app.isPackaged,
       });
-      return { authorizeUrl: loginUrl };
+      await checkDesktopServer(server, (url, init) => net.fetch(String(url), init));
+      const request = createDesktopOAuthRequest(server.oauthWebOrigin);
+      desktopOAuthResult = null;
+      pendingDesktopOAuth = { ...request.pending, server, attempt: desktopOAuthAttempt };
+      if (!app.isPackaged) {
+        const { openDevelopmentLoginWindow } = await import("./development-login.js");
+        await openDevelopmentLoginWindow({
+          parent: mainWindow,
+          authorizeUrl: request.authorizeUrl,
+          onCallback: queueDesktopOAuthCallback,
+        });
+      } else {
+        await shell.openExternal(request.authorizeUrl);
+      }
+      return { status: "opened", authorizeUrl: request.authorizeUrl };
+    } catch (error) {
+      pendingDesktopOAuth = null;
+      return {
+        status: "error",
+        code: error instanceof DesktopServerError ? error.code : "oauth",
+        error: errorMessage(error),
+      };
+    } finally {
+      startingDesktopOAuth = false;
     }
-    const request = createDesktopOAuthRequest(desktopOAuthWebOrigin());
-    pendingDesktopOAuth = request.pending;
-    await shell.openExternal(request.authorizeUrl);
-    return { authorizeUrl: request.authorizeUrl };
   });
   ipcMain.handle("workbench:auth:consumeOAuthResult", (event): DesktopOAuthResult | null => {
     assertTrustedRenderer(event);
@@ -700,6 +686,7 @@ function registerIpcHandlers(): void {
     fs.rmSync(connectorDataPath(), { recursive: true, force: true });
     fs.rmSync(connectorLogsPath(), { recursive: true, force: true });
     fs.rmSync(desktopSettingsPath(), { force: true });
+    fs.rmSync(path.join(app.getPath("userData"), "desktop-server.json"), { force: true });
     app.relaunch();
     shutdownComplete = true;
     app.exit(0);
@@ -752,6 +739,7 @@ function requireLogs(): ConnectorLogStore {
 }
 
 async function initializeDesktopServices(): Promise<void> {
+  serverStore = new DesktopServerStore(path.join(app.getPath("userData"), "desktop-server.json"), activeDesktopServer());
   const dataPath = connectorDataPath();
   fs.mkdirSync(dataPath, { recursive: true, mode: 0o700 });
   settingsStore = new DesktopSettingsStore(desktopSettingsPath());

@@ -10,10 +10,9 @@
     "useUnknownInCatchVariables": true,
     "verbatimModuleSyntax": true,
     "isolatedModules": true,
-    "esModuleInterop": true,
-    "allowSyntheticDefaultImports": true,
     "skipLibCheck": false,
-    "types": ["node", "vitest/globals"]
+    "types": ["node"]
   },
-  "include": ["src/**/*.ts", "tests/**/*.ts", "scripts/**/*.mts"]
+  "include": ["src/**/*.ts", "tests/**/*.ts"],
+  "exclude": ["src/client/**", "tests/client.spec.tsx"]
 }

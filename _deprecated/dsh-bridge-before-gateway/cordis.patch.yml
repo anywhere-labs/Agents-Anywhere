@@ -1,0 +1,13 @@
+- insert:
+    - id: agents-anywhere-bridge
+      name: '@agents-anywhere/dsh-bridge'
+      config:
+        dshHome: !!js dshHomePath()
+        stateRoot: !!js dshHomePath('agents-anywhere', 'bridge')
+        authenticationDeadlineMs: 5000
+        readRequestTimeoutMs: 30000
+        writeRequestTimeoutMs: 60000
+        shutdownTimeoutMs: 15000
+        maxListLimit: 500
+        maxCommandLimit: 200
+        maxPendingInteractions: 64
