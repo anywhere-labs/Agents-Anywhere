@@ -174,6 +174,8 @@ so polling, presence changes and same-name devices do not reorder the list.
 
 - Successful Desktop login reuses a matching local device or provisions a
   `connectorKind: "desktop"` device with the user-authenticated Connector API.
+- Successful local connection, reconnection, CLI pairing and pair-code completion
+  refresh the device list without opening an Agent quick-setup dialog.
 - Electron Main persists the returned `connectorId` and `connectorToken`, then
   sends them to `anywhere-cli rpc` through `connector.saveConfig`.
 - Closing the window on macOS keeps the app and Connector running in the

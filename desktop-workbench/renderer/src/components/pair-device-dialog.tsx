@@ -18,7 +18,7 @@ import { getDesktopServerConnection } from "@/features/desktop/server-connection
 import { toast } from "sonner"
 
 import { useAuth } from "@/components/auth/auth-context"
-import { useAgentSetupPairing, type AgentSetupConnector } from "@/components/agent-setup-provider"
+import { useDevicePairing } from "@/components/device-pairing-provider"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -211,7 +211,7 @@ export function PairDeviceDialog({
   title,
 }: Props) {
   const { session } = useAuth()
-  const { requestAgentSetup, waitForConnector, readyConnectorIds } = useAgentSetupPairing()
+  const { waitForConnector, clearPairing, readyConnectorIds } = useDevicePairing()
   const t = useTranslations("dashboard.pairDevice")
   const tCommon = useTranslations("common")
   const [step, setStep] = React.useState<Step>(setupCredential ? "cli-method" : "connection-method")
@@ -262,22 +262,22 @@ export function PairDeviceDialog({
     onOpenChange(false)
   }, [onOpenChange, reset])
 
-  const completePairing = React.useCallback((pairedConnector?: AgentSetupConnector) => {
-    if (pairedConnector) requestAgentSetup(pairedConnector)
+  const completePairing = React.useCallback(() => {
     onConnectorCreated?.()
     closePairing()
-  }, [closePairing, onConnectorCreated, requestAgentSetup])
+  }, [closePairing, onConnectorCreated])
 
-  const startConnectorWaiting = (connector: AgentSetupConnector) => {
+  const startConnectorWaiting = (connectorId: string) => {
     stopWaiting()
     setWaitingOnline(true)
-    waitForConnector(connector)
+    waitForConnector(connectorId)
   }
 
   React.useEffect(() => {
     if (!open || !waitingOnline || !connectorId || !readyConnectorIds.includes(connectorId)) return
+    clearPairing(connectorId)
     closePairing()
-  }, [closePairing, connectorId, open, readyConnectorIds, waitingOnline])
+  }, [clearPairing, closePairing, connectorId, open, readyConnectorIds, waitingOnline])
 
   const handleOpenChange = (nextOpen: boolean) => {
     if (!nextOpen && (creating || claiming)) return
@@ -308,7 +308,7 @@ export function PairDeviceDialog({
       return
     }
     setStep(method)
-    if (method === "command") startConnectorWaiting({ id: connectorId, name })
+    if (method === "command") startConnectorWaiting(connectorId)
   }
 
   const handleCreate = async () => {
@@ -343,7 +343,7 @@ export function PairDeviceDialog({
         connectorToken,
       })
       if (version !== pairingVersionRef.current) return
-      completePairing({ id: connectorId, name: name.trim() })
+      completePairing()
     } catch (error) {
       if (version !== pairingVersionRef.current) return
       toast.error(error instanceof Error ? error.message : t("errors.claimFailed"))

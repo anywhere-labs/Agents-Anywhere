@@ -10,8 +10,12 @@ const demoSource = readFileSync(
   new URL("../src/components/demo.tsx", import.meta.url),
   "utf8",
 )
-const setupSource = readFileSync(
-  new URL("../src/components/agent-setup-provider.tsx", import.meta.url),
+const pairingSource = readFileSync(
+  new URL("../src/components/device-pairing-provider.tsx", import.meta.url),
+  "utf8",
+)
+const desktopSource = readFileSync(
+  new URL("../src/features/desktop/desktop-connector-context.tsx", import.meta.url),
   "utf8",
 )
 
@@ -23,36 +27,41 @@ function sourceBetween(start, end) {
   return source.slice(startIndex, endIndex)
 }
 
-test("CLI pairing waits in the app-level Agent setup provider after the form closes", () => {
+test("CLI pairing keeps watching after the form closes and completes without another dialog", () => {
   const waiting = sourceBetween("const startConnectorWaiting", "const handleOpenChange")
-  assert.match(waiting, /waitForConnector\(connector\)/)
+  assert.match(waiting, /waitForConnector\(connectorId\)/)
   assert.match(waiting, /readyConnectorIds\.includes\(connectorId\)/)
   assert.match(waiting, /!open \|\| !waitingOnline/)
   assert.match(waiting, /closePairing\(\)/)
+  assert.match(waiting, /clearPairing\(connectorId\)/)
   assert.doesNotMatch(source, /dashboardApi\.getConnector|pollingRef/)
 
   const close = sourceBetween("const closePairing", "const completePairing")
   assert.match(close, /reset\(\)/)
   assert.match(close, /onOpenChange\(false\)/)
   assert.doesNotMatch(close, /removeRequest|watchPairingConnector/)
-  assert.match(setupSource, /<PendingPairing/)
-  assert.match(setupSource, /return watchPairingConnector/)
-  assert.match(setupSource, /queue\.find\(\(item\) => !item\.waitingOnline\)/)
+  assert.match(pairingSource, /<PendingPairing/)
+  assert.match(pairingSource, /return watchPairingConnector/)
+  assert.match(pairingSource, /refreshData\(\)/)
+  assert.doesNotMatch(pairingSource, /Dialog|requestAgentSetup|quickAddRuntime/)
 })
 
-test("pair-code completion still requests Agent setup and refreshes once", () => {
+test("pair-code completion closes the form and refreshes once", () => {
   const complete = sourceBetween("const completePairing", "const startConnectorWaiting")
-  assert.match(complete, /requestAgentSetup\(pairedConnector\)/)
+  assert.doesNotMatch(complete, /AgentSetup|Dialog/)
   assert.match(complete, /closePairing\(\)/)
   assert.match(complete, /onConnectorCreated\?\.\(\)/)
   assert.equal(source.match(/onConnectorCreated\?\.\(\)/g)?.length, 1)
 })
 
-test("pairing keeps runtime requests in the shared Agent setup flow", () => {
+test("Desktop connection and pairing have no Agent setup trigger or runtime configuration requests", () => {
   assert.doesNotMatch(source, /type Step =[^;]*\| "agents"/)
   assert.doesNotMatch(source, /discoverConnectorRuntimeOverview/)
   assert.doesNotMatch(source, /createConnectorRuntime/)
   assert.doesNotMatch(source, /setConnectorRuntimeActive/)
+  assert.doesNotMatch(desktopSource, /AgentSetup|agentSetup|trackBinding|takeOnline/)
+  assert.doesNotMatch(demoSource, /AgentSetup/)
+  assert.match(demoSource, /<DevicePairingProvider>/)
 })
 
 test("workspace refresh does not manually close the pairing dialog", () => {
