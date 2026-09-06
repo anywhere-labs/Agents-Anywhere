@@ -37,7 +37,6 @@
     <string name="auth_password_login">账号密码登录</string>
     <string name="auth_continue_qr">扫码登录</string>
     <string name="auth_host_choice_title">选择登录服务</string>
-    <string name="auth_host_choice_description">选择你要使用的 Agents Anywhere 服务。</string>
     <string name="auth_official_service">登录Agents Anywhere Cloud</string>
     <string name="auth_official_service_description">使用 Agents Anywhere 在线服务</string>
     <string name="auth_self_host_service">连接到你自己的服务实例</string>

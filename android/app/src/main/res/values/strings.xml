@@ -37,7 +37,6 @@
     <string name="auth_password_login">Account Password Login</string>
     <string name="auth_continue_qr">Scan to Login</string>
     <string name="auth_host_choice_title">Choose a login service</string>
-    <string name="auth_host_choice_description">Select the Agents Anywhere service you want to use.</string>
     <string name="auth_official_service">Sign in to Agents Anywhere Cloud</string>
     <string name="auth_official_service_description">Use the Agents Anywhere online service</string>
     <string name="auth_self_host_service">Connect to your own server instance</string>

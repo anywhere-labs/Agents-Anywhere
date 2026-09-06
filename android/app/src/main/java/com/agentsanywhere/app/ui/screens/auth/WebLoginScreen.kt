@@ -134,12 +134,21 @@ private fun HostChoiceScreen(
                     fontWeight = FontWeight.SemiBold,
                     lineHeight = 34.sp,
                 )
-                Text(
-                    text = stringResource(R.string.auth_host_choice_description),
-                    color = colors.muted,
-                    fontSize = 15.sp,
-                    lineHeight = 21.sp,
-                )
+                Row(verticalAlignment = Alignment.Top) {
+                    Icon(
+                        imageVector = Lucide.Info,
+                        contentDescription = null,
+                        tint = colors.faint,
+                        modifier = Modifier.size(17.dp),
+                    )
+                    Text(
+                        modifier = Modifier.padding(start = 9.dp),
+                        text = stringResource(R.string.auth_host_choice_hint),
+                        color = colors.muted,
+                        fontSize = 13.sp,
+                        lineHeight = 19.sp,
+                    )
+                }
             }
             Spacer(Modifier.height(30.dp))
             state.errorMessage?.let {
@@ -178,24 +187,6 @@ private fun HostChoiceScreen(
                         }
                         SelfHostLoginForm(state, onServerUrlChanged, onConnect)
                     }
-                }
-            }
-            if (!state.selfHostExpanded) {
-                Spacer(Modifier.height(22.dp))
-                Row(verticalAlignment = Alignment.Top) {
-                    Icon(
-                        imageVector = Lucide.Info,
-                        contentDescription = null,
-                        tint = colors.faint,
-                        modifier = Modifier.size(17.dp),
-                    )
-                    Text(
-                        modifier = Modifier.padding(start = 9.dp),
-                        text = stringResource(R.string.auth_host_choice_hint),
-                        color = colors.muted,
-                        fontSize = 13.sp,
-                        lineHeight = 19.sp,
-                    )
                 }
             }
         }
