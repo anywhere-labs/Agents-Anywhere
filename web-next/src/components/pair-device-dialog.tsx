@@ -191,7 +191,7 @@ function ChoiceCard({
       onClick={onClick}
       className="h-auto w-full min-w-0 justify-start gap-3 whitespace-normal px-4 py-4 text-left"
     >
-      <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-muted text-foreground">
+      <span className="grid size-10 shrink-0 place-items-center text-foreground">
         <Icon className="size-5" />
       </span>
       <span className="min-w-0">
