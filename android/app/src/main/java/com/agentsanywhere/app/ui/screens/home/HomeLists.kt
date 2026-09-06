@@ -242,8 +242,8 @@ private fun SessionList(
     onSessionLongPress: (AgentSession, Rect) -> Unit,
     onOpenSession: (AgentSession) -> Unit,
 ) {
-    var pinnedExpanded by remember(sessions) { mutableStateOf(true) }
-    var recentExpanded by remember(sessions) { mutableStateOf(true) }
+    var pinnedExpanded by remember { mutableStateOf(true) }
+    var recentExpanded by remember { mutableStateOf(true) }
     val pinned = remember(sessions) { SessionsState(sessions = sessions).pinnedSessions }
     val recent = remember(sessions) { SessionsState(sessions = sessions).recentSessions }
     val listState = rememberLazyListState()

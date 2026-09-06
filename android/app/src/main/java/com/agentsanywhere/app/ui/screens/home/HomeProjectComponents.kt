@@ -82,6 +82,8 @@ internal data class HomeProjectActionMenu(
 @Composable
 internal fun HomeProjectList(
     projects: List<AgentProject>,
+    allSessions: List<AgentSession>,
+    projectPreferences: HomeProjectPreferences,
     pinnedSessions: List<AgentSession>,
     sessionsByProject: Map<String, List<AgentSession>>,
     loadingProjectIds: Set<String>,
@@ -93,14 +95,12 @@ internal fun HomeProjectList(
     onOpenSession: (AgentSession) -> Unit,
 ) {
     var pinnedExpanded by remember { mutableStateOf(true) }
-    var projectsExpanded by remember { mutableStateOf(true) }
-    val pinnedProjects = remember(projects) {
-        projects.filter(AgentProject::pinned).sortedWith(projectComparator())
+    val projectsExpanded = projectPreferences.projectsExpanded
+    val ordered = remember(projects, allSessions) {
+        com.agentsanywhere.app.feature.sessions.sortProjectsByActivity(projects, allSessions)
     }
-    val regularProjects = remember(projects) {
-        projects.filterNot(AgentProject::pinned)
-            .sortedWith(compareByDescending<AgentProject> { it.createdAt }.thenBy { it.name.lowercase() })
-    }
+    val pinnedProjects = ordered.filter(AgentProject::pinned)
+    val regularProjects = ordered.filterNot(AgentProject::pinned)
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -143,7 +143,7 @@ internal fun HomeProjectList(
             HomeProjectSectionHeader(
                 label = stringResource(R.string.home_projects),
                 expanded = projectsExpanded,
-                onClick = { projectsExpanded = !projectsExpanded },
+                onClick = projectPreferences::toggleSection,
             )
         }
         if (projectsExpanded) {
@@ -169,11 +169,6 @@ internal fun HomeProjectList(
         }
     }
 }
-
-private fun projectComparator(): Comparator<AgentProject> =
-    compareByDescending<AgentProject> { it.pinnedAt.orEmpty() }
-        .thenByDescending { it.lastActivityAt.orEmpty() }
-        .thenBy { it.name.lowercase() }
 
 @Composable
 private fun HomeProjectTreeItem(
@@ -524,14 +519,15 @@ private fun HomeProjectActionRow(
 internal fun HomeProjectEditSheet(
     project: AgentProject,
     deviceName: String,
+    name: String,
+    onNameChange: (String) -> Unit,
     busy: Boolean,
     errorMessage: String?,
     onDismiss: () -> Unit,
-    onSave: (String) -> Unit,
+    onSave: () -> Unit,
 ) {
     val colors = LocalAAColors.current
     val darkMode = colors.canvas == Color(0xFF09090B)
-    var name by remember(project.id, project.name) { mutableStateOf(project.name) }
     val canSave = !busy && name.trim().isNotEmpty() && name.trim() != project.name
 
     ModalBottomSheet(
@@ -568,7 +564,7 @@ internal fun HomeProjectEditSheet(
             ProjectFieldLabel(stringResource(R.string.home_project_name))
             BasicTextField(
                 value = name,
-                onValueChange = { if (it.length <= 255) name = it },
+                onValueChange = { if (it.codePointCount(0, it.length) <= 255) onNameChange(it) },
                 enabled = !busy,
                 singleLine = true,
                 modifier = Modifier
@@ -613,7 +609,7 @@ internal fun HomeProjectEditSheet(
                     enabled = canSave,
                     primary = true,
                     modifier = Modifier.weight(1f),
-                    onClick = { onSave(name.trim()) },
+                    onClick = onSave,
                 )
             }
         }

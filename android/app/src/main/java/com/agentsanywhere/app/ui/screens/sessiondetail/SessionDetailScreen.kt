@@ -834,6 +834,7 @@ fun SessionDetailScreen(
             )
             unfocusComposer()
             forceLatestRequest += 1
+            state.session?.let { onSessionChanged(it.copy(optimisticTopUntil = System.currentTimeMillis() + 1_000)) }
             val request = if (requestAction == RuntimeMessageAction.Steer) {
                 controller.steer(
                     sessionId = id,

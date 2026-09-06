@@ -12,4 +12,8 @@ data class AgentProject(
     val lastActivityAt: String?,
     val createdAt: String,
     val updatedAt: String,
+    val manuallyCreated: Boolean = false,
+    val sidebarSessionCounts: ProjectSessionCounts? = null,
 )
+
+data class ProjectSessionCounts(val active: Int = 0, val archived: Int = 0)

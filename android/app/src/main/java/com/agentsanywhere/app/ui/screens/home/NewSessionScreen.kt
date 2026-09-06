@@ -48,6 +48,14 @@ import com.agentsanywhere.app.feature.sessions.NewSessionRuntimeCapabilities
 import com.agentsanywhere.app.feature.sessions.NewSessionRuntimeSelectionState
 import com.agentsanywhere.app.feature.sessions.SessionsState
 import com.agentsanywhere.app.model.AgentProject
+import com.agentsanywhere.app.feature.sessions.availableProjectName
+import com.agentsanywhere.app.feature.sessions.workspaceProject
+import com.agentsanywhere.app.feature.sessions.workspaceProjectName
+import com.agentsanywhere.app.api.ApiException
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.withTimeout
 import com.agentsanywhere.app.navigation.AppDestination
 import com.agentsanywhere.app.ui.designsystem.LocalAAColors
 import com.agentsanywhere.app.ui.designsystem.ScreenScaffold
@@ -61,6 +69,8 @@ import kotlinx.coroutines.launch
 fun NewSessionScreen(
     navigate: (AppDestination) -> Unit,
     sessionsState: SessionsState,
+    sidebarViewMode: String = HomeSidebarViewMode.Project,
+    onLoadProjects: suspend () -> Result<List<AgentProject>> = { Result.success(sessionsState.projects) },
     onListDirectory: suspend (String, String, String) -> Result<NewSessionDirectory>,
     onListRuntimes: suspend (String) -> Result<DeviceRuntimeList>,
     onLoadRuntimeCapabilities: suspend (String, String) -> Result<NewSessionRuntimeCapabilities>,
@@ -107,7 +117,7 @@ fun NewSessionScreen(
             ),
         )
     }
-    var selectedWorkspacePath by rememberSaveable { mutableStateOf("~") }
+    var selectedWorkspacePath by rememberSaveable { mutableStateOf("") }
     var homePath by rememberSaveable { mutableStateOf<String?>(null) }
     var choosePath by rememberSaveable { mutableStateOf(false) }
     var currentPath by rememberSaveable { mutableStateOf("~") }
@@ -115,19 +125,48 @@ fun NewSessionScreen(
     var pathLoading by remember { mutableStateOf(false) }
     var pathError by remember { mutableStateOf<String?>(null) }
     var expandedConfiguration by remember { mutableStateOf<NewSessionConfigurationKey?>(null) }
-    var projectListExpanded by rememberSaveable { mutableStateOf(true) }
+    var projectListExpanded by rememberSaveable { mutableStateOf(false) }
     var creatingProject by rememberSaveable { mutableStateOf(false) }
     var projectName by rememberSaveable { mutableStateOf("") }
     var projectCreating by remember { mutableStateOf(false) }
     var projectCreateError by remember { mutableStateOf<String?>(null) }
-    val selectedProject = projects.firstOrNull { it.id == selectedProjectId }
+    var nameEdited by rememberSaveable { mutableStateOf(false) }
+    var workspaceConflict by remember { mutableStateOf<AgentProject?>(null) }
+    var previousDeviceId by rememberSaveable { mutableStateOf<String?>(null) }
+    var previousProjectId by rememberSaveable { mutableStateOf<String?>(null) }
+    var previousPath by rememberSaveable { mutableStateOf("") }
+    var directoryRequestId by remember { mutableStateOf(0L) }
+    val selectedProject = projects.firstOrNull { it.id == selectedProjectId && (selectedDeviceId == null || it.connectorId == selectedDeviceId) }
+
+    fun selectDevice(id: String?) {
+        if (selectedDeviceId == id) return
+        selectedDeviceId = id
+        selectedProjectId = null
+        selectedWorkspacePath = ""
+        currentPath = ""
+        homePath = null
+        directoryRequestId++
+        pathEntries = emptyList()
+        pathLoading = false
+        projectCreateError = null
+        choosePath = false
+    }
+
+    fun cancelProjectCreation() {
+        if (projectCreating) return
+        selectedDeviceId = previousDeviceId
+        selectedProjectId = previousProjectId
+        selectedWorkspacePath = previousPath
+        creatingProject = false
+        projectCreateError = null
+        workspaceConflict = null
+    }
 
     BackHandler {
         when {
             choosePath -> choosePath = false
             creatingProject -> {
-                creatingProject = false
-                projectCreateError = null
+                cancelProjectCreation()
             }
             else -> navigate(AppDestination.Sessions)
         }
@@ -136,7 +175,8 @@ fun NewSessionScreen(
     LaunchedEffect(projects, sessionsState.hasLoaded) {
         val requested = pendingInitialProjectId?.let { id -> projects.firstOrNull { it.id == id } }
         val current = projects.firstOrNull { it.id == selectedProjectId }
-        val next = requested ?: current ?: projects.firstOrNull()
+        val next = requested ?: current
+        if (requested != null) selectedDeviceId = requested.connectorId
         if (next?.id != selectedProjectId) {
             selectedProjectId = next?.id
         }
@@ -157,9 +197,9 @@ fun NewSessionScreen(
         if (!creatingProject && selectedProject != null) {
             selectedDeviceId = selectedProject.connectorId
         } else if (devices.isNotEmpty() && devices.none { it.id == selectedDeviceId }) {
-            selectedDeviceId = devices.firstOrNull()?.id
+            selectDevice(devices.firstOrNull()?.id)
         } else if (devices.isEmpty() && sessionsState.hasLoaded) {
-            selectedDeviceId = null
+            selectDevice(null)
         }
     }
 
@@ -259,10 +299,12 @@ fun NewSessionScreen(
             deviceOs = device.deviceOs,
             fallbackRoot = fallbackRoot,
         )
+        val requestId = ++directoryRequestId
         pathLoading = true
         pathError = null
         onListDirectory(device.id, request.root, request.path)
             .onSuccess { directory ->
+                if (requestId != directoryRequestId || selectedDeviceId != device.id) return@onSuccess
                 val nextPath = canonicalRemoteDirectoryPath(
                     request = request,
                     returnedPath = directory.path,
@@ -272,37 +314,48 @@ fun NewSessionScreen(
                 pathEntries = directory.entries.map { entry ->
                     entry.copy(path = normalizeRemotePath(entry.path))
                 }
-                if (request.root == "~" && homePath == null && nextPath.isNotBlank()) {
-                    homePath = nextPath
-                }
                 if (select && isSelectableRemoteDirectory(nextPath, device.deviceOs)) {
                     selectedWorkspacePath = nextPath
                 }
             }
             .onFailure { error ->
+                if (error is CancellationException) throw error
+                if (requestId != directoryRequestId || selectedDeviceId != device.id) return@onFailure
                 pathEntries = emptyList()
                 pathError = error.message ?: context.getString(R.string.new_session_load_directory_failed)
             }
-        pathLoading = false
+        if (requestId == directoryRequestId && selectedDeviceId == device.id) pathLoading = false
     }
 
-    LaunchedEffect(selectedDevice?.id, creatingProject, selectedProject?.id) {
-        if (selectedDevice == null) {
-            homePath = null
-            pathEntries = emptyList()
-            return@LaunchedEffect
-        }
-        if (!creatingProject && selectedProject != null) {
-            homePath = null
-            pathEntries = emptyList()
-            currentPath = selectedProject.workspacePath
-            selectedWorkspacePath = selectedProject.workspacePath
-            return@LaunchedEffect
-        }
+    LaunchedEffect(selectedDevice?.id) {
+        val deviceId = selectedDevice?.id
         homePath = null
-        currentPath = "~"
-        selectedWorkspacePath = "~"
-        loadDirectory(targetPath = ".", fallbackRoot = "~", select = true)
+        directoryRequestId++
+        pathEntries = emptyList()
+        pathLoading = false
+        if (deviceId == null) return@LaunchedEffect
+        val result = try {
+            withTimeout(8_000) { onListDirectory(deviceId, "~", ".") }
+        } catch (error: kotlinx.coroutines.TimeoutCancellationException) {
+            Result.failure(error)
+        }
+        if (selectedDeviceId != deviceId) return@LaunchedEffect
+        val resolved = result.getOrNull()?.path?.takeIf(String::isNotBlank) ?: "~"
+        homePath = resolved
+        if (!creatingProject && selectedWorkspacePath.isBlank()) {
+            val project = workspaceProject(projects, deviceId, resolved, selectedDeviceOs)
+            selectedProjectId = project?.id
+            selectedWorkspacePath = project?.workspacePath ?: resolved
+            currentPath = selectedWorkspacePath
+        }
+    }
+
+    LaunchedEffect(selectedWorkspacePath, selectedDeviceId, projects, creatingProject) {
+        if (!creatingProject || nameEdited) return@LaunchedEffect
+        val existing = workspaceProject(projects, selectedDeviceId.orEmpty(), selectedWorkspacePath, selectedDeviceOs)
+        projectName = if (selectedWorkspacePath.isBlank()) "" else availableProjectName(
+            existing?.name ?: workspaceProjectName(selectedWorkspacePath), projects, existing?.id,
+        )
     }
 
     LaunchedEffect(editingTitle) {
@@ -312,11 +365,9 @@ fun NewSessionScreen(
         }
     }
 
-    val selectedProjectDevice = sessionsState.devices.firstOrNull { it.id == selectedProject?.connectorId }
-    val selectedProjectTitle = selectedProject?.name ?: stringResource(R.string.new_session_choose_project)
-    val selectedProjectDetail = selectedProject?.workspacePath ?: stringResource(R.string.new_session_no_project)
+    val selectedProjectTitle = selectedProject?.name ?: if (selectedWorkspacePath == homePath || selectedWorkspacePath.isBlank()) stringResource(R.string.workspace_home) else workspaceProjectName(selectedWorkspacePath)
     val canUseCurrentPath = isSelectableRemoteDirectory(currentPath, selectedDeviceOs)
-    val effectiveWorkspacePath = selectedProject?.workspacePath.orEmpty()
+    val effectiveWorkspacePath = selectedWorkspacePath
     val catalogsLoading = selectedRuntime != null && (
         !runtimeSelection.capabilities.loaded ||
             runtimeSelection.capabilities.loading ||
@@ -353,16 +404,12 @@ fun NewSessionScreen(
             NewSessionConfigurationField(
                 key = NewSessionConfigurationKey.Device,
                 label = stringResource(R.string.new_session_device),
-                value = if (creatingProject) {
-                    selectedDevice?.name ?: stringResource(R.string.new_session_no_device)
-                } else {
-                    selectedProjectDevice?.name ?: stringResource(R.string.new_session_no_device)
-                },
-                selectedId = if (creatingProject) selectedDevice?.id else selectedProject?.connectorId,
+                value = selectedDevice?.name ?: stringResource(R.string.new_session_no_device),
+                selectedId = selectedDevice?.id,
                 options = devices.map { device ->
                     NewSessionConfigurationOption(id = device.id, label = device.name)
                 },
-                enabled = creatingProject && devices.isNotEmpty() && !projectCreating,
+                enabled = devices.isNotEmpty() && !projectCreating,
             ),
         )
         if (!creatingProject) add(
@@ -460,10 +507,8 @@ fun NewSessionScreen(
             )
         }
     }
-    val projectDeviceMatches = selectedProject != null &&
-        selectedDevice?.id == selectedProject.connectorId
-    val canStart = selectedProject != null &&
-        projectDeviceMatches &&
+    val canStart = selectedDevice != null &&
+        runtimeSelection.connectorId == selectedDevice.id &&
         selectedRuntime != null &&
         runtimeSelection.readyForCreate &&
         effectiveWorkspacePath.isNotBlank() &&
@@ -476,10 +521,9 @@ fun NewSessionScreen(
     }
 
     fun startSession() {
-        val project = selectedProject ?: return
         val device = selectedDevice ?: return
         val runtime = selectedRuntime ?: return
-        if (!canStart || device.id != project.connectorId) return
+        if (!canStart) return
         preferenceStore.save(
             connectorId = device.id,
             runtimeId = runtime.id,
@@ -488,7 +532,7 @@ fun NewSessionScreen(
         onPrepareSession(
             NewSessionDraft(
                 connectorId = device.id,
-                projectId = project.id,
+                projectId = selectedProject?.id.orEmpty(),
                 runtime = runtime.type,
                 title = title.trim().takeIf(String::isNotBlank),
                 cwd = effectiveWorkspacePath.trim().takeIf(String::isNotBlank),
@@ -506,43 +550,90 @@ fun NewSessionScreen(
     }
 
     fun beginProjectCreation() {
+        previousDeviceId = selectedDeviceId
+        previousProjectId = selectedProjectId
+        previousPath = selectedWorkspacePath
+        selectedWorkspacePath = ""
+        projectListExpanded = false
+        nameEdited = false
         projectName = ""
         projectCreateError = null
         projectCreating = false
         choosePath = false
         creatingProject = true
         expandedConfiguration = null
-        val preferredDeviceId = selectedProject?.connectorId
+        val preferredDeviceId = selectedDeviceId
             ?.takeIf { id -> devices.any { it.id == id } }
             ?: initialPreference?.connectorId?.takeIf { id -> devices.any { it.id == id } }
             ?: devices.firstOrNull()?.id
         selectedDeviceId = preferredDeviceId
     }
 
-    fun createProject() {
+    fun createProject(confirmRename: Boolean = false) {
         val device = selectedDevice ?: return
-        val cleanName = projectName.trim()
-        val cleanPath = selectedWorkspacePath.trim()
-        if (cleanName.isBlank() || cleanPath.isBlank() || projectCreating) return
+        val inputPath = selectedWorkspacePath.trim()
+        val inputName = projectName.trim()
+        val useDirectoryName = !nameEdited
+        if (projectCreating || inputPath.isBlank() || inputName.isBlank()) return
         projectCreating = true
         projectCreateError = null
         scope.launch {
-            onCreateProject(cleanName, device.id, cleanPath)
-                .onSuccess { project ->
-                    localProject = project
-                    selectedProjectId = project.id
-                    selectedDeviceId = project.connectorId
-                    selectedWorkspacePath = project.workspacePath
-                    currentPath = project.workspacePath
-                    projectListExpanded = false
-                    creatingProject = false
-                    choosePath = false
+            var attemptedName = inputName
+            var existingProjectId: String? = null
+            try {
+                val path = if (inputPath.startsWith("~")) {
+                    onListDirectory(device.id, inputPath, ".").getOrThrow().path.also {
+                        require(it.isNotBlank() && !it.startsWith("~")) {
+                            context.getString(R.string.workspace_resolve_failed)
+                        }
+                    }
+                } else inputPath
+                // Refresh before checking the workspace so another client's project is not silently renamed.
+                val latest = onLoadProjects().getOrThrow()
+                val existing = workspaceProject(latest, device.id, path, device.deviceOs)
+                existingProjectId = existing?.id
+                attemptedName = availableProjectName(
+                    if (useDirectoryName) existing?.name ?: workspaceProjectName(path) else inputName,
+                    latest, existingProjectId,
+                )
+                selectedWorkspacePath = path
+                projectName = attemptedName
+                if (!confirmRename && existing != null && existing.name != attemptedName) {
+                    workspaceConflict = existing
+                    return@launch
                 }
-                .onFailure { error ->
+                val project = onCreateProject(attemptedName, device.id, path).getOrThrow()
+                localProject = project
+                selectedProjectId = project.id
+                selectedDeviceId = project.connectorId
+                selectedWorkspacePath = project.workspacePath
+                currentPath = project.workspacePath
+                projectListExpanded = false
+                creatingProject = false
+                choosePath = false
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                if (error is ApiException && error.errorCode == "project_name_conflict") {
+                    val latest = onLoadProjects().getOrDefault(projects)
+                    projectName = availableProjectName(attemptedName, latest, existingProjectId, setOf(attemptedName))
+                    nameEdited = true
+                    projectCreateError = context.getString(R.string.project_name_adjusted)
+                } else {
                     projectCreateError = error.message ?: context.getString(R.string.new_session_project_create_failed)
                 }
-            projectCreating = false
+            } finally { projectCreating = false }
         }
+    }
+
+    workspaceConflict?.let { project ->
+        AlertDialog(
+            onDismissRequest = { workspaceConflict = null },
+            title = { Text(stringResource(R.string.project_workspace_conflict_title)) },
+            text = { Text(stringResource(R.string.project_workspace_conflict_message, project.name, projectName)) },
+            confirmButton = { TextButton(onClick = { workspaceConflict = null; createProject(confirmRename = true) }) { Text(stringResource(R.string.project_rename_existing)) } },
+            dismissButton = { TextButton(onClick = { workspaceConflict = null }) { Text(stringResource(R.string.common_cancel)) } },
+        )
     }
 
     ScreenScaffold {
@@ -583,11 +674,7 @@ fun NewSessionScreen(
                     onSelect = { key, id ->
                         when (key) {
                             NewSessionConfigurationKey.Device -> {
-                                if (creatingProject) {
-                                    selectedDeviceId = id
-                                    projectCreateError = null
-                                    choosePath = false
-                                }
+                                selectDevice(id)
                             }
                             NewSessionConfigurationKey.Agent -> {
                                 runtimeSelection = runtimeSelection.selectRuntime(id)
@@ -641,6 +728,7 @@ fun NewSessionScreen(
                         onUseCurrent = {
                             if (canUseCurrentPath) {
                                 selectedWorkspacePath = currentPath
+                                if (!creatingProject) selectedProjectId = workspaceProject(projects, selectedDeviceId.orEmpty(), currentPath, selectedDeviceOs)?.id
                                 choosePath = false
                             }
                         },
@@ -667,13 +755,14 @@ fun NewSessionScreen(
                         darkMode = darkMode,
                         modifier = Modifier.weight(1f),
                         onNameChange = {
+                            nameEdited = true
                             projectName = it
                             projectCreateError = null
                         },
                         onChooseDirectory = {
                             if (selectedDevice != null) {
                                 choosePath = true
-                                val startPath = if (isWindowsDevice) "" else selectedWorkspacePath
+                                val startPath = selectedWorkspacePath.ifBlank { homePath ?: "~" }
                                 scope.launch {
                                     loadDirectory(
                                         targetPath = startPath,
@@ -682,28 +771,34 @@ fun NewSessionScreen(
                                 }
                             }
                         },
-                        onCancel = {
-                            creatingProject = false
-                            projectCreateError = null
-                        },
-                        onCreate = ::createProject,
+                        onPathChange = { selectedWorkspacePath = it; projectCreateError = null },
+                        onCancel = ::cancelProjectCreation,
+                        onCreate = { createProject() },
                     )
                 } else {
-                    ProjectSection(
+                    WorkspaceSection(
                         selectedTitle = selectedProjectTitle,
-                        selectedDetail = selectedProjectDetail,
+                        path = selectedWorkspacePath,
+                        connectorId = selectedDeviceId,
+                        deviceOs = selectedDeviceOs,
+                        homePath = homePath,
+                        projectMode = sidebarViewMode == HomeSidebarViewMode.Project,
                         projects = projects,
-                        selectedProjectId = selectedProjectId,
-                        expanded = projectListExpanded,
-                        darkMode = darkMode,
+                        sessions = sessionsState.sessions + sessionsState.archivedSessions,
+                        open = projectListExpanded,
                         modifier = Modifier.weight(1f),
-                        onCreateProject = ::beginProjectCreation,
-                        onToggleExpanded = { projectListExpanded = !projectListExpanded },
-                        onSelectProject = { project ->
-                            selectedProjectId = project.id
-                            selectedDeviceId = project.connectorId
-                            selectedWorkspacePath = project.workspacePath
-                            currentPath = project.workspacePath
+                        onOpen = { projectListExpanded = true },
+                        onDismiss = { projectListExpanded = false },
+                        onCreate = ::beginProjectCreation,
+                        onBrowse = {
+                            projectListExpanded = false
+                            choosePath = true
+                            scope.launch { loadDirectory(selectedWorkspacePath.ifBlank { homePath ?: "~" }) }
+                        },
+                        onSelect = { choice ->
+                            selectedProjectId = choice.projectId
+                            selectedWorkspacePath = choice.path
+                            currentPath = choice.path
                             projectListExpanded = false
                         },
                     )

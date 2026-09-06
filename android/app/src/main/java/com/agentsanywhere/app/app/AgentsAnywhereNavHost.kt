@@ -116,6 +116,10 @@ internal fun AgentsAnywhereNavHost(
     onSetSessionPinned: suspend (String, Boolean) -> Result<AgentSession>,
     onSetSessionArchived: suspend (String, Boolean) -> Result<AgentSession>,
     onLoadProjectSessions: (String) -> Unit,
+    onLoadProjects: suspend () -> Result<List<AgentProject>>,
+    onLoadArchivedPage: suspend (String?, String?) -> Result<com.agentsanywhere.app.feature.sessions.SessionPageAppend>,
+    onRestoreProject: suspend (String) -> Result<List<AgentSession>>,
+    onMarkAllRead: suspend () -> Result<Unit>,
     onUpdateProject: suspend (String, String?, Boolean?) -> Result<AgentProject>,
     onArchiveProjectSessions: suspend (String) -> Result<List<AgentSession>>,
     onCreateProject: suspend (String, String, String) -> Result<AgentProject>,
@@ -184,6 +188,7 @@ internal fun AgentsAnywhereNavHost(
                     navigate = navigate,
                     state = sessionsState,
                     selectedTab = selectedHomeTab,
+                    onLoadProjects = onLoadProjects,
                     isRefreshing = isRefreshingSessions,
                     userId = userId,
                     role = role,
@@ -213,6 +218,7 @@ internal fun AgentsAnywhereNavHost(
                     onRenameSession = onRenameSession,
                     onSetSessionPinned = onSetSessionPinned,
                     onSetSessionArchived = onSetSessionArchived,
+                    onMarkAllRead = onMarkAllRead,
                     onLoadProjectSessions = onLoadProjectSessions,
                     onUpdateProject = onUpdateProject,
                     onArchiveProjectSessions = onArchiveProjectSessions,
@@ -232,6 +238,8 @@ internal fun AgentsAnywhereNavHost(
                     onLoadPermissionCatalog = onLoadNewSessionPermissionCatalog,
                     onPrepareSession = onPrepareSession,
                     initialProjectId = initialNewSessionProjectId,
+                    sidebarViewMode = sidebarViewMode,
+                    onLoadProjects = onLoadProjects,
                     onCreateProject = onCreateProject,
                 )
                 AppDestination.SessionDetail -> SessionDetailScreen(
@@ -305,9 +313,16 @@ internal fun AgentsAnywhereNavHost(
                     onCreateCredential = onCreateDeviceSetup,
                     onRenameDevice = onRenameDevice,
                 )
-                AppDestination.ArchivedSessions -> ArchivedSessionsScreen(
-                    onBack = { navigate(AppDestination.Sessions) },
-                )
+                AppDestination.ArchivedSessions -> androidx.compose.runtime.key(serverUrl, userId) {
+                    ArchivedSessionsScreen(
+                        projects = sessionsState.projects,
+                        onLoadPage = onLoadArchivedPage,
+                        onRestoreSession = { onSetSessionArchived(it, false) },
+                        onRestoreProject = onRestoreProject,
+                        onOpenSession = onOpenSession,
+                        onBack = { navigate(AppDestination.Sessions) },
+                    )
+                }
             }
         }
     }

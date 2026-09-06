@@ -52,8 +52,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.agentsanywhere.app.R
 import com.agentsanywhere.app.api.AuthMeResponse
+import com.agentsanywhere.app.api.ApiException
 import com.agentsanywhere.app.feature.devices.DeviceAgentPreviews
 import com.agentsanywhere.app.feature.sessions.SessionsState
+import com.agentsanywhere.app.feature.sessions.projectHasActiveSessions
+import com.agentsanywhere.app.feature.sessions.sessionListComparator
+import com.agentsanywhere.app.feature.sessions.availableProjectName
+import androidx.compose.runtime.LaunchedEffect
 import com.agentsanywhere.app.feature.update.AppUpdateViewModel
 import com.agentsanywhere.app.model.AgentDevice
 import com.agentsanywhere.app.model.AgentProject
@@ -74,6 +79,7 @@ import com.composables.icons.lucide.Search
 import com.composables.icons.lucide.Terminal
 import com.composables.icons.lucide.UserRound
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.CancellationException
 
 enum class HomeTab { Active, Archived, Devices }
 
@@ -112,6 +118,8 @@ fun HomeScreen(
     onRenameSession: suspend (String, String) -> Result<AgentSession>,
     onSetSessionPinned: suspend (String, Boolean) -> Result<AgentSession>,
     onSetSessionArchived: suspend (String, Boolean) -> Result<AgentSession>,
+    onMarkAllRead: suspend () -> Result<Unit>,
+    onLoadProjects: suspend () -> Result<List<AgentProject>>,
     onLoadProjectSessions: (String) -> Unit,
     onUpdateProject: suspend (String, String?, Boolean?) -> Result<AgentProject>,
     onArchiveProjectSessions: suspend (String) -> Result<List<AgentSession>>,
@@ -130,10 +138,25 @@ fun HomeScreen(
     var renameBusy by remember { mutableStateOf(false) }
     var profileOpen by remember { mutableStateOf(false) }
     var projectActionMenu by remember { mutableStateOf<HomeProjectActionMenu?>(null) }
-    var expandedProjectIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+    val projectPreferences = rememberHomeProjectPreferences(serverUrl, userId)
+    val expandedProjectIds = projectPreferences.expandedIds
+    val restoredProjectIds = remember(serverUrl, userId) { mutableSetOf<String>() }
+    val loadedSessions = remember(projectSessionsById, state.sessions, state.archivedSessions) {
+        (projectSessionsById.values.flatten() + state.sessions + state.archivedSessions).associateBy { it.id }.values.toList()
+    }
+    LaunchedEffect(expandedProjectIds, state.projects, loadedSessions, state.hasLoaded, sidebarViewMode) {
+        val visibleIds = state.projects.filter { projectHasActiveSessions(it, loadedSessions) }.mapTo(mutableSetOf()) { it.id }
+        val targets = if (sidebarViewMode == HomeSidebarViewMode.Project) expandedProjectIds.intersect(visibleIds) else emptySet()
+        restoredProjectIds.retainAll(targets)
+        if (state.hasLoaded) targets.filterNot { it in restoredProjectIds }.forEach { id ->
+            restoredProjectIds.add(id)
+            onLoadProjectSessions(id)
+        }
+    }
     var editingProject by remember { mutableStateOf<AgentProject?>(null) }
     var projectEditBusy by remember { mutableStateOf(false) }
     var projectEditError by remember { mutableStateOf<String?>(null) }
+    var projectEditName by remember { mutableStateOf("") }
     var projectToArchive by remember { mutableStateOf<AgentProject?>(null) }
     var projectArchiveBusy by remember { mutableStateOf(false) }
 
@@ -169,7 +192,9 @@ fun HomeScreen(
                 projectSessionsById = projectSessionsById,
                 loadingProjectIds = loadingProjectIds,
                 expandedProjectIds = expandedProjectIds,
+                projectPreferences = projectPreferences,
                 onRefresh = onRefresh,
+                onMarkAllRead = onMarkAllRead,
                 onLoadMore = onLoadMore,
                 onTabSelected = onTabSelected,
                 onProfile = { profileOpen = true },
@@ -177,12 +202,7 @@ fun HomeScreen(
                 onSessionLongPress = { session, bounds -> actionMenu = HomeSessionActionMenu(session, bounds) },
                 onProjectLongPress = { project, bounds -> projectActionMenu = HomeProjectActionMenu(project, bounds) },
                 onProjectExpandedChange = { project, expanded ->
-                    expandedProjectIds = if (expanded) {
-                        expandedProjectIds + project.id
-                    } else {
-                        expandedProjectIds - project.id
-                    }
-                    if (expanded) onLoadProjectSessions(project.id)
+                    projectPreferences.setProjectExpanded(project.id, expanded)
                 },
                 onNewSessionInProject = onNewSessionInProject,
                 onOpenSession = onOpenSession,
@@ -233,6 +253,7 @@ fun HomeScreen(
                     onEdit = {
                         projectActionMenu = null
                         projectEditError = null
+                        projectEditName = menu.project.name
                         editingProject = menu.project
                     },
                     onTogglePinned = {
@@ -331,6 +352,8 @@ fun HomeScreen(
         HomeProjectEditSheet(
             project = project,
             deviceName = state.devices.firstOrNull { it.id == project.connectorId }?.name ?: project.connectorId,
+            name = projectEditName,
+            onNameChange = { projectEditName = it; projectEditError = null },
             busy = projectEditBusy,
             errorMessage = projectEditError,
             onDismiss = {
@@ -339,20 +362,30 @@ fun HomeScreen(
                     projectEditError = null
                 }
             },
-            onSave = { name ->
+            onSave = {
                 if (!projectEditBusy) {
                     projectEditBusy = true
                     projectEditError = null
+                    val name = availableProjectName(projectEditName, state.projects, project.id)
+                    projectEditName = name
                     scope.launch {
-                        onUpdateProject(project.id, name, null)
-                            .onSuccess {
-                                editingProject = null
-                                showToast(context.getString(R.string.home_project_updated))
-                            }
-                            .onFailure {
-                                projectEditError = it.message ?: context.getString(R.string.home_project_update_failed)
-                            }
-                        projectEditBusy = false
+                        try {
+                            onUpdateProject(project.id, name, null)
+                                .onSuccess {
+                                    editingProject = null
+                                    showToast(context.getString(R.string.home_project_updated))
+                                }
+                                .onFailure { error ->
+                                    if (error is CancellationException) throw error
+                                    if (error is ApiException && error.errorCode == "project_name_conflict") {
+                                        val latest = onLoadProjects().getOrDefault(state.projects)
+                                        projectEditName = availableProjectName(name, latest, project.id, setOf(name))
+                                        projectEditError = context.getString(R.string.project_name_adjusted)
+                                    } else {
+                                        projectEditError = error.message ?: context.getString(R.string.home_project_update_failed)
+                                    }
+                                }
+                        } finally { projectEditBusy = false }
                     }
                 }
             },
@@ -370,7 +403,7 @@ fun HomeScreen(
                     scope.launch {
                         onArchiveProjectSessions(project.id)
                             .onSuccess {
-                                expandedProjectIds = expandedProjectIds - project.id
+                                projectPreferences.setProjectExpanded(project.id, false)
                                 projectToArchive = null
                                 showToast(context.getString(R.string.home_project_archived))
                             }
@@ -400,7 +433,9 @@ private fun HomeContent(
     projectSessionsById: Map<String, List<AgentSession>>,
     loadingProjectIds: Set<String>,
     expandedProjectIds: Set<String>,
+    projectPreferences: HomeProjectPreferences,
     onRefresh: () -> Unit,
+    onMarkAllRead: suspend () -> Result<Unit>,
     onLoadMore: (HomeTab) -> Unit,
     onTabSelected: (HomeTab) -> Unit,
     onProfile: () -> Unit,
@@ -434,7 +469,7 @@ private fun HomeContent(
             onFilesClick = { navigate(AppDestination.Files) },
         )
         if (sidebarViewMode == HomeSidebarViewMode.Session) {
-            HomeTabs(selectedTab = selectedTab, onTabSelected = onTabSelected)
+            HomeSessionsHeader(onMarkAllRead = onMarkAllRead)
         }
         PullToRefreshBox(
             isRefreshing = isRefreshing,
@@ -459,6 +494,7 @@ private fun HomeContent(
                     projectSessionsById = projectSessionsById,
                     loadingProjectIds = loadingProjectIds,
                     expandedProjectIds = expandedProjectIds,
+                    projectPreferences = projectPreferences,
                     onProjectExpandedChange = onProjectExpandedChange,
                     onProjectLongPress = onProjectLongPress,
                     onNewSessionInProject = onNewSessionInProject,
@@ -469,7 +505,7 @@ private fun HomeContent(
             } else {
                 HomeList(
                     state = state,
-                    tab = selectedTab,
+                    tab = HomeTab.Active,
                     darkMode = darkMode,
                     onSessionLongPress = onSessionLongPress,
                     onOpenSession = onOpenSession,
@@ -500,6 +536,7 @@ private fun HomeProjectModeList(
     projectSessionsById: Map<String, List<AgentSession>>,
     loadingProjectIds: Set<String>,
     expandedProjectIds: Set<String>,
+    projectPreferences: HomeProjectPreferences,
     onProjectExpandedChange: (AgentProject, Boolean) -> Unit,
     onProjectLongPress: (AgentProject, Rect) -> Unit,
     onNewSessionInProject: (AgentProject) -> Unit,
@@ -541,12 +578,16 @@ private fun HomeProjectModeList(
                         }
                     (cached + fallbackSessions[projectId].orEmpty())
                         .distinctBy(AgentSession::id)
-                        .sortedByDescending(AgentSession::sortKey)
+                        .sortedWith(sessionListComparator())
                 }
             }
             HomeProjectList(
-                projects = state.projects,
-                pinnedSessions = state.sessions.filter(AgentSession::pinned),
+                projects = state.projects.filter { projectHasActiveSessions(it, visibleSessions.values.flatten()) },
+                allSessions = state.sessions + state.archivedSessions + visibleSessions.values.flatten(),
+                projectPreferences = projectPreferences,
+                pinnedSessions = (visibleSessions.values.flatten() + state.sessions)
+                    .associateBy { it.id }.values.filter { it.pinned && !it.archived }
+                    .sortedWith(sessionListComparator()),
                 sessionsByProject = visibleSessions,
                 loadingProjectIds = loadingProjectIds,
                 expandedProjectIds = expandedProjectIds,

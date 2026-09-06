@@ -58,6 +58,7 @@ import com.agentsanywhere.app.feature.terminal.RemoteTerminalPool
 import com.agentsanywhere.app.feature.terminal.TerminalController
 import com.agentsanywhere.app.model.MobileLoginQrPayload
 import com.agentsanywhere.app.model.AgentSession
+import com.agentsanywhere.app.model.AgentProject
 import com.agentsanywhere.app.navigation.AppDestination
 import com.agentsanywhere.app.ui.designsystem.AgentsAnywhereTheme
 import com.agentsanywhere.app.ui.designsystem.AALanguageMode
@@ -170,9 +171,20 @@ fun AgentsAnywhereApp(
             },
         )
     }
+    val nextOrderExpiry = sessionsState.sessions.map { it.optimisticTopUntil }.filter { it > 0L }.minOrNull()
+    LaunchedEffect(nextOrderExpiry) {
+        if (nextOrderExpiry != null) {
+            kotlinx.coroutines.delay((nextOrderExpiry - System.currentTimeMillis()).coerceAtLeast(1L))
+            val now = System.currentTimeMillis()
+            sessionsState = sessionsState.copy(sessions = sessionsState.sessions.map {
+                if (it.optimisticTopUntil <= now) it.copy(optimisticTopUntil = 0L) else it
+            }.sortedWith(com.agentsanywhere.app.feature.sessions.sessionListComparator(now)))
+        }
+    }
     var isRefreshingSessions by remember { mutableStateOf(false) }
     var projectSessionsById by remember { mutableStateOf<Map<String, List<AgentSession>>>(emptyMap()) }
     var loadingProjectIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var projectsRequestVersion by remember { mutableStateOf(0L) }
     val scope = rememberCoroutineScope()
     val lifecycleOwner = LocalLifecycleOwner.current
     var appVisible by remember(lifecycleOwner) {
@@ -278,6 +290,7 @@ fun AgentsAnywhereApp(
         try {
             sessionsController.loadSessions()
                 .onSuccess { loadedState ->
+                    projectsRequestVersion++
                     sessionsState = sessionsState.mergedWithRefresh(loadedState, request.generation)
                 }
                 .onFailure { error ->
@@ -318,15 +331,33 @@ fun AgentsAnywhereApp(
         }
     }
 
+    suspend fun reloadProjects(): Result<List<AgentProject>> {
+        val token = sessionStore.readAccessToken()
+        val version = ++projectsRequestVersion
+        return sessionsController.loadProjects().onSuccess { projects ->
+            if (sessionStore.readAccessToken() == token && projectsRequestVersion == version) {
+                sessionsState = sessionsState.copy(projects = projects)
+            }
+        }
+    }
+
     fun loadProjectSessions(projectId: String) {
         if (projectId.isBlank() || projectId in loadingProjectIds) return
+        val token = sessionStore.readAccessToken()
         loadingProjectIds = loadingProjectIds + projectId
         scope.launch {
-            sessionsController.loadProjectSessions(projectId, sessionsState.devices)
-                .onSuccess { sessions ->
-                    projectSessionsById = projectSessionsById + (projectId to sessions)
+            try {
+                sessionsController.loadProjectSessions(projectId, sessionsState.devices)
+                    .onSuccess { sessions ->
+                        if (sessionStore.readAccessToken() == token) {
+                            projectSessionsById = projectSessionsById + (projectId to sessions)
+                        }
+                    }
+            } finally {
+                if (sessionStore.readAccessToken() == token) {
+                    loadingProjectIds = loadingProjectIds - projectId
                 }
-            loadingProjectIds = loadingProjectIds - projectId
+            }
         }
     }
 
@@ -379,6 +410,7 @@ fun AgentsAnywhereApp(
                     if (sessionStore.readServerUrl() != realtimeServerUrl ||
                         sessionStore.readAccessToken() != realtimeAccessToken
                     ) return@launch
+                    projectsRequestVersion++
                     sessionsState = sessionsState.replacedByDashboardSnapshot(
                         sessionsController.dashboardSnapshotState(snapshot),
                     )
@@ -572,6 +604,7 @@ fun AgentsAnywhereApp(
                         sessionsState = sessionsState
                             .withPatchedSessions(update.sessions, request.generation)
                             .withMissingSessionsRemoved(update.notFound, request.generation)
+                        reloadProjects()
                     }
             }
         },
@@ -593,6 +626,7 @@ fun AgentsAnywhereApp(
                 sessionsController.archiveAllDeviceSessions(connectorId, archived, scope, sessionsState.devices)
                     .onSuccess { sessions ->
                         sessionsState = sessionsState.withPatchedSessions(sessions, request.generation)
+                        reloadProjects()
                     }
             }
         },
@@ -617,6 +651,7 @@ fun AgentsAnywhereApp(
                 sessionsController.setSessionPinned(sessionId, pinned, sessionsState.devices)
                     .onSuccess { session ->
                         sessionsState = sessionsState.withPatchedSession(session, request.generation)
+                        reloadProjects()
                     }
             }
         },
@@ -629,16 +664,54 @@ fun AgentsAnywhereApp(
                 sessionsController.setSessionArchived(sessionId, archived, sessionsState.devices)
                     .onSuccess { session ->
                         sessionsState = sessionsState.withPatchedSession(session, request.generation)
+                        reloadProjects()
                     }
             }
         },
         onLoadProjectSessions = ::loadProjectSessions,
+        onLoadProjects = ::reloadProjects,
+        onLoadArchivedPage = { projectId, cursor ->
+            sessionsController.loadArchivedSessionPage(projectId, cursor, sessionsState.devices)
+        },
+        onRestoreProject = { projectId ->
+            val ids = sessionsState.archivedSessions.filter { it.projectId == projectId }.map { it.id }
+            val request = sessionsState.beginSessionRequest(ids)
+            sessionsState = request.state
+            sessionsController.archiveProjectSessions(projectId, sessionsState.devices, archived = false, scope = "archived")
+                .mapCatching { sessions ->
+                    check(sessions.isNotEmpty() && sessions.none { it.archived }) { "Could not restore all sessions in this project." }
+                    sessions
+                }.onSuccess { sessions ->
+                    sessionsState = sessionsState.withPatchedSessions(sessions, request.generation)
+                    projectSessionsById = projectSessionsById + (projectId to
+                        (sessions + projectSessionsById[projectId].orEmpty()).distinctBy { it.id })
+                    reloadProjects()
+                }
+        },
+        onMarkAllRead = {
+            val ids = (projectSessionsById.values.flatten() + sessionsState.sessions + sessionsState.archivedSessions)
+                .associateBy { it.id }.values.filter { it.unread }.map { it.id }
+            val request = sessionsState.beginSessionRequest(ids)
+            sessionsState = request.state
+            runCatching {
+                // The bulk endpoint accepts at most 200 IDs; preserve each successful batch.
+                ids.chunked(200).forEach { batch ->
+                    val update = sessionsController.markSessionsRead(batch, sessionsState.devices).getOrThrow()
+                    sessionsState = sessionsState.withPatchedSessions(update.sessions, request.generation)
+                        .withMissingSessionsRemoved(update.notFound, request.generation)
+                    projectSessionsById = projectSessionsById.mapValues { (_, sessions) ->
+                        sessions.filterNot { it.id in update.notFound }
+                    }
+                }
+            }
+        },
         onUpdateProject = { projectId, name, pinned ->
             if (!hasAuthSession) {
                 Result.failure(IllegalStateException("Sign in again to update this project."))
             } else {
                 sessionsController.updateProject(projectId, name, pinned)
                     .onSuccess { project ->
+                        projectsRequestVersion++
                         sessionsState = sessionsState.withPatchedProject(project)
                     }
             }
@@ -653,10 +726,11 @@ fun AgentsAnywhereApp(
                     .distinct()
                 val request = sessionsState.beginSessionRequest(targetIds)
                 sessionsState = request.state
-                sessionsController.archiveProjectSessions(projectId, sessionsState.devices)
+                sessionsController.archiveProjectSessions(projectId, sessionsState.devices, scope = "all")
                     .onSuccess { sessions ->
                         sessionsState = sessionsState.withPatchedSessions(sessions, request.generation)
                         projectSessionsById = projectSessionsById + (projectId to emptyList())
+                        reloadProjects()
                     }
             }
         },
@@ -666,6 +740,7 @@ fun AgentsAnywhereApp(
             } else {
                 sessionsController.createProject(name, connectorId, workspacePath)
                     .onSuccess { project ->
+                        projectsRequestVersion++
                         sessionsState = sessionsState.withPatchedProject(project)
                     }
             }
@@ -683,6 +758,7 @@ fun AgentsAnywhereApp(
                 val outcome = sessionsController.createAndStartSession(
                     draft = draft,
                     devices = sessionsState.devices,
+                    projects = sessionsState.projects,
                 )
                 val refreshedState = when (outcome) {
                     is NewSessionCreateOutcome.Created -> outcome.refreshedState
@@ -692,7 +768,8 @@ fun AgentsAnywhereApp(
                     sessionsState = sessionsState.mergedWithRefresh(refreshedState, refresh.generation)
                 }
                 if (outcome is NewSessionCreateOutcome.Created) {
-                    sessionsState = sessionsState.withPatchedSession(outcome.session, refresh.generation)
+                    sessionsState = sessionsState.withPatchedSession(outcome.session.copy(optimisticTopUntil = System.currentTimeMillis() + 1_000), refresh.generation)
+                    reloadProjects()
                 }
                 outcome
             }

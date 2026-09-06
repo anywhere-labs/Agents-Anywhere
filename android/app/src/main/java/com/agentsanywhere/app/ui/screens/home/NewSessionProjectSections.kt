@@ -328,6 +328,7 @@ internal fun CreateProjectSection(
     modifier: Modifier,
     onNameChange: (String) -> Unit,
     onChooseDirectory: () -> Unit,
+    onPathChange: (String) -> Unit,
     onCancel: () -> Unit,
     onCreate: () -> Unit,
 ) {
@@ -421,7 +422,6 @@ internal fun CreateProjectSection(
                 .clip(RoundedCornerShape(18.dp))
                 .background(colors.raisedSurface)
                 .border(1.dp, colors.border, RoundedCornerShape(18.dp))
-                .then(if (canBrowse) Modifier.noRippleClickable(onClick = onChooseDirectory) else Modifier)
                 .padding(horizontal = 14.dp),
             horizontalArrangement = Arrangement.spacedBy(10.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -432,16 +432,24 @@ internal fun CreateProjectSection(
                 tint = colors.inkSoft.copy(alpha = if (canBrowse) 1f else 0.45f),
                 modifier = Modifier.size(20.dp),
             )
-            Text(
-                text = workspacePath.ifBlank { stringResource(R.string.new_session_choose_directory) },
-                color = colors.ink.copy(alpha = if (canBrowse) 1f else 0.45f),
-                fontSize = 15.sp,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
-                overflow = TextOverflow.MiddleEllipsis,
+            BasicTextField(
+                value = workspacePath,
+                onValueChange = onPathChange,
+                enabled = canBrowse,
+                singleLine = true,
+                textStyle = TextStyle(color = colors.ink, fontSize = 15.sp, fontFamily = FontFamily.Monospace),
+                cursorBrush = SolidColor(colors.ink),
                 modifier = Modifier.weight(1f),
+                decorationBox = { field ->
+                    Box {
+                        if (workspacePath.isEmpty()) Text(stringResource(R.string.new_session_choose_directory), color = colors.muted, fontSize = 15.sp)
+                        field()
+                    }
+                },
             )
-            ForwardGlyph(color = colors.muted.copy(alpha = if (canBrowse) 1f else 0.45f))
+            Box(Modifier.size(40.dp).noRippleClickable(enabled = canBrowse, onClick = onChooseDirectory), contentAlignment = Alignment.Center) {
+                ForwardGlyph(color = colors.muted.copy(alpha = if (canBrowse) 1f else 0.45f))
+            }
         }
         error?.let { message ->
             Text(
