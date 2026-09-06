@@ -66,7 +66,7 @@ class DshProvider(RuntimeProvider):
         metadata.update(
             {
                 "protocolVersion": "1.0",
-                "profile": "web",
+                "readOnly": True,
                 "storageMode": "dsh-native",
                 "sameSessionWriterLimit": 1,
                 "crossProcessWriterExclusion": False,
@@ -138,7 +138,7 @@ class DshProvider(RuntimeProvider):
         metadata.update(
             {
                 "protocolVersion": "1.0",
-                "profile": "web",
+                "readOnly": True,
                 "storageMode": "dsh-native",
                 "sameSessionWriterLimit": 1,
                 "crossProcessWriterExclusion": False,

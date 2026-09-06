@@ -24,7 +24,7 @@ export interface ConnectorProcess {
   assertHealthy(): Promise<void>
 }
 
-/** Owns only the child it spawns. All Agent operations remain in Connector. */
+/** Owns only the child it spawns; DSH Agent operations are served by the plugin runtime. */
 export class SourceConnector implements ConnectorProcess {
   private child: ChildProcessWithoutNullStreams | null = null
   private nextId = 0
@@ -76,6 +76,7 @@ export class SourceConnector implements ConnectorProcess {
       detached: process.platform !== 'win32',
       env: {
         ...process.env,
+        ...(this.config.dshHome ? { DSH_HOME: this.config.dshHome } : {}),
         AGENT_CONNECTOR_DATA_DIR: dataDir,
         UV_PROJECT_ENVIRONMENT: join(this.config.stateRoot, 'connector-venv'),
         PYTHONDONTWRITEBYTECODE: '1',

@@ -35,13 +35,14 @@ async function fixture(mode = 'normal') {
   let child: ChildProcessWithoutNullStreams | undefined
   const connector = new SourceConnector({
     stateRoot: join(root, 'data'), connectorSourceDir: source, uvPath: mode === 'missing' ? join(root, 'missing-uv') : process.execPath,
-    autoStart: false, apiBaseUrl: 'https://api.example.test',
+    autoStart: false, apiBaseUrl: 'https://api.example.test', dshHome: join(root, 'dsh-home'),
   }, (command, args, options) => {
     assert.equal(args[0], 'run')
     assert.deepEqual(args.slice(1, 5), ['--directory', source, 'anywhere-cli', 'rpc'])
     assert.equal(args[5], '--config')
     assert.doesNotMatch(JSON.stringify(args), /PRIVATE-DEVICE-TOKEN/)
     assert.equal(options.env?.UV_PROJECT_ENVIRONMENT, join(root, 'data', 'connector-venv'))
+    assert.equal(options.env?.DSH_HOME, join(root, 'dsh-home'))
     child = spawn(command, [script, mode], options)
     return child
   })

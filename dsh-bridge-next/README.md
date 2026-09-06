@@ -23,7 +23,7 @@ DSH 左侧边栏「设置」上方 → 手机连接 → 云端登录或连接自
 - Web 完成页的桌面端下载和官网地址目前为空，显示“暂未开放”和“官网即将上线”。地址统一在 `web-next/src/lib/product-links.ts` 配置。Android 沿用现有 Releases 入口，iOS 下载入口暂未开放。
 - 引导页关闭后，已上线的 Connector 继续运行；退出插件账号或卸载 Host 服务会停止插件自己的进程。
 
-`src/host/dsh-runtime/` 仍是占位，本轮没有实现 DSH 会话、消息、模型等业务，也没有修改 Python DSH 适配器。引导完成代表设备连接与引导步骤完成，不代表本插件的 DSH 对话能力已实现。
+Runtime 第一阶段已实现：DSH 可通过一键配置添加，读取原生活跃/持久化会话列表、标题与完整历史，并转换为平台统一 Timeline。当前支持查看历史，发送消息、模型选择、中断与交互审批后续接入；这些能力在平台中明确关闭。实现与消息映射见 [会话读取](./RUNTIME_READS.md)。
 
 ## 本地构建与安装
 
@@ -140,7 +140,7 @@ src/host/account/       用户授权、设备绑定及凭据恢复
 src/host/connector/     内部 Python Connector 的进程管理
 src/host/rpc/           公开的连接管理接口
 src/host/storage/       私有文件存储与实例锁
-src/host/dsh-runtime/   待实现的 DSH Agent 业务
+src/host/dsh-runtime/   DSH 原生查询、历史转换、端点与只读能力
 src/client/            DSH 侧边栏入口、连接弹窗和 Host 调用
 scripts/               构建、源码复制与产物检查
 tests/                 单元及集成测试

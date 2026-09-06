@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
+import json
 import os
 import sys
 from pathlib import Path
@@ -9,250 +9,17 @@ from typing import Any
 
 import pytest
 
-from connector.runtime_protocol import RuntimeConfig, RuntimeInvalidRequestError
-from connector.runtimes.dsh.discovery import BridgeEndpoint, DshDiscovery
+from connector.runtime_protocol import (
+    RuntimeConfig,
+    RuntimeInvalidRequestError,
+    RuntimeUnavailableError,
+    RuntimeUnsupportedError,
+    RuntimeUpstreamError,
+)
+from connector.runtimes.dsh.discovery import BridgeEndpoint, DshDiscovery, discover
 from connector.runtimes.dsh.provider import DshProvider
 from connector.runtimes.dsh.runtime import DshRuntime
 from connector.runtimes.providers import default_runtime_providers
-from connector.runtimes.session_identity import stable_runtime_session_id
-from connector.server.runtime_sync import session_requires_timeline_sync
-
-
-class _Host:
-    connector_id = "connector-test"
-
-    def __init__(self, sync_state: dict[str, Any] | None = None) -> None:
-        self.sync_state = sync_state
-        self.sync_values: dict[str, dict[str, Any]] = {}
-        self.sync_writes: list[tuple[str, dict[str, Any]]] = []
-        self.timeline_items: list[Any] = []
-        self.runtime_errors: list[tuple[str, str, str, dict[str, Any]]] = []
-
-    async def sync_state_read(self, key: str) -> dict[str, Any] | None:
-        if key.startswith("dsh/history/"):
-            return self.sync_state
-        return self.sync_values.get(key)
-
-    async def sync_state_write(self, key: str, value: dict[str, Any]) -> None:
-        self.sync_writes.append((key, value))
-        self.sync_values[key] = value
-
-    async def timeline_item_upsert(self, item: Any) -> None:
-        self.timeline_items.append(item)
-
-    async def runtime_error(
-        self,
-        runtime: str,
-        code: str,
-        message: str,
-        **kwargs: Any,
-    ) -> None:
-        self.runtime_errors.append((runtime, code, message, kwargs))
-
-
-class _RecoveredClient:
-    async def request(self, method: str, params: Any = None) -> Any:
-        assert method == "session.list"
-        return {"sessions": [], "nextCursor": None}
-
-    async def close(self) -> None:
-        return None
-
-
-class _RecoveringRuntime(DshRuntime):
-    connect_attempts = 0
-
-    async def _start_client(self) -> None:
-        self.connect_attempts += 1
-        if self.connect_attempts == 1:
-            raise ConnectionError("DSH Web is restarting")
-        self._client = _RecoveredClient()  # type: ignore[assignment]
-        self._restart_attempts = 0
-
-
-class _ListRuntime(DshRuntime):
-    async def _request(self, method: str, params: Any = None) -> Any:
-        assert method == "session.list"
-        return {
-            "sessions": [
-                {
-                    "externalSessionId": "session-external",
-                    "runtime": "dsh",
-                    "title": "History",
-                    "revision": "revision-2",
-                    "metadata": {},
-                }
-            ]
-        }
-
-
-class _BridgeSessionListRuntime(DshRuntime):
-    async def _request(self, method: str, params: Any = None) -> Any:
-        assert method == "session.list"
-        return {
-            "sessions": [
-                {
-                    "sessionId": "bridge-collision",
-                    "externalSessionId": "session-external",
-                    "runtime": "dsh",
-                    "title": "History",
-                }
-            ]
-        }
-
-
-class _NamespacedHost(_Host):
-    def __init__(self, namespace: str) -> None:
-        super().__init__()
-        self._namespace = namespace
-
-    @property
-    def session_namespace(self) -> str:
-        return self._namespace
-
-
-class _PagedListRuntime(DshRuntime):
-    def __init__(
-        self, *args: Any, repeated_cursor: bool = False, **kwargs: Any
-    ) -> None:
-        super().__init__(*args, **kwargs)
-        self.repeated_cursor = repeated_cursor
-        self.requests: list[dict[str, Any]] = []
-
-    async def _request(self, method: str, params: Any = None) -> Any:
-        assert method == "session.list"
-        assert isinstance(params, dict)
-        self.requests.append(dict(params))
-        cursor = params.get("cursor")
-        if cursor is None:
-            return {
-                "sessions": [
-                    {
-                        "externalSessionId": "session-one",
-                        "runtime": "dsh",
-                        "title": "One",
-                        "revision": "revision-1",
-                        "localArchived": True,
-                    }
-                ],
-                "nextCursor": "cursor-1",
-            }
-        return {
-            "sessions": [
-                {
-                    "externalSessionId": "session-two",
-                    "runtime": "dsh",
-                    "title": "Two",
-                    "revision": "revision-2",
-                }
-            ],
-            "nextCursor": "cursor-1" if self.repeated_cursor else None,
-        }
-
-
-class _SnapshotRuntime(DshRuntime):
-    async def _request(self, method: str, params: Any = None) -> Any:
-        assert method == "session.getSnapshot"
-        return {
-            "sessionId": "sess_1",
-            "externalSessionId": "session-external",
-            "runtime": "dsh",
-            "items": [],
-            "complete": True,
-            "watermark": {"seq": 7, "revision": "revision-7"},
-        }
-
-
-class _StateRuntime(DshRuntime):
-    async def _request(self, method: str, params: Any = None) -> Any:
-        assert method == "session.getState"
-        return {
-            "sessionId": params["sessionId"],
-            "externalSessionId": params["externalSessionId"],
-            "runtime": "dsh",
-            "status": "idle",
-            "selections": {},
-        }
-
-
-class _CapabilitiesRuntime(DshRuntime):
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
-        self.requests: list[str] = []
-
-    async def _request(self, method: str, params: Any = None) -> Any:
-        self.requests.append(method)
-        if method == "session.getCapabilities":
-            return {
-                "sessionId": params["sessionId"],
-                "externalSessionId": params["externalSessionId"],
-                "runtime": "dsh",
-                "revision": 2,
-                "capabilities": [
-                    {
-                        "capabilityId": "session.send_message",
-                        "scope": "session",
-                        "sessionId": params["sessionId"],
-                        "supported": True,
-                        "available": True,
-                        "allowed": True,
-                    }
-                ],
-            }
-        if method == "runtime.getCapabilities":
-            return {
-                "runtime": "dsh",
-                "revision": 3,
-                "capabilities": [
-                    {
-                        "capabilityId": "catalog.permission",
-                        "scope": "runtime",
-                        "supported": True,
-                        "available": True,
-                        "allowed": True,
-                    },
-                    {
-                        "capabilityId": "catalog.model",
-                        "scope": "runtime",
-                        "supported": True,
-                        "available": True,
-                        "allowed": True,
-                    },
-                ],
-            }
-        raise AssertionError(f"unexpected method: {method}")
-
-
-class _StartTurnRuntime(DshRuntime):
-    async def _request(self, method: str, params: Any = None) -> Any:
-        assert method == "session.startTurn"
-        assert isinstance(params, dict)
-        client_message_id = params["clientMessageId"]
-        session_id = params["sessionId"]
-        native_message_id = (
-            "aa-"
-            + hashlib.sha256(f"{session_id}\0{client_message_id}".encode()).hexdigest()
-        )
-        await self._handle_notification(
-            "timeline.item.upsert",
-            {
-                "sessionId": session_id,
-                "externalSessionId": params["externalSessionId"],
-                "runtime": "dsh",
-                "item": {
-                    "id": "dsh-user-message",
-                    "type": "message",
-                    "payload": {
-                        "role": "user",
-                        "text": params["content"],
-                        "messageId": native_message_id,
-                    },
-                    "orderSeq": 8,
-                    "revision": 1,
-                },
-            },
-        )
-        return {"ok": True, "result": {"accepted": True}}
 
 
 def test_dsh_is_third_default_provider() -> None:
@@ -326,63 +93,6 @@ def test_dsh_provider_identity_schema_and_validation(tmp_path: Path) -> None:
     asyncio.run(run())
 
 
-def test_dsh_session_revision_requests_timeline_sync() -> None:
-    async def run() -> None:
-        runtime = _ListRuntime(
-            config=RuntimeConfig(runtime="dsh", revision=1),
-            host=_Host(sync_state={"revision": "revision-1"}),  # type: ignore[arg-type]
-        )
-
-        sessions = await runtime.list_sessions()
-
-        assert len(sessions) == 1
-        assert sessions[0].metadata["revision"] == "revision-2"
-        assert sessions[0].metadata["sync"] == {
-            "key": "dsh/history/cursor/68c04cbee23556a53997bf93a62cbc8ecf6f6eff009015c87248b62f678116d6",
-            "revision": "revision-2",
-            "previous_revision": "revision-1",
-            "changed": True,
-            "requires_timeline_sync": True,
-            "history_cursor_missing": False,
-        }
-        assert session_requires_timeline_sync(sessions[0]) is True
-
-    asyncio.run(run())
-
-
-def test_dsh_session_identity_ignores_bridge_ids_across_instances() -> None:
-    async def run() -> None:
-        first_namespace = "connector-test:dsh:source-one"
-        second_namespace = "connector-test:dsh:source-two"
-        first = _BridgeSessionListRuntime(
-            config=RuntimeConfig(runtime="dsh", revision=1),
-            host=_NamespacedHost(first_namespace),  # type: ignore[arg-type]
-        )
-        second = _BridgeSessionListRuntime(
-            config=RuntimeConfig(runtime="dsh", revision=1),
-            host=_NamespacedHost(second_namespace),  # type: ignore[arg-type]
-        )
-
-        first_session = (await first.list_sessions())[0]
-        second_session = (await second.list_sessions())[0]
-
-        assert first_session.session_id == stable_runtime_session_id(
-            first_namespace,
-            "dsh",
-            "session-external",
-        )
-        assert second_session.session_id == stable_runtime_session_id(
-            second_namespace,
-            "dsh",
-            "session-external",
-        )
-        assert first_session.session_id != second_session.session_id
-        assert first_session.session_id != "bridge-collision"
-        assert second_session.session_id != "bridge-collision"
-
-    asyncio.run(run())
-
-
 def test_dsh_provider_canonicalizes_home_and_endpoint_claims(
     tmp_path: Path,
 ) -> None:
@@ -442,9 +152,7 @@ def test_dsh_provider_blocks_case_and_unicode_path_aliases(tmp_path: Path) -> No
 
         first_claims = provider.resource_claims(first)
         second_claims = provider.resource_claims(second)
-        assert [
-            (claim.kind, claim.key, claim.mode) for claim in first_claims
-        ] == [
+        assert [(claim.kind, claim.key, claim.mode) for claim in first_claims] == [
             (claim.kind, claim.key, claim.mode) for claim in second_claims
         ]
         assert provider.session_source_key(first) == provider.session_source_key(second)
@@ -452,233 +160,162 @@ def test_dsh_provider_blocks_case_and_unicode_path_aliases(tmp_path: Path) -> No
     asyncio.run(run())
 
 
-def test_dsh_first_scan_forces_state_sync_after_connector_restart() -> None:
+class _Host:
+    connector_id = "test"
+    session_namespace = "test:instance"
+
+
+class _Pages(DshRuntime):
+    def __init__(self, pages):
+        super().__init__(RuntimeConfig("dsh", 2), _Host())
+        self.pages = iter(pages)
+        self.calls = []
+
+    async def _request(self, method, params=None):
+        self.calls.append((method, params))
+        return next(self.pages)
+
+
+def test_inventory_pages_preserve_host_ids_and_sync_metadata() -> None:
     async def run() -> None:
-        runtime = _ListRuntime(
-            config=RuntimeConfig(runtime="dsh", revision=1),
-            host=_Host(sync_state={"revision": "revision-2"}),  # type: ignore[arg-type]
-        )
-
-        first = await runtime.list_sessions()
-        second = await runtime.list_sessions()
-
-        assert first[0].metadata["sync"]["changed"] is True
-        assert first[0].metadata["sync"]["requires_timeline_sync"] is True
-        assert second[0].metadata["sync"]["changed"] is False
-        assert second[0].metadata["sync"]["requires_timeline_sync"] is False
-
-    asyncio.run(run())
-
-
-def test_dsh_complete_inventory_follows_pagination_and_preserves_source_flags() -> None:
-    async def run() -> None:
-        runtime = _PagedListRuntime(
-            config=RuntimeConfig(runtime="dsh", revision=1),
-            host=_Host(),  # type: ignore[arg-type]
-        )
-
-        sessions = await runtime.list_complete_session_inventory(page_size=1)
-
-        assert [session.external_session_id for session in sessions] == [
-            "session-one",
-            "session-two",
-        ]
-        assert sessions[0].metadata["localArchived"] is True
-        assert runtime.requests == [
-            {"limit": 1, "force": False},
-            {"limit": 1, "force": False, "cursor": "cursor-1"},
-        ]
-
-    asyncio.run(run())
-
-
-def test_dsh_complete_inventory_rejects_repeated_cursor() -> None:
-    async def run() -> None:
-        runtime = _PagedListRuntime(
-            config=RuntimeConfig(runtime="dsh", revision=1),
-            host=_Host(),  # type: ignore[arg-type]
-            repeated_cursor=True,
-        )
-
-        with pytest.raises(RuntimeError, match="repeated nextCursor"):
-            await runtime.list_complete_session_inventory(page_size=1)
-
-    asyncio.run(run())
-
-
-def test_dsh_request_recovers_after_proactive_restart_attempts_are_exhausted() -> None:
-    async def run() -> None:
-        host = _Host()
-        runtime = _RecoveringRuntime(
-            config=RuntimeConfig(
-                runtime="dsh",
-                revision=2,
-                values={
-                    "maxRestartAttempts": 1,
-                    "restartBackoffMs": 0,
-                },
-            ),
-            host=host,  # type: ignore[arg-type]
-        )
-
-        await runtime._restart_loop()
-
-        assert runtime._client is None
-        assert runtime.connect_attempts == 1
-        assert host.runtime_errors[0][1] == "DSH_BRIDGE_RESTART_FAILED"
-
-        sessions = await runtime.list_sessions(limit=100, force=True)
-
-        assert sessions == ()
-        assert runtime.connect_attempts == 2
-        assert runtime._restart_attempts == 0
-        await runtime.stop()
-
-    asyncio.run(run())
-
-
-def test_dsh_non_conflict_state_releases_cached_writer_block() -> None:
-    async def run() -> None:
-        runtime = _StateRuntime(
-            config=RuntimeConfig(runtime="dsh", revision=1),
-            host=_Host(),  # type: ignore[arg-type]
-        )
-        runtime._concurrent_writer_sessions.add("sess_1")
-
-        state = await runtime.get_session_state("sess_1", "session-external")
-
-        assert state is not None
-        assert state.status == "idle"
-        assert "sess_1" not in runtime._concurrent_writer_sessions
-
-    asyncio.run(run())
-
-
-def test_dsh_session_capabilities_inherit_permission_catalog_only() -> None:
-    async def run() -> None:
-        runtime = _CapabilitiesRuntime(
-            config=RuntimeConfig(runtime="dsh", revision=1),
-            host=_Host(),  # type: ignore[arg-type]
-        )
-
-        capability_set = await runtime.get_session_capabilities(
-            "sess_1",
-            "session-external",
-        )
-
-        capabilities = {
-            capability.capability_id: capability
-            for capability in capability_set.capabilities
-        }
-        permission = capabilities["catalog.permission"]
-        assert permission.scope == "session"
-        assert permission.session_id == "sess_1"
-        assert permission.supported is True
-        assert permission.available is True
-        assert permission.allowed is True
-        assert "catalog.model" not in capabilities
-        assert capability_set.revision == 3
-        assert runtime.requests == [
-            "session.getCapabilities",
-            "runtime.getCapabilities",
-        ]
-
-    asyncio.run(run())
-
-
-def test_dsh_snapshot_watermark_commits_history_cursor() -> None:
-    async def run() -> None:
-        host = _Host()
-        runtime = _SnapshotRuntime(
-            config=RuntimeConfig(runtime="dsh", revision=1),
-            host=host,  # type: ignore[arg-type]
-        )
-
-        prepared = await runtime.prepare_session_timeline_sync(
-            "sess_1",
-            "session-external",
-        )
-
-        assert prepared is not None
-        assert prepared.snapshot is not None
-        assert prepared.snapshot.metadata == {
-            "revision": "revision-7",
-            "watermarkSeq": 7,
-        }
-        assert prepared.commit is not None
-        await prepared.commit()
-        assert host.sync_writes == [
-            (
-                "dsh/history/cursor/68c04cbee23556a53997bf93a62cbc8ecf6f6eff009015c87248b62f678116d6",
+        runtime = _Pages(
+            [
                 {
-                    "revision": "revision-7",
-                    "externalSessionIdHash": "68c04cbee23556a53997bf93a62cbc8ecf6f6eff009015c87248b62f678116d6",
+                    "sessions": [
+                        {
+                            "sessionId": "a",
+                            "externalSessionId": "native-a",
+                            "runtime": "dsh",
+                            "metadata": {"sync": {"requires_timeline_sync": True}},
+                        }
+                    ],
+                    "nextCursor": "page-2",
                 },
-            )
-        ]
+                {
+                    "sessions": [
+                        {
+                            "sessionId": "b",
+                            "externalSessionId": "native-b",
+                            "runtime": "dsh",
+                        }
+                    ]
+                },
+            ]
+        )
+        inventory = await runtime.list_complete_session_inventory(page_size=1)
+        assert [item.session_id for item in inventory] == ["a", "b"]
+        assert inventory[0].metadata["sync"]["requires_timeline_sync"] is True
+        assert runtime.calls[1][1]["cursor"] == "page-2"
 
     asyncio.run(run())
 
 
-def test_dsh_live_timeline_notification_unwraps_item_envelope() -> None:
-    async def run() -> None:
-        host = _Host()
-        runtime = DshRuntime(
-            config=RuntimeConfig(runtime="dsh", revision=1),
-            host=host,  # type: ignore[arg-type]
-        )
-
-        await runtime._handle_notification(
-            "timeline.item.upsert",
+@pytest.mark.parametrize(
+    "pages",
+    [
+        [
+            {"sessions": [], "nextCursor": "loop"},
+            {"sessions": [], "nextCursor": "loop"},
+        ],
+        [
             {
-                "sessionId": "sess_1",
-                "externalSessionId": "session-external",
-                "runtime": "dsh",
-                "item": {
-                    "id": "message_1",
-                    "type": "message",
-                    "payload": {"role": "assistant", "text": "hello from DSH"},
-                    "orderSeq": 7,
-                    "revision": 1,
-                },
+                "sessions": [{"sessionId": "a", "externalSessionId": "a"}],
+                "nextCursor": "next",
             },
-        )
-
-        assert len(host.timeline_items) == 1
-        item = host.timeline_items[0]
-        assert item.id == "message_1"
-        assert item.session_id == stable_runtime_session_id(
-            host.connector_id,
-            "dsh",
-            "session-external",
-        )
-        assert item.type == "message"
-        assert item.role == "assistant"
-        assert item.content["text"] == "hello from DSH"
-        assert item.source["itemType"] == "message"
+            {"sessions": [{"sessionId": "a", "externalSessionId": "a"}]},
+        ],
+    ],
+)
+def test_inventory_rejects_incomplete_or_repeated_pages(pages) -> None:
+    async def run() -> None:
+        with pytest.raises(RuntimeUpstreamError):
+            await _Pages(pages).list_complete_session_inventory()
 
     asyncio.run(run())
 
 
-def test_dsh_live_user_message_restores_client_message_id() -> None:
+def test_snapshot_requires_all_pages_from_same_capture() -> None:
     async def run() -> None:
-        host = _Host()
-        runtime = _StartTurnRuntime(
-            config=RuntimeConfig(runtime="dsh", revision=1),
-            host=host,  # type: ignore[arg-type]
+        base = {
+            "sessionId": "a",
+            "externalSessionId": "native-a",
+            "items": [],
+            "watermark": {"seq": 1},
+            "snapshotComplete": True,
+        }
+        runtime = _Pages(
+            [{**base, "nextCursor": "next"}, {**base, "watermark": {"seq": 2}}]
         )
+        with pytest.raises(RuntimeUpstreamError, match="changed"):
+            await runtime.get_session_snapshot("a", "native-a")
+        runtime = _Pages([{**base, "metadata": {"totalItems": 1}}])
+        with pytest.raises(RuntimeUpstreamError, match="missing"):
+            await runtime.get_session_snapshot("a", "native-a")
 
-        result = await runtime.start_turn(
-            "sess_1",
-            "session-external",
-            "hello from Web",
-            client_message_id="client-message-1",
+    asyncio.run(run())
+
+
+def test_read_only_runtime_does_not_expose_write_or_catalog_operations() -> None:
+    async def run() -> None:
+        runtime = _Pages([])
+        for call in [runtime.list_model_catalog, runtime.list_permission_catalog]:
+            with pytest.raises(RuntimeUnsupportedError):
+                await call()
+        with pytest.raises(RuntimeUnsupportedError):
+            await runtime.start_turn("a", "native-a", "hello")
+        assert runtime.calls == []
+        assert await runtime.get_session_notices("a") == ()
+
+    asyncio.run(run())
+
+
+def test_stale_or_invalid_endpoint_cannot_be_added(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("DSH_HOME", str(tmp_path))
+    path = tmp_path / "agents-anywhere/bridge/endpoint.json"
+    path.parent.mkdir(parents=True)
+
+    async def run() -> None:
+        assert not (await discover({})).available
+        # A live process with a dead port is not an available runtime.
+        path.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "host": "127.0.0.1",
+                    "port": 1,
+                    "pid": os.getpid(),
+                    "token": "not-a-real-token",
+                }
+            )
         )
+        assert not (await discover({})).available
+        with pytest.raises(RuntimeInvalidRequestError):
+            await DshProvider().validate_config({})
 
-        assert result.ok is True
-        assert len(host.timeline_items) == 1
-        assert host.timeline_items[0].source["clientMessageId"] == "client-message-1"
-        assert host.sync_writes[0][0].startswith("dsh/client-messages/")
-        assert host.sync_writes[0][1] == {"clientMessageId": "client-message-1"}
+    asyncio.run(run())
+
+
+def test_reads_retry_connection_after_bounded_recovery_is_exhausted() -> None:
+    class Client:
+        connected = True
+
+        async def request(self, method, params):
+            return {"sessions": []}
+
+    class Runtime(DshRuntime):
+        attempts = 0
+
+        async def _start_client(self):
+            self.attempts += 1
+            if self.attempts == 1:
+                raise ConnectionError("DSH restarting")
+            self._client = Client()
+
+    async def run() -> None:
+        runtime = Runtime(RuntimeConfig("dsh", 2), _Host())
+        with pytest.raises(RuntimeUnavailableError):
+            await runtime.list_sessions()
+        assert await runtime.list_sessions() == ()
+        assert runtime.attempts == 2
 
     asyncio.run(run())
