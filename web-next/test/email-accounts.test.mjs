@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import { pbkdf2Sync, webcrypto } from "node:crypto"
 import test from "node:test"
 import { readFileSync, existsSync } from "node:fs"
 import { registerHooks } from "node:module"
@@ -49,6 +50,24 @@ test("email login normalizes identity and sends only a derived password verifier
   assert.equal(requests[1].body.email, "member@example.com")
   assert.match(requests[1].body.passwordVerifier, /^[\w-]{43}$/)
   assert.equal(requests[1].authorization, null)
+})
+
+test("HTTP browser login uses the account salt and sends a compatible verifier before native OAuth consent", async () => {
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, "crypto")
+  Object.defineProperty(globalThis, "crypto", { configurable: true, value: { getRandomValues: webcrypto.getRandomValues.bind(webcrypto) } })
+  try {
+    const { api, requests } = fixture()
+    await api.login({ email: " Member@Example.COM ", password: "synthetic password 密码" })
+    assert.deepEqual(requests.map((request) => request.path), ["/api/v2/auth/password-salt", "/api/v2/auth/login"])
+    assert.deepEqual(requests[0].body, { email: "member@example.com" })
+    assert.deepEqual(requests[1].body, {
+      email: "member@example.com",
+      passwordVerifier: pbkdf2Sync("synthetic password 密码", "test-salt", 120_000, 32, "sha256").toString("base64url"),
+    })
+  } finally {
+    if (descriptor) Object.defineProperty(globalThis, "crypto", descriptor)
+    else delete globalThis.crypto
+  }
 })
 
 test("registration carries display name and verification code without a username", async () => {
