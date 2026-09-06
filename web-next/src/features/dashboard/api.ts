@@ -34,6 +34,7 @@ import type {
   ProtocolPermissionCatalogResponse,
   PublicSessionShareResponse,
   ProjectCreateRequest,
+  ProjectResolveRequest,
   ProjectCreateResponse,
   ProjectDeleteResponse,
   ProjectListResponse,
@@ -210,6 +211,10 @@ export class DashboardApi {
       body,
       { token },
     );
+  }
+
+  resolveProject(token: string, body: ProjectResolveRequest): Promise<ProjectResponse> {
+    return this.client.post<ProjectResponse>("/projects/resolve", body, { token });
   }
 
   deleteProject(token: string, projectId: string): Promise<ProjectDeleteResponse> {
