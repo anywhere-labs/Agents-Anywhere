@@ -81,32 +81,32 @@ struct PairDeviceSheet: View {
         } else if let credential, let server = appState.serverURL {
             Text(credential.connector.name).font(.title2.bold())
             if appState.nativeChatServices?.agentSetup.requests.first(where: { $0.id == credential.connector.id })?.ready != true {
-            if step == .cliMethod {
-                Text(String(localized: "选择配对方式")).foregroundStyle(.secondary)
-                AppGlassButton(String(localized: "使用配对码"), systemImage: "number", style: .prominent) { step = .pairCode }
-                Text(String(localized: "在设备上运行命令，将生成的六位配对码填回这里。"))
-                    .font(.footnote).foregroundStyle(.secondary)
-                AppGlassButton(String(localized: "使用 Token"), systemImage: "key") {
-                    step = .token
-                    appState.nativeChatServices?.agentSetup.watch(credential.connector)
+                if step == .cliMethod {
+                    Text(String(localized: "选择配对方式")).foregroundStyle(.secondary)
+                    AppGlassButton(String(localized: "使用配对码"), systemImage: "number", style: .prominent) { step = .pairCode }
+                    Text(String(localized: "在设备上运行命令，将生成的六位配对码填回这里。"))
+                        .font(.footnote).foregroundStyle(.secondary)
+                    AppGlassButton(String(localized: "使用 Token"), systemImage: "key") {
+                        step = .token
+                        appState.nativeChatServices?.agentSetup.watch(credential.connector)
+                    }
+                } else if step == .pairCode {
+                    Text(String(localized: "先在目标设备运行以下命令，再填写 CLI 显示的配对码。"))
+                        .foregroundStyle(.secondary)
+                    commandBlock(V2PairingCommand.pair(server: server))
+                    TextField("000000", text: $code).keyboardType(.numberPad).textContentType(.oneTimeCode)
+                        .font(.title2.monospaced()).textFieldStyle(.roundedBorder)
+                        .onChange(of: code) { _, value in code = String(value.filter { $0.isASCII && $0.isNumber }.prefix(6)) }
+                    AppGlassButton(String(localized: "连接设备"), systemImage: "link", style: .prominent, isLoading: isWorking) {
+                        Task { await claim(credential) }
+                    }.disabled(code.count != 6 || isWorking || !canConnect)
+                } else {
+                    Text(String(localized: "在目标设备运行以下命令，然后保持 CLI 运行。即使关闭此页面，我们也会继续等待设备连接。"))
+                        .foregroundStyle(.secondary)
+                    commandBlock(V2PairingCommand.start(server: server, credential: credential))
+                    Text(String(localized: "命令包含设备凭据，请仅在你信任的设备上使用。"))
+                        .font(.footnote).foregroundStyle(.secondary)
                 }
-            } else if step == .pairCode {
-                Text(String(localized: "先在目标设备运行以下命令，再填写 CLI 显示的配对码。"))
-                    .foregroundStyle(.secondary)
-                commandBlock(V2PairingCommand.pair(server: server))
-                TextField("000000", text: $code).keyboardType(.numberPad).textContentType(.oneTimeCode)
-                    .font(.title2.monospaced()).textFieldStyle(.roundedBorder)
-                    .onChange(of: code) { _, value in code = String(value.filter { $0.isASCII && $0.isNumber }.prefix(6)) }
-                AppGlassButton(String(localized: "连接设备"), systemImage: "link", style: .prominent, isLoading: isWorking) {
-                    Task { await claim(credential) }
-                }.disabled(code.count != 6 || isWorking || !canConnect)
-            } else {
-                Text(String(localized: "在目标设备运行以下命令，然后保持 CLI 运行。即使关闭此页面，我们也会继续等待设备连接。"))
-                    .foregroundStyle(.secondary)
-                commandBlock(V2PairingCommand.start(server: server, credential: credential))
-                Text(String(localized: "命令包含设备凭据，请仅在你信任的设备上使用。"))
-                    .font(.footnote).foregroundStyle(.secondary)
-            }
             }
             if let setup = appState.nativeChatServices?.agentSetup,
                let request = setup.requests.first(where: { $0.id == credential.connector.id }) {

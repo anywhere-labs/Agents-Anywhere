@@ -178,23 +178,25 @@ final class V2DashboardRepository {
 
     func createProject(name: String, connectorID: String, path: String, reusing projectID: String? = nil) async throws -> V2Project {
         try requireWritable()
+        guard connectors.contains(where: { $0.id == connectorID && $0.status == .online }) else { throw URLError(.notConnectedToInternet) }
         let latest = try await service.projectAPI.list()
         try requireWritable()
+        guard connectors.contains(where: { $0.id == connectorID && $0.status == .online }) else { throw URLError(.notConnectedToInternet) }
         projects = latest.projects; changed()
         let os = connectors.first { $0.id == connectorID }?.deviceOs
         guard let key = ProjectWorkspacePath.key(path, deviceOS: os) else {
             throw V2BusinessError.workspaceFilesUnavailable(message: String(localized: "请输入设备上的完整绝对路径。"))
         }
         let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let existing = latest.projects.first(where: { $0.connectorId == connectorID && ProjectWorkspacePath.key($0.workspacePath, deviceOS: os) == key }) {
-            if existing.name == name { upsertProject(existing); return existing }
-            guard existing.id == projectID else { throw ProjectReuseRequired(project: existing) }
-            let renamed = try await service.projectAPI.update(existing.id, .init(name: name, pinned: nil))
-            try requireValid(); upsertProject(renamed.project)
-            return renamed.project
+        let existing = latest.projects.first { $0.connectorId == connectorID && ProjectWorkspacePath.key($0.workspacePath, deviceOS: os) == key }
+        if let existing, existing.name != name, existing.id != projectID {
+            throw ProjectReuseRequired(project: existing)
         }
-        let response = try await service.projectAPI.create(.init(name: ProjectWorkspacePath.availableName(name, projects: latest.projects),
-            connectorId: connectorID, workspacePath: path.trimmingCharacters(in: .whitespacesAndNewlines)))
+        // The manual form uses the server's workspace upsert, including when an
+        // automatic project already owns the directory. It must become manual.
+        let response = try await service.projectAPI.create(.init(name: ProjectWorkspacePath.availableName(name, projects: latest.projects, ignoring: existing?.id),
+            connectorId: connectorID, workspacePath: existing?.workspacePath ?? path.trimmingCharacters(in: .whitespacesAndNewlines),
+            manuallyCreated: true))
         try requireValid()
         upsertProject(response.project)
         return response.project

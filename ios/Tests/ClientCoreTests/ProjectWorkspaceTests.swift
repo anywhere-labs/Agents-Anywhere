@@ -220,4 +220,17 @@ import Testing
         let restored = model(http, defaults: defaults)
         #expect(restored.workspace == "/workspace" && restored.isHome && http.calls.count == count)
     }
+
+    @Test func anInvalidLegacyDirectoryDefaultsToTheRemoteHome() async throws {
+        let suite = "aa-legacy-home-tests-\(UUID())", http = TestHTTPTransport()
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let scope = V2ClientScope(serverURL: URL(string: "https://example.test")!, accountID: "account")
+        let key = "aa.native.new-session.v1." + Data((scope.serverURL.absoluteString + "\n" + scope.accountID).utf8).base64EncodedString()
+        defaults.set(try JSONEncoder().encode(NewSessionPreference(connectorID: "device", workspaces: ["device": "~"])), forKey: key)
+        let draft = model(http, defaults: defaults)
+        http.respond = { call in try defaultResponse(http, call) }
+        await draft.refresh(connectors: try devices())
+        #expect(draft.workspace == "/workspace" && draft.isHome)
+    }
 }

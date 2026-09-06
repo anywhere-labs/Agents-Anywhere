@@ -146,7 +146,9 @@ final class NewSessionModel {
             homePaths[device] = path
             resolvedHomes.insert(device)
             preference.homePaths = homePaths; persist()
-            if connectorID == device, workspace.isEmpty { workspace = path; identifyProject() }
+            if connectorID == device, ProjectWorkspacePath.key(workspace, deviceOS: connector?.deviceOs) == nil {
+                workspace = path; identifyProject()
+            }
         } catch { if isValid, !Task.isCancelled { homeErrors[device] = error.localizedDescription } }
     }
     var canAttach: Bool { prepared?.capabilities.allows("runtime.attachment") == true }

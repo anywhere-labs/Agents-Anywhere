@@ -228,20 +228,20 @@ private struct WorkspaceDirectoryView: View {
                             .labelStyle(.iconOnly).frame(width: 44, height: 44).disabled(!canRead)
                     }.padding(.horizontal, 12)
                 }
-            Text(currentDirectoryPath)
-                .font(.system(.caption, design: .monospaced))
-                .foregroundStyle(.secondary)
-                .textSelection(.enabled)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 20).padding(.vertical, 12)
-                .background(.bar)
-                .accessibilityLabel(String(localized: "当前目录：\(currentDirectoryPath)"))
-                .contextMenu {
-                    Button(String(localized: "复制路径"), appSymbol: "document.on.document") {
-                        UIPasteboard.general.string = currentDirectoryPath
+                Text(currentDirectoryPath)
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 20).padding(.vertical, 12)
+                    .background(.bar)
+                    .accessibilityLabel(String(localized: "当前目录：\(currentDirectoryPath)"))
+                    .contextMenu {
+                        Button(String(localized: "复制路径"), appSymbol: "document.on.document") {
+                            UIPasteboard.general.string = currentDirectoryPath
+                        }
                     }
-                }
             }.background(.bar)
         }
         .safeAreaInset(edge: .bottom) {
@@ -261,7 +261,6 @@ private struct WorkspaceDirectoryView: View {
         .task(id: DirectoryRequest(connector: connectorId, root: root, path: effectivePath, canRead: canRead)) {
             await loadDirectory()
         }
-        .onChange(of: model.resolvedPath) { _, new in if new == effectivePath { address = nil } }
     }
 
     private var currentDirectoryPath: String {
@@ -282,12 +281,17 @@ private struct WorkspaceDirectoryView: View {
 
     private func loadDirectory() async {
         guard canRead else { return }
+        let requested = effectivePath, previousAddress = address
         await model.load(
             connectorId: connectorId,
             root: root,
-            path: effectivePath,
+            path: requested,
             service: service
         )
+        // A successfully resolved '~', symlink or normalized path is a valid
+        // directory too. Keep any address the user edited during this request.
+        if !Task.isCancelled, !model.isLoading, effectivePath == requested,
+           address == previousAddress, model.selectablePath != nil { address = nil }
     }
 }
 

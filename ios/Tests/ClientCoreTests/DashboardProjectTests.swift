@@ -95,12 +95,31 @@ import Testing
         } catch let conflict as ProjectReuseRequired { #expect(conflict.project.id == "project") }
         #expect(http.calls.allSatisfy { $0.method == .get })
         http.respond = { call in
-            if call.method == .patch { return try fixtureData("project") }
+            if call.method == .post { return try fixtureData("project") }
             return try http.defaultResponse(call)
         }
         _ = try await store.createProject(name: "Renamed", connectorID: "device", path: "/workspace", reusing: "project")
-        #expect(http.calls.filter { $0.method == .patch }.count == 1)
-        #expect(http.calls.allSatisfy { $0.method != .post })
+        #expect(http.calls.filter { $0.method == .post }.count == 1)
+        #expect(http.calls.last?.body?["manuallyCreated"] == .bool(true))
+    }
+
+    @Test func theManualFormPromotesAnAutomaticProjectWithoutChangingItsWorkspace() async throws {
+        let http = TestHTTPTransport()
+        let repository = self.repository(http)
+        repository.apply(try dashboard())
+        var value = try fixtureObject("project")["project"] as! [String: Any]
+        value["manuallyCreated"] = false
+        let name = value["name"] as! String
+        http.respond = { call in
+            if call.method == .get { return try JSONSerialization.data(withJSONObject: ["projects": [value], "serverTime": ""]) }
+            value["manuallyCreated"] = true
+            return try JSONSerialization.data(withJSONObject: ["project": value, "serverTime": ""])
+        }
+        let project = try await repository.createProject(name: name, connectorID: "device", path: "/workspace/./")
+        #expect(project.id == "project" && project.manuallyCreated && project.workspacePath == "/workspace")
+        #expect(http.calls.last?.body?["workspacePath"] == .string("/workspace"))
+        #expect(http.calls.last?.body?["name"] == .string(name))
+        #expect(http.calls.last?.body?["manuallyCreated"] == .bool(true))
     }
 
     @Test func projectVisibilityUsesServerCountsAndArchiveStateOnly() throws {
