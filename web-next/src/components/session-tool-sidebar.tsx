@@ -901,7 +901,7 @@ function ToolLauncher({
 
   return (
     <nav aria-label={t("navigationLabel")} className="flex h-full justify-center overflow-y-auto p-6">
-      <div className="my-auto flex w-full max-w-64 flex-col gap-2">
+      <div className="my-auto flex w-full max-w-72 flex-col gap-2">
         {TOOL_KINDS.map((kind, index) => {
           const meta = TOOL_META[kind]
           const Icon = meta.icon
@@ -911,7 +911,7 @@ function ToolLauncher({
             <Card
               key={kind}
               size="sm"
-              className="relative gap-0 py-3 focus-within:ring-2 focus-within:ring-ring/50"
+              className="relative gap-0 rounded-xl py-3 focus-within:ring-2 focus-within:ring-ring/50"
             >
               <Button
                 ref={index === 0 ? firstButtonRef : undefined}
