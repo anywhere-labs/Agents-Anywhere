@@ -8,19 +8,21 @@ final class DeviceManagementModel {
     private(set) var isDeviceActionRunning = false
     private(set) var isArchiveActionRunning = false
     var sessionFilter = V2DeviceSessionFilter.active
+    var projectID: String?
     var selectedSessionIds: Set<V2SessionID> = []
     var isSelectingSessions = false
     var errorMessage: String?
 
     var filteredSessions: [V2SessionMeta] {
         sessions.filter { session in
+            guard projectID == nil || session.projectId == projectID else { return false }
             switch sessionFilter {
             case .active:
-                !session.archived
+                return !session.archived
             case .archived:
-                session.archived
+                return session.archived
             case .all:
-                true
+                return true
             }
         }
     }
@@ -29,8 +31,8 @@ final class DeviceManagementModel {
         sessions = V2DeviceProjection.sessions(
             connectorId: connectorId,
             allSessions: allSessions
-        )
-        selectedSessionIds.formIntersection(Set(sessions.map(\.id)))
+        ).sorted { SessionSidebarPresentation($0).precedes(SessionSidebarPresentation($1), id: $0.id, otherID: $1.id) }
+        selectedSessionIds.formIntersection(Set(filteredSessions.map(\.id)))
     }
 
     func setSessionFilter(_ filter: V2DeviceSessionFilter) {
@@ -39,11 +41,25 @@ final class DeviceManagementModel {
     }
 
     func toggleSessionSelection(_ sessionId: V2SessionID) {
+        guard filteredSessions.contains(where: { $0.id == sessionId }) else { return }
         if selectedSessionIds.contains(sessionId) {
             selectedSessionIds.remove(sessionId)
         } else {
+            guard selectedSessionIds.count < 200 else {
+                errorMessage = String(localized: "Select no more than 200 sessions at once."); return
+            }
             selectedSessionIds.insert(sessionId)
         }
+    }
+
+    func selectProject(_ id: String?) {
+        projectID = id
+        selectedSessionIds.removeAll()
+    }
+
+    func toggleSelectAll() {
+        let ids = Set(filteredSessions.prefix(200).map(\.id))
+        selectedSessionIds = selectedSessionIds == ids ? [] : ids
     }
 
     func stopSelectingSessions() {

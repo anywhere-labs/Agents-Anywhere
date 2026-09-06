@@ -162,11 +162,13 @@ struct ChatShellView: View {
                     }
                     startNewSession()
                 },
+                onNewProjectSession: startProjectSession,
                 onConnectorUpdated: appState.updateConnector,
                 onConnectorDeleted: removeConnector,
                 onSessionsUpdated: appState.updateSessions,
                 onSetSessionsArchived: appState.setSessionsArchived
             )
+            .id(connectorId)
         } else if let services = appState.nativeChatServices {
             if case let .session(id) = selection {
                 let session = services.sessionRepository.session(id: id)

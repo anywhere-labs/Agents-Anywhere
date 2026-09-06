@@ -368,7 +368,7 @@ struct ChatSidebarSessionRow: View {
     }
 }
 
-private struct ChatSidebarSessionIndicator: View {
+struct ChatSidebarSessionIndicator: View {
     let indicator: SessionSidebarPresentation.Indicator
     var body: some View {
         switch indicator {

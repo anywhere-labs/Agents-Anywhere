@@ -2,6 +2,8 @@ import SwiftUI
 
 struct DeviceAgentSection: View {
     @Bindable var model: DeviceAgentModel
+    var showsConnectionNotice = true
+    var onError: ((String?) -> Void)?
     @State private var configuration: Configuration?
     @State private var showsAddAgents = false
     @State private var deleting: V2DeviceRuntime?
@@ -21,7 +23,7 @@ struct DeviceAgentSection: View {
                 Spacer()
                 AgentRediscoveryButton(model: model)
             }
-            if !model.connected {
+            if showsConnectionNotice && !model.connected {
                 Label("设备或网络已离线，连接恢复后可继续。", systemImage: "wifi.slash")
                     .font(.footnote).foregroundStyle(.secondary)
             }
@@ -81,11 +83,15 @@ struct DeviceAgentSection: View {
             }.disabled(proposedName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
         .alert("Agent 操作未完成", isPresented: Binding(
-            get: { !showsAddAgents && configuration == nil && (schemaError != nil || model.error != nil) },
+            get: { onError == nil && currentError != nil },
             set: { if !$0 { schemaError = nil; model.dismissError() } }
         )) {
             Button("好", role: .cancel) { schemaError = nil; model.dismissError() }
         } message: { Text(schemaError ?? model.error ?? "") }
+        .onChange(of: currentError, initial: true) { _, error in onError?(error) }
+    }
+    private var currentError: String? {
+        !showsAddAgents && configuration == nil ? schemaError ?? model.error : nil
     }
 }
 
