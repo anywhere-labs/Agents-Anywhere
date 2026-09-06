@@ -2,6 +2,8 @@
 
 Agents Anywhere 的 DSH 插件重写项目。职责边界和迁移顺序见 [开发计划](./DEVELOPMENT_PLAN.md)。
 
+完整产品流程见 [Onboarding 业务方案](./ONBOARDING_PLAN.md)：检测 AA Desktop 后分两条路径。已安装时由 Desktop 管理用户、设备和 Connector；未安装时由插件管理本机能力，并把已上线设备交给 Web 引导。两种模式的 DSH Agent 业务均位于插件 `host/dsh-runtime/`。下一阶段先实现无 Desktop 场景。
+
 ## 当前内容
 
 - 独立的 Yarn 项目、插件清单和配置层。

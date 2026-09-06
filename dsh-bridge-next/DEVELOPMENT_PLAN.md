@@ -10,6 +10,10 @@
 
 当前已建立项目目录、Host / Client 空入口及构建检查脚本。所有业务模块仍为占位，尚未实现设置页、本机端口或 Agent 业务。
 
+最新业务流程见 [Onboarding 业务方案](./ONBOARDING_PLAN.md)。**第一期先实现未安装 Agents Anywhere Desktop 的流程。** 本文的 Desktop 均指 AA Desktop；DSH Desktop 是承载插件的另一应用。
+
+插件进入引导前由 Host 检查本机 Desktop 安装状态。已安装时将 onboarding、用户、设备及 Connector 管理交给 Desktop；未安装时插件承担本机管理职责，OAuth 后把已上线设备交给 Web 独立 onboarding 页面。两种模式共用插件内的 `dsh-runtime`，不改变 Connector 薄转发的边界。
+
 ## 2. 两端的明确分工
 
 ### Connector 侧：`connector/connector/runtimes/dsh/`
@@ -76,13 +80,16 @@ DSH 原生事件
   → 手机 / AA 客户端
 ```
 
-插件设置页还有一条管理链路：`client → host/rpc → host/connector`，用于启动、停止和查看 Python Connector。这条进程管理链路与上面的 Agent 远控链路分别实现。
+未安装 AA Desktop 时，插件还有一条管理链路：`client → host/rpc → host/connector`，用于启动、停止和查看其内部源码 Python Connector。已安装时，账号、设备和 Connector 生命周期由 Desktop 管理，插件不启用对应管理模块。这条进程管理链路与上面的 Agent 远控链路分别实现。
+
+无 Desktop 的引导交接为：`插件 → Web OAuth → 插件 localhost 回调 → 领取用户和设备凭据、启动 Connector → 带 connectorId 重定向 Web onboarding → 配置全部可添加 Agent → 可选手机下载/扫码 → 完成页`。token 留在本机，URL 中的 connectorId 仅用于定位，Web 仍校验当前用户的设备权限。
 
 ## 4. 规划目录
 
 ```text
 dsh-bridge-next/
 ├── DEVELOPMENT_PLAN.md
+├── ONBOARDING_PLAN.md
 ├── package.json
 ├── cordis.patch.yml
 ├── src/
@@ -91,8 +98,10 @@ dsh-bridge-next/
 │   │   ├── index.ts            # 模块组装、插件注册和生命周期
 │   │   ├── config.ts           # 配置校验、数据目录和运行路径
 │   │   ├── rpc/                # 向插件设置页提供管理接口
-│   │   ├── account/            # 账号登录、设备绑定、手机授权
-│   │   ├── connector/          # Python Connector 的进程、环境和 stdio 管理
+│   │   ├── desktop/            # 规划新增：共享安装记录检测和打开 Desktop
+│   │   ├── onboarding/         # 规划新增：模式选择、OAuth 后的 Web 交接
+│   │   ├── account/            # 无 Desktop 时的账号、设备和凭据管理
+│   │   ├── connector/          # 无 Desktop 时的源码 Connector 进程管理
 │   │   ├── storage/            # 通用配置、凭据及文件读写能力
 │   │   └── dsh-runtime/
 │   │       ├── index.ts        # DSH 运行时模块的组装与释放
@@ -110,6 +119,8 @@ dsh-bridge-next/
 
 目录按实际实现逐步建立。`dsh-runtime` 内部可以按业务拆分文件，但对外仍由同一个插件提供稳定协议。
 
+`host/desktop/`、`host/onboarding/` 是本次方案新增的规划目录，尚未建立。Desktop 与 Web 的专门页面在各自应用实现；插件管理模块按运行模式启用，不要求为两种模式复制运行时业务。
+
 `src/contracts/` 是插件内部前后端的共享约定。Python Connector 与插件之间已有的跨进程协议位于仓库根目录 `contracts/dsh-bridge/1.0/`，两者用途不同，不能再维护一份相互漂移的桥接协议。
 
 ## 5. 协议与状态归属
@@ -119,6 +130,8 @@ dsh-bridge-next/
 - 必须进行不兼容变更时，明确协议版本和两端迁移方式，不能在同一版本中静默改变语义。
 - DSH 会话数据仍由 DSH 原生持久化管理；插件只保存自己拥有的关联、幂等及必要同步元数据。
 - 每类状态只有一个维护者：DSH 会话以 DSH 为准；Connector 运行状态根据进程和真实反馈更新；设置页缓存用于展示。
+- 已安装 Desktop 时，账号、设备和 Connector 状态以 Desktop 为准；未安装时由插件拥有。检测到安装状态变化不等于可以自动接管另一个进程。
+- 共享安装记录固定为 `<操作系统用户主目录>/.agentsanywhere/desktop/install.json`。Desktop 每次启动检查，内容正确则不重写；插件每次进入引导重新读取并验证。完整路径、失效处理和兼容约定见 Onboarding 方案。
 
 “后续只更新插件”以协议兼容为前提。新功能超出现有 Connector 协议表达范围时，仍可能需要两端配合更新。
 
@@ -133,16 +146,20 @@ dsh-bridge-next/
 
 以实际业务语义为依据逐项迁移，避免两端同时保留一套独立的 DSH 业务规则。旧代码和测试用于核对行为，不能把旧实现的所有行为直接视为正确结果。
 
-后续实施范围以新插件及 Connector 的 DSH 适配器为主；不扩大到其他运行时、Connector 公共层或 AA Server。确有跨边界需求时另行明确。
+后续首期实施涉及新插件、Web onboarding 页面和 Connector 的 DSH 薄转发适配器。认证与设备管理优先复用既有服务端能力；若回环 OAuth 契约有缺口，先明确最小改动。其他运行时不纳入本次重写。
+
+Desktop 端启动登记与 onboarding 是后续独立接入工作。`desktop-workbench/` 仍由其他 Agent 负责，本任务只记录其需要遵守的文件和入口约定，不读取或修改该目录。
 
 ## 7. 实施顺序与验收
 
-1. **协议盘点**：列清现有请求、响应、通知，以及 Python 侧待迁移的 DSH 业务；建立可重复的脱敏样本。
-2. **工程骨架**：建立独立包、业务目录、双端空入口和构建检查命令。本次工作止于此，不实现业务。
-3. **运行时接入**：核实目标 DSH 版本的实际接口，实现真实加载、设置入口、本机端点和握手；验证卸载后的资源清理。
-4. **Agent 功能迁移**：逐项实现会话、模型、消息、Timeline 和交互。每迁入一项，就调整 Python 对应方法为薄转发，并验证整条链路。
-5. **管理功能接入**：完善 Connector 启停、环境检测、日志、账号登录和设备绑定，接入设置页。
-6. **完整验收与切换**：验证收发消息、中断、审批、历史与实时一致性、断线恢复及重启后的状态；通过后再安排旧插件替换。
+工程骨架已完成。后续按无 Desktop 场景推进，详细验收见 [Onboarding 业务方案第 8 节](./ONBOARDING_PLAN.md#8-下一步先打通未安装-desktop-的完整链路)。
+
+1. **入口与契约**：统一共享路径、实现只读安装检测和插件引导入口；核对 OAuth、本机设备注册及现有桥接协议。
+2. **授权与上线**：完成插件 OAuth、本地回调、凭据与设备复用、内部源码 Connector 上线；作为第一个可独立验收的目标。
+3. **Web 交接与配置**：回调再次跳转到带 connectorId 的 Web 独立引导页，校验设备权限、复用全部 Agent 配置内容，接通 DSH 发现和配置。
+4. **手机与完成页**：页面内下载、扫码、可选跳过，完成页显示“立即体验”“下载桌面端”和官网链接。
+5. **DSH 业务迁移与端到端验证**：在插件实现 Agent 业务，同步收薄 Python 适配器，验证实际对话、历史/实时和重启恢复。
+6. **Desktop 接入**：由 Desktop 负责方接入启动记录、专门引导页、插件来源唤起及普通首启完成标记；最后处理新旧管理模式的显式交接。
 
 ## 8. 开发约定
 
