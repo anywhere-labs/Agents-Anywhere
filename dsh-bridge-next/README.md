@@ -7,7 +7,7 @@ Agents Anywhere 的 DSH 插件。当前已实现**没有安装 AA Desktop 时，
 ## 已实现
 
 ```text
-DSH 左侧边栏「设置」上方 → 手机连接 → 在弹窗中点击「登录云端」
+DSH 左侧边栏「设置」上方 → 手机连接 → 云端登录或连接自己的服务器
   → Web 登录 / 注册、授权插件
   → 插件 127.0.0.1 回调，交换用户凭据
   → 复用或注册本机设备，启动插件内部的源码 Connector
@@ -49,7 +49,11 @@ cd /Users/t4wefan/code/github/Agents-Anywhere
 ./local-up.sh
 ```
 
-该命令默认只启动 Server 和 Web。测试本流程时，Connector 由插件在授权后启动，无需传 `--with-connector`。默认服务地址是 `http://127.0.0.1:8000`，Web 地址是 `http://127.0.0.1:5174`；地址不同可在插件弹窗的“连接到自己的服务实例”中修改。登录使用已配置的 Web 和服务地址，开发环境仍连接本地服务。远程部署使用 HTTPS，浏览器与插件 Host 必须在同一台机器。
+该命令默认只启动 Server 和 Web。测试本流程时，Connector 由插件在授权后启动，无需传 `--with-connector`。在插件弹窗中点击“连接到你自己的 Agents Anywhere 服务实例”，只输入后端地址 `http://127.0.0.1:8000`，再点击“连接服务器”。插件先检查后端 `/api/v2/health`，通过后打开本地 Web 登录页。
+
+地址规则与 Desktop 一致：支持省略 `https://`，允许末尾带 `/api/v2`，保存时规范化为服务器 origin。Web/OAuth 地址由后端推导，远程服务使用同源 Web；本地开发的 `localhost`、`127.0.0.1`、`[::1]` 的 `8000` 端口映射为 `5174`，其他端口保持原样。浏览器与插件 Host 必须在同一台机器。
+
+“登录 Agents Anywhere Cloud”始终选择与 Desktop 相同的云端 `https://web.agents-anywhere.com`，不会沿用表单中输入的自建地址。本地测试请选择自建服务入口。已登录时，“继续设置”和 Host 重启恢复沿用当前账号的后端地址。
 
 本地扫码还要求手机能够访问服务地址；仅监听回环地址时可先跳过手机步骤。默认本地启动脚本需要 Docker 提供 PostgreSQL 和 Redis。
 
@@ -81,13 +85,13 @@ corepack yarn dev
 
 弹窗使用 `@deepseek-ai/dsh-client-ui-primitives` 的 `Modal`、`Tooltip`、`Button`、`Input`、`StateDot`。这些组件由 DSH 的平台模块提供，插件不打包自己的副本；`clsx` 和实际使用的 Lucide 图标内联进 Client bundle。
 
-登录弹窗参考 Desktop 登录页的简洁纵向布局，标题为「登录以使用手机端远控能力」。初始视图只有说明、登录按钮和自建服务入口，不显示品牌、设备编号或状态卡片；账号状态、连接进度和错误只在需要时显示，自建服务表单按需展开。
+登录弹窗沿用 Desktop 的中文登录文案和简洁纵向布局。初始视图显示标题「登录到 Agents Anywhere」、说明、云端登录按钮和自建服务入口；展开后显示 OR 分隔、带服务器图标的单个地址输入框和「连接服务器」按钮。账号状态、连接进度和错误只在需要时显示。
 
 入口与弹窗布局位于 `src/client/features/onboarding/entry.module.css`，连接内容布局位于同目录的 `section.module.css`，使用 CSS Modules 和官方 `--dsw-alias-*` / `--dsw-font-*` 主题变量。页面跟随 DSH 的明暗主题，不声明全局主题或固定颜色。
 
 外部插件无法直接使用官方仓库未发布的构建 helper，因此 `scripts/client-css.ts` 按其输出契约处理 CSS：监听源文件、生成局部类名，在 Client factory 执行时注入带 `data-plugin` / `data-plugin-css` 的样式，供 DSH HMR 清理和重新加载。实现参考官方 `docs/web-styling.zh.md` 与 `packages/client/tsdown.client.ts`。
 
-`check:build` 在 headless DOM 中加载真实官方组件，验证侧边栏展开/收起、弹窗打开/关闭/焦点恢复、登录、取消、地址保存，以及卸载时弹窗与入口清理；同时检查样式去重及 HMR 清理后的重新注入。Node 中的 CSS loader 仅用于验证，不进入插件产物。
+`check:build` 在 headless DOM 中加载真实官方组件，验证侧边栏展开/收起、弹窗打开/关闭/焦点恢复、云端与自建服务登录、单地址输入校验、取消，以及卸载时弹窗与入口清理；同时检查样式去重及 HMR 清理后的重新注入。Node 中的 CSS loader 仅用于验证，不进入插件产物。
 
 ## 配置与本地状态
 
@@ -95,13 +99,13 @@ Host 配置位于 DSH 的插件配置行。常用项如下：
 
 | 配置 | 默认值 / 行为 |
 |---|---|
-| `apiBaseUrl` / `webBaseUrl` | 上述本地地址；页面保存的地址优先 |
+| `apiBaseUrl` | 默认云端后端地址；上次连接时保存的后端地址优先 |
 | `stateRoot` | 操作系统用户主目录下 `.agentsanywhere/dsh-bridge-next` |
 | `connectorSourceDir` | 包内 `lib/bundled-connector`；覆盖时必须为绝对路径 |
 | `uvPath` | `UV_PATH` 环境变量或 PATH 中的 `uv`；GUI 找不到时填写 uv 可执行文件的绝对路径 |
 | `autoStart` | `true`；Host 重载时尝试恢复已授权设备，首次安装不会自动启动 Connector |
 
-数据目录中保存 `settings.json`、`account.json`、按服务和账号隔离的 `bindings/`、`connector/` 与 `connector-venv/`。凭据文件以原子替换方式写入，POSIX 权限为 `0600`。退出登录删除用户凭据并停止连接，保留设备绑定供下次复用。
+数据目录中保存 `settings.json`、`account.json`、按服务和账号隔离的 `bindings/`、`connector/` 与 `connector-venv/`。`settings.json` 只保存 `apiBaseUrl`，不保存 Web 或 OAuth 地址；加载旧配置时自动移除旧的 `webBaseUrl`，保留匹配后端的账号。切换服务器前先检查健康状态，地址无效或无法连接时保留已有账号和连接。凭据文件以原子替换方式写入，POSIX 权限为 `0600`。退出登录删除用户凭据并停止连接，保留设备绑定供下次复用。
 
 同一数据目录只允许一个插件实例管理设备。插件根据规范化后的数据目录选取一个本机回环管理端口，由操作系统保证独占，异常退出后自动释放；该端口不提供 HTTP 或业务接口。端口若被其他程序占用会明确报错，不尝试抢占或启动第二个管理进程。
 

@@ -11,8 +11,7 @@ export function createHostApi(rpc: HostRpc): OnboardingHostApi {
     return result.value as T
   }
   return {
-    inspect: () => call('inspect'), begin: () => call('begin'),
-    configure: settings => call('configure', { settings }),
+    inspect: () => call('inspect'), begin: input => call('begin', input ? { input } : {}),
     cancel: () => call('cancel'), logout: () => call('logout'),
   }
 }

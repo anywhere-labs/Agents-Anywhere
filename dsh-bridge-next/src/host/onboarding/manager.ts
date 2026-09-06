@@ -1,10 +1,11 @@
 import { rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
-import type { ConnectionSettings, DesktopDetection, FlowStage, OnboardingSnapshot } from '../../contracts/index.js'
+import { CLOUD_API_BASE_URL, type ConnectionSettings, type DesktopDetection, type FlowStage, type LoginRequest, type OnboardingSnapshot } from '../../contracts/index.js'
 import { AccountApi, ApiError, type Account } from '../account/api.js'
 import { ensureBinding, type Binding } from '../account/binding.js'
-import { normalizeBaseUrl, type ResolvedConfig } from '../config.js'
+import { checkServer, normalizeServerOrigin, resolveOAuthWebOrigin } from '../account/server.js'
+import type { ResolvedConfig } from '../config.js'
 import { SourceConnector, type ConnectorProcess } from '../connector/process.js'
 import { detectDesktop } from '../desktop/detect.js'
 import { acquireManagerLock, readJson, writeJson } from '../storage/files.js'
@@ -14,6 +15,7 @@ interface Dependencies {
   connector?: ConnectorProcess
   detect?: () => Promise<DesktopDetection>
   api?: (baseUrl: string) => AccountApi
+  checkServer?: (baseUrl: string) => Promise<void>
   onlineTimeoutMs?: number
   pollIntervalMs?: number
 }
@@ -28,7 +30,7 @@ export class OnboardingManager {
   private flow: LoopbackFlow | null = null
   private controller: AbortController | null = null
   private work: Promise<void> | null = null
-  private beginning: Promise<{ url: string }> | null = null
+  private beginning: { key: string; promise: Promise<{ url: string }> } | null = null
   private releaseLock: (() => Promise<void>) | null = null
   private initialized: Promise<void> | null = null
   private disposed = false
@@ -38,7 +40,7 @@ export class OnboardingManager {
   private readonly apiFactory: (base: string) => AccountApi
 
   constructor(private readonly config: ResolvedConfig, private readonly dependencies: Dependencies = {}) {
-    this.settings = { apiBaseUrl: config.apiBaseUrl, webBaseUrl: config.webBaseUrl }
+    this.settings = { apiBaseUrl: config.apiBaseUrl }
     this.connector = dependencies.connector ?? new SourceConnector(config)
     this.detect = dependencies.detect ?? detectDesktop
     this.apiFactory = dependencies.api ?? (base => new AccountApi(base))
@@ -53,8 +55,19 @@ export class OnboardingManager {
     this.releaseLock = await acquireManagerLock(join(this.config.stateRoot, 'manager.lock'), () => this.loseOwnership())
     try {
       const settings = await readJson<ConnectionSettings>(join(this.config.stateRoot, 'settings.json'))
-      if (settings) this.settings = this.validateSettings(settings)
+      if (settings) {
+        this.settings = this.validateSettings(settings)
+        // Migrate earlier two-address settings without touching account credentials.
+        if (Object.keys(settings).length !== 1 || settings.apiBaseUrl !== this.settings.apiBaseUrl) {
+          await writeJson(join(this.config.stateRoot, 'settings.json'), this.settings)
+        }
+      }
       this.account = await readJson<Account>(join(this.config.stateRoot, 'account.json'))
+      // Older installs did not write settings when signing in to the default local server.
+      if (!settings && this.account) {
+        this.settings = this.validateSettings({ apiBaseUrl: this.account.apiBaseUrl })
+        await writeJson(join(this.config.stateRoot, 'settings.json'), this.settings)
+      }
       if (this.account?.apiBaseUrl !== this.settings.apiBaseUrl) this.account = null
       this.desktop = await this.detect()
     } catch (error) {
@@ -78,20 +91,31 @@ export class OnboardingManager {
     return this.snapshot()
   }
 
-  begin(): Promise<{ url: string }> {
-    if (this.beginning) return this.beginning
-    this.beginning = this.serial(() => this.startFlow()).finally(() => { this.beginning = null })
-    return this.beginning
+  begin(input?: LoginRequest): Promise<{ url: string }> {
+    const key = JSON.stringify(input ?? null)
+    if (this.beginning) return this.beginning.key === key
+      ? this.beginning.promise : Promise.reject(new Error('正在开始另一次登录，请稍候。'))
+    const promise = this.serial(() => this.startFlow(input)).finally(() => { this.beginning = null })
+    this.beginning = { key, promise }
+    return promise
   }
 
-  private async startFlow(): Promise<{ url: string }> {
+  private async startFlow(input?: LoginRequest): Promise<{ url: string }> {
     await this.initialize()
     if (this.disposed) throw new Error('插件已关闭。')
+    if (input && input.target !== 'cloud' && input.target !== 'server') throw new Error('请选择云端或自建服务器。')
+    const next = this.validateSettings({ apiBaseUrl: input?.target === 'cloud' ? CLOUD_API_BASE_URL
+      : input?.target === 'server' ? input.serverUrl : this.settings.apiBaseUrl })
     this.desktop = await this.detect()
     if (this.desktop.status !== 'absent') throw new Error(this.desktop.message)
-    await this.cancelFlow()
+    await (this.dependencies.checkServer ?? checkServer)(next.apiBaseUrl)
+    if (this.disposed) throw new Error('插件已关闭。')
     await this.connector.prepare()
     if (this.disposed) throw new Error('插件已关闭。')
+    if (next.apiBaseUrl !== this.settings.apiBaseUrl) await this.logoutFlow()
+    else await this.cancelFlow()
+    await writeJson(join(this.config.stateRoot, 'settings.json'), next)
+    this.settings = next
     const controller = new AbortController()
     this.controller = controller
     const flow = new LoopbackFlow(
@@ -114,7 +138,7 @@ export class OnboardingManager {
         this.account = null
       }
     }
-    return { url: flow.authorizationUrl(this.settings.webBaseUrl) }
+    return { url: flow.authorizationUrl(resolveOAuthWebOrigin(this.settings.apiBaseUrl)) }
   }
 
   private launch(flow: LoopbackFlow, controller: AbortController, code?: string): void {
@@ -156,23 +180,11 @@ export class OnboardingManager {
       await delay(this.dependencies.pollIntervalMs ?? 1_000, undefined, { signal })
     }
     signal.throwIfAborted()
-    const url = new URL(`${this.settings.webBaseUrl}/`)
+    const url = new URL(`${resolveOAuthWebOrigin(this.settings.apiBaseUrl)}/`)
     url.hash = `/onboarding?${new URLSearchParams({ source: 'dsh-plugin', connectorId: this.binding.connectorId, flowId: flow.id })}`
     this.stage = 'ready'
     this.message = '设备已上线，正在继续 Web 引导…'
     flow.update({ stage: 'ready', message: this.message, redirectUrl: url.href })
-  }
-
-  async configure(settings: ConnectionSettings): Promise<OnboardingSnapshot> {
-    return this.serial(async () => {
-      await this.initialize()
-      if (this.disposed) throw new Error('插件已关闭。')
-      const next = this.validateSettings(settings)
-      await this.logoutFlow()
-      this.settings = next
-      await writeJson(join(this.config.stateRoot, 'settings.json'), next)
-      return this.snapshot()
-    })
   }
 
   cancel(): Promise<void> { return this.serial(() => this.cancelFlow()) }
@@ -224,7 +236,7 @@ export class OnboardingManager {
   }
 
   private validateSettings(settings: ConnectionSettings): ConnectionSettings {
-    return { apiBaseUrl: normalizeBaseUrl(settings.apiBaseUrl).replace(/\/api\/v2$/, ''), webBaseUrl: normalizeBaseUrl(settings.webBaseUrl) }
+    return { apiBaseUrl: normalizeServerOrigin(settings.apiBaseUrl) }
   }
 
   private serial<T>(action: () => Promise<T>): Promise<T> {

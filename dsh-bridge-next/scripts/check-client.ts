@@ -68,11 +68,12 @@ export async function checkClient(source: string, packageId: string): Promise<vo
 
     let snapshot: OnboardingSnapshot = {
       desktop: { status: 'absent', message: '未找到 Desktop 安装记录。' },
-      settings: { apiBaseUrl: 'http://127.0.0.1:8000', webBaseUrl: 'http://127.0.0.1:5174' },
+      settings: { apiBaseUrl: 'http://127.0.0.1:8000' },
       stage: 'idle', message: '登录后连接这台电脑。', account: null,
       connectorId: null, connectorRunning: false, flowId: null,
     }
     const calls: { endpoint: string; payload: unknown }[] = []
+    let failNextBegin = false
     type EntryProps = { host: OnboardingHostApi; wide: boolean }
     let entry: { Component: ComponentType<EntryProps>; props: { host: OnboardingHostApi } } | undefined
     let entryCount = 0
@@ -81,6 +82,7 @@ export async function checkClient(source: string, packageId: string): Promise<vo
         assert.equal(channel, '/api')
         calls.push({ endpoint, payload })
         if (endpoint.endsWith('/begin')) {
+          if (failNextBegin) { failNextBegin = false; return { ok: false, error: { message: '无法连接服务器，请检查地址和网络后重试。' } } }
           snapshot = { ...snapshot, stage: 'authorizing' }
           return { ok: true, value: { url: 'https://example.com/onboarding' } }
         }
@@ -112,7 +114,7 @@ export async function checkClient(source: string, packageId: string): Promise<vo
       assert.ok(element, `Missing button: ${text}`)
       return element
     }
-    const dialog = () => document.querySelector<HTMLElement>('[role="dialog"][aria-label="登录以使用手机端远控能力"]')
+    const dialog = () => document.querySelector<HTMLElement>('[role="dialog"][aria-label="登录到 Agents Anywhere"]')
     const trigger = button('手机连接')
     assert.equal(trigger.textContent, '手机连接')
     assert.ok(trigger.querySelector('svg.lucide-smartphone'))
@@ -124,11 +126,11 @@ export async function checkClient(source: string, packageId: string): Promise<vo
     assert.equal(container.hasAttribute('inert'), true)
     assert.equal(trigger.getAttribute('aria-expanded'), 'true')
     assert.equal(document.activeElement, button('关闭手机连接'))
-    assert.doesNotMatch(dialog()!.textContent!, /agents anywhere/i)
+    assert.match(dialog()!.textContent!, /在所有设备间访问你的 Agent、会话和工作空间。/)
     assert.equal(dialog()!.querySelector('input'), null, 'Server fields stay hidden until requested')
-    assert.equal(button('登录云端').disabled, false)
-    await act(async () => { button('登录云端').click() })
-    assert.ok(calls.some(call => call.endpoint === 'agentsAnywhereOnboarding/begin'))
+    assert.equal(button('登录 Agents Anywhere Cloud').disabled, false)
+    await act(async () => { button('登录 Agents Anywhere Cloud').click() })
+    assert.deepEqual(JSON.parse(JSON.stringify(calls.find(call => call.endpoint.endsWith('/begin'))?.payload)), { args: { input: { target: 'cloud' } } })
     assert.deepEqual(openedUrls, [{ url: 'https://example.com/onboarding', target: '_blank', features: 'noopener,noreferrer' }])
     assert.equal(dialog()!.querySelector('a')?.href, 'https://example.com/onboarding')
     assert.equal(dialog()!.querySelector('[data-state]')?.getAttribute('data-state'), 'ongoing')
@@ -143,22 +145,46 @@ export async function checkClient(source: string, packageId: string): Promise<vo
     assert.ok(calls.some(call => call.endpoint === 'agentsAnywhereOnboarding/cancel'))
     assert.equal(dialog()!.querySelector('a'), null)
 
-    await act(async () => { button('连接到自己的服务实例').click() })
+    await act(async () => { button('连接到你自己的 Agents Anywhere 服务实例').click() })
     const inputs = Array.from(dialog()!.querySelectorAll('input'))
-    assert.equal(inputs.length, 2)
-    assert.ok(inputs.every(input => input.required && input.type === 'url' && input.labels?.length === 1))
-    assert.deepEqual(inputs.map(input => input.value), [snapshot.settings.webBaseUrl, snapshot.settings.apiBaseUrl])
+    assert.equal(inputs.length, 1, 'Self-hosted login accepts only the backend address')
+    const input = inputs[0]!
+    assert.equal(input.labels?.[0]?.textContent, '连接到你自己的 Agents Anywhere 服务实例')
+    assert.equal(input.placeholder, '输入服务器地址，例如 https://your-server.com')
+    assert.equal(input.inputMode, 'url')
+    assert.equal(document.activeElement, input)
+    assert.equal(button('连接服务器').disabled, true)
+    assert.ok(dialog()!.querySelector('svg.lucide-server'))
+    const enterServer = async (value: string) => act(async () => {
+      Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype, 'value')!.set!.call(input, value)
+      input.dispatchEvent(new dom.window.Event('input', { bubbles: true }))
+    })
+    await enterServer('http://127.0.0.1:8000')
+    assert.equal(button('连接服务器').disabled, false)
     await act(async () => {
       dialog()!.querySelector('form')!.dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }))
     })
-    const configure = calls.find(call => call.endpoint === 'agentsAnywhereOnboarding/configure')
-    assert.ok(configure)
-    assert.deepEqual(JSON.parse(JSON.stringify(configure.payload)), { args: { settings: snapshot.settings } })
+    assert.deepEqual(JSON.parse(JSON.stringify(calls.filter(call => call.endpoint.endsWith('/begin')).at(-1)?.payload)), {
+      args: { input: { target: 'server', serverUrl: 'http://127.0.0.1:8000' } },
+    })
+    assert.equal(calls.some(call => call.endpoint.endsWith('/configure')), false, 'Connecting must initiate login, not just save a form')
+    assert.match(dialog()!.textContent!, /已打开登录页面，完成登录后将自动返回。/)
+    await act(async () => { button('取消本次连接').click() })
 
-    const saveButton = button('保存连接地址')
+    failNextBegin = true
+    await act(async () => { button('连接服务器').click() })
+    assert.equal(input.getAttribute('aria-invalid'), 'true')
+    assert.match(document.getElementById(input.getAttribute('aria-describedby')!)!.textContent!, /无法连接服务器/)
+    await enterServer('https://another.example')
+    assert.equal(input.getAttribute('aria-invalid'), 'false')
+    await act(async () => { button('登录 Agents Anywhere Cloud').click() })
+    assert.deepEqual(JSON.parse(JSON.stringify(calls.filter(call => call.endpoint.endsWith('/begin')).at(-1)?.payload)), { args: { input: { target: 'cloud' } } })
+    await act(async () => { button('取消本次连接').click() })
+
+    const connectButton = button('连接服务器')
     await act(async () => {
-      saveButton.focus()
-      saveButton.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }))
+      connectButton.focus()
+      connectButton.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }))
     })
     assert.equal(document.activeElement, button('关闭手机连接'))
     await act(async () => { button('关闭手机连接').click() })

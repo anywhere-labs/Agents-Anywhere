@@ -35,7 +35,7 @@ async function fixture(mode = 'normal') {
   let child: ChildProcessWithoutNullStreams | undefined
   const connector = new SourceConnector({
     stateRoot: join(root, 'data'), connectorSourceDir: source, uvPath: mode === 'missing' ? join(root, 'missing-uv') : process.execPath,
-    autoStart: false, apiBaseUrl: 'https://api.example.test', webBaseUrl: 'https://app.example.test',
+    autoStart: false, apiBaseUrl: 'https://api.example.test',
   }, (command, args, options) => {
     assert.equal(args[0], 'run')
     assert.deepEqual(args.slice(1, 5), ['--directory', source, 'anywhere-cli', 'rpc'])

@@ -1,6 +1,6 @@
 import { Context, Service } from '@deepseek-ai/cordis'
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
-import { HOST_NAMESPACE, type ConnectionSettings, type OnboardingHostApi, type OnboardingSnapshot } from '../../contracts/index.js'
+import { HOST_NAMESPACE, type LoginRequest, type OnboardingHostApi, type OnboardingSnapshot } from '../../contracts/index.js'
 import { Config, resolveConfig } from '../config.js'
 import { OnboardingManager } from '../onboarding/manager.js'
 
@@ -29,9 +29,7 @@ export class OnboardingService extends TypertRemoteService implements Onboarding
   @Remote('inspect')
   inspect(): Promise<OnboardingSnapshot> { return this.manager.inspect() }
   @Remote('begin')
-  begin(): Promise<{ url: string }> { return this.manager.begin() }
-  @Remote('configure')
-  configure(settings: ConnectionSettings): Promise<OnboardingSnapshot> { return this.manager.configure(settings) }
+  begin(input?: LoginRequest): Promise<{ url: string }> { return this.manager.begin(input) }
   @Remote('cancel')
   async cancel(): Promise<null> { await this.manager.cancel(); return null }
   @Remote('logout')

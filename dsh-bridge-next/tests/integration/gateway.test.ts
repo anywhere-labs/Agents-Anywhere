@@ -21,10 +21,10 @@ test('published Host is callable through the actual rc.1 Gateway and disposes it
     for (let n = 0; n < 100 && !ctx.get('agentsAnywhereOnboarding'); n++) await delay(5)
     const result = await ctx.typertGateway.invoke({ namespace: 'agentsAnywhereOnboarding', method: 'inspect', args: {} }) as { stage: string }
     assert.equal(result.stage, 'idle')
-    const configured = await ctx.typertGateway.invoke({ namespace: 'agentsAnywhereOnboarding', method: 'configure', args: {
-      settings: { apiBaseUrl: 'https://api.example.test', webBaseUrl: 'https://app.example.test' },
-    } }) as { settings: { apiBaseUrl: string } }
-    assert.equal(configured.settings.apiBaseUrl, 'https://api.example.test')
+    await assert.rejects(ctx.typertGateway.invoke({ namespace: 'agentsAnywhereOnboarding', method: 'begin', args: {
+      input: { target: 'server', serverUrl: 'https://api.example.test/login' },
+    } }), /页面路径/)
+    await assert.rejects(ctx.typertGateway.invoke({ namespace: 'agentsAnywhereOnboarding', method: 'configure', args: {} }))
     assert.equal(await ctx.typertGateway.invoke({ namespace: 'agentsAnywhereOnboarding', method: 'cancel', args: {} }), null)
     await assert.rejects(ctx.typertGateway.invoke({ namespace: 'agentsAnywhereOnboarding', method: 'dispose', args: {} }))
     await plugin.dispose()

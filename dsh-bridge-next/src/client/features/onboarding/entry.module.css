@@ -60,7 +60,8 @@
 }
 
 .trigger :focus-visible,
-.dialog :focus-visible {
+.dialog button:focus-visible,
+.dialog a:focus-visible {
   outline: 2px solid var(--dsw-alias-brand-primary);
   outline-offset: 3px;
 }

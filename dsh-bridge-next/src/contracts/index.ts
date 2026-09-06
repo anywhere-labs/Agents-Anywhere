@@ -1,6 +1,7 @@
 // Shared settings API types will live here. The Connector bridge protocol stays in contracts/dsh-bridge.
 export const HOST_NAMESPACE = 'agentsAnywhereOnboarding'
 export const OAUTH_CLIENT_ID = 'agents-anywhere-dsh-plugin'
+export const CLOUD_API_BASE_URL = 'https://web.agents-anywhere.com'
 
 export type DesktopDetection =
   | { status: 'absent'; message: string }
@@ -11,8 +12,9 @@ export type FlowStage = 'idle' | 'authorizing' | 'pairing' | 'starting' | 'ready
 
 export interface ConnectionSettings {
   apiBaseUrl: string
-  webBaseUrl: string
 }
+
+export type LoginRequest = { target: 'cloud' } | { target: 'server'; serverUrl: string }
 
 /** Public snapshots never contain account or Connector credentials. */
 export interface OnboardingSnapshot {
@@ -28,8 +30,8 @@ export interface OnboardingSnapshot {
 
 export interface OnboardingHostApi {
   inspect(): Promise<OnboardingSnapshot>
-  begin(): Promise<{ url: string }>
-  configure(settings: ConnectionSettings): Promise<OnboardingSnapshot>
+  /** No input resumes the currently configured account; explicit input selects a login target. */
+  begin(input?: LoginRequest): Promise<{ url: string }>
   cancel(): Promise<null>
   logout(): Promise<null>
 }

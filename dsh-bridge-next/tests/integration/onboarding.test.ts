@@ -7,8 +7,8 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { OnboardingManager } from '../../src/host/onboarding/manager.js'
 import { AccountApi, type Account, type Device } from '../../src/host/account/api.js'
 import type { ConnectorProcess } from '../../src/host/connector/process.js'
-import type { DesktopDetection } from '../../src/contracts/index.js'
-import { readJson } from '../../src/host/storage/files.js'
+import { CLOUD_API_BASE_URL, type DesktopDetection } from '../../src/contracts/index.js'
+import { readJson, writeJson } from '../../src/host/storage/files.js'
 
 class FakeApi extends AccountApi {
   registrations = 0
@@ -41,16 +41,23 @@ async function fixture() {
   const root = await mkdtemp(join(tmpdir(), 'aa-flow-'))
   const api = new FakeApi('https://api.example.test')
   const connector = new FakeConnector()
+  const checkedServers: string[] = []
+  let healthError: Error | null = null
   let detection: DesktopDetection = { status: 'absent', message: 'not registered' }
   const create = () => new OnboardingManager({
     stateRoot: root, connectorSourceDir: root, uvPath: 'uv', autoStart: false,
-    apiBaseUrl: api.baseUrl, webBaseUrl: 'https://app.example.test',
-  }, { api: () => api, connector, detect: async () => detection, onlineTimeoutMs: 5000, pollIntervalMs: 10 })
+    apiBaseUrl: api.baseUrl,
+  }, {
+    api: base => base === api.baseUrl ? api : new FakeApi(base), connector, detect: async () => detection,
+    checkServer: async (base) => { checkedServers.push(base); if (healthError) throw healthError },
+    onlineTimeoutMs: 5000, pollIntervalMs: 10,
+  })
   let manager = create()
   return {
-    root, api, connector,
+    root, api, connector, checkedServers,
     get manager() { return manager },
     setDesktop(value: DesktopDetection) { detection = value },
+    failHealthCheck() { healthError = new Error('无法连接服务器，请检查地址和网络后重试。') },
     async reopen() { await manager.dispose(); manager = create(); return manager },
     async close() { await manager.dispose(); await rm(root, { recursive: true, force: true }) },
   }
@@ -91,7 +98,7 @@ test('OAuth callback pairs once, waits for actual online state, then redirects t
     h.api.online = true
     await until(async () => (await h.manager.inspect()).stage === 'ready')
     const ready = await fetch(`${progress}/status`).then(r => r.json())
-    assert.match(ready.redirectUrl, /^https:\/\/app.example.test\/#\/onboarding\?/)
+    assert.match(ready.redirectUrl, /^https:\/\/api.example.test\/#\/onboarding\?/)
     assert.match(ready.redirectUrl, /connectorId=conn_test/)
     assert.doesNotMatch(JSON.stringify(await h.manager.inspect()), /USER-SECRET|CONNECTOR-SECRET|accessToken|connectorToken/)
     assert.doesNotMatch(JSON.stringify(ready), /SECRET|token|code=/i)
@@ -170,6 +177,7 @@ test('repeated begin shares preparation, and disposal during preparation cannot 
   try {
     const first = h.manager.begin()
     assert.equal(h.manager.begin(), first)
+    await assert.rejects(h.manager.begin({ target: 'cloud' }), /另一次登录/)
     await entry
     const stopped = h.manager.dispose()
     const rejected = assert.rejects(first, /已关闭/)
@@ -178,4 +186,75 @@ test('repeated begin shares preparation, and disposal during preparation cannot 
     assert.equal(h.connector.starts, 0)
     assert.equal(await readJson(join(h.root, 'manager.lock')), null)
   } finally { await h.close() }
+})
+
+test('self-hosted and cloud login use separate targets and persist only the normalized backend', async () => {
+  const h = await fixture()
+  try {
+    const local = await h.manager.begin({ target: 'server', serverUrl: ' http://127.0.0.1:8000/api/v2/ ' })
+    assert.equal(new URL(local.url).origin, 'http://127.0.0.1:5174')
+    assert.equal(new URL(local.url).hash.startsWith('#/plugin-oauth?'), true)
+    assert.deepEqual(await readJson(join(h.root, 'settings.json')), { apiBaseUrl: 'http://127.0.0.1:8000' })
+    const cloud = await h.manager.begin({ target: 'cloud' })
+    assert.equal(new URL(cloud.url).origin, CLOUD_API_BASE_URL)
+    assert.deepEqual(await readJson(join(h.root, 'settings.json')), { apiBaseUrl: CLOUD_API_BASE_URL })
+    assert.deepEqual((await h.manager.inspect()).settings, { apiBaseUrl: CLOUD_API_BASE_URL })
+    assert.deepEqual(h.checkedServers, ['http://127.0.0.1:8000', CLOUD_API_BASE_URL])
+    assert.equal(h.api.exchanges, 0)
+    assert.equal(h.connector.starts, 0)
+  } finally { await h.close() }
+})
+
+test('invalid or unavailable login targets preserve the connected account and backend', async () => {
+  const h = await fixture()
+  h.api.online = true
+  try {
+    await callback((await h.manager.begin()).url)
+    await until(async () => (await h.manager.inspect()).stage === 'ready')
+    const account = await readJson(join(h.root, 'account.json'))
+    const stops = h.connector.stops
+    await assert.rejects(h.manager.begin({ target: 'server', serverUrl: 'https://wrong.example/login' }), /页面路径/)
+    h.failHealthCheck()
+    await assert.rejects(h.manager.begin({ target: 'server', serverUrl: 'unavailable.example' }), /无法连接服务器/)
+    assert.equal(h.connector.stops, stops)
+    assert.equal(h.connector.running, true)
+    assert.equal((await h.manager.inspect()).stage, 'ready')
+    assert.deepEqual(await readJson(join(h.root, 'account.json')), account)
+    assert.deepEqual(await readJson(join(h.root, 'settings.json')), { apiBaseUrl: h.api.baseUrl })
+  } finally { await h.close() }
+})
+
+test('legacy Web settings are removed on load while the saved account continues onboarding at the derived origin', async () => {
+  const h = await fixture()
+  h.api.online = true
+  try {
+    await writeJson(join(h.root, 'settings.json'), { apiBaseUrl: h.api.baseUrl, webBaseUrl: 'https://old-web.example.test' })
+    const account = await h.api.exchange()
+    await writeJson(join(h.root, 'account.json'), account)
+    const snapshot = await h.manager.inspect()
+    assert.deepEqual(snapshot.settings, { apiBaseUrl: h.api.baseUrl })
+    assert.equal(snapshot.account?.userId, account.userId)
+    assert.deepEqual(await readJson(join(h.root, 'settings.json')), { apiBaseUrl: h.api.baseUrl })
+    const { url } = await h.manager.begin()
+    await until(async () => (await h.manager.inspect()).stage === 'ready')
+    const progress = await fetch(`${url}/status`).then(response => response.json())
+    assert.equal(new URL(progress.redirectUrl).origin, h.api.baseUrl)
+    assert.equal(h.api.exchanges, 1, 'Migration must reuse the authorized account')
+  } finally { await h.close() }
+})
+
+test('an existing local account without settings survives the new cloud default', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'aa-legacy-account-'))
+  const api = new FakeApi('http://127.0.0.1:8000')
+  const account = await api.exchange()
+  await writeJson(join(root, 'account.json'), account)
+  const manager = new OnboardingManager({
+    stateRoot: root, connectorSourceDir: root, uvPath: 'uv', autoStart: false, apiBaseUrl: CLOUD_API_BASE_URL,
+  }, { connector: new FakeConnector(), detect: async () => ({ status: 'absent', message: 'not registered' }) })
+  try {
+    const snapshot = await manager.inspect()
+    assert.equal(snapshot.account?.userId, account.userId)
+    assert.deepEqual(snapshot.settings, { apiBaseUrl: 'http://127.0.0.1:8000' })
+    assert.deepEqual(await readJson(join(root, 'settings.json')), snapshot.settings)
+  } finally { await manager.dispose(); await rm(root, { recursive: true, force: true }) }
 })

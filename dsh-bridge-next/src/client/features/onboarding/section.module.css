@@ -11,8 +11,9 @@
 .form {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 32px;
   min-width: 0;
+  padding-top: 12px;
 }
 
 .status {
@@ -37,7 +38,7 @@
   height: 40px;
   gap: 8px;
   border-radius: 8px;
-  white-space: nowrap;
+  white-space: normal;
 }
 
 .section .secondaryButton {
@@ -57,24 +58,47 @@
   text-underline-offset: 3px;
 }
 
-.form {
-  padding-top: 24px;
-  border-top: 1px solid var(--dsw-alias-border-l2);
+.separator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-s-14);
+}
+
+.separator::before,
+.separator::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--dsw-alias-border-l2);
+}
+
+.fields {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
 }
 
 .field {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  font: var(--dsw-font-xs-13);
+  font: var(--dsw-font-s-14);
+  font-weight: 500;
 }
 
 .input {
   width: 100%;
   min-width: 0;
   box-sizing: border-box;
-  height: 40px;
-  border-radius: 8px;
+  height: 44px;
+  padding: 0 12px;
+  border-radius: 12px;
+  gap: 8px;
+}
+
+.input:has(input[aria-invalid='true']) {
+  border-color: var(--dsw-alias-state-error-primary);
 }
 
 .hint {
@@ -82,9 +106,4 @@
   color: var(--dsw-alias-label-tertiary);
   font: var(--dsw-font-xs-13);
   text-align: center;
-}
-
-.section :focus-visible {
-  outline: 2px solid var(--dsw-alias-brand-primary);
-  outline-offset: 3px;
 }

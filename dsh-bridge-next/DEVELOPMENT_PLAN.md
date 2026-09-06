@@ -10,6 +10,8 @@
 
 当前已实现无 AA Desktop 的插件登录、设备绑定、内部源码 Connector 管理与 Web onboarding，覆盖到“设置完成”。DSH runtime 保持占位，Python DSH 适配器的薄转发改造尚未开始。运行方法与验证范围见 [README](./README.md)。
 
+插件入口为 DSH 主侧边栏设置上方的「手机连接」，使用官方扩展点与官方 Modal、Button、Input 等组件。登录文案及云端/自建实例交互与 Desktop 保持一致：自建实例仅输入后端地址，检查后端健康状态后发起 OAuth；本地只保存后端地址，按同源部署及本地开发端口约定推导 Web/OAuth 地址，不再单独配置或保存 OAuth 地址。
+
 最新业务流程见 [Onboarding 业务方案](./ONBOARDING_PLAN.md)。**第一期先实现未安装 Agents Anywhere Desktop 的流程。** 本文的 Desktop 均指 AA Desktop；DSH Desktop 是承载插件的另一应用。
 
 插件进入引导前由 Host 检查本机 Desktop 安装状态。已安装时将 onboarding、用户、设备及 Connector 管理交给 Desktop；未安装时插件承担本机管理职责，OAuth 后把已上线设备交给 Web 独立 onboarding 页面。两种模式共用插件内的 `dsh-runtime`，不改变 Connector 薄转发的边界。
