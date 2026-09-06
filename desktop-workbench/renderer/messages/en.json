@@ -878,6 +878,7 @@
         "tabsLabel": "Tool tabs",
         "navigationLabel": "Open a tool",
         "review": "Review",
+        "reviewFilesChanged": "{count, plural, one {# file changed} other {# files changed}}",
         "terminal": "Terminal",
         "files": "Files",
         "newTab": "Open a new tab",

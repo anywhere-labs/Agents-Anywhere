@@ -58,6 +58,8 @@ import {
   timelineClientMessageId,
 } from "@/components/session/optimistic-timeline"
 import { nextTimelineResetVersion } from "@/components/session/session-review-history"
+import { buildLatestChangedTurnReview } from "@/components/session/session-review-model"
+import { SessionReviewTag } from "@/components/session/session-review-tag"
 import { isVisibleTimelineItem, messageText, runtimeLabel, textOf } from "@/components/session/session-utils"
 import { stripInjectedAttachmentMentions } from "@/features/dashboard/attachments"
 import { sessionRuntimeId, sessionRuntimeType } from "@/features/dashboard/runtime-instances"
@@ -67,6 +69,8 @@ type SessionDetailProps = {
   token: string
   sessionId: string
   fallbackSession: SessionView | null
+  connectorDeviceOs?: string | null
+  onOpenReview?: () => void
   onSessionUpdated?: (session: SessionView) => void
   onMemorySnapshotUpdated?: (snapshot: SessionMemorySnapshot | null) => void
   onStreamProgress?: (sessionId: string, nextSeq: number | null) => void
@@ -301,6 +305,8 @@ export function SessionDetail({
   token,
   sessionId,
   fallbackSession,
+  connectorDeviceOs,
+  onOpenReview,
   onSessionUpdated,
   onMemorySnapshotUpdated,
   onStreamProgress,
@@ -1432,6 +1438,13 @@ export function SessionDetail({
     () => groupTimelineItems((state?.items ?? []).filter(isVisibleTimelineItem), interactionTargetIds),
     [interactionTargetIds, state?.items],
   )
+  const changedFileCount = React.useMemo(() => {
+    if (state?.session.id !== sessionId) return 0
+    return buildLatestChangedTurnReview(state.items.filter(isVisibleTimelineItem), {
+      root: state.session.cwd,
+      caseInsensitivePaths: connectorDeviceOs === "windows",
+    })?.files.length ?? 0
+  }, [connectorDeviceOs, sessionId, state?.items, state?.session.id, state?.session.cwd])
   const turnActionsByGroupKey = React.useMemo(
     () => buildTurnActionsByGroupKey(
       timelineGroups,
@@ -1622,6 +1635,9 @@ export function SessionDetail({
           onRespondInteraction={handleRespondInteraction}
         />
         <div ref={composerContainerRef} className="pointer-events-auto relative">
+          {onOpenReview ? (
+            <SessionReviewTag fileCount={changedFileCount} onReview={onOpenReview} />
+          ) : null}
           <SessionComposer
             token={token}
             session={session}

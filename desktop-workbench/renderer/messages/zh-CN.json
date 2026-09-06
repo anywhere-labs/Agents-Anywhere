@@ -878,6 +878,7 @@
         "tabsLabel": "工具标签页",
         "navigationLabel": "打开工具",
         "review": "审阅",
+        "reviewFilesChanged": "{count} 个文件已更改",
         "terminal": "终端",
         "files": "文件",
         "newTab": "打开新标签页",

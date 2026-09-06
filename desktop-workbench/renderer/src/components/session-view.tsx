@@ -76,6 +76,9 @@ export function SessionView() {
     terminalLabel: t("tools.terminal"),
   })
   const previousToolSidebarExpanded = usePrevious(toolSidebar.expanded)
+  const handleOpenReview = React.useCallback(() => {
+    toolSidebar.openTool("review")
+  }, [toolSidebar.openTool])
 
   const availablePanelIds = isMobile ? (["files"] satisfies PanelId[]) : PANEL_IDS
   const floatingPanels = availablePanelIds.filter((id) => panels[id] === "floating")
@@ -251,6 +254,8 @@ export function SessionView() {
                   token={token}
                   sessionId={detailSessionId ?? session.id}
                   fallbackSession={activeSessionFallback}
+                  connectorDeviceOs={connector?.deviceOs}
+                  onOpenReview={handleOpenReview}
                   onSessionUpdated={upsertSession}
                   onMemorySnapshotUpdated={handleMemorySnapshotUpdated}
                   onStreamProgress={reportSessionStreamProgress}
