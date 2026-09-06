@@ -1,10 +1,15 @@
-lib/
-node_modules/
-.yarn/cache/
-.yarn/install-state.gz
-.yarn/unplugged/
-artifacts/
-coverage/
+node_modules
+lib
+bundled-connector
+*.tgz
+.DS_Store
+*.log
+src/**/*.d.ts
 
-# The repository ignores lockfiles globally; this package intentionally owns one.
-!yarn.lock
+# Python cache
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/.pytest_cache/
+**/.ruff_cache/
+**/.mypy_cache/

@@ -17,6 +17,7 @@ import type {
   PublicLocalDesktopBinding,
 } from "./connector-types";
 import type { DesktopOAuthResult } from "./desktop-oauth";
+import type { DesktopOAuthStartResult, DesktopServerConnection } from "./desktop-server";
 
 function subscribe<T>(channel: string, callback: (value: T) => void): () => void {
   const listener = (_event: Electron.IpcRendererEvent, value: T) => callback(value);
@@ -46,8 +47,9 @@ contextBridge.exposeInMainWorld("desktopWorkbench", {
   },
   openExternal: (url: string): Promise<void> => ipcRenderer.invoke("workbench:openExternal", url),
   auth: {
-    startOAuth: (): Promise<{ authorizeUrl: string }> =>
-      ipcRenderer.invoke("workbench:auth:startOAuth"),
+    getServer: (): Promise<DesktopServerConnection> => ipcRenderer.invoke("workbench:auth:getServer"),
+    startOAuth: (input?: { serverUrl?: string }): Promise<DesktopOAuthStartResult> =>
+      ipcRenderer.invoke("workbench:auth:startOAuth", input),
     consumeOAuthResult: (): Promise<DesktopOAuthResult | null> =>
       ipcRenderer.invoke("workbench:auth:consumeOAuthResult"),
     onOAuthResult: (callback: () => void): (() => void) =>

@@ -1,0 +1,17 @@
+{
+  "cloud": {
+    "serverUrl": "https://web.agents-anywhere.com",
+    "oauthWebOrigin": "https://web.agents-anywhere.com"
+  },
+  "apiNamespace": "/api/v2",
+  "healthTimeoutMs": 10000,
+  "oauth": {
+    "protocol": "agents-anywhere-desktop",
+    "clientId": "agents-anywhere-desktop",
+    "redirectUri": "agents-anywhere-desktop://oauth/callback",
+    "route": "/desktop-oauth",
+    "scope": "profile",
+    "requestTtlMs": 600000,
+    "tokenTimeoutMs": 15000
+  }
+}

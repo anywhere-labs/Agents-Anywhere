@@ -3,6 +3,7 @@ import {
   apiErrorKind,
   extractErrorPayload
 } from "@/lib/api/errors";
+import { desktopApiProxyBase, getDesktopServerConnection } from "@/features/desktop/server-connection";
 
 export type ApiTokenProvider = () => string | null | undefined;
 
@@ -23,10 +24,25 @@ export const API_NAMESPACE = normalizeApiNamespace(process.env.NEXT_PUBLIC_AGENT
 
 export function apiPath(path: string): string {
   if (path.startsWith("http")) return path;
-  if (!API_NAMESPACE) return path.startsWith("/") ? path : `/${path}`;
-  if (path === API_NAMESPACE || path.startsWith(`${API_NAMESPACE}/`)) return path;
+  const namespace = getDesktopServerConnection()?.apiNamespace ?? API_NAMESPACE;
+  if (!namespace) return path.startsWith("/") ? path : `/${path}`;
+  if (path === namespace || path.startsWith(`${namespace}/`)) return path;
   const normalized = path.startsWith("/") ? path : `/${path}`;
-  return `${API_NAMESPACE}${normalized}`;
+  return `${namespace}${normalized}`;
+}
+
+export function apiUrl(path: string): string {
+  if (/^https?:\/\//.test(path)) return path;
+  return `${desktopApiProxyBase()}${apiPath(path)}`;
+}
+
+export function apiWebSocketUrl(path: string): string {
+  const namespacedPath = apiPath(path);
+  if (typeof window === "undefined") return namespacedPath;
+  const origin = getDesktopServerConnection()?.serverUrl || process.env.NEXT_PUBLIC_AGENTS_ANYWHERE_API || window.location.origin;
+  const url = new URL(namespacedPath, origin);
+  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  return url.toString();
 }
 
 function normalizeApiNamespace(value: string): string {
@@ -36,12 +52,12 @@ function normalizeApiNamespace(value: string): string {
 }
 
 export class ApiClient {
-  private readonly baseUrl: string;
+  private readonly baseUrl?: string;
   private readonly getToken?: ApiTokenProvider;
   private readonly fetcher: typeof fetch;
 
   constructor(options: ApiClientOptions = {}) {
-    this.baseUrl = options.baseUrl ?? "";
+    this.baseUrl = options.baseUrl;
     this.getToken = options.getToken;
     this.fetcher = options.fetcher ?? ((input, init) => fetch(input, init));
   }
@@ -128,7 +144,7 @@ export class ApiClient {
     path: string,
     query?: ApiRequestOptions["query"],
   ): string {
-    const base = this.baseUrl;
+    const base = this.baseUrl ?? desktopApiProxyBase();
     const namespacedPath = apiPath(path);
     const raw = namespacedPath.startsWith("http") ? namespacedPath : `${base}${namespacedPath}`;
     if (!query) return raw;

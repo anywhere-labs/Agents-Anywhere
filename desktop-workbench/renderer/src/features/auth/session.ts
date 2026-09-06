@@ -12,7 +12,8 @@ export function loadStoredSession(): StoredSession | null {
     return {
       accessToken: parsed.accessToken,
       userId: parsed.userId,
-      role: parsed.role
+      role: parsed.role,
+      serverUrl: typeof parsed.serverUrl === "string" ? parsed.serverUrl : undefined,
     };
   } catch {
     return null;

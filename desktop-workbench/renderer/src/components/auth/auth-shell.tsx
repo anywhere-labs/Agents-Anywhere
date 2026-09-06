@@ -1,29 +1,11 @@
 "use client"
 
-import { LocaleSwitcher } from "@/components/locale-switcher"
-
 export function AuthShell({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex min-h-screen flex-col bg-background">
-      {/* Top nav */}
-      <header className="aa-window-drag flex shrink-0 items-center justify-between pb-5 pl-6 pr-8 pt-12">
-        <span className="aa-wordmark hidden text-xl md:inline">Agents Anywhere</span>
-        <nav className="aa-window-no-drag flex items-center gap-4 text-sm text-muted-foreground">
-          <a
-            href="https://github.com/anywhere-labs/Agents-Anywhere"
-            target="_blank"
-            rel="noreferrer"
-            className="hidden transition-colors hover:text-foreground md:inline"
-          >
-            GitHub
-          </a>
-          <LocaleSwitcher size="sm" variant="ghost" className="text-foreground" />
-        </nav>
-      </header>
-
-      {/* Centered content */}
-      <main className="flex flex-1 items-center justify-center px-4 py-12">
-        <div className="w-full max-w-sm">
+    <div className="aa-auth-shell h-dvh overflow-y-auto bg-background text-foreground">
+      <header aria-hidden="true" className="aa-window-drag fixed inset-x-0 top-0 h-12" />
+      <main className="flex min-h-full items-center justify-center px-6 py-20">
+        <div className="aa-window-no-drag w-full max-w-[35rem]">
           {children}
         </div>
       </main>

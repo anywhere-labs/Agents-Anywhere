@@ -1,11 +1,13 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import config from "../config.json";
+import type { DesktopServerConnection } from "./desktop-server";
 
-export const DESKTOP_OAUTH_PROTOCOL = "agents-anywhere-desktop";
-export const DESKTOP_OAUTH_CLIENT_ID = "agents-anywhere-desktop";
-export const DESKTOP_OAUTH_REDIRECT_URI = `${DESKTOP_OAUTH_PROTOCOL}://oauth/callback`;
-export const DESKTOP_OAUTH_SCOPE = "profile";
+export const DESKTOP_OAUTH_PROTOCOL = config.oauth.protocol;
+export const DESKTOP_OAUTH_CLIENT_ID = config.oauth.clientId;
+export const DESKTOP_OAUTH_REDIRECT_URI = config.oauth.redirectUri;
+export const DESKTOP_OAUTH_SCOPE = config.oauth.scope;
 
-const DESKTOP_OAUTH_REQUEST_TTL_MS = 10 * 60 * 1000;
+const DESKTOP_OAUTH_REQUEST_TTL_MS = config.oauth.requestTtlMs;
 
 export type DesktopOAuthPending = {
   state: string;
@@ -14,8 +16,44 @@ export type DesktopOAuthPending = {
 };
 
 export type DesktopOAuthResult =
-  | { status: "success"; accessToken: string }
+  | { status: "success"; accessToken: string; server: DesktopServerConnection }
   | { status: "error"; error: string };
+
+export async function exchangeDesktopOAuthCode(
+  code: string,
+  verifier: string,
+  server: DesktopServerConnection,
+  fetcher: typeof fetch,
+): Promise<string> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), config.oauth.tokenTimeoutMs);
+  try {
+    const response = await fetcher(`${server.serverUrl}${server.apiNamespace}/oauth/token`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      credentials: "omit",
+      redirect: "error",
+      body: new URLSearchParams({
+        grant_type: "authorization_code",
+        code,
+        client_id: DESKTOP_OAUTH_CLIENT_ID,
+        redirect_uri: DESKTOP_OAUTH_REDIRECT_URI,
+        code_verifier: verifier,
+      }).toString(),
+      signal: controller.signal,
+    });
+    const payload = await response.json() as { access_token?: unknown; detail?: unknown };
+    if (!response.ok) {
+      throw new Error(typeof payload.detail === "string" ? payload.detail : `Desktop login failed (${response.status}).`);
+    }
+    if (typeof payload.access_token !== "string" || !payload.access_token) {
+      throw new Error("Desktop login token response was invalid.");
+    }
+    return payload.access_token;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
 
 export function createDesktopOAuthRequest(
   webOrigin: string,
@@ -35,7 +73,7 @@ export function createDesktopOAuthRequest(
     state,
   });
   return {
-    authorizeUrl: `${origin}/#/desktop-oauth?${params.toString()}`,
+    authorizeUrl: `${origin}/#${config.oauth.route}?${params.toString()}`,
     pending: { state, verifier, createdAt: now },
   };
 }
