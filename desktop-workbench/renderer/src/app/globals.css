@@ -189,6 +189,45 @@ body {
   -webkit-app-region: drag;
 }
 
+html[data-windows-title-bar] {
+  --aa-title-bar-height: 32px;
+}
+
+html[data-windows-title-bar] body {
+  padding-top: var(--aa-title-bar-height);
+}
+
+.aa-windows-title-bar {
+  position: fixed;
+  inset: 0 0 auto;
+  height: var(--aa-title-bar-height);
+  padding-right: calc(100vw - env(titlebar-area-width, calc(100vw - 138px)) + 12px);
+}
+
+html[data-windows-title-bar] .h-svh {
+  height: calc(100svh - var(--aa-title-bar-height));
+}
+
+html[data-windows-title-bar] .aa-auth-shell {
+  height: calc(100dvh - var(--aa-title-bar-height));
+}
+
+html[data-windows-title-bar] .min-h-screen {
+  min-height: calc(100vh - var(--aa-title-bar-height));
+}
+
+html[data-windows-title-bar] .aa-auth-shell > header {
+  top: var(--aa-title-bar-height);
+}
+
+html[data-windows-title-bar] [data-slot="sidebar-container"] {
+  top: var(--aa-title-bar-height);
+}
+
+html[data-windows-title-bar] [data-slot="session-tool-sidebar"] {
+  top: var(--aa-title-bar-height);
+}
+
 /* Hallmark · studied: yes · source: user login reference · existing Geist tokens
  * Pre-emit critique: P5 H5 E4 S5 R5 V4. The native window owns the chrome.
  */

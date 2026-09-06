@@ -584,6 +584,7 @@ export function SessionToolSidebar({
 
   return createPortal(
     <aside
+      data-slot="session-tool-sidebar"
       aria-label={t("sidebarLabel")}
       aria-hidden={!presented || !controller.open}
       inert={!presented || !controller.open ? true : undefined}
