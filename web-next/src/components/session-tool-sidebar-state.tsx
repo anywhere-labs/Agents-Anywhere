@@ -11,15 +11,25 @@ import {
 } from "@/components/session-tool-sidebar-store"
 import { useAuth } from "@/components/auth/auth-context"
 import { INITIAL_SESSION_TOOL_TABS_STATE } from "@/components/session-tool-tabs"
-import { dashboardApi } from "@/features/dashboard/api"
+import { API_NAMESPACE } from "@/lib/api"
+import { readTerminalPreferences, terminalPreferenceKey, writeTerminalPreferences } from "./session-terminal-preferences"
 
 const SessionToolSidebarStateContext = React.createContext<SessionToolSidebarStore | null>(null)
 
 export function SessionToolSidebarStateProvider({ children }: { children: React.ReactNode }) {
   const { session } = useAuth()
-  const [store] = React.useState(createSessionToolSidebarStore)
-  const sessionRef = React.useRef(session)
-  sessionRef.current = session
+  const [store] = React.useState(() => {
+    let storage: Storage | null = null
+    try {
+      if (typeof window !== "undefined") storage = window.localStorage
+    } catch { /* Browser storage may be disabled. Inventory queries remain available. */ }
+    const server = JSON.stringify([process.env.NEXT_PUBLIC_AGENTS_ANYWHERE_API ?? "", API_NAMESPACE])
+    const key = terminalPreferenceKey(server, session?.userId ?? "signed-out")
+    return createSessionToolSidebarStore({
+      terminalPreferences: readTerminalPreferences(storage, key),
+      onTerminalPreferencesChange: (preferences) => writeTerminalPreferences(storage, key, preferences),
+    })
+  })
 
   const lifecycleGeneration = React.useRef(0)
   React.useEffect(() => {
@@ -28,18 +38,6 @@ export function SessionToolSidebarStateProvider({ children }: { children: React.
       queueMicrotask(() => {
         if (lifecycleGeneration.current !== generation) return
         store.beginShutdown()
-        const current = sessionRef.current
-        if (!current) return
-        for (const id of store.getSessionIds()) {
-          const context = store.getContext(id)
-          if (!context?.connectorId || context.ownerUserId !== current.userId) continue
-          for (const tab of store.getState(id).tabs) {
-            if (tab.terminal) {
-              void dashboardApi.connectorTerminalCloseV2(current.accessToken, context.connectorId, tab.terminal.terminalId)
-                .catch(() => undefined)
-            }
-          }
-        }
       })
     }
   }, [store])

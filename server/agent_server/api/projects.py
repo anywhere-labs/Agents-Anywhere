@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy.exc import IntegrityError
 
 from agent_server.core.models import (
     ArchiveAllRequest,
@@ -10,6 +11,7 @@ from agent_server.core.models import (
     ProjectDeleteResponse,
     ProjectListResponse,
     ProjectPatchRequest,
+    ProjectResolveRequest,
     ProjectResponse,
     ProjectSessionListResponse,
 )
@@ -86,6 +88,41 @@ async def create_project(
         attachedSessions=0,
         serverTime=utc_now(),
     )
+
+
+@router.post("/resolve", response_model=ProjectResponse)
+async def resolve_project(
+    payload: ProjectResolveRequest,
+    user_id: str = Depends(current_user_id),
+    store: Store = Depends(get_store),
+    broker: TimelineBroker = Depends(get_timeline_broker),
+) -> ProjectResponse:
+    try:
+        project = await store.ensure_project_for_workspace(
+            connector_id=payload.connectorId,
+            workspace_path=payload.workspacePath,
+            user_id=user_id,
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail="connector not found") from None
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except IntegrityError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "project_resolution_conflict",
+                "message": "workspace changed concurrently; please retry",
+            },
+        ) from exc
+    await publish_dashboard_changed(
+        store,
+        broker,
+        user_id=user_id,
+        connector_id=project.connectorId,
+        reason="project.resolved",
+    )
+    return ProjectResponse(project=project, serverTime=utc_now())
 
 
 @router.patch("/{project_id}", response_model=ProjectResponse)

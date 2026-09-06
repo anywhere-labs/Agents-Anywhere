@@ -37,6 +37,10 @@ export type SessionToolTabsAction =
   | { type: "set-tab-title"; id: string; title: string | null }
   | { type: "resolve-terminal"; id: string; terminal: TerminalView }
   | { type: "fail-terminal"; id: string; error: string }
+  | { type: "restore-terminal-layout"; tab: SessionToolTab; open: boolean; expanded: boolean; preferredWidth: number | null }
+  | { type: "restore-terminals"; pendingId: string; terminals: TerminalView[]; activeTerminalId?: string | null }
+  | { type: "remove-terminal"; terminalId: string }
+  | { type: "clear-terminals" }
 
 export const INITIAL_SESSION_TOOL_TABS_STATE: SessionToolTabsState = {
   open: false,
@@ -73,6 +77,46 @@ export function sessionToolTabsReducer(
   state: SessionToolTabsState,
   action: SessionToolTabsAction,
 ): SessionToolTabsState {
+  if (action.type === "restore-terminal-layout") {
+    return {
+      ...state,
+      open: action.open,
+      expanded: action.open && action.expanded,
+      preferredWidth: action.preferredWidth,
+      tabs: [...state.tabs, action.tab],
+      activeTabId: state.activeTabId ?? action.tab.id,
+    }
+  }
+  if (action.type === "restore-terminals") {
+    const index = state.tabs.findIndex((tab) => tab.id === action.pendingId)
+    if (index === -1) return state
+    const existingIds = new Set(state.tabs.flatMap((tab) => tab.terminal ? [tab.terminal.terminalId] : []))
+    const restored = action.terminals.filter((terminal) => {
+      if (existingIds.has(terminal.terminalId)) return false
+      existingIds.add(terminal.terminalId)
+      return true
+    }).map((terminal) => ({
+      ...createSessionToolTab(`terminal:${terminal.terminalId}`, "terminal", terminal.label),
+      terminal,
+    }))
+    const tabs = [...state.tabs.slice(0, index), ...restored, ...state.tabs.slice(index + 1)]
+    const preferred = action.activeTerminalId
+      ? tabs.find((tab) => tab.terminal?.terminalId === action.activeTerminalId)
+      : undefined
+    return {
+      ...state,
+      tabs,
+      activeTabId: state.activeTabId === action.pendingId
+        ? preferred?.id ?? tabs[Math.min(index, tabs.length - 1)]?.id ?? null
+        : state.activeTabId,
+    }
+  }
+  if (action.type === "remove-terminal" || action.type === "clear-terminals") {
+    const removed = state.tabs.filter((tab) => action.type === "clear-terminals"
+      ? tab.kind === "terminal"
+      : tab.terminal?.terminalId === action.terminalId)
+    return removed.reduce((current, tab) => sessionToolTabsReducer(current, { type: "close-tab", id: tab.id }), state)
+  }
   if (action.type === "toggle-sidebar") {
     return state.open
       ? { ...state, open: false, expanded: false }

@@ -104,6 +104,23 @@ def test_synced_project_is_not_manual_and_client_creation_claims_it(store):
     asyncio.run(scenario())
 
 
+def test_concurrent_workspace_resolution_reuses_one_project(store):
+    async def scenario():
+        resolved = await asyncio.gather(
+            *[
+                store.ensure_project_for_workspace(
+                    user_id="owner", connector_id="device", workspace_path="/repo"
+                )
+                for _ in range(4)
+            ]
+        )
+        assert len({project.id for project in resolved}) == 1
+        assert all(not project.manuallyCreated for project in resolved)
+        assert len(await store.list_projects(user_id="owner")) == 1
+
+    asyncio.run(scenario())
+
+
 @pytest.mark.parametrize("session_count", [0, 2])
 def test_archiving_project_clears_manual_flag_even_when_empty(store, session_count):
     async def scenario():

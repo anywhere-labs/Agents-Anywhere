@@ -314,6 +314,11 @@ export type ProjectCreateResponse = ProjectResponse & {
   attachedSessions: number;
 };
 
+export type ProjectResolveRequest = {
+  connectorId: string;
+  workspacePath: string;
+};
+
 export type ProjectPatchRequest = {
   name?: string;
   pinned?: boolean;

@@ -10,14 +10,7 @@ import {
 } from "@/components/auth/account-identity-fields"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
+import { SettingsSection } from "@/components/settings/settings-section"
 import {
   Field,
   FieldDescription,
@@ -80,73 +73,10 @@ export function AccountProfileCard({
     }
   }
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>{t("title")}</CardTitle>
-        <CardDescription>{t("description")}</CardDescription>
-      </CardHeader>
-      <CardContent>
-        <FieldGroup>
-          <DisplayNameField
-            value={displayName}
-            onChange={setDisplayName}
-            disabled={Boolean(saving)}
-          />
-          <Button
-            type="button"
-            variant="outline"
-            className="self-start"
-            disabled={
-              Boolean(saving) ||
-              !isValidDisplayName(displayName) ||
-              displayName.trim() === me.displayName
-            }
-            onClick={() => void save("displayName")}
-          >
-            {saving === "displayName" ? (
-              <Spinner data-icon="inline-start" />
-            ) : null}
-            {t("saveDisplayName")}
-          </Button>
-          <Field>
-            <FieldLabel htmlFor="profile-email">{t("email")}</FieldLabel>
-            <Input
-              id="profile-email"
-              type="email"
-              autoComplete="email"
-              value={email}
-              disabled={Boolean(saving)}
-              onChange={(event) => {
-                setEmail(event.currentTarget.value)
-                setCode("")
-              }}
-            />
-            <FieldDescription>{t("emailDescription")}</FieldDescription>
-            {me.email && normalizeEmail(email) === me.email ? (
-              <Badge
-                variant={me.emailVerified ? "secondary" : "outline"}
-                className="self-start"
-              >
-                {t(me.emailVerified ? "verified" : "unverified")}
-              </Badge>
-            ) : null}
-          </Field>
-          {emailVerificationRequired ? (
-            <EmailCodeField
-              email={email}
-              value={code}
-              onChange={setCode}
-              purpose="bind"
-              token={token}
-              disabled={Boolean(saving)}
-              id="profile-email-code"
-            />
-          ) : (
-            <FieldDescription>{t("verificationDisabled")}</FieldDescription>
-          )}
-        </FieldGroup>
-      </CardContent>
-      <CardFooter>
+    <SettingsSection
+      title={t("title")}
+      description={t("description")}
+      footer={
         <Button
           type="button"
           disabled={
@@ -160,7 +90,66 @@ export function AccountProfileCard({
           {saving === "email" ? <Spinner data-icon="inline-start" /> : null}
           {t(me.email ? "changeEmail" : "bindEmail")}
         </Button>
-      </CardFooter>
-    </Card>
+      }
+    >
+      <FieldGroup>
+        <DisplayNameField
+          value={displayName}
+          onChange={setDisplayName}
+          disabled={Boolean(saving)}
+        />
+        <Button
+          type="button"
+          variant="outline"
+          className="self-start"
+          disabled={
+            Boolean(saving) ||
+            !isValidDisplayName(displayName) ||
+            displayName.trim() === me.displayName
+          }
+          onClick={() => void save("displayName")}
+        >
+          {saving === "displayName" ? (
+            <Spinner data-icon="inline-start" />
+          ) : null}
+          {t("saveDisplayName")}
+        </Button>
+        <Field>
+          <div className="flex flex-wrap items-center gap-2">
+            <FieldLabel htmlFor="profile-email">{t("email")}</FieldLabel>
+            {me.email && normalizeEmail(email) === me.email ? (
+              <Badge variant={me.emailVerified ? "secondary" : "outline"}>
+                {t(me.emailVerified ? "verified" : "unverified")}
+              </Badge>
+            ) : null}
+          </div>
+          <Input
+            id="profile-email"
+            type="email"
+            autoComplete="email"
+            value={email}
+            disabled={Boolean(saving)}
+            onChange={(event) => {
+              setEmail(event.currentTarget.value)
+              setCode("")
+            }}
+          />
+          <FieldDescription>{t("emailDescription")}</FieldDescription>
+        </Field>
+        {emailVerificationRequired ? (
+          <EmailCodeField
+            email={email}
+            value={code}
+            onChange={setCode}
+            purpose="bind"
+            token={token}
+            disabled={Boolean(saving)}
+            id="profile-email-code"
+          />
+        ) : (
+          <FieldDescription>{t("verificationDisabled")}</FieldDescription>
+        )}
+      </FieldGroup>
+    </SettingsSection>
   )
 }

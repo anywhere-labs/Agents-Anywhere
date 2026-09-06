@@ -5,6 +5,7 @@ import {
   type SessionToolTabsState,
 } from "./session-tool-tabs.ts"
 import type { TimelineItem } from "@/features/dashboard/types"
+import type { SessionTerminalPreference } from "./session-terminal-preferences.ts"
 
 export type SessionToolSidebarContext = {
   ownerUserId: string
@@ -30,7 +31,10 @@ type Listener = () => void
 
 export type SessionToolSidebarStore = ReturnType<typeof createSessionToolSidebarStore>
 
-export function createSessionToolSidebarStore() {
+export function createSessionToolSidebarStore(options: {
+  terminalPreferences?: SessionTerminalPreference[]
+  onTerminalPreferencesChange?: (preferences: SessionTerminalPreference[]) => void
+} = {}) {
   const states = new Map<string, SessionToolTabsState>()
   const contexts = new Map<string, SessionToolSidebarContext>()
   const reviewTimelines = new Map<string, SessionReviewTimelineSnapshot>()
@@ -45,6 +49,29 @@ export function createSessionToolSidebarStore() {
   let sessionIdsSnapshot: string[] = []
   let hostBounds: SessionToolSidebarHostBounds = { left: 0, width: 0 }
   let shuttingDown = false
+  const terminalPreferences = new Map((options.terminalPreferences ?? []).map((item) => [item.sessionId, item]))
+  const closedTerminalIds = new Set<string>()
+
+  const persistTerminals = (sessionId: string, state: SessionToolTabsState) => {
+    const context = contexts.get(sessionId)
+    if (!context?.connectorId) return
+    if (state.tabs.some((tab) => tab.kind === "terminal")) {
+      const activeTab = state.tabs.find((tab) => tab.id === state.activeTabId)
+      terminalPreferences.set(sessionId, {
+        sessionId,
+        connectorId: context.connectorId,
+        root: context.root,
+        open: state.open,
+        expanded: state.expanded,
+        preferredWidth: state.preferredWidth,
+        activeTerminalId: activeTab?.terminal?.terminalId
+          ?? (activeTab?.kind === "terminal" ? terminalPreferences.get(sessionId)?.activeTerminalId ?? null : null),
+      })
+    } else {
+      terminalPreferences.delete(sessionId)
+    }
+    options.onTerminalPreferencesChange?.(Array.from(terminalPreferences.values()))
+  }
 
   const resolveSessionId = (sessionId: string) => {
     let current = sessionId
@@ -89,6 +116,7 @@ export function createSessionToolSidebarStore() {
       const next = sessionToolTabsReducer(current, action)
       if (next === current) return
       states.set(sessionId, next)
+      persistTerminals(sessionId, next)
       addSessionId(sessionId)
       stateListeners.get(sessionId)?.forEach((listener) => listener())
     },
@@ -102,9 +130,22 @@ export function createSessionToolSidebarStore() {
     },
 
     setContext(sessionId: string, context: SessionToolSidebarContext) {
+      context = { ...context, root: context.root.trim() || "." }
       sessionId = resolveSessionId(sessionId)
       const current = contexts.get(sessionId)
       if (current && sameContext(current, context)) return
+      if (current && (
+        current.connectorId !== context.connectorId || current.root !== context.root
+        || current.ownerUserId !== context.ownerUserId
+      )) {
+        const state = states.get(sessionId)
+        if (state) {
+          const next = sessionToolTabsReducer(state, { type: "clear-terminals" })
+          states.set(sessionId, next)
+          persistTerminals(sessionId, next)
+          stateListeners.get(sessionId)?.forEach((listener) => listener())
+        }
+      }
       contexts.set(sessionId, context)
       addSessionId(sessionId)
       contextListeners.get(sessionId)?.forEach((listener) => listener())
@@ -141,6 +182,12 @@ export function createSessionToolSidebarStore() {
       const from = resolveSessionId(fromSessionId)
       const to = resolveSessionId(toSessionId)
       if (from === to) return
+      const preference = terminalPreferences.get(from)
+      if (preference) {
+        terminalPreferences.set(to, { ...preference, sessionId: to })
+        terminalPreferences.delete(from)
+        options.onTerminalPreferencesChange?.(Array.from(terminalPreferences.values()))
+      }
       const fromStateListeners = stateListeners.get(from)
       const fromContextListeners = contextListeners.get(from)
       const fromReviewTimelineListeners = reviewTimelineListeners.get(from)
@@ -181,6 +228,22 @@ export function createSessionToolSidebarStore() {
 
     getSessionIds(): string[] {
       return sessionIdsSnapshot
+    },
+
+    getTerminalPreference(sessionId: string) {
+      return terminalPreferences.get(resolveSessionId(sessionId)) ?? null
+    },
+
+    removeTerminal(connectorId: string, terminalId: string) {
+      closedTerminalIds.add(JSON.stringify([connectorId, terminalId]))
+      for (const [sessionId, context] of contexts) {
+        if (context.connectorId !== connectorId) continue
+        this.dispatch(sessionId, { type: "remove-terminal", terminalId })
+      }
+    },
+
+    isTerminalClosed(connectorId: string, terminalId: string) {
+      return closedTerminalIds.has(JSON.stringify([connectorId, terminalId]))
     },
 
     getHostKey(sessionId: string): string {

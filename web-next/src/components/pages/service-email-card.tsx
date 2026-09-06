@@ -112,7 +112,12 @@ export function ServiceEmailCard({
             <FieldDescription>{t("fromDescription")}</FieldDescription>
           </Field>
           <Field>
-            <FieldLabel htmlFor="email-api-key">{t("apiKey")}</FieldLabel>
+            <div className="flex flex-wrap items-center gap-2">
+              <FieldLabel htmlFor="email-api-key">{t("apiKey")}</FieldLabel>
+              <Badge variant="secondary">
+                {t(settings.apiKeyConfigured && !clearApiKey ? "configured" : "notConfigured")}
+              </Badge>
+            </div>
             <Input
               id="email-api-key"
               type="password"
@@ -122,13 +127,6 @@ export function ServiceEmailCard({
               onChange={(event) => setApiKey(event.currentTarget.value)}
             />
             <FieldDescription>{t("apiKeyDescription")}</FieldDescription>
-            <Badge variant="secondary" className="self-start">
-              {t(
-                settings.apiKeyConfigured && !clearApiKey
-                  ? "configured"
-                  : "notConfigured",
-              )}
-            </Badge>
           </Field>
           {settings.apiKeyConfigured && !enabled ? (
             <Field orientation="horizontal">

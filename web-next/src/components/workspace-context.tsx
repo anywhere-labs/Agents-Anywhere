@@ -12,11 +12,13 @@ import {
 } from "@/lib/demo-api"
 import { useAuth } from "@/components/auth/auth-context"
 import { dashboardApi } from "@/features/dashboard/api"
+import { resolveWorkspaceProject } from "@/features/dashboard/project-workspaces"
 import type {
   ConnectorView as RealConnectorView,
   DashboardSnapshotMessage,
   ProjectCreateRequest,
   ProjectPatchRequest,
+  ProjectResolveRequest,
   ProjectView,
   SessionLocalTimelineState,
   SessionPageInfo,
@@ -359,6 +361,7 @@ export type WorkspaceState = {
   renameSession: (id: string, title: string) => Promise<boolean>
   loadProjectSessions: (projectId: string) => Promise<boolean>
   createProject: (payload: ProjectCreateRequest) => Promise<ProjectView | null>
+  resolveProject: (payload: ProjectResolveRequest) => Promise<ProjectView>
   updateProject: (projectId: string, patch: ProjectPatchRequest) => Promise<ProjectView | null>
   deleteProject: (projectId: string) => Promise<boolean>
   archiveProjectSessions: (projectId: string) => Promise<boolean>
@@ -1215,6 +1218,26 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     }
   }, [authSession?.accessToken, upsertProject])
 
+  const resolveProject = React.useCallback(async (payload: ProjectResolveRequest): Promise<ProjectView> => {
+    const token = authSession?.accessToken
+    if (!token) throw new Error("Authentication required")
+    let path = payload.workspacePath.trim()
+    if (path.startsWith("~")) {
+      const response = await dashboardApi.connectorFsList(token, payload.connectorId, { root: path, path: "." })
+      if (!response.result.path || response.result.targetType === "file") throw new Error("Could not resolve workspace directory")
+      path = response.result.path
+    }
+    const project = await resolveWorkspaceProject({
+      projects,
+      connectorId: payload.connectorId,
+      path,
+      deviceOs: connectors.find((connector) => connector.id === payload.connectorId)?.deviceOs,
+      resolve: async (body) => (await dashboardApi.resolveProject(token, body)).project,
+    })
+    upsertProject(project)
+    return project
+  }, [authSession?.accessToken, connectors, projects, upsertProject])
+
   const deleteProject = React.useCallback(async (projectId: string): Promise<boolean> => {
     const token = authSession?.accessToken
     if (!token) return false
@@ -1608,6 +1631,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     renameSession,
     loadProjectSessions,
     createProject,
+    resolveProject,
     updateProject,
     deleteProject,
     archiveProjectSessions,

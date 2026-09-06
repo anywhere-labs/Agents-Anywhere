@@ -167,6 +167,13 @@ class ProjectCreateRequest(BaseModel):
     attachMatchingSessions: bool = False
 
 
+class ProjectResolveRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    connectorId: str = Field(min_length=1)
+    workspacePath: str = Field(min_length=1, max_length=4096)
+
+
 class ProjectPatchRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 

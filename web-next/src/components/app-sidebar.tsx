@@ -27,6 +27,7 @@ import {
   type ProjectSessionStatusFilter,
 } from "@/components/sidebar/sidebar-selectors"
 import { SidebarAccountFooter } from "@/components/sidebar/sidebar-account-footer"
+import { useProjectSidebarPreferences } from "@/components/sidebar/use-project-sidebar-preferences"
 import {
   Sidebar,
   SidebarContent,
@@ -76,8 +77,8 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
   const [mobileConnectionsSidebarVisible] = useMobileConnectionsSidebarVisibility()
   const t = useTranslations("dashboard")
   const [pairOpen, setPairOpen] = React.useState(false)
-  const [projectsExpanded, setProjectsExpanded] = React.useState(true)
-  const [expandedProjectIds, setExpandedProjectIds] = React.useState<string[]>([])
+  const { preferences: { projectsExpanded, expandedProjectIds }, setProjectExpanded, setProjectsExpanded } =
+    useProjectSidebarPreferences(authSession?.userId ?? "signed-out")
   const [projectEditor, setProjectEditor] = React.useState<ProjectEditorState>(null)
   const [projectToArchive, setProjectToArchive] = React.useState<ProjectView | null>(null)
   const [projectSessionStatus, setProjectSessionStatus] =
@@ -121,13 +122,24 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
     refreshData()
   }, [authSession?.accessToken, refreshData, sessions])
 
-  const toggleProjectExpanded = React.useCallback((projectId: string, open: boolean) => {
-    setExpandedProjectIds((current) => {
-      if (open) return current.includes(projectId) ? current : [...current, projectId]
-      return current.filter((id) => id !== projectId)
-    })
-    if (open) void loadProjectSessions(projectId)
-  }, [loadProjectSessions])
+  const loadedExpandedProjects = React.useRef({ userId: authSession?.userId, ids: new Set<string>() })
+  React.useEffect(() => {
+    if (loadedExpandedProjects.current.userId !== authSession?.userId) {
+      loadedExpandedProjects.current = { userId: authSession?.userId, ids: new Set() }
+    }
+    const loaded = loadedExpandedProjects.current.ids
+    const visible = new Set([...pinnedProjects, ...regularProjects].map((project) => project.id))
+    const expanded = new Set(sidebarShowsSessions ? [] : expandedProjectIds.filter((id) => visible.has(id)))
+    for (const id of loaded) {
+      if (!expanded.has(id)) loaded.delete(id)
+    }
+    if (isLoading || !authSession?.accessToken) return
+    for (const id of expanded) {
+      if (loaded.has(id)) continue
+      loaded.add(id)
+      void loadProjectSessions(id)
+    }
+  }, [authSession?.accessToken, authSession?.userId, expandedProjectIds, isLoading, loadProjectSessions, pinnedProjects, regularProjects, sidebarShowsSessions])
 
   const toggleProjectPin = React.useCallback(async (project: ProjectView) => {
     const updated = await updateProject(project.id, { pinned: !project.pinned })
@@ -180,7 +192,7 @@ export function AppSidebar({ contained = false }: { contained?: boolean }) {
     expandedProjectIds,
     loadingProjectSessionIds,
     activeSessionId,
-    onExpandedChange: toggleProjectExpanded,
+    onExpandedChange: setProjectExpanded,
     onOpenSession: openSession,
     onNewSession: startProjectSession,
     onEdit: (project) => setProjectEditor({ mode: "edit", project }),
