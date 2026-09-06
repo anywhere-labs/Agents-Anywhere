@@ -1438,12 +1438,12 @@ export function SessionDetail({
     () => groupTimelineItems((state?.items ?? []).filter(isVisibleTimelineItem), interactionTargetIds),
     [interactionTargetIds, state?.items],
   )
-  const changedFileCount = React.useMemo(() => {
-    if (state?.session.id !== sessionId) return 0
+  const changedTurnReview = React.useMemo(() => {
+    if (state?.session.id !== sessionId) return null
     return buildLatestChangedTurnReview(state.items.filter(isVisibleTimelineItem), {
       root: state.session.cwd,
       caseInsensitivePaths: connectorDeviceOs === "windows",
-    })?.files.length ?? 0
+    })
   }, [connectorDeviceOs, sessionId, state?.items, state?.session.id, state?.session.cwd])
   const turnActionsByGroupKey = React.useMemo(
     () => buildTurnActionsByGroupKey(
@@ -1635,8 +1635,8 @@ export function SessionDetail({
           onRespondInteraction={handleRespondInteraction}
         />
         <div ref={composerContainerRef} className="pointer-events-auto relative">
-          {onOpenReview ? (
-            <SessionReviewTag fileCount={changedFileCount} onReview={onOpenReview} />
+          {onOpenReview && changedTurnReview ? (
+            <SessionReviewTag files={changedTurnReview.files} onReview={onOpenReview} />
           ) : null}
           <SessionComposer
             token={token}
