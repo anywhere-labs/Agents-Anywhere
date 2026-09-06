@@ -5,6 +5,9 @@ struct ChatSidebarView: View {
     let devices: [ChatSidebarDevice]
     let pinnedSessions: [ChatSidebarSession]
     let recentSessions: [ChatSidebarSession]
+    let repository: V2DashboardRepository?
+    let onNewProjectSession: (String) -> Void
+    let onRestoreSession: (String) async -> Bool
     let account: ChatSidebarAccount?
     let selectedDeviceId: V2ConnectorID?
     let selectedSessionId: V2SessionID?
@@ -20,6 +23,8 @@ struct ChatSidebarView: View {
     let onCopySessionId: (V2SessionID) -> Void
 
     @State private var isShowingPairing = false
+    @State private var showsArchives = false
+    @AppStorage("aa.native.sidebar.session-list") private var showsSessionList = false
 
     var body: some View {
         ScrollView {
@@ -49,6 +54,23 @@ struct ChatSidebarView: View {
                     )
                 }
 
+                if let repository {
+                    HStack {
+                        Menu {
+                            Picker("侧栏显示", selection: $showsSessionList) {
+                                Text("按项目").tag(false)
+                                Text("全部会话").tag(true)
+                            }
+                            Button("归档会话", systemImage: "archivebox") { showsArchives = true }
+                        } label: {
+                            Label(showsSessionList ? "全部会话" : "按项目", systemImage: "line.3.horizontal.decrease")
+                                .font(.subheadline).foregroundStyle(.secondary).frame(minHeight: 40)
+                        }
+                        Spacer()
+                        Button("归档会话", systemImage: "archivebox") { showsArchives = true }
+                            .labelStyle(.iconOnly).frame(width: 40, height: 40)
+                    }.padding(.horizontal, 10)
+                    if showsSessionList {
                 ChatSidebarSessionSection(
                     title: "Recent",
                     sessions: recentSessions,
@@ -61,12 +83,22 @@ struct ChatSidebarView: View {
                     onArchive: onArchiveSession,
                     onCopyId: onCopySessionId
                 )
+                        DashboardPageButton(repository: repository, scope: .init())
+                    } else {
+                        ChatSidebarProjects(repository: repository, selectedSessionID: selectedSessionId,
+                            onNewSession: onNewProjectSession, onOpenSession: onOpenSession,
+                            onRenameSession: onRenameSession, onPinSession: onToggleSessionPinned,
+                            onArchiveSession: onArchiveSession, onCopySession: onCopySessionId)
+                    }
+                }
+
             }
             .padding(.leading, safeAreaInsets.leading + 14)
             .padding(.trailing, safeAreaInsets.trailing + 14)
             .padding(.top, 10)
             .padding(.bottom, safeAreaInsets.bottom + 82)
         }
+        .refreshable { await repository?.refresh() }
         .scrollIndicators(.hidden)
         .scrollEdgeEffectStyle(.soft, for: .bottom)
         .overlay(alignment: .bottom) {
@@ -79,6 +111,9 @@ struct ChatSidebarView: View {
                     .padding(.trailing, safeAreaInsets.trailing + 18)
                     .padding(.bottom, max(safeAreaInsets.bottom, 12))
             }
+        }
+        .sheet(isPresented: $showsArchives) {
+            if let repository { ArchivedSessionsSheet(repository: repository, onOpen: onOpenSession, onRestore: onRestoreSession) }
         }
         .sheet(isPresented: $isShowingPairing) {
             PairDeviceSheet()
@@ -228,7 +263,7 @@ private struct ChatSidebarDeviceRow: View {
     }
 }
 
-private struct ChatSidebarSessionRow: View {
+struct ChatSidebarSessionRow: View {
     let session: ChatSidebarSession
     let isSelected: Bool
     let onOpen: () -> Void
@@ -270,7 +305,7 @@ private struct ChatSidebarSessionRow: View {
                 }
             }
             Button(action: onArchive) {
-                Label("Archive", systemImage: "archivebox")
+                Label(session.archived ? "Restore" : "Archive", systemImage: session.archived ? "tray.and.arrow.up" : "archivebox")
             }
             Divider()
             Button(action: onCopyId) {

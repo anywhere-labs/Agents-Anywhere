@@ -17,6 +17,7 @@ struct ChatSidebarSession: Identifiable, Equatable {
     let title: String?
     let status: V2RuntimeStatus
     let unread: Bool
+    let archived: Bool
     let pinned: Bool
     let presentation: SessionSidebarPresentation
 
@@ -25,6 +26,7 @@ struct ChatSidebarSession: Identifiable, Equatable {
         title = session.title
         status = session.status
         unread = session.unread
+        archived = session.archived
         pinned = session.pinned
         presentation = SessionSidebarPresentation(session)
     }

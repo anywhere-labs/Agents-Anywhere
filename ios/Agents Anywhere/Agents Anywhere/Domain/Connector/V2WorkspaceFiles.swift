@@ -19,6 +19,8 @@ struct V2WorkspaceDirectory: Decodable, Hashable {
     let path: String
     let entries: [V2WorkspaceEntry]
     let truncated: Bool?
+    let targetPath: String?
+    let targetType: String?
 }
 
 struct V2WorkspaceEntry: Decodable, Identifiable, Hashable {

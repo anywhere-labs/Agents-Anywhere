@@ -21,7 +21,7 @@ NOW = "2026-09-05T12:00:00Z"
 def routes() -> list[dict[str, str]]:
     """Read real FastAPI decorators without constructing the app or connecting to storage."""
     result = []
-    for module in ("auth", "connectors", "connector_runtimes", "connector_files", "sessions", "sessions_fs", "client_ws", "dashboard_stream"):
+    for module in ("auth", "projects", "connectors", "connector_runtimes", "connector_files", "sessions", "sessions_fs", "client_ws", "dashboard_stream"):
         tree = ast.parse((ROOT / f"server/agent_server/api/{module}.py").read_text())
         prefix = ""
         for node in tree.body:
@@ -42,8 +42,9 @@ def routes() -> list[dict[str, str]]:
 
 
 def fixtures() -> dict:
-    connector = m.ConnectorView(id="device", userId="account", name="Mac", deviceOs="macos", status="online", createdAt=NOW, updatedAt=NOW)
-    session = m.SessionView(id="session", connectorId="device", connectorStatus="online", runtime="claude", runtimeId="rti_work", runtimeName="Work", status="idle", takeover=True, title="Task", cwd="/workspace", updatedSeq=10)
+    connector = m.ConnectorView(id="device", userId="account", name="Mac", connectorKind="cli", deviceOs="macos", status="online", createdAt=NOW, updatedAt=NOW)
+    session = m.SessionView(id="session", connectorId="device", projectId="project", connectorStatus="online", runtime="claude", runtimeId="rti_work", runtimeName="Work", status="idle", takeover=True, title="Task", cwd="/workspace", updatedSeq=10)
+    project = m.ProjectView(id="project", userId="account", connectorId="device", name="Workspace", workspacePath="/workspace", manuallyCreated=True, activeSessionCount=1, sidebarSessionCounts=m.ProjectSidebarSessionCounts(active=1, archived=0), createdAt=NOW, updatedAt=NOW)
     state = m.SessionRuntimeState(sessionId="session", runtime="claude", runtimeId="rti_work", status="idle", selections={"model": "sel_model", "effort": None}, updatedSeq=10, createdAt=NOW, updatedAt=NOW)
     capabilities = p.ProtocolCapabilitySet(revision=10, capabilities=[p.ProtocolCapability(capabilityId="session.send_message", runtime="claude", runtimeId="rti_work")])
     model = p.ProtocolModelCatalog(runtime="claude", revision=1, models=[p.ProtocolModelItem(id="model", displayName="Model", selectionId="sel_model", reasoningItems=[p.ProtocolReasoningItem(id="high", displayName="High", selectionId="sel_effort")])])
@@ -55,6 +56,9 @@ def fixtures() -> dict:
     snapshot = p.ProtocolSessionSnapshotResponse(session=session.model_dump(), state=state.model_dump(), timeline=p.ProtocolTimelineSnapshot(items=[item], nextSeq=10), notices=[notice], effectiveCapabilities=capabilities, runtimeCapabilities=capabilities, catalogs={"model": model.model_dump(), "permission": permission.model_dump()}, eventCursor="seq:10", serverTime=NOW)
     event = p.ProtocolEventEnvelope(eventId="event", sequence=11, cursor="seq:11", type="timeline.item_created", sessionId="session", emittedAt=NOW, payload={"item": item.model_copy(update={"id": "item-2", "orderSeq": 2, "updatedSeq": 11}).model_dump()})
     output = {
+        "project": m.ProjectResponse(project=project, serverTime=NOW),
+        "projects": m.ProjectListResponse(projects=[project], serverTime=NOW),
+        "projectDelete": m.ProjectDeleteResponse(projectId="project", detachedSessions=0, serverTime=NOW),
         "connector": m.ConnectorResponse(connector=connector, serverTime=NOW),
         "connectors": m.ConnectorListResponse(connectors=[connector], serverTime=NOW),
         "runtime": runtime,
@@ -62,7 +66,7 @@ def fixtures() -> dict:
         "runtimeTypes": d.RuntimeTypeListResponse(connectorId="device", runtimeTypes=[runtime_type], serverTime=NOW),
         "preferences": m.ConnectorPreferencesResponse(connectorId="device", preferences={"cwd": "/workspace"}, serverTime=NOW),
         "session": m.SessionResponse(session=session, serverTime=NOW),
-        "sessions": {"sessions": [session.model_dump()], "serverTime": NOW},
+        "sessions": {"sessions": [session.model_dump()], "hasMore": False, "nextCursor": None, "serverTime": NOW},
         "takeover": m.TakeoverResponse(session=session),
         "snapshot": snapshot,
         "state": m.SessionRuntimeStateResponse(state=state, serverTime=NOW),
@@ -87,12 +91,14 @@ def fixtures() -> dict:
         "profile": m.AuthMeResponse(userId="account", email="test@example.com", displayName="Test", role="member", disabled=False, serverTime=NOW),
     }
     result = {key: value.model_dump(mode="json", by_alias=True) if hasattr(value, "model_dump") else value for key, value in output.items()}
-    result["dashboard"] = {"type": "dashboard.snapshot", "connectors": [connector.model_dump()], "sessions": [session.model_dump()], "serverTime": NOW}
+    result["dashboard"] = {"type": "dashboard.snapshot", "connectors": [connector.model_dump()], "projects": [project.model_dump()], "sessions": [session.model_dump()], "sessionPages": {"active": {"hasMore": False, "nextCursor": None}, "archived": {"hasMore": False, "nextCursor": None}}, "serverTime": NOW}
     requests = {
+        "createProject": m.ProjectCreateRequest(name="Workspace", connectorId="device", workspacePath="/workspace"),
+        "patchProject": m.ProjectPatchRequest(pinned=True),
         "createRuntime": d.RuntimeInstanceCreateRequest(runtimeType="claude", name="Work", config={}, active=True),
         "renameRuntime": d.RuntimeInstancePatchRequest(name="Work"),
-        "createSession": m.SessionCreateAndStartRequest(connectorId="device", runtime="claude", runtimeId="rti_work", content="Hello", selections={"model": "sel_model"}),
-        "bindSession": m.SessionCreateRequest(connectorId="device", runtime="claude", runtimeId="rti_work", externalSessionId="external", selections={}),
+        "createSession": m.SessionCreateAndStartRequest(connectorId="device", projectId="project", runtime="claude", runtimeId="rti_work", content="Hello", selections={"model": "sel_model"}),
+        "bindSession": m.SessionCreateRequest(connectorId="device", projectId="project", runtime="claude", runtimeId="rti_work", externalSessionId="external", selections={}),
         "selection": m.SessionSelectionPatchRequest(selections={"effort": None}),
         "message": m.MessageCreateRequest(content="Hello", attachments=[], clientMessageId="client"),
         "steer": m.SessionSteerRequest(content="Hello", attachments=[], clientMessageId="client"),
@@ -102,6 +108,7 @@ def fixtures() -> dict:
         "readText": m.FsReadTextRequest(path="test.txt"),
     }
     result["requests"] = {key: value.model_dump(mode="json", by_alias=True, exclude_none=True) for key, value in requests.items()}
+    result["requests"]["createProject"].pop("attachMatchingSessions", None)
     result["routes"] = routes()
     return result
 

@@ -30,6 +30,7 @@
         "latestTurnEndSeq": 0,
         "pinned": false,
         "pinnedAt": null,
+        "projectId": "project",
         "runtime": "claude",
         "runtimeId": "rti_work",
         "runtimeName": "Work",
@@ -94,6 +95,7 @@
   },
   "connector": {
     "connector": {
+      "connectorKind": "cli",
       "createdAt": "2026-09-05T12:00:00Z",
       "deviceOs": "macos",
       "id": "device",
@@ -108,6 +110,7 @@
   "connectors": {
     "connectors": [
       {
+        "connectorKind": "cli",
         "createdAt": "2026-09-05T12:00:00Z",
         "deviceOs": "macos",
         "id": "device",
@@ -123,6 +126,7 @@
   "dashboard": {
     "connectors": [
       {
+        "connectorKind": "cli",
         "createdAt": "2026-09-05T12:00:00Z",
         "deviceOs": "macos",
         "id": "device",
@@ -133,7 +137,37 @@
         "userId": "account"
       }
     ],
+    "projects": [
+      {
+        "activeSessionCount": 1,
+        "connectorId": "device",
+        "createdAt": "2026-09-05T12:00:00Z",
+        "id": "project",
+        "lastActivityAt": null,
+        "manuallyCreated": true,
+        "name": "Workspace",
+        "pinned": false,
+        "pinnedAt": null,
+        "sidebarSessionCounts": {
+          "active": 1,
+          "archived": 0
+        },
+        "updatedAt": "2026-09-05T12:00:00Z",
+        "userId": "account",
+        "workspacePath": "/workspace"
+      }
+    ],
     "serverTime": "2026-09-05T12:00:00Z",
+    "sessionPages": {
+      "active": {
+        "hasMore": false,
+        "nextCursor": null
+      },
+      "archived": {
+        "hasMore": false,
+        "nextCursor": null
+      }
+    },
     "sessions": [
       {
         "archiveSource": null,
@@ -152,6 +186,7 @@
         "latestTurnEndSeq": 0,
         "pinned": false,
         "pinnedAt": null,
+        "projectId": "project",
         "runtime": "claude",
         "runtimeId": "rti_work",
         "runtimeName": "Work",
@@ -341,6 +376,55 @@
     "serverTime": "2026-09-05T12:00:00Z",
     "userId": "account"
   },
+  "project": {
+    "project": {
+      "activeSessionCount": 1,
+      "connectorId": "device",
+      "createdAt": "2026-09-05T12:00:00Z",
+      "id": "project",
+      "lastActivityAt": null,
+      "manuallyCreated": true,
+      "name": "Workspace",
+      "pinned": false,
+      "pinnedAt": null,
+      "sidebarSessionCounts": {
+        "active": 1,
+        "archived": 0
+      },
+      "updatedAt": "2026-09-05T12:00:00Z",
+      "userId": "account",
+      "workspacePath": "/workspace"
+    },
+    "serverTime": "2026-09-05T12:00:00Z"
+  },
+  "projectDelete": {
+    "detachedSessions": 0,
+    "projectId": "project",
+    "serverTime": "2026-09-05T12:00:00Z"
+  },
+  "projects": {
+    "projects": [
+      {
+        "activeSessionCount": 1,
+        "connectorId": "device",
+        "createdAt": "2026-09-05T12:00:00Z",
+        "id": "project",
+        "lastActivityAt": null,
+        "manuallyCreated": true,
+        "name": "Workspace",
+        "pinned": false,
+        "pinnedAt": null,
+        "sidebarSessionCounts": {
+          "active": 1,
+          "archived": 0
+        },
+        "updatedAt": "2026-09-05T12:00:00Z",
+        "userId": "account",
+        "workspacePath": "/workspace"
+      }
+    ],
+    "serverTime": "2026-09-05T12:00:00Z"
+  },
   "recovery": {
     "events": [
       {
@@ -389,6 +473,7 @@
     "bindSession": {
       "connectorId": "device",
       "externalSessionId": "external",
+      "projectId": "project",
       "runtime": "claude",
       "runtimeId": "rti_work",
       "selections": {}
@@ -400,6 +485,11 @@
       "command": "plan",
       "raw": "/plan task"
     },
+    "createProject": {
+      "connectorId": "device",
+      "name": "Workspace",
+      "workspacePath": "/workspace"
+    },
     "createRuntime": {
       "active": true,
       "config": {},
@@ -410,6 +500,7 @@
       "attachments": [],
       "connectorId": "device",
       "content": "Hello",
+      "projectId": "project",
       "runtime": "claude",
       "runtimeId": "rti_work",
       "selections": {
@@ -426,6 +517,9 @@
       "input": {
         "confirmed": true
       }
+    },
+    "patchProject": {
+      "pinned": true
     },
     "readText": {
       "maxBytes": 1048576,
@@ -660,6 +754,30 @@
     {
       "method": "WEBSOCKET",
       "path": "/api/v2/dashboard/ws"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v2/projects"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/projects"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v2/projects/{project_id}"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/v2/projects/{project_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v2/projects/{project_id}/sessions"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/projects/{project_id}/sessions/archive-all"
     },
     {
       "method": "GET",
@@ -944,6 +1062,7 @@
       "latestTurnEndSeq": 0,
       "pinned": false,
       "pinnedAt": null,
+      "projectId": "project",
       "runtime": "claude",
       "runtimeId": "rti_work",
       "runtimeName": "Work",
@@ -964,6 +1083,8 @@
     }
   },
   "sessions": {
+    "hasMore": false,
+    "nextCursor": null,
     "serverTime": "2026-09-05T12:00:00Z",
     "sessions": [
       {
@@ -983,6 +1104,7 @@
         "latestTurnEndSeq": 0,
         "pinned": false,
         "pinnedAt": null,
+        "projectId": "project",
         "runtime": "claude",
         "runtimeId": "rti_work",
         "runtimeName": "Work",
@@ -1140,6 +1262,7 @@
       "latestTurnEndSeq": 0,
       "pinned": false,
       "pinnedAt": null,
+      "projectId": "project",
       "runtime": "claude",
       "runtimeId": "rti_work",
       "runtimeName": "Work",
@@ -1248,6 +1371,7 @@
       "latestTurnEndSeq": 0,
       "pinned": false,
       "pinnedAt": null,
+      "projectId": "project",
       "runtime": "claude",
       "runtimeId": "rti_work",
       "runtimeName": "Work",

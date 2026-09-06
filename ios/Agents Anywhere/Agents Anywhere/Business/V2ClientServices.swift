@@ -10,6 +10,7 @@ final class V2ClientServices {
     let sessionPreparation: V2SessionPreparationService
     let account: V2AccountService
     let dashboard: V2DashboardService
+    let dashboardRepository: V2DashboardRepository
     let sessionReads: V2SessionReadCoordinator
     let sessionDetail: V2SessionDetailService
     let sessionCreation: V2SessionCreationService
@@ -27,9 +28,11 @@ final class V2ClientServices {
         account = V2AccountService(accountAPI: api.account)
         dashboard = V2DashboardService(
             connectorAPI: api.connectors,
+            projectAPI: api.projects,
             sessionAPI: api.sessions,
             realtimeAPI: api.realtime
         )
+        dashboardRepository = V2DashboardRepository(service: dashboard)
         sessionReads = V2SessionReadCoordinator { id in
             let response = try await api.sessions.markRead(sessionIds: [id])
             guard let receipt = response.sessions.first(where: { $0.id == id }) else { throw HTTPError.invalidResponse }
@@ -51,10 +54,11 @@ final class V2ClientServices {
             serverURL: api.serverURL
         )
         newSession = NewSessionModel(scope: scope, devices: deviceManagement,
-            preparation: sessionPreparation, creation: sessionCreation)
+            preparation: sessionPreparation, creation: sessionCreation, projectAPI: api.projects)
         connectivity.onChange = { [weak self] status in
             self?.sessionRepository.updateConnectivity(status)
             self?.newSession.updateNetwork(status)
+            self?.dashboardRepository.updateNetwork(status)
             self?.sessionReads.updateConnectivity(status)
             self?.onConnectivityChange?(status)
         }
@@ -62,6 +66,7 @@ final class V2ClientServices {
     }
 
     func shutdown() {
+        dashboardRepository.invalidate()
         sessionReads.invalidate()
         newSession.invalidate()
         connectivity.stop()

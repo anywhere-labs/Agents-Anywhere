@@ -4,6 +4,7 @@ struct NewSessionView: View, Equatable {
     @Bindable var model: NewSessionModel
     let connectors: [V2Connector]
     let sessions: [V2SessionMeta]
+    let repository: V2DashboardRepository
     let safeAreaInsets: EdgeInsets
     var dashboardLoading = false
     var dashboardError: String?
@@ -44,8 +45,8 @@ struct NewSessionView: View, Equatable {
                             HStack(spacing: 14) {
                                 Image(systemName: "folder").font(.title3).foregroundStyle(.primary).frame(width: 24)
                                 VStack(alignment: .leading, spacing: 5) {
-                                    Text("工作目录").font(.subheadline.weight(.medium)).foregroundStyle(.primary)
-                                    Text(model.workspace.isEmpty ? "使用 Agent 的默认目录" : model.workspace)
+                                    Text("项目").font(.subheadline.weight(.medium)).foregroundStyle(.primary)
+                                    Text(model.project.map { $0.name + " · " + $0.workspacePath } ?? "选择已有项目或创建项目")
                                         .font(.footnote).foregroundStyle(.secondary).lineLimit(2)
                                 }
                                 Spacer(minLength: 8)
@@ -98,13 +99,12 @@ struct NewSessionView: View, Equatable {
             }
         }
         .modifier(ChatPageSafeArea(insets: safeAreaInsets))
-        .task(id: TargetRefreshKey(connectors: connectors, network: model.network)) { await model.refresh(connectors: connectors) }
+        .task(id: TargetRefreshKey(connectors: connectors, network: model.network, connectorID: model.connectorID)) { await model.refresh(connectors: connectors) }
         .sheet(isPresented: $showsTarget) {
             SessionTargetSheet(model: model, onManageDevice: { id in showsTarget = false; onManageDevice(id) })
         }
         .sheet(isPresented: $showsWorkspace) {
-            SessionWorkspaceSheet(model: model, recent: V2DeviceProjection.workspaces(
-                sessions: sessions.filter { $0.connectorId == model.connectorID }))
+            ProjectSelectionSheet(model: model, repository: repository)
         }
         .confirmationDialog("创建结果仍未确认，再次创建可能产生重复会话。", isPresented: $confirmsRetry, titleVisibility: .visible) {
             Button("保留草稿并允许重新创建") { model.acknowledgeUncertainCreation() }
@@ -157,6 +157,9 @@ struct NewSessionView: View, Equatable {
         } else if model.connector?.status != .online {
             status("目标设备离线", detail: "等待它重新连接，或选择其他在线设备。草稿会继续保留。", icon: "bolt.horizontal.circle")
             Button("选择其他设备") { showsTarget = true }
+        } else if model.project == nil {
+            status("选择任务所属的项目", detail: "项目决定会话使用的工作目录。", icon: "folder")
+            Button("选择项目") { showsWorkspace = true }
         } else if !model.isPreparing && model.runtime?.isReadyForSession != true {
             status("选择一个已就绪的 Agent", detail: "可在设备管理中配置或启动实例。", icon: "sparkle")
             Button("选择 Agent") { showsTarget = true }
@@ -178,4 +181,5 @@ struct NewSessionView: View, Equatable {
 private struct TargetRefreshKey: Equatable {
     let connectors: [V2Connector]
     let network: V2NetworkStatus
+    let connectorID: String
 }

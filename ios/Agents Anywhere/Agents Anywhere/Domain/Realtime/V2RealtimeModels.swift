@@ -65,6 +65,8 @@ struct V2EventRecoveryResponse: Decodable, Hashable {
 struct V2DashboardSnapshot: Decodable, Hashable {
     let type: String
     let connectors: [V2Connector]
+    let projects: [V2Project]
+    let sessionPages: V2DashboardSessionPages
     let sessions: [V2SessionMeta]
     let serverTime: String
 }

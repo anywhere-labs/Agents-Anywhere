@@ -21,6 +21,9 @@ struct ChatShellView: View {
                 devices: sidebarDevices,
                 pinnedSessions: sidebarSessions.filter(\.pinned),
                 recentSessions: sidebarSessions.filter { !$0.pinned },
+                repository: appState.nativeChatServices?.dashboardRepository,
+                onNewProjectSession: startProjectSession,
+                onRestoreSession: { await appState.setSessionArchived(sessionId: $0, archived: false) },
                 account: sidebarAccount,
                 selectedDeviceId: selectedDeviceId,
                 selectedSessionId: selectedSessionId,
@@ -151,7 +154,7 @@ struct ChatShellView: View {
                     .equatable()
                     .id(id)
             } else {
-                NewSessionView(model: services.newSession, connectors: appState.connectors, sessions: appState.sessions,
+                NewSessionView(model: services.newSession, connectors: appState.connectors, sessions: appState.sessions, repository: services.dashboardRepository,
                     safeAreaInsets: safeAreaInsets, dashboardLoading: appState.isDashboardLoading,
                     dashboardError: appState.connectorsError,
                     onMenu: toggleSidebar, onManageDevice: openDevice,
@@ -168,6 +171,13 @@ struct ChatShellView: View {
                 onOpenSidebar: openSidebar
             )
         }
+    }
+
+    private func startProjectSession(_ id: String) {
+        guard let services = appState.nativeChatServices else { return }
+        services.newSession.updateProjects(services.dashboardRepository.projects)
+        guard services.newSession.selectProject(id) else { return }
+        startNewSession()
     }
 
     private func startNewSession() {
@@ -204,8 +214,9 @@ struct ChatShellView: View {
 
     private func archiveSession(_ id: V2SessionID) {
         Task {
-            let archived = await appState.setSessionArchived(sessionId: id, archived: true)
-            if archived, selectedSessionId == id {
+            let shouldArchive = appState.sessions.first { $0.id == id }?.archived != true
+            let changed = await appState.setSessionArchived(sessionId: id, archived: shouldArchive)
+            if changed && shouldArchive, selectedSessionId == id {
                 selection = .newSession
             }
         }

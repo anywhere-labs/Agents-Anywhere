@@ -28,6 +28,7 @@ final class AppState: ObservableObject {
     @Published private(set) var accountAvatarSource: AccountAvatarImageSource?
     @Published private(set) var connectors: [V2Connector] = []
     @Published private(set) var sessions: [V2SessionMeta] = []
+    @Published private(set) var projects: [V2Project] = []
     @Published private(set) var isDashboardLoading = false
     @Published private(set) var hasLoadedConnectors = false
     @Published private(set) var hasLoadedSessions = false
@@ -274,33 +275,24 @@ final class AppState: ObservableObject {
 
     func refreshDashboard() async {
         guard let services = makeV2Services() else { return }
-        if isDashboardLoading { return }
-        dashboardError = nil
-        sessionsError = nil
-        connectorsError = nil
-        isDashboardLoading = true
-        defer {
-            if cachedServices === services {
-                isDashboardLoading = false
-                lastDashboardRefreshAt = Date()
-            }
-        }
+        await services.dashboardRepository.refresh()
+        if cachedServices === services { lastDashboardRefreshAt = Date() }
+    }
 
-        do {
-            let dashboard = try await services.dashboard.load()
-            guard cachedServices === services, !Task.isCancelled else { return }
-            connectors = dashboard.connectors
-            sessions = dashboard.sessions.map(services.sessionReads.ingest)
-            services.sessionRepository.applyMetadata(sessions)
-            hasLoadedConnectors = true
-            hasLoadedSessions = true
-        } catch {
-            guard cachedServices === services, !Task.isCancelled else { return }
-            let message = error.localizedDescription
-            sessionsError = message
-            connectorsError = message
-        }
-        dashboardError = sessionsError ?? connectorsError
+    private func syncDashboard(_ services: V2ClientServices) {
+        guard cachedServices === services else { return }
+        let repository = services.dashboardRepository
+        if connectors != repository.connectors { connectors = repository.connectors }
+        if projects != repository.projects { projects = repository.projects }
+        if sessions != repository.sessions { sessions = repository.sessions }
+        isDashboardLoading = repository.isLoading
+        hasLoadedConnectors = repository.hasLoaded
+        hasLoadedSessions = repository.hasLoaded
+        dashboardError = repository.error
+        connectorsError = repository.error
+        sessionsError = repository.error
+        services.sessionRepository.applyMetadata(sessions)
+        if repository.hasLoaded { services.newSession.updateProjects(projects) }
     }
 
     /// Opens the dashboard WebSocket and continuously replaces the global Connector and Session projections.
@@ -575,33 +567,20 @@ final class AppState: ObservableObject {
     }
 
     func updateSession(_ updated: V2SessionMeta) {
-        let updated = cachedServices?.sessionReads.ingest(updated) ?? updated
-        cachedServices?.sessionRepository.applyMetadata([updated])
-        if let index = sessions.firstIndex(where: { $0.id == updated.id }) {
-            sessions[index] = updated
-        } else {
-            sessions.insert(updated, at: 0)
-        }
+        cachedServices?.dashboardRepository.upsert([updated])
     }
 
     func updateConnector(_ updated: V2Connector) {
-        if let index = connectors.firstIndex(where: { $0.id == updated.id }) {
-            connectors[index] = updated
-        } else {
-            connectors.insert(updated, at: 0)
-        }
+        cachedServices?.dashboardRepository.upsertConnector(updated)
     }
 
     func removeConnector(connectorId: V2ConnectorID) {
         cachedServices?.sessionRepository.remove(sessionIds: sessions.filter { $0.connectorId == connectorId }.map(\.id))
-        connectors.removeAll { $0.id == connectorId }
-        sessions.removeAll { $0.connectorId == connectorId }
+        cachedServices?.dashboardRepository.removeConnector(connectorId)
     }
 
     func updateSessions(_ updated: [V2SessionMeta]) {
-        for session in updated {
-            updateSession(session)
-        }
+        cachedServices?.dashboardRepository.upsert(updated)
     }
 
     func signOut(showSignedOutRoute: Bool = true) {
@@ -625,6 +604,7 @@ final class AppState: ObservableObject {
         serverURL = nil
         connectors = []
         sessions = []
+        projects = []
         isDashboardLoading = false
         hasLoadedConnectors = false
         hasLoadedSessions = false
@@ -700,20 +680,7 @@ final class AppState: ObservableObject {
     }
 
     private func applyDashboardSnapshot(_ snapshot: V2DashboardSnapshot) {
-        guard snapshot.type == "dashboard.snapshot" else { return }
-        let updatedSessions = snapshot.sessions.map { cachedServices?.sessionReads.ingest($0) ?? $0 }
-        cachedServices?.sessionRepository.applyMetadata(updatedSessions)
-        if connectors != snapshot.connectors {
-            connectors = snapshot.connectors
-        }
-        if sessions != updatedSessions {
-            sessions = updatedSessions
-        }
-        hasLoadedConnectors = true
-        hasLoadedSessions = true
-        connectorsError = nil
-        sessionsError = nil
-        dashboardError = nil
+        cachedServices?.dashboardRepository.apply(snapshot)
     }
 
     private func handleSessionRestoreFailure(_ error: Error) {
@@ -774,14 +741,19 @@ final class AppState: ObservableObject {
         let services = V2ClientServices(api: api, accountID: accountID)
         cachedServices = services
         cachedServicesToken = token
+        services.dashboardRepository.reconcile = { [weak services] in services?.sessionReads.ingest($0) ?? $0 }
+        services.dashboardRepository.onChange = { [weak self, weak services] in
+            guard let services else { return }
+            self?.syncDashboard(services)
+        }
+        syncDashboard(services)
         services.sessionReads.setActive(!isInBackground)
         services.sessionReads.onChange = { [weak self, weak services] id in
             guard let self, let services, self.cachedServices === services,
                   let index = self.sessions.firstIndex(where: { $0.id == id }) else { return }
             let updated = services.sessionReads.project(self.sessions[index])
             if self.sessions[index] != updated {
-                self.sessions[index] = updated
-                services.sessionRepository.applyMetadata([updated])
+                services.dashboardRepository.upsert([updated])
             }
         }
         services.sessionReads.setVisibleSession(visibleSessionID)

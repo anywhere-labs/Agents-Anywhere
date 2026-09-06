@@ -9,6 +9,8 @@ struct WorkspaceFilesSheet: View {
     let service: V2WorkspaceFilesService
 
     var session: V2SessionModel?
+    var permitsReading = true
+    var onSelectDirectory: ((String) -> Void)? = nil
     @State private var destination: FileDestination?
     @State private var transfer: FileTransferRequest?
     @State private var detent: PresentationDetent = .medium
@@ -39,7 +41,7 @@ struct WorkspaceFilesSheet: View {
                 title: deviceName,
                 service: service,
                 onOpenFile: openFile, onFileAction: startTransfer, canRead: canRead,
-                canTransfer: canRead && transfer == nil
+                canTransfer: canRead && transfer == nil, onSelectDirectory: onSelectDirectory
             )
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -56,7 +58,7 @@ struct WorkspaceFilesSheet: View {
                     title: deviceName,
                     service: service,
                     onOpenFile: openFile, onFileAction: startTransfer, canRead: canRead,
-                    canTransfer: canRead && transfer == nil
+                    canTransfer: canRead && transfer == nil, onSelectDirectory: onSelectDirectory
                 )
             }
             .safeAreaInset(edge: .bottom) {
@@ -112,6 +114,7 @@ struct WorkspaceFilesSheet: View {
     }
 
     private var canRead: Bool {
+        guard permitsReading else { return false }
         guard let session else { return true }
         return session.isValid && session.network.availability != .offline && session.metadata?.connectorStatus == .online
     }
@@ -146,6 +149,7 @@ private struct WorkspaceDirectoryView: View {
     let onFileAction: (V2WorkspaceEntry, WorkspaceFileAction) -> Void
     let canRead: Bool
     let canTransfer: Bool
+    let onSelectDirectory: ((String) -> Void)?
 
     @State private var model = WorkspaceDirectoryModel()
 
@@ -221,6 +225,14 @@ private struct WorkspaceDirectoryView: View {
                         UIPasteboard.general.string = currentDirectoryPath
                     }
                 }
+        }
+        .toolbar {
+            if let onSelectDirectory {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("使用此目录") { onSelectDirectory(currentDirectoryPath) }
+                        .disabled(!canRead || model.isLoading || model.resolvedPath.isEmpty || model.errorMessage != nil)
+                }
+            }
         }
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)

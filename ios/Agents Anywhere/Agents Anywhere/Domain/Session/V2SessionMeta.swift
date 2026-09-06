@@ -14,6 +14,7 @@ enum V2ConnectorPresence: String, Codable, Hashable {
 struct V2SessionMeta: Codable, Identifiable, Hashable {
     let id: V2SessionID
     let connectorId: V2ConnectorID
+    var projectId: String? = nil
     let runtime: V2RuntimeID
     var runtimeId: V2RuntimeID? = nil
     var runtimeType: String? = nil
@@ -51,6 +52,8 @@ struct V2SessionMeta: Codable, Identifiable, Hashable {
 
 struct V2SessionListResponse: Decodable, Hashable {
     let sessions: [V2SessionMeta]
+    var hasMore: Bool
+    var nextCursor: String?
     let serverTime: String
 }
 
@@ -67,6 +70,7 @@ struct V2SessionMetaPatchRequest: Encodable, Hashable {
 
 struct V2SessionCreateRequest: Encodable, Hashable {
     let connectorId: V2ConnectorID
+    let projectId: String
     let runtime: V2RuntimeID
     var runtimeId: V2RuntimeID? = nil
     let externalSessionId: String?
@@ -76,6 +80,7 @@ struct V2SessionCreateRequest: Encodable, Hashable {
 
     enum CodingKeys: String, CodingKey {
         case connectorId
+        case projectId
         case runtime
         case runtimeId
         case externalSessionId
@@ -87,6 +92,7 @@ struct V2SessionCreateRequest: Encodable, Hashable {
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(connectorId, forKey: .connectorId)
+        try container.encode(projectId, forKey: .projectId)
         try container.encode(runtime, forKey: .runtime)
         try container.encodeIfPresent(runtimeId, forKey: .runtimeId)
         try container.encodeIfPresent(externalSessionId, forKey: .externalSessionId)
@@ -110,6 +116,7 @@ struct V2InlineAttachment: Encodable, Hashable {
 
 struct V2SessionCreateAndStartRequest: Encodable, Hashable {
     let connectorId: V2ConnectorID
+    let projectId: String
     let runtime: V2RuntimeID
     var runtimeId: V2RuntimeID? = nil
     let title: String?
@@ -121,6 +128,7 @@ struct V2SessionCreateAndStartRequest: Encodable, Hashable {
 
     enum CodingKeys: String, CodingKey {
         case connectorId
+        case projectId
         case runtime
         case runtimeId
         case title
@@ -134,6 +142,7 @@ struct V2SessionCreateAndStartRequest: Encodable, Hashable {
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(connectorId, forKey: .connectorId)
+        try container.encode(projectId, forKey: .projectId)
         try container.encode(runtime, forKey: .runtime)
         try container.encodeIfPresent(runtimeId, forKey: .runtimeId)
         try container.encodeIfPresent(title, forKey: .title)

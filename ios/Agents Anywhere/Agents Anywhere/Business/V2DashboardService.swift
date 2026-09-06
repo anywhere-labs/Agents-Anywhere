@@ -2,22 +2,28 @@ import Foundation
 
 struct V2DashboardData: Hashable {
     let connectors: [V2Connector]
-    let sessions: [V2SessionMeta]
+    let projects: [V2Project]
+    let active: V2SessionListResponse
+    let archived: V2SessionListResponse
+    var sessions: [V2SessionMeta] { active.sessions + archived.sessions }
 }
 
 struct V2DashboardService {
     let connectorAPI: any V2ConnectorAPIProtocol
+    let projectAPI: V2ProjectAPI
     let sessionAPI: any V2SessionAPIProtocol
     let realtimeAPI: any V2RealtimeAPIProtocol
 
     /// Reads the durable dashboard resources concurrently.
     func load() async throws -> V2DashboardData {
         async let connectors = connectorAPI.listConnectors()
-        async let sessions = sessionAPI.listSessions()
-        let (connectorResponse, sessionResponse) = try await (connectors, sessions)
+        async let projects = projectAPI.list()
+        async let active = sessionAPI.listSessions(archived: false, cursor: nil)
+        async let archived = sessionAPI.listSessions(archived: true, cursor: nil)
+        let (connectorResponse, projectResponse, activeResponse, archivedResponse) = try await (connectors, projects, active, archived)
         return V2DashboardData(
             connectors: connectorResponse.connectors,
-            sessions: sessionResponse.sessions
+            projects: projectResponse.projects, active: activeResponse, archived: archivedResponse
         )
     }
 
