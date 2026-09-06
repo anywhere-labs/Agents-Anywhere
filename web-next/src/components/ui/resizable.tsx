@@ -35,19 +35,23 @@ function ResizablePanel({ className, ...props }: React.ComponentProps<typeof Pan
 
 function ResizableHandle({
   withHandle,
+  showSeparator = true,
   className,
   ...props
 }: React.ComponentProps<typeof Separator> & {
   withHandle?: boolean
+  showSeparator?: boolean
 }) {
   return (
     <Separator
       data-slot="resizable-handle"
       className={cn(
-        // Draw a 1px separator while keeping an invisible drag hit area.
-        "relative flex w-px items-center justify-center bg-border ring-offset-background",
+        // Keep an 8px drag hit area even when a surface intentionally hides the 1px rule.
+        "relative flex w-px items-center justify-center ring-offset-background",
         "after:absolute after:inset-y-0 after:left-1/2 after:w-2 after:-translate-x-1/2",
-        "focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring",
+        showSeparator
+          ? "bg-border focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
+          : "bg-transparent focus-visible:outline-none",
         // v4 exposes handle orientation with aria-orientation.
         "aria-[orientation=horizontal]:h-px aria-[orientation=horizontal]:w-full",
         "aria-[orientation=horizontal]:after:left-0 aria-[orientation=horizontal]:after:h-2 aria-[orientation=horizontal]:after:w-full aria-[orientation=horizontal]:after:translate-x-0 aria-[orientation=horizontal]:after:-translate-y-1/2",

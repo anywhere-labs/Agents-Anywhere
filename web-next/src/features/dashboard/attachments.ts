@@ -11,6 +11,25 @@ export type ReconcileAttachment = {
   optimistic?: boolean;
 };
 
+export function attachmentShouldReadFromDevice(
+  attachment: ReconcileAttachment,
+  hasAttachmentUrl = false,
+): boolean {
+  return Boolean(
+    !hasAttachmentUrl
+    && !attachment.fileId.startsWith("file_")
+    && attachment.path
+    && !attachment.optimistic
+    && !attachment.openUrl
+    && !attachment.downloadUrl,
+  );
+}
+
+export function attachmentIsImage(name: string, mediaType: string): boolean {
+  if (mediaType.toLowerCase().startsWith("image/")) return true;
+  return /\.(png|apng|jpe?g|gif|webp|avif|svg)$/i.test(name);
+}
+
 export function extractAttachments(
   content: Record<string, unknown>,
 ): ReconcileAttachment[] {

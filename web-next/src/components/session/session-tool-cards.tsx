@@ -1,23 +1,30 @@
 "use client"
 
 import * as React from "react"
-import { Bot, Check, ChevronDown, Code2, Copy, FilePenLine, Hammer, Loader2, TerminalSquare } from "lucide-react"
 import { toast } from "sonner"
+import { copyText } from "@/lib/clipboard"
+import { Bot, Check, ChevronDown, Code2, Copy, FilePenLine, Hammer, Loader2, TerminalSquare } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Marker, MarkerContent, MarkerIcon } from "@/components/ui/marker"
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area"
 import { InteractionCard } from "@/components/session/session-approval-card"
+import { useSessionFilePreviewOpener } from "@/components/session/session-file-preview-context"
 import { MonacoCodeView, monacoLanguageForFile } from "@/components/monaco-code-view"
 import { openSessionFilePreview } from "@/components/markdown-text"
 import { cn } from "@/lib/utils"
-import { copyText } from "@/lib/clipboard"
 import { highlightCode } from "@/lib/code-highlight"
 import { dashboardApi } from "@/features/dashboard/api"
 import type { Notice, SessionView, TimelineItem } from "@/features/dashboard/types"
 import { useTranslations } from "next-intl"
 import { commandText, firstTextOf, recordsOf, textOf } from "@/components/session/session-utils"
+import {
+  fileChangeAction,
+  fileChangeDisplayDiff,
+  isCreatedFileChange,
+  type FileChangeAction,
+} from "@/components/session/session-review-model"
 
 const FILE_CHANGE_MONACO_OPTIONS = {
   folding: false,
@@ -376,7 +383,15 @@ export function JsonBlock({ value }: { value: unknown }) {
   return <CodePanel label="json" code={JSON.stringify(value, null, 2)} language="json" />
 }
 
-function DiffPanel({ code, maxHeight }: { code: string; maxHeight: number }) {
+export function DiffPanel({
+  code,
+  maxHeight,
+  compactGutter = false,
+}: {
+  code: string
+  maxHeight: number
+  compactGutter?: boolean
+}) {
   const rows = React.useMemo(() => buildDiffRows(code), [code])
   return (
     <ScrollArea contentWide className="min-w-0" style={{ height: maxHeight, maxHeight }}>
@@ -384,7 +399,10 @@ function DiffPanel({ code, maxHeight }: { code: string; maxHeight: number }) {
         {rows.map((row, index) => (
           <div
             className={cn(
-              "grid min-w-full grid-cols-[0.875rem_2.5rem_1px_minmax(0,1fr)] gap-1 px-3 py-0.5 leading-relaxed",
+              "grid min-w-full gap-1 py-0.5 leading-relaxed",
+              compactGutter
+                ? "grid-cols-[0.75rem_2rem_1px_minmax(0,1fr)] px-2"
+                : "grid-cols-[0.875rem_2.5rem_1px_minmax(0,1fr)] px-3",
               row.kind === "add" && "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
               row.kind === "delete" && "bg-red-500/10 text-red-700 dark:text-red-300",
               row.kind === "hunk" && "bg-violet-500/10 text-violet-700 dark:text-violet-300",
@@ -425,6 +443,7 @@ function FileChangeRow({
   readOnly: boolean
 }) {
   const tSession = useTranslations("dashboard.session")
+  const openFilePreview = useSessionFilePreviewOpener()
   const path = firstTextOf(change.path, change.filePath, change.file, change.uri) ?? "unknown path"
   const displayPath = displayPathForSession(path, session.cwd) ?? path
   const diff = textOf(change.diff)
@@ -482,7 +501,7 @@ function FileChangeRow({
           className="code-mono min-w-0 truncate rounded-sm text-left text-xs underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
           disabled={!canPreview}
           onClick={() => {
-            if (canPreview) openSessionFilePreview(token, session, path)
+            if (canPreview) openSessionFilePreview(token, session, path, openFilePreview)
           }}
         >
           {displayPath}
@@ -636,31 +655,6 @@ function codePanelHeight(code: string) {
   return Math.max(96, Math.min(320, lines * 19 + 24))
 }
 
-function isUnifiedDiffLike(value: string) {
-  return value.split("\n").some((line) => {
-    if (line.startsWith("@@")) return true
-    if (line.startsWith("diff --git") || line.startsWith("index ")) return true
-    if (line.startsWith("--- ") || line.startsWith("+++ ")) return true
-    if (/^[+-]\S/.test(line)) return true
-    return false
-  })
-}
-
-type FileChangeAction = "add" | "modify" | "delete" | "rename" | "unknown"
-
-function fileChangeAction(change: Record<string, unknown>): FileChangeAction {
-  const direct = textOf(change.action) || textOf(change.type) || textOf(change.status)
-  const nestedKind = change.kind && typeof change.kind === "object" && !Array.isArray(change.kind)
-    ? textOf((change.kind as Record<string, unknown>).type)
-    : textOf(change.kind)
-  const value = (nestedKind || direct || "").toLowerCase()
-  if (value === "add" || value === "added" || value === "create" || value === "created") return "add"
-  if (value === "delete" || value === "deleted" || value === "remove" || value === "removed") return "delete"
-  if (value === "rename" || value === "renamed" || value === "move" || value === "moved") return "rename"
-  if (value === "modify" || value === "modified" || value === "change" || value === "changed" || value === "edit" || value === "edited") return "modify"
-  return "unknown"
-}
-
 function fileChangeActionLabelKey(action: FileChangeAction): string {
   if (action === "add") return "fileChangeAdded"
   if (action === "delete") return "fileChangeDeleted"
@@ -682,17 +676,4 @@ function displayPathForSession(path: string | null, cwd: string | null | undefin
 
 function normalizeDisplayPath(path: string): string {
   return path.replace(/\\/g, "/").replace(/\/+$/, "")
-}
-
-function fileChangeDisplayDiff(change: Record<string, unknown>, diff: string | null): string | null {
-  if (!diff) return null
-  if (isUnifiedDiffLike(diff)) return diff
-  const action = fileChangeAction(change)
-  if (action === "add") return diff.split("\n").map((line) => `+${line}`).join("\n")
-  if (action === "delete") return diff.split("\n").map((line) => `-${line}`).join("\n")
-  return null
-}
-
-export function isCreatedFileChange(change: Record<string, unknown>) {
-  return fileChangeAction(change) === "add"
 }

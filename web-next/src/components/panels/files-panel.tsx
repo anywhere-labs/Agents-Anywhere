@@ -1,7 +1,22 @@
 "use client"
 
 import * as React from "react"
-import { ChevronRight, ChevronUp, Copy, Download, File, Folder, FolderOpen, MessageSquarePlus, RefreshCw, X } from "lucide-react"
+import { useCompactPanel } from "@/hooks/use-compact-panel"
+import { useDiscardFileChanges } from "@/components/discard-file-changes-dialog"
+import type { PanelImperativeHandle } from "react-resizable-panels"
+import {
+  ChevronRight,
+  ChevronUp,
+  Copy,
+  Download,
+  File,
+  Folder,
+  FolderOpen,
+  ListTree,
+  MessageSquarePlus,
+  RefreshCw,
+  X,
+} from "lucide-react"
 import { toast } from "sonner"
 
 import "./runtime-panel.css"
@@ -9,36 +24,67 @@ import { ChevronExternal } from "./runtime-icons"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import {
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "@/components/ui/empty"
+import {
   ContextMenu,
   ContextMenuContent,
+  ContextMenuGroup,
   ContextMenuItem,
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Separator } from "@/components/ui/separator"
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
+import {
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
+} from "@/components/ui/resizable"
+import { FilePathBreadcrumb, FilePreviewSurface } from "@/components/file-preview-page"
+import { LazyFileTree } from "@/components/panels/lazy-file-tree"
+import type { SessionFilePreviewTarget } from "@/components/session/session-file-preview-context"
+import {
+  findSessionFileTargetEntry,
+  resolveSessionFilePath,
+  resolveSessionFileTargetMetadata,
+  sessionFileListRepresentsDirectory,
+  sessionFileNameFromPath,
+  sessionFileParentPath,
+  sessionFilePathNeedsCanonicalHome,
+  sessionFileTreeAllowed,
+} from "@/components/session/session-file-preview-model"
 import { useWorkspace } from "@/components/workspace-context"
 import { dashboardApi } from "@/features/dashboard/api"
 import type { FsEntry } from "@/features/dashboard/types"
 import { copyText } from "@/lib/clipboard"
 import { downloadBlob } from "@/lib/download"
+import { openNativeFilePreviewWindow } from "@/lib/file-preview-window"
 import { cn } from "@/lib/utils"
 import { useTranslations } from "next-intl"
-
-export type PickedFile = {
-  name: string
-  path: string
-}
 
 type FilesPanelBodyProps = {
   token?: string | null
   connectorId?: string | null
   root?: string | null
   connectorDeviceOs?: string | null
-  variant?: "desktop" | "mobile"
+  variant?: "desktop" | "mobile" | "tab"
   onClose?: () => void
   onPopOut?: () => void
   onPopupBlocked?: () => void
+  initialFile?: SessionFilePreviewTarget | null
+  onDirtyChange?: (dirty: boolean) => void
+  onSelectedFileNameChange?: (name: string | null) => void
 }
 
 export function FilesPanelBody({
@@ -50,23 +96,60 @@ export function FilesPanelBody({
   onClose,
   onPopOut,
   onPopupBlocked,
+  initialFile,
+  onSelectedFileNameChange,
+  onDirtyChange,
 }: FilesPanelBodyProps) {
+  const { ref: panelRef, compact } = useCompactPanel()
   const t = useTranslations("dashboard.panels.files")
   const { appendPathToComposer } = useWorkspace()
   const effectiveRoot = root?.trim() || "."
+  const treeAllowed = sessionFileTreeAllowed(initialFile)
   const [path, setPath] = React.useState(".")
   const [currentPath, setCurrentPath] = React.useState(".")
   const [entries, setEntries] = React.useState<FsEntry[]>([])
+  const [entriesTruncated, setEntriesTruncated] = React.useState(false)
   const [loading, setLoading] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
   const [contextEntry, setContextEntry] = React.useState<FsEntry | null>(null)
+  const [selectedFile, setSelectedFile] = React.useState<SessionFilePreviewTarget | null>(
+    treeAllowed ? null : initialFile ?? null,
+  )
+  const [panelTitle, setPanelTitle] = React.useState<string | null>(initialFile?.name ?? null)
+  const [treeOpen, setTreeOpen] = React.useState(treeAllowed)
+  const [treeResizeActive, setTreeResizeActive] = React.useState(false)
+  const loadRequestIdRef = React.useRef(0)
+  const treePanelRef = React.useRef<PanelImperativeHandle | null>(null)
+
+  const { confirmDiscard, discardDialog } = useDiscardFileChanges()
+  const dirtyRef = React.useRef(false)
+  const handleDirtyChange = React.useCallback((dirty: boolean) => {
+    dirtyRef.current = dirty
+    onDirtyChange?.(dirty)
+  }, [onDirtyChange])
 
   const canLoad = Boolean(token && connectorId)
   const isWindowsConnector = connectorDeviceOs === "windows"
 
+  React.useEffect(() => {
+    onSelectedFileNameChange?.(panelTitle)
+  }, [onSelectedFileNameChange, panelTitle])
+
+  const toggleTree = React.useCallback(() => {
+    const panel = treePanelRef.current
+    if (treeOpen) {
+      panel?.collapse()
+      setTreeOpen(false)
+      return
+    }
+    panel?.expand()
+    setTreeOpen(true)
+  }, [treeOpen])
+
   const loadDir = React.useCallback(
     async (nextPath: string) => {
       if (!token || !connectorId) return
+      const requestId = ++loadRequestIdRef.current
       const trimmedPath = nextPath.trim()
       const target = isWindowsConnector ? trimmedPath : trimmedPath || "/"
       setLoading(true)
@@ -76,29 +159,185 @@ export function FilesPanelBody({
           root: effectiveRoot,
           path: target,
         })
+        if (requestId !== loadRequestIdRef.current) return
         const resolvedPath = response.result.path || target
         setEntries(response.result.entries)
+        setEntriesTruncated(Boolean(response.result.truncated))
         setCurrentPath(resolvedPath)
         setPath(resolvedPath)
       } catch (err) {
+        if (requestId !== loadRequestIdRef.current) return
         setError(err instanceof Error ? err.message : String(err))
       } finally {
-        setLoading(false)
+        if (requestId === loadRequestIdRef.current) setLoading(false)
       }
     },
     [connectorId, effectiveRoot, isWindowsConnector, token],
   )
 
   React.useEffect(() => {
+    const requestId = ++loadRequestIdRef.current
     const initialPath = isWindowsConnector ? "" : effectiveRoot
     setPath(initialPath)
     setCurrentPath(initialPath)
     setEntries([])
+    setEntriesTruncated(false)
     setError(null)
-    if (canLoad) void loadDir(initialPath)
-  }, [canLoad, connectorId, effectiveRoot, isWindowsConnector, loadDir])
+    setContextEntry(null)
+    setPanelTitle(initialFile?.name ?? null)
+    setTreeOpen(treeAllowed)
 
-  const parentPath = React.useMemo(() => parentOf(currentPath || path), [currentPath, path])
+    if (!treeAllowed) {
+      setSelectedFile(initialFile ?? null)
+      setLoading(false)
+      return
+    }
+
+    setSelectedFile(null)
+    if (!token || !connectorId || !canLoad) {
+      setSelectedFile(initialFile ?? null)
+      setLoading(false)
+      return
+    }
+
+    const initialize = async () => {
+      setLoading(true)
+      try {
+        if (!initialFile) {
+          const response = await dashboardApi.connectorFsList(token, connectorId, {
+            root: effectiveRoot,
+            path: initialPath,
+          })
+          if (requestId !== loadRequestIdRef.current) return
+          const resolvedPath = response.result.path || initialPath
+          setPath(resolvedPath)
+          setCurrentPath(resolvedPath)
+          setEntries(response.result.entries)
+          setEntriesTruncated(Boolean(response.result.truncated))
+          return
+        }
+
+        const targetResponse = await dashboardApi.connectorFsList(token, connectorId, {
+          root: effectiveRoot,
+          path: initialFile.path,
+        })
+        if (requestId !== loadRequestIdRef.current) return
+
+        const targetMetadata = resolveSessionFileTargetMetadata(
+          targetResponse.result,
+          isWindowsConnector,
+        )
+        if (targetMetadata) {
+          const browsePath = targetMetadata.browsePath || effectiveRoot
+          setPath(browsePath)
+          setCurrentPath(browsePath)
+          setEntries(targetResponse.result.entries)
+          setEntriesTruncated(Boolean(targetResponse.result.truncated))
+
+          if (targetMetadata.kind === "directory") {
+            setSelectedFile(null)
+            setPanelTitle(initialFile.name || sessionFileNameFromPath(browsePath))
+            return
+          }
+
+          const resolvedName = targetMetadata.kind === "file"
+            ? targetMetadata.entry?.name || sessionFileNameFromPath(targetMetadata.targetPath)
+            : initialFile.name || sessionFileNameFromPath(targetMetadata.targetPath)
+          setSelectedFile({
+            ...initialFile,
+            name: resolvedName,
+            path: targetMetadata.targetPath,
+          })
+          setPanelTitle(resolvedName)
+          return
+        }
+
+        // Older Connectors do not report the original target before fs.readDir
+        // falls back to a parent directory. Canonicalize the workspace/Home roots
+        // so common symlinked roots (for example macOS /tmp) still resolve safely.
+        const needsCanonicalHome = sessionFilePathNeedsCanonicalHome(initialFile.path)
+        const [rootResponse, homeResponse] = await Promise.all([
+          dashboardApi.connectorFsList(token, connectorId, {
+            root: effectiveRoot,
+            path: ".",
+          }),
+          needsCanonicalHome && initialFile.path.trim() !== "~"
+            ? dashboardApi.connectorFsList(token, connectorId, {
+                root: effectiveRoot,
+                path: "~",
+              })
+            : Promise.resolve(null),
+        ])
+        if (requestId !== loadRequestIdRef.current) return
+
+        const canonicalRoot = rootResponse.result.path || effectiveRoot
+        const listedPath = targetResponse.result.path || canonicalRoot
+        const canonicalHome = needsCanonicalHome
+          ? homeResponse?.result.path || canonicalRoot
+          : ""
+        if (sessionFileListRepresentsDirectory(
+          listedPath,
+          canonicalRoot,
+          initialFile.path,
+          isWindowsConnector,
+          canonicalHome,
+        )) {
+          setPath(listedPath)
+          setCurrentPath(listedPath)
+          setEntries(targetResponse.result.entries)
+          setEntriesTruncated(Boolean(targetResponse.result.truncated))
+          setSelectedFile(null)
+          setPanelTitle(initialFile.name || sessionFileNameFromPath(listedPath))
+          return
+        }
+
+        setPath(listedPath)
+        setCurrentPath(listedPath)
+        setEntries(targetResponse.result.entries)
+        setEntriesTruncated(Boolean(targetResponse.result.truncated))
+
+        const targetEntry = findSessionFileTargetEntry(
+          targetResponse.result.entries,
+          canonicalRoot,
+          initialFile.path,
+          isWindowsConnector,
+          canonicalHome,
+        )
+        if (targetEntry && (targetEntry.type === "file" || targetEntry.type === "symlink")) {
+          setSelectedFile({
+            ...initialFile,
+            name: targetEntry.name,
+            path: targetEntry.path,
+          })
+          setPanelTitle(targetEntry.name)
+          return
+        }
+
+        setSelectedFile({
+          ...initialFile,
+          path: resolveSessionFilePath(
+            canonicalRoot,
+            initialFile.path,
+            isWindowsConnector,
+            canonicalHome,
+          ),
+        })
+      } catch (err) {
+        if (requestId !== loadRequestIdRef.current) return
+        setError(err instanceof Error ? err.message : String(err))
+        setSelectedFile(initialFile ?? null)
+      } finally {
+        if (requestId === loadRequestIdRef.current) setLoading(false)
+      }
+    }
+
+    void initialize()
+  }, [canLoad, connectorId, effectiveRoot, initialFile, isWindowsConnector, token, treeAllowed])
+
+  const parentPath = React.useMemo(
+    () => sessionFileParentPath(currentPath || path),
+    [currentPath, path],
+  )
   const canGoParent = parentPath !== "" || isWindowsDriveRoot(currentPath || path)
   const sortedEntries = React.useMemo(
     () =>
@@ -113,26 +352,44 @@ export function FilesPanelBody({
   const contextPath = contextEntry?.path ?? currentPath
   const contextIsFile = contextEntry ? isDownloadableEntry(contextEntry) : false
 
-  const openEntry = (entry: FsEntry) => {
+  const loadTreeDirectory = React.useCallback(
+    async (directoryPath: string) => {
+      if (!token || !connectorId) throw new Error(t("noConnector"))
+      const response = await dashboardApi.connectorFsList(token, connectorId, {
+        root: effectiveRoot,
+        path: directoryPath,
+      })
+      return response.result
+    },
+    [connectorId, effectiveRoot, t, token],
+  )
+
+  const openEntry = async (entry: FsEntry) => {
+    if (entry.path !== selectedFile?.path && dirtyRef.current && !await confirmDiscard()) return
     if (entry.type === "directory") {
       void loadDir(entry.path)
       return
     }
     if (entry.type === "file" || entry.type === "symlink") {
-      const file = { name: entry.name, path: entry.path }
+      const file: SessionFilePreviewTarget = {
+        source: "workspace",
+        name: entry.name,
+        path: entry.path,
+        root: effectiveRoot,
+      }
+      if (variant === "tab") {
+        handleDirtyChange(false)
+        setSelectedFile(file)
+        if (compact) { treePanelRef.current?.collapse(); setTreeOpen(false) }
+        setPanelTitle(file.name)
+        return
+      }
       openNativeFilePreviewWindow({
         token,
         connectorId,
         root: effectiveRoot,
         file,
         onBlocked: onPopupBlocked,
-        labels: {
-          preview: t("preview"),
-          loading: t("previewLoading", { name: file.name }),
-          noConnector: t("noConnector"),
-          binaryUnavailable: (size) => t("binaryUnavailable", { size }),
-          truncated: t("truncated"),
-        },
       })
     }
   }
@@ -173,6 +430,28 @@ export function FilesPanelBody({
     setContextEntry(entryPath ? entriesByPath.get(entryPath) ?? null : null)
   }
 
+  const renderContextMenu = () => (
+    <ContextMenuContent className="w-52">
+      <ContextMenuGroup>
+        <ContextMenuItem onSelect={() => void copyPath()}>
+          <Copy />
+          {t("copyPath")}
+        </ContextMenuItem>
+        <ContextMenuItem onSelect={addToComposer}>
+          <MessageSquarePlus />
+          {t("addToComposer")}
+        </ContextMenuItem>
+      </ContextMenuGroup>
+      <ContextMenuSeparator />
+      <ContextMenuGroup>
+        <ContextMenuItem onSelect={() => void downloadEntry()} disabled={!contextIsFile || !canLoad}>
+          <Download />
+          {t("download")}
+        </ContextMenuItem>
+      </ContextMenuGroup>
+    </ContextMenuContent>
+  )
+
   const fileBrowser = (
     <ContextMenu>
       <ContextMenuTrigger asChild>
@@ -193,11 +472,13 @@ export function FilesPanelBody({
               {sortedEntries.map((entry) => (
                 <button
                   key={entry.path}
-                  className="aa-fs-row"
                   type="button"
                   data-fs-entry-path={entry.path}
                   onClick={() => openEntry(entry)}
                   disabled={entry.type !== "directory" && entry.type !== "file" && entry.type !== "symlink"}
+                  aria-current={selectedFile?.path === entry.path ? "page" : undefined}
+                  data-selected={selectedFile?.path === entry.path ? "true" : undefined}
+                  className={cn("aa-fs-row", selectedFile?.path === entry.path && "active")}
                 >
                   {entry.type === "directory" ? <Folder className="size-3.5" /> : <File className="size-3.5" />}
                   <span>{entry.name}</span>
@@ -208,21 +489,40 @@ export function FilesPanelBody({
           </ScrollArea>
         </div>
       </ContextMenuTrigger>
-      <ContextMenuContent className="w-52">
-        <ContextMenuItem onSelect={() => void copyPath()}>
-          <Copy className="size-4" />
-          {t("copyPath")}
-        </ContextMenuItem>
-        <ContextMenuItem onSelect={addToComposer}>
-          <MessageSquarePlus className="size-4" />
-          {t("addToComposer")}
-        </ContextMenuItem>
-        <ContextMenuSeparator />
-        <ContextMenuItem onSelect={() => void downloadEntry()} disabled={!contextIsFile || !canLoad}>
-          <Download className="size-4" />
-          {t("download")}
-        </ContextMenuItem>
-      </ContextMenuContent>
+      {renderContextMenu()}
+    </ContextMenu>
+  )
+
+  const fileTreeBrowser = (
+    <ContextMenu>
+      <ContextMenuTrigger asChild>
+        <div className="flex min-h-0 flex-1 flex-col">
+          <ScrollArea className="aa-fs-browser">
+            <LazyFileTree
+              identity={`${connectorId ?? ""}:${effectiveRoot}:${connectorDeviceOs ?? ""}:${currentPath}`}
+              rootPath={currentPath || effectiveRoot}
+              entries={sortedEntries}
+              rootLoading={loading}
+              rootError={error}
+              rootTruncated={entriesTruncated}
+              canLoad={canLoad}
+              caseInsensitivePaths={isWindowsConnector}
+              selectedPath={selectedFile?.path}
+              labels={{
+                empty: t("empty"),
+                loading: t("loading"),
+                noConnector: t("noConnector"),
+                retry: t("retry"),
+                truncated: t("truncated"),
+              }}
+              loadDirectory={loadTreeDirectory}
+              onOpenFile={openEntry}
+              onContextEntryChange={setContextEntry}
+            />
+          </ScrollArea>
+        </div>
+      </ContextMenuTrigger>
+      {renderContextMenu()}
     </ContextMenu>
   )
 
@@ -293,6 +593,135 @@ export function FilesPanelBody({
         </div>
         {fileBrowser}
       </div>
+    )
+  }
+
+  if (variant === "tab") {
+    const breadcrumbPath = treeAllowed
+      ? selectedFile?.path || currentPath || effectiveRoot
+      : selectedFile?.name || initialFile?.name || "."
+    const previewPane = (
+      <section className="aa-fs-preview" aria-label={t("preview")}>
+        {selectedFile ? (
+          <FilePreviewSurface
+            key={`${connectorId}:${effectiveRoot}:${selectedFile.path}:${selectedFile.sourceUrl ?? ""}`}
+            token={token ?? null}
+            connectorId={connectorId ?? ""}
+            root={effectiveRoot}
+            initialPath={selectedFile.path}
+            initialName={selectedFile.name}
+            sourceUrl={selectedFile.sourceUrl}
+            sourceMediaType={selectedFile.mediaType}
+            sourceSize={selectedFile.size}
+            readOnly={selectedFile.source === "attachment"}
+            onDirtyChange={handleDirtyChange}
+            mode="embedded"
+            onOpenExternal={() => {
+              openNativeFilePreviewWindow({
+                token,
+                connectorId,
+                root: effectiveRoot,
+                file: selectedFile,
+                onBlocked: onPopupBlocked,
+              })
+            }}
+          />
+        ) : (
+          <Empty className="h-full rounded-none border-0">
+            <EmptyHeader>
+              <EmptyMedia>
+                <FolderOpen />
+              </EmptyMedia>
+              <EmptyTitle>{t("openFile")}</EmptyTitle>
+              <EmptyDescription>{t("openFileDescription")}</EmptyDescription>
+            </EmptyHeader>
+          </Empty>
+        )}
+      </section>
+    )
+
+    return (
+      <Card ref={panelRef} size="sm" className="aa-rt-pane aa-rt-pane-tab">
+        {discardDialog}
+        <CardContent className="aa-rt-content">
+          <header className="aa-fs-shared-header">
+            <FilePathBreadcrumb path={breadcrumbPath} />
+            {treeAllowed ? (
+              <TooltipProvider delayDuration={500}>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      className="aa-fs-tree-toggle shrink-0"
+                      variant="ghost"
+                      size="icon-sm"
+                      type="button"
+                      aria-label={treeOpen ? t("hideTree") : t("showTree")}
+                      aria-expanded={treeOpen}
+                      data-open={treeOpen ? "true" : "false"}
+                      onClick={toggleTree}
+                    >
+                      <ListTree />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom" align="end" sideOffset={6}>
+                    {treeOpen ? t("hideTree") : t("showTree")}
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            ) : null}
+          </header>
+          {treeAllowed ? (
+            <ResizablePanelGroup
+              direction={compact ? "vertical" : "horizontal"}
+              className={cn("aa-fs-workspace", treeResizeActive && "is-resizing")}
+            >
+              <ResizablePanel id="files-preview" defaultSize="60%" minSize="35%">
+                {previewPane}
+              </ResizablePanel>
+
+              <ResizableHandle
+                className={cn("aa-fs-tree-resize-handle", !treeOpen && "hidden")}
+                showSeparator={false}
+                title={t("resizeTree")}
+                aria-label={t("resizeTree")}
+                onPointerDown={(event) => {
+                  event.currentTarget.setPointerCapture(event.pointerId)
+                  setTreeResizeActive(true)
+                }}
+                onPointerUp={(event) => {
+                  if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+                    event.currentTarget.releasePointerCapture(event.pointerId)
+                  }
+                  setTreeResizeActive(false)
+                }}
+                onPointerCancel={() => setTreeResizeActive(false)}
+                onLostPointerCapture={() => setTreeResizeActive(false)}
+              />
+
+              <ResizablePanel
+                id="files-tree"
+                panelRef={treePanelRef}
+                collapsible
+                collapsedSize="0px"
+                defaultSize="40%"
+                minSize={compact ? "20%" : "160px"}
+                maxSize="65%"
+                groupResizeBehavior="preserve-pixel-size"
+                onResize={(size) => {
+                  const collapsed = treePanelRef.current?.isCollapsed() ?? size.inPixels <= 1
+                  setTreeOpen(!collapsed)
+                }}
+              >
+                <aside className={cn("aa-fs-tree", !treeOpen && "collapsed")} aria-label={t("fileTree")}>
+                  {treeOpen ? fileTreeBrowser : null}
+                </aside>
+              </ResizablePanel>
+            </ResizablePanelGroup>
+          ) : (
+            <div className="aa-fs-workspace">{previewPane}</div>
+          )}
+        </CardContent>
+      </Card>
     )
   }
 
@@ -389,49 +818,6 @@ export function FilesPanelBody({
       </CardContent>
     </Card>
   )
-}
-
-export function openNativeFilePreviewWindow({
-  connectorId,
-  root,
-  file,
-  onBlocked,
-}: {
-  token?: string | null
-  connectorId?: string | null
-  root: string
-  file: PickedFile
-  onBlocked?: () => void
-  labels?: {
-    preview: string
-    loading: string
-    noConnector: string
-    binaryUnavailable: (size: string) => string
-    truncated: string
-  }
-}) {
-  const search = new URLSearchParams({
-    connectorId: connectorId ?? "",
-    root,
-    path: file.path,
-    name: file.name,
-  })
-  const child = window.open(`/#/preview?${search.toString()}`, "_blank", "width=980,height=720,resizable=yes,scrollbars=yes")
-  if (!child) {
-    onBlocked?.()
-    return
-  }
-  child.focus()
-}
-
-function parentOf(rawPath: string): string {
-  const clean = normalizeWindowsDrivePath(rawPath).trim().replace(/[/\\]+$/, "") || "."
-  if (clean === "." || clean === "/" || /^[A-Za-z]:[\\/]?$/.test(clean)) return ""
-  const normalized = clean.replace(/\\/g, "/")
-  const slash = normalized.lastIndexOf("/")
-  if (slash < 0) return "."
-  if (slash === 0) return "/"
-  return normalized.slice(0, slash)
 }
 
 function normalizeWindowsDrivePath(path: string): string {

@@ -67,6 +67,10 @@ import {
   preserveOptimisticItems,
   timelineClientMessageId,
 } from "@/components/session/optimistic-timeline"
+import { nextTimelineResetVersion } from "@/components/session/session-review-history"
+import { buildTurnReviewDisplay, type SessionReviewTarget } from "@/components/session/session-review-model"
+import { SessionReviewCard } from "@/components/session/session-review-card"
+import { SessionReviewTag } from "@/components/session/session-review-tag"
 import { isVisibleTimelineItem, messageText, runtimeLabel, textOf } from "@/components/session/session-utils"
 import { stripInjectedAttachmentMentions } from "@/features/dashboard/attachments"
 import { sessionRuntimeId, sessionRuntimeType } from "@/features/dashboard/runtime-instances"
@@ -76,6 +80,8 @@ type SessionDetailProps = {
   token: string
   sessionId: string
   fallbackSession: SessionView | null
+  connectorDeviceOs?: string | null
+  onOpenReview?: (target?: SessionReviewTarget) => void
   onSessionUpdated?: (session: SessionView) => void
   onMemorySnapshotUpdated?: (snapshot: SessionMemorySnapshot | null) => void
   onStreamProgress?: (sessionId: string, nextSeq: number | null) => void
@@ -88,6 +94,7 @@ export type SessionMemorySnapshot = {
   notices: Notice[]
   nextSeq: number
   hasMore: boolean
+  timelineResetVersion: number
   serverTime: string
   pendingInteractionCount: number
 }
@@ -99,6 +106,7 @@ type SessionRemoteState = {
   notices: Notice[]
   nextSeq: number
   hasMore: boolean
+  timelineResetVersion: number
   serverTime: string
   eventCursor: string
   effectiveCapabilities: ProtocolCapabilitySet | null
@@ -113,6 +121,7 @@ function remoteStateFromOptimisticState(optimisticState: SessionLocalTimelineSta
   return {
     ...optimisticState,
     notices: optimisticState.notices ?? [],
+    timelineResetVersion: 0,
     eventCursor: `seq:${optimisticState.nextSeq}`,
     effectiveCapabilities: null,
     catalogs: {},
@@ -172,6 +181,7 @@ function sessionStateFromSnapshot(snapshot: SessionSnapshotResponse): SessionRem
     notices: snapshot.notices,
     nextSeq: snapshot.timeline.nextSeq,
     hasMore: snapshot.timeline.hasMore,
+    timelineResetVersion: 0,
     serverTime: snapshot.serverTime,
     eventCursor: snapshot.eventCursor,
     effectiveCapabilities: snapshot.effectiveCapabilities,
@@ -193,6 +203,7 @@ function mergeSessionSnapshot(
     ...incoming,
     items: timeline.items,
     nextSeq: timeline.nextSeq,
+    timelineResetVersion: nextTimelineResetVersion(current.timelineResetVersion, true),
     eventCursor: incoming.nextSeq >= current.nextSeq
       ? incoming.eventCursor
       : current.eventCursor,
@@ -305,6 +316,8 @@ export function SessionDetail({
   token,
   sessionId,
   fallbackSession,
+  connectorDeviceOs,
+  onOpenReview,
   onSessionUpdated,
   onMemorySnapshotUpdated,
   onStreamProgress,
@@ -378,6 +391,11 @@ export function SessionDetail({
   const session = state?.session ?? fallbackSession
   const runtimeState = state?.state ?? null
   const runtimeStatus = effectiveRuntimeStatus(runtimeState, session)
+  const turnInProgress = runtimeStatus === "waiting"
+    || runtimeStatus === "pending"
+    || runtimeStatus === "running"
+    || runtimeStatus === "stopping"
+    || runtimeStatus === "waiting_approval"
   const previousStatusTraceRef = React.useRef<{
     sessionId: string
     sessionStatus: string
@@ -687,6 +705,7 @@ export function SessionDetail({
       notices: state.notices,
       nextSeq: state.nextSeq,
       hasMore: state.hasMore,
+      timelineResetVersion: state.timelineResetVersion,
       serverTime: state.serverTime,
       pendingInteractionCount: blockingInteractions(state.notices, state.session.id).length,
     })
@@ -878,7 +897,10 @@ export function SessionDetail({
             cursorSequence(next.eventCursor) || next.nextSeq,
           )
           processedEventIds = new Set()
-          setState(merged)
+          setState((current) => ({
+            ...merged,
+            timelineResetVersion: nextTimelineResetVersion(current?.timelineResetVersion ?? 0, true),
+          }))
           onSessionUpdatedRef.current?.(next.session)
         })
         .catch(() => undefined)
@@ -1568,16 +1590,23 @@ export function SessionDetail({
     () => groupTimelineItems((state?.items ?? []).filter(isVisibleTimelineItem), interactionTargetIds),
     [interactionTargetIds, state?.items],
   )
+  const turnReviewDisplay = React.useMemo(() => {
+    return buildTurnReviewDisplay(state?.session.id === sessionId ? state.items.filter(isVisibleTimelineItem) : [], {
+      root: state?.session.cwd,
+      caseInsensitivePaths: connectorDeviceOs === "windows",
+      turnInProgress,
+    })
+  }, [connectorDeviceOs, sessionId, state?.items, state?.session.id, state?.session.cwd, turnInProgress])
+  const completedTurnReviewsByEndItemId = React.useMemo(
+    () => new Map(turnReviewDisplay.completedTurns.map((turn) => [turn.endItemId, turn])),
+    [turnReviewDisplay.completedTurns],
+  )
   const turnActionsByGroupKey = React.useMemo(
     () => buildTurnActionsByGroupKey(
       timelineGroups,
-      runtimeStatus === "waiting"
-        || runtimeStatus === "pending"
-        || runtimeStatus === "running"
-        || runtimeStatus === "stopping"
-        || runtimeStatus === "waiting_approval",
+      turnInProgress,
     ),
-    [runtimeStatus, timelineGroups],
+    [timelineGroups, turnInProgress],
   )
 
   if (loading && !session) return <SessionSkeleton />
@@ -1650,6 +1679,9 @@ export function SessionDetail({
             {timelineGroups.map((group) => {
               const groupKey = timelineGroupKey(group)
               const turnAction = turnActionsByGroupKey.get(groupKey)
+              const completedTurnReview = timelineGroupItems(group)
+                .map((item) => completedTurnReviewsByEndItemId.get(item.id))
+                .find((turn) => turn !== undefined)
               return (
                 <React.Fragment key={groupKey}>
                   <TimelineGroupEntry
@@ -1667,6 +1699,16 @@ export function SessionDetail({
                     onItemOpenChange={handleTimelineItemOpenChange}
                     onRespondInteraction={handleRespondInteraction}
                   />
+                  {completedTurnReview && onOpenReview ? (
+                    <SessionReviewCard
+                      key={completedTurnReview.review.key}
+                      review={completedTurnReview.review}
+                      onReview={() => onOpenReview({
+                        orderSeq: completedTurnReview.endOrderSeq,
+                        resetVersion: state?.timelineResetVersion ?? 0,
+                      })}
+                    />
+                  ) : null}
                   {turnAction ? (
                     <TurnActions
                       token={token}
@@ -1725,6 +1767,9 @@ export function SessionDetail({
           onRespondInteraction={handleRespondInteraction}
         />
         <div ref={composerContainerRef} className="pointer-events-auto relative">
+          {onOpenReview && turnReviewDisplay.activeReview ? (
+            <SessionReviewTag files={turnReviewDisplay.activeReview.files} onReview={() => onOpenReview()} />
+          ) : null}
           <SessionComposer
             token={token}
             session={session}
@@ -2470,6 +2515,10 @@ function mergeSessionEvent(
     : item
       ? mergeTimelineItems(current.items, [item])
       : current.items
+  const timelineResetVersion = nextTimelineResetVersion(
+    current.timelineResetVersion,
+    timelineSnapshot !== null,
+  )
   const acceptsSession = Boolean(session && session.updatedSeq >= current.session.updatedSeq)
   const nextSession = acceptsSession && session && !sessionSemanticallyEqual(current.session, session)
     ? session
@@ -2526,6 +2575,7 @@ function mergeSessionEvent(
     nextEffectiveCapabilities === current.effectiveCapabilities &&
     nextCatalogs === current.catalogs &&
     nextSeq === current.nextSeq &&
+    timelineResetVersion === current.timelineResetVersion &&
     nextEventCursor === current.eventCursor
   ) {
     return current
@@ -2538,6 +2588,7 @@ function mergeSessionEvent(
     items: nextItems,
     notices: nextNotices,
     nextSeq,
+    timelineResetVersion,
     eventCursor: nextEventCursor,
     effectiveCapabilities: nextEffectiveCapabilities,
     catalogs: nextCatalogs,

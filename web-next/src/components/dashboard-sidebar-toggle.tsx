@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import { WorkspaceSidebarControlContext } from "@/components/dashboard-sidebar-controls"
 import { PanelLeft } from "lucide-react"
 import { useTranslations } from "next-intl"
 
@@ -9,8 +10,9 @@ import { Button } from "@/components/ui/button"
 import { useSidebar } from "@/components/ui/sidebar"
 import { cn } from "@/lib/utils"
 
-export function DashboardSidebarToggle({ className }: { className?: string }) {
-  const { isMobile, toggleSidebar } = useSidebar()
+export function DashboardSidebarToggle({ className, standalone = false }: { className?: string; standalone?: boolean }) {
+  const managed = React.useContext(WorkspaceSidebarControlContext)
+  const { isMobile, open, openMobile, toggleSidebar } = useSidebar()
   const sidebarControls = useDashboardSidebarControls()
   const tActions = useTranslations("dashboard.actions")
 
@@ -19,15 +21,20 @@ export function DashboardSidebarToggle({ className }: { className?: string }) {
       toggleSidebar()
       return
     }
-    sidebarControls?.toggleSidebar()
+    if (sidebarControls) sidebarControls.toggleSidebar()
+    else toggleSidebar()
   }, [isMobile, sidebarControls, toggleSidebar])
+
+  if (managed && !standalone) return <span aria-hidden="true" className={cn("size-8 shrink-0", className)} />
 
   return (
     <Button
       variant="ghost"
       size="icon-sm"
       type="button"
-      aria-label={sidebarControls?.open === false ? tActions("expand") : tActions("collapse")}
+      aria-label={(isMobile ? openMobile : open) ? tActions("collapse") : tActions("expand")}
+      aria-expanded={isMobile ? openMobile : open}
+      data-slot="workspace-sidebar-toggle"
       onClick={toggleDashboardSidebar}
       className={cn("shrink-0 text-muted-foreground hover:text-foreground", className)}
     >

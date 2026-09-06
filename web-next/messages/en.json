@@ -758,7 +758,14 @@
         "pathAddedToComposer": "Path added to Composer",
         "pathCopied": "Path copied",
         "binaryUnavailable": "Binary file ({size} bytes). Preview unavailable.",
-        "truncated": "truncated"
+        "truncated": "truncated",
+        "retry": "Retry",
+        "fileTree": "File tree",
+        "resizeTree": "Resize file tree",
+        "showTree": "Open file tree",
+        "hideTree": "Hide file tree",
+        "openFile": "Open a file",
+        "openFileDescription": "Select a file from the file tree on the right"
       },
       "terminal": {
         "title": "Shell",
@@ -977,7 +984,44 @@
       "fileChangeUnknown": "Changed",
       "showCode": "Show code",
       "hideCode": "Hide code",
-      "loadCodeFailed": "Failed to load code"
+      "loadCodeFailed": "Failed to load code",
+      "tools": {
+        "sidebarLabel": "Session tools",
+        "tabsLabel": "Tool tabs",
+        "navigationLabel": "Open a tool",
+        "review": "Review",
+        "reviewFilesChanged": "{count, plural, one {# file changed} other {# files changed}}",
+        "reviewFilesEdited": "{count, plural, one {Edited # file} other {Edited # files}}",
+        "reviewShowMoreFiles": "{count, plural, one {Show # more file} other {Show # more files}}",
+        "reviewCollapseFiles": "Collapse files",
+        "terminal": "Terminal",
+        "files": "Files",
+        "newTab": "Open a new tab",
+        "closeTab": "Close {title}",
+        "expand": "Expand tool sidebar",
+        "restore": "Restore tool sidebar",
+        "collapse": "Collapse tool sidebar",
+        "toggle": "Open tool sidebar",
+        "visibilityToggle": "Show/hide side panel",
+        "reviewEmptyTitle": "No file changes",
+        "reviewEmptyDescription": "File changes from the latest edited turn will appear here.",
+        "reviewHistoryFailed": "Could not load older file changes.",
+        "reviewRetry": "Retry",
+        "reviewDiffUnavailable": "A diff preview is not available for this change.",
+        "reviewResizeTree": "Resize changed files tree",
+        "reviewFileTree": "Changed files",
+        "reviewTreeLoading": "Loading changed files...",
+        "reviewTreeTruncated": "Some changed files are not shown.",
+        "reviewFolderChanged": "Contains changed files",
+        "reviewFileAdded": "Added file",
+        "reviewFileDeleted": "Deleted file",
+        "reviewFileModified": "Modified file",
+        "reviewCollapseFile": "Collapse diffs for {file}",
+        "reviewExpandFile": "Expand diffs for {file}",
+        "reviewOpenFilePreview": "Open full preview for {file}",
+        "reviewPreviewBlocked": "The file preview window was blocked.",
+        "reviewDiffCard": "Change {index} of {count}"
+      }
     },
     "sessionStatus": {
       "idle": "Idle",
@@ -1640,6 +1684,11 @@
     "saveBeforeLeavingEdit": "Save or refresh before leaving edit mode.",
     "saveBeforeClose": "Save or refresh before closing this preview.",
     "emptyDirectory": "This folder is empty",
-    "binaryUnavailable": "Preview unavailable"
+    "binaryUnavailable": "Preview unavailable",
+    "openWindow": "Open in separate window",
+    "discardTitle": "Discard unsaved changes?",
+    "discardDescription": "Your edits to this file have not been saved. Discard them to continue.",
+    "keepEditing": "Keep editing",
+    "discardChanges": "Discard changes"
   }
 }

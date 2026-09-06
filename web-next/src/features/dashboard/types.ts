@@ -600,6 +600,8 @@ export type FsListResult = {
   path: string;
   entries: FsEntry[];
   truncated?: boolean;
+  targetPath?: string | null;
+  targetType?: string | null;
 };
 
 export type FsReadTextResult = {
