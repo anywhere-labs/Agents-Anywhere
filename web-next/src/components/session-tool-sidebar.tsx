@@ -645,7 +645,8 @@ export function SessionToolSidebar({
       ) : null}
 
       {discardDialog}
-      <div className={cn("flex h-14 shrink-0 items-center gap-1 bg-background px-2", fillsMain && "pl-12")}>
+      {/* Keep buttons aligned with the chat header while trimming the space below them. */}
+      <div className={cn("flex h-12 shrink-0 items-center gap-1 bg-background px-2 pt-2", fillsMain && "pl-12")}>
         <div
           role="tablist"
           aria-label={t("tabsLabel")}
