@@ -401,7 +401,8 @@ fun NewSessionScreen(
         pathLoading = false
         if (deviceId == null) return@LaunchedEffect
         if (creatingProject) {
-            loadDirectory(startPath, fallbackRoot = selectedWorkspacePath)
+            // The embedded browser's current directory is the project target.
+            loadDirectory(startPath, fallbackRoot = selectedWorkspacePath, select = true)
             return@LaunchedEffect
         }
         val result = try {
@@ -733,7 +734,7 @@ fun NewSessionScreen(
             keyboard?.hide()
             selectedWorkspacePath = ""
             projectCreateError = null
-            scope.launch { loadDirectory(path, fallbackRoot = currentPath) }
+            scope.launch { loadDirectory(path, fallbackRoot = currentPath, select = true) }
         }
         NewProjectScreen(
             deviceField = configurationFields.first { it.key == NewSessionConfigurationKey.Device },
