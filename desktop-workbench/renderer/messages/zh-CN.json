@@ -1137,7 +1137,8 @@
       "agentRunning": "已配置并运行",
       "agentConfigured": "已配置",
       "noAgentsFound": "这台设备上没有已配置或可添加的 Agent。",
-      "refreshAgents": "刷新 Agent"
+      "refreshAgents": "刷新 Agent",
+      "skipAgents": "暂不添加"
     },
     "firstDevice": {
       "title": "要添加你的第一台设备吗？",

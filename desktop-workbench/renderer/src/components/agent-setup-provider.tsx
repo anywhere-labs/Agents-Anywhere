@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { CheckCircle2, Loader2, Plus, RefreshCw } from "lucide-react"
+import { CheckCircle2, Loader2, Plus } from "lucide-react"
 import { useTranslations } from "next-intl"
 import { toast } from "sonner"
 
@@ -163,8 +163,13 @@ function AgentSetupDialog({ connector, onClose }: { connector: AgentSetupConnect
     .filter((runtimeType) => !configured.some((runtime) => runtime.runtimeType === runtimeType.runtimeType))
 
   return (
-    <Dialog open onOpenChange={(open) => { if (!open && !busyRef.current) onClose() }}>
-      <DialogContent className="sm:max-w-xl">
+    <Dialog open>
+      <DialogContent
+        className="sm:max-w-xl"
+        showCloseButton={false}
+        onInteractOutside={(event) => event.preventDefault()}
+        onEscapeKeyDown={(event) => event.preventDefault()}
+      >
         <DialogHeader>
           <DialogTitle>{t("successTitle")}</DialogTitle>
           <DialogDescription>
@@ -224,9 +229,8 @@ function AgentSetupDialog({ connector, onClose }: { connector: AgentSetupConnect
           )}
         </div>
         <DialogFooter>
-          <Button variant="outline" disabled={loading || addingType !== null} onClick={() => setReload((current) => current + 1)}>
-            <RefreshCw />
-            {t("refreshAgents")}
+          <Button type="button" variant="outline" disabled={addingType !== null} onClick={onClose}>
+            {t("skipAgents")}
           </Button>
           <Button disabled={addingType !== null} onClick={onClose}>{tCommon("done")}</Button>
         </DialogFooter>

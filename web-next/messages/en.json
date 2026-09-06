@@ -1101,7 +1101,8 @@
         "discoverRuntimesFailed": "Failed to discover agents on this device.",
         "configureAndStartFailed": "Failed to configure and start the agent."
       },
-      "quickAdd": "Quick add"
+      "quickAdd": "Quick add",
+      "skipAgents": "Skip for now"
     },
     "firstDevice": {
       "title": "Add your first device?",

@@ -1137,7 +1137,8 @@
       "agentRunning": "Configured and running",
       "agentConfigured": "Configured",
       "noAgentsFound": "No configured or addable agents were found on this device.",
-      "refreshAgents": "Refresh agents"
+      "refreshAgents": "Refresh agents",
+      "skipAgents": "Skip for now"
     },
     "firstDevice": {
       "title": "Add your first device?",
