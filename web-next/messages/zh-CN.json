@@ -1093,6 +1093,7 @@
       "closeAnyway": "仍然关闭",
       "errors": {
         "prepareFailed": "无法准备配对。",
+        "copyFailed": "复制失败，请选中命令后手动复制。",
         "createFailed": "无法创建连接器。",
         "claimFailed": "无法认领配对。",
         "discoverRuntimesFailed": "无法发现这台设备上的 Agent。",

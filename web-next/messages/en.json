@@ -1093,6 +1093,7 @@
       "closeAnyway": "Close anyway",
       "errors": {
         "prepareFailed": "Failed to prepare pairing.",
+        "copyFailed": "Copy failed. Please select the command and copy it manually.",
         "createFailed": "Failed to create connector.",
         "claimFailed": "Failed to claim pairing.",
         "discoverRuntimesFailed": "Failed to discover agents on this device.",
