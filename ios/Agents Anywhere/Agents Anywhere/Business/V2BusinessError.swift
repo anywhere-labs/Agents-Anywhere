@@ -3,6 +3,7 @@ import Foundation
 enum V2BusinessError: LocalizedError {
     case emptyMessage
     case emptySessionSelection
+    case tooManySessions
     case emptySessionTitle
     case emptyAvatar
     case passwordTooShort
@@ -15,6 +16,8 @@ enum V2BusinessError: LocalizedError {
     case invalidRuntimeConfigField(title: String)
     case tooManyAttachments(maximum: Int)
     case emptyAttachment(name: String)
+    case emptyAttachmentSelection
+    case attachmentTooLarge(name: String)
     case invalidPageSize
     case workspaceFilesUnavailable(message: String)
     case workspaceEntryNotPreviewable
@@ -26,6 +29,8 @@ enum V2BusinessError: LocalizedError {
             return String(localized: "Enter a message before sending.")
         case .emptySessionSelection:
             return String(localized: "Select at least one session.")
+        case .tooManySessions:
+            return String(localized: "Select no more than 200 sessions at once.")
         case .emptySessionTitle:
             return String(localized: "Enter a session title.")
         case .emptyAvatar:
@@ -45,11 +50,15 @@ enum V2BusinessError: LocalizedError {
         case .invalidRuntimeConfigSchema:
             return String(localized: "The runtime configuration schema is unavailable or invalid.")
         case let .invalidRuntimeConfigField(title):
-            return "Enter a valid value for \(title)."
+            return String(localized: "Enter a valid value for \(title).")
         case let .tooManyAttachments(maximum):
-            return "Attach no more than \(maximum) files."
+            return String(localized: "Attach no more than \(maximum) files.")
         case let .emptyAttachment(name):
-            return "The attachment '\(name)' is empty."
+            return String(localized: "The attachment '\(name)' is empty.")
+        case .emptyAttachmentSelection:
+            return String(localized: "Choose at least one file to upload.")
+        case let .attachmentTooLarge(name):
+            return String(localized: "The attachment '\(name)' exceeds the 25 MiB file limit.")
         case .invalidPageSize:
             return String(localized: "The requested page size is outside the supported range.")
         case let .workspaceFilesUnavailable(message):

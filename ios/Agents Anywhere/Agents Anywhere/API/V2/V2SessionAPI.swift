@@ -1,7 +1,9 @@
 import Foundation
 
 protocol V2SessionAPIProtocol {
-    func listSessions() async throws -> V2SessionListResponse
+    func setTakeover(sessionId: V2SessionID, enabled: Bool) async throws -> V2SessionTakeoverResponse
+    func sync(sessionId: V2SessionID) async throws -> V2RuntimeActionResponse
+    func listSessions(archived: Bool, cursor: String?) async throws -> V2SessionListResponse
     func sessionMeta(sessionId: V2SessionID) async throws -> V2SessionMetaResponse
     func patchSessionMeta(sessionId: V2SessionID, request: V2SessionMetaPatchRequest) async throws -> V2SessionMetaResponse
     func createSession(request: V2SessionCreateRequest) async throws -> V2SessionCreateResponse
@@ -18,8 +20,10 @@ protocol V2SessionAPIProtocol {
 struct V2SessionAPI: V2SessionAPIProtocol {
     let transport: any HTTPTransport
 
-    func listSessions() async throws -> V2SessionListResponse {
-        let request = HTTPRequest<EmptyRequestBody, V2SessionListResponse>(method: .get, path: "/sessions")
+    func listSessions(archived: Bool = false, cursor: String? = nil) async throws -> V2SessionListResponse {
+        var query = [URLQueryItem(name: "archived", value: String(archived)), URLQueryItem(name: "limit", value: "100")]
+        if let cursor { query.append(URLQueryItem(name: "cursor", value: cursor)) }
+        let request = HTTPRequest<EmptyRequestBody, V2SessionListResponse>(method: .get, path: "/sessions", queryItems: query)
         return try await transport.send(request)
     }
 
@@ -101,6 +105,18 @@ struct V2SessionAPI: V2SessionAPIProtocol {
             beforeOrderSeq: beforeOrderSeq,
             limit: limit
         )
+    }
+
+    func setTakeover(sessionId: V2SessionID, enabled: Bool) async throws -> V2SessionTakeoverResponse {
+        try await transport.send(HTTPRequest<EmptyRequestBody, V2SessionTakeoverResponse>(
+            method: enabled ? .post : .delete, path: sessionPath(sessionId, suffix: "takeover")
+        ))
+    }
+
+    func sync(sessionId: V2SessionID) async throws -> V2RuntimeActionResponse {
+        try await transport.send(HTTPRequest<EmptyRequestBody, V2RuntimeActionResponse>(
+            method: .post, path: sessionPath(sessionId, suffix: "sync")
+        ))
     }
 
     private func bulkAction(path: String, sessionIds: [V2SessionID]) async throws -> V2SessionBulkActionResponse {

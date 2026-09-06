@@ -14,12 +14,28 @@ struct V2WorkspaceFilesService {
             connectorId: connectorId,
             request: V2WorkspaceFilesListRequest(root: root, path: path)
         )
-        guard response.ok else {
+        if let error = response.error, !response.ok { throw error }
+        guard response.ok, let directory = response.result else {
             throw V2BusinessError.workspaceFilesUnavailable(
-                message: response.error ?? String(localized: "The workspace directory is unavailable.")
+                message: String(localized: "The workspace directory is unavailable.")
             )
         }
-        return response.result
+        return directory
+    }
+
+    func readText(connectorId: V2ConnectorID, root: String, path: String, maxBytes: Int = 1_048_576) async throws -> V2WorkspaceTextResponse {
+        guard (1...4_194_304).contains(maxBytes) else { throw V2BusinessError.invalidPageSize }
+        return try await connectorAPI.readWorkspaceText(
+            connectorId: connectorId, root: root,
+            request: V2WorkspaceTextRequest(path: path, maxBytes: maxBytes)
+        )
+    }
+
+    /// Explicit export/open-in action uses the full binary transfer, including for
+    /// text files. The size-limited Web text preview is never used as a download.
+    func download(connectorId: V2ConnectorID, root: String, entry: V2WorkspaceEntry) async throws -> WorkspaceDownloadedFile {
+        guard entry.isFile else { throw V2BusinessError.workspaceEntryNotPreviewable }
+        return try await connectorAPI.downloadWorkspaceFile(connectorId: connectorId, root: root, path: entry.path)
     }
 
     /// Creates a one-use scoped token and returns the existing Web file-preview route.

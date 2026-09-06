@@ -1,268 +1,103 @@
 import SwiftUI
-import UIKit
 
 struct AccountSettingsSheet: View {
     @EnvironmentObject private var appState: AppState
     @Environment(\.dismiss) private var dismiss
-
-    @State private var isConfirmingSignOut = false
+    @AppStorage(AppAppearance.storageKey) private var appearanceValue = AppAppearance.system.rawValue
+    @State private var confirmsSignOut = false
+    @State private var signOutError: String?
+    @State private var toasts = ChatToastStore()
 
     var body: some View {
         NavigationStack {
             List {
                 if let me = appState.me {
-                    AccountSettingsProfileSection(
-                        displayName: me.accountLabel,
-                        email: me.email,
-                        role: me.role,
-                        disabled: me.disabled,
-                        avatarSource: appState.accountAvatarSource
-                    )
+                    Section {
+                        HStack(spacing: 16) {
+                            AccountAvatarView(displayName: me.accountLabel, source: appState.accountAvatarSource, size: 60)
+                            VStack(alignment: .leading, spacing: 5) {
+                                Text(me.accountLabel).font(.title3.weight(.semibold))
+                                if let email = me.email { Text(email).font(.subheadline).foregroundStyle(.secondary) }
+                                Text(me.role == .admin ? String(localized: "Administrator") : String(localized: "Member"))
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                            Spacer(minLength: 0)
+                        }.padding(.vertical, 12)
+                    }.listRowBackground(Color.clear).listRowSeparator(.hidden)
 
-                    AccountSettingsNavigationSection()
+                    Section(String(localized: "Account")) {
+                        NavigationLink { AccountIdentitySettingsView(mode: .nickname) } label: {
+                            SettingsRow(title: String(localized: "Nickname"), symbol: "person.text.rectangle", value: me.displayName)
+                        }
+                        NavigationLink { AccountIdentitySettingsView(mode: .email) } label: {
+                            SettingsRow(title: String(localized: "Email"), symbol: "envelope", value: me.email)
+                        }
+                        NavigationLink { AvatarSettingsView() } label: {
+                            SettingsRow(title: String(localized: "Profile photo"), symbol: "person.crop.circle")
+                        }
+                        NavigationLink { PasswordSettingsView() } label: {
+                            SettingsRow(title: String(localized: "Password"), symbol: "key")
+                        }
+                    }
                 }
 
-                AccountSettingsServerSection(serverURL: appState.serverURL)
-                AccountSettingsAboutSection()
-
+                Section(String(localized: "App")) {
+                    NavigationLink { AppearanceSettingsView() } label: {
+                        SettingsRow(title: String(localized: "Appearance"), symbol: "circle.lefthalf.filled",
+                            value: String(localized: (AppAppearance(rawValue: appearanceValue) ?? .system).title))
+                    }
+                    NavigationLink { SettingsLanguageView() } label: {
+                        SettingsRow(title: String(localized: "Language"), symbol: "globe", value: SettingsLanguageView.currentLanguage)
+                    }
+                }
+                Section(String(localized: "Workspace")) {
+                    NavigationLink { SettingsServerView() } label: {
+                        SettingsRow(title: String(localized: "Server"), symbol: "server.rack", value: appState.serverURL?.host)
+                    }
+                }
                 Section {
-                    Button("Sign out", role: .destructive) {
-                        isConfirmingSignOut = true
+                    NavigationLink { SettingsAboutView() } label: {
+                        SettingsRow(title: String(localized: "About"), symbol: "info.circle")
                     }
                 }
-            }
-            .navigationTitle("Settings")
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") {
-                        dismiss()
-                    }
-                }
-            }
-            .refreshable {
-                _ = await appState.refreshAccount()
-            }
-            .alert("Account update failed", isPresented: accountErrorBinding) {
-                Button("OK", role: .cancel) {
-                    appState.dismissAccountError()
-                }
-            } message: {
-                Text(appState.accountError ?? "")
-            }
-        }
-        .sheet(isPresented: $isConfirmingSignOut) {
-            SignOutConfirmationSheet(onSignOut: signOut)
-        }
-        .presentationDetents([.medium, .large])
-        .presentationDragIndicator(.visible)
-    }
-
-    private var accountErrorBinding: Binding<Bool> {
-        Binding(
-            get: { appState.accountError != nil },
-            set: { isPresented in
-                if !isPresented {
-                    appState.dismissAccountError()
-                }
-            }
-        )
-    }
-
-    private func signOut() throws {
-        try appState.signOutAndDeleteCredentials()
-    }
-}
-
-private struct SignOutConfirmationSheet: View {
-    let onSignOut: () throws -> Void
-
-    @Environment(\.dismiss) private var dismiss
-    @State private var errorMessage = ""
-    @State private var isShowingError = false
-
-    var body: some View {
-        NavigationStack {
-            VStack(spacing: 20) {
-                Spacer()
-
-                Image(systemName: "rectangle.portrait.and.arrow.forward")
-                    .font(.system(size: 42, weight: .medium))
-                    .foregroundStyle(.secondary)
-
-                Text("Sign out?")
-                    .font(.largeTitle.bold())
-
-                Text("Your saved credentials will be removed from this device. You will need to sign in again to reconnect.")
-                    .font(.body)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .frame(maxWidth: 420)
-
-                Spacer()
-
-                Button(role: .destructive, action: confirmSignOut) {
-                    Label("Sign out", systemImage: "rectangle.portrait.and.arrow.forward")
-                        .font(.headline)
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.glassProminent)
-                .buttonBorderShape(.capsule)
-                .controlSize(.large)
-                .tint(.red)
-                .foregroundStyle(.white)
-
-                Button(action: dismiss.callAsFunction) {
-                    Text("Cancel")
-                        .frame(maxWidth: .infinity)
-                }
-                    .buttonStyle(.glass)
-                    .buttonBorderShape(.capsule)
-                    .controlSize(.large)
-            }
-            .padding(24)
-            .navigationTitle("Sign out")
-            .navigationBarTitleDisplayMode(.inline)
-        }
-        .alert("Could not sign out", isPresented: $isShowingError) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(errorMessage)
-        }
-        .presentationDetents([.large])
-        .presentationDragIndicator(.hidden)
-        .interactiveDismissDisabled()
-    }
-
-    /// Deletes credentials and closes the cover only after the signed-out route is active.
-    private func confirmSignOut() {
-        do {
-            try onSignOut()
-            dismiss()
-        } catch {
-            errorMessage = error.localizedDescription
-            isShowingError = true
-        }
-    }
-}
-
-private struct AccountSettingsProfileSection: View {
-    let displayName: String
-    let email: String?
-    let role: UserRole
-    let disabled: Bool
-    let avatarSource: AccountAvatarImageSource?
-
-    var body: some View {
-        Section {
-            HStack(spacing: 16) {
-                AccountAvatarView(displayName: displayName, source: avatarSource, size: 64)
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(displayName)
-                        .font(.headline)
-                    if let email {
-                        Text(email)
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                    }
-                    if role == .admin {
-                        Text("Administrator")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                    } else {
-                        Text("Member")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                    }
-                    if disabled {
-                        Label("Disabled", systemImage: "xmark.circle.fill")
-                            .font(.caption)
+                Section {
+                    Button(role: .destructive) { confirmsSignOut = true } label: {
+                        SettingsRow(title: String(localized: "Sign out"), symbol: "rectangle.portrait.and.arrow.forward")
                             .foregroundStyle(.red)
-                    } else {
-                        Label("Active", systemImage: "checkmark.circle.fill")
-                            .font(.caption)
-                            .foregroundStyle(.green)
-                    }
+                    }.disabled(appState.isAccountWorking)
+                } footer: {
+                    Text("Agents Anywhere · \(SettingsAboutView.version)")
+                        .font(.footnote).frame(maxWidth: .infinity).padding(.top, 16)
                 }
             }
-            .padding(.vertical, 6)
-        }
-    }
-}
-
-private struct AccountSettingsNavigationSection: View {
-    var body: some View {
-        Section("Account") {
-            NavigationLink {
-                AccountIdentitySettingsView()
-            } label: {
-                Label("Nickname and email", systemImage: "person.text.rectangle")
+            .listStyle(.insetGrouped).scrollContentBackground(.hidden)
+            .background(Color(uiColor: .systemBackground))
+            .navigationTitle(String(localized: "Settings")).navigationBarTitleDisplayMode(.inline)
+            .toolbar { SheetCloseToolbar(disabled: appState.isAccountWorking) { dismiss() } }
+            .refreshable { _ = await appState.refreshAccount() }
+            .alert(String(localized: "Sign out?"), isPresented: $confirmsSignOut) {
+                Button(String(localized: "Cancel"), role: .cancel) {}
+                Button(String(localized: "Sign out"), role: .destructive, action: signOut)
+            } message: {
+                Text(String(localized: "Your saved credentials will be removed from this device. You will need to sign in again to reconnect."))
             }
-
-            NavigationLink {
-                AvatarSettingsView()
-            } label: {
-                Label("Profile photo", systemImage: "person.crop.circle")
-            }
-
-            NavigationLink {
-                PasswordSettingsView()
-            } label: {
-                Label("Password", systemImage: "key")
-            }
+            .alert(String(localized: "Could not sign out"), isPresented: Binding(get: { signOutError != nil }, set: { if !$0 { signOutError = nil } })) {
+                Button(String(localized: "OK"), role: .cancel) { signOutError = nil }
+            } message: { Text(signOutError ?? "") }
         }
-
-        Section("Preferences") {
-            NavigationLink {
-                AppearanceSettingsView()
-            } label: {
-                Label("Appearance", systemImage: "circle.lefthalf.filled")
-            }
+        .overlay(alignment: .top) { ChatErrorToasts(store: toasts, isRetrying: false, onRetry: { _ in }) }
+        .onChange(of: appState.accountError) { _, error in
+            guard let error else { return }
+            toasts.update(source: "account", failure: .init(kind: .rejected, message: error))
+            appState.dismissAccountError()
         }
-    }
-}
-
-private struct AccountSettingsServerSection: View {
-    let serverURL: URL?
-
-    var body: some View {
-        Section("Server") {
-            if let serverURL {
-                LabeledContent("Status", value: "Connected")
-                LabeledContent("Address") {
-                    Text(serverURL.absoluteString)
-                        .font(.caption.monospaced())
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.trailing)
-                }
-                Button {
-                    UIPasteboard.general.string = serverURL.absoluteString
-                } label: {
-                    Label("Copy server address", systemImage: "doc.on.doc")
-                }
-            } else {
-                ContentUnavailableView(
-                    "Server unavailable",
-                    systemImage: "network.slash"
-                )
-            }
-        }
-    }
-}
-
-private struct AccountSettingsAboutSection: View {
-    var body: some View {
-        Section("About") {
-            LabeledContent("Version", value: version)
-            LabeledContent("Build", value: build)
-        }
+        .environment(\.closeSettings, { dismiss() })
+        .presentationDetents([.large]).presentationDragIndicator(.visible)
+        .interactiveDismissDisabled(appState.isAccountWorking)
     }
 
-    private var version: String {
-        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "-"
-    }
-
-    private var build: String {
-        Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "-"
+    private func signOut() {
+        do { try appState.signOutAndDeleteCredentials(); dismiss() }
+        catch { signOutError = error.localizedDescription }
     }
 }

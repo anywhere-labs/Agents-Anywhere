@@ -6,7 +6,9 @@ struct V2SessionCreationService {
     /// Encodes initial attachments inline because no session-scoped upload resource exists before creation.
     func createAndStart(
         connectorId: V2ConnectorID,
+        projectId: String,
         runtime: V2RuntimeID,
+        runtimeId: V2RuntimeID? = nil,
         title: String?,
         cwd: String?,
         content: String,
@@ -37,7 +39,9 @@ struct V2SessionCreationService {
         return try await sessionAPI.createAndStartSession(
             request: V2SessionCreateAndStartRequest(
                 connectorId: connectorId,
+                projectId: projectId,
                 runtime: runtime,
+                runtimeId: runtimeId,
                 title: title,
                 cwd: cwd,
                 content: normalizedContent,
@@ -50,7 +54,9 @@ struct V2SessionCreationService {
 
     func bindExisting(
         connectorId: V2ConnectorID,
+        projectId: String,
         runtime: V2RuntimeID,
+        runtimeId: V2RuntimeID? = nil,
         externalSessionId: String,
         title: String?,
         cwd: String?,
@@ -59,7 +65,9 @@ struct V2SessionCreationService {
         try await sessionAPI.createSession(
             request: V2SessionCreateRequest(
                 connectorId: connectorId,
+                projectId: projectId,
                 runtime: runtime,
+                runtimeId: runtimeId,
                 externalSessionId: externalSessionId,
                 title: title,
                 cwd: cwd,

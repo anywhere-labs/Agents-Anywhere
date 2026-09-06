@@ -13,7 +13,9 @@ import {
   ShieldCheck,
 } from "lucide-react"
 import { useTranslations } from "next-intl"
+import { getDesktopServerConnection } from "@/features/desktop/server-connection"
 import { toast } from "sonner"
+import { copyText } from "@/lib/clipboard"
 
 import { useAuth } from "@/components/auth/auth-context"
 import { DashboardSidebarToggle } from "@/components/dashboard-sidebar-toggle"
@@ -92,6 +94,8 @@ function formatUptime(seconds: number) {
 }
 
 function browserPublicUrl(fallback: string): string {
+  const publicUrl = getDesktopServerConnection()?.oauthWebOrigin
+  if (publicUrl) return publicUrl
   if (typeof window === "undefined") return fallback
   return window.location.origin.replace(/\/$/, "") || fallback
 }
@@ -249,11 +253,16 @@ export function ServicePage() {
 
   React.useEffect(() => load(), [load])
 
-  const copy = React.useCallback((key: CopyKey, value: string) => {
-    void navigator.clipboard.writeText(value)
-    setCopied(key)
-    window.setTimeout(() => setCopied(null), 1200)
-  }, [])
+  const copy = React.useCallback(async (key: CopyKey, value: string) => {
+    setCopied(null)
+    try {
+      await copyText(value)
+      setCopied(key)
+      window.setTimeout(() => setCopied(null), 1200)
+    } catch {
+      toast.error(tCommon("copyFailed"))
+    }
+  }, [tCommon])
 
   const updateOAuthDraft = React.useCallback((patch: Partial<OAuthProviderConfigUpdate>) => {
     setOauthDraft((current) => ({ ...current, ...patch }))

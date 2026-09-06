@@ -41,8 +41,18 @@ struct V2SessionEvent: Decodable, Identifiable, Hashable {
     let sessionId: V2SessionID
     let emittedAt: String
     let payload: JSONValue
+    /// Client receipt time, excluded from the wire contract. Used to order refresh barriers.
+    var receivedAt: Date = Date()
+
+    enum CodingKeys: String, CodingKey {
+        case protocolVersion, eventId, sequence, cursor, type, sessionId, emittedAt, payload
+    }
 
     var id: String { eventId }
+
+    var isLiveProjection: Bool {
+        ["session.meta.updated", "runtime.state.updated", "runtime.capability.updated", "runtime.catalog.updated"].contains(type)
+    }
 }
 
 struct V2EventRecoveryResponse: Decodable, Hashable {
@@ -55,6 +65,8 @@ struct V2EventRecoveryResponse: Decodable, Hashable {
 struct V2DashboardSnapshot: Decodable, Hashable {
     let type: String
     let connectors: [V2Connector]
+    let projects: [V2Project]
+    let sessionPages: V2DashboardSessionPages
     let sessions: [V2SessionMeta]
     let serverTime: String
 }

@@ -15,6 +15,7 @@ import {
   XCircle,
 } from "lucide-react"
 import { useTranslations } from "next-intl"
+import { getDesktopServerConnection } from "@/features/desktop/server-connection"
 import QRCode from "qrcode"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -56,6 +57,8 @@ function formatExpiry(value: string): string {
 }
 
 function resolveMobileWebUrl(): string {
+  const publicUrl = getDesktopServerConnection()?.serverUrl
+  if (publicUrl) return publicUrl
   if (typeof window === "undefined") return ""
 
   const { hostname, origin } = window.location

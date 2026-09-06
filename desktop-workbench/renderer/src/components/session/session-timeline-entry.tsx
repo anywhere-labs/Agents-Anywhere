@@ -4,6 +4,7 @@ import * as React from "react"
 import { Braces, ChevronDown, CircleAlert, Clock, Copy, FilePenLine, Sparkles } from "lucide-react"
 import dynamic from "next/dynamic"
 import { useTranslations } from "next-intl"
+import { toast } from "sonner"
 
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import {
@@ -15,14 +16,15 @@ import {
 } from "@/components/ui/context-menu"
 import { Marker, MarkerContent, MarkerIcon } from "@/components/ui/marker"
 import { JsonBlock, TimelineStatusBadge, ToolCard } from "@/components/session/session-tool-cards"
+import { useSessionFilePreviewOpener } from "@/components/session/session-file-preview-context"
 import { openSessionFilePreview } from "@/components/markdown-text"
 import { cn } from "@/lib/utils"
+import { copyText } from "@/lib/clipboard"
 import type { Notice, SessionView, TimelineItem } from "@/features/dashboard/types"
 import { firstTextOf, messageText, recordsOf, textOf } from "@/components/session/session-utils"
 import { extractAttachments, stripInjectedAttachmentMentions } from "@/features/dashboard/attachments"
 import { MessageAttachments } from "@/components/session/message-attachments"
 import { CollapsibleUserMessage } from "@/components/session/collapsible-user-message"
-import { useSessionFilePreviewOpener } from "@/components/session/session-file-preview-context"
 
 const MarkdownText = dynamic(() => import("../markdown-text").then((mod) => ({ default: mod.MarkdownText })), { ssr: false })
 const INLINE_REASONING_SUMMARY_MAX_CHARS = 80
@@ -95,7 +97,16 @@ function isNestedAgentCall(item: TimelineItem): boolean {
 
 function TimelineEntryContextMenu({ item, children }: { item: TimelineItem; children: React.ReactNode }) {
   const tSession = useTranslations("dashboard.session")
+  const tCommon = useTranslations("common")
   const text = timelineItemCopyText(item)
+  const copyTimelineValue = async (value: string) => {
+    if (!value) return
+    try {
+      await copyText(value)
+    } catch {
+      toast.error(tCommon("copyFailed"))
+    }
+  }
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>
@@ -130,11 +141,6 @@ function timelineItemCopyText(item: TimelineItem): string {
     item.content.label,
     item.content.title,
   )?.trim() ?? ""
-}
-
-function copyTimelineValue(value: string) {
-  if (!value) return
-  navigator.clipboard.writeText(value).catch(() => undefined)
 }
 
 function MessageCard({

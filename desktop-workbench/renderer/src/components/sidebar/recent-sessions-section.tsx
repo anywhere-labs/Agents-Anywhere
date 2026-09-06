@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import { CheckCheck } from "lucide-react"
 import { SessionFilterMenu } from "@/components/session-filter-menu"
 import { SessionPageTrigger } from "@/components/sidebar/session-page-trigger"
 import { SessionSidebarItem } from "@/components/sidebar/session-sidebar-item"
@@ -55,12 +56,20 @@ export function RecentSessionsSection({
     <SidebarGroup>
       <Collapsible open={expanded} onOpenChange={setExpanded}>
         <SidebarGroupLabel
-          className="group/recent flex items-center justify-between pr-1"
+          className="flex items-center gap-1"
           role="heading"
           aria-level={2}
         >
           <SidebarSectionTrigger label={label ?? t("sections.recents")} expanded={expanded} />
-          <SessionFilterMenu onMarkAllRead={onMarkAllRead} />
+          <SessionFilterMenu />
+          <button
+            type="button"
+            aria-label={t("actions.markAllRead")}
+            onClick={() => void onMarkAllRead()}
+            className="rounded-md p-0.5 text-sidebar-foreground/60 transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+          >
+            <CheckCheck className="size-3.5" />
+          </button>
         </SidebarGroupLabel>
         <CollapsibleContent>
           <SidebarGroupContent>

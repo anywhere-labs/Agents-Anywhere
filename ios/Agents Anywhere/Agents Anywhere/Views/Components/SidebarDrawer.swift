@@ -16,7 +16,7 @@ struct SidebarDrawerConfiguration: Sendable {
 
     init(
         revealFraction: CGFloat = 0.75,
-        edgeActivationWidth: CGFloat = 24,
+        edgeActivationWidth: CGFloat = 44,
         sidebarClosedScale: CGFloat = 0.95,
         sidebarOverlayOpacity: CGFloat = 0.5,
         contentOverlayOpacity: CGFloat = 0.14,
@@ -42,7 +42,23 @@ private struct SidebarDrawerPresentationKey: EnvironmentKey {
     static let defaultValue = SidebarDrawerPresentation.drawer
 }
 
+private struct SidebarDrawerTransitionKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+private struct SidebarDrawerObscuresDetailKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
 extension EnvironmentValues {
+    var sidebarDrawerObscuresDetail: Bool {
+        get { self[SidebarDrawerObscuresDetailKey.self] }
+        set { self[SidebarDrawerObscuresDetailKey.self] = newValue }
+    }
+    var sidebarDrawerIsTransitioning: Bool {
+        get { self[SidebarDrawerTransitionKey.self] }
+        set { self[SidebarDrawerTransitionKey.self] = newValue }
+    }
     var sidebarDrawerPresentation: SidebarDrawerPresentation {
         get { self[SidebarDrawerPresentationKey.self] }
         set { self[SidebarDrawerPresentationKey.self] = newValue }
@@ -118,6 +134,7 @@ private struct SidebarDrawerInteractive<
     @State private var dragStartProgress: CGFloat?
     @State private var dragDisposition: DragDisposition?
     @State private var animationGeneration = 0
+    @State private var isAnimating = false
     @State private var feedbackTrigger = 0
 
     init(
@@ -145,6 +162,9 @@ private struct SidebarDrawerInteractive<
                     screenSize.width * configuration.revealFraction.clamped(to: 0.01 ... 1),
                     1
                 )
+                let interaction = DrawerInteractionState(isOpen: isOpen, progress: progress,
+                    isAnimating: isAnimating, isDragging: dragStartProgress != nil)
+                let closeRegion = SidebarDrawerCloseRegion(leadingEdge: revealWidth * progress)
 
                 ZStack(alignment: .leading) {
                     drawerSystemBackground
@@ -158,6 +178,8 @@ private struct SidebarDrawerInteractive<
                         header: sidebarHeader(safeAreaInsets),
                         content: sidebarContent(safeAreaInsets)
                     )
+                    .allowsHitTesting(interaction.acceptsSidebarTouches)
+                    .accessibilityHidden(!interaction.acceptsSidebarTouches)
 
                     SidebarDrawerMainCard(
                         size: screenSize,
@@ -165,9 +187,20 @@ private struct SidebarDrawerInteractive<
                         progress: progress,
                         offset: revealWidth * progress,
                         overlayOpacity: contentOverlayOpacity,
-                        content: mainContent(safeAreaInsets),
-                        close: closeFromOverlay
+                        content: mainContent(safeAreaInsets)
                     )
+                    .allowsHitTesting(interaction.acceptsContentTouches)
+                    .accessibilityHidden(!interaction.acceptsContentTouches)
+
+                    // Only the screen-space strip occupied by the visible card
+                    // closes the drawer. Its untranslated hit targets are disabled.
+                    closeRegion.fill(.clear)
+                        .contentShape(.interaction, closeRegion)
+                        .onTapGesture(perform: closeFromOverlay)
+                        .allowsHitTesting(interaction.acceptsSidebarTouches)
+                        .accessibilityHidden(!interaction.acceptsSidebarTouches)
+                        .accessibilityLabel(String(localized: "关闭侧栏"))
+                        .accessibilityAddTraits(.isButton)
 
 #if !canImport(UIKit)
                     if usesOpeningEdgeGestureRegion {
@@ -218,6 +251,9 @@ private struct SidebarDrawerInteractive<
             .ignoresSafeArea()
         }
         .environment(\.sidebarDrawerPresentation, .drawer)
+        .environment(\.sidebarDrawerObscuresDetail, isOpen || progress > 0.001)
+        .environment(\.sidebarDrawerIsTransitioning, isAnimating || dragStartProgress != nil
+            || abs(progress - (isOpen ? 1 : 0)) > 0.001)
         .sensoryFeedback(
             .impact(weight: .light, intensity: 1),
             trigger: feedbackTrigger
@@ -388,6 +424,7 @@ private struct SidebarDrawerInteractive<
 
         animationGeneration &+= 1
         let generation = animationGeneration
+        isAnimating = true
 
         if shouldProvideFeedback {
             feedbackTrigger &+= 1
@@ -396,6 +433,7 @@ private struct SidebarDrawerInteractive<
         let completion = {
             guard generation == animationGeneration else { return }
 
+            isAnimating = false
             progress = target
             let targetIsOpen = target == 1
             if isOpen != targetIsOpen {
@@ -416,7 +454,7 @@ private struct SidebarDrawerInteractive<
                     Spring(response: 0.34, dampingRatio: 0.9),
                     initialVelocity: initialVelocity
                 ),
-                completionCriteria: .logicallyComplete
+                completionCriteria: .removed
             ) {
                 progress = target
             } completion: {
@@ -439,6 +477,11 @@ private struct SidebarDrawerNativeSplitView<
     private let sidebarHeaderEdgeEffectStyle: ScrollEdgeEffectStyle
 
     @State private var columnVisibility: NavigationSplitViewVisibility
+    @State private var preferredCompactColumn: NavigationSplitViewColumn
+    @State private var isAnimating = false
+    @State private var animationGeneration = 0
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     init(
         isOpen: Binding<Bool>,
@@ -449,6 +492,7 @@ private struct SidebarDrawerNativeSplitView<
     ) {
         _isOpen = isOpen
         _columnVisibility = State(initialValue: isOpen.wrappedValue ? .all : .detailOnly)
+        _preferredCompactColumn = State(initialValue: isOpen.wrappedValue ? .sidebar : .detail)
         self.sidebarHeaderEdgeEffectStyle = sidebarHeaderEdgeEffectStyle
         self.sidebarHeader = sidebarHeader
         self.sidebarContent = sidebarContent
@@ -456,7 +500,7 @@ private struct SidebarDrawerNativeSplitView<
     }
 
     var body: some View {
-        NavigationSplitView(columnVisibility: $columnVisibility) {
+        NavigationSplitView(columnVisibility: $columnVisibility, preferredCompactColumn: $preferredCompactColumn) {
             GeometryReader { geometry in
                 let safeAreaInsets = geometry.safeAreaInsets
 
@@ -467,22 +511,22 @@ private struct SidebarDrawerNativeSplitView<
                 )
                 .toolbar(removing: .sidebarToggle)
             }
+            .toolbar(.hidden, for: .navigationBar)
+            .navigationSplitViewColumnWidth(min: 240, ideal: 300, max: 360)
         } detail: {
             GeometryReader { geometry in
-                let safeAreaInsets = geometry.safeAreaInsets
-
-                mainContent(safeAreaInsets)
+                mainContent(geometry.safeAreaInsets)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
+        .navigationSplitViewStyle(.balanced)
         .environment(\.sidebarDrawerPresentation, .nativeSidebar)
+        .environment(\.sidebarDrawerIsTransitioning, isAnimating || columnsNeedUpdate)
         .onChange(of: isOpen) { _, newValue in
-            let target: NavigationSplitViewVisibility = newValue ? .all : .detailOnly
-            if columnVisibility != target {
-                columnVisibility = target
-            }
+            updateColumns(open: newValue)
         }
         .onChange(of: columnVisibility) { _, newValue in
+            guard horizontalSizeClass != .compact else { return }
             switch newValue {
             case .all, .doubleColumn:
                 if !isOpen {
@@ -497,6 +541,32 @@ private struct SidebarDrawerNativeSplitView<
             default:
                 break
             }
+        }
+        .onChange(of: preferredCompactColumn) { _, column in
+            guard horizontalSizeClass == .compact else { return }
+            isOpen = column == .sidebar
+        }
+        .onChange(of: horizontalSizeClass) { _, _ in updateColumns(open: isOpen) }
+    }
+
+    private func updateColumns(open: Bool) {
+        animationGeneration &+= 1
+        let generation = animationGeneration
+        isAnimating = true
+        withAnimation(reduceMotion ? nil : .smooth(duration: 0.3), completionCriteria: .removed) {
+            columnVisibility = open ? .all : .detailOnly
+            preferredCompactColumn = open ? .sidebar : .detail
+        } completion: {
+            if animationGeneration == generation { isAnimating = false }
+        }
+    }
+
+    private var columnsNeedUpdate: Bool {
+        if horizontalSizeClass == .compact { return preferredCompactColumn != (isOpen ? .sidebar : .detail) }
+        switch columnVisibility {
+        case .all, .doubleColumn: return !isOpen
+        case .detailOnly: return isOpen
+        default: return false
         }
     }
 }
@@ -571,7 +641,6 @@ private struct SidebarDrawerMainCard<Content: View>: View {
     let offset: CGFloat
     let overlayOpacity: CGFloat
     let content: Content
-    let close: () -> Void
 
     var body: some View {
         let screenShape = ConcentricRectangle(
@@ -590,16 +659,24 @@ private struct SidebarDrawerMainCard<Content: View>: View {
         )
 
         content
+            // The untransformed host supplies all original insets, including
+            // the keyboard. Apply them once inside the page, never again from
+            // this moving card's intersection with the window.
+            .ignoresSafeArea()
             .frame(width: size.width, height: size.height)
             .background(drawerSystemBackground, in: screenShape)
             .clipShape(screenShape)
+            .background {
+                // Shadow only the card shape. Compositing the entire conversation
+                // into an animated shadow layer repaints its text during a pan.
+                screenShape.fill(drawerSystemBackground)
+                    .shadow(color: .black.opacity(0.28 * progress), radius: 18 * progress, x: -3 * progress, y: 0)
+            }
             .contentShape(screenShape)
             .overlay {
                 screenShape
                     .fill(.white.opacity(overlayOpacity))
-                    .contentShape(screenShape)
-                    .onTapGesture(perform: close)
-                    .allowsHitTesting(progress > 0.001)
+                    .allowsHitTesting(false)
             }
             .overlay {
                 screenShape
@@ -609,14 +686,11 @@ private struct SidebarDrawerMainCard<Content: View>: View {
                     )
                     .allowsHitTesting(false)
             }
-            .compositingGroup()
-            .shadow(
-                color: .black.opacity(0.28 * progress),
-                radius: 18 * progress,
-                x: -3 * progress,
-                y: 0
-            )
-            .offset(x: offset)
+            // Ordinary offset still participates in descendant coordinates:
+            // subpixel motion can round this 402-point column to 402 1/3 and
+            // change paragraph wrapping. Keep the whole translation out of
+            // layout, including every interpolated frame of the spring.
+            .modifier(SidebarDrawerTranslation(x: offset).ignoredByLayout())
     }
 }
 

@@ -28,11 +28,12 @@ final class WorkspaceDirectoryModel {
                 root: root,
                 path: path
             )
+            try Task.checkCancellation()
             resolvedPath = directory.path
             isTruncated = directory.truncated == true
             entries = directory.entries.sorted(by: workspaceEntryAscending)
         } catch {
-            errorMessage = error.localizedDescription
+            if !Task.isCancelled { errorMessage = error.localizedDescription }
         }
     }
 

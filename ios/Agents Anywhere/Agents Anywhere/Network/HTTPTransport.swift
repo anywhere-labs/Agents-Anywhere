@@ -3,6 +3,7 @@ import Foundation
 protocol HTTPTransport {
     func send<Body: Encodable, Response: Decodable>(_ request: HTTPRequest<Body, Response>) async throws -> Response
     func upload<Response: Decodable>(_ request: HTTPUploadRequest<Response>) async throws -> Response
+    func download(_ url: URL) async throws -> URL
 }
 
 struct URLSessionHTTPTransport: HTTPTransport {
@@ -11,33 +12,56 @@ struct URLSessionHTTPTransport: HTTPTransport {
     private let tokenProvider: AuthTokenProvider
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
+    private let retryPolicy: HTTPReadRetryPolicy
+    private let sleep: (Duration) async throws -> Void
 
     init(
         serverURL: URL,
         urlSession: URLSession = .shared,
         tokenProvider: AuthTokenProvider,
         encoder: JSONEncoder = JSONEncoder(),
-        decoder: JSONDecoder = JSONDecoder()
+        decoder: JSONDecoder = JSONDecoder(),
+        retryPolicy: HTTPReadRetryPolicy = HTTPReadRetryPolicy(),
+        sleep: @escaping (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
     ) {
         self.serverURL = serverURL.normalizedV2ServerURL()
         self.urlSession = urlSession
         self.tokenProvider = tokenProvider
         self.encoder = encoder
         self.decoder = decoder
+        self.retryPolicy = retryPolicy
+        self.sleep = sleep
     }
 
     /// Performs network I/O, injects auth when requested, and decodes the response body.
     func send<Body: Encodable, Response: Decodable>(_ request: HTTPRequest<Body, Response>) async throws -> Response {
         let urlRequest = try await makeURLRequest(request)
-        let (data, response) = try await urlSession.data(for: urlRequest)
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw HTTPError.invalidResponse
+        var attempt = 0
+        while true {
+            try Task.checkCancellation()
+            var retryAfter: TimeInterval?
+            do {
+                let (data, response) = try await urlSession.data(for: urlRequest)
+                guard let http = response as? HTTPURLResponse else { throw HTTPError.invalidResponse }
+                guard 200..<300 ~= http.statusCode else {
+                    retryAfter = retryPolicy.delay(from: http.value(forHTTPHeaderField: "Retry-After"))
+                    throw HTTPError.server(statusCode: http.statusCode,
+                                           message: decodeServerErrorMessage(data: data, statusCode: http.statusCode),
+                                           detail: try? decoder.decode(HTTPServerErrorEnvelope.self, from: data).detail)
+                }
+                return try decodeResponse(Response.self, from: data)
+            } catch {
+                try Task.checkCancellation()
+                guard request.method == .get, attempt < retryPolicy.maximumRetries,
+                      retryPolicy.permitsRetry(error) else { throw error }
+                // Long rate-limit waits are surfaced to the caller; never retry earlier
+                // than the server asks, or hold a foreground request indefinitely.
+                if let retryAfter, retryAfter > 30 { throw error }
+                let delay = max(0.5 * pow(2, Double(attempt)), retryAfter ?? 0)
+                attempt += 1
+                try await sleep(.seconds(delay))
+            }
         }
-        guard 200..<300 ~= httpResponse.statusCode else {
-            let message = decodeServerErrorMessage(data: data, statusCode: httpResponse.statusCode)
-            throw HTTPError.server(statusCode: httpResponse.statusCode, message: message)
-        }
-        return try decodeResponse(Response.self, from: data)
     }
 
     /// Performs multipart upload I/O and decodes the JSON response.
@@ -51,10 +75,32 @@ struct URLSessionHTTPTransport: HTTPTransport {
         guard 200..<300 ~= httpResponse.statusCode else {
             throw HTTPError.server(
                 statusCode: httpResponse.statusCode,
-                message: decodeServerErrorMessage(data: data, statusCode: httpResponse.statusCode)
+                message: decodeServerErrorMessage(data: data, statusCode: httpResponse.statusCode),
+                detail: try? decoder.decode(HTTPServerErrorEnvelope.self, from: data).detail
             )
         }
         return try decodeResponse(Response.self, from: data)
+    }
+
+    /// The API returns a transfer URL. Resolve it only against this account's
+    /// server and never forward its credentials to another origin on redirect.
+    func download(_ url: URL) async throws -> URL {
+        guard let target = URL(string: url.relativeString, relativeTo: serverURL)?.absoluteURL,
+              target.hasSameOrigin(as: serverURL) else { throw HTTPError.invalidResponse }
+        guard let token = try await tokenProvider.accessToken(), !token.isEmpty else { throw HTTPError.unauthorized }
+        var request = URLRequest(url: target)
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/octet-stream", forHTTPHeaderField: "Accept")
+        try Task.checkCancellation()
+        let (file, response) = try await urlSession.download(for: request, delegate: DownloadRedirectPolicy(origin: serverURL))
+        do {
+            try Task.checkCancellation()
+            guard let http = response as? HTTPURLResponse else { throw HTTPError.invalidResponse }
+            guard 200..<300 ~= http.statusCode else {
+                throw HTTPError.server(statusCode: http.statusCode, message: HTTPURLResponse.localizedString(forStatusCode: http.statusCode))
+            }
+            return file
+        } catch { try? FileManager.default.removeItem(at: file); throw error }
     }
 
     private func decodeResponse<Response: Decodable>(_ responseType: Response.Type, from data: Data) throws -> Response {
@@ -155,11 +201,11 @@ struct URLSessionHTTPTransport: HTTPTransport {
 
 private let v2Namespace = "/api/v2"
 
-private func v2APIPath(_ path: String) -> String {
-    if path == v2Namespace || path.hasPrefix("\(v2Namespace)/") {
-        return path
-    }
+func v2APIPath(_ path: String) -> String {
     let normalized = path.hasPrefix("/") ? path : "/\(path)"
+    if normalized == v2Namespace || normalized.hasPrefix("\(v2Namespace)/") {
+        return normalized
+    }
     return "\(v2Namespace)\(normalized)"
 }
 
@@ -167,9 +213,7 @@ extension URL {
     func normalizedV2ServerURL() -> URL {
         let components = URLComponents(url: self, resolvingAgainstBaseURL: false)
         guard var normalized = components else { return self }
-        while normalized.path.count > 1, normalized.path.hasSuffix("/") {
-            normalized.path.removeLast()
-        }
+        normalized.path = ""
         normalized.query = nil
         normalized.fragment = nil
         return normalized.url ?? self
@@ -183,19 +227,19 @@ extension String {
     }
 }
 
-private extension DecodingError {
+extension DecodingError {
     var v2Description: String {
         switch self {
         case let .keyNotFound(key, context):
-            return "The server response is missing '\(v2Path(context.codingPath + [key]))'."
+            return String(localized: "The server response is missing '\(v2Path(context.codingPath + [key]))'.")
         case let .typeMismatch(type, context):
-            return "The server response has an invalid type at '\(v2Path(context.codingPath))' for \(type)."
+            return String(localized: "The server response has an invalid type at '\(v2Path(context.codingPath))' for \(String(describing: type)).")
         case let .valueNotFound(type, context):
-            return "The server response is missing a value at '\(v2Path(context.codingPath))' for \(type)."
+            return String(localized: "The server response is missing a value at '\(v2Path(context.codingPath))' for \(String(describing: type)).")
         case let .dataCorrupted(context):
-            return "The server response could not be decoded at '\(v2Path(context.codingPath))'."
+            return String(localized: "The server response could not be decoded at '\(v2Path(context.codingPath))'.")
         @unknown default:
-            return "The server response could not be decoded."
+            return String(localized: "The server response could not be decoded.")
         }
     }
 

@@ -31,19 +31,21 @@ final class URLSessionWebSocketConnection: WebSocketConnection, @unchecked Senda
 
     /// Receives socket frames until the server closes or the consumer cancels.
     func messages() -> AsyncThrowingStream<Data, Error> {
-        AsyncThrowingStream { continuation in
+        AsyncThrowingStream(bufferingPolicy: .bufferingOldest(2048)) { continuation in
             let receiveTask = Task {
                 do {
                     while !Task.isCancelled {
                         let message = try await task.receive()
+                        let data: Data
                         switch message {
-                        case let .data(data):
-                            continuation.yield(data)
+                        case let .data(bytes):
+                            data = bytes
                         case let .string(text):
-                            continuation.yield(Data(text.utf8))
+                            data = Data(text.utf8)
                         @unknown default:
                             continue
                         }
+                        if case .dropped = continuation.yield(data) { throw HTTPError.streamOverflow }
                     }
                     continuation.finish()
                 } catch {

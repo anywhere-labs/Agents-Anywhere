@@ -1,11 +1,15 @@
 "use client"
 
 import * as React from "react"
+import { toast } from "sonner"
+import { copyText as copyToClipboard } from "@/lib/clipboard"
 import {
   Check,
+  ChevronRight,
   Copy,
   Download,
   Edit3,
+  ExternalLink,
   File,
   FileWarning,
   Folder,
@@ -22,13 +26,16 @@ import { useRouteSearchParams } from "@/components/hash-route-params"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area"
+import { Label } from "@/components/ui/label"
+import { ScrollArea } from "@/components/ui/scroll-area"
 import { Spinner } from "@/components/ui/spinner"
+import { Switch } from "@/components/ui/switch"
 import { MonacoCodeView, type MonacoCodeViewApi } from "@/components/monaco-code-view"
-import { openNativeFilePreviewWindow } from "@/components/panels/files-panel"
+import { openNativeFilePreviewWindow } from "@/lib/file-preview-window"
 import { dashboardApi } from "@/features/dashboard/api"
 import { loadStoredSession } from "@/features/auth/session"
 import type { FsEntry, FsPreviewSessionResponse, FsReadTextResult } from "@/features/dashboard/types"
+import { cn } from "@/lib/utils"
 
 type PreviewState =
   | { kind: "loading" }
@@ -49,17 +56,138 @@ type BinaryFileInfo = {
 const TEXT_MAX_BYTES = 1_000_000
 
 export function FilePreviewPage() {
-  const t = useTranslations("preview")
   const params = useRouteSearchParams()
   const connectorId = params.get("connectorId") ?? ""
   const root = params.get("root") ?? ""
   const routePath = params.get("path") ?? ""
   const previewToken = params.get("previewToken") ?? ""
+  const routeName = params.get("name") ?? ""
+  const sourceUrl = params.get("sourceUrl") ?? ""
+  const sourceMediaType = params.get("mediaType") ?? ""
+  const sourceSize = routeSourceSize(params.get("size"))
+  const token = React.useMemo(() => loadStoredSession()?.accessToken ?? null, [])
+
+  return (
+    <FilePreviewSurface
+      key={`${connectorId}:${root}:${routePath}:${previewToken}:${sourceUrl}`}
+      token={token}
+      connectorId={connectorId}
+      root={root}
+      initialPath={routePath}
+      initialName={routeName}
+      previewToken={previewToken}
+      sourceUrl={sourceUrl}
+      sourceMediaType={sourceMediaType}
+      sourceSize={sourceSize}
+      readOnly={Boolean(sourceUrl)}
+      mode="window"
+    />
+  )
+}
+
+function routeSourceSize(value: string | null): number | undefined {
+  if (value === null || value === "") return undefined
+  const parsed = Number(value)
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined
+}
+
+type FilePreviewSurfaceProps = {
+  token: string | null
+  connectorId: string
+  root: string
+  initialPath: string
+  initialName?: string
+  previewToken?: string
+  sourceUrl?: string
+  sourceMediaType?: string
+  sourceSize?: number
+  readOnly?: boolean
+  mode?: "window" | "embedded"
+  onDirtyChange?: (dirty: boolean) => void
+  onOpenExternal?: () => void
+}
+
+export function FilePathBreadcrumb({ path }: { path: string }) {
+  const viewportRef = React.useRef<HTMLDivElement | null>(null)
+  const contentRef = React.useRef<HTMLDivElement | null>(null)
+  const [overflowed, setOverflowed] = React.useState(false)
+  const normalizedPath = path.trim().replaceAll("\\", "/") || "."
+  const segments = React.useMemo(() => {
+    const values = normalizedPath.split("/").filter(Boolean)
+    return values.length > 0
+      ? values
+      : normalizedPath.startsWith("/")
+        ? []
+        : [normalizedPath]
+  }, [normalizedPath])
+
+  React.useLayoutEffect(() => {
+    const viewport = viewportRef.current
+    const content = contentRef.current
+    if (!viewport || !content) return
+
+    const measure = () => setOverflowed(content.scrollWidth > viewport.clientWidth + 1)
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(viewport)
+    observer.observe(content)
+    return () => observer.disconnect()
+  }, [segments])
+
+  return (
+    <div
+      ref={viewportRef}
+      className="aa-file-preview-breadcrumb-viewport min-w-0 flex-1"
+      data-overflowed={overflowed ? "true" : "false"}
+      dir="ltr"
+      title={normalizedPath}
+      aria-label={normalizedPath}
+    >
+      <div ref={contentRef} className="aa-file-preview-breadcrumb" aria-hidden="true">
+        {segments.map((segment, index) => (
+          <React.Fragment key={`${segment}:${index}`}>
+            {index > 0 ? <ChevronRight className="aa-file-preview-breadcrumb-separator" /> : null}
+            <span
+              className={cn(
+                "aa-file-preview-breadcrumb-segment",
+                index === segments.length - 1 && "current",
+              )}
+            >
+              {segment}
+            </span>
+          </React.Fragment>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+export function FilePreviewSurface({
+  token,
+  connectorId,
+  root,
+  initialPath,
+  initialName = "",
+  previewToken = "",
+  sourceUrl = "",
+  sourceMediaType = "",
+  sourceSize,
+  readOnly = false,
+  mode = "embedded",
+  onOpenExternal,
+  onDirtyChange,
+}: FilePreviewSurfaceProps) {
+  const t = useTranslations("preview")
+  const tCommon = useTranslations("common")
+  const tokenRef = React.useRef(token)
+  tokenRef.current = token
+  const translationRef = React.useRef(t)
+  translationRef.current = t
+  const routePath = initialPath
   const [previewSession, setPreviewSession] = React.useState<FsPreviewSessionResponse | null>(null)
   const [path, setPath] = React.useState(routePath)
   const effectivePath = previewSession?.path ?? path
-  const name = path === routePath ? params.get("name") || fileNameFromPath(effectivePath) : fileNameFromPath(effectivePath)
-  const token = React.useMemo(() => loadStoredSession()?.accessToken ?? null, [])
+  const name = path === routePath ? initialName || fileNameFromPath(effectivePath) : fileNameFromPath(effectivePath)
   const [state, setState] = React.useState<PreviewState>({ kind: "loading" })
   const [editMode, setEditMode] = React.useState(false)
   const [dirty, setDirty] = React.useState(false)
@@ -68,12 +196,19 @@ export function FilePreviewPage() {
   const [downloadError, setDownloadError] = React.useState<string | null>(null)
   const [savedFlash, setSavedFlash] = React.useState(false)
   const [copied, setCopied] = React.useState(false)
+  const embeddedEditModeId = React.useId()
   const editorRef = React.useRef<MonacoCodeViewApi | null>(null)
   const editorInitialContentRef = React.useRef("")
   const objectUrlRef = React.useRef<string | null>(null)
+  const loadRequestIdRef = React.useRef(0)
+  const containerRef = React.useRef<HTMLElement | null>(null)
+
+  React.useEffect(() => { onDirtyChange?.(dirty) }, [dirty, onDirtyChange])
 
   const isScopedPreview = Boolean(previewToken)
-  const canLoad = isScopedPreview || Boolean(token && connectorId && root && path)
+  const isSourcePreview = Boolean(sourceUrl)
+  const readOnlyPreview = readOnly || isScopedPreview || isSourcePreview
+  const canLoad = isScopedPreview || isSourcePreview || Boolean(token && connectorId && root && path)
 
   const revokeObjectUrl = React.useCallback(() => {
     if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current)
@@ -81,6 +216,10 @@ export function FilePreviewPage() {
   }, [])
 
   const loadFile = React.useCallback(async () => {
+    const token = tokenRef.current
+    const t = translationRef.current
+    const requestId = ++loadRequestIdRef.current
+    const requestIsCurrent = () => requestId === loadRequestIdRef.current
     revokeObjectUrl()
     editorRef.current?.destroy()
     editorRef.current = null
@@ -95,9 +234,58 @@ export function FilePreviewPage() {
       return
     }
     try {
+      if (sourceUrl) {
+        const blob = await dashboardApi.downloadBlob(token, sourceUrl)
+        if (!requestIsCurrent()) return
+        const mediaType = resolvedPreviewMediaType(sourceMediaType, blob.type, name)
+        const size = sourceSize ?? blob.size
+        if (canTextPreview(mediaType, name)) {
+          const truncated = blob.size > TEXT_MAX_BYTES
+          const content = await blob.slice(0, TEXT_MAX_BYTES).text()
+          if (!requestIsCurrent()) return
+          setState({
+            kind: "text",
+            file: {
+              path,
+              name,
+              size,
+              sha256: `source:${blob.size}:${mediaType}`,
+              encoding: "utf-8",
+              content,
+              truncated,
+              binary: false,
+              serverTime: new Date().toISOString(),
+            },
+          })
+          return
+        }
+        const binary: BinaryFileInfo = {
+          path,
+          name,
+          size,
+          sha256: `source:${blob.size}:${mediaType}`,
+          mediaType,
+          downloadUrl: sourceUrl,
+        }
+        let objectUrl: string | null = null
+        if (canBrowserPreview(mediaType, name)) {
+          objectUrl = URL.createObjectURL(new Blob([blob], {
+            type: mediaType || blob.type || "application/octet-stream",
+          }))
+          if (!requestIsCurrent()) {
+            URL.revokeObjectURL(objectUrl)
+            return
+          }
+          objectUrlRef.current = objectUrl
+        }
+        if (!requestIsCurrent()) return
+        setState({ kind: "binary", file: binary, objectUrl })
+        return
+      }
       let scopedSession = previewSession
       if (previewToken && !scopedSession) {
         scopedSession = await dashboardApi.createConnectorFsPreviewSession(previewToken)
+        if (!requestIsCurrent()) return
         setPreviewSession(scopedSession)
       }
       const text = scopedSession
@@ -105,6 +293,7 @@ export function FilePreviewPage() {
         : token
           ? await dashboardApi.connectorFsReadText(token, connectorId, root, path, TEXT_MAX_BYTES)
           : null
+      if (!requestIsCurrent()) return
       if (!text) {
         setState({ kind: "error", message: t("missingContext") })
         return
@@ -118,6 +307,7 @@ export function FilePreviewPage() {
         : token
           ? await dashboardApi.connectorFsRead(token, connectorId, root, path)
           : null
+      if (!requestIsCurrent()) return
       if (!response) {
         setState({ kind: "error", message: t("missingContext") })
         return
@@ -130,14 +320,22 @@ export function FilePreviewPage() {
       let objectUrl: string | null = null
       if (canBrowserPreview(mediaType, binary.name)) {
         const blob = await dashboardApi.downloadBlob(scopedSession ? null : token, binary.downloadUrl)
+        if (!requestIsCurrent()) return
         objectUrl = URL.createObjectURL(new Blob([blob], { type: mediaType || blob.type || "application/octet-stream" }))
+        if (!requestIsCurrent()) {
+          URL.revokeObjectURL(objectUrl)
+          return
+        }
         objectUrlRef.current = objectUrl
       }
+      if (!requestIsCurrent()) return
       setState({ kind: "binary", file: binary, objectUrl })
     } catch (err) {
-      if (!previewToken && token && connectorId && path) {
+      if (!requestIsCurrent()) return
+      if (!sourceUrl && !previewToken && token && connectorId && path) {
         try {
           const response = await dashboardApi.connectorFsList(token, connectorId, { root, path })
+          if (!requestIsCurrent()) return
           if (samePath(response.result.path, path)) {
             setState({ kind: "directory", path: response.result.path, entries: response.result.entries })
             return
@@ -146,20 +344,37 @@ export function FilePreviewPage() {
           // Preserve the original file-preview error when the target is not a directory.
         }
       }
+      if (!requestIsCurrent()) return
       setState({ kind: "error", message: err instanceof Error ? err.message : String(err) })
     }
-  }, [canLoad, connectorId, name, path, previewSession, previewToken, revokeObjectUrl, root, t, token])
+  }, [
+    canLoad,
+    connectorId,
+    name,
+    path,
+    previewSession,
+    previewToken,
+    revokeObjectUrl,
+    root,
+    sourceMediaType,
+    sourceSize,
+    sourceUrl,
+  ])
 
   React.useEffect(() => {
     void loadFile()
-    return revokeObjectUrl
+    return () => {
+      loadRequestIdRef.current += 1
+      revokeObjectUrl()
+    }
   }, [loadFile, revokeObjectUrl])
 
   React.useEffect(() => {
+    if (mode !== "window") return
     if (state.kind === "loading" || state.kind === "error") return
     const stateName = state.kind === "directory" ? fileNameFromPath(state.path) : state.file.name
     document.title = `${stateName || name} - ${t("title")}`
-  }, [name, state, t])
+  }, [mode, name, state, t])
 
   React.useEffect(() => {
     if (state.kind !== "text") return
@@ -177,8 +392,16 @@ export function FilePreviewPage() {
 
   const handleDownload = React.useCallback(async () => {
     setDownloadError(null)
-    if (!token && !isScopedPreview) return
+    if (!token && !readOnlyPreview) return
     try {
+      if (sourceUrl) {
+        const blob = await dashboardApi.downloadBlob(token, sourceUrl)
+        const sourceName = state.kind === "text" || state.kind === "binary"
+          ? state.file.name
+          : name
+        downloadBlob(blob, sourceName || name)
+        return
+      }
       if (state.kind === "text") {
         const content = editorRef.current?.getValue() ?? state.file.content
         downloadBlob(new Blob([content], { type: "text/plain;charset=utf-8" }), state.file.name || name)
@@ -193,10 +416,10 @@ export function FilePreviewPage() {
     } catch (err) {
       setDownloadError(err instanceof Error ? err.message : String(err))
     }
-  }, [isScopedPreview, name, state, token])
+  }, [isScopedPreview, name, readOnlyPreview, sourceUrl, state, token])
 
   const handleSave = React.useCallback(async () => {
-    if (isScopedPreview || !token || state.kind !== "text" || !editorRef.current || !editMode) return
+    if (readOnlyPreview || !token || state.kind !== "text" || !editorRef.current || !editMode) return false
     const content = editorRef.current.getValue()
     setSaving(true)
     setSaveError(null)
@@ -223,16 +446,33 @@ export function FilePreviewPage() {
       setDirty(false)
       setSavedFlash(true)
       window.setTimeout(() => setSavedFlash(false), 1500)
+      return true
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       setSaveError(message.includes("412") ? t("saveConflict") : message)
+      return false
     } finally {
       setSaving(false)
     }
-  }, [connectorId, editMode, isScopedPreview, path, root, state, t, token])
+  }, [connectorId, editMode, path, readOnlyPreview, root, state, t, token])
+
+  const handleEmbeddedEditModeChange = React.useCallback(
+    (checked: boolean) => {
+      if (readOnlyPreview || state.kind !== "text" || saving) return
+      if (!checked && dirty) {
+        setSaveError(t("saveBeforeLeavingEdit"))
+        return
+      }
+      setSaveError(null)
+      setEditMode(checked)
+      if (checked) window.requestAnimationFrame(() => editorRef.current?.focus())
+    },
+    [dirty, readOnlyPreview, saving, state.kind, t],
+  )
 
   React.useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      if (mode === "embedded" && !containerRef.current?.contains(document.activeElement)) return
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
         event.preventDefault()
         void handleSave()
@@ -246,7 +486,7 @@ export function FilePreviewPage() {
     }
     window.addEventListener("keydown", onKeyDown, true)
     return () => window.removeEventListener("keydown", onKeyDown, true)
-  }, [handleSave])
+  }, [handleSave, mode])
 
   React.useEffect(() => {
     if (!dirty) return
@@ -258,105 +498,184 @@ export function FilePreviewPage() {
     return () => window.removeEventListener("beforeunload", onBeforeUnload)
   }, [dirty])
 
-  const copyText = React.useCallback(() => {
+  const copyText = React.useCallback(async () => {
     if (state.kind !== "text") return
-    const content = editorRef.current?.getValue() ?? state.file.content
-    navigator.clipboard.writeText(content).catch(() => undefined)
-    setCopied(true)
-    window.setTimeout(() => setCopied(false), 1200)
-  }, [state])
+    setCopied(false)
+    try {
+      await copyToClipboard(editorRef.current?.getValue() ?? state.file.content)
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 1200)
+    } catch {
+      toast.error(tCommon("copyFailed"))
+    }
+  }, [state, tCommon])
 
   return (
-    <main className="flex h-svh min-h-0 flex-col overflow-hidden bg-background text-foreground">
-      <header className="flex min-h-12 items-center gap-2 border-b bg-sidebar px-3">
-        <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-medium">{name || t("untitled")}</div>
-          <div className="truncate code-mono text-xs text-muted-foreground">{effectivePath}</div>
+    <main
+      ref={containerRef}
+      className={cn(
+        "flex h-full min-h-0 flex-col overflow-hidden bg-background text-foreground",
+        mode === "window" && "h-svh",
+      )}
+    >
+      <header
+        className={cn(
+          "aa-file-preview-header flex min-h-12 shrink-0 items-center gap-2 border-b px-3",
+          mode === "embedded"
+            ? "aa-file-preview-header-embedded bg-background shadow-none"
+            : "bg-sidebar",
+        )}
+      >
+        {mode === "window" ? (
+          <div className="aa-file-preview-meta min-w-0 flex-1">
+            <div className="truncate text-sm font-medium">{name || t("untitled")}</div>
+            <div className="truncate code-mono text-xs text-muted-foreground">{effectivePath}</div>
+          </div>
+        ) : null}
+        <div
+          className={cn(
+            "aa-file-preview-actions flex items-center gap-1",
+            mode === "embedded" ? "min-w-0 flex-1" : "shrink-0",
+          )}
+        >
+          <PreviewBadges state={state} dirty={dirty} saving={saving} savedFlash={savedFlash} saveError={saveError} />
+          <Button variant="ghost" size="icon-sm" type="button" aria-label={t("refresh")} onClick={() => void loadFile()}>
+            <RotateCw className="size-4" />
+          </Button>
+          {mode === "window" ? (
+            <Button
+              className="aa-file-preview-labelled-action"
+              variant={editMode ? "secondary" : "ghost"}
+              size="sm"
+              type="button"
+              disabled={state.kind !== "text" || readOnlyPreview}
+              onClick={() => {
+                if (editMode) {
+                  if (dirty) {
+                    setSaveError(t("saveBeforeLeavingEdit"))
+                    return
+                  }
+                  setEditMode(false)
+                  return
+                }
+                setEditMode(true)
+                window.setTimeout(() => editorRef.current?.focus(), 0)
+              }}
+            >
+              <Edit3 className="size-3.5" />
+              <span className="aa-file-preview-action-label">{t("edit")}</span>
+            </Button>
+          ) : null}
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            type="button"
+            aria-label={t("search")}
+            disabled={state.kind !== "text"}
+            onClick={() => editorRef.current?.openSearch()}
+          >
+            <Search className="size-4" />
+          </Button>
+          {mode === "window" ? (
+            <>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                type="button"
+                aria-label={copied ? tCommon("copied") : t("copy")}
+                disabled={state.kind !== "text"}
+                onClick={copyText}
+              >
+                {copied ? <Check className="size-4" /> : <Copy className="size-4" />}
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                type="button"
+                aria-label={t("download")}
+                disabled={state.kind !== "text" && state.kind !== "binary"}
+                onClick={() => void handleDownload()}
+              >
+                <Download className="size-4" />
+              </Button>
+              <Button
+                className="aa-file-preview-labelled-action"
+                size="sm"
+                type="button"
+                disabled={readOnlyPreview || state.kind !== "text" || !dirty || saving || !editMode}
+                onClick={() => void handleSave()}
+              >
+                {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
+                <span className="aa-file-preview-action-label">{t("save")}</span>
+              </Button>
+            </>
+          ) : null}
+          {mode === "embedded" ? (
+            <>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                type="button"
+                title={t("openWindow")}
+                aria-label={t("openWindow")}
+                disabled={!onOpenExternal}
+                onClick={onOpenExternal}
+              >
+                <ExternalLink className="size-4" />
+              </Button>
+              <Label
+                htmlFor={embeddedEditModeId}
+                className={cn(
+                  "ml-auto h-8 shrink-0 cursor-pointer gap-2 rounded-md border border-input bg-background px-2.5 text-xs shadow-xs transition-colors hover:bg-accent hover:text-accent-foreground",
+                  editMode && "border-primary/30 bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary",
+                  (state.kind !== "text" || readOnlyPreview || saving) && "pointer-events-none cursor-not-allowed opacity-50",
+                )}
+              >
+                <span>{t("edit")}</span>
+                <Switch
+                  id={embeddedEditModeId}
+                  size="sm"
+                  checked={editMode}
+                  disabled={state.kind !== "text" || readOnlyPreview || saving}
+                  aria-label={t("edit")}
+                  onCheckedChange={handleEmbeddedEditModeChange}
+                />
+              </Label>
+              <Button
+                className="shrink-0"
+                size="sm"
+                type="button"
+                aria-label={t("save")}
+                title={t("save")}
+                disabled={readOnlyPreview || state.kind !== "text" || !dirty || saving || !editMode}
+                onClick={() => void handleSave()}
+              >
+                {saving ? t("saving") : t("save")}
+              </Button>
+            </>
+          ) : (
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              type="button"
+              aria-label={t("close")}
+              onClick={() => {
+                if (dirty) {
+                  setSaveError(t("saveBeforeClose"))
+                  return
+                }
+                window.close()
+              }}
+            >
+              <X className="size-4" />
+            </Button>
+          )}
         </div>
-        <PreviewBadges state={state} dirty={dirty} saving={saving} savedFlash={savedFlash} saveError={saveError} />
-        <Button variant="ghost" size="icon-sm" type="button" aria-label={t("refresh")} onClick={() => void loadFile()}>
-          <RotateCw className="size-4" />
-        </Button>
-        <Button
-          variant={editMode ? "secondary" : "ghost"}
-          size="sm"
-          type="button"
-          disabled={state.kind !== "text" || isScopedPreview}
-          onClick={() => {
-            if (editMode) {
-              if (dirty) {
-                setSaveError(t("saveBeforeLeavingEdit"))
-                return
-              }
-              setEditMode(false)
-              return
-            }
-            setEditMode(true)
-            window.setTimeout(() => editorRef.current?.focus(), 0)
-          }}
-        >
-          <Edit3 className="size-3.5" />
-          {t("edit")}
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          type="button"
-          aria-label={t("search")}
-          disabled={state.kind !== "text"}
-          onClick={() => editorRef.current?.openSearch()}
-        >
-          <Search className="size-4" />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          type="button"
-          aria-label={t("copy")}
-          disabled={state.kind !== "text"}
-          onClick={copyText}
-        >
-          {copied ? <Check className="size-4" /> : <Copy className="size-4" />}
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          type="button"
-          aria-label={t("download")}
-          disabled={state.kind !== "text" && state.kind !== "binary"}
-          onClick={() => void handleDownload()}
-        >
-          <Download className="size-4" />
-        </Button>
-        <Button
-          size="sm"
-          type="button"
-          disabled={isScopedPreview || state.kind !== "text" || !dirty || saving || !editMode}
-          onClick={() => void handleSave()}
-        >
-          {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
-          {t("save")}
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          type="button"
-          aria-label={t("close")}
-          onClick={() => {
-            if (dirty) {
-              setSaveError(t("saveBeforeClose"))
-              return
-            }
-            window.close()
-          }}
-        >
-          <X className="size-4" />
-        </Button>
       </header>
       {downloadError ? (
         <div className="border-b px-3 py-2 text-xs text-destructive">{downloadError}</div>
       ) : null}
-      <section className="min-h-0 flex-1 overflow-hidden">
+      <section className="min-h-0 min-w-0 flex-1 overflow-hidden">
         {state.kind === "loading" ? <CenteredStatus label={t("loading")} /> : null}
         {state.kind === "error" ? (
           <div className="mx-auto flex h-full max-w-xl items-center px-6">
@@ -372,7 +691,7 @@ export function FilePreviewPage() {
             key={`${state.file.path}:${state.file.sha256}:${editMode}`}
             fileName={state.file.name || name}
             content={state.file.content}
-            editable={editMode && !isScopedPreview}
+            editable={editMode && !readOnlyPreview}
             onReady={handleEditorReady}
             onChange={handleEditorChange}
             className="h-full min-h-0 overflow-hidden"
@@ -493,22 +812,23 @@ function BinaryPreview({
   const kind = previewKind(file.mediaType, file.name)
   if (objectUrl && kind === "image") {
     return (
-      <ScrollArea className="h-full bg-muted/20" contentWide>
-        <div className="flex min-h-full min-w-full items-center justify-center p-4">
-          <img src={objectUrl} alt={file.name} className="max-h-full max-w-full object-contain" />
-        </div>
-        <ScrollBar orientation="horizontal" />
-      </ScrollArea>
+      <div className="flex size-full min-h-0 min-w-0 items-center justify-center overflow-hidden bg-muted/20 p-4">
+        <img src={objectUrl} alt={file.name} className="block max-h-full max-w-full object-contain" />
+      </div>
     )
   }
   if (objectUrl && kind === "video") {
-    return <div className="flex h-full items-center justify-center bg-black p-4"><video src={objectUrl} controls className="max-h-full max-w-full" /></div>
+    return <div className="flex size-full min-h-0 min-w-0 items-center justify-center overflow-hidden bg-black p-4"><video src={objectUrl} controls className="block max-h-full max-w-full object-contain" /></div>
   }
   if (objectUrl && kind === "audio") {
-    return <div className="flex h-full items-center justify-center p-8"><audio src={objectUrl} controls className="w-full max-w-2xl" /></div>
+    return <div className="flex size-full min-h-0 min-w-0 items-center justify-center overflow-hidden p-8"><audio src={objectUrl} controls className="w-full max-w-2xl" /></div>
   }
   if (objectUrl && kind === "pdf") {
-    return <iframe src={objectUrl} title={file.name} className="h-full w-full border-0" />
+    return (
+      <div className="size-full min-h-0 min-w-0 overflow-hidden">
+        <iframe src={objectUrl} title={file.name} className="block size-full border-0" />
+      </div>
+    )
   }
   return (
     <div className="flex h-full items-center justify-center p-6">
@@ -574,6 +894,38 @@ function downloadBlob(blob: Blob, filename: string) {
 function canBrowserPreview(mediaType: string, name: string) {
   const kind = previewKind(mediaType, name)
   return kind === "image" || kind === "video" || kind === "audio" || kind === "pdf"
+}
+
+function canTextPreview(mediaType: string, name: string) {
+  const type = mediaType.toLowerCase().split(";", 1)[0]?.trim() ?? ""
+  if (type.startsWith("text/")) return true
+  if (
+    type === "application/json"
+    || type === "application/ld+json"
+    || type === "application/javascript"
+    || type === "application/xml"
+    || type === "application/x-httpd-php"
+    || type === "application/x-sh"
+    || type === "application/x-yaml"
+  ) return true
+
+  const lowerName = name.toLowerCase()
+  if (
+    [".env", ".gitignore", ".gitattributes", ".npmrc", ".yarnrc", ".zshrc", ".bashrc"]
+      .includes(lowerName)
+  ) {
+    return true
+  }
+  return /\.(?:c|cc|conf|cpp|cs|css|csv|go|h|hpp|html?|ini|java|js|jsx|json|jsonl|kt|kts|log|lua|md|mdx|mjs|mts|php|properties|py|rb|rs|scss|sh|sql|svelte|swift|toml|ts|tsx|txt|vue|xml|ya?ml|zsh)$/
+    .test(lowerName)
+}
+
+function resolvedPreviewMediaType(declaredType: string, responseType: string, name: string) {
+  const declared = declaredType.trim()
+  if (declared && declared !== "application/octet-stream") return declared
+  const response = responseType.trim()
+  if (response && response !== "application/octet-stream") return response
+  return mediaTypeForFile(name)
 }
 
 function previewKind(mediaType: string, name: string): "image" | "video" | "audio" | "pdf" | "binary" {

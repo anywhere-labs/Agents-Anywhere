@@ -308,6 +308,7 @@ export type ProjectCreateRequest = {
   name: string;
   connectorId: string;
   workspacePath: string;
+  manuallyCreated?: boolean;
 };
 
 export type ProjectCreateResponse = ProjectResponse & {
@@ -600,6 +601,8 @@ export type FsListResult = {
   path: string;
   entries: FsEntry[];
   truncated?: boolean;
+  targetPath?: string | null;
+  targetType?: string | null;
 };
 
 export type FsReadTextResult = {

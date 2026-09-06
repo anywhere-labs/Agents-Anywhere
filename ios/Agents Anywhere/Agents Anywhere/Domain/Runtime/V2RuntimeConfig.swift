@@ -2,14 +2,22 @@ import Foundation
 
 struct V2RuntimeConfigSchema: Hashable {
     let fields: [V2RuntimeConfigField]
+    let defaults: [String: JSONValue]
+    let source: JSONValue
+    let uiSource: JSONValue
+    let namedRequiredFields: Set<String>
 
-    init(schema: JSONValue, uiSchema: JSONValue) throws {
+    init(schema: JSONValue, uiSchema: JSONValue, defaults: [String: JSONValue] = [:], requiresNamedInstance: Bool = false) throws {
+        self.defaults = defaults
+        self.source = schema
+        self.uiSource = uiSchema
         guard case let .object(root) = schema else {
             throw V2BusinessError.invalidRuntimeConfigSchema
         }
         let properties = root.object(for: "properties") ?? [:]
-        let requiredNames = Set(root.stringArray(for: "required"))
         let uiRoot = uiSchema.objectValue ?? [:]
+        namedRequiredFields = Set(uiRoot.stringArray(for: "requiredForNamedInstance")).intersection(properties.keys)
+        let requiredNames = Set(root.stringArray(for: "required")).union(requiresNamedInstance ? namedRequiredFields : [])
         let preferredOrder = uiRoot.stringArray(for: "order")
         let remainingNames = properties.keys
             .filter { !preferredOrder.contains($0) }
@@ -27,13 +35,19 @@ struct V2RuntimeConfigSchema: Hashable {
                 description: fieldSchema.string(for: "description"),
                 isRequired: requiredNames.contains(name),
                 defaultValue: fieldSchema["default"],
-                kind: V2RuntimeConfigFieldKind(schema: fieldSchema, uiSchema: uiField)
+                kind: V2RuntimeConfigFieldKind(schema: fieldSchema, uiSchema: uiField),
+                schema: fieldSchema,
+                component: uiField.string(for: "component")
             )
         }
     }
 
+    func forNamedInstance() throws -> Self {
+        try Self(schema: source, uiSchema: uiSource, defaults: defaults, requiresNamedInstance: true)
+    }
+
     func initialValues(config: JSONValue?) -> [String: JSONValue] {
-        var values = config?.objectValue ?? [:]
+        var values = defaults.merging(config?.objectValue ?? [:]) { _, configured in configured }
         for field in fields where values[field.id] == nil {
             if let defaultValue = field.defaultValue {
                 values[field.id] = defaultValue
@@ -50,6 +64,12 @@ struct V2RuntimeConfigField: Identifiable, Hashable {
     let isRequired: Bool
     let defaultValue: JSONValue?
     let kind: V2RuntimeConfigFieldKind
+    let schema: [String: JSONValue]
+    let component: String?
+
+    func translationKey(_ field: String) -> String? {
+        schema.object(for: "metadata")?.object(for: "i18n")?.string(for: field)
+    }
 }
 
 enum V2RuntimeConfigFieldKind: Hashable {
@@ -58,9 +78,13 @@ enum V2RuntimeConfigFieldKind: Hashable {
     case number(integer: Bool, minimum: Double?, maximum: Double?)
     case choice([V2RuntimeConfigOption])
     case keyValue
+    case modelGateway
+    case customModels
     case json
 
     init(schema: [String: JSONValue], uiSchema: [String: JSONValue]) {
+        if uiSchema.string(for: "component") == "modelGateway" { self = .modelGateway; return }
+        if uiSchema.string(for: "component") == "customModels" { self = .customModels; return }
         if let options = schema.array(for: "enum"), !options.isEmpty {
             self = .choice(options.map(V2RuntimeConfigOption.init))
             return
@@ -88,7 +112,7 @@ enum V2RuntimeConfigFieldKind: Hashable {
                 minimum: schema.number(for: "minimum"),
                 maximum: schema.number(for: "maximum")
             )
-        case "object" where component == "keyValue" || schema["additionalProperties"] != nil:
+        case "object" where component == "keyValue" || schema.object(for: "additionalProperties") != nil:
             self = .keyValue
         default:
             self = .json

@@ -1,9 +1,11 @@
 import Foundation
 
-struct V2Connector: Decodable, Identifiable, Hashable {
+nonisolated struct V2Connector: Codable, Identifiable, Hashable {
     let id: V2ConnectorID
     let userId: String
     let name: String
+    let connectorKind: String
+    let deviceOs: String?
     let status: V2ConnectorPresence
     let lastSeenAt: String?
     let createdAt: String

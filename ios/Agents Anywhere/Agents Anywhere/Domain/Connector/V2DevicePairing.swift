@@ -30,17 +30,25 @@ struct V2DeviceRuntime: Decodable, Identifiable, Hashable {
     let connectorId: V2ConnectorID
     let runtimeId: V2RuntimeID
     let runtimeType: String
+    let name: String
     let displayName: String
+    let typeDisplayName: String
     let present: Bool
+    let available: Bool
+    let reason: String?
     let configured: Bool
     let active: Bool
     let status: V2DeviceRuntimeStatus
     let discovery: JSONValue
+    let metadata: JSONValue
     let schema: JSONValue?
     let uiSchema: JSONValue
+    let defaults: [String: JSONValue]
+    let capabilities: [String: Bool]
     let config: JSONValue?
     let error: JSONValue?
     let lastDiscoveredAt: String
+    let createdAt: String
     let updatedAt: String
 
     var id: V2RuntimeID { runtimeId }

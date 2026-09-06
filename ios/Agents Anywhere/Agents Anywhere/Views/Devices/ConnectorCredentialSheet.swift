@@ -14,10 +14,10 @@ struct ConnectorCredentialSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
-                    Label("Connector disconnected", systemImage: "key.horizontal")
+                    Label(String(localized: "Connector disconnected"), appSymbol: "key.horizontal")
                         .font(.title2.weight(.semibold))
 
-                    Text("The previous credential no longer works. Update the desktop Connector with these values before reconnecting it.")
+                    Text(String(localized: "The previous credential no longer works. Update the desktop Connector with these values before reconnecting it."))
                         .foregroundStyle(.secondary)
 
                     ConnectorCredentialValue(
@@ -40,20 +40,18 @@ struct ConnectorCredentialSheet: View {
                     )
 
                     Label(
-                        "This token is shown only now. Store it in the Connector configuration and do not share it.",
-                        systemImage: "exclamationmark.shield"
+                        String(localized: "This token is shown only now. Store it in the Connector configuration and do not share it."),
+                        appSymbol: "exclamationmark.shield"
                     )
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                 }
                 .padding(20)
             }
-            .navigationTitle("New credential")
+            .navigationTitle(String(localized: "New credential"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { dismiss() }
-                }
+                SheetCloseToolbar { dismiss() }
             }
         }
     }
@@ -91,12 +89,12 @@ private struct ConnectorCredentialValue: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                 Button(action: onCopy) {
-                    Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                    AppSymbol(copied ? "checkmark" : "doc.on.doc")
                         .frame(width: 32, height: 32)
                 }
                 .buttonStyle(.bordered)
                 .buttonBorderShape(.circle)
-                .accessibilityLabel(copied ? "Copied" : "Copy \(String(localized: title))")
+                .accessibilityLabel(copied ? String(localized: "Copied") : String(localized: "Copy \(String(localized: title))"))
             }
         }
         .padding(14)

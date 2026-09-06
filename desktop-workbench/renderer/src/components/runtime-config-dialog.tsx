@@ -68,6 +68,7 @@ type RuntimeConfigDialogProps = {
   config: Record<string, unknown> | null
   open: boolean
   saving: boolean
+  submitDisabled?: boolean
   submitLabel?: string
   badgeLabel?: string
   defaults?: Record<string, unknown>
@@ -98,6 +99,7 @@ export function RuntimeConfigDialog({
   config,
   open,
   saving,
+  submitDisabled = false,
   submitLabel,
   badgeLabel,
   defaults,
@@ -160,7 +162,7 @@ export function RuntimeConfigDialog({
   }
 
   const submit = async () => {
-    if (!typedSchema) return
+    if (!typedSchema || submitDisabled) return
     const ajv = new Ajv2020({ allErrors: true, strict: false })
     const validate = ajv.compile(typedSchema)
     if (!validate(draft)) {
@@ -247,7 +249,7 @@ export function RuntimeConfigDialog({
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>
               {tCommon("cancel")}
             </Button>
-            <Button type="button" onClick={() => void submit()} disabled={saving || !schema}>
+            <Button type="button" onClick={() => void submit()} disabled={saving || submitDisabled || !schema}>
               {saving ? t("saving") : submitLabel ?? tCommon("save")}
             </Button>
           </div>

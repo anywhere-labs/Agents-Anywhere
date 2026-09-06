@@ -8,11 +8,12 @@ import { useAuth } from "@/components/auth/auth-context"
 import { DashboardSidebarToggle } from "@/components/dashboard-sidebar-toggle"
 import { MobileConnectionDialog } from "@/components/pages/mobile-signin-panel"
 import { Button } from "@/components/ui/button"
+import { accountDisplayName } from "@/features/auth/account-profile"
 import { useMobileConnectionsSidebarVisibility } from "@/features/mobile-connections/sidebar-visibility"
 
 export function MobileConnectionsPage() {
   const t = useTranslations("dashboard.mobileConnections")
-  const { session } = useAuth()
+  const { session, me } = useAuth()
   const [sidebarVisible, setSidebarVisible] = useMobileConnectionsSidebarVisibility()
 
   const toggleSidebarVisibility = () => {
@@ -44,7 +45,7 @@ export function MobileConnectionsPage() {
             </div>
             <MobileConnectionDialog
               token={session?.accessToken ?? ""}
-              userId={session?.userId ?? ""}
+              userId={me ? accountDisplayName(me) : session?.userId ?? ""}
             >
               <Button type="button" size="lg">
                 {t("connect")}

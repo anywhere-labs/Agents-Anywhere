@@ -6,10 +6,12 @@ import {
   Check,
   Copy,
   ExternalLink,
-  Laptop,
+  Hash,
+  KeyRound,
+  MonitorUp,
   Loader2,
-  Monitor,
   Terminal,
+  type LucideIcon,
 } from "lucide-react"
 import { useTranslations } from "next-intl"
 import { toast } from "sonner"
@@ -37,10 +39,12 @@ import {
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp"
-import { Label } from "@/components/ui/label"
+import { Field, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area"
 import { dashboardApi } from "@/features/dashboard/api"
+import { preparePairingCredential, type PairingCredential } from "@/features/dashboard/pairing-credential"
 import type { ConnectorCreateResponse, ConnectorRevokeResponse } from "@/features/dashboard/types"
+import { copyText } from "@/lib/clipboard"
 import { cn } from "@/lib/utils"
 
 const ADJECTIVES = [
@@ -56,15 +60,15 @@ const NOUNS = [
   "quartz", "raven", "ridge", "river", "rocket", "sequoia", "sparrow", "summit", "willow", "zephyr",
 ]
 
-const DESKTOP_DOWNLOAD_URL = "https://www.agents-anywhere.com/download"
+const DESKTOP_DOWNLOAD_URL = "https://github.com/anywhere-labs/Agents-Anywhere/releases/latest"
 
-type Platform = "macos" | "windows" | "linux"
-type LinuxMethod = "terminal" | "pair-code"
+type CliMethod = "command" | "pair-code"
 type Step =
-  | "platform"
+  | "connection-method"
   | "desktop-install"
-  | "linux-method"
+  | "cli-confirm"
   | "name"
+  | "cli-method"
   | "command"
   | "pair-code"
 
@@ -110,15 +114,35 @@ function shellQuote(value: string): string {
 }
 
 function CodeBlock({ code, copyLabel }: { code: string; copyLabel: string }) {
+  const t = useTranslations("dashboard.pairDevice")
+  const tCommon = useTranslations("common")
   const [copied, setCopied] = React.useState(false)
-  const copy = () => {
-    navigator.clipboard.writeText(code).catch(() => {})
-    setCopied(true)
-    window.setTimeout(() => setCopied(false), 2000)
+  const [copying, setCopying] = React.useState(false)
+  const containerRef = React.useRef<HTMLDivElement>(null)
+  const resetTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  React.useEffect(() => () => {
+    if (resetTimerRef.current !== null) clearTimeout(resetTimerRef.current)
+  }, [])
+
+  const copy = async () => {
+    if (copying) return
+    if (resetTimerRef.current !== null) clearTimeout(resetTimerRef.current)
+    setCopied(false)
+    setCopying(true)
+    try {
+      await copyText(code, containerRef.current ?? undefined)
+      setCopied(true)
+      resetTimerRef.current = setTimeout(() => setCopied(false), 2000)
+    } catch {
+      toast.error(t("errors.copyFailed"))
+    } finally {
+      setCopying(false)
+    }
   }
 
   return (
-    <div className="grid rounded-lg border border-border bg-muted/40" style={{ gridTemplateColumns: "1fr auto" }}>
+    <div ref={containerRef} className="grid rounded-lg border border-border bg-muted/40" style={{ gridTemplateColumns: "1fr auto" }}>
       <ScrollArea className="min-w-0">
         <div className="px-4 py-3">
           <code className="block whitespace-pre code-mono text-xs text-foreground">{code}</code>
@@ -130,10 +154,11 @@ function CodeBlock({ code, copyLabel }: { code: string; copyLabel: string }) {
         variant="ghost"
         size="icon"
         onClick={copy}
-        aria-label={copyLabel}
+        disabled={copying}
+        aria-label={copied ? tCommon("copied") : copyLabel}
         className="m-2 self-center text-muted-foreground"
       >
-        {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
+        {copying ? <Loader2 className="animate-spin" /> : copied ? <Check /> : <Copy />}
       </Button>
     </div>
   )
@@ -149,12 +174,12 @@ function PollingIndicator({ label }: { label: string }) {
 }
 
 function ChoiceCard({
-  icon,
+  icon: Icon,
   title,
   description,
   onClick,
 }: {
-  icon: React.ReactNode
+  icon: LucideIcon
   title: string
   description: string
   onClick: () => void
@@ -164,13 +189,13 @@ function ChoiceCard({
       type="button"
       variant="outline"
       onClick={onClick}
-      className="h-auto w-full min-w-0 justify-start gap-3 whitespace-normal px-4 py-4 text-left"
+      className="h-auto w-full min-w-0 flex-col items-start gap-0.5 whitespace-normal px-4 py-3 text-left"
     >
-      <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-muted text-foreground">{icon}</span>
-      <span className="min-w-0">
-        <span className="block font-medium">{title}</span>
-        <span className="mt-0.5 block break-words text-sm font-normal text-muted-foreground">{description}</span>
+      <span className="flex min-w-0 items-center gap-2 font-medium">
+        <Icon className="size-4" />
+        {title}
       </span>
+      <span className="min-w-0 break-words text-sm text-muted-foreground">{description}</span>
     </Button>
   )
 }
@@ -186,12 +211,9 @@ export function PairDeviceDialog({
   const { requestAgentSetup, waitForConnector, readyConnectorIds } = useAgentSetupPairing()
   const t = useTranslations("dashboard.pairDevice")
   const tCommon = useTranslations("common")
-  const [step, setStep] = React.useState<Step>(setupCredential ? "linux-method" : "platform")
-  const [platform, setPlatform] = React.useState<Platform | null>(setupCredential ? "linux" : null)
-  const [linuxMethod, setLinuxMethod] = React.useState<LinuxMethod | null>(null)
+  const [step, setStep] = React.useState<Step>(setupCredential ? "cli-method" : "connection-method")
   const [name, setName] = React.useState(() => setupCredential?.connector.name ?? randomName())
-  const [connectorId, setConnectorId] = React.useState<string | null>(() => setupCredential?.connector.id ?? null)
-  const [connectorToken, setConnectorToken] = React.useState<string | null>(() => setupCredential?.connectorToken ?? null)
+  const [credential, setCredential] = React.useState<PairingCredential | null>(setupCredential)
   const [pairCode, setPairCode] = React.useState("")
   const [creating, setCreating] = React.useState(false)
   const [claiming, setClaiming] = React.useState(false)
@@ -201,6 +223,8 @@ export function PairDeviceDialog({
   const pairingVersionRef = React.useRef(0)
   const suppressCloseGuardRef = React.useRef(false)
   const serverUrl = React.useMemo(resolvePairingServerUrl, [])
+  const connectorId = credential?.connector.id ?? null
+  const connectorToken = credential?.connectorToken ?? null
 
   const shouldConfirmExit = connectorId !== null && createdThisFlow
 
@@ -211,12 +235,9 @@ export function PairDeviceDialog({
 
   const reset = React.useCallback(() => {
     stopWaiting()
-    setStep(setupCredential ? "linux-method" : "platform")
-    setPlatform(setupCredential ? "linux" : null)
-    setLinuxMethod(null)
+    setStep(setupCredential ? "cli-method" : "connection-method")
     setName(setupCredential?.connector.name ?? randomName())
-    setConnectorId(setupCredential?.connector.id ?? null)
-    setConnectorToken(setupCredential?.connectorToken ?? null)
+    setCredential(setupCredential)
     setPairCode("")
     setCreating(false)
     setClaiming(false)
@@ -225,11 +246,9 @@ export function PairDeviceDialog({
 
   React.useEffect(() => {
     if (!open || !setupCredential) return
-    setStep("linux-method")
-    setPlatform("linux")
+    setStep("cli-method")
     setName(setupCredential.connector.name)
-    setConnectorId(setupCredential.connector.id)
-    setConnectorToken(setupCredential.connectorToken)
+    setCredential(setupCredential)
   }, [open, setupCredential])
 
   React.useEffect(() => () => { pairingVersionRef.current += 1 }, [])
@@ -258,6 +277,7 @@ export function PairDeviceDialog({
   }, [closePairing, connectorId, open, readyConnectorIds, waitingOnline])
 
   const handleOpenChange = (nextOpen: boolean) => {
+    if (!nextOpen && (creating || claiming)) return
     if (!nextOpen && suppressCloseGuardRef.current) return
     if (!nextOpen && shouldConfirmExit) {
       setExitGuardOpen(true)
@@ -268,44 +288,42 @@ export function PairDeviceDialog({
   }
 
   const goBack = () => {
+    if (creating || claiming) return
     stopWaiting()
-    if (step === "desktop-install" || step === "linux-method") {
-      setStep("platform")
+    if (step === "command" || step === "pair-code") {
+      setStep("cli-method")
+    } else if (step === "cli-method") {
+      setStep("name")
     } else {
-      setStep("linux-method")
+      setStep("connection-method")
     }
   }
 
-  const selectPlatform = (nextPlatform: Platform) => {
-    setPlatform(nextPlatform)
-    setStep(nextPlatform === "linux" ? "linux-method" : "desktop-install")
-  }
-
-  const routeToLinuxMethod = (method: LinuxMethod) => {
-    setLinuxMethod(method)
+  const routeToCliMethod = (method: CliMethod) => {
     if (!connectorId || !connectorToken) {
       setStep("name")
       return
     }
-    setStep(method === "terminal" ? "command" : "pair-code")
-    if (method === "terminal") startConnectorWaiting({ id: connectorId, name })
+    setStep(method)
+    if (method === "command") startConnectorWaiting({ id: connectorId, name })
   }
 
   const handleCreate = async () => {
-    if (!name.trim() || !session?.accessToken || !linuxMethod) return
+    if (!name.trim() || !session?.accessToken || creating) return
+    const version = pairingVersionRef.current
     setCreating(true)
     try {
-      const result = await dashboardApi.createConnector(session.accessToken, name.trim())
-      setConnectorId(result.connector.id)
-      setConnectorToken(result.connectorToken)
+      const result = await preparePairingCredential(session.accessToken, name, credential)
+      if (version !== pairingVersionRef.current) return
+      setCredential(result)
       setName(result.connector.name)
-      setCreatedThisFlow(true)
-      setStep(linuxMethod === "terminal" ? "command" : "pair-code")
-      if (linuxMethod === "terminal") startConnectorWaiting(result.connector)
+      if (!credential) setCreatedThisFlow(true)
+      setStep("cli-method")
     } catch (error) {
+      if (version !== pairingVersionRef.current) return
       toast.error(error instanceof Error ? error.message : t("errors.createFailed"))
     } finally {
-      setCreating(false)
+      if (version === pairingVersionRef.current) setCreating(false)
     }
   }
 
@@ -357,64 +375,70 @@ export function PairDeviceDialog({
   return (
     <>
       <Dialog open={open} onOpenChange={handleOpenChange}>
-        <DialogContent className="overflow-hidden sm:max-w-2xl">
+        <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-2xl">
           <div
             key={step}
-            className="grid gap-4 motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-right-4 motion-safe:duration-200"
+            className="grid min-w-0 gap-4 motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-right-4 motion-safe:duration-200"
           >
-            {step === "platform" ? (
+            {step === "connection-method" ? (
               <>
                 <DialogHeader>
-                  <DialogTitle>{title ?? t("platformTitle")}</DialogTitle>
-                  <DialogDescription>{t("platformDescription")}</DialogDescription>
+                  <DialogTitle className="text-lg">{title ?? t("connectionTitle")}</DialogTitle>
+                  <DialogDescription>{t("connectionDescription")}</DialogDescription>
                 </DialogHeader>
-                <div className="grid gap-3 py-2 sm:grid-cols-3">
+                <div className="grid gap-3 py-2">
                   <ChoiceCard
-                    icon={<Laptop className="size-5" />}
-                    title={t("platformMacos")}
-                    description={t("platformMacosDescription")}
-                    onClick={() => selectPlatform("macos")}
+                    icon={MonitorUp}
+                    title={t("desktopTitle")}
+                    description={t("desktopDescription")}
+                    onClick={() => setStep("desktop-install")}
                   />
                   <ChoiceCard
-                    icon={<Monitor className="size-5" />}
-                    title={t("platformWindows")}
-                    description={t("platformWindowsDescription")}
-                    onClick={() => selectPlatform("windows")}
-                  />
-                  <ChoiceCard
-                    icon={<Terminal className="size-5" />}
-                    title={t("platformLinux")}
-                    description={t("platformLinuxDescription")}
-                    onClick={() => selectPlatform("linux")}
+                    icon={Terminal}
+                    title={t("cliTitle")}
+                    description={t("cliDescription")}
+                    onClick={() => setStep("cli-confirm")}
                   />
                 </div>
               </>
             ) : null}
 
-            {step === "desktop-install" && platform !== "linux" ? (
+            {step === "desktop-install" ? (
               <>
                 <DialogHeader>
-                  <DialogTitle>
-                    {t("desktopInstallTitle", {
-                      platform: t(platform === "macos" ? "platformMacos" : "platformWindows"),
-                    })}
-                  </DialogTitle>
+                  <DialogTitle>{t("desktopInstallTitle")}</DialogTitle>
+                  <DialogDescription>{t("desktopInstallDescription")}</DialogDescription>
                 </DialogHeader>
                 <ol className="grid gap-3 py-2 text-sm">
-                  <li className="rounded-xl border bg-muted/25 p-4">{t("desktopInstallStepDownload")}</li>
-                  <li className="rounded-xl border bg-muted/25 p-4">{t("desktopInstallStepLogin")}</li>
-                  <li className="rounded-xl border bg-muted/25 p-4">{t("desktopInstallStepOnline")}</li>
+                  <li className="rounded-lg border bg-muted/30 p-4">
+                    <div className="flex flex-col gap-1">
+                      <p className="font-medium">{t("desktopDownloadTitle")}</p>
+                      <p className="text-muted-foreground">{t("desktopInstallStepDownload")}</p>
+                    </div>
+                  </li>
+                  <li className="rounded-lg border bg-muted/30 p-4">
+                    <div className="flex flex-col gap-1">
+                      <p className="font-medium">{t("desktopLoginTitle")}</p>
+                      <p className="text-muted-foreground">{t("desktopInstallStepLogin")}</p>
+                    </div>
+                  </li>
+                  <li className="rounded-lg border bg-muted/30 p-4">
+                    <div className="flex flex-col gap-1">
+                      <p className="font-medium">{t("desktopOnlineTitle")}</p>
+                      <p className="text-muted-foreground">{t("desktopInstallStepOnline")}</p>
+                    </div>
+                  </li>
                 </ol>
                 <DialogFooter className="gap-2 sm:justify-between">
                   <Button type="button" variant="ghost" size="sm" onClick={goBack} className="gap-1.5">
-                    <ArrowLeft className="size-3.5" />
+                    <ArrowLeft data-icon="inline-start" />
                     {tCommon("back")}
                   </Button>
-                  <div className="flex gap-2">
+                  <div className="flex flex-col gap-2 sm:flex-row">
                     <Button type="button" variant="outline" asChild>
-                      <a href={DESKTOP_DOWNLOAD_URL} target="_blank" rel="noreferrer">
+                      <a href={DESKTOP_DOWNLOAD_URL} target="_blank" rel="noopener noreferrer">
                         {t("githubReleases")}
-                        <ExternalLink className="size-3.5" />
+                        <ExternalLink data-icon="inline-end" />
                       </a>
                     </Button>
                     <Button type="button" onClick={() => completePairing()}>{tCommon("done")}</Button>
@@ -423,29 +447,53 @@ export function PairDeviceDialog({
               </>
             ) : null}
 
-            {step === "linux-method" ? (
+            {step === "cli-confirm" ? (
               <>
                 <DialogHeader>
-                  <DialogTitle>{t("linuxMethodTitle")}</DialogTitle>
-                  <DialogDescription>{t("linuxMethodDescription")}</DialogDescription>
+                  <DialogTitle>{t("commandWarningTitle")}</DialogTitle>
+                  <DialogDescription>{t("commandWarningDescription")}</DialogDescription>
+                </DialogHeader>
+                <p className="text-sm text-muted-foreground">{t("commandWarningFallback")}</p>
+                <DialogFooter className="gap-2 sm:justify-between">
+                  <Button type="button" variant="ghost" size="sm" onClick={goBack}>
+                    <ArrowLeft data-icon="inline-start" />
+                    {tCommon("back")}
+                  </Button>
+                  <div className="flex flex-col gap-2 sm:flex-row">
+                    <Button type="button" variant="outline" onClick={() => setStep("desktop-install")}>
+                      {t("commandWarningDesktop")}
+                    </Button>
+                    <Button type="button" onClick={() => setStep("name")}>
+                      {t("commandWarningConfirm")}
+                    </Button>
+                  </div>
+                </DialogFooter>
+              </>
+            ) : null}
+
+            {step === "cli-method" ? (
+              <>
+                <DialogHeader>
+                  <DialogTitle>{t("methodTitle")}</DialogTitle>
+                  <DialogDescription>{t("methodDescription", { name })}</DialogDescription>
                 </DialogHeader>
                 <div className="grid gap-3 py-2">
                   <ChoiceCard
-                    icon={<Terminal className="size-5" />}
-                    title={t("linuxTerminalTitle")}
-                    description={t("linuxTerminalDescription")}
-                    onClick={() => routeToLinuxMethod("terminal")}
+                    icon={Hash}
+                    title={t("pairCodeTitle")}
+                    description={t("pairCodeDescription")}
+                    onClick={() => routeToCliMethod("pair-code")}
                   />
                   <ChoiceCard
-                    icon={<Monitor className="size-5" />}
-                    title={t("linuxPairCodeTitle")}
-                    description={t("linuxPairCodeDescription")}
-                    onClick={() => routeToLinuxMethod("pair-code")}
+                    icon={KeyRound}
+                    title={t("tokenTitle")}
+                    description={t("tokenDescription")}
+                    onClick={() => routeToCliMethod("command")}
                   />
                 </div>
                 <DialogFooter>
                   <Button type="button" variant="ghost" size="sm" onClick={goBack} className="gap-1.5">
-                    <ArrowLeft className="size-3.5" />
+                    <ArrowLeft data-icon="inline-start" />
                     {tCommon("back")}
                   </Button>
                 </DialogFooter>
@@ -458,26 +506,31 @@ export function PairDeviceDialog({
                   <DialogTitle>{t("nameTitle")}</DialogTitle>
                   <DialogDescription>{t("nameDescription")}</DialogDescription>
                 </DialogHeader>
-                <div className="flex flex-col gap-2 py-2">
-                  <Label htmlFor="device-name">{t("nameLabel")}</Label>
-                  <Input
-                    id="device-name"
-                    value={name}
-                    onChange={(event) => setName(event.target.value)}
-                    placeholder={t("namePlaceholder")}
-                    className="code-mono"
-                    onKeyDown={(event) => event.key === "Enter" && void handleCreate()}
-                    autoFocus
-                  />
-                </div>
+                <FieldGroup className="py-2">
+                  <Field data-disabled={creating} className="gap-2">
+                    <FieldLabel htmlFor="device-name">{t("nameLabel")}</FieldLabel>
+                    <Input
+                      id="device-name"
+                      value={name}
+                      onChange={(event) => setName(event.target.value)}
+                      placeholder={t("namePlaceholder")}
+                      className="code-mono"
+                      disabled={creating}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" && !event.nativeEvent.isComposing) void handleCreate()
+                      }}
+                      autoFocus
+                    />
+                  </Field>
+                </FieldGroup>
                 <DialogFooter className="gap-2 sm:justify-between">
-                  <Button type="button" variant="ghost" size="sm" onClick={goBack} className="gap-1.5">
-                    <ArrowLeft className="size-3.5" />
+                  <Button type="button" variant="ghost" size="sm" onClick={goBack} disabled={creating}>
+                    <ArrowLeft data-icon="inline-start" />
                     {tCommon("back")}
                   </Button>
                   <Button type="button" onClick={() => void handleCreate()} disabled={!name.trim() || creating}>
-                    {creating ? <Loader2 className="size-4 animate-spin" /> : null}
-                    {t("createDevice")}
+                    {creating ? <Loader2 data-icon="inline-start" className="animate-spin" /> : null}
+                    {tCommon("continue")}
                   </Button>
                 </DialogFooter>
               </>
@@ -499,7 +552,7 @@ export function PairDeviceDialog({
                 </div>
                 <DialogFooter>
                   <Button type="button" variant="ghost" size="sm" onClick={goBack} className="gap-1.5">
-                    <ArrowLeft className="size-3.5" />
+                    <ArrowLeft data-icon="inline-start" />
                     {tCommon("back")}
                   </Button>
                 </DialogFooter>
@@ -510,33 +563,37 @@ export function PairDeviceDialog({
               <>
                 <DialogHeader>
                   <DialogTitle>{t("codeStepTitle")}</DialogTitle>
+                  <DialogDescription>{t("codeStepDescription", { name })}</DialogDescription>
                 </DialogHeader>
                 <div className="flex flex-col gap-4 py-2">
-                  <div className="rounded-xl border bg-muted/25 p-4 text-sm">
+                  <div className="rounded-lg border bg-muted/30 p-4 text-sm">
                     <div className="font-medium">{t("pairCommand")}</div>
                     <div className="mt-3">
                       <CodeBlock code={pairCommand} copyLabel={t("copyCommand")} />
                     </div>
                     <p className="mt-3 text-muted-foreground">{t("pairCommandHint")}</p>
                   </div>
-                  <div className="flex flex-col gap-2">
-                    <Label>{t("codeLabel")}</Label>
-                    <InputOTP
-                      maxLength={6}
-                      value={pairCode}
-                      onChange={(value) => setPairCode(value.replace(/\D/g, "").slice(0, 6))}
-                      disabled={claiming}
-                      inputMode="numeric"
-                      aria-label={t("codeLabel")}
-                      containerClassName={cn("w-full justify-between", claiming && "opacity-40")}
-                    >
-                      <InputOTPGroup className="w-full">
-                        {Array.from({ length: 6 }).map((_, index) => (
-                          <InputOTPSlot key={index} index={index} className="h-12 flex-1 text-xl" />
-                        ))}
-                      </InputOTPGroup>
-                    </InputOTP>
-                  </div>
+                  <FieldGroup>
+                    <Field data-disabled={claiming} className="gap-2">
+                      <FieldLabel htmlFor="device-pair-code">{t("codeLabel")}</FieldLabel>
+                      <InputOTP
+                        id="device-pair-code"
+                        maxLength={6}
+                        value={pairCode}
+                        onChange={(value) => setPairCode(value.replace(/\D/g, "").slice(0, 6))}
+                        disabled={claiming}
+                        inputMode="numeric"
+                        aria-label={t("codeLabel")}
+                        containerClassName={cn("w-full justify-between", claiming && "opacity-40")}
+                      >
+                        <InputOTPGroup className="w-full">
+                          {Array.from({ length: 6 }).map((_, index) => (
+                            <InputOTPSlot key={index} index={index} className="h-12 flex-1 text-xl" />
+                          ))}
+                        </InputOTPGroup>
+                      </InputOTP>
+                    </Field>
+                  </FieldGroup>
                   {claiming ? <PollingIndicator label={t("confirming")} /> : null}
                 </div>
                 <DialogFooter className="gap-2 sm:justify-between">
@@ -548,11 +605,11 @@ export function PairDeviceDialog({
                     className="gap-1.5"
                     disabled={claiming}
                   >
-                    <ArrowLeft className="size-3.5" />
+                    <ArrowLeft data-icon="inline-start" />
                     {tCommon("back")}
                   </Button>
                   <Button type="button" onClick={() => void handleClaim()} disabled={pairCode.length < 6 || claiming}>
-                    {claiming ? <Loader2 className="size-4 animate-spin" /> : null}
+                    {claiming ? <Loader2 data-icon="inline-start" className="animate-spin" /> : null}
                     {t("claim")}
                   </Button>
                 </DialogFooter>

@@ -11,11 +11,11 @@ struct ServiceEntryView: View {
                 AuthBrandLockup()
 
                 VStack(spacing: 12) {
-                    AuthPrimaryButton(title: "Enter Server", systemImage: "link") {
+                    AuthPrimaryButton(title: String(localized: "Enter Server"), systemImage: "link") {
                         onEnterServer()
                     }
 
-                    AuthGlassButton("QR Code Login", systemImage: "qrcode.viewfinder") {
+                    AuthGlassButton(String(localized: "QR Code Login"), systemImage: "qrcode.viewfinder") {
                         onQRCodeLogin()
                     }
                 }

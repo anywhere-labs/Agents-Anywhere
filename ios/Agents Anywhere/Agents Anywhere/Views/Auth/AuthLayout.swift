@@ -51,9 +51,7 @@ struct AuthScreen<Content: View>: View {
         .background(AppTheme.appBackground(colorScheme))
         .toolbar {
             if showsCancel {
-                ToolbarItem(placement: .cancellationAction) {
-                    SheetCloseButton(action: onCancel)
-                }
+                SheetCloseToolbar(action: onCancel)
             }
         }
     }
@@ -85,7 +83,7 @@ struct AuthBrandLockup: View {
             AAWordmark(fontSize: 42)
                 .foregroundStyle(AppTheme.primaryText(colorScheme))
 
-            Text("Connect this iPhone to your self-hosted workspace.")
+            Text(String(localized: "Connect this iPhone to your self-hosted workspace."))
                 .font(.body)
                 .foregroundStyle(AppTheme.secondaryText(colorScheme))
                 .multilineTextAlignment(.center)
@@ -179,9 +177,9 @@ struct LoginSummaryView: View {
 
     var body: some View {
         VStack(spacing: 12) {
-            summaryRow("Server", server)
+            summaryRow(String(localized: "Server"), server)
             Divider()
-            summaryRow("User", userId)
+            summaryRow(String(localized: "User"), userId)
         }
         .font(.body)
         .padding(.vertical, 4)
@@ -213,8 +211,7 @@ struct AuthResultView: View {
         AuthWelcomeLayout {
             VStack(spacing: 26) {
                 VStack(spacing: 16) {
-                    Image(systemName: symbolName)
-                        .font(.system(size: 56, weight: .semibold))
+                    AppSymbol(symbolName, size: 56)
                         .foregroundStyle(symbolColor)
 
                     VStack(spacing: 8) {

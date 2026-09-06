@@ -1,10 +1,14 @@
 import SwiftUI
 
 struct ChatSidebarView: View {
+    @EnvironmentObject private var appState: AppState
     let safeAreaInsets: EdgeInsets
     let devices: [ChatSidebarDevice]
     let pinnedSessions: [ChatSidebarSession]
     let recentSessions: [ChatSidebarSession]
+    let repository: V2DashboardRepository?
+    let onNewProjectSession: (String) -> Void
+    let onRestoreSession: (String) async -> Bool
     let account: ChatSidebarAccount?
     let selectedDeviceId: V2ConnectorID?
     let selectedSessionId: V2SessionID?
@@ -20,6 +24,8 @@ struct ChatSidebarView: View {
     let onCopySessionId: (V2SessionID) -> Void
 
     @State private var isShowingPairing = false
+    @State private var showsArchives = false
+    @AppStorage("aa.native.sidebar.session-list") private var showsSessionList = false
 
     var body: some View {
         ScrollView {
@@ -32,7 +38,25 @@ struct ChatSidebarView: View {
                     onCopyId: onCopyDeviceId
                 )
                 ChatSidebarPairDeviceButton {
+                    appState.nativeChatServices?.agentSetup.pairingFormPresented = true
                     isShowingPairing = true
+                }
+
+                if let setup = appState.nativeChatServices?.agentSetup {
+                    ForEach(setup.requests.filter { !$0.ready }) { request in
+                        HStack {
+                            if request.error == nil { ProgressView().controlSize(.small) }
+                            VStack(alignment: .leading) {
+                                Text(request.connector.name).font(.subheadline)
+                                Text(request.error ?? String(localized: "等待设备连接…")).font(.caption).foregroundStyle(.secondary)
+                            }
+                            Spacer(minLength: 0)
+                            Menu {
+                                if request.error != nil { Button(String(localized: "重试")) { setup.retry(request.id) } }
+                                Button(String(localized: "停止等待")) { setup.finish(request.id) }
+                            } label: { AppSymbol("ellipsis").frame(width: 36, height: 36) }
+                        }.padding(.horizontal, 10).padding(.vertical, 8)
+                    }
                 }
 
                 if !pinnedSessions.isEmpty {
@@ -49,24 +73,44 @@ struct ChatSidebarView: View {
                     )
                 }
 
-                ChatSidebarSessionSection(
-                    title: "Recent",
-                    sessions: recentSessions,
-                    selectedSessionId: selectedSessionId,
-                    isLoading: isLoadingSessions,
-                    emptyMessage: "No sessions match",
-                    onOpen: onOpenSession,
-                    onRename: onRenameSession,
-                    onTogglePinned: onToggleSessionPinned,
-                    onArchive: onArchiveSession,
-                    onCopyId: onCopySessionId
-                )
+                if let repository {
+                    if showsSessionList {
+                        HStack {
+                            Text("Recent").font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
+                            Spacer()
+                            ChatSidebarListMenu(showsSessionList: $showsSessionList,
+                                onShowArchives: { showsArchives = true }) {}
+                        }
+                        .padding(.horizontal, 10).padding(.top, 16)
+                        ChatSidebarSessionSection(
+                            title: nil,
+                            sessions: recentSessions,
+                            selectedSessionId: selectedSessionId,
+                            isLoading: isLoadingSessions,
+                            emptyMessage: "No sessions yet",
+                            onOpen: onOpenSession,
+                            onRename: onRenameSession,
+                            onTogglePinned: onToggleSessionPinned,
+                            onArchive: onArchiveSession,
+                            onCopyId: onCopySessionId
+                        )
+                        DashboardPageButton(repository: repository, scope: .init())
+                    } else {
+                        ChatSidebarProjects(repository: repository, showsSessionList: $showsSessionList,
+                            selectedSessionID: selectedSessionId, onShowArchives: { showsArchives = true },
+                            onNewSession: onNewProjectSession, onOpenSession: onOpenSession,
+                            onRenameSession: onRenameSession, onPinSession: onToggleSessionPinned,
+                            onArchiveSession: onArchiveSession, onCopySession: onCopySessionId)
+                    }
+                }
+
             }
             .padding(.leading, safeAreaInsets.leading + 14)
             .padding(.trailing, safeAreaInsets.trailing + 14)
             .padding(.top, 10)
             .padding(.bottom, safeAreaInsets.bottom + 82)
         }
+        .refreshable { await repository?.refresh() }
         .scrollIndicators(.hidden)
         .scrollEdgeEffectStyle(.soft, for: .bottom)
         .overlay(alignment: .bottom) {
@@ -80,64 +124,45 @@ struct ChatSidebarView: View {
                     .padding(.bottom, max(safeAreaInsets.bottom, 12))
             }
         }
-        .sheet(isPresented: $isShowingPairing) {
+        .sheet(isPresented: $showsArchives) {
+            if let repository { ArchivedSessionsSheet(repository: repository, onOpen: onOpenSession, onRestore: onRestoreSession) }
+        }
+        .sheet(isPresented: $isShowingPairing, onDismiss: {
+            appState.nativeChatServices?.agentSetup.pairingFormPresented = false
+        }) {
             PairDeviceSheet()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
     }
 }
 
-struct ChatSidebarHeaderView: View {
-    @Binding var searchText: String
-    @Binding var isSearching: Bool
-
-    @FocusState private var isSearchFocused: Bool
+struct ChatSidebarListMenu<Filters: View>: View {
+    @Binding var showsSessionList: Bool
+    let onShowArchives: () -> Void
+    @ViewBuilder var filters: () -> Filters
 
     var body: some View {
-        VStack(spacing: 10) {
-            HStack(spacing: 12) {
-                AAWordmark(fontSize: 24)
-
-                Spacer(minLength: 8)
-
-                Button(action: toggleSearch) {
-                    Label(
-                        isSearching ? "Close search" : "Search sessions",
-                        systemImage: isSearching ? "xmark" : "magnifyingglass"
-                    )
-                    .labelStyle(.iconOnly)
-                }
-                .buttonStyle(.glass)
-                .buttonBorderShape(.circle)
-                .controlSize(.large)
+        Menu {
+            Picker(String(localized: "侧栏显示"), selection: $showsSessionList) {
+                Text(String(localized: "按项目")).tag(false)
+                Text(String(localized: "全部会话")).tag(true)
             }
-
-            if isSearching {
-                TextField("Search session titles", text: $searchText)
-                    .focused($isSearchFocused)
-                    .textFieldStyle(.plain)
-                    .submitLabel(.search)
-                    .padding(.horizontal, 12)
-                    .frame(minHeight: 38)
-                    .background(.primary.opacity(0.07), in: Capsule())
-            }
-        }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 10)
-        .onChange(of: isSearching) { _, searching in
-            isSearchFocused = searching
+            filters()
+            Divider()
+            Button(String(localized: "归档会话"), appSymbol: "archivebox", action: onShowArchives)
+        } label: {
+            Label(String(localized: "列表选项"), appSymbol: "ellipsis")
+                .labelStyle(.iconOnly).frame(width: 44, height: 44)
         }
     }
+}
 
-    private func toggleSearch() {
-        withAnimation(.snappy(duration: 0.22)) {
-            if isSearching {
-                searchText = ""
-                isSearching = false
-            } else {
-                isSearching = true
-            }
-        }
+struct ChatSidebarHeaderView: View {
+    var body: some View {
+        AAWordmark(fontSize: 24)
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            .padding(.horizontal, 18)
+            .padding(.vertical, 10)
     }
 }
 
@@ -146,7 +171,7 @@ private struct ChatSidebarPairDeviceButton: View {
 
     var body: some View {
         Button(action: action) {
-            Label("Pair device", systemImage: "plus")
+            Label(String(localized: "Pair device"), appSymbol: "plus")
                 .font(.body.weight(.semibold))
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 10)
@@ -187,7 +212,7 @@ private struct ChatSidebarDeviceSection: View {
 }
 
 private struct ChatSidebarSessionSection: View {
-    let title: LocalizedStringResource
+    let title: LocalizedStringResource?
     let sessions: [ChatSidebarSession]
     let selectedSessionId: V2SessionID?
     var isLoading = false
@@ -200,7 +225,7 @@ private struct ChatSidebarSessionSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            ChatSidebarSectionLabel(title: title)
+            if let title { ChatSidebarSectionLabel(title: title) }
 
             if isLoading {
                 ChatSidebarLoadingRow(title: "Loading sessions...")
@@ -263,17 +288,17 @@ private struct ChatSidebarDeviceRow: View {
         .buttonStyle(.plain)
         .contextMenu {
             Button(action: onOpen) {
-                Label("Open", systemImage: "folder")
+                Label(String(localized: "Open"), appSymbol: "folder")
             }
             Divider()
             Button(action: onCopyId) {
-                Label("Copy device ID", systemImage: "doc.on.doc")
+                Label(String(localized: "Copy device ID"), appSymbol: "doc.on.doc")
             }
         }
     }
 }
 
-private struct ChatSidebarSessionRow: View {
+struct ChatSidebarSessionRow: View {
     let session: ChatSidebarSession
     let isSelected: Bool
     let onOpen: () -> Void
@@ -288,14 +313,10 @@ private struct ChatSidebarSessionRow: View {
     var body: some View {
         Button(action: onOpen) {
             HStack(spacing: 10) {
-                ChatSidebarSessionStatusDot(
-                    status: session.status,
-                    unread: session.unread
-                )
-
                 Text(session.title ?? String(localized: "Untitled session"))
-                    .font(.body)
-                    .lineLimit(1)
+                    .font(.body).foregroundStyle(.primary)
+                    .lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
+                ChatSidebarSessionIndicator(indicator: session.presentation.indicator)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 10)
@@ -306,30 +327,31 @@ private struct ChatSidebarSessionRow: View {
         .buttonStyle(.plain)
         .contextMenu {
             Button(action: onOpen) {
-                Label("Open", systemImage: "folder")
+                Label(String(localized: "Open"), appSymbol: "folder")
             }
             Button(action: beginRename) {
-                Label("Rename", systemImage: "pencil")
-            }
+                Label(String(localized: "Rename"), appSymbol: "pencil")
+            }.disabled(session.id.hasPrefix("local:"))
             Button(action: onTogglePinned) {
                 if session.pinned {
-                    Label("Unpin", systemImage: "pin.slash")
+                    Label(String(localized: "Unpin"), appSymbol: "pin.slash")
                 } else {
-                    Label("Pin", systemImage: "pin")
+                    Label(String(localized: "Pin"), appSymbol: "pin")
                 }
             }
+            .disabled(session.id.hasPrefix("local:"))
             Button(action: onArchive) {
-                Label("Archive", systemImage: "archivebox")
-            }
+                Label(session.archived ? String(localized: "Restore") : String(localized: "Archive"), appSymbol: session.archived ? "tray.and.arrow.up" : "archivebox")
+            }.disabled(session.id.hasPrefix("local:"))
             Divider()
             Button(action: onCopyId) {
-                Label("Copy session ID", systemImage: "doc.on.doc")
+                Label(String(localized: "Copy session ID"), appSymbol: "doc.on.doc")
             }
         }
-        .alert("Rename session", isPresented: $isRenaming) {
-            TextField("Session title", text: $titleDraft)
-            Button("Cancel", role: .cancel) {}
-            Button("Save", action: submitRename)
+        .alert(String(localized: "Rename session"), isPresented: $isRenaming) {
+            TextField(String(localized: "Session title"), text: $titleDraft)
+            Button(String(localized: "Cancel"), role: .cancel) {}
+            Button(String(localized: "Save"), action: submitRename)
                 .disabled(titleDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
     }
@@ -346,36 +368,22 @@ private struct ChatSidebarSessionRow: View {
     }
 }
 
-private struct ChatSidebarSessionStatusDot: View {
-    let status: V2RuntimeStatus
-    let unread: Bool
-
+struct ChatSidebarSessionIndicator: View {
+    let indicator: SessionSidebarPresentation.Indicator
     var body: some View {
-        Circle()
-            .fill(fillColor)
-            .overlay {
-                Circle().stroke(borderColor, lineWidth: 1)
-            }
-            .frame(width: 7, height: 7)
-    }
-
-    private var fillColor: Color {
-        if unread { return .primary }
-        if status == .running { return .green }
-        return .clear
-    }
-
-    private var borderColor: Color {
-        if unread { return .primary }
-        switch status {
+        switch indicator {
+        case .waitingApproval:
+            Text(String(localized: "等待批准")).font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.mint).padding(.horizontal, 8).padding(.vertical, 3)
+                .background(.mint.opacity(0.16), in: .capsule)
+                .fixedSize().accessibilityLabel(String(localized: "等待批准"))
         case .running:
-            return .green
-        case .blocked:
-            return .orange.opacity(0.8)
-        case .waiting, .pending, .stopping:
-            return .blue.opacity(0.8)
-        default:
-            return .secondary.opacity(0.55)
+            ProgressView().controlSize(.mini).tint(.primary)
+                .frame(width: 14, height: 14).accessibilityLabel(String(localized: "运行中"))
+        case .unread:
+            Circle().fill(.green).frame(width: 8, height: 8).accessibilityLabel(String(localized: "未读"))
+        case .none:
+            EmptyView()
         }
     }
 }
@@ -417,7 +425,7 @@ private struct ChatSidebarBottomControls: View {
     var body: some View {
         HStack(spacing: 10) {
             AppGlassButton(
-                "New session",
+                String(localized: "New session"),
                 systemImage: "square.and.pencil",
                 style: .prominent,
                 maxWidth: nil,
@@ -433,7 +441,7 @@ private struct ChatSidebarBottomControls: View {
             }
             .buttonStyle(.glass)
             .buttonBorderShape(.circle)
-            .accessibilityLabel("Account")
+            .accessibilityLabel(String(localized: "Account"))
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .sheet(isPresented: $isShowingSettings) {

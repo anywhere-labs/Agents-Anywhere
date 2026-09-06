@@ -1,6 +1,8 @@
 "use client"
 
 import * as React from "react"
+import { toast } from "sonner"
+import { copyText as copyToClipboard } from "@/lib/clipboard"
 import {
   Check,
   ChevronRight,
@@ -101,6 +103,7 @@ type FilePreviewSurfaceProps = {
   sourceSize?: number
   readOnly?: boolean
   mode?: "window" | "embedded"
+  onDirtyChange?: (dirty: boolean) => void
   onOpenExternal?: () => void
 }
 
@@ -172,8 +175,14 @@ export function FilePreviewSurface({
   readOnly = false,
   mode = "embedded",
   onOpenExternal,
+  onDirtyChange,
 }: FilePreviewSurfaceProps) {
   const t = useTranslations("preview")
+  const tCommon = useTranslations("common")
+  const tokenRef = React.useRef(token)
+  tokenRef.current = token
+  const translationRef = React.useRef(t)
+  translationRef.current = t
   const routePath = initialPath
   const [previewSession, setPreviewSession] = React.useState<FsPreviewSessionResponse | null>(null)
   const [path, setPath] = React.useState(routePath)
@@ -194,6 +203,8 @@ export function FilePreviewSurface({
   const loadRequestIdRef = React.useRef(0)
   const containerRef = React.useRef<HTMLElement | null>(null)
 
+  React.useEffect(() => { onDirtyChange?.(dirty) }, [dirty, onDirtyChange])
+
   const isScopedPreview = Boolean(previewToken)
   const isSourcePreview = Boolean(sourceUrl)
   const readOnlyPreview = readOnly || isScopedPreview || isSourcePreview
@@ -205,6 +216,8 @@ export function FilePreviewSurface({
   }, [])
 
   const loadFile = React.useCallback(async () => {
+    const token = tokenRef.current
+    const t = translationRef.current
     const requestId = ++loadRequestIdRef.current
     const requestIsCurrent = () => requestId === loadRequestIdRef.current
     revokeObjectUrl()
@@ -346,8 +359,6 @@ export function FilePreviewSurface({
     sourceMediaType,
     sourceSize,
     sourceUrl,
-    t,
-    token,
   ])
 
   React.useEffect(() => {
@@ -487,13 +498,17 @@ export function FilePreviewSurface({
     return () => window.removeEventListener("beforeunload", onBeforeUnload)
   }, [dirty])
 
-  const copyText = React.useCallback(() => {
+  const copyText = React.useCallback(async () => {
     if (state.kind !== "text") return
-    const content = editorRef.current?.getValue() ?? state.file.content
-    navigator.clipboard.writeText(content).catch(() => undefined)
-    setCopied(true)
-    window.setTimeout(() => setCopied(false), 1200)
-  }, [state])
+    setCopied(false)
+    try {
+      await copyToClipboard(editorRef.current?.getValue() ?? state.file.content)
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 1200)
+    } catch {
+      toast.error(tCommon("copyFailed"))
+    }
+  }, [state, tCommon])
 
   return (
     <main
@@ -567,7 +582,7 @@ export function FilePreviewSurface({
                 variant="ghost"
                 size="icon-sm"
                 type="button"
-                aria-label={t("copy")}
+                aria-label={copied ? tCommon("copied") : t("copy")}
                 disabled={state.kind !== "text"}
                 onClick={copyText}
               >

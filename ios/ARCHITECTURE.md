@@ -1,9 +1,15 @@
 # iOS v2 Client Architecture
 
-The iOS v2 client uses one-way dependencies:
+The iOS v2 client separates wire values, account-scoped state and presentation:
 
 ```text
-SwiftUI / AppState
+SwiftUI views
+        |
+        v
+Observable session / chat / New Session models
+        |
+        v
+Session repository and projection (session workflows)
         |
         v
 Business use-case services
@@ -29,6 +35,7 @@ The API layer does not validate user workflows or mutate app state.
 
 The initial resource clients are:
 
+- `V2ProjectAPI`
 - `V2ConnectorAPI`
 - `V2SessionAPI`
 - `V2RuntimeAPI`
@@ -39,7 +46,7 @@ The initial resource clients are:
 
 `Agents Anywhere/Business` composes API calls into user-visible operations:
 
-- `V2DashboardService` loads connector/session resources and opens dashboard
+- `V2DashboardService` loads connector/project/paginated-session resources and opens dashboard
   updates.
 - `V2SessionDetailService` hydrates a session, pages timeline history, sends or
   steers messages, interrupts work, changes selections, and recovers events.
@@ -52,10 +59,71 @@ The initial resource clients are:
 Business services return domain values or throw explicit errors. They do not
 own SwiftUI state, caching, navigation, or optimistic timeline reduction.
 
-## Migration rule
+## State and presentation
 
-The existing `APIClient` remains only while current views are migrated. New v2
-features must depend on `V2ClientServices`; they must not add more session or
-runtime methods to the old client. Once all call sites use the new services,
-the legacy session/runtime models and methods can move to `_deprecated` and be
-removed.
+`V2ClientServices` owns one normalized server/account/credential lifetime. It
+constructs the services, session repository, connectivity monitor and
+`NewSessionModel`. `AppState` routes authentication, dashboard updates and app
+lifecycle changes into that scope. Signing out invalidates retained observable
+models and cancels their outstanding work.
+
+`Repositories` owns coalesced reads, subscriptions, memory/disk caches, authoritative
+session projections and event recovery. `Models/Session` exposes stable
+`@MainActor @Observable` session, runtime and timeline references for SwiftUI.
+The repository publishes local pending sends through the same observation stream
+as network updates. Views never own a second session socket or network reducer.
+
+`Models/Chat` adds UI-specific ownership without changing wire DTOs:
+
+- `ComposerDraft` owns text, attachments and composition state. Session and New
+  Session drafts remain scoped independently from transient view instances.
+- `SessionChatModel` coordinates actual message, attachment, selection and notice
+  actions through the existing repository and services.
+- `SessionTimelinePresentation` receives repository projections and publishes
+  stable rendered rows at 30 Hz. Its idle clock sleeps. Initial/recovered history
+  and live token appends have distinct presentation semantics.
+- `SessionNoticeStore` owns stable form drafts and response submission state;
+  authoritative runtime notices determine blocking and completion.
+- `NewSessionModel` calls device/preparation/creation services directly and owns
+  the selected device/Agent pair, account-scoped preferences, preflight checks
+  and uncertain-creation protection.
+
+`Views/Chat` contains native SwiftUI layouts, the persistent UIKit text editor
+bridge, sheet/picker presentation and Textual Markdown rendering. Theme colors
+come from the existing `AppTheme`. See [NATIVE_CHAT.md](NATIVE_CHAT.md) for UI
+behavior, protocol support, verified checks and manual device validation.
+
+## Projects, startup and device setup
+
+`V2DashboardRepository` is the canonical project/device/session list. Global active,
+archived and project lists each own a cursor. A revision fence prevents late HTTP
+reads from undoing dashboard pushes or explicit mutations; expanded page membership
+survives replacement of the global first page. Counts belong to the server.
+
+`V2RestorationStore` holds the last navigation destination and a profile bound to
+the saved server and credential fingerprint. The token stays in Keychain.
+`V2LocalStore` serializes versioned, bounded archives off the main actor, with
+atomic writes, iOS data protection and backup exclusion. Launch reads local state
+before rendering the restored page; profile validation, dashboard refresh and
+session recovery run afterwards. Connectivity failures keep that page available.
+Only a definitive authentication rejection transitions to signed out.
+
+`DeviceAgentModel` distinguishes available types from configured instances.
+`AgentSetupCoordinator` owns pending pairing observations at account scope, so
+closing the pairing form cannot cancel discovery. Phone offline/background states
+pause its reads; returning online resumes them. Configuration changes use native
+controls and refresh instance inventory after uncertain outcomes before retry.
+
+`NewSessionSubmission` stages a local navigation destination and user bubble before
+creation. The creation response binds the same client message and attachment
+previews to the server ID. The local destination never makes session API requests.
+Normal sends stage before upload; accepted, confirmed and uncertain are distinct.
+No persisted record is an automatic write outbox.
+
+## Migration boundary
+
+Retired session/runtime API methods, models and the chat placeholder live in
+`ios/_deprecated`, outside the application target. The remaining `APIClient`
+facade supports the existing shell through `V2ClientServices`; new session and
+runtime features use the typed resources and scoped services directly. Do not
+restore legacy routes or introduce view-owned transport/cache implementations.

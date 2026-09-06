@@ -58,10 +58,12 @@ def _workspace_name(path: str, device_os: str | None) -> str:
 
 
 def _next_project_name(base: str, existing_names: set[str]) -> str:
+    base = base[:255]
     candidate = base
     suffix = 1
     while candidate in existing_names:
-        candidate = f"{base} ({suffix})"
+        ending = f" ({suffix})"
+        candidate = f"{base[: 255 - len(ending)]}{ending}"
         suffix += 1
     return candidate
 
@@ -227,25 +229,34 @@ class ProjectRepositoryMixin:
         workspace_path: str | None,
         user_id: str | None = None,
     ) -> ProjectView:
-        """Public wrapper used by migrations/tools and sync-focused callers."""
-        async with self._engine.begin() as conn:
-            connector = (
-                await conn.execute(
-                    select(connectors_t.c.user_id).where(
-                        connectors_t.c.id == connector_id
+        """Resolve a workspace without renaming or marking its project manual."""
+        for attempt in range(3):
+            try:
+                async with self._engine.begin() as conn:
+                    connector = (
+                        await conn.execute(
+                            select(connectors_t.c.user_id).where(
+                                connectors_t.c.id == connector_id,
+                                connectors_t.c.revoked == 0,
+                            )
+                        )
+                    ).first()
+                    if connector is None or (
+                        user_id is not None and connector.user_id != user_id
+                    ):
+                        raise KeyError(connector_id)
+                    project_id, _ = await self._ensure_project_for_workspace(
+                        conn,
+                        connector_id=connector_id,
+                        workspace_path=workspace_path,
                     )
-                )
-            ).first()
-            if connector is None or (
-                user_id is not None and connector.user_id != user_id
-            ):
-                raise KeyError(connector_id)
-            project_id, _ = await self._ensure_project_for_workspace(
-                conn,
-                connector_id=connector_id,
-                workspace_path=workspace_path,
-            )
-        return await self.get_project(project_id, user_id=connector.user_id)
+                return await self.get_project(project_id, user_id=connector.user_id)
+            except IntegrityError:
+                # A concurrent session or client may claim this path/name.
+                # Start a fresh transaction and reuse its project or next name.
+                if attempt == 2:
+                    raise
+        raise RuntimeError("project resolution exhausted retries")
 
     async def list_projects(self, *, user_id: str) -> list[ProjectView]:
         query = (
@@ -287,6 +298,7 @@ class ProjectRepositoryMixin:
         connector_id: str,
         name: str,
         workspace_path: str,
+        manually_created: bool = True,
     ) -> ProjectView:
         cleaned_name = name.strip()
         if not cleaned_name:
@@ -324,30 +336,32 @@ class ProjectRepositoryMixin:
                     if existing_workspace is not None
                     else None
                 )
-                name_conflict = (
-                    await conn.execute(
-                        select(projects_t.c.id).where(
-                            projects_t.c.user_id == user_id,
-                            projects_t.c.name == cleaned_name,
-                            projects_t.c.id != (existing_project_id or ""),
+                if manually_created or existing_project_id is None:
+                    name_conflict = (
+                        await conn.execute(
+                            select(projects_t.c.id).where(
+                                projects_t.c.user_id == user_id,
+                                projects_t.c.name == cleaned_name,
+                                projects_t.c.id != (existing_project_id or ""),
+                            )
                         )
-                    )
-                ).first()
-                if name_conflict is not None:
-                    raise ProjectNameConflictError(cleaned_name)
+                    ).first()
+                    if name_conflict is not None:
+                        raise ProjectNameConflictError(cleaned_name)
 
                 if existing_project_id is not None:
                     project_id = existing_project_id
-                    await conn.execute(
-                        update(projects_t)
-                        .where(projects_t.c.id == project_id)
-                        .values(
-                            name=cleaned_name,
-                            workspace_path=cleaned_path,
-                            manually_created=True,
-                            updated_at=now,
+                    if manually_created:
+                        await conn.execute(
+                            update(projects_t)
+                            .where(projects_t.c.id == project_id)
+                            .values(
+                                name=cleaned_name,
+                                workspace_path=cleaned_path,
+                                manually_created=True,
+                                updated_at=now,
+                            )
                         )
-                    )
                 else:
                     await conn.execute(
                         insert(projects_t).values(
@@ -357,7 +371,7 @@ class ProjectRepositoryMixin:
                             name=cleaned_name,
                             workspace_path=cleaned_path,
                             workspace_key=workspace_key,
-                            manually_created=True,
+                            manually_created=manually_created,
                             pinned=0,
                             created_at=now,
                             updated_at=now,

@@ -8,6 +8,7 @@ struct V2AttachmentService {
         sessionId: V2SessionID,
         attachments: [V2LocalAttachment]
     ) async throws -> [V2AttachmentReference] {
+        if attachments.isEmpty { throw V2BusinessError.emptyAttachmentSelection }
         if attachments.count > 5 {
             throw V2BusinessError.tooManyAttachments(maximum: 5)
         }
@@ -15,6 +16,7 @@ struct V2AttachmentService {
             if attachment.data.isEmpty {
                 throw V2BusinessError.emptyAttachment(name: attachment.name)
             }
+            if attachment.data.count > 25 * 1024 * 1024 { throw V2BusinessError.attachmentTooLarge(name: attachment.name) }
             return HTTPUploadFile(
                 fieldName: "files",
                 fileName: attachment.name,
@@ -28,7 +30,7 @@ struct V2AttachmentService {
     func download(sessionId: V2SessionID, fileId: V2AttachmentID) async throws -> Data {
         let response = try await attachmentAPI.download(sessionId: sessionId, fileId: fileId)
         guard let data = Data(base64Encoded: response.contentBase64) else {
-            throw HTTPError.decoding(message: "The attachment content is not valid Base64 data.")
+            throw HTTPError.decoding(message: String(localized: "The attachment content is not valid Base64 data."))
         }
         return data
     }

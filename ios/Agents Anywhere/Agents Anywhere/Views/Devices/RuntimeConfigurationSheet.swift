@@ -1,300 +1,108 @@
-import Foundation
-import Observation
 import SwiftUI
+import UIKit
 
 struct RuntimeConfigurationSheet: View {
     @Environment(\.dismiss) private var dismiss
-
-    let runtime: V2DeviceRuntime
-    let schema: V2RuntimeConfigSchema
+    let displayName: String
+    let allowsNaming: Bool
+    private let initialName: String
     let startAfterSaving: Bool
-    let onSave: ([String: JSONValue]) async throws -> Void
-
+    var canSave: Bool
+    let onSave: (String, [String: JSONValue]) async throws -> Void
     @State private var model: RuntimeConfigurationModel
+    @State private var instanceName: String
     @State private var isSaving = false
-    @State private var errorMessage: String?
+    @State private var confirmsDiscard = false
+    @State private var toasts = ChatToastStore()
 
-    init(
-        runtime: V2DeviceRuntime,
-        schema: V2RuntimeConfigSchema,
-        startAfterSaving: Bool,
-        onSave: @escaping ([String: JSONValue]) async throws -> Void
-    ) {
-        self.runtime = runtime
-        self.schema = schema
-        self.startAfterSaving = startAfterSaving
-        self.onSave = onSave
+    init(runtime: V2DeviceRuntime, schema: V2RuntimeConfigSchema, startAfterSaving: Bool,
+         canSave: Bool = true, onSave: @escaping ([String: JSONValue]) async throws -> Void) {
+        displayName = runtime.sessionDisplayName; allowsNaming = false; initialName = runtime.name
+        self.startAfterSaving = startAfterSaving; self.canSave = canSave
+        self.onSave = { _, config in try await onSave(config) }
+        _instanceName = State(initialValue: runtime.name)
         _model = State(initialValue: RuntimeConfigurationModel(schema: schema, config: runtime.config))
+    }
+    init(type: V2RuntimeType, schema: V2RuntimeConfigSchema, suggestedName: String,
+         canSave: Bool = true, onSave: @escaping (String, [String: JSONValue]) async throws -> Void) {
+        displayName = type.displayName; allowsNaming = true; startAfterSaving = true; initialName = suggestedName
+        self.canSave = canSave; self.onSave = onSave
+        _instanceName = State(initialValue: suggestedName)
+        _model = State(initialValue: RuntimeConfigurationModel(schema: schema, config: .object(type.defaults)))
     }
 
     var body: some View {
         NavigationStack {
-            Form {
-                Section {
-                    ForEach(schema.fields) { field in
-                        RuntimeConfigurationFieldView(field: field, model: model)
-                    }
-                } header: {
-                    Text(runtime.displayName)
-                } footer: {
-                    Text("Configuration is validated by the Agent runtime before it is saved.")
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 28) {
+                        if allowsNaming {
+                            VStack(alignment: .leading, spacing: 10) {
+                                Text(String(localized: "Instance name")).font(.headline)
+                                TextField(String(localized: "Name"), text: $instanceName)
+                                    .runtimeConfigInput()
+                            }
+                        }
+                        ForEach(model.schema.fields) { field in
+                            RuntimeConfigurationFieldView(field: field, model: model).id(field.id)
+                        }
+                        if !canSave {
+                            Label(String(localized: "Device disconnected. Your changes are kept until it reconnects."), appSymbol: "wifi.slash")
+                                .font(.footnote).foregroundStyle(.secondary)
+                        }
+                    }.padding(22).frame(maxWidth: 720).frame(maxWidth: .infinity)
                 }
-
-                if let errorMessage {
-                    Section {
-                        Label(errorMessage, systemImage: "exclamationmark.triangle")
-                            .foregroundStyle(.red)
+                .scrollDismissesKeyboard(.interactively)
+                .onChange(of: model.errors) { _, errors in
+                    if let first = model.schema.fields.first(where: { errors[$0.id] != nil }) {
+                        withAnimation(.smooth) { proxy.scrollTo(first.id, anchor: .top) }
                     }
                 }
             }
-            .navigationTitle("Runtime configuration")
+            .disabled(isSaving)
+            .navigationTitle(Text(String(localized: "Configure \(displayName)")))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button(startAfterSaving ? "Configure & Start" : "Save") {
-                        Task { await save() }
-                    }
-                    .disabled(isSaving)
-                }
+                SheetEditorToolbar(saveTitle: allowsNaming ? String(localized: "Add") : String(localized: "Save"),
+                    isWorking: isSaving,
+                    saveDisabled: !canSave || (allowsNaming && instanceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty),
+                    onCancel: { if hasChanges { confirmsDiscard = true } else { dismiss() } },
+                    onSave: {
+                        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                        Task { await Task.yield(); await save() }
+                    })
             }
-            .overlay {
-                if isSaving {
-                    ProgressView()
-                        .controlSize(.large)
-                        .padding(24)
-                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                HStack(spacing: 16) {
+                    Button {
+                        model.resetDefaults()
+                    } label: {
+                        Label(String(localized: "Reset all defaults"), appSymbol: "arrow.counterclockwise")
+                            .font(.subheadline).lineLimit(2)
+                    }.disabled(isSaving)
+                    Spacer(minLength: 0)
                 }
+                .padding(18).frame(maxWidth: 720).frame(maxWidth: .infinity)
+                .background(.bar)
             }
+            .overlay(alignment: .top) { ChatErrorToasts(store: toasts, isRetrying: false, onRetry: { _ in }) }
         }
+        .presentationDetents([.large]).interactiveDismissDisabled(isSaving || hasChanges)
+        .confirmDiscardChanges($confirmsDiscard) { dismiss() }
     }
-
+    private var hasChanges: Bool { model.hasChanges || instanceName != initialName }
     private func save() async {
-        guard !isSaving else { return }
-        isSaving = true
-        defer { isSaving = false }
+        guard canSave, !isSaving else { return }
         do {
             let config = try model.makeConfig()
-            try await onSave(config)
+            isSaving = true
+            defer { isSaving = false }
+            try await onSave(instanceName.trimmingCharacters(in: .whitespacesAndNewlines), config)
             dismiss()
+        } catch is RuntimeConfigurationValidationError {
+            // Field validation remains inline, with focus on the first invalid group.
         } catch {
-            errorMessage = error.localizedDescription
+            toasts.update(source: "configuration", failure: .init(kind: .rejected, message: error.localizedDescription))
         }
-    }
-}
-
-@MainActor
-@Observable
-final class RuntimeConfigurationModel {
-    let schema: V2RuntimeConfigSchema
-    var textValues: [String: String] = [:]
-    var boolValues: [String: Bool] = [:]
-    var choiceValues: [String: JSONValue] = [:]
-
-    init(schema: V2RuntimeConfigSchema, config: JSONValue?) {
-        self.schema = schema
-        let values = schema.initialValues(config: config)
-        for field in schema.fields {
-            let value = values[field.id]
-            switch field.kind {
-            case .text, .number:
-                textValues[field.id] = value?.stringValue ?? ""
-            case .boolean:
-                if case let .bool(boolean) = value {
-                    boolValues[field.id] = boolean
-                } else {
-                    boolValues[field.id] = false
-                }
-            case let .choice(options):
-                choiceValues[field.id] = value ?? options.first?.value ?? .null
-            case .keyValue:
-                textValues[field.id] = Self.keyValueText(value)
-            case .json:
-                textValues[field.id] = Self.jsonText(value)
-            }
-        }
-    }
-
-    func textBinding(fieldId: String) -> Binding<String> {
-        Binding(
-            get: { self.textValues[fieldId] ?? "" },
-            set: { self.textValues[fieldId] = $0 }
-        )
-    }
-
-    func boolBinding(fieldId: String) -> Binding<Bool> {
-        Binding(
-            get: { self.boolValues[fieldId] ?? false },
-            set: { self.boolValues[fieldId] = $0 }
-        )
-    }
-
-    func choiceBinding(fieldId: String) -> Binding<JSONValue> {
-        Binding(
-            get: { self.choiceValues[fieldId] ?? .null },
-            set: { self.choiceValues[fieldId] = $0 }
-        )
-    }
-
-    func makeConfig() throws -> [String: JSONValue] {
-        var config: [String: JSONValue] = [:]
-        for field in schema.fields {
-            switch field.kind {
-            case .text:
-                let value = textValues[field.id]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                if field.isRequired && value.isEmpty {
-                    throw V2BusinessError.invalidRuntimeConfigField(title: field.title)
-                }
-                if !value.isEmpty { config[field.id] = .string(value) }
-            case let .number(integer, minimum, maximum):
-                let rawValue = textValues[field.id]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                if rawValue.isEmpty && !field.isRequired { continue }
-                guard let number = Double(rawValue),
-                      minimum.map({ number >= $0 }) ?? true,
-                      maximum.map({ number <= $0 }) ?? true,
-                      !integer || number.rounded() == number
-                else {
-                    throw V2BusinessError.invalidRuntimeConfigField(title: field.title)
-                }
-                config[field.id] = .number(number)
-            case .boolean:
-                config[field.id] = .bool(boolValues[field.id] ?? false)
-            case .choice:
-                guard let value = choiceValues[field.id], value != .null || !field.isRequired else {
-                    throw V2BusinessError.invalidRuntimeConfigField(title: field.title)
-                }
-                config[field.id] = value
-            case .keyValue:
-                config[field.id] = try parseKeyValueField(field)
-            case .json:
-                config[field.id] = try parseJSONField(field)
-            }
-        }
-        return config
-    }
-
-    private func parseKeyValueField(_ field: V2RuntimeConfigField) throws -> JSONValue {
-        let lines = (textValues[field.id] ?? "").split(whereSeparator: \.isNewline)
-        var values: [String: JSONValue] = [:]
-        for line in lines {
-            let parts = line.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
-            let key = parts.first?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            guard !key.isEmpty, parts.count == 2 else {
-                throw V2BusinessError.invalidRuntimeConfigField(title: field.title)
-            }
-            values[key] = .string(String(parts[1]))
-        }
-        return .object(values)
-    }
-
-    private func parseJSONField(_ field: V2RuntimeConfigField) throws -> JSONValue {
-        let text = textValues[field.id]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if text.isEmpty && !field.isRequired { return .null }
-        guard let data = text.data(using: .utf8),
-              let value = try? JSONDecoder().decode(JSONValue.self, from: data)
-        else {
-            throw V2BusinessError.invalidRuntimeConfigField(title: field.title)
-        }
-        return value
-    }
-
-    private static func keyValueText(_ value: JSONValue?) -> String {
-        guard case let .object(values) = value else { return "" }
-        return values.keys.sorted().map { key in
-            "\(key)=\(values[key]?.stringValue ?? "")"
-        }.joined(separator: "\n")
-    }
-
-    private static func jsonText(_ value: JSONValue?) -> String {
-        guard let value,
-              let data = try? JSONEncoder.prettyPrinted.encode(value),
-              let text = String(data: data, encoding: .utf8)
-        else { return "" }
-        return text
-    }
-}
-
-private struct RuntimeConfigurationFieldView: View {
-    let field: V2RuntimeConfigField
-    @Bindable var model: RuntimeConfigurationModel
-
-    var body: some View {
-        switch field.kind {
-        case let .text(_, _, secure):
-            if secure {
-                SecureField(field.title, text: model.textBinding(fieldId: field.id))
-            } else {
-                TextField(field.title, text: model.textBinding(fieldId: field.id))
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-            }
-        case .boolean:
-            Toggle(field.title, isOn: model.boolBinding(fieldId: field.id))
-        case .number:
-            TextField(field.title, text: model.textBinding(fieldId: field.id))
-                .keyboardType(.decimalPad)
-        case let .choice(options):
-            Picker(field.title, selection: model.choiceBinding(fieldId: field.id)) {
-                ForEach(options) { option in
-                    Text(option.title).tag(option.value)
-                }
-            }
-        case .keyValue:
-            RuntimeMultilineField(
-                title: field.title,
-                description: field.description,
-                placeholder: "NAME=value",
-                text: model.textBinding(fieldId: field.id)
-            )
-        case .json:
-            RuntimeMultilineField(
-                title: field.title,
-                description: field.description,
-                placeholder: "{}",
-                text: model.textBinding(fieldId: field.id)
-            )
-        }
-    }
-}
-
-private struct RuntimeMultilineField: View {
-    let title: String
-    let description: String?
-    let placeholder: String
-    @Binding var text: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(title)
-                .font(.body)
-            if let description {
-                Text(description)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            TextEditor(text: $text)
-                .font(.body.monospaced())
-                .frame(minHeight: 110)
-                .overlay(alignment: .topLeading) {
-                    if text.isEmpty {
-                        Text(placeholder)
-                            .font(.body.monospaced())
-                            .foregroundStyle(.tertiary)
-                            .padding(.top, 8)
-                            .padding(.leading, 5)
-                            .allowsHitTesting(false)
-                    }
-                }
-        }
-    }
-}
-
-private extension JSONEncoder {
-    static var prettyPrinted: JSONEncoder {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        return encoder
     }
 }

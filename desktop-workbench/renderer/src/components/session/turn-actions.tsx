@@ -17,6 +17,7 @@ import {
 import { dashboardApi } from "@/features/dashboard/api"
 import type { SessionShareScope } from "@/features/dashboard/types"
 import { cn } from "@/lib/utils"
+import { copyText } from "@/lib/clipboard"
 
 export type TurnAction = {
   copyText: string
@@ -40,8 +41,9 @@ export function TurnActions({
 
   const copyReply = React.useCallback(async () => {
     if (!action.copyText) return
+    setCopied(false)
     try {
-      await navigator.clipboard.writeText(action.copyText)
+      await copyText(action.copyText)
       setCopied(true)
       toast.success(t("replyCopied"))
       window.setTimeout(() => setCopied(false), 1200)
@@ -67,7 +69,7 @@ export function TurnActions({
           if (error instanceof DOMException && error.name === "AbortError") return
         }
       }
-      await navigator.clipboard.writeText(result.shareUrl)
+      await copyText(result.shareUrl)
       toast.success(t("shareLinkCopied"))
       setDialogOpen(false)
     } catch {

@@ -17,14 +17,18 @@ struct ChatSidebarSession: Identifiable, Equatable {
     let title: String?
     let status: V2RuntimeStatus
     let unread: Bool
+    let archived: Bool
     let pinned: Bool
+    let presentation: SessionSidebarPresentation
 
     init(session: V2SessionMeta) {
         id = session.id
         title = session.title
         status = session.status
         unread = session.unread
+        archived = session.archived
         pinned = session.pinned
+        presentation = SessionSidebarPresentation(session)
     }
 }
 
@@ -36,10 +40,4 @@ struct ChatSidebarAccount: Equatable {
         displayName = me.accountLabel
         self.avatarSource = avatarSource
     }
-}
-
-enum ChatShellSelection: Equatable {
-    case newSession
-    case device(V2ConnectorID)
-    case session(V2SessionID)
 }

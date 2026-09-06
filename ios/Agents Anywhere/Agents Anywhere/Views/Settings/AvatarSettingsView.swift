@@ -10,6 +10,7 @@ struct AvatarSettingsView: View {
     @State private var zoom: CGFloat = 1
     @State private var offset = CGSize.zero
     @State private var localError: String?
+    @State private var confirmsDiscard = false
 
     var body: some View {
         Form {
@@ -27,35 +28,36 @@ struct AvatarSettingsView: View {
 
             Section {
                 PhotosPicker(selection: $selectedItem, matching: .images) {
-                    Label("Choose photo", systemImage: "photo.on.rectangle")
+                    Label(String(localized: "Choose photo"), appSymbol: "photo.on.rectangle")
                 }
 
                 if selectedImage != nil {
                     VStack(alignment: .leading, spacing: 10) {
-                        Text("Zoom")
+                        Text(String(localized: "Zoom"))
                             .font(.subheadline)
                         Slider(value: $zoom, in: 1 ... 3)
                     }
 
-                    Button(action: uploadAvatar) {
-                        AccountSettingsActionLabel(
-                            title: "Save profile photo",
-                            isWorking: appState.isAccountWorking
-                        )
-                    }
-                    .disabled(appState.isAccountWorking)
                 }
             }
 
             if appState.me?.avatar != nil {
                 Section {
-                    Button("Remove profile photo", role: .destructive, action: removeAvatar)
+                    Button(String(localized: "Remove profile photo"), role: .destructive, action: removeAvatar)
                         .disabled(appState.isAccountWorking)
                 }
             }
         }
-        .navigationTitle("Profile photo")
+        .navigationTitle(String(localized: "Profile photo"))
         .navigationBarTitleDisplayMode(.inline)
+        .navigationBarBackButtonHidden()
+        .scrollContentBackground(.hidden).background(Color(uiColor: .systemBackground))
+        .toolbar {
+            SheetEditorToolbar(isWorking: appState.isAccountWorking, saveDisabled: selectedImage == nil,
+                onCancel: { if selectedImage == nil { dismiss() } else { confirmsDiscard = true } }, onSave: uploadAvatar)
+        }
+        .interactiveDismissDisabled(selectedImage != nil || appState.isAccountWorking)
+        .confirmDiscardChanges($confirmsDiscard) { dismiss() }
         .onChange(of: selectedItem) { _, nextItem in
             guard let nextItem else { return }
             Task { await loadImage(nextItem) }
@@ -68,8 +70,8 @@ struct AvatarSettingsView: View {
                 candidate: offset
             )
         }
-        .alert("Could not use photo", isPresented: localErrorBinding) {
-            Button("OK", role: .cancel) {
+        .alert(String(localized: "Could not use photo"), isPresented: localErrorBinding) {
+            Button(String(localized: "OK"), role: .cancel) {
                 localError = nil
             }
         } message: {
@@ -197,22 +199,5 @@ private struct AvatarEditorPreview: View {
                     )
                 )
             }
-    }
-}
-
-private struct AccountSettingsActionLabel: View {
-    let title: LocalizedStringResource
-    let isWorking: Bool
-
-    var body: some View {
-        HStack {
-            Spacer()
-            if isWorking {
-                ProgressView()
-                    .controlSize(.small)
-            }
-            Text(title)
-            Spacer()
-        }
     }
 }

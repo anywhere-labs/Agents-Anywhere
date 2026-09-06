@@ -14,6 +14,7 @@ enum V2RuntimeNoticeStatus: String, Codable, Hashable {
 }
 
 struct V2RuntimeNotice: Decodable, Identifiable, Hashable {
+    let raw: JSONValue
     let noticeId: V2NoticeID
     let type: String
     let sessionId: V2SessionID
@@ -57,6 +58,7 @@ struct V2RuntimeNotice: Decodable, Identifiable, Hashable {
     }
 
     init(from decoder: Decoder) throws {
+        raw = try JSONValue(from: decoder)
         let container = try decoder.container(keyedBy: CodingKeys.self)
         noticeId = try container.decode(V2NoticeID.self, forKey: .noticeId)
         type = try container.decode(String.self, forKey: .type)

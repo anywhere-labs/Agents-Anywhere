@@ -11,7 +11,8 @@
     "typecheck": "tsc --noEmit",
     "lint": "tsc --noEmit",
     "protocol:generate": "node scripts/generate-protocol-types.mjs",
-    "protocol:check": "node scripts/generate-protocol-types.mjs --check"
+    "protocol:check": "node scripts/generate-protocol-types.mjs --check",
+    "test": "node --test test/*.test.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.6.0",

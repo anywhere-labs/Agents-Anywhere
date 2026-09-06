@@ -61,6 +61,7 @@ async def create_project(
             connector_id=payload.connectorId,
             name=payload.name,
             workspace_path=payload.workspacePath,
+            manually_created=payload.manuallyCreated,
         )
     except KeyError:
         raise HTTPException(status_code=404, detail="connector not found") from None

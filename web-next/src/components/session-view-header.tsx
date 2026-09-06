@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { Download, FolderOpen, Loader2, SquareTerminal } from "lucide-react"
+import { Download, Loader2, PanelRight } from "lucide-react"
 import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
@@ -9,21 +9,13 @@ import { Badge } from "@/components/ui/badge"
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card"
 import { Input } from "@/components/ui/input"
 import { DashboardSidebarToggle } from "@/components/dashboard-sidebar-toggle"
-import { useWorkspace, type PanelId } from "@/components/workspace-context"
-import { useIsMobile } from "@/hooks/use-mobile"
+import { useWorkspace } from "@/components/workspace-context"
 import type { SessionMemorySnapshot } from "@/components/session-detail"
 import { cn } from "@/lib/utils"
 import { useTranslations } from "next-intl"
 import type { SessionView as SessionViewModel } from "@/lib/demo-api"
 import { runtimeLabel } from "@/components/session/session-utils"
 import { sessionRuntimeType } from "@/features/dashboard/runtime-instances"
-
-type PanelIcon = React.ComponentType<React.SVGProps<SVGSVGElement>>
-
-const PANEL_META: Record<PanelId, { titleKey: "panelFiles" | "panelShell"; icon: PanelIcon }> = {
-  files: { titleKey: "panelFiles", icon: FolderOpen },
-  terminal: { titleKey: "panelShell", icon: SquareTerminal },
-}
 
 const HEADER_BLUR_LAYERS = buildBlurGradientLayers({
   height: 56,
@@ -46,6 +38,8 @@ type SessionViewHeaderProps = {
   onExportMemoryTimeline?: () => void
   onExportRemoteTimeline?: () => void
   exporting?: boolean
+  toolsOpen?: boolean
+  onToggleTools?: () => void
 }
 
 export function SessionViewHeader({
@@ -55,10 +49,11 @@ export function SessionViewHeader({
   onExportMemoryTimeline,
   onExportRemoteTimeline,
   exporting,
+  toolsOpen,
+  onToggleTools,
 }: SessionViewHeaderProps) {
   const { renameSession } = useWorkspace()
   const tSession = useTranslations("dashboard.session")
-  const isMobile = useIsMobile()
   const [editingTitle, setEditingTitle] = React.useState(false)
   const [titleDraft, setTitleDraft] = React.useState(session.title ?? "")
   const [renaming, setRenaming] = React.useState(false)
@@ -144,8 +139,13 @@ export function SessionViewHeader({
           exporting={exporting}
         />
         <div className="ml-auto flex items-center gap-1">
-          <TogglePanelButton id="files" icon={PANEL_META.files.icon} />
-          {isMobile ? null : <TogglePanelButton id="terminal" icon={PANEL_META.terminal.icon} />}
+          {!toolsOpen ? (
+            <Button variant="ghost" size="icon-sm" type="button"
+              aria-label={tSession("tools.toggle")} title={tSession("tools.toggle")}
+              data-slot="session-tool-sidebar-toggle" onClick={onToggleTools}>
+              <PanelRight />
+            </Button>
+          ) : null}
         </div>
       </div>
     </header>
@@ -285,25 +285,5 @@ function SessionMetaBadge({
         </div>
       </HoverCardContent>
     </HoverCard>
-  )
-}
-
-function TogglePanelButton({ id, icon: Icon }: { id: PanelId; icon: PanelIcon }) {
-  const { panels, setPanelMode } = useWorkspace()
-  const isMobile = useIsMobile()
-  const t = useTranslations("dashboard.session")
-  const active = isMobile ? panels[id] === "floating" : panels[id] !== "closed"
-  return (
-    <button
-      type="button"
-      aria-label={t(PANEL_META[id].titleKey)}
-      onClick={() => setPanelMode(id, active ? "closed" : isMobile ? "floating" : "docked")}
-      className={cn(
-        "rounded-md p-2 transition-colors hover:bg-accent hover:text-foreground",
-        active ? "text-foreground" : "text-muted-foreground",
-      )}
-    >
-      <Icon className="size-4" />
-    </button>
   )
 }

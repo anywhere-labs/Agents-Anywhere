@@ -90,7 +90,7 @@ struct AppGlassButton: View {
     private var label: some View {
         HStack(spacing: 10) {
             if let systemImage {
-                Image(systemName: systemImage)
+                AppSymbol(systemImage)
             }
             if let title {
                 Text(title)
