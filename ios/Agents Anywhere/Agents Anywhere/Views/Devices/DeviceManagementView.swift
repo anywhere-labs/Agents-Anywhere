@@ -4,6 +4,9 @@ import UIKit
 struct DeviceManagementView: View {
     let connector: V2Connector
     let allSessions: [V2SessionMeta]
+    let projects: [V2Project]
+    let agents: DeviceAgentModel
+    let dashboard: V2DashboardRepository
     let service: V2DeviceManagementService
     let workspaceFilesService: V2WorkspaceFilesService
     let serverURL: URL
@@ -22,7 +25,6 @@ struct DeviceManagementView: View {
     @State private var isConfirmingCredentialRotation = false
     @State private var isConfirmingDeletion = false
     @State private var credential: V2ConnectorRevokeResponse?
-    @State private var runtimeConfiguration: RuntimeConfigurationPresentation?
     @State private var selectedWorkspace: V2DeviceWorkspace?
     @State private var isSelectedArchiveActionRunning = false
 
@@ -30,21 +32,12 @@ struct DeviceManagementView: View {
         NavigationStack {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 30) {
-                    DeviceRuntimeSection(
-                        connectorIsOnline: connector.status == .online,
-                        configuredRuntimes: model.configuredRuntimes,
-                        availableRuntimes: model.availableRuntimes,
-                        isLoading: model.isLoadingRuntimes,
-                        isDiscovering: model.isDiscoveringRuntimes,
-                        busyRuntimeId: model.busyRuntimeId,
-                        onRefresh: refreshRuntimes,
-                        onConfigure: presentRuntimeConfiguration,
-                        onToggleActive: setRuntimeActive,
-                        onDeleteConfiguration: deleteRuntimeConfiguration
-                    )
+                    DeviceAgentSection(model: agents)
 
                     DeviceWorkspaceSection(
-                        workspaces: model.workspaces,
+                        workspaces: projects.filter { $0.connectorId == connector.id }.map {
+                            .init(path: $0.workspacePath, name: $0.name, sessionCount: $0.activeSessionCount, lastActiveAt: $0.lastActivityAt)
+                        },
                         onOpenWorkspace: { selectedWorkspace = $0 },
                         onNewSession: onNewSession
                     )
@@ -83,7 +76,6 @@ struct DeviceManagementView: View {
         .background(Color(uiColor: .systemBackground))
         .task(id: connector.id) {
             model.updateSessions(connectorId: connector.id, allSessions: allSessions)
-            await model.loadRuntimes(connectorId: connector.id, service: service)
         }
         .onChange(of: allSessions) { _, sessions in
             model.updateSessions(connectorId: connector.id, allSessions: sessions)
@@ -122,25 +114,6 @@ struct DeviceManagementView: View {
         } message: {
             Text(model.errorMessage ?? "")
         }
-        .sheet(item: $runtimeConfiguration) { presentation in
-            RuntimeConfigurationSheet(
-                runtime: presentation.runtime,
-                schema: presentation.schema,
-                startAfterSaving: !presentation.runtime.configured,
-                onSave: { config in
-                    try await model.saveRuntimeConfig(
-                        connectorId: connector.id,
-                        runtime: presentation.runtime,
-                        config: config,
-                        startAfterSaving: !presentation.runtime.configured,
-                        service: service
-                    )
-                }
-            )
-            .presentationDetents([.medium, .large])
-            .presentationContentInteraction(.resizes)
-            .presentationDragIndicator(.visible)
-        }
         .sheet(item: $credential) { response in
             ConnectorCredentialSheet(
                 connector: response.connector,
@@ -153,7 +126,7 @@ struct DeviceManagementView: View {
                 connectorId: connector.id,
                 deviceName: connector.name,
                 workspace: workspace,
-                service: workspaceFilesService
+                service: workspaceFilesService, permitsReading: connector.status == .online && dashboard.canWrite
             )
         }
     }
@@ -170,38 +143,6 @@ struct DeviceManagementView: View {
     private func beginRename() {
         proposedName = connector.name
         isRenaming = true
-    }
-
-    private func refreshRuntimes() {
-        Task {
-            await model.discoverRuntimes(connectorId: connector.id, service: service)
-        }
-    }
-
-    private func presentRuntimeConfiguration(_ runtime: V2DeviceRuntime) {
-        guard let schema = model.configSchema(runtime: runtime, service: service) else { return }
-        runtimeConfiguration = RuntimeConfigurationPresentation(runtime: runtime, schema: schema)
-    }
-
-    private func setRuntimeActive(_ runtime: V2DeviceRuntime, _ active: Bool) {
-        Task {
-            await model.setRuntimeActive(
-                connectorId: connector.id,
-                runtime: runtime,
-                active: active,
-                service: service
-            )
-        }
-    }
-
-    private func deleteRuntimeConfiguration(_ runtime: V2DeviceRuntime) {
-        Task {
-            await model.deleteRuntimeConfig(
-                connectorId: connector.id,
-                runtime: runtime,
-                service: service
-            )
-        }
     }
 
     private func toggleSelectingSessions() {

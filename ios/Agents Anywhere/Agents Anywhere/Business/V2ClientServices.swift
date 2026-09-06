@@ -17,6 +17,8 @@ final class V2ClientServices {
     let attachments: V2AttachmentService
     let interactions: V2RuntimeInteractionService
     let devicePairing: V2DevicePairingService
+    let agentSetup: AgentSetupCoordinator
+    private var agentModels: [String: DeviceAgentModel] = [:]
     let deviceManagement: V2DeviceManagementService
     let workspaceFiles: V2WorkspaceFilesService
     let newSession: NewSessionModel
@@ -48,6 +50,7 @@ final class V2ClientServices {
         interactions = V2RuntimeInteractionService(runtimeAPI: api.runtime)
         sessionRepository = V2SessionRepository(scope: scope, detail: sessionDetail, interactions: interactions)
         devicePairing = V2DevicePairingService(connectorAPI: api.connectors)
+        agentSetup = AgentSetupCoordinator(service: devicePairing)
         deviceManagement = V2DeviceManagementService(connectorAPI: api.connectors)
         workspaceFiles = V2WorkspaceFilesService(
             connectorAPI: api.connectors,
@@ -59,13 +62,31 @@ final class V2ClientServices {
             self?.sessionRepository.updateConnectivity(status)
             self?.newSession.updateNetwork(status)
             self?.dashboardRepository.updateNetwork(status)
+            self?.agentSetup.updateNetwork(status)
+            self?.updateAgentConnections()
             self?.sessionReads.updateConnectivity(status)
             self?.onConnectivityChange?(status)
         }
         connectivity.start()
     }
 
+    func agents(on connectorID: String) -> DeviceAgentModel {
+        if let model = agentModels[connectorID] { return model }
+        let model = DeviceAgentModel(connectorID: connectorID, service: deviceManagement)
+        agentModels[connectorID] = model
+        updateAgentConnections()
+        return model
+    }
+
+    func updateAgentConnections() {
+        let online = Set(dashboardRepository.connectors.filter { $0.status == .online }.map(\.id))
+        for (id, model) in agentModels { model.updateConnection(online.contains(id) && connectivity.status.availability != .offline) }
+        agentSetup.updateConnectors(dashboardRepository.connectors)
+    }
+
     func shutdown() {
+        agentSetup.invalidate()
+        agentModels.values.forEach { $0.invalidate() }; agentModels = [:]
         dashboardRepository.invalidate()
         sessionReads.invalidate()
         newSession.invalidate()

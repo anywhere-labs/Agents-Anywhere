@@ -5,12 +5,14 @@ import SwiftUI
 struct RuntimeConfigurationSheet: View {
     @Environment(\.dismiss) private var dismiss
 
-    let runtime: V2DeviceRuntime
+    let displayName: String
+    let allowsNaming: Bool
     let schema: V2RuntimeConfigSchema
     let startAfterSaving: Bool
-    let onSave: ([String: JSONValue]) async throws -> Void
+    let onSave: (String, [String: JSONValue]) async throws -> Void
 
     @State private var model: RuntimeConfigurationModel
+    @State private var instanceName: String
     @State private var isSaving = false
     @State private var errorMessage: String?
 
@@ -20,22 +22,37 @@ struct RuntimeConfigurationSheet: View {
         startAfterSaving: Bool,
         onSave: @escaping ([String: JSONValue]) async throws -> Void
     ) {
-        self.runtime = runtime
+        displayName = runtime.displayName
+        allowsNaming = false
+        _instanceName = State(initialValue: runtime.name)
         self.schema = schema
         self.startAfterSaving = startAfterSaving
-        self.onSave = onSave
+        self.onSave = { _, config in try await onSave(config) }
         _model = State(initialValue: RuntimeConfigurationModel(schema: schema, config: runtime.config))
+    }
+
+    init(type: V2RuntimeType, schema: V2RuntimeConfigSchema, suggestedName: String,
+         onSave: @escaping (String, [String: JSONValue]) async throws -> Void) {
+        displayName = type.displayName; allowsNaming = true
+        self.schema = schema; startAfterSaving = true; self.onSave = onSave
+        _instanceName = State(initialValue: suggestedName)
+        _model = State(initialValue: RuntimeConfigurationModel(schema: schema, config: .object(type.defaults)))
     }
 
     var body: some View {
         NavigationStack {
             Form {
+                if allowsNaming {
+                    Section("实例名称") {
+                        TextField("名称", text: $instanceName).textInputAutocapitalization(.never).autocorrectionDisabled()
+                    }
+                }
                 Section {
                     ForEach(schema.fields) { field in
                         RuntimeConfigurationFieldView(field: field, model: model)
                     }
                 } header: {
-                    Text(runtime.displayName)
+                    Text(displayName)
                 } footer: {
                     Text("Configuration is validated by the Agent runtime before it is saved.")
                 }
@@ -47,17 +64,18 @@ struct RuntimeConfigurationSheet: View {
                     }
                 }
             }
+            .disabled(isSaving)
             .navigationTitle("Runtime configuration")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
+                    Button("Cancel") { dismiss() }.disabled(isSaving)
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button(startAfterSaving ? "Configure & Start" : "Save") {
                         Task { await save() }
                     }
-                    .disabled(isSaving)
+                    .disabled(isSaving || (allowsNaming && instanceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
                 }
             }
             .overlay {
@@ -69,6 +87,7 @@ struct RuntimeConfigurationSheet: View {
                 }
             }
         }
+        .interactiveDismissDisabled(isSaving)
     }
 
     private func save() async {
@@ -77,7 +96,7 @@ struct RuntimeConfigurationSheet: View {
         defer { isSaving = false }
         do {
             let config = try model.makeConfig()
-            try await onSave(config)
+            try await onSave(instanceName.trimmingCharacters(in: .whitespacesAndNewlines), config)
             dismiss()
         } catch {
             errorMessage = error.localizedDescription

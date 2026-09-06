@@ -21,6 +21,7 @@ final class V2DashboardRepository {
     @ObservationIgnored private var generation = 0
     @ObservationIgnored private var isValid = true
     @ObservationIgnored private var firstPageIDs: Set<String> = []
+    @ObservationIgnored private var projectPageIDs: [V2SessionListScope: Set<String>] = [:]
     @ObservationIgnored private var extendedScopes: Set<V2SessionListScope> = []
 
     init(service: V2DashboardService) { self.service = service }
@@ -58,7 +59,8 @@ final class V2DashboardRepository {
         let validDevices = Set(connectors.map(\.id))
         // Only replace the global first page. Expanded project pages and older
         // global pages remain cached until an authoritative update replaces them.
-        var retained = sessions.filter { !firstPageIDs.contains($0.id) && validDevices.contains($0.connectorId) }
+        let projectMembers = projectPageIDs.values.reduce(into: Set<String>()) { $0.formUnion($1) }
+        var retained = sessions.filter { (!firstPageIDs.contains($0.id) || projectMembers.contains($0.id)) && validDevices.contains($0.connectorId) }
         let current = Dictionary(uniqueKeysWithValues: sessions.map { ($0.id, $0) })
         retained.append(contentsOf: incoming.map { merge(current[$0.id], $0) })
         self.sessions = unique(retained)
@@ -68,6 +70,7 @@ final class V2DashboardRepository {
         }
         let projectIDs = Set(projects.map(\.id))
         pages = pages.filter { $0.key.projectID.map(projectIDs.contains) ?? true }
+        projectPageIDs = projectPageIDs.filter { $0.key.projectID.map(projectIDs.contains) ?? false }
         hasLoaded = true; error = nil
         onChange?()
     }
@@ -93,6 +96,10 @@ final class V2DashboardRepository {
             let next = response.nextCursor
             pages[scope] = .init(hasMore: response.hasMore && next != nil && next != cursor, nextCursor: next)
             if cursor != nil { extendedScopes.insert(scope) }
+            if scope.projectID != nil {
+                if refresh { projectPageIDs[scope] = [] }
+                projectPageIDs[scope, default: []].formUnion(response.sessions.map(\.id))
+            }
             mergeSessions(response.sessions)
             onChange?()
         } catch {
@@ -158,6 +165,7 @@ final class V2DashboardRepository {
         loadingPages = []; pageErrors = [:]
     }
     private func upsertProject(_ project: V2Project) {
+        if let old = projects.first(where: { $0.id == project.id }), old.updatedAt > project.updatedAt { return }
         generation += 1
         projects.removeAll { $0.id == project.id }; projects.append(project); onChange?()
     }

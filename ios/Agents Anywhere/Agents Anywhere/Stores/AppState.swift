@@ -292,6 +292,7 @@ final class AppState: ObservableObject {
         connectorsError = repository.error
         sessionsError = repository.error
         services.sessionRepository.applyMetadata(sessions)
+        services.updateAgentConnections()
         if repository.hasLoaded { services.newSession.updateProjects(projects) }
     }
 
@@ -707,6 +708,7 @@ final class AppState: ObservableObject {
     func setAppInBackground(_ background: Bool) {
         isInBackground = background
         cachedServices?.sessionReads.setActive(!background)
+        cachedServices?.agentSetup.setActive(!background)
         if background {
             dashboardUpdatesTask?.cancel()
             dashboardUpdatesTask = nil
@@ -747,6 +749,8 @@ final class AppState: ObservableObject {
             self?.syncDashboard(services)
         }
         syncDashboard(services)
+        services.agentSetup.onOnline = { [weak services] connector in services?.dashboardRepository.upsertConnector(connector) }
+        services.agentSetup.setActive(!isInBackground)
         services.sessionReads.setActive(!isInBackground)
         services.sessionReads.onChange = { [weak self, weak services] id in
             guard let self, let services, self.cachedServices === services,

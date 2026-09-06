@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct ChatSidebarView: View {
+    @EnvironmentObject private var appState: AppState
     let safeAreaInsets: EdgeInsets
     let devices: [ChatSidebarDevice]
     let pinnedSessions: [ChatSidebarSession]
@@ -37,7 +38,25 @@ struct ChatSidebarView: View {
                     onCopyId: onCopyDeviceId
                 )
                 ChatSidebarPairDeviceButton {
+                    appState.nativeChatServices?.agentSetup.pairingFormPresented = true
                     isShowingPairing = true
+                }
+
+                if let setup = appState.nativeChatServices?.agentSetup {
+                    ForEach(setup.requests.filter { !$0.ready }) { request in
+                        HStack {
+                            if request.error == nil { ProgressView().controlSize(.small) }
+                            VStack(alignment: .leading) {
+                                Text(request.connector.name).font(.subheadline)
+                                Text(request.error ?? "等待设备连接…").font(.caption).foregroundStyle(.secondary)
+                            }
+                            Spacer(minLength: 0)
+                            Menu {
+                                if request.error != nil { Button("重试") { setup.retry(request.id) } }
+                                Button("停止等待") { setup.finish(request.id) }
+                            } label: { Image(systemName: "ellipsis").frame(width: 36, height: 36) }
+                        }.padding(.horizontal, 10).padding(.vertical, 8)
+                    }
                 }
 
                 if !pinnedSessions.isEmpty {
@@ -115,7 +134,9 @@ struct ChatSidebarView: View {
         .sheet(isPresented: $showsArchives) {
             if let repository { ArchivedSessionsSheet(repository: repository, onOpen: onOpenSession, onRestore: onRestoreSession) }
         }
-        .sheet(isPresented: $isShowingPairing) {
+        .sheet(isPresented: $isShowingPairing, onDismiss: {
+            appState.nativeChatServices?.agentSetup.pairingFormPresented = false
+        }) {
             PairDeviceSheet()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)

@@ -51,6 +51,16 @@ import Testing
         #expect(!http.calls[1].query.contains { $0.name == "cursor" })
     }
 
+    @Test func projectMembershipSurvivesLeavingGlobalFirstPage() async throws {
+        let http = TestHTTPTransport(); let store = repository(http)
+        store.apply(try dashboard())
+        http.respond = { _ in try page(id: "session") }
+        await store.loadPage(.init(projectID: "project"))
+        var next = try fixtureObject("dashboard"); next["sessions"] = []
+        store.apply(try decode(next))
+        #expect(store.sessions.map(\.id) == ["session"])
+    }
+
     @Test func oldPageCannotUndoAnArchiveAndCanBeRetriedAfterSnapshot() async throws {
         let http = TestHTTPTransport(); let store = repository(http); let gate = TestGate()
         store.apply(try dashboard(cursor: "100"))

@@ -48,11 +48,27 @@ struct ChatShellView: View {
         } message: {
             Text(appState.sessionActionError ?? "")
         }
+        .sheet(item: agentSetupBinding) { connector in
+            if let services = appState.nativeChatServices {
+                AgentSetupSheet(connector: connector, model: services.agents(on: connector.id)) {
+                    services.agentSetup.finish(connector.id)
+                    Task { await appState.refreshDashboard() }
+                }
+            }
+        }
         .onChange(of: visibleSessionID, initial: true) { _, id in
             appState.setVisibleSession(id)
         }
         .onChange(of: sidebarLayout, initial: true) { _, layout in sidebar.setLayout(layout) }
         .onDisappear { appState.setVisibleSession(nil) }
+    }
+
+    private var agentSetupBinding: Binding<V2Connector?> {
+        Binding(get: { appState.nativeChatServices?.agentSetup.presentedConnector }, set: { value in
+            if value == nil, let setup = appState.nativeChatServices?.agentSetup, let connector = setup.presentedConnector {
+                setup.finish(connector.id)
+            }
+        })
     }
 
     private var sidebarDevices: [ChatSidebarDevice] {
@@ -120,6 +136,7 @@ struct ChatShellView: View {
     private func mainContent(safeAreaInsets: EdgeInsets) -> some View {
         if case let .device(connectorId) = selection,
            let connector = appState.connectors.first(where: { $0.id == connectorId }),
+           let clients = appState.nativeChatServices,
            let service = appState.deviceManagementService,
            let workspaceFilesService = appState.workspaceFilesService,
            let serverURL = appState.serverURL
@@ -127,6 +144,9 @@ struct ChatShellView: View {
             DeviceManagementView(
                 connector: connector,
                 allSessions: appState.sessions,
+                projects: appState.projects,
+                agents: clients.agents(on: connectorId),
+                dashboard: clients.dashboardRepository,
                 service: service,
                 workspaceFilesService: workspaceFilesService,
                 serverURL: serverURL,

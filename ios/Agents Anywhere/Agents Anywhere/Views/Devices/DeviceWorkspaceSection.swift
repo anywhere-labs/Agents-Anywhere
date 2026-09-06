@@ -11,7 +11,7 @@ struct DeviceWorkspaceSection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
-                Text("Workspaces")
+                Text("项目")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
                     .textCase(.uppercase)
@@ -30,7 +30,7 @@ struct DeviceWorkspaceSection: View {
             }
 
             if workspaces.isEmpty {
-                Text("Workspaces appear after this device syncs sessions.")
+                Text("在 New Session 中创建项目，或从侧栏添加项目。")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
