@@ -31,7 +31,7 @@ private struct SettingsPageChrome: ViewModifier {
     @Environment(\.closeSettings) private var close
     func body(content: Content) -> some View {
         content
-            .scrollContentBackground(.hidden).background(Color(uiColor: .systemBackground))
+            .listStyle(.insetGrouped)
             .navigationTitle(title).navigationBarTitleDisplayMode(.inline)
             .toolbar { SheetCloseToolbar(action: close) }
     }

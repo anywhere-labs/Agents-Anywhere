@@ -3621,6 +3621,23 @@
         }
       }
     },
+    "Project mode": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Project mode"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "项目模式"
+          }
+        }
+      }
+    },
     "Projects": {
       "extractionState": "manual",
       "localizations": {

@@ -22,7 +22,6 @@ struct PasswordSettingsView: View {
         }
         .navigationTitle(String(localized: "Password"))
         .navigationBarTitleDisplayMode(.inline)
-        .scrollContentBackground(.hidden).background(Color(uiColor: .systemBackground))
         .navigationBarBackButtonHidden()
         .toolbar {
             SheetEditorToolbar(isWorking: appState.isAccountWorking,

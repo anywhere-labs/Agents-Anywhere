@@ -63,7 +63,7 @@ struct AccountIdentitySettingsView: View {
                 }
             }
         }
-        .disabled(isWorking).scrollContentBackground(.hidden).background(Color(uiColor: .systemBackground))
+        .disabled(isWorking)
         .navigationTitle(title).navigationBarTitleDisplayMode(.inline).navigationBarBackButtonHidden()
         .toolbar { SheetEditorToolbar(isWorking: isWorking, saveDisabled: !canSave, onCancel: cancel, onSave: save) }
         .interactiveDismissDisabled(hasChanges || isWorking)

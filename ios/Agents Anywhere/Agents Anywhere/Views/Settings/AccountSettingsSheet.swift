@@ -50,11 +50,14 @@ struct AccountSettingsSheet: View {
                     NavigationLink { SettingsLanguageView() } label: {
                         SettingsRow(title: String(localized: "Language"), symbol: "globe", value: SettingsLanguageView.currentLanguage)
                     }
+                    Toggle(isOn: Binding(
+                        get: { !showsSessionList },
+                        set: { showsSessionList = !$0 }
+                    )) {
+                        SettingsRow(title: String(localized: "Project mode"), symbol: "folder")
+                    }.tint(.green)
                 }
                 Section(String(localized: "Workspace")) {
-                    Toggle(isOn: $showsSessionList) {
-                        SettingsRow(title: String(localized: "侧边栏显示会话"), symbol: "sidebar.left")
-                    }.tint(.green)
                     NavigationLink { SettingsServerView() } label: {
                         SettingsRow(title: String(localized: "Server"), symbol: "server.rack", value: appState.serverURL?.host)
                     }
@@ -74,8 +77,7 @@ struct AccountSettingsSheet: View {
                         .font(.footnote).frame(maxWidth: .infinity).padding(.top, 16)
                 }
             }
-            .listStyle(.insetGrouped).scrollContentBackground(.hidden)
-            .background(Color(uiColor: .systemBackground))
+            .listStyle(.insetGrouped)
             .navigationTitle(String(localized: "Settings")).navigationBarTitleDisplayMode(.inline)
             .toolbar { SheetCloseToolbar(disabled: appState.isAccountWorking) { dismiss() } }
             .refreshable { _ = await appState.refreshAccount() }

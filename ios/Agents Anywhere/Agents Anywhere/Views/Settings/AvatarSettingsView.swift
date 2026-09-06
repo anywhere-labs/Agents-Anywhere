@@ -51,7 +51,6 @@ struct AvatarSettingsView: View {
         .navigationTitle(String(localized: "Profile photo"))
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden()
-        .scrollContentBackground(.hidden).background(Color(uiColor: .systemBackground))
         .toolbar {
             SheetEditorToolbar(isWorking: appState.isAccountWorking, saveDisabled: selectedImage == nil,
                 onCancel: { if selectedImage == nil { dismiss() } else { confirmsDiscard = true } }, onSave: uploadAvatar)
