@@ -17,9 +17,9 @@ import { RegisterScreen } from "./register-screen"
 
 const pluginMessages: Record<string, string> = {
   invalid: '授权链接无效，请回到 DSH 插件重新开始。',
-  opening: '正在继续本机设置…', eyebrow: 'AGENTS ANYWHERE · DSH',
+  opening: '正在继续本机设置…',
   title: '连接这台电脑',
-  description: '授权 DSH 插件连接你的账号，在本机注册设备并运行 Connector。接下来会引导你配置 Agent 和手机。',
+  description: '授权 DSH 插件连接你的账号。',
   currentAccount: '当前账号', unknownAccount: '已登录账号',
   continue: '授权并继续', switchAccount: '使用其他账号', cancel: '取消',
 }
@@ -140,7 +140,7 @@ function MobileOAuthConsent({
     <main className="flex min-h-screen items-center justify-center bg-background px-6">
       <section className="w-full max-w-sm space-y-6 text-center">
         <div className="space-y-2">
-          <p className="text-sm font-medium text-muted-foreground">{t("eyebrow")}</p>
+          {kind !== "plugin" ? <p className="text-sm font-medium text-muted-foreground">{t("eyebrow")}</p> : null}
           <h1 className="text-2xl font-semibold tracking-normal text-foreground">{t("title")}</h1>
           <p className="text-sm leading-6 text-muted-foreground">{t("description")}</p>
         </div>

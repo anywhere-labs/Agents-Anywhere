@@ -100,7 +100,7 @@ export class LoopbackFlow {
 
 function progressHtml(nonce: string, statusPath: string): string {
   return `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>连接设备 · Agents Anywhere</title>
-<style nonce="${nonce}">:root{color-scheme:light dark}body{margin:0;font:16px system-ui;min-height:100vh;display:grid;place-items:center}main{max-width:420px;padding:32px;text-align:center}p{line-height:1.8;opacity:.75}small{opacity:.55}</style>
-<main><small>AGENTS ANYWHERE</small><h1>正在连接你的设备</h1><p id="status" role="status">授权已收到，正在准备本机连接…</p><small>连接成功后，会自动继续设置。</small></main>
+<style nonce="${nonce}">:root{color-scheme:light dark}body{margin:0;font:16px system-ui;min-height:100vh;display:grid;place-items:center}main{max-width:420px;padding:32px;text-align:center}p{line-height:1.8;opacity:.75}</style>
+<main><h1>正在连接你的设备</h1><p id="status" role="status">授权已收到，正在准备本机连接…</p></main>
 <script nonce="${nonce}">let failures=0;async function tick(){try{const response=await fetch(${JSON.stringify(statusPath)},{cache:'no-store'});if(!response.ok)throw new Error();const result=await response.json();document.getElementById('status').textContent=result.message;failures=0;if(result.stage==='ready'&&result.redirectUrl){location.replace(result.redirectUrl);return}if(result.stage==='error')return}catch{if(++failures>=5){document.getElementById('status').textContent='本机连接已关闭，请回到插件重试。';return}}setTimeout(tick,800)}tick();</script></html>`
 }
