@@ -1,5 +1,3 @@
-/* Hallmark · genre: modern-minimal · tone: compact product workspace · palette: existing neutral semantic tokens · macrostructure: embedded-browser-tool-sidebar · contrast: pass (40–41) · nav: N/A · footer: N/A · slop: pass (42–45) · honest: pass (46) · chrome: pass (47) · tokens: pass (48) · responsive: pass (49) · icons: pass (30) · mobile: pass (desktop-only change; 34, 49–57) */
-
 .aa-rt-pane {
   --aa-rt-radius: 13px;
   --aa-rt-header-bg: var(--sidebar);
@@ -357,24 +355,24 @@
 .aa-file-tree-row {
   display: grid;
   width: 100%;
-  height: 36px;
+  height: 32px;
   min-width: 0;
   max-width: 100%;
-  grid-template-columns: 20px minmax(0, 1fr);
+  grid-template-columns: 18px minmax(0, 1fr);
   align-items: center;
   gap: 8px;
   border: 1px solid transparent;
-  border-radius: calc(var(--radius-xl) - 2px);
+  border-radius: var(--radius-xl);
   background: transparent;
   color: var(--muted-foreground);
   cursor: pointer;
   font: inherit;
-  padding: 0 9px 0 calc(7px + var(--aa-tree-indent, 0px));
+  padding: 0 8px 0 calc(8px + var(--aa-tree-indent, 0px));
   text-align: left;
 }
 
 .aa-file-tree-row[data-has-trailing="true"] {
-  grid-template-columns: 20px minmax(0, 1fr) auto;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
 }
 
 .aa-file-tree-row:hover,
@@ -395,16 +393,16 @@
 
 .aa-file-tree-leading {
   display: flex;
-  width: 20px;
+  width: 18px;
   min-width: 0;
   align-items: center;
   justify-content: center;
 }
 
 .aa-file-tree-chevron {
-  width: 18px;
-  height: 18px;
-  stroke-width: 2.25;
+  width: 14px;
+  height: 14px;
+  stroke-width: 2;
   transition: transform 140ms cubic-bezier(0.16, 1, 0.3, 1), color 140ms ease;
 }
 
@@ -413,15 +411,15 @@
 }
 
 .aa-file-tree-spinner {
-  width: 15px;
-  height: 15px;
+  width: 14px;
+  height: 14px;
   animation: aa-file-tree-spin 700ms linear infinite;
 }
 
 .aa-file-type-icon {
   display: block;
-  width: 18px;
-  height: 18px;
+  width: 14px;
+  height: 14px;
   flex: none;
 }
 
@@ -429,7 +427,8 @@
   min-width: 0;
   overflow: hidden;
   color: var(--foreground);
-  font-size: 14px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 13px;
   line-height: 1;
   text-overflow: ellipsis;
   white-space: nowrap;

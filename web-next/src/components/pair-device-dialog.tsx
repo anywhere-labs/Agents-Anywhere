@@ -8,7 +8,7 @@ import {
   ExternalLink,
   Hash,
   KeyRound,
-  Laptop,
+  MonitorUp,
   Loader2,
   Terminal,
   type LucideIcon,
@@ -189,15 +189,13 @@ function ChoiceCard({
       type="button"
       variant="outline"
       onClick={onClick}
-      className="h-auto w-full min-w-0 justify-start gap-3 whitespace-normal px-4 py-4 text-left"
+      className="h-auto w-full min-w-0 flex-col items-start gap-0.5 whitespace-normal px-4 py-3 text-left"
     >
-      <span className="grid size-10 shrink-0 place-items-center text-foreground">
-        <Icon className="size-5" />
+      <span className="flex min-w-0 items-center gap-2 font-medium">
+        <Icon className="size-4" />
+        {title}
       </span>
-      <span className="min-w-0">
-        <span className="block font-medium">{title}</span>
-        <span className="mt-0.5 block break-words text-sm font-normal text-muted-foreground">{description}</span>
-      </span>
+      <span className="min-w-0 break-words text-sm text-muted-foreground">{description}</span>
     </Button>
   )
 }
@@ -390,7 +388,7 @@ export function PairDeviceDialog({
                 </DialogHeader>
                 <div className="grid gap-3 py-2">
                   <ChoiceCard
-                    icon={Laptop}
+                    icon={MonitorUp}
                     title={t("desktopTitle")}
                     description={t("desktopDescription")}
                     onClick={() => setStep("desktop-install")}
@@ -412,19 +410,19 @@ export function PairDeviceDialog({
                   <DialogDescription>{t("desktopInstallDescription")}</DialogDescription>
                 </DialogHeader>
                 <ol className="grid gap-3 py-2 text-sm">
-                  <li className="rounded-xl border bg-muted/25 p-4">
+                  <li className="rounded-lg border bg-muted/30 p-4">
                     <div className="flex flex-col gap-1">
                       <p className="font-medium">{t("desktopDownloadTitle")}</p>
                       <p className="text-muted-foreground">{t("desktopInstallStepDownload")}</p>
                     </div>
                   </li>
-                  <li className="rounded-xl border bg-muted/25 p-4">
+                  <li className="rounded-lg border bg-muted/30 p-4">
                     <div className="flex flex-col gap-1">
                       <p className="font-medium">{t("desktopLoginTitle")}</p>
                       <p className="text-muted-foreground">{t("desktopInstallStepLogin")}</p>
                     </div>
                   </li>
-                  <li className="rounded-xl border bg-muted/25 p-4">
+                  <li className="rounded-lg border bg-muted/30 p-4">
                     <div className="flex flex-col gap-1">
                       <p className="font-medium">{t("desktopOnlineTitle")}</p>
                       <p className="text-muted-foreground">{t("desktopInstallStepOnline")}</p>
@@ -568,7 +566,7 @@ export function PairDeviceDialog({
                   <DialogDescription>{t("codeStepDescription", { name })}</DialogDescription>
                 </DialogHeader>
                 <div className="flex flex-col gap-4 py-2">
-                  <div className="rounded-xl border bg-muted/25 p-4 text-sm">
+                  <div className="rounded-lg border bg-muted/30 p-4 text-sm">
                     <div className="font-medium">{t("pairCommand")}</div>
                     <div className="mt-3">
                       <CodeBlock code={pairCommand} copyLabel={t("copyCommand")} />
