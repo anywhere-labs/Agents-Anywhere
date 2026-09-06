@@ -178,7 +178,6 @@ private struct SidebarDrawerInteractive<
 
                     SidebarDrawerMainCard(
                         size: screenSize,
-                        containerCornerInsets: fullScreenGeometry.containerCornerInsets,
                         progress: progress,
                         offset: revealWidth * progress,
                         overlayOpacity: contentOverlayOpacity,
@@ -618,27 +617,16 @@ private struct SidebarDrawerSidebar<Header: View, Content: View>: View {
 
 private struct SidebarDrawerMainCard<Content: View>: View {
     let size: CGSize
-    let containerCornerInsets: RectangleCornerInsets
     let progress: CGFloat
     let offset: CGFloat
     let overlayOpacity: CGFloat
     let content: Content
 
     var body: some View {
-        let screenShape = ConcentricRectangle(
-            topLeadingCorner: .concentric(
-                minimum: .fixed(containerCornerInsets.topLeading.drawerCornerRadius)
-            ),
-            topTrailingCorner: .concentric(
-                minimum: .fixed(containerCornerInsets.topTrailing.drawerCornerRadius)
-            ),
-            bottomLeadingCorner: .concentric(
-                minimum: .fixed(containerCornerInsets.bottomLeading.drawerCornerRadius)
-            ),
-            bottomTrailingCorner: .concentric(
-                minimum: .fixed(containerCornerInsets.bottomTrailing.drawerCornerRadius)
-            )
-        )
+        // Resolve the actual container shape. containerCornerInsets also includes
+        // iPad window controls, so converting those insets into minimum radii
+        // incorrectly enlarges the top corners in a windowed drawer.
+        let screenShape = ConcentricRectangle()
 
         content
             // The untransformed host supplies all original insets, including
@@ -691,12 +679,6 @@ private extension CGFloat {
 private extension Double {
     func clamped(to range: ClosedRange<Double>) -> Double {
         Swift.min(Swift.max(self, range.lowerBound), range.upperBound)
-    }
-}
-
-private extension CGSize {
-    var drawerCornerRadius: CGFloat {
-        max(width, height)
     }
 }
 

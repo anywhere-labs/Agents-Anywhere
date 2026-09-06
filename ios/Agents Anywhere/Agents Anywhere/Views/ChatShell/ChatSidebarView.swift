@@ -290,7 +290,7 @@ private struct ChatSidebarDeviceRow: View {
         .buttonStyle(.plain)
         .contextMenu {
             Button(action: onOpen) {
-                Label(String(localized: "Open"), appSymbol: "folder")
+                Label(String(localized: "Open"), appSymbol: "folder.fill")
             }
             Divider()
             Button(action: onCopyId) {
@@ -303,6 +303,7 @@ private struct ChatSidebarDeviceRow: View {
 struct ChatSidebarSessionRow: View {
     let session: ChatSidebarSession
     let isSelected: Bool
+    var inset = false
     let onOpen: () -> Void
     let onRename: (String) -> Void
     let onTogglePinned: () -> Void
@@ -321,7 +322,10 @@ struct ChatSidebarSessionRow: View {
                 ChatSidebarSessionIndicator(indicator: session.presentation.indicator)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 10)
+            // Match Web's inset session rows while keeping the selection and
+            // the touch target across the full sidebar width.
+            .padding(.leading, inset ? 36 : 10)
+            .padding(.trailing, 10)
             .frame(minHeight: 42)
             .background(.primary.opacity(isSelected ? 0.08 : 0), in: RoundedRectangle(cornerRadius: 9))
             .contentShape(Rectangle())
@@ -329,21 +333,21 @@ struct ChatSidebarSessionRow: View {
         .buttonStyle(.plain)
         .contextMenu {
             Button(action: onOpen) {
-                Label(String(localized: "Open"), appSymbol: "folder")
+                Label(String(localized: "Open"), appSymbol: "folder.fill")
             }
             Button(action: beginRename) {
                 Label(String(localized: "Rename"), appSymbol: "pencil")
             }.disabled(session.id.hasPrefix("local:"))
             Button(action: onTogglePinned) {
                 if session.pinned {
-                    Label(String(localized: "Unpin"), appSymbol: "pin.slash")
+                    Label(String(localized: "Unpin"), appSymbol: "pin")
                 } else {
                     Label(String(localized: "Pin"), appSymbol: "pin")
                 }
             }
             .disabled(session.id.hasPrefix("local:"))
             Button(action: onArchive) {
-                Label(session.archived ? String(localized: "Restore") : String(localized: "Archive"), appSymbol: session.archived ? "tray.and.arrow.up" : "archivebox")
+                Label(session.archived ? String(localized: "Restore") : String(localized: "Archive"), appSymbol: "archivebox")
             }.disabled(session.id.hasPrefix("local:"))
             Divider()
             Button(action: onCopyId) {

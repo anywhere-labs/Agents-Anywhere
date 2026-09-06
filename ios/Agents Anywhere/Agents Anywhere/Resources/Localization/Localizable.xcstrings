@@ -13157,6 +13157,23 @@
         }
       }
     },
+    "项目选项": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Project options"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "项目选项"
+          }
+        }
+      }
+    },
     "项目": {
       "extractionState": "manual",
       "localizations": {

@@ -46,7 +46,7 @@ struct ChatSidebarProjects: View {
                         ForEach(V2DeviceSessionFilter.allCases) { Text($0.title).tag($0) }
                     }
                 }
-                Button(String(localized: "创建项目"), appSymbol: "folder.badge.plus") { createsProject = true }
+                Button(String(localized: "创建项目"), appSymbol: "plus") { createsProject = true }
                     .labelStyle(.iconOnly).frame(width: 44, height: 44).disabled(!repository.canWrite)
             }.padding(.horizontal, 10).padding(.top, 16)
             if repository.sidebarPreferences.projectsExpanded {
@@ -96,39 +96,45 @@ struct ChatSidebarProjects: View {
     private func projectRow(_ project: V2Project) -> some View {
         HStack(spacing: 0) {
             Button { toggleProject(project.id) } label: {
-                HStack(spacing: 10) {
-                    AppSymbol(expanded.contains(project.id) ? "folder.fill" : "folder")
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(project.name).lineLimit(1)
-                        Text(repository.connectors.first { $0.id == project.connectorId }?.name ?? String(localized: "设备不可用"))
-                            .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
-                    }
-                    Spacer(minLength: 0)
-                    if busy.contains(project.id) { ProgressView().controlSize(.mini) }
-                    else if project.pinned { AppSymbol("pin.fill", size: 12) }
+                HStack(spacing: 8) {
+                    AppSymbol(expanded.contains(project.id) ? "folder.fill" : "folder", size: 18)
+                    Text(project.name).font(.body).lineLimit(1)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading).contentShape(.rect)
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading).contentShape(.rect)
             }
+            .accessibilityHint(expanded.contains(project.id) ? String(localized: "收起项目") : String(localized: "展开项目"))
+            Menu { projectMenu(project) } label: {
+                ZStack {
+                    if busy.contains(project.id) { ProgressView().controlSize(.mini) }
+                    else { AppSymbol("ellipsis", size: 18) }
+                }.frame(width: 44, height: 44).contentShape(.rect)
+            }
+            .accessibilityLabel(String(localized: "项目选项"))
+            .disabled(busy.contains(project.id))
             Button { onNewSession(project.id) } label: {
-                AppSymbol("plus").frame(width: 44, height: 48).contentShape(.rect)
+                AppSymbol("square.and.pencil", size: 18).frame(width: 44, height: 44).contentShape(.rect)
             }
             .accessibilityLabel(Text(String(localized: "在 \(project.name) 中新建会话")))
-            Button { toggleProject(project.id) } label: {
-                AppSymbol("chevron.right", size: 12)
-                    .rotationEffect(.degrees(expanded.contains(project.id) ? 90 : 0))
-                    .frame(width: 44, height: 48).contentShape(.rect)
-            }
-            .accessibilityLabel(expanded.contains(project.id) ? String(localized: "收起项目") : String(localized: "展开项目"))
         }
+        .foregroundStyle(.primary)
         .padding(.leading, 10).buttonStyle(.plain)
-        .contextMenu {
+        .contextMenu { projectMenu(project) }
+    }
+
+    @ViewBuilder
+    private func projectMenu(_ project: V2Project) -> some View {
+        let deviceName = repository.connectors.first { $0.id == project.connectorId }?.name ?? String(localized: "设备不可用")
+        Section(deviceName) {
             Button(String(localized: "新建会话"), appSymbol: "square.and.pencil") { onNewSession(project.id) }
+            Button(String(localized: "编辑项目"), appSymbol: "pencil") { editing = project }
+                .disabled(!repository.canWrite || busy.contains(project.id))
             Button(project.pinned ? String(localized: "取消置顶") : String(localized: "置顶"), appSymbol: "pin") {
                 perform(project.id) { try await repository.updateProject(project.id, pinned: !project.pinned) }
             }.disabled(!repository.canWrite || busy.contains(project.id))
-            Button(String(localized: "编辑项目"), appSymbol: "pencil") { editing = project }
-                .disabled(!repository.canWrite || busy.contains(project.id))
-            Button(String(localized: "归档项目会话"), appSymbol: "archivebox") { action = .init(project: project, deletes: false) }
+        }
+        Section {
+            Button(String(localized: "归档项目会话"), appSymbol: "archivebox", role: .destructive) { action = .init(project: project, deletes: false) }
                 .disabled(!repository.canWrite || busy.contains(project.id))
             Button(String(localized: "删除项目"), appSymbol: "trash", role: .destructive) { action = .init(project: project, deletes: true) }
                 .disabled(!repository.canWrite || busy.contains(project.id))
@@ -139,11 +145,14 @@ struct ChatSidebarProjects: View {
         VStack(alignment: .leading, spacing: 2) {
             ForEach(ProjectSidebarPresentation.sessions(repository.sessions, projectID: project.id, filter: filter)) { session in
                 ChatSidebarSessionRow(session: .init(session: session), isSelected: selectedSessionID == session.id,
+                    inset: true,
                     onOpen: { onOpenSession(session.id) }, onRename: { onRenameSession(session.id, $0) },
                     onTogglePinned: { onPinSession(session.id, !session.pinned) }, onArchive: { onArchiveSession(session.id) },
                     onCopyId: { onCopySession(session.id) })
             }
-            ForEach(scopes(project.id), id: \.self) { scope in DashboardPageButton(repository: repository, scope: scope) }
+            ForEach(scopes(project.id), id: \.self) { scope in
+                DashboardPageButton(repository: repository, scope: scope).padding(.leading, 26)
+            }
         }
         .task(id: "\(filter.rawValue):\(repository.canWrite)") {
             for scope in scopes(project.id) { await repository.ensureProjectPage(scope) }
