@@ -2,7 +2,7 @@ import SwiftUI
 import AppKit
 
 // A native, headless SwiftUI check for the phone card's render/layout boundary.
-// Compile with SidebarDrawerTranslation.swift and SidebarDrawerCloseRegion.swift;
+// Compile with SidebarDrawerTranslation.swift, SidebarDrawerScale.swift and SidebarDrawerCloseRegion.swift;
 // no application window, simulator, account or network connection is needed.
 @MainActor private final class Measurements {
     var frames: [CGRect] = []
@@ -41,6 +41,7 @@ import AppKit
 @main @MainActor private struct DrawerLayoutProbe {
     static func main() {
         verifyCloseHitRegion()
+        verifySidebarScale()
         var ordinaryOrigins = Set<CGFloat>()
         var stableOrigins = Set<CGFloat>()
         var stableWidths = Set<CGFloat>()
@@ -73,6 +74,33 @@ import AppKit
         print("Control origins: \(ordinaryOrigins.count); isolated origins: \(stableOrigins.count); isolated widths: \(stableWidths.count).")
     }
 
+    private static func verifySidebarScale() {
+        var originalTops = Set<CGFloat>()
+        var digests = Set<Int>()
+        for displayScale: CGFloat in [2, 3] {
+            // Include both sides of the identity transform and the spring's
+            // final fractional frames, where UIKit used to adjust its inset.
+            for scale: CGFloat in [0.95, 0.975, 0.99, 0.999, 0.9999, 1, 1.0001] {
+                for ignored in [false, true] {
+                    let measurements = Measurements()
+                    let renderer = ImageRenderer(content: SidebarScaleProbe(
+                        scale: scale, ignoresMotion: ignored, measurements: measurements))
+                    renderer.scale = displayScale
+                    guard let image = renderer.cgImage, let bytes = image.dataProvider?.data,
+                          let frame = measurements.frames.last else { fatalError("No sidebar render or geometry") }
+                    if ignored {
+                        precondition(abs(frame.minY) < 0.001 && abs(frame.width - 302) < 0.001 && abs(frame.height - 874) < 0.001,
+                            "Sidebar scale leaked into navigation layout: \(frame)")
+                        digests.insert((bytes as Data).hashValue)
+                    } else { originalTops.insert(frame.minY) }
+                }
+            }
+        }
+        precondition(originalTops.count > 1, "Scale control did not expose vertical movement")
+        precondition(digests.count > 2, "Sidebar scale animation stopped rendering")
+        print("PASS: 28 sidebar renders at 2x/3x; layout stays 302x874 at y=0 through the identity transform while the reveal still scales.")
+    }
+
     private static func verifyCloseHitRegion() {
         let bounds = CGRect(x: 0, y: 0, width: 402, height: 874)
         // Check the actual SwiftUI Path used by contentShape, not a duplicate
@@ -93,5 +121,32 @@ import AppKit
         precondition(!shifted.contains(CGPoint(x: 200, y: 100)))
         precondition(shifted.contains(CGPoint(x: 350, y: 100)))
         print("PASS: close contentShape excludes sidebar points and includes only the exposed main card.")
+    }
+}
+
+@MainActor private struct SidebarScaleProbe: View {
+    let scale: CGFloat
+    let ignoresMotion: Bool
+    let measurements: Measurements
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            Color.clear
+            if ignoresMotion {
+                sidebar.modifier(SidebarDrawerScale(scale: scale).ignoredByLayout())
+            } else {
+                sidebar.scaleEffect(scale, anchor: .leading)
+            }
+        }.frame(width: 402, height: 874)
+    }
+
+    private var sidebar: some View {
+        Color.red.frame(width: 302, height: 874)
+            .overlay {
+                GeometryReader { proxy in
+                    let _ = measurements.frames.append(proxy.frame(in: .global))
+                    Color.clear
+                }
+            }
     }
 }

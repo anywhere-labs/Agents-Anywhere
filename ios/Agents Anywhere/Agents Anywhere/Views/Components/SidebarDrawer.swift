@@ -611,7 +611,7 @@ private struct SidebarDrawerSidebar<Header: View, Content: View>: View {
                     .opacity(overlayOpacity)
                     .allowsHitTesting(false)
             }
-            .scaleEffect(scale, anchor: .leading)
+            .modifier(SidebarDrawerScale(scale: scale).ignoredByLayout())
     }
 }
 
