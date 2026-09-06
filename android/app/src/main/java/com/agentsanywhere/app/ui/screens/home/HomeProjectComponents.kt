@@ -72,6 +72,7 @@ import com.composables.icons.lucide.Folder
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Pencil
 import com.composables.icons.lucide.Pin
+import com.composables.icons.lucide.SquarePen
 import kotlin.math.roundToInt
 
 internal data class HomeProjectActionMenu(
@@ -191,7 +192,7 @@ private fun HomeProjectTreeItem(
     )
     if (expanded) {
         when {
-            loading -> Box(
+            loading && sessions.isEmpty() -> Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(48.dp)
@@ -252,7 +253,10 @@ private fun HomeProjectRow(
             .onGloballyPositioned { bounds = it.boundsInRoot() }
             .pointerInput(onClick, onLongPress, bounds) {
                 detectTapGestures(
-                    onTap = { onClick() },
+                    onTap = {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        onClick()
+                    },
                     onLongPress = {
                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                         onLongPress(bounds)
@@ -298,7 +302,7 @@ private fun HomeProjectRow(
             contentAlignment = Alignment.Center,
         ) {
             Icon(
-                imageVector = Lucide.Pencil,
+                imageVector = Lucide.SquarePen,
                 contentDescription = stringResource(R.string.home_new_session_in_project, project.name),
                 tint = colors.faint,
                 modifier = Modifier.size(19.dp),
@@ -314,6 +318,7 @@ private fun HomeProjectSectionHeader(
     onClick: () -> Unit,
 ) {
     val colors = LocalAAColors.current
+    val haptic = LocalHapticFeedback.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -321,7 +326,10 @@ private fun HomeProjectSectionHeader(
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
-                onClick = onClick,
+                onClick = {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    onClick()
+                },
             ),
         verticalAlignment = Alignment.CenterVertically,
     ) {

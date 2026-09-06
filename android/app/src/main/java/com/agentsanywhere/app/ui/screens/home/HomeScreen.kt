@@ -140,16 +140,19 @@ fun HomeScreen(
     var projectActionMenu by remember { mutableStateOf<HomeProjectActionMenu?>(null) }
     val projectPreferences = rememberHomeProjectPreferences(serverUrl, userId)
     val expandedProjectIds = projectPreferences.expandedIds
-    val restoredProjectIds = remember(serverUrl, userId) { mutableSetOf<String>() }
+    val prefetchedProjectIds = remember(serverUrl, userId) { mutableSetOf<String>() }
     val loadedSessions = remember(projectSessionsById, state.sessions, state.archivedSessions) {
         (projectSessionsById.values.flatten() + state.sessions + state.archivedSessions).associateBy { it.id }.values.toList()
     }
     LaunchedEffect(expandedProjectIds, state.projects, loadedSessions, state.hasLoaded, sidebarViewMode) {
-        val visibleIds = state.projects.filter { projectHasActiveSessions(it, loadedSessions) }.mapTo(mutableSetOf()) { it.id }
-        val targets = if (sidebarViewMode == HomeSidebarViewMode.Project) expandedProjectIds.intersect(visibleIds) else emptySet()
-        restoredProjectIds.retainAll(targets)
-        if (state.hasLoaded) targets.filterNot { it in restoredProjectIds }.forEach { id ->
-            restoredProjectIds.add(id)
+        val targets = if (sidebarViewMode == HomeSidebarViewMode.Project) {
+            state.projects.filter { projectHasActiveSessions(it, loadedSessions) }
+                .sortedWith(compareByDescending<AgentProject> { it.id in expandedProjectIds }.thenByDescending { it.pinned })
+                .map { it.id }
+        } else emptyList()
+        prefetchedProjectIds.retainAll(targets.toSet())
+        if (state.hasLoaded) targets.filterNot { it in prefetchedProjectIds }.forEach { id ->
+            prefetchedProjectIds.add(id)
             onLoadProjectSessions(id)
         }
     }
@@ -203,6 +206,7 @@ fun HomeScreen(
                 onProjectLongPress = { project, bounds -> projectActionMenu = HomeProjectActionMenu(project, bounds) },
                 onProjectExpandedChange = { project, expanded ->
                     projectPreferences.setProjectExpanded(project.id, expanded)
+                    if (expanded) onLoadProjectSessions(project.id)
                 },
                 onNewSessionInProject = onNewSessionInProject,
                 onOpenSession = onOpenSession,
