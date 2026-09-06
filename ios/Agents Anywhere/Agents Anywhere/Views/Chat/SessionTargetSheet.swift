@@ -31,8 +31,6 @@ struct SessionTargetSheet: View {
                             await model.loadInventory(device.id)
                         }
                     }
-                } footer: {
-                    Text(String(localized: "同一种 Agent 可以有不同实例；这里显示的是设备上的实际实例名称。"))
                 }
                 if let error = selectionError ?? model.error {
                     Section { Text(error).font(.footnote).foregroundStyle(.secondary) }

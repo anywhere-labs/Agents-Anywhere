@@ -19,7 +19,7 @@ struct SessionDetailsSheet: View {
                         row(String(localized: "Agent"), meta.runtimeName ?? meta.runtime)
                         row(String(localized: "Agent 类型"), meta.runtimeTypeDisplayName ?? meta.runtimeType ?? meta.runtime)
                         row(String(localized: "状态"), (chat.session.runtime.state?.status ?? meta.status).displayName)
-                        row(String(localized: "工作目录"), meta.cwd ?? String(localized: "无"))
+                        row(String(localized: "dashboard.session.workspace"), meta.cwd ?? String(localized: "无"))
                         row(String(localized: "接管"), meta.takeover ? String(localized: "已开启") : String(localized: "只读"))
                     }
                     Section(String(localized: "标识与时间线")) {
@@ -36,8 +36,6 @@ struct SessionDetailsSheet: View {
                         if exportRequest != nil {
                             HStack { ProgressView(); Text(String(localized: "正在准备导出…")); Spacer(); Button(String(localized: "取消")) { exportRequest = nil } }
                         }
-                    } footer: {
-                        Text(String(localized: "已加载导出保留当前缓存窗口；服务器导出会单独分页读取完整时间线，不改变你正在查看的位置。"))
                     }
                 }
                 if let error { Section { Text(error).foregroundStyle(.secondary) } }

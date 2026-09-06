@@ -38,7 +38,7 @@ struct RuntimeConfigurationSheet: View {
                     Group {
                         if allowsNaming {
                             Section(String(localized: "Instance name")) {
-                                TextField(String(localized: "Name"), text: $instanceName)
+                                TextField(String(localized: "dashboard.device.runtimeNamePlaceholder"), text: $instanceName)
                                     .runtimeConfigInput()
                             }
                         }

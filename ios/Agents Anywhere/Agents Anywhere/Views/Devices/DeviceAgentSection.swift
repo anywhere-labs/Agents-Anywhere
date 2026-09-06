@@ -26,7 +26,7 @@ struct DeviceAgentSection: View {
                 HStack(spacing: 12) {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(runtime.sessionDisplayName).font(.headline)
-                        Text(String(localized: "\(runtime.typeDisplayName) · \(runtime.sessionUnavailableReason ?? String(localized: "已就绪"))"))
+                        Text(String(localized: "\(runtime.typeDisplayName) · \(runtime.status.displayName)"))
                             .font(.footnote).foregroundStyle(.secondary)
                     }.frame(maxWidth: .infinity, alignment: .leading)
                     HStack(spacing: 10) {
@@ -53,7 +53,7 @@ struct DeviceAgentSection: View {
             }
         } header: {
             HStack {
-                Text(String(localized: "Agent"))
+                Text(String(localized: "dashboard.device.agentRuntimes"))
                 Spacer()
                 AgentRediscoveryButton(model: model)
             }
@@ -76,6 +76,8 @@ struct DeviceAgentSection: View {
                 guard let runtime = deleting else { return }; deleting = nil
                 Task { try? await model.remove(runtime) }
             }
+        } message: {
+            Text(String(localized: "\(deleting?.sessionDisplayName ?? "") will be stopped and removed from the configured list. You can add it again later; its instance identity, sessions, and timeline history are kept, and the local installation is not deleted."))
         }
         .alert(String(localized: "重命名 Agent"), isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
             TextField(String(localized: "实例名称"), text: $proposedName)

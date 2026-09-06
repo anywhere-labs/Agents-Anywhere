@@ -53,6 +53,42 @@
         }
       }
     },
+    "%@ is online. You can now choose which agents to configure and start on this device, or finish without adding any.": {
+      "comment": "Shared with Web: dashboard.pairDevice.successDescription. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ is online. Choose which agents to configure and start, or finish without adding one."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 已上线。你可以选择要配置并启动的 Agent，也可以不添加直接完成。"
+          }
+        }
+      }
+    },
+    "%@ will be stopped and removed from the configured list. You can add it again later; its instance identity, sessions, and timeline history are kept, and the local installation is not deleted.": {
+      "comment": "Shared with Web: dashboard.device.deleteRuntimeConfigDescription. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ will be stopped and removed from the configured list. You can add it again later; its instance identity, sessions, and timeline history are kept, and the local installation is not deleted."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 会停止并从已配置列表移除，之后仍可重新添加。实例身份、已有会话和 Timeline 历史都会保留，本机安装也不会被删除。"
+          }
+        }
+      }
+    },
     "%@ · %@": {
       "extractionState": "manual",
       "localizations": {
@@ -117,23 +153,49 @@
       }
     },
     "%lld selected": {
+      "comment": "Shared with Web: dashboard.device.selectedCount. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%lld selected"
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld selected"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld selected"
+                }
+              }
+            }
           }
         },
         "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "已选择 %lld 项"
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "已选择 %lld 个"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "已选择 %lld 个"
+                }
+              }
+            }
           }
         }
       }
     },
     "%lld sessions": {
+      "comment": "Shared with Web: dashboard.device.sessionCount. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -155,9 +217,21 @@
           }
         },
         "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%lld 个会话"
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld 个会话"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld 个会话"
+                }
+              }
+            }
           }
         }
       }
@@ -427,6 +501,7 @@
       }
     },
     "Account": {
+      "comment": "Shared with Web: pages.settings.account. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -438,29 +513,31 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "账户"
+            "value": "账号"
           }
         }
       }
     },
     "Account update failed": {
+      "comment": "Shared with Web: pages.settings.profile.failed. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Account update failed"
+            "value": "Failed to update account."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "账号更新失败"
+            "value": "账号信息更新失败。"
           }
         }
       }
     },
     "Active": {
+      "comment": "Shared with Web: dashboard.device.active. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -512,6 +589,7 @@
       }
     },
     "Add custom model": {
+      "comment": "Shared with Web: dashboard.device.addCustomModel. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -529,6 +607,7 @@
       }
     },
     "Add effort": {
+      "comment": "Shared with Web: dashboard.device.addCustomEffort. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -546,6 +625,7 @@
       }
     },
     "Add variable": {
+      "comment": "Shared with Web: dashboard.device.addEnvironmentVariable. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -563,12 +643,13 @@
       }
     },
     "Administrator": {
+      "comment": "Shared with Web: common.admin. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Administrator"
+            "value": "Admin"
           }
         },
         "zh-Hans": {
@@ -580,6 +661,7 @@
       }
     },
     "Agent": {
+      "comment": "Shared with Web: common.agent. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -614,18 +696,19 @@
       }
     },
     "Agent 操作未完成": {
+      "comment": "Shared with Web: dashboard.device.runtimeActionFailed. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Agent operation failed"
+            "value": "Failed to update runtime state."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "Agent 操作未完成"
+            "value": "无法更新 Runtime 状态。"
           }
         }
       }
@@ -682,18 +765,19 @@
       }
     },
     "Agent 类型": {
+      "comment": "Shared with Web: dashboard.session.runtimeType. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Agent type"
+            "value": "Runtime type"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "Agent 类型"
+            "value": "Runtime 类型"
           }
         }
       }
@@ -767,6 +851,7 @@
       }
     },
     "All": {
+      "comment": "Shared with Web: dashboard.device.all. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -784,6 +869,7 @@
       }
     },
     "All projects": {
+      "comment": "Shared with Web: pages.settings.archivedAllProjects. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -818,35 +904,37 @@
       }
     },
     "Always use the dark appearance.": {
+      "comment": "Shared with Web: pages.settings.darkDescription. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Always use the dark appearance."
+            "value": "Dim interface"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "始终使用深色外观。"
+            "value": "暗色界面"
           }
         }
       }
     },
     "Always use the light appearance.": {
+      "comment": "Shared with Web: pages.settings.lightDescription. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Always use the light appearance."
+            "value": "Bright interface"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "始终使用浅色外观。"
+            "value": "明亮界面"
           }
         }
       }
@@ -869,6 +957,7 @@
       }
     },
     "Appearance": {
+      "comment": "Shared with Web: pages.settings.appearance. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -886,6 +975,7 @@
       }
     },
     "Archive": {
+      "comment": "Shared with Web: dashboard.actions.archive. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -903,74 +993,97 @@
       }
     },
     "Archive all in scope": {
+      "comment": "Shared with Web: dashboard.device.archiveAll. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Archive all in scope"
+            "value": "Archive all"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "归档范围内全部会话"
+            "value": "全部归档"
+          }
+        }
+      }
+    },
+    "Archive all sessions in %@? The project will remain available for future sessions.": {
+      "comment": "Shared with Web: dashboard.projects.archiveAllDescription. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Archive all sessions in %@? The project will remain available for future sessions."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "确定要归档“%@”下的所有会话吗？项目会保留，之后仍可继续创建会话。"
           }
         }
       }
     },
     "Archive project sessions": {
+      "comment": "Shared with Web: dashboard.projects.archiveAll. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Archive project sessions"
+            "value": "Archive project"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "归档项目会话"
+            "value": "归档该项目"
           }
         }
       }
     },
     "Archive project sessions?": {
+      "comment": "Shared with Web: dashboard.projects.archiveAllTitle. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Archive project sessions?"
+            "value": "Archive project"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "归档项目会话？"
+            "value": "归档项目"
           }
         }
       }
     },
     "Archive these sessions?": {
+      "comment": "Shared with Web: dashboard.device.archiveAllTitle. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Archive these sessions?"
+            "value": "Archive sessions?"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "归档这些会话？"
+            "value": "归档会话？"
           }
         }
       }
     },
     "Archived": {
+      "comment": "Shared with Web: dashboard.device.archived. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -1136,6 +1249,7 @@
       }
     },
     "Cancel": {
+      "comment": "Shared with Web: common.cancel. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -1186,23 +1300,6 @@
         }
       }
     },
-    "Choose a folder to start a new session.": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Choose a folder to start a new session."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "选择一个目录，开始新会话。"
-          }
-        }
-      }
-    },
     "Choose an avatar image before uploading.": {
       "extractionState": "manual",
       "localizations": {
@@ -1221,18 +1318,19 @@
       }
     },
     "Choose an image smaller than 8 MB.": {
+      "comment": "Shared with Web: pages.settings.avatarTooLarge. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Choose an image smaller than 8 MB."
+            "value": "Image must be 8 MB or smaller."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "请选择小于 8 MB 的图片。"
+            "value": "图片必须小于或等于 8 MB。"
           }
         }
       }
@@ -1254,23 +1352,6 @@
         }
       }
     },
-    "Choose another filter or start a new session.": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Choose another filter or start a new session."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "请选择其他筛选条件，或开始新会话。"
-          }
-        }
-      }
-    },
     "Choose at least one file to upload.": {
       "extractionState": "manual",
       "localizations": {
@@ -1284,6 +1365,24 @@
           "stringUnit": {
             "state": "translated",
             "value": "请至少选择一个文件上传。"
+          }
+        }
+      }
+    },
+    "Choose how to connect %@ to your account.": {
+      "comment": "Shared with Web: dashboard.pairDevice.methodDescription. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choose how to connect %@ to your account."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "选择一种方式，将 %@ 连接到您的账号。"
           }
         }
       }
@@ -1306,18 +1405,19 @@
       }
     },
     "Choose photo": {
+      "comment": "Shared with Web: pages.settings.avatarEmpty. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Choose photo"
+            "value": "Choose an image"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "选择照片"
+            "value": "选择图片"
           }
         }
       }
@@ -1357,6 +1457,7 @@
       }
     },
     "Close": {
+      "comment": "Shared with Web: common.close. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -1374,6 +1475,7 @@
       }
     },
     "Code sent. Check your inbox.": {
+      "comment": "Shared with Web: auth.emailCode.sent. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -1476,6 +1578,7 @@
       }
     },
     "Configure %@": {
+      "comment": "Shared with Web: dashboard.device.configureRuntime. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -1493,12 +1596,13 @@
       }
     },
     "Confirm Login": {
+      "comment": "Shared with Web: common.mobileConfirm. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Confirm Login"
+            "value": "Confirm sign-in"
           }
         },
         "zh-Hans": {
@@ -1527,6 +1631,7 @@
       }
     },
     "Confirm password": {
+      "comment": "Shared with Web: pages.settings.confirmPassword. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -1680,6 +1785,7 @@
       }
     },
     "Copied": {
+      "comment": "Shared with Web: common.copied. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -1714,12 +1820,13 @@
       }
     },
     "Copy device ID": {
+      "comment": "Shared with Web: dashboard.actions.copyDeviceId. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Copy device ID"
+            "value": "Copy Device ID"
           }
         },
         "zh-Hans": {
@@ -1731,12 +1838,13 @@
       }
     },
     "Copy path": {
+      "comment": "Shared with Web: dashboard.panels.files.copyPath. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Copy path"
+            "value": "Copy Path"
           }
         },
         "zh-Hans": {
@@ -1765,12 +1873,13 @@
       }
     },
     "Copy session ID": {
+      "comment": "Shared with Web: dashboard.actions.copySessionId. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Copy session ID"
+            "value": "Copy Session ID"
           }
         },
         "zh-Hans": {
@@ -1850,6 +1959,7 @@
       }
     },
     "Create": {
+      "comment": "Shared with Web: common.create. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -1866,24 +1976,8 @@
         }
       }
     },
-    "Create a project to choose where your agents work.": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Create a project to choose where your agents work."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "创建项目，选择 Agent 的工作目录。"
-          }
-        }
-      }
-    },
     "Create project": {
+      "comment": "Shared with Web: dashboard.projects.create. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -1952,23 +2046,25 @@
       }
     },
     "Custom model": {
+      "comment": "Shared with Web: dashboard.new.model. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Custom model"
+            "value": "Model"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "自定义模型"
+            "value": "模型"
           }
         }
       }
     },
     "Dark": {
+      "comment": "Shared with Web: pages.settings.dark. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -1986,6 +2082,7 @@
       }
     },
     "Delete": {
+      "comment": "Shared with Web: common.delete. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -2003,6 +2100,7 @@
       }
     },
     "Delete device": {
+      "comment": "Shared with Web: dashboard.device.deleteDevice. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -2054,18 +2152,19 @@
       }
     },
     "Delete this device?": {
+      "comment": "Shared with Web: dashboard.device.deleteTitle. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Delete this device?"
+            "value": "Delete device?"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "删除这台设备？"
+            "value": "删除设备？"
           }
         }
       }
@@ -2139,6 +2238,7 @@
       }
     },
     "Device name": {
+      "comment": "Shared with Web: dashboard.device.deviceName. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -2150,7 +2250,7 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "设备名称"
+            "value": "设备名"
           }
         }
       }
@@ -2173,6 +2273,7 @@
       }
     },
     "Devices": {
+      "comment": "Shared with Web: common.sections.devices. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -2224,6 +2325,7 @@
       }
     },
     "Disconnected": {
+      "comment": "Shared with Web: common.disconnected. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -2258,6 +2360,7 @@
       }
     },
     "Display name": {
+      "comment": "Shared with Web: dashboard.device.customModelDisplayName. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -2292,6 +2395,7 @@
       }
     },
     "Done": {
+      "comment": "Shared with Web: common.done. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -2309,6 +2413,7 @@
       }
     },
     "Effort ID": {
+      "comment": "Shared with Web: dashboard.device.customEffortId. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -2360,6 +2465,7 @@
       }
     },
     "Email verification code": {
+      "comment": "Shared with Web: auth.emailCode.label. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -2377,12 +2483,13 @@
       }
     },
     "Empty Folder": {
+      "comment": "Shared with Web: preview.emptyDirectory. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Empty Folder"
+            "value": "This folder is empty"
           }
         },
         "zh-Hans": {
@@ -2598,6 +2705,7 @@
       }
     },
     "Files": {
+      "comment": "Shared with Web: dashboard.panels.files.title. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -2615,6 +2723,7 @@
       }
     },
     "Gateway API key": {
+      "comment": "Shared with Web: dashboard.device.modelGatewayApiKey. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -2632,6 +2741,7 @@
       }
     },
     "Gateway URL": {
+      "comment": "Shared with Web: dashboard.device.modelGatewayBaseUrl. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -2683,6 +2793,7 @@
       }
     },
     "Home 目录": {
+      "comment": "Shared with Web: dashboard.workspacePicker.home. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -2716,23 +2827,6 @@
         }
       }
     },
-    "Inherited variable will be removed.": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Inherited variable will be removed."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "将移除继承的环境变量。"
-          }
-        }
-      }
-    },
     "Input": {
       "extractionState": "manual",
       "localizations": {
@@ -2751,6 +2845,7 @@
       }
     },
     "Instance name": {
+      "comment": "Shared with Web: dashboard.device.runtimeName. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -2785,6 +2880,7 @@
       }
     },
     "Language": {
+      "comment": "Shared with Web: pages.settings.language. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -2802,6 +2898,7 @@
       }
     },
     "Light": {
+      "comment": "Shared with Web: pages.settings.light. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -2853,35 +2950,37 @@
       }
     },
     "Loading email settings…": {
+      "comment": "Shared with Web: common.loading. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Loading email settings…"
+            "value": "Loading..."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "正在加载邮箱设置…"
+            "value": "加载中..."
           }
         }
       }
     },
     "Loading files...": {
+      "comment": "Shared with Web: common.loading. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Loading files..."
+            "value": "Loading..."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "正在加载文件…"
+            "value": "加载中..."
           }
         }
       }
@@ -2938,12 +3037,13 @@
       }
     },
     "Log In": {
+      "comment": "Shared with Web: auth.login.submit. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Log In"
+            "value": "Sign in"
           }
         },
         "zh-Hans": {
@@ -3006,23 +3106,25 @@
       }
     },
     "Match the device appearance.": {
+      "comment": "Shared with Web: pages.settings.autoDescription. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Match the device appearance."
+            "value": "Follow system"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "跟随设备外观。"
+            "value": "跟随系统"
           }
         }
       }
     },
     "Member": {
+      "comment": "Shared with Web: common.member. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -3057,6 +3159,7 @@
       }
     },
     "Model ID": {
+      "comment": "Shared with Web: dashboard.device.customModelId. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -3159,6 +3262,7 @@
       }
     },
     "New password": {
+      "comment": "Shared with Web: pages.settings.newPassword. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -3176,6 +3280,7 @@
       }
     },
     "New session": {
+      "comment": "Shared with Web: common.newSession. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -3210,6 +3315,7 @@
       }
     },
     "No custom models.": {
+      "comment": "Shared with Web: dashboard.device.noCustomModels. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -3227,23 +3333,25 @@
       }
     },
     "No devices": {
+      "comment": "Shared with Web: common.empty.noDevicesShort. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "No devices"
+            "value": "No devices."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "没有设备"
+            "value": "无设备。"
           }
         }
       }
     },
     "No environment overrides.": {
+      "comment": "Shared with Web: dashboard.device.noEnvironmentOverrides. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -3278,35 +3386,37 @@
       }
     },
     "No projects yet": {
+      "comment": "Shared with Web: dashboard.device.noProjects. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "No projects yet"
+            "value": "No projects yet."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "暂无项目"
+            "value": "暂无项目。"
           }
         }
       }
     },
     "No sessions here": {
+      "comment": "Shared with Web: dashboard.device.noSessions. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "No sessions here"
+            "value": "No sessions."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "这里还没有会话"
+            "value": "没有会话。"
           }
         }
       }
@@ -3329,29 +3439,31 @@
       }
     },
     "No workspaces yet": {
+      "comment": "Shared with Web: dashboard.device.noWorkspaces. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "No workspaces yet"
+            "value": "No workspaces yet."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "还没有工作目录"
+            "value": "还没有工作目录。"
           }
         }
       }
     },
     "Not verified": {
+      "comment": "Shared with Web: pages.settings.profile.unverified. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Not verified"
+            "value": "Unverified"
           }
         },
         "zh-Hans": {
@@ -3363,6 +3475,7 @@
       }
     },
     "OK": {
+      "comment": "Shared with Web: common.ok. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -3380,12 +3493,13 @@
       }
     },
     "Offline": {
+      "comment": "Shared with Web: dashboard.device.offline. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Offline"
+            "value": "offline"
           }
         },
         "zh-Hans": {
@@ -3397,12 +3511,13 @@
       }
     },
     "Online": {
+      "comment": "Shared with Web: dashboard.device.online. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Online"
+            "value": "online"
           }
         },
         "zh-Hans": {
@@ -3431,6 +3546,7 @@
       }
     },
     "Open": {
+      "comment": "Shared with Web: dashboard.actions.open. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -3482,18 +3598,19 @@
       }
     },
     "Open sidebar": {
+      "comment": "Shared with Web: dashboard.actions.expand. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Open sidebar"
+            "value": "Expand sidebar"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "打开侧栏"
+            "value": "展开侧栏"
           }
         }
       }
@@ -3533,6 +3650,7 @@
       }
     },
     "Pair device": {
+      "comment": "Shared with Web: common.actions.pairDevice. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -3550,6 +3668,7 @@
       }
     },
     "Password": {
+      "comment": "Shared with Web: pages.settings.password. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -3567,6 +3686,7 @@
       }
     },
     "Password must be at least 8 characters.": {
+      "comment": "Shared with Web: pages.settings.passwordTooShort. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -3584,6 +3704,7 @@
       }
     },
     "Passwords do not match.": {
+      "comment": "Shared with Web: pages.settings.passwordMismatch. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -3618,6 +3739,7 @@
       }
     },
     "Pin": {
+      "comment": "Shared with Web: dashboard.actions.pin. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -3635,6 +3757,7 @@
       }
     },
     "Pinned": {
+      "comment": "Shared with Web: common.sections.pinned. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -3669,18 +3792,19 @@
       }
     },
     "Profile photo": {
+      "comment": "Shared with Web: pages.settings.changeAvatar. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Profile photo"
+            "value": "Change avatar"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "头像"
+            "value": "更换头像"
           }
         }
       }
@@ -3703,12 +3827,13 @@
       }
     },
     "Project actions": {
+      "comment": "Shared with Web: dashboard.projects.options. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Project actions"
+            "value": "Project options"
           }
         },
         "zh-Hans": {
@@ -3737,6 +3862,7 @@
       }
     },
     "Projects": {
+      "comment": "Shared with Web: dashboard.device.projects. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -3754,12 +3880,13 @@
       }
     },
     "QR Code Login": {
+      "comment": "Shared with Web: dashboard.mobileConnections.scanTitle. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "QR Code Login"
+            "value": "Scan to sign in"
           }
         },
         "zh-Hans": {
@@ -3805,12 +3932,13 @@
       }
     },
     "Reasoning efforts": {
+      "comment": "Shared with Web: dashboard.device.customModelEfforts. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Reasoning efforts"
+            "value": "Efforts"
           }
         },
         "zh-Hans": {
@@ -3822,12 +3950,13 @@
       }
     },
     "Recent": {
+      "comment": "Shared with Web: common.sections.recents. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Recent"
+            "value": "Recents"
           }
         },
         "zh-Hans": {
@@ -3839,6 +3968,7 @@
       }
     },
     "Remove effort": {
+      "comment": "Shared with Web: dashboard.device.removeCustomEffort. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -3856,6 +3986,7 @@
       }
     },
     "Remove inherited variable": {
+      "comment": "Shared with Web: dashboard.device.removeInherited. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -3873,57 +4004,61 @@
       }
     },
     "Remove model": {
+      "comment": "Shared with Web: dashboard.device.removeCustomModel. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Remove model"
+            "value": "Remove custom model"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "移除模型"
+            "value": "删除自定义模型"
           }
         }
       }
     },
     "Remove profile photo": {
+      "comment": "Shared with Web: pages.settings.removeAvatar. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Remove profile photo"
+            "value": "Remove"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "移除头像"
+            "value": "移除"
           }
         }
       }
     },
     "Remove variable": {
+      "comment": "Shared with Web: dashboard.device.removeEnvironmentVariable. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Remove variable"
+            "value": "Remove environment variable"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "移除变量"
+            "value": "删除环境变量"
           }
         }
       }
     },
     "Rename": {
+      "comment": "Shared with Web: dashboard.actions.rename. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -3975,6 +4110,7 @@
       }
     },
     "Rename session": {
+      "comment": "Shared with Web: dashboard.session.renameTitle. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -4009,23 +4145,25 @@
       }
     },
     "Resend in %lld s": {
+      "comment": "Shared with Web: auth.emailCode.retry. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Resend in %lld s"
+            "value": "Resend in %llds"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "%lld 秒后可重新发送"
+            "value": "%lld 秒后重发"
           }
         }
       }
     },
     "Reset all defaults": {
+      "comment": "Shared with Web: dashboard.device.resetAllDefaults. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -4043,57 +4181,61 @@
       }
     },
     "Restore": {
+      "comment": "Shared with Web: dashboard.actions.unarchive. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Restore"
+            "value": "Unarchive"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "恢复"
+            "value": "取消归档"
           }
         }
       }
     },
     "Restore all in scope": {
+      "comment": "Shared with Web: dashboard.device.unarchiveAll. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Restore all in scope"
+            "value": "Unarchive all"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "恢复范围内全部会话"
+            "value": "全部取消归档"
           }
         }
       }
     },
     "Restore these sessions?": {
+      "comment": "Shared with Web: dashboard.device.unarchiveAllTitle. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Restore these sessions?"
+            "value": "Unarchive sessions?"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "恢复这些会话？"
+            "value": "取消归档会话？"
           }
         }
       }
     },
     "Retry": {
+      "comment": "Shared with Web: common.retry. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -4195,6 +4337,24 @@
         }
       }
     },
+    "Run this command in the terminal on %@ to connect it to your account automatically.": {
+      "comment": "Shared with Web: dashboard.pairDevice.commandStepDescription. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Run this command in the terminal on %@ to connect it to your account automatically."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在 %@ 的终端中运行下方命令，设备会自动连接到您的账号。"
+          }
+        }
+      }
+    },
     "Running": {
       "extractionState": "manual",
       "localizations": {
@@ -4213,6 +4373,7 @@
       }
     },
     "Save": {
+      "comment": "Shared with Web: common.save. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -4298,18 +4459,19 @@
       }
     },
     "Select sessions": {
+      "comment": "Shared with Web: dashboard.device.select. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Select sessions"
+            "value": "Select"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "选择会话"
+            "value": "选择"
           }
         }
       }
@@ -4332,12 +4494,13 @@
       }
     },
     "Send verification code": {
+      "comment": "Shared with Web: auth.emailCode.send. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Send verification code"
+            "value": "Send code"
           }
         },
         "zh-Hans": {
@@ -4349,6 +4512,7 @@
       }
     },
     "Server": {
+      "comment": "Shared with Web: common.server. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -4366,12 +4530,13 @@
       }
     },
     "Server URL": {
+      "comment": "Shared with Web: dashboard.pairDevice.serverAddress. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Server URL"
+            "value": "Server address"
           }
         },
         "zh-Hans": {
@@ -4400,6 +4565,7 @@
       }
     },
     "Session ID": {
+      "comment": "Shared with Web: dashboard.session.sessionId. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -4417,18 +4583,19 @@
       }
     },
     "Session actions": {
+      "comment": "Shared with Web: dashboard.actions.sessionOptions. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Session actions"
+            "value": "Session options"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "会话操作"
+            "value": "会话选项"
           }
         }
       }
@@ -4468,6 +4635,7 @@
       }
     },
     "Sessions": {
+      "comment": "Shared with Web: common.sessions. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -4485,6 +4653,7 @@
       }
     },
     "Settings": {
+      "comment": "Shared with Web: pages.settings.title. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -4604,6 +4773,7 @@
       }
     },
     "Sign out": {
+      "comment": "Shared with Web: common.actions.signOut. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -4621,18 +4791,19 @@
       }
     },
     "Sign out?": {
+      "comment": "Shared with Web: common.signOut.title. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Sign out?"
+            "value": "Sign out"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "退出登录？"
+            "value": "退出登录"
           }
         }
       }
@@ -4723,12 +4894,13 @@
       }
     },
     "System": {
+      "comment": "Shared with Web: pages.settings.autoDescription. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "System"
+            "value": "Follow system"
           }
         },
         "zh-Hans": {
@@ -5385,6 +5557,24 @@
         }
       }
     },
+    "The workspace “%@” already belongs to “%@”. Continuing will rename that project to “%@” instead of creating a duplicate. Its sessions and settings will be preserved.": {
+      "comment": "Shared with Web: dashboard.projects.workspaceConflictDescription. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The workspace “%1$@” already belongs to “%2$@”. Continuing will rename that project to “%3$@” instead of creating a duplicate. Its sessions and settings will be preserved."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "工作目录“%1$@”已属于项目“%2$@”。继续后不会创建新项目，而会把现有项目重命名为“%3$@”；项目内的会话和设置都会保留。"
+          }
+        }
+      }
+    },
     "This QR code is not a valid Agents Anywhere login code.": {
       "extractionState": "manual",
       "localizations": {
@@ -5522,18 +5712,19 @@
       }
     },
     "This model has no custom reasoning efforts.": {
+      "comment": "Shared with Web: dashboard.device.noCustomEfforts. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "This model has no custom reasoning efforts."
+            "value": "No efforts configured."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "此模型没有自定义推理强度。"
+            "value": "未设置推理强度。"
           }
         }
       }
@@ -5556,18 +5747,19 @@
       }
     },
     "This service accepts email without a verification code.": {
+      "comment": "Shared with Web: pages.settings.profile.verificationDisabled. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "This service accepts email without a verification code."
+            "value": "Email codes are disabled by the administrator. Saving marks the address as verified."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "此服务允许直接使用邮箱，无需验证码。"
+            "value": "管理员未开启邮箱验证码，保存后邮箱直接标记为已验证。"
           }
         }
       }
@@ -5589,19 +5781,20 @@
         }
       }
     },
-    "This workspace folder has no files.": {
+    "This will permanently remove %@ and all its associated data. This action cannot be undone.": {
+      "comment": "Shared with Web: dashboard.device.deleteDescription. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "This workspace folder has no files."
+            "value": "This will permanently remove %@ and all its associated data. This action cannot be undone."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "此工作目录中没有文件。"
+            "value": "这会永久移除 %@ 以及所有关联数据。此操作不可撤销。"
           }
         }
       }
@@ -5624,18 +5817,19 @@
       }
     },
     "Unable to Load Files": {
+      "comment": "Shared with Web: dashboard.workspacePicker.loadFailed. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Unable to Load Files"
+            "value": "Failed to load directory."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "无法加载文件"
+            "value": "无法加载目录。"
           }
         }
       }
@@ -5675,6 +5869,7 @@
       }
     },
     "Unpin": {
+      "comment": "Shared with Web: dashboard.actions.unpin. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -5692,6 +5887,7 @@
       }
     },
     "Untitled session": {
+      "comment": "Shared with Web: pages.settings.archivedUntitled. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -5709,18 +5905,19 @@
       }
     },
     "Use at least 8 characters. Changing the password does not sign out this device.": {
+      "comment": "Shared with Web: pages.settings.newPasswordDescription. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Use at least 8 characters. Changing the password does not sign out this device."
+            "value": "Use at least 8 characters."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "请使用至少 8 个字符。更改密码不会使这台设备退出登录。"
+            "value": "至少使用 8 个字符。"
           }
         }
       }
@@ -5760,6 +5957,7 @@
       }
     },
     "Value": {
+      "comment": "Shared with Web: dashboard.device.environmentValue. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -5794,6 +5992,7 @@
       }
     },
     "Variable name": {
+      "comment": "Shared with Web: dashboard.device.environmentName. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -5828,6 +6027,7 @@
       }
     },
     "Verified": {
+      "comment": "Shared with Web: pages.settings.profile.verified. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -5845,6 +6045,7 @@
       }
     },
     "Version": {
+      "comment": "Shared with Web: common.version. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -5896,12 +6097,13 @@
       }
     },
     "Waiting for approval": {
+      "comment": "Shared with Web: dashboard.sessionStatus.waitingApproval. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Waiting for approval"
+            "value": "Waiting approval"
           }
         },
         "zh-Hans": {
@@ -6015,23 +6217,25 @@
       }
     },
     "Your saved credentials will be removed from this device. You will need to sign in again to reconnect.": {
+      "comment": "Shared with Web: common.signOut.description. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Your saved credentials will be removed from this device. You will need to sign in again to reconnect."
+            "value": "You will need to sign in again to access this instance."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "将从此设备移除保存的凭据，下次连接需要重新登录。"
+            "value": "你需要重新登录才能访问此实例。"
           }
         }
       }
     },
     "Zoom": {
+      "comment": "Shared with Web: pages.settings.avatarZoom. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -6048,9 +6252,117 @@
         }
       }
     },
-    "dashboard.device.runtimeConfigComponents.customModels.description": {
+    "dashboard.device.agentRuntimes": {
+      "comment": "Shared with Web: dashboard.device.agentRuntimes. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
-      "comment": "Shared with Web and runtime schema metadata.",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Agent runtimes"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Agent Runtime"
+          }
+        }
+      }
+    },
+    "dashboard.device.archiveSelected": {
+      "comment": "Shared with Web: dashboard.device.archiveSelected. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Archive selected"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "归档已选择"
+          }
+        }
+      }
+    },
+    "dashboard.device.availableRuntimeTypes": {
+      "comment": "Shared with Web: dashboard.device.availableRuntimeTypes. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Available to add"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "可添加"
+          }
+        }
+      }
+    },
+    "dashboard.device.configure": {
+      "comment": "Shared with Web: dashboard.device.configure. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Configure"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "配置"
+          }
+        }
+      }
+    },
+    "dashboard.device.customEffortDisplayName": {
+      "comment": "Shared with Web: dashboard.device.customEffortDisplayName. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Effort name"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "强度名称"
+          }
+        }
+      }
+    },
+    "dashboard.device.hideModelGatewayApiKey": {
+      "comment": "Shared with Web: dashboard.device.hideModelGatewayApiKey. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hide gateway API key"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "隐藏 Gateway API Key"
+          }
+        }
+      }
+    },
+    "dashboard.device.runtimeConfigComponents.customModels.description": {
+      "comment": "Shared with Web: dashboard.device.runtimeConfigComponents.customModels.description. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
@@ -6067,8 +6379,8 @@
       }
     },
     "dashboard.device.runtimeConfigComponents.customModels.label": {
+      "comment": "Shared with Web: dashboard.device.runtimeConfigComponents.customModels.label. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
-      "comment": "Shared with Web and runtime schema metadata.",
       "localizations": {
         "en": {
           "stringUnit": {
@@ -6085,8 +6397,8 @@
       }
     },
     "dashboard.device.runtimeConfigComponents.keyValue.description": {
+      "comment": "Shared with Web: dashboard.device.runtimeConfigComponents.keyValue.description. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
-      "comment": "Shared with Web and runtime schema metadata.",
       "localizations": {
         "en": {
           "stringUnit": {
@@ -6103,8 +6415,8 @@
       }
     },
     "dashboard.device.runtimeConfigComponents.keyValue.label": {
+      "comment": "Shared with Web: dashboard.device.runtimeConfigComponents.keyValue.label. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
-      "comment": "Shared with Web and runtime schema metadata.",
       "localizations": {
         "en": {
           "stringUnit": {
@@ -6121,8 +6433,8 @@
       }
     },
     "dashboard.device.runtimeConfigComponents.modelGateway.description": {
+      "comment": "Shared with Web: dashboard.device.runtimeConfigComponents.modelGateway.description. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
-      "comment": "Shared with Web and runtime schema metadata.",
       "localizations": {
         "en": {
           "stringUnit": {
@@ -6139,8 +6451,8 @@
       }
     },
     "dashboard.device.runtimeConfigComponents.modelGateway.label": {
+      "comment": "Shared with Web: dashboard.device.runtimeConfigComponents.modelGateway.label. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
-      "comment": "Shared with Web and runtime schema metadata.",
       "localizations": {
         "en": {
           "stringUnit": {
@@ -6157,8 +6469,8 @@
       }
     },
     "dashboard.device.runtimeConfigComponents.modelGateway.requiredDescription": {
+      "comment": "Shared with Web: dashboard.device.runtimeConfigComponents.modelGateway.requiredDescription. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
-      "comment": "Shared with Web and runtime schema metadata.",
       "localizations": {
         "en": {
           "stringUnit": {
@@ -6175,8 +6487,8 @@
       }
     },
     "dashboard.device.runtimeConfigComponents.modelGateway.requiredLabel": {
+      "comment": "Shared with Web: dashboard.device.runtimeConfigComponents.modelGateway.requiredLabel. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
-      "comment": "Shared with Web and runtime schema metadata.",
       "localizations": {
         "en": {
           "stringUnit": {
@@ -6193,8 +6505,8 @@
       }
     },
     "dashboard.device.runtimeConfigFields.claudeExecutablePath.description": {
+      "comment": "Shared with Web: dashboard.device.runtimeConfigFields.claudeExecutablePath.description. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
-      "comment": "Shared with Web and runtime schema metadata.",
       "localizations": {
         "en": {
           "stringUnit": {
@@ -6211,8 +6523,8 @@
       }
     },
     "dashboard.device.runtimeConfigFields.claudeExecutablePath.label": {
+      "comment": "Shared with Web: dashboard.device.runtimeConfigFields.claudeExecutablePath.label. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
-      "comment": "Shared with Web and runtime schema metadata.",
       "localizations": {
         "en": {
           "stringUnit": {
@@ -6229,8 +6541,8 @@
       }
     },
     "dashboard.device.runtimeConfigFields.codexExecutablePath.description": {
+      "comment": "Shared with Web: dashboard.device.runtimeConfigFields.codexExecutablePath.description. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
-      "comment": "Shared with Web and runtime schema metadata.",
       "localizations": {
         "en": {
           "stringUnit": {
@@ -6247,8 +6559,8 @@
       }
     },
     "dashboard.device.runtimeConfigFields.codexExecutablePath.label": {
+      "comment": "Shared with Web: dashboard.device.runtimeConfigFields.codexExecutablePath.label. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
-      "comment": "Shared with Web and runtime schema metadata.",
       "localizations": {
         "en": {
           "stringUnit": {
@@ -6265,8 +6577,8 @@
       }
     },
     "dashboard.device.runtimeConfigFields.codexHome.description": {
+      "comment": "Shared with Web: dashboard.device.runtimeConfigFields.codexHome.description. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
-      "comment": "Shared with Web and runtime schema metadata.",
       "localizations": {
         "en": {
           "stringUnit": {
@@ -6283,8 +6595,8 @@
       }
     },
     "dashboard.device.runtimeConfigFields.codexHome.label": {
+      "comment": "Shared with Web: dashboard.device.runtimeConfigFields.codexHome.label. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
-      "comment": "Shared with Web and runtime schema metadata.",
       "localizations": {
         "en": {
           "stringUnit": {
@@ -6301,8 +6613,8 @@
       }
     },
     "dashboard.device.runtimeConfigFields.modelGatewayApiKey.description": {
+      "comment": "Shared with Web: dashboard.device.runtimeConfigFields.modelGatewayApiKey.description. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
-      "comment": "Shared with Web and runtime schema metadata.",
       "localizations": {
         "en": {
           "stringUnit": {
@@ -6319,8 +6631,8 @@
       }
     },
     "dashboard.device.runtimeConfigFields.modelGatewayApiKey.label": {
+      "comment": "Shared with Web: dashboard.device.runtimeConfigFields.modelGatewayApiKey.label. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
-      "comment": "Shared with Web and runtime schema metadata.",
       "localizations": {
         "en": {
           "stringUnit": {
@@ -6337,8 +6649,8 @@
       }
     },
     "dashboard.device.runtimeConfigFields.modelGatewayBaseUrl.description": {
+      "comment": "Shared with Web: dashboard.device.runtimeConfigFields.modelGatewayBaseUrl.description. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
-      "comment": "Shared with Web and runtime schema metadata.",
       "localizations": {
         "en": {
           "stringUnit": {
@@ -6355,8 +6667,8 @@
       }
     },
     "dashboard.device.runtimeConfigFields.modelGatewayBaseUrl.label": {
+      "comment": "Shared with Web: dashboard.device.runtimeConfigFields.modelGatewayBaseUrl.label. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
-      "comment": "Shared with Web and runtime schema metadata.",
       "localizations": {
         "en": {
           "stringUnit": {
@@ -6373,8 +6685,8 @@
       }
     },
     "dashboard.device.runtimeConfigFields.useSystemCodex.description": {
+      "comment": "Shared with Web: dashboard.device.runtimeConfigFields.useSystemCodex.description. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
-      "comment": "Shared with Web and runtime schema metadata.",
       "localizations": {
         "en": {
           "stringUnit": {
@@ -6391,8 +6703,8 @@
       }
     },
     "dashboard.device.runtimeConfigFields.useSystemCodex.label": {
+      "comment": "Shared with Web: dashboard.device.runtimeConfigFields.useSystemCodex.label. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
-      "comment": "Shared with Web and runtime schema metadata.",
       "localizations": {
         "en": {
           "stringUnit": {
@@ -6408,9 +6720,261 @@
         }
       }
     },
-    "dashboard.new.permissionModes.autoReview.description": {
+    "dashboard.device.runtimeNamePlaceholder": {
+      "comment": "Shared with Web: dashboard.device.runtimeNamePlaceholder. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
-      "comment": "Shared with Web and runtime schema metadata.",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Runtime instance name"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Runtime 实例名称"
+          }
+        }
+      }
+    },
+    "dashboard.device.runtimeStatus.available": {
+      "comment": "Shared with Web: dashboard.device.runtimeStatus.available. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Available"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "可用"
+          }
+        }
+      }
+    },
+    "dashboard.device.runtimeStatus.discovering": {
+      "comment": "Shared with Web: dashboard.device.runtimeStatus.discovering. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Discovering"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在发现"
+          }
+        }
+      }
+    },
+    "dashboard.device.runtimeStatus.error": {
+      "comment": "Shared with Web: dashboard.device.runtimeStatus.error. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Error"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "错误"
+          }
+        }
+      }
+    },
+    "dashboard.device.runtimeStatus.running": {
+      "comment": "Shared with Web: dashboard.device.runtimeStatus.running. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Running"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "运行中"
+          }
+        }
+      }
+    },
+    "dashboard.device.runtimeStatus.starting": {
+      "comment": "Shared with Web: dashboard.device.runtimeStatus.starting. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Starting"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "启动中"
+          }
+        }
+      }
+    },
+    "dashboard.device.runtimeStatus.stopped": {
+      "comment": "Shared with Web: dashboard.device.runtimeStatus.stopped. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Stopped"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已停止"
+          }
+        }
+      }
+    },
+    "dashboard.device.runtimeStatus.stopping": {
+      "comment": "Shared with Web: dashboard.device.runtimeStatus.stopping. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Stopping"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "停止中"
+          }
+        }
+      }
+    },
+    "dashboard.device.runtimeStatus.unavailable": {
+      "comment": "Shared with Web: dashboard.device.runtimeStatus.unavailable. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Unavailable"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "不可用"
+          }
+        }
+      }
+    },
+    "dashboard.device.runtimeStatus.unknown": {
+      "comment": "Shared with Web: dashboard.device.runtimeStatus.unknown. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Unknown"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未知"
+          }
+        }
+      }
+    },
+    "dashboard.device.runtimeStatus.validating": {
+      "comment": "Shared with Web: dashboard.device.runtimeStatus.validating. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Validating"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在验证"
+          }
+        }
+      }
+    },
+    "dashboard.device.showModelGatewayApiKey": {
+      "comment": "Shared with Web: dashboard.device.showModelGatewayApiKey. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Show gateway API key"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "显示 Gateway API Key"
+          }
+        }
+      }
+    },
+    "dashboard.device.unarchiveSelected": {
+      "comment": "Shared with Web: dashboard.device.unarchiveSelected. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Unarchive selected"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "取消归档已选择"
+          }
+        }
+      }
+    },
+    "dashboard.new.modelAndReasoning": {
+      "comment": "Shared with Web: dashboard.new.modelAndReasoning. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Model and reasoning"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "模型和推理强度"
+          }
+        }
+      }
+    },
+    "dashboard.new.permissionModes.autoReview.description": {
+      "comment": "Shared with Web: dashboard.new.permissionModes.autoReview.description. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
@@ -6427,8 +6991,8 @@
       }
     },
     "dashboard.new.permissionModes.autoReview.label": {
+      "comment": "Shared with Web: dashboard.new.permissionModes.autoReview.label. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
-      "comment": "Shared with Web and runtime schema metadata.",
       "localizations": {
         "en": {
           "stringUnit": {
@@ -6445,8 +7009,8 @@
       }
     },
     "dashboard.new.permissionModes.claude.acceptEdits.description": {
+      "comment": "Shared with Web: dashboard.new.permissionModes.claude.acceptEdits.description. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
-      "comment": "Shared with Web and runtime schema metadata.",
       "localizations": {
         "en": {
           "stringUnit": {
@@ -6463,8 +7027,8 @@
       }
     },
     "dashboard.new.permissionModes.claude.acceptEdits.label": {
+      "comment": "Shared with Web: dashboard.new.permissionModes.claude.acceptEdits.label. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
-      "comment": "Shared with Web and runtime schema metadata.",
       "localizations": {
         "en": {
           "stringUnit": {
@@ -6481,8 +7045,8 @@
       }
     },
     "dashboard.new.permissionModes.claude.auto.description": {
+      "comment": "Shared with Web: dashboard.new.permissionModes.claude.auto.description. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
-      "comment": "Shared with Web and runtime schema metadata.",
       "localizations": {
         "en": {
           "stringUnit": {
@@ -6499,8 +7063,8 @@
       }
     },
     "dashboard.new.permissionModes.claude.auto.label": {
+      "comment": "Shared with Web: dashboard.new.permissionModes.claude.auto.label. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
-      "comment": "Shared with Web and runtime schema metadata.",
       "localizations": {
         "en": {
           "stringUnit": {
@@ -6517,8 +7081,8 @@
       }
     },
     "dashboard.new.permissionModes.claude.bypassPermissions.description": {
+      "comment": "Shared with Web: dashboard.new.permissionModes.claude.bypassPermissions.description. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
-      "comment": "Shared with Web and runtime schema metadata.",
       "localizations": {
         "en": {
           "stringUnit": {
@@ -6535,8 +7099,8 @@
       }
     },
     "dashboard.new.permissionModes.claude.bypassPermissions.label": {
+      "comment": "Shared with Web: dashboard.new.permissionModes.claude.bypassPermissions.label. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
-      "comment": "Shared with Web and runtime schema metadata.",
       "localizations": {
         "en": {
           "stringUnit": {
@@ -6553,8 +7117,8 @@
       }
     },
     "dashboard.new.permissionModes.claude.default.description": {
+      "comment": "Shared with Web: dashboard.new.permissionModes.claude.default.description. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
-      "comment": "Shared with Web and runtime schema metadata.",
       "localizations": {
         "en": {
           "stringUnit": {
@@ -6571,8 +7135,8 @@
       }
     },
     "dashboard.new.permissionModes.claude.default.label": {
+      "comment": "Shared with Web: dashboard.new.permissionModes.claude.default.label. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
-      "comment": "Shared with Web and runtime schema metadata.",
       "localizations": {
         "en": {
           "stringUnit": {
@@ -6589,8 +7153,8 @@
       }
     },
     "dashboard.new.permissionModes.claude.dontAsk.description": {
+      "comment": "Shared with Web: dashboard.new.permissionModes.claude.dontAsk.description. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
-      "comment": "Shared with Web and runtime schema metadata.",
       "localizations": {
         "en": {
           "stringUnit": {
@@ -6607,8 +7171,8 @@
       }
     },
     "dashboard.new.permissionModes.claude.dontAsk.label": {
+      "comment": "Shared with Web: dashboard.new.permissionModes.claude.dontAsk.label. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
-      "comment": "Shared with Web and runtime schema metadata.",
       "localizations": {
         "en": {
           "stringUnit": {
@@ -6625,8 +7189,8 @@
       }
     },
     "dashboard.new.permissionModes.claude.plan.description": {
+      "comment": "Shared with Web: dashboard.new.permissionModes.claude.plan.description. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
-      "comment": "Shared with Web and runtime schema metadata.",
       "localizations": {
         "en": {
           "stringUnit": {
@@ -6643,8 +7207,8 @@
       }
     },
     "dashboard.new.permissionModes.claude.plan.label": {
+      "comment": "Shared with Web: dashboard.new.permissionModes.claude.plan.label. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
-      "comment": "Shared with Web and runtime schema metadata.",
       "localizations": {
         "en": {
           "stringUnit": {
@@ -6661,8 +7225,8 @@
       }
     },
     "dashboard.new.permissionModes.fullAccess.description": {
+      "comment": "Shared with Web: dashboard.new.permissionModes.fullAccess.description. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
-      "comment": "Shared with Web and runtime schema metadata.",
       "localizations": {
         "en": {
           "stringUnit": {
@@ -6679,8 +7243,8 @@
       }
     },
     "dashboard.new.permissionModes.fullAccess.label": {
+      "comment": "Shared with Web: dashboard.new.permissionModes.fullAccess.label. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
-      "comment": "Shared with Web and runtime schema metadata.",
       "localizations": {
         "en": {
           "stringUnit": {
@@ -6697,8 +7261,8 @@
       }
     },
     "dashboard.new.permissionModes.requestApproval.description": {
+      "comment": "Shared with Web: dashboard.new.permissionModes.requestApproval.description. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
-      "comment": "Shared with Web and runtime schema metadata.",
       "localizations": {
         "en": {
           "stringUnit": {
@@ -6715,8 +7279,8 @@
       }
     },
     "dashboard.new.permissionModes.requestApproval.label": {
+      "comment": "Shared with Web: dashboard.new.permissionModes.requestApproval.label. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
-      "comment": "Shared with Web and runtime schema metadata.",
       "localizations": {
         "en": {
           "stringUnit": {
@@ -6728,6 +7292,330 @@
           "stringUnit": {
             "state": "translated",
             "value": "请求批准"
+          }
+        }
+      }
+    },
+    "dashboard.new.typewriter.buildNext": {
+      "comment": "Shared with Web: dashboard.new.typewriter.buildNext. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "What should we build next?"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "接下来要构建什么？"
+          }
+        }
+      }
+    },
+    "dashboard.new.typewriter.focusedSession": {
+      "comment": "Shared with Web: dashboard.new.typewriter.focusedSession. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Start a focused session."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "开始一个专注会话。"
+          }
+        }
+      }
+    },
+    "dashboard.new.typewriter.giveTask": {
+      "comment": "Shared with Web: dashboard.new.typewriter.giveTask. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Give the agent a task."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "给 Agent 一个任务。"
+          }
+        }
+      }
+    },
+    "dashboard.new.typewriter.needsAttention": {
+      "comment": "Shared with Web: dashboard.new.typewriter.needsAttention. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "What needs attention?"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "哪里需要关注？"
+          }
+        }
+      }
+    },
+    "dashboard.new.typewriter.rightDevice": {
+      "comment": "Shared with Web: dashboard.new.typewriter.rightDevice. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Send work to the right device."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "把任务发送到合适的设备。"
+          }
+        }
+      }
+    },
+    "dashboard.new.typewriter.startWhere": {
+      "comment": "Shared with Web: dashboard.new.typewriter.startWhere. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Where should the agent start?"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Agent 应该从哪里开始？"
+          }
+        }
+      }
+    },
+    "dashboard.new.typewriter.startWorkspace": {
+      "comment": "Shared with Web: dashboard.new.typewriter.startWorkspace. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Start from a project."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "从一个项目开始。"
+          }
+        }
+      }
+    },
+    "dashboard.new.typewriter.workOn": {
+      "comment": "Shared with Web: dashboard.new.typewriter.workOn. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "What should we work on?"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "我们要处理什么？"
+          }
+        }
+      }
+    },
+    "dashboard.pairDevice.codeLabel": {
+      "comment": "Shared with Web: dashboard.pairDevice.codeLabel. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pair code from device"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "设备上的配对码"
+          }
+        }
+      }
+    },
+    "dashboard.pairDevice.codeStepTitle": {
+      "comment": "Shared with Web: dashboard.pairDevice.codeStepTitle. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pair with code"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "使用配对码配对"
+          }
+        }
+      }
+    },
+    "dashboard.pairDevice.commandStepTitle": {
+      "comment": "Shared with Web: dashboard.pairDevice.commandStepTitle. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Connect using a token"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "使用 Token 连接"
+          }
+        }
+      }
+    },
+    "dashboard.pairDevice.connectionDescription": {
+      "comment": "Shared with Web: dashboard.pairDevice.connectionDescription. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Connect your device using the desktop app or CLI."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "您可以通过桌面程序或 CLI 连接您的设备。"
+          }
+        }
+      }
+    },
+    "dashboard.pairDevice.nameDescription": {
+      "comment": "Shared with Web: dashboard.pairDevice.nameDescription. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Give your device a recognizable name, then choose a pairing method."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "为您的设备起一个容易辨认的名字，然后选择配对方式。"
+          }
+        }
+      }
+    },
+    "dashboard.pairDevice.namePlaceholder": {
+      "comment": "Shared with Web: dashboard.pairDevice.namePlaceholder. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "e.g. amber-finch"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "例如 amber-finch"
+          }
+        }
+      }
+    },
+    "dashboard.pairDevice.nameTitle": {
+      "comment": "Shared with Web: dashboard.pairDevice.nameTitle. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Name your device"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "命名设备"
+          }
+        }
+      }
+    },
+    "dashboard.pairDevice.tokenDescription": {
+      "comment": "Shared with Web: dashboard.pairDevice.tokenDescription. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Run a command containing a token on your device to connect directly."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在设备终端运行包含 Token 的命令，直接完成连接。"
+          }
+        }
+      }
+    },
+    "dashboard.projects.workspace": {
+      "comment": "Shared with Web: dashboard.projects.workspace. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Path"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "路径"
+          }
+        }
+      }
+    },
+    "dashboard.session.workspace": {
+      "comment": "Shared with Web: dashboard.session.workspace. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Workspace"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "工作目录"
           }
         }
       }
@@ -6766,24 +7654,8 @@
         }
       }
     },
-    "一个想法，就够了": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Start with an idea"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "一个想法，就够了"
-          }
-        }
-      }
-    },
     "上一级目录": {
+      "comment": "Shared with Web: common.parent. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -6795,7 +7667,7 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "上一级目录"
+            "value": "上级目录"
           }
         }
       }
@@ -6903,6 +7775,7 @@
       }
     },
     "下载": {
+      "comment": "Shared with Web: dashboard.panels.files.download. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -6920,35 +7793,37 @@
       }
     },
     "下载桌面应用": {
+      "comment": "Shared with Web: dashboard.pairDevice.githubReleases. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Download desktop app"
+            "value": "Download from GitHub Releases"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "下载桌面应用"
+            "value": "前往 GitHub Releases 下载"
           }
         }
       }
     },
     "为命令行设备命名": {
+      "comment": "Shared with Web: dashboard.pairDevice.nameTitle. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Name your command-line device"
+            "value": "Name your device"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "为命令行设备命名"
+            "value": "命名设备"
           }
         }
       }
@@ -6987,53 +7862,20 @@
         }
       }
     },
-    "今天，做点什么？": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "What shall we work on?"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "今天，做点什么？"
-          }
-        }
-      }
-    },
-    "从一个问题开始，让 Agent 和你一起找到答案。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Start with a question.\nFind an answer with your Agent."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "从一个问题开始，\n让 Agent 和你一起找到答案。"
-          }
-        }
-      }
-    },
     "从侧栏添加设备，连接后即可开始。": {
+      "comment": "Shared with Web: dashboard.workspacePicker.noOnlineDeviceDescription. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Add a device from the sidebar and connect it to get started."
+            "value": "Add a device before choosing a project or starting a session."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "从侧栏添加设备，连接后即可开始。"
+            "value": "添加设备后才能选择项目或开始会话。"
           }
         }
       }
@@ -7051,23 +7893,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "从这台设备已配置的实例中选择"
-          }
-        }
-      }
-    },
-    "从这里开始": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Start here"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "从这里开始"
           }
         }
       }
@@ -7090,6 +7915,7 @@
       }
     },
     "会话": {
+      "comment": "Shared with Web: common.sessions. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -7192,52 +8018,55 @@
       }
     },
     "会话文件": {
+      "comment": "Shared with Web: dashboard.session.files. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Session files"
+            "value": "Files"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "会话文件"
+            "value": "文件"
           }
         }
       }
     },
     "会话菜单": {
+      "comment": "Shared with Web: dashboard.actions.sessionOptions. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Session menu"
+            "value": "Session options"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "会话菜单"
+            "value": "会话选项"
           }
         }
       }
     },
     "会话详情": {
+      "comment": "Shared with Web: dashboard.session.overview. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Session details"
+            "value": "Session overview"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "会话详情"
+            "value": "会话概览"
           }
         }
       }
@@ -7277,6 +8106,7 @@
       }
     },
     "使用 Token": {
+      "comment": "Shared with Web: dashboard.pairDevice.tokenTitle. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -7311,6 +8141,7 @@
       }
     },
     "使用桌面程序": {
+      "comment": "Shared with Web: dashboard.pairDevice.commandWarningDesktop. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -7328,46 +8159,49 @@
       }
     },
     "使用此目录": {
+      "comment": "Shared with Web: dashboard.workspacePicker.usePath. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Use this directory"
+            "value": "Use this path"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "使用此目录"
+            "value": "使用此路径"
           }
         }
       }
     },
     "使用此项目并保存名称": {
+      "comment": "Shared with Web: dashboard.projects.workspaceConflictConfirm. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Use this project and save the name"
+            "value": "Continue and rename"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "使用此项目并保存名称"
+            "value": "继续并重命名"
           }
         }
       }
     },
     "使用配对码": {
+      "comment": "Shared with Web: dashboard.pairDevice.pairCodeTitle. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Use a pairing code"
+            "value": "Use pair code"
           }
         },
         "zh-Hans": {
@@ -7379,18 +8213,19 @@
       }
     },
     "例如 Agents Anywhere": {
+      "comment": "Shared with Web: dashboard.projects.namePlaceholder. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "For example, Agents Anywhere"
+            "value": "My project"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "例如 Agents Anywhere"
+            "value": "我的项目"
           }
         }
       }
@@ -7413,12 +8248,13 @@
       }
     },
     "侧边栏显示会话": {
+      "comment": "Shared with Web: pages.settings.desktopSidebarShowSessions. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Show sessions in sidebar"
+            "value": "Show sessions in the sidebar"
           }
         },
         "zh-Hans": {
@@ -7430,6 +8266,7 @@
       }
     },
     "保存": {
+      "comment": "Shared with Web: common.save. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -7463,23 +8300,6 @@
         }
       }
     },
-    "修一个问题，做一个功能，或探索新的方向。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Fix a bug, build a feature,\nor explore something new."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "修一个问题，做一个功能，\n或探索新的方向。"
-          }
-        }
-      }
-    },
     "修改": {
       "extractionState": "manual",
       "localizations": {
@@ -7498,18 +8318,19 @@
       }
     },
     "停止生成": {
+      "comment": "Shared with Web: dashboard.session.interrupt. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Stop generating"
+            "value": "Interrupt"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "停止生成"
+            "value": "中断"
           }
         }
       }
@@ -7532,18 +8353,19 @@
       }
     },
     "先在目标设备运行以下命令，再填写 CLI 显示的配对码。": {
+      "comment": "Shared with Web: dashboard.pairDevice.pairCommandHint. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Run this command on the device, then enter the pairing code shown by the CLI."
+            "value": "Run the command, then enter the 6-digit pairing code shown in the terminal below."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "先在目标设备运行以下命令，再填写 CLI 显示的配对码。"
+            "value": "运行命令后，将终端显示的 6 位配对码输入下方。"
           }
         }
       }
@@ -7600,6 +8422,7 @@
       }
     },
     "关闭接管": {
+      "comment": "Shared with Web: dashboard.session.takeoverDisableConfirm. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -7617,6 +8440,7 @@
       }
     },
     "关闭接管？": {
+      "comment": "Shared with Web: dashboard.session.takeoverDisableTitle. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -7651,18 +8475,19 @@
       }
     },
     "其他回答": {
+      "comment": "Shared with Web: dashboard.session.inputRequestOther. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Custom answer"
+            "value": "Other"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "其他回答"
+            "value": "其他"
           }
         }
       }
@@ -7684,53 +8509,20 @@
         }
       }
     },
-    "写下想做的事，和 Agent 一起把细节补全。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Share what you have in mind.\nWork out the details with an Agent."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "写下想做的事，\n和 Agent 一起把细节补全。"
-          }
-        }
-      }
-    },
-    "准备好，一起开工": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Let’s get to work"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "准备好，一起开工"
-          }
-        }
-      }
-    },
     "分享回复": {
+      "comment": "Shared with Web: dashboard.session.share. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Share reply"
+            "value": "Share"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "分享回复"
+            "value": "分享"
           }
         }
       }
@@ -7787,18 +8579,19 @@
       }
     },
     "创建一个项目，开始新的任务。": {
+      "comment": "Shared with Web: dashboard.projects.empty. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Create a project to start a new task."
+            "value": "No projects yet."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "创建一个项目，开始新的任务。"
+            "value": "还没有项目。"
           }
         }
       }
@@ -7838,6 +8631,7 @@
       }
     },
     "创建项目": {
+      "comment": "Shared with Web: dashboard.projects.create. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -7855,6 +8649,7 @@
       }
     },
     "删除": {
+      "comment": "Shared with Web: common.delete. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -7872,23 +8667,25 @@
       }
     },
     "删除这个 Agent 的配置？": {
+      "comment": "Shared with Web: dashboard.device.deleteRuntimeConfigTitle. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Delete this Agent configuration?"
+            "value": "Delete runtime configuration?"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "删除这个 Agent 的配置？"
+            "value": "删除 Runtime 配置？"
           }
         }
       }
     },
     "删除配置": {
+      "comment": "Shared with Web: dashboard.device.deleteRuntimeConfigAction. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -7940,6 +8737,7 @@
       }
     },
     "到底部": {
+      "comment": "Shared with Web: dashboard.session.bottom. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -7974,91 +8772,97 @@
       }
     },
     "刷新状态": {
+      "comment": "Shared with Web: common.refresh. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Refresh state"
+            "value": "Refresh"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "刷新状态"
+            "value": "刷新"
           }
         }
       }
     },
     "加载会话…": {
+      "comment": "Shared with Web: common.status.loadingSessions. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Loading sessions…"
+            "value": "Loading sessions..."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "加载会话…"
+            "value": "加载会话中..."
           }
         }
       }
     },
     "加载对话选项…": {
+      "comment": "Shared with Web: common.loading. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Loading conversation options…"
+            "value": "Loading..."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "加载对话选项…"
+            "value": "加载中..."
           }
         }
       }
     },
     "加载更多会话": {
+      "comment": "Shared with Web: pages.settings.archivedLoadMore. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Load more sessions"
+            "value": "Load more"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "加载更多会话"
+            "value": "加载更多"
           }
         }
       }
     },
     "加载更多归档会话": {
+      "comment": "Shared with Web: pages.settings.archivedLoadMore. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Load more archived sessions"
+            "value": "Load more"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "加载更多归档会话"
+            "value": "加载更多"
           }
         }
       }
     },
     "加载较早的消息": {
+      "comment": "Shared with Web: dashboard.session.loadOlder. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -8070,24 +8874,25 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "加载较早的消息"
+            "value": "加载更早消息"
           }
         }
       }
     },
     "加载预览…": {
+      "comment": "Shared with Web: common.loading. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Loading preview…"
+            "value": "Loading..."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "加载预览…"
+            "value": "加载中..."
           }
         }
       }
@@ -8127,6 +8932,25 @@
       }
     },
     "发送": {
+      "comment": "Shared with Web: dashboard.new.sendTask. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Send task"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "发送任务"
+          }
+        }
+      }
+    },
+    "发送消息": {
+      "comment": "Shared with Web: dashboard.session.send. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -8139,23 +8963,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "发送"
-          }
-        }
-      }
-    },
-    "发送消息": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Send message"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "发送消息"
           }
         }
       }
@@ -8178,6 +8985,7 @@
       }
     },
     "取消": {
+      "comment": "Shared with Web: common.cancel. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -8212,6 +9020,7 @@
       }
     },
     "取消置顶": {
+      "comment": "Shared with Web: dashboard.actions.unpin. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -8263,6 +9072,7 @@
       }
     },
     "只读": {
+      "comment": "Shared with Web: dashboard.new.readOnly. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -8292,23 +9102,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "只读模式，开启接管后可以继续发送消息。"
-          }
-        }
-      }
-    },
-    "可以现在配置 Agent，也可以稍后在设备页面添加。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Configure an Agent now, or add one later from the device page."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "可以现在配置 Agent，也可以稍后在设备页面添加。"
           }
         }
       }
@@ -8347,23 +9140,6 @@
         }
       }
     },
-    "同一种 Agent 可以有不同实例；这里显示的是设备上的实际实例名称。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "An Agent type can have multiple instances. These are the actual instance names on this device."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "同一种 Agent 可以有不同实例；这里显示的是设备上的实际实例名称。"
-          }
-        }
-      }
-    },
     "向 Agent 发送消息": {
       "extractionState": "manual",
       "localizations": {
@@ -8382,18 +9158,19 @@
       }
     },
     "启用 %@": {
+      "comment": "Shared with Web: dashboard.device.activateRuntime. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Enable %@"
+            "value": "Activate %@"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "启用 %@"
+            "value": "激活 %@"
           }
         }
       }
@@ -8415,36 +9192,20 @@
         }
       }
     },
-    "命令包含设备凭据，请仅在你信任的设备上使用。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "This command contains device credentials. Use it only on a device you trust."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "命令包含设备凭据，请仅在你信任的设备上使用。"
-          }
-        }
-      }
-    },
     "命令行": {
+      "comment": "Shared with Web: dashboard.pairDevice.cliTitle. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Command line"
+            "value": "Connect using the command line"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "命令行"
+            "value": "使用命令行连接"
           }
         }
       }
@@ -8586,52 +9347,37 @@
       }
     },
     "在电脑上安装桌面应用，使用以下服务器地址登录当前账号。连接后，可以在设备管理中添加 Agent。": {
+      "comment": "Shared with Web: dashboard.pairDevice.desktopInstallStepLogin. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Install the desktop app on your computer and sign in to the same account using this server address. Then add Agents in device management."
+            "value": "Open the desktop app, connect to the service you are using here, and sign in with the same account."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "在电脑上安装桌面应用，使用以下服务器地址登录当前账号。连接后，可以在设备管理中添加 Agent。"
+            "value": "打开桌面程序，连接到您当前使用的服务，并使用同一个账号登录。"
           }
         }
       }
     },
     "在电脑上安装桌面应用，并登录同一账号。设备会自动显示在侧栏。": {
+      "comment": "Shared with Web: dashboard.pairDevice.desktopDescription. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Install the desktop app on your computer and sign in to the same account. The device will appear in the sidebar."
+            "value": "For the best experience on Windows or macOS, connect using the desktop app."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "在电脑上安装桌面应用，并登录同一账号。设备会自动显示在侧栏。"
-          }
-        }
-      }
-    },
-    "在目标设备运行以下命令，然后保持 CLI 运行。即使关闭此页面，我们也会继续等待设备连接。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Run this command on the target device and keep the CLI running. We will keep waiting for the device even if you close this page."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "在目标设备运行以下命令，然后保持 CLI 运行。即使关闭此页面，我们也会继续等待设备连接。"
+            "value": "如果您使用 Windows 或 macOS，搭配桌面程序连接可以获得最佳体验。"
           }
         }
       }
@@ -8671,18 +9417,19 @@
       }
     },
     "在设备上运行命令，将生成的六位配对码填回这里。": {
+      "comment": "Shared with Web: dashboard.pairDevice.pairCodeDescription. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Run the command on the device and enter its six-digit pairing code here."
+            "value": "Run a command on your device, then enter the generated 6-digit pairing code here."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "在设备上运行命令，将生成的六位配对码填回这里。"
+            "value": "在设备终端运行命令，将生成的 6 位配对码填回这里。"
           }
         }
       }
@@ -8739,6 +9486,7 @@
       }
     },
     "复制代码": {
+      "comment": "Shared with Web: dashboard.session.copyCode. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -8756,6 +9504,7 @@
       }
     },
     "复制会话 ID": {
+      "comment": "Shared with Web: dashboard.actions.copySessionId. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -8773,40 +9522,43 @@
       }
     },
     "复制内容": {
+      "comment": "Shared with Web: dashboard.session.copyItemText. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Copy content"
+            "value": "Copy text"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "复制内容"
+            "value": "复制文本"
           }
         }
       }
     },
     "复制原始 JSON": {
+      "comment": "Shared with Web: dashboard.session.copyItemJson. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Copy raw JSON"
+            "value": "Copy item JSON"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "复制原始 JSON"
+            "value": "复制 item JSON"
           }
         }
       }
     },
     "复制命令": {
+      "comment": "Shared with Web: common.copyCommand. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -8824,6 +9576,7 @@
       }
     },
     "复制回复": {
+      "comment": "Shared with Web: dashboard.session.copyReply. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -8841,6 +9594,7 @@
       }
     },
     "复制条目 ID": {
+      "comment": "Shared with Web: dashboard.session.copyItemId. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -8852,12 +9606,13 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "复制条目 ID"
+            "value": "复制 item ID"
           }
         }
       }
     },
     "复制路径": {
+      "comment": "Shared with Web: dashboard.panels.files.copyPath. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -8875,18 +9630,19 @@
       }
     },
     "外部 Session ID": {
+      "comment": "Shared with Web: dashboard.session.externalId. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "External session ID"
+            "value": "External ID"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "外部 Session ID"
+            "value": "外部 ID"
           }
         }
       }
@@ -8909,6 +9665,7 @@
       }
     },
     "好": {
+      "comment": "Shared with Web: common.ok. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -8920,29 +9677,31 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "好"
+            "value": "好的"
           }
         }
       }
     },
     "如果使用 Windows 或 macOS，桌面程序的连接和日常使用更方便。": {
+      "comment": "Shared with Web: dashboard.pairDevice.commandWarningFallback. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "On Windows or macOS, the desktop app makes connecting and everyday use easier."
+            "value": "On Windows or macOS, we recommend the desktop app for easier setup and everyday use."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "如果使用 Windows 或 macOS，桌面程序的连接和日常使用更方便。"
+            "value": "如果您使用 Windows 或 macOS，更推荐使用桌面程序，连接和日常使用会更方便。"
           }
         }
       }
     },
     "实例名称": {
+      "comment": "Shared with Web: dashboard.device.runtimeName. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -8977,52 +9736,55 @@
       }
     },
     "对话选项": {
+      "comment": "Shared with Web: dashboard.new.selectionSettings. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Conversation options"
+            "value": "Settings"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "对话选项"
+            "value": "设置"
           }
         }
       }
     },
     "导出已加载时间线 JSON": {
+      "comment": "Shared with Web: dashboard.session.exportMemoryTimelineJson. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Export loaded timeline as JSON"
+            "value": "Export memory JSON"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "导出已加载时间线 JSON"
+            "value": "导出内存 JSON"
           }
         }
       }
     },
     "导出服务器时间线 JSON": {
+      "comment": "Shared with Web: dashboard.session.exportRemoteTimelineJson. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Export server timeline as JSON"
+            "value": "Export remote JSON"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "导出服务器时间线 JSON"
+            "value": "导出远程 JSON"
           }
         }
       }
@@ -9045,18 +9807,19 @@
       }
     },
     "尚未发现可用 Agent。在设备上安装并登录 Agent 后，重新发现即可添加。": {
+      "comment": "Shared with Web: dashboard.device.noDiscoveredRuntimes. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "No Agents found. Install an Agent and sign in on the device, then discover again to add it."
+            "value": "No additional runtimes were discovered."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "尚未发现可用 Agent。在设备上安装并登录 Agent 后，重新发现即可添加。"
+            "value": "没有发现其他 Runtime。"
           }
         }
       }
@@ -9096,6 +9859,7 @@
       }
     },
     "展开": {
+      "comment": "Shared with Web: dashboard.session.expandMessage. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -9130,6 +9894,7 @@
       }
     },
     "工作目录": {
+      "comment": "Shared with Web: dashboard.device.workspaces. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -9231,23 +9996,6 @@
         }
       }
     },
-    "已加载导出保留当前缓存窗口；服务器导出会单独分页读取完整时间线，不改变你正在查看的位置。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Exporting loaded messages keeps the current cache window. Server export reads the complete timeline separately without changing your scroll position."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "已加载导出保留当前缓存窗口；服务器导出会单独分页读取完整时间线，不改变你正在查看的位置。"
-          }
-        }
-      }
-    },
     "已加载条目": {
       "extractionState": "manual",
       "localizations": {
@@ -9283,6 +10031,7 @@
       }
     },
     "已复制": {
+      "comment": "Shared with Web: common.copied. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -9351,6 +10100,7 @@
       }
     },
     "已开启": {
+      "comment": "Shared with Web: common.enabled. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -9362,7 +10112,7 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "已开启"
+            "value": "已启用"
           }
         }
       }
@@ -9487,6 +10237,7 @@
       }
     },
     "开启接管": {
+      "comment": "Shared with Web: dashboard.session.takeoverEnableConfirm. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -9504,6 +10255,7 @@
       }
     },
     "开启接管？": {
+      "comment": "Shared with Web: dashboard.session.takeoverEnableTitle. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -9538,6 +10290,7 @@
       }
     },
     "归档": {
+      "comment": "Shared with Web: dashboard.actions.archive. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -9555,6 +10308,7 @@
       }
     },
     "归档会话": {
+      "comment": "Shared with Web: pages.settings.archivedSessions. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -9566,41 +10320,43 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "归档会话"
+            "value": "已归档会话"
           }
         }
       }
     },
     "归档这个项目的会话？": {
+      "comment": "Shared with Web: dashboard.projects.archiveAllTitle. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Archive sessions in this project?"
+            "value": "Archive project"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "归档这个项目的会话？"
+            "value": "归档项目"
           }
         }
       }
     },
     "归档项目会话": {
+      "comment": "Shared with Web: dashboard.projects.archiveAll. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Archive project sessions"
+            "value": "Archive project"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "归档项目会话"
+            "value": "归档该项目"
           }
         }
       }
@@ -9623,18 +10379,19 @@
       }
     },
     "当前可用的 Agent 都已添加。安装其他 Agent 后，可以重新发现。": {
+      "comment": "Shared with Web: dashboard.device.noRuntimeTypes. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "All available Agents have been added. Install another Agent, then discover again."
+            "value": "No more runtime types can be added on this device."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "当前可用的 Agent 都已添加。安装其他 Agent 后，可以重新发现。"
+            "value": "这个设备暂时没有可继续添加的 Runtime 类型。"
           }
         }
       }
@@ -9674,18 +10431,19 @@
       }
     },
     "当前设置未保存，请稍后重试。": {
+      "comment": "Shared with Web: dashboard.session.updateSelectionsFailed. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Settings were not saved. Try again later."
+            "value": "Failed to update model or permission."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "当前设置未保存，请稍后重试。"
+            "value": "无法更新模型或权限。"
           }
         }
       }
@@ -9725,6 +10483,7 @@
       }
     },
     "思考强度": {
+      "comment": "Shared with Web: common.reasoningEffort. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -9736,12 +10495,13 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "思考强度"
+            "value": "推理强度"
           }
         }
       }
     },
     "思考过程": {
+      "comment": "Shared with Web: dashboard.session.reasoning. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -9753,7 +10513,7 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "思考过程"
+            "value": "推理"
           }
         }
       }
@@ -9793,18 +10553,19 @@
       }
     },
     "恢复会话": {
+      "comment": "Shared with Web: pages.settings.archivedUnarchive. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Restore session"
+            "value": "Unarchive"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "恢复会话"
+            "value": "取消归档"
           }
         }
       }
@@ -9827,18 +10588,19 @@
       }
     },
     "打开侧栏": {
+      "comment": "Shared with Web: dashboard.actions.expand. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Open sidebar"
+            "value": "Expand sidebar"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "打开侧栏"
+            "value": "展开侧栏"
           }
         }
       }
@@ -9928,23 +10690,6 @@
         }
       }
     },
-    "把想法变成进展": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Turn ideas into progress"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "把想法变成进展"
-          }
-        }
-      }
-    },
     "拒绝": {
       "extractionState": "manual",
       "localizations": {
@@ -9963,18 +10708,19 @@
       }
     },
     "按目录自动填写名称，重名时添加数字后缀。也可以自行修改。": {
+      "comment": "Shared with Web: dashboard.projects.nameDescription. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "The name is suggested from the directory, with a number added for duplicates. You can also edit it."
+            "value": "Generated from the directory. You can change it."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "按目录自动填写名称，重名时添加数字后缀。也可以自行修改。"
+            "value": "根据目录自动生成，可自行修改。"
           }
         }
       }
@@ -10014,6 +10760,7 @@
       }
     },
     "接管": {
+      "comment": "Shared with Web: dashboard.session.takeover. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -10031,18 +10778,19 @@
       }
     },
     "接管会话": {
+      "comment": "Shared with Web: dashboard.session.takeover. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Take over session"
+            "value": "Takeover"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "接管会话"
+            "value": "接管"
           }
         }
       }
@@ -10094,23 +10842,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "推荐"
-          }
-        }
-      }
-    },
-    "描述你的目标，其余的可以一步步来。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Describe what you want to do.\nWe can take it step by step."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "描述你的目标，\n其余的可以一步步来。"
           }
         }
       }
@@ -10201,6 +10932,7 @@
       }
     },
     "文件": {
+      "comment": "Shared with Web: dashboard.panels.files.title. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -10269,6 +11001,7 @@
       }
     },
     "文件管理": {
+      "comment": "Shared with Web: dashboard.panels.files.title. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -10280,24 +11013,25 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "文件管理"
+            "value": "文件"
           }
         }
       }
     },
     "文件预览": {
+      "comment": "Shared with Web: preview.title. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "File preview"
+            "value": "Preview"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "文件预览"
+            "value": "预览"
           }
         }
       }
@@ -10337,6 +11071,7 @@
       }
     },
     "新建会话": {
+      "comment": "Shared with Web: common.newSession. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -10348,12 +11083,13 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "新建会话"
+            "value": "新会话"
           }
         }
       }
     },
     "无": {
+      "comment": "Shared with Web: dashboard.session.none. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -10371,52 +11107,55 @@
       }
     },
     "无法恢复会话，请稍后重试。": {
+      "comment": "Shared with Web: pages.settings.archivedUnarchiveFailed. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Could not restore the session. Try again later."
+            "value": "Couldn't unarchive session."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "无法恢复会话，请稍后重试。"
+            "value": "取消归档失败。"
           }
         }
       }
     },
     "无法更改设置": {
+      "comment": "Shared with Web: dashboard.session.updateSelectionsFailed. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Could not change settings"
+            "value": "Failed to update model or permission."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "无法更改设置"
+            "value": "无法更新模型或权限。"
           }
         }
       }
     },
     "无法添加 Agent": {
+      "comment": "Shared with Web: dashboard.device.createRuntimeFailed. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Could not add Agent"
+            "value": "Failed to create runtime instance."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "无法添加 Agent"
+            "value": "无法创建 Runtime 实例。"
           }
         }
       }
@@ -10456,18 +11195,19 @@
       }
     },
     "无法预览文件": {
+      "comment": "Shared with Web: preview.unavailable. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Could not preview file"
+            "value": "Preview unavailable"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "无法预览文件"
+            "value": "无法预览"
           }
         }
       }
@@ -10558,6 +11298,7 @@
       }
     },
     "未命名会话": {
+      "comment": "Shared with Web: dashboard.session.untitled. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -10626,6 +11367,7 @@
       }
     },
     "未读": {
+      "comment": "Shared with Web: dashboard.sessionStatus.unread. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -10660,18 +11402,19 @@
       }
     },
     "权限": {
+      "comment": "Shared with Web: dashboard.new.permissionMode. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Permissions"
+            "value": "Permission mode"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "权限"
+            "value": "权限模式"
           }
         }
       }
@@ -10762,23 +11505,25 @@
       }
     },
     "标识与时间线": {
+      "comment": "Shared with Web: dashboard.session.timeline. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Identifiers and timeline"
+            "value": "Timeline"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "标识与时间线"
+            "value": "时间线"
           }
         }
       }
     },
     "标题": {
+      "comment": "Shared with Web: common.title. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -10796,23 +11541,25 @@
       }
     },
     "桌面应用": {
+      "comment": "Shared with Web: dashboard.pairDevice.desktopTitle. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Desktop app"
+            "value": "Connect using the desktop app"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "桌面应用"
+            "value": "使用桌面程序连接"
           }
         }
       }
     },
     "模型": {
+      "comment": "Shared with Web: dashboard.new.model. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -10881,52 +11628,55 @@
       }
     },
     "正在准备导出…": {
+      "comment": "Shared with Web: dashboard.session.exportingTimeline. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Preparing export…"
+            "value": "Exporting..."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "正在准备导出…"
+            "value": "导出中..."
           }
         }
       }
     },
     "正在创建会话…": {
+      "comment": "Shared with Web: dashboard.new.creating. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Creating session…"
+            "value": "Creating session..."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "正在创建会话…"
+            "value": "正在创建会话..."
           }
         }
       }
     },
     "正在刷新 Agent": {
+      "comment": "Shared with Web: dashboard.device.discoveringRuntimes. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Refreshing Agents"
+            "value": "Discovering…"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "正在刷新 Agent"
+            "value": "正在发现…"
           }
         }
       }
@@ -11136,35 +11886,37 @@
       }
     },
     "正在查找设备…": {
+      "comment": "Shared with Web: common.status.loadingDevices. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Finding devices…"
+            "value": "Loading devices..."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "正在查找设备…"
+            "value": "加载设备中..."
           }
         }
       }
     },
     "正在检查 Agent…": {
+      "comment": "Shared with Web: dashboard.device.discoveringRuntimes. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Checking Agents…"
+            "value": "Discovering…"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "正在检查 Agent…"
+            "value": "正在发现…"
           }
         }
       }
@@ -11187,18 +11939,19 @@
       }
     },
     "正在解析设备家目录…": {
+      "comment": "Shared with Web: dashboard.workspacePicker.resolvingHome. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Resolving the device home directory…"
+            "value": "Resolving home..."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "正在解析设备家目录…"
+            "value": "正在解析 Home..."
           }
         }
       }
@@ -11289,18 +12042,19 @@
       }
     },
     "此方式需要会使用终端以及 uv / uvx 命令行工具。": {
+      "comment": "Shared with Web: dashboard.pairDevice.commandWarningDescription. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "This method requires familiarity with the terminal and the uv / uvx command-line tools."
+            "value": "This method requires some technical experience. You should be comfortable using the terminal and uv / uvx command-line tools."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "此方式需要会使用终端以及 uv / uvx 命令行工具。"
+            "value": "此方式需要一定的计算机基础，您需要会使用终端以及 uv / uvx 命令行工具。"
           }
         }
       }
@@ -11323,23 +12077,25 @@
       }
     },
     "没有设备": {
+      "comment": "Shared with Web: common.empty.noDevicesShort. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "No devices"
+            "value": "No devices."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "没有设备"
+            "value": "无设备。"
           }
         }
       }
     },
     "浏览文件系统": {
+      "comment": "Shared with Web: common.browseFilesystem. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -11357,18 +12113,19 @@
       }
     },
     "浏览目录": {
+      "comment": "Shared with Web: common.browseFilesystem. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Browse directories"
+            "value": "Browse filesystem"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "浏览目录"
+            "value": "浏览文件系统"
           }
         }
       }
@@ -11425,18 +12182,19 @@
       }
     },
     "添加你要使用的 Agent": {
+      "comment": "Shared with Web: dashboard.pairDevice.agentsTitle. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Add the Agents you want to use"
+            "value": "Choose agents for this device"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "添加你要使用的 Agent"
+            "value": "为这台设备选择 Agent"
           }
         }
       }
@@ -11510,6 +12268,7 @@
       }
     },
     "状态": {
+      "comment": "Shared with Web: dashboard.session.status. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -11539,23 +12298,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "生成未完成"
-          }
-        }
-      }
-    },
-    "用于这个对话接下来发送的消息。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Applies to the next messages sent in this conversation."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "用于这个对话接下来发送的消息。"
           }
         }
       }
@@ -11612,6 +12354,7 @@
       }
     },
     "确定要使用命令行吗？": {
+      "comment": "Shared with Web: dashboard.pairDevice.commandWarningTitle. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -11646,6 +12389,7 @@
       }
     },
     "移除 %@": {
+      "comment": "Shared with Web: dashboard.new.removeAttachmentNamed. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -11680,18 +12424,19 @@
       }
     },
     "稍后配置": {
+      "comment": "Shared with Web: dashboard.pairDevice.skipAgents. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Set up later"
+            "value": "Skip for now"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "稍后配置"
+            "value": "暂不添加"
           }
         }
       }
@@ -11799,6 +12544,7 @@
       }
     },
     "等待批准": {
+      "comment": "Shared with Web: dashboard.sessionStatus.waitingApproval. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -11816,18 +12562,19 @@
       }
     },
     "等待设备连接…": {
+      "comment": "Shared with Web: dashboard.pairDevice.waitingOnline. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Waiting for device…"
+            "value": "Waiting for device to come online..."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "等待设备连接…"
+            "value": "等待设备上线..."
           }
         }
       }
@@ -11884,6 +12631,7 @@
       }
     },
     "继续": {
+      "comment": "Shared with Web: common.continue. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -11918,6 +12666,7 @@
       }
     },
     "继续使用命令行": {
+      "comment": "Shared with Web: dashboard.pairDevice.commandWarningConfirm. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -11935,6 +12684,7 @@
       }
     },
     "编辑项目": {
+      "comment": "Shared with Web: dashboard.projects.editTitle. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -11952,18 +12702,19 @@
       }
     },
     "编辑项目时，设备和工作目录保持不变。": {
+      "comment": "Shared with Web: dashboard.projects.editDescription. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "The device and working directory stay fixed when editing a project."
+            "value": "You can rename this project. Its device and workspace cannot be changed."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "编辑项目时，设备和工作目录保持不变。"
+            "value": "你可以修改项目名称；设备和工作区创建后不能更换。"
           }
         }
       }
@@ -12054,6 +12805,7 @@
       }
     },
     "置顶": {
+      "comment": "Shared with Web: dashboard.actions.pin. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -12104,24 +12856,8 @@
         }
       }
     },
-    "让下一步更简单": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Make the next step easier"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "让下一步更简单"
-          }
-        }
-      }
-    },
     "设备": {
+      "comment": "Shared with Web: common.device. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -12139,18 +12875,19 @@
       }
     },
     "设备上的完整路径": {
+      "comment": "Shared with Web: dashboard.workspacePicker.enterPath. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Full path on the device"
+            "value": "Enter path..."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "设备上的完整路径"
+            "value": "输入路径..."
           }
         }
       }
@@ -12173,6 +12910,7 @@
       }
     },
     "设备名称": {
+      "comment": "Shared with Web: dashboard.device.deviceName. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -12184,7 +12922,7 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "设备名称"
+            "value": "设备名"
           }
         }
       }
@@ -12224,35 +12962,37 @@
       }
     },
     "设备已连接": {
+      "comment": "Shared with Web: dashboard.pairDevice.successTitle. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Device connected"
+            "value": "Device paired"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "设备已连接"
+            "value": "设备已配对"
           }
         }
       }
     },
     "设备已连接。选择 Agent 后，就可以在项目中开始任务。": {
+      "comment": "Shared with Web: dashboard.pairDevice.agentsDescription. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Device connected. Choose an Agent to start a task in a project."
+            "value": "Quick add generates a name and uses the default configuration. You can adjust it on the device page later."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "设备已连接。选择 Agent 后，就可以在项目中开始任务。"
+            "value": "快速添加会自动生成名称并使用默认配置，之后可在设备页面调整。"
           }
         }
       }
@@ -12428,18 +13168,19 @@
       }
     },
     "询问 Agents": {
+      "comment": "Shared with Web: dashboard.new.placeholder. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Ask Agents"
+            "value": "Describe the task..."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "询问 Agents"
+            "value": "描述任务..."
           }
         }
       }
@@ -12547,35 +13288,37 @@
       }
     },
     "请选择一个已成功加载的目录。": {
+      "comment": "Shared with Web: dashboard.workspacePicker.directoryRequired. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Select a directory that has loaded successfully."
+            "value": "Choose a directory."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "请选择一个已成功加载的目录。"
+            "value": "请选择一个目录。"
           }
         }
       }
     },
     "请选择在线设备后创建项目。": {
+      "comment": "Shared with Web: dashboard.projects.onlineDeviceRequired. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Select an online device to create a project."
+            "value": "Connect a device before adding a project."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "请选择在线设备后创建项目。"
+            "value": "请先连接一台设备，再添加项目。"
           }
         }
       }
@@ -12615,6 +13358,7 @@
       }
     },
     "运行中": {
+      "comment": "Shared with Web: dashboard.sessionStatus.running. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -12632,23 +13376,25 @@
       }
     },
     "运行目标": {
+      "comment": "Shared with Web: dashboard.new.deviceAndAgent. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Runtime target"
+            "value": "Device and agent"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "运行目标"
+            "value": "设备和 Agent"
           }
         }
       }
     },
     "运行设备": {
+      "comment": "Shared with Web: common.device. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -12660,12 +13406,13 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "运行设备"
+            "value": "设备"
           }
         }
       }
     },
     "返回": {
+      "comment": "Shared with Web: common.back. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -12717,35 +13464,37 @@
       }
     },
     "还没有可用设备": {
+      "comment": "Shared with Web: dashboard.workspacePicker.noOnlineDeviceTitle. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "No devices available"
+            "value": "No device is online"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "还没有可用设备"
+            "value": "当前没有在线设备"
           }
         }
       }
     },
     "还没有项目，可以创建一个项目并选择工作目录。": {
+      "comment": "Shared with Web: dashboard.projects.empty. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "No projects yet. Create one and choose its working directory."
+            "value": "No projects yet."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "还没有项目，可以创建一个项目并选择工作目录。"
+            "value": "还没有项目。"
           }
         }
       }
@@ -12768,18 +13517,19 @@
       }
     },
     "这个 Agent 的实例数量已达上限。": {
+      "comment": "Shared with Web: dashboard.device.runtimeInstanceLimitReached. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "This Agent has reached its instance limit."
+            "value": "This runtime type cannot create another instance."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "这个 Agent 的实例数量已达上限。"
+            "value": "这个 Runtime 类型暂时不能再创建实例。"
           }
         }
       }
@@ -12802,52 +13552,55 @@
       }
     },
     "这个目录已有项目": {
+      "comment": "Shared with Web: dashboard.projects.workspaceConflictTitle. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "A project already uses this directory"
+            "value": "This workspace already has a project"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "这个目录已有项目"
+            "value": "该工作目录已有项目"
           }
         }
       }
     },
     "这台设备上的项目": {
+      "comment": "Shared with Web: dashboard.workspacePicker.projects. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Projects on this device"
+            "value": "Projects"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "这台设备上的项目"
+            "value": "项目"
           }
         }
       }
     },
     "这台设备尚无已配置的 Agent。": {
+      "comment": "Shared with Web: dashboard.device.noConfiguredRuntimes. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "No Agents have been configured on this device yet."
+            "value": "No runtimes have been configured."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "这台设备尚无已配置的 Agent。"
+            "value": "还没有配置 Runtime。"
           }
         }
       }
@@ -12938,18 +13691,19 @@
       }
     },
     "连接设备": {
+      "comment": "Shared with Web: dashboard.pairDevice.claim. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Connect device"
+            "value": "Claim"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "连接设备"
+            "value": "认领"
           }
         }
       }
@@ -12984,69 +13738,73 @@
       }
     },
     "适合通过 CLI 连接远程主机或无界面的设备。": {
+      "comment": "Shared with Web: dashboard.pairDevice.cliDescription. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Connect a remote host or a device without a display using the CLI."
+            "value": "Connect your device with a single command. Suggested for Linux."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "适合通过 CLI 连接远程主机或无界面的设备。"
+            "value": "使用一行命令连接您的设备，建议用于 Linux。"
           }
         }
       }
     },
     "选择 Agent": {
+      "comment": "Shared with Web: common.select. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Choose Agent"
+            "value": "Select agent"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "选择 Agent"
+            "value": "选择代理"
           }
         }
       }
     },
     "选择一个已就绪的 Agent": {
+      "comment": "Shared with Web: common.select. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Choose a ready Agent"
+            "value": "Select agent"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "选择一个已就绪的 Agent"
+            "value": "选择代理"
           }
         }
       }
     },
     "选择任务所属的项目": {
+      "comment": "Shared with Web: dashboard.workspacePicker.selectProject. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Choose a project for your task"
+            "value": "Select a project"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "选择任务所属的项目"
+            "value": "选择项目"
           }
         }
       }
@@ -13069,12 +13827,13 @@
       }
     },
     "选择工作目录": {
+      "comment": "Shared with Web: dashboard.workspacePicker.title. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Choose working directory"
+            "value": "Choose a workspace folder"
           }
         },
         "zh-Hans": {
@@ -13086,57 +13845,25 @@
       }
     },
     "选择已有项目或创建项目": {
+      "comment": "Shared with Web: dashboard.workspacePicker.selectProject. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Choose an existing project or create one"
+            "value": "Select a project"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "选择已有项目或创建项目"
-          }
-        }
-      }
-    },
-    "选择模型后，可继续选择它支持的思考强度。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "After choosing a model, select one of its supported reasoning efforts."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "选择模型后，可继续选择它支持的思考强度。"
-          }
-        }
-      }
-    },
-    "选择熟悉的设备和工具，开始下一件想做的事。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Pick your device and tools.\nStart the next thing on your list."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "选择熟悉的设备和工具，\n开始下一件想做的事。"
+            "value": "选择项目"
           }
         }
       }
     },
     "选择设备": {
+      "comment": "Shared with Web: dashboard.projects.selectDevice. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -13154,52 +13881,37 @@
       }
     },
     "选择设备和 Agent": {
+      "comment": "Shared with Web: dashboard.new.deviceAndAgent. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Choose device and Agent"
+            "value": "Device and agent"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "选择设备和 Agent"
-          }
-        }
-      }
-    },
-    "选择设备和 Agent，把想做的事交给它。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Choose a device and Agent.\nLeave the task to them."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "选择设备和 Agent，\n把想做的事交给它。"
+            "value": "设备和 Agent"
           }
         }
       }
     },
     "选择设备的连接方式": {
+      "comment": "Shared with Web: dashboard.pairDevice.connectionTitle. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Choose how to connect the device"
+            "value": "Connect your device"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "选择设备的连接方式"
+            "value": "连接您的设备"
           }
         }
       }
@@ -13222,12 +13934,13 @@
       }
     },
     "选择配对方式": {
+      "comment": "Shared with Web: dashboard.pairDevice.methodTitle. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Choose a pairing method"
+            "value": "Choose pairing method"
           }
         },
         "zh-Hans": {
@@ -13239,6 +13952,7 @@
       }
     },
     "选择项目": {
+      "comment": "Shared with Web: dashboard.workspacePicker.selectProject. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -13256,6 +13970,7 @@
       }
     },
     "配置 %@": {
+      "comment": "Shared with Web: dashboard.device.configureRuntime. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -13273,40 +13988,43 @@
       }
     },
     "配置 Agent": {
+      "comment": "Shared with Web: dashboard.pairDevice.agentsTitle. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Configure Agent"
+            "value": "Choose agents for this device"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "配置 Agent"
+            "value": "为这台设备选择 Agent"
           }
         }
       }
     },
     "配置后添加": {
+      "comment": "Shared with Web: dashboard.device.configureAndStart. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Configure and add"
+            "value": "Configure and start"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "配置后添加"
+            "value": "配置并启动"
           }
         }
       }
     },
     "重命名": {
+      "comment": "Shared with Web: dashboard.actions.rename. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -13324,52 +14042,55 @@
       }
     },
     "重命名 Agent": {
+      "comment": "Shared with Web: dashboard.device.renameRuntimeTitle. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Rename Agent"
+            "value": "Rename runtime instance"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "重命名 Agent"
+            "value": "重命名 Runtime 实例"
           }
         }
       }
     },
     "重新加载": {
+      "comment": "Shared with Web: common.refresh. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Reload"
+            "value": "Refresh"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "重新加载"
+            "value": "刷新"
           }
         }
       }
     },
     "重新发现 Agent": {
+      "comment": "Shared with Web: dashboard.device.refreshRuntimes. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Discover Agents again"
+            "value": "Refresh"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "重新发现 Agent"
+            "value": "刷新"
           }
         }
       }
@@ -13426,6 +14147,7 @@
       }
     },
     "重试": {
+      "comment": "Shared with Web: common.retry. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -13476,24 +14198,8 @@
         }
       }
     },
-    "项目选项": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Project options"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "项目选项"
-          }
-        }
-      }
-    },
     "项目": {
+      "comment": "Shared with Web: dashboard.sections.projects. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -13511,18 +14217,19 @@
       }
     },
     "项目关联这个目录，不会在设备上新建文件夹。": {
+      "comment": "Shared with Web: dashboard.projects.createDescription. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "This registers the directory as a project. It does not create a folder on the device."
+            "value": "Choose a device and working directory, then confirm the project name. The project is created when you submit."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "项目关联这个目录，不会在设备上新建文件夹。"
+            "value": "先选择设备和工作目录，再确认项目名称。提交后创建项目。"
           }
         }
       }
@@ -13545,6 +14252,7 @@
       }
     },
     "项目名称": {
+      "comment": "Shared with Web: dashboard.projects.name. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -13595,6 +14303,24 @@
         }
       }
     },
+    "项目选项": {
+      "comment": "Shared with Web: dashboard.projects.options. Sync with ios/scripts/web_copy.py.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Project options"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "项目操作"
+          }
+        }
+      }
+    },
     "预览已截断，复制可获取完整内容": {
       "extractionState": "manual",
       "localizations": {
@@ -13630,6 +14356,7 @@
       }
     },
     "默认": {
+      "comment": "Shared with Web: dashboard.new.defaultReasoning. Sync with ios/scripts/web_copy.py.",
       "extractionState": "manual",
       "localizations": {
         "en": {

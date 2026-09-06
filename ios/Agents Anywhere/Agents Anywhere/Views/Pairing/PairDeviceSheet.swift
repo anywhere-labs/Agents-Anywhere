@@ -51,6 +51,7 @@ struct PairDeviceSheet: View {
                 else if step != .connectionMethod { cliInstructions(step) }
                 else {
                     Text(String(localized: "选择设备的连接方式")).font(.title2.bold())
+                    Text(String(localized: "dashboard.pairDevice.connectionDescription")).foregroundStyle(.secondary)
                     AppGlassButton(String(localized: "桌面应用"), systemImage: "desktopcomputer", style: .prominent) {
                         path.append(.desktop)
                     }
@@ -68,11 +69,13 @@ struct PairDeviceSheet: View {
     private var nameForm: some View {
         Form {
             Section {
-                TextField(String(localized: "设备名称"), text: $name)
+                TextField(String(localized: "dashboard.pairDevice.namePlaceholder"), text: $name)
                     .textFieldStyle(.plain).autocorrectionDisabled()
                     .submitLabel(.continue).onSubmit(continuePairing)
             } header: {
-                Text(String(localized: "为命令行设备命名")).textCase(nil)
+                Text(String(localized: "设备名称")).textCase(nil)
+            } footer: {
+                Text(String(localized: "dashboard.pairDevice.nameDescription"))
             }
             Section {
                 AppGlassButton(String(localized: "继续"), systemImage: "arrow.right", style: .prominent,
@@ -101,7 +104,7 @@ struct PairDeviceSheet: View {
                         Text(credential.connector.name).textCase(nil)
                     }.listRowBackground(Color.clear)
                     Section {
-                        OneTimeCodeField(code: $code, title: String(localized: "使用配对码"))
+                        OneTimeCodeField(code: $code, title: String(localized: "dashboard.pairDevice.codeLabel"))
                     }
                     Section {
                         AppGlassButton(String(localized: "连接设备"), systemImage: "link", style: .prominent, isLoading: isWorking) {
@@ -137,10 +140,10 @@ struct PairDeviceSheet: View {
         case .connectionMethod: String(localized: "添加设备")
         case .desktop: String(localized: "桌面应用")
         case .cliConfirm: String(localized: "命令行")
-        case .name: String(localized: "设备名称")
+        case .name: String(localized: "dashboard.pairDevice.nameTitle")
         case .cliMethod: String(localized: "选择配对方式")
-        case .pairCode: String(localized: "使用配对码")
-        case .token: String(localized: "使用 Token")
+        case .pairCode: String(localized: "dashboard.pairDevice.codeStepTitle")
+        case .token: String(localized: "dashboard.pairDevice.commandStepTitle")
         }
     }
 
@@ -175,7 +178,7 @@ struct PairDeviceSheet: View {
             Text(credential.connector.name).font(.title2.bold())
             if !isReady(credential) {
                 if step == .cliMethod {
-                    Text(String(localized: "选择配对方式")).foregroundStyle(.secondary)
+                    Text(String(localized: "Choose how to connect \(credential.connector.name) to your account.")).foregroundStyle(.secondary)
                     AppGlassButton(String(localized: "使用配对码"), systemImage: "number", style: .prominent) {
                         path.append(.pairCode)
                     }
@@ -184,12 +187,12 @@ struct PairDeviceSheet: View {
                     AppGlassButton(String(localized: "使用 Token"), systemImage: "key") {
                         path.append(.token)
                     }
+                    Text(String(localized: "dashboard.pairDevice.tokenDescription"))
+                        .font(.footnote).foregroundStyle(.secondary)
                 } else {
-                    Text(String(localized: "在目标设备运行以下命令，然后保持 CLI 运行。即使关闭此页面，我们也会继续等待设备连接。"))
+                    Text(String(localized: "Run this command in the terminal on \(credential.connector.name) to connect it to your account automatically."))
                         .foregroundStyle(.secondary)
                     commandBlock(V2PairingCommand.start(server: server, credential: credential))
-                    Text(String(localized: "命令包含设备凭据，请仅在你信任的设备上使用。"))
-                        .font(.footnote).foregroundStyle(.secondary)
                 }
             }
             pairingStatus(credential)
@@ -207,7 +210,7 @@ struct PairDeviceSheet: View {
            let request = setup.requests.first(where: { $0.id == credential.connector.id }) {
             if request.ready {
                 Label(String(localized: "设备已连接"), appSymbol: "checkmark.circle").font(.headline)
-                Text(String(localized: "可以现在配置 Agent，也可以稍后在设备页面添加。"))
+                Text(String(localized: "\(credential.connector.name) is online. You can now choose which agents to configure and start on this device, or finish without adding any."))
                     .font(.footnote).foregroundStyle(.secondary)
                 AppGlassButton(String(localized: "配置 Agent"), style: .prominent) { setup.configure(request.id); dismiss() }
                 AppGlassButton(String(localized: "稍后配置")) { setup.finish(request.id); dismiss() }

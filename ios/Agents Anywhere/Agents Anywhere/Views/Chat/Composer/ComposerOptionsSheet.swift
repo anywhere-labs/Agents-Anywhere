@@ -42,7 +42,7 @@ struct ComposerOptionsSheet: View {
                     }
                     VStack(spacing: 0) {
                         NavigationLink(value: Page.models) {
-                            optionRow(String(localized: "模型"), icon: "sparkles", value: settings.modelLabel)
+                            optionRow(String(localized: "dashboard.new.modelAndReasoning"), icon: "sparkles", value: settings.modelLabel)
                         }
                         .disabled(isLoading || !canSelectModel || settings.catalog.models.isEmpty)
                         Divider().padding(.leading, 52)
@@ -152,8 +152,6 @@ struct ComposerOptionsSheet: View {
                         .disabled(!model.option.isEnabled)
                     }
                 }
-            } footer: {
-                Text(String(localized: "选择模型后，可继续选择它支持的思考强度。"))
             }
         }
         .disabled(isLoading || !canSelectModel)
@@ -171,8 +169,6 @@ struct ComposerOptionsSheet: View {
                     }
                     .disabled(!option.isEnabled)
                 }
-            } footer: {
-                Text(String(localized: "用于这个对话接下来发送的消息。"))
             }
         }
         .disabled(isLoading || !canSelectPermission)

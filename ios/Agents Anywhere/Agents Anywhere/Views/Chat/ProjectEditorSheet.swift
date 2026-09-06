@@ -62,14 +62,14 @@ struct ProjectEditorSheet: View {
                                 .disabled(device?.status != .online || !repository.canWrite)
                         }
                     }
-                } header: { Text(String(localized: "工作目录")) } footer: {
+                } header: { Text(String(localized: "dashboard.projects.workspace")) } footer: {
                     Text(draft.original == nil ? String(localized: "项目关联这个目录，不会在设备上新建文件夹。") : String(localized: "编辑项目时，设备和工作目录保持不变。"))
                 }
                 Section {
                     TextField(String(localized: "例如 Agents Anywhere"), text: Binding(get: { draft.name }, set: draft.editName))
                         .textInputAutocapitalization(.never).autocorrectionDisabled()
                 } header: { Text(String(localized: "项目名称")) } footer: {
-                    Text(String(localized: "按目录自动填写名称，重名时添加数字后缀。也可以自行修改。"))
+                    if draft.original == nil { Text(String(localized: "按目录自动填写名称，重名时添加数字后缀。也可以自行修改。")) }
                 }
                 if let error { Section { Text(error).foregroundStyle(.secondary) } }
             }
@@ -96,7 +96,7 @@ struct ProjectEditorSheet: View {
                 let id = reuse?.id; reuse = nil
                 Task { await save(reusing: id) }
             }
-        } message: { Text(String(localized: "将使用「\(reuse?.name ?? "")」，并将名称更新为「\(draft.name)」。已有会话会保留。")) }
+        } message: { Text(String(localized: "The workspace “\(draft.path)” already belongs to “\(reuse?.name ?? "")”. Continuing will rename that project to “\(draft.name)” instead of creating a duplicate. Its sessions and settings will be preserved.")) }
         .sheet(isPresented: $showsFiles) {
             if let device, let service = appState.workspaceFilesService {
                 WorkspaceFilesSheet(connectorId: device.id, deviceName: device.name,

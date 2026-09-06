@@ -19,8 +19,7 @@ struct DeviceProjectList: View {
     var body: some View {
         Section {
             if projects.isEmpty {
-                ContentUnavailableView(String(localized: "No projects yet"), appSymbol: "folder",
-                    description: Text(String(localized: "Create a project to choose where your agents work.")))
+                ContentUnavailableView(String(localized: "No projects yet"), appSymbol: "folder")
             } else {
                 Group {
                     ForEach(projects) { project in
@@ -68,8 +67,7 @@ struct DeviceWorkspaceList: View {
     var body: some View {
         Section {
             if workspaces.isEmpty {
-                ContentUnavailableView(String(localized: "No workspaces yet"), appSymbol: "folder",
-                    description: Text(String(localized: "Choose a folder to start a new session.")))
+                ContentUnavailableView(String(localized: "No workspaces yet"), appSymbol: "folder")
             } else {
                 Group {
                     ForEach(workspaces) { workspace in
@@ -191,8 +189,7 @@ struct DeviceSessionList: View {
                 ForEach(V2DeviceSessionFilter.allCases) { Text($0.title).tag($0) }
             }.pickerStyle(.segmented)
             if model.filteredSessions.isEmpty {
-                ContentUnavailableView(String(localized: "No sessions here"), appSymbol: "bubble.left.and.bubble.right",
-                    description: Text(String(localized: "Choose another filter or start a new session.")))
+                ContentUnavailableView(String(localized: "No sessions here"), appSymbol: "bubble.left.and.bubble.right")
             } else {
                 Group {
                     ForEach(model.filteredSessions) { session in
@@ -262,7 +259,7 @@ struct DeviceSessionSelectionDock: View {
             Text("\(count) selected").font(.subheadline).monospacedDigit()
             Spacer(minLength: 0)
             Button(String(localized: "Cancel"), action: onCancel).disabled(isWorking)
-            AppGlassButton(restores ? String(localized: "Restore") : String(localized: "Archive"), systemImage: restores ? "tray.and.arrow.up" : "archivebox",
+            AppGlassButton(restores ? String(localized: "dashboard.device.unarchiveSelected") : String(localized: "dashboard.device.archiveSelected"), systemImage: restores ? "tray.and.arrow.up" : "archivebox",
                 style: .prominent, isLoading: isWorking, disabled: disabled || count == 0, maxWidth: nil, action: onSubmit)
         }
         .padding(14).glassEffect(.regular, in: .rect(cornerRadius: 24))

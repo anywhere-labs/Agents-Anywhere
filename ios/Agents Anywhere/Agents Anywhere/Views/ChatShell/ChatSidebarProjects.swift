@@ -77,7 +77,7 @@ struct ChatSidebarProjects: View {
                 }
             }
         } message: {
-            Text(action?.deletes == true ? String(localized: "只有没有会话的项目可以删除，设备上的文件会保留。") : String(localized: "当前活动会话将移到归档列表，可从归档中恢复。"))
+            Text(action?.deletes == true ? String(localized: "只有没有会话的项目可以删除，设备上的文件会保留。") : String(localized: "Archive all sessions in \(action?.project.name ?? "")? The project will remain available for future sessions."))
         }
         .alert(String(localized: "操作未完成"), isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
             Button(String(localized: "好")) { error = nil }

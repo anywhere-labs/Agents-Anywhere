@@ -77,7 +77,9 @@ struct RuntimeConfigurationFieldView: View {
                 Text(RuntimeConfigCopy.schemaText(keySchema, key: "labelKey", fallback: String(localized: "Gateway API key"), locale: locale))
                     .font(.subheadline.weight(.medium))
                 RuntimeSecretInput(title: RuntimeConfigCopy.lookup(String(localized: "Gateway API key"), locale: locale),
-                    text: binding(\.gateways, default: .init()).apiKey)
+                    text: binding(\.gateways, default: .init()).apiKey,
+                    showTitle: String(localized: "dashboard.device.showModelGatewayApiKey"),
+                    hideTitle: String(localized: "dashboard.device.hideModelGatewayApiKey"))
                 Text(RuntimeConfigCopy.schemaText(keySchema, key: "descriptionKey", fallback: keySchema["description"]?.stringValue ?? "", locale: locale))
                     .font(.footnote).foregroundStyle(.secondary)
             }
@@ -122,6 +124,8 @@ struct RuntimeConfigurationFieldView: View {
 struct RuntimeSecretInput: View {
     let title: String
     @Binding var text: String
+    var showTitle = String(localized: "Show secret")
+    var hideTitle = String(localized: "Hide secret")
     @State private var isVisible = false
     var body: some View {
         HStack(spacing: 8) {
@@ -129,7 +133,7 @@ struct RuntimeSecretInput: View {
                 if isVisible { TextField(title, text: $text) }
                 else { SecureField(title, text: $text) }
             }.textContentType(nil).accessibilityLabel(title)
-            Button(isVisible ? String(localized: "Hide secret") : String(localized: "Show secret"), appSymbol: isVisible ? "eye.slash" : "eye") {
+            Button(isVisible ? hideTitle : showTitle, appSymbol: isVisible ? "eye.slash" : "eye") {
                 isVisible.toggle()
             }.labelStyle(.iconOnly).frame(width: 32, height: 32)
         }.runtimeConfigInput()

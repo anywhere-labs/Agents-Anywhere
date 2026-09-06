@@ -23,10 +23,6 @@ struct RuntimeEnvironmentRowEditor: View {
                 } label: { AppSymbol("ellipsis").frame(width: 44, height: 44) }
                     .accessibilityLabel(String(localized: "Variable actions"))
             }
-            if row.removesInherited {
-                Label(String(localized: "Inherited variable will be removed."), appSymbol: "minus.circle")
-                    .font(.footnote).foregroundStyle(.secondary)
-            }
         }
         .padding(.vertical, 8)
     }
@@ -81,7 +77,7 @@ private struct RuntimeEffortRowEditor: View {
             VStack(alignment: .leading, spacing: 12) {
                 TextField(String(localized: "Effort ID"), text: $row.effortID)
                     .runtimeConfigInput().focused($focusedField, equals: .identifier)
-                TextField(String(localized: "Display name"), text: $row.displayName)
+                TextField(String(localized: "dashboard.device.customEffortDisplayName"), text: $row.displayName)
                     .runtimeConfigInput().focused($focusedField, equals: .value)
             }
             Button(String(localized: "Remove effort"), appSymbol: "trash", role: .destructive) {

@@ -18,7 +18,10 @@ struct NewSessionWelcomeView: View {
 
     private var canReveal: Bool { !sidebarIsTransitioning && !sidebarObscuresDetail }
     private var title: String { String(localized: copy.title) }
-    private var detail: String { String(localized: copy.detail) }
+    private var detail: String {
+        [String(localized: "dashboard.new.typewriter.rightDevice"),
+         String(localized: "dashboard.new.typewriter.focusedSession")].joined(separator: "\n")
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -95,23 +98,12 @@ private enum NewSessionWelcomeCopy: CaseIterable {
 
     var title: LocalizedStringResource {
         switch self {
-        case .start: "从这里开始"
-        case .idea: "把想法变成进展"
-        case .question: "今天，做点什么？"
-        case .nextStep: "让下一步更简单"
-        case .explore: "一个想法，就够了"
-        case .together: "准备好，一起开工"
-        }
-    }
-
-    var detail: LocalizedStringResource {
-        switch self {
-        case .start: "选择设备和 Agent，把想做的事交给它。"
-        case .idea: "修一个问题，做一个功能，或探索新的方向。"
-        case .question: "从一个问题开始，让 Agent 和你一起找到答案。"
-        case .nextStep: "描述你的目标，其余的可以一步步来。"
-        case .explore: "写下想做的事，和 Agent 一起把细节补全。"
-        case .together: "选择熟悉的设备和工具，开始下一件想做的事。"
+        case .start: "dashboard.new.typewriter.buildNext"
+        case .idea: "dashboard.new.typewriter.startWhere"
+        case .question: "dashboard.new.typewriter.workOn"
+        case .nextStep: "dashboard.new.typewriter.giveTask"
+        case .explore: "dashboard.new.typewriter.startWorkspace"
+        case .together: "dashboard.new.typewriter.needsAttention"
         }
     }
 }

@@ -8,16 +8,12 @@ import json
 from pathlib import Path
 import re
 import sys
+from web_copy import copy_errors, expected_copy
 
 
 ROOT = Path(__file__).resolve().parents[2]
 APP = ROOT / "ios/Agents Anywhere/Agents Anywhere"
 LANGUAGES = ("en", "zh-Hans")
-SHARED_PREFIXES = (
-    "dashboard.device.runtimeConfigFields.",
-    "dashboard.device.runtimeConfigComponents.",
-    "dashboard.new.permissionModes.",
-)
 PRINTF = re.compile(r"%(?:(\d+)\$)?[-+#0 ']*(?:\d+)?(?:\.\d+)?(hh|ll|h|l|z|t|j|L)?([@diuoxXfFeEgGaAcCsSp])")
 
 
@@ -44,20 +40,16 @@ def string_units(value):
                 yield from string_units(item)
 
 
-def flatten(value, prefix=""):
-    for key, item in value.items():
-        name = f"{prefix}.{key}" if prefix else key
-        if isinstance(item, dict):
-            yield from flatten(item, name)
-        elif isinstance(item, str):
-            yield name, item
-
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--derived-data", type=Path, help="DerivedData from a successful iOS build; also verifies source coverage")
     args = parser.parse_args()
     errors = []
+    shared = expected_copy()
+    for key, entry in shared.items():
+        reference = next(string_units(entry["localizations"]["en"]))["value"]
+        if placeholders(key) and placeholders(key) != placeholders(reference):
+            errors.append(f"Web arguments do not match Swift interpolation for {key!r}")
     catalogs = {}
     for path in sorted((APP / "Resources/Localization").glob("*.xcstrings")):
         catalog = json.loads(path.read_text())
@@ -74,20 +66,14 @@ def main():
                     value = unit.get("value", "")
                     if unit.get("state") != "translated" or (key.strip() and not value.strip()):
                         errors.append(f"{language}: unfinished translation for {key!r}")
-                    if path.stem == "Localizable" and placeholders(key) != placeholders(value):
+                    # Named Web keys do not contain Swift interpolation. Their
+                    # reviewed English format supplies the argument contract.
+                    reference = next(string_units(shared[key]["localizations"]["en"]))["value"] if key in shared else key
+                    if path.stem == "Localizable" and placeholders(reference) != placeholders(value):
                         errors.append(f"{language}: argument order/type mismatch for {key!r}: {value!r}")
 
     localizable = catalogs.get("Localizable", {})
-    web = {}
-    for language, filename in (("en", "en.json"), ("zh-Hans", "zh-CN.json")):
-        web[language] = dict(flatten(json.loads((ROOT / "web-next/messages" / filename).read_text())))
-    for key, english in web["en"].items():
-        if not key.startswith(SHARED_PREFIXES) or "{" in english:
-            continue
-        for language in LANGUAGES:
-            actual = localizable.get(key, {}).get("localizations", {}).get(language, {}).get("stringUnit", {}).get("value")
-            if actual != web[language].get(key):
-                errors.append(f"{language}: runtime metadata copy differs from Web: {key}")
+    errors.extend(copy_errors(localizable, shared))
 
     plural_keys = (
         "%lld projects", "%lld workspaces", "%lld sessions", "%lld 个问题", "%lld 次子 Agent 调用",
@@ -127,7 +113,7 @@ def main():
         print("\n".join(errors), file=sys.stderr)
         return 1
     total = sum(len(entries) for entries in catalogs.values())
-    print(f"Validated {total} catalog entries in English and Simplified Chinese, placeholders, plural rules, permissions and Web metadata.")
+    print(f"Validated {total} catalog entries in English and Simplified Chinese, placeholders, plural rules, permissions and {len(shared)} shared Web messages.")
     if args.derived_data:
         print(f"All {len(extracted)} extracted keys from {len(sources)} active Swift files are covered.")
     return 0

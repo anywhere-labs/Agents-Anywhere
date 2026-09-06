@@ -165,7 +165,7 @@ struct DeviceManagementView: View {
         .alert(String(localized: "Delete this device?"), isPresented: $confirmsDeletion) {
             Button(String(localized: "Cancel"), role: .cancel) {}
             Button(String(localized: "Delete device"), role: .destructive) { Task { await deleteDevice() } }
-        } message: { Text(String(localized: "The device and its server-owned metadata will be removed. This action cannot be undone.")) }
+        } message: { Text(String(localized: "This will permanently remove \(connector.name) and all its associated data. This action cannot be undone.")) }
         .alert(model.sessionFilter == .archived ? String(localized: "Restore these sessions?") : String(localized: "Archive these sessions?"), isPresented: $confirmsArchiveAll) {
             Button(String(localized: "Cancel"), role: .cancel) {}
             Button(model.sessionFilter == .archived ? String(localized: "Restore") : String(localized: "Archive")) { archiveAll() }
@@ -183,7 +183,7 @@ struct DeviceManagementView: View {
             }
         } message: {
             Text(projectActionIsDeletion ? String(localized: "Only empty projects can be deleted. Files on the device are kept.") :
-                String(localized: "Active sessions in this project will be archived. You can restore them later."))
+                String(localized: "Archive all sessions in \(pendingProject?.name ?? "")? The project will remain available for future sessions."))
         }
     }
 

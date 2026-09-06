@@ -185,8 +185,7 @@ private struct WorkspaceDirectoryView: View {
             } else if model.entries.isEmpty {
                 ContentUnavailableView(
                     String(localized: "Empty Folder"),
-                    appSymbol: "folder",
-                    description: Text(String(localized: "This workspace folder has no files."))
+                    appSymbol: "folder"
                 )
             } else {
                 ForEach(model.entries) { entry in
