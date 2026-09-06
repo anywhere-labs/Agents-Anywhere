@@ -7,13 +7,7 @@ import { toast } from "sonner"
 
 import { LoadingState } from "@/components/loading-state"
 import { Button } from "@/components/ui/button"
-import {
-  Card,
-  CardAction,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
+import { SettingsSection } from "@/components/settings/settings-section"
 import {
   Empty,
   EmptyContent,
@@ -300,7 +294,7 @@ export function ArchivedSessionsTab({
   }
 
   return (
-    <div className="flex max-w-5xl flex-col gap-5">
+    <div className="flex flex-col gap-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 className="text-xl font-semibold">{t("archivedSessions")}</h2>
         <Select value={projectFilter} onValueChange={setProjectFilter}>
@@ -341,13 +335,11 @@ export function ArchivedSessionsTab({
       ) : (
         <div className="flex flex-col gap-4">
           {groups.map((group) => (
-            <Card
+            <SettingsSection
               key={group.key}
-              size="sm"
-              className="gap-0 border border-border py-0"
-            >
-              <CardHeader className="border-b py-4">
-                <CardTitle className="flex min-w-0 items-start gap-2">
+              contentClassName="p-0"
+              title={
+                <span className="flex min-w-0 items-start gap-2">
                   <Folder className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
                   <span className="flex min-w-0 flex-1 flex-col gap-0.5">
                     <span className="flex min-w-0 items-center gap-2">
@@ -362,58 +354,55 @@ export function ArchivedSessionsTab({
                       </span>
                     ) : null}
                   </span>
-                </CardTitle>
-                {group.projectId ? (
-                  <CardAction>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      disabled={unarchivingProjectId !== null}
-                      onClick={() => void unarchiveProject(group.projectId!)}
-                    >
-                      {unarchivingProjectId === group.projectId
-                        ? <Spinner data-icon="inline-start" />
-                        : <ArchiveRestore data-icon="inline-start" />}
-                      {t("archivedUnarchiveAll")}
-                    </Button>
-                  </CardAction>
-                ) : null}
-              </CardHeader>
-              <CardContent className="p-0">
-                {group.sessions.map((session, index) => {
-                  const time = sessionTime(session)
-                  const unarchiving = unarchivingIds.includes(session.id)
-                  return (
-                    <React.Fragment key={session.id}>
-                      {index > 0 ? <Separator /> : null}
-                      <div className="flex items-center justify-between gap-4 px-4 py-3">
-                        <div className="min-w-0">
-                          <p className="truncate text-sm font-medium">
-                            {session.title?.trim() || t("archivedUntitled")}
-                          </p>
-                          <p className="mt-0.5 text-xs text-muted-foreground">
-                            {time ? dateFormatter.format(new Date(time)) : t("archivedTimeUnavailable")}
-                          </p>
-                        </div>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          disabled={unarchiving || unarchivingProjectId !== null}
-                          onClick={() => void unarchiveSession(session.id)}
-                        >
-                          {unarchiving
-                            ? <Spinner data-icon="inline-start" />
-                            : <ArchiveRestore data-icon="inline-start" />}
-                          {t("archivedUnarchive")}
-                        </Button>
+                </span>
+              }
+              action={group.projectId ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={unarchivingProjectId !== null}
+                  onClick={() => void unarchiveProject(group.projectId!)}
+                >
+                  {unarchivingProjectId === group.projectId
+                    ? <Spinner data-icon="inline-start" />
+                    : <ArchiveRestore data-icon="inline-start" />}
+                  {t("archivedUnarchiveAll")}
+                </Button>
+              ) : undefined}
+            >
+              {group.sessions.map((session, index) => {
+                const time = sessionTime(session)
+                const unarchiving = unarchivingIds.includes(session.id)
+                return (
+                  <React.Fragment key={session.id}>
+                    {index > 0 ? <Separator /> : null}
+                    <div className="flex items-center justify-between gap-4 px-4 py-3">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-medium">
+                          {session.title?.trim() || t("archivedUntitled")}
+                        </p>
+                        <p className="mt-0.5 text-xs text-muted-foreground">
+                          {time ? dateFormatter.format(new Date(time)) : t("archivedTimeUnavailable")}
+                        </p>
                       </div>
-                    </React.Fragment>
-                  )
-                })}
-              </CardContent>
-            </Card>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={unarchiving || unarchivingProjectId !== null}
+                        onClick={() => void unarchiveSession(session.id)}
+                      >
+                        {unarchiving
+                          ? <Spinner data-icon="inline-start" />
+                          : <ArchiveRestore data-icon="inline-start" />}
+                        {t("archivedUnarchive")}
+                      </Button>
+                    </div>
+                  </React.Fragment>
+                )
+              })}
+            </SettingsSection>
           ))}
         </div>
       )}
