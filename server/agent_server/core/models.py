@@ -162,16 +162,11 @@ class ProjectCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=255)
     connectorId: str = Field(min_length=1)
     workspacePath: str = Field(min_length=1, max_length=4096)
+    # Automatic workspace selection must not claim or rename an existing project.
+    manuallyCreated: bool = True
     # Retained for compatibility with older clients. Project creation never
     # binds existing sessions, even when this legacy flag is true.
     attachMatchingSessions: bool = False
-
-
-class ProjectResolveRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
-
-    connectorId: str = Field(min_length=1)
-    workspacePath: str = Field(min_length=1, max_length=4096)
 
 
 class ProjectPatchRequest(BaseModel):

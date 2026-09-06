@@ -298,6 +298,7 @@ class ProjectRepositoryMixin:
         connector_id: str,
         name: str,
         workspace_path: str,
+        manually_created: bool = True,
     ) -> ProjectView:
         cleaned_name = name.strip()
         if not cleaned_name:
@@ -335,30 +336,32 @@ class ProjectRepositoryMixin:
                     if existing_workspace is not None
                     else None
                 )
-                name_conflict = (
-                    await conn.execute(
-                        select(projects_t.c.id).where(
-                            projects_t.c.user_id == user_id,
-                            projects_t.c.name == cleaned_name,
-                            projects_t.c.id != (existing_project_id or ""),
+                if manually_created or existing_project_id is None:
+                    name_conflict = (
+                        await conn.execute(
+                            select(projects_t.c.id).where(
+                                projects_t.c.user_id == user_id,
+                                projects_t.c.name == cleaned_name,
+                                projects_t.c.id != (existing_project_id or ""),
+                            )
                         )
-                    )
-                ).first()
-                if name_conflict is not None:
-                    raise ProjectNameConflictError(cleaned_name)
+                    ).first()
+                    if name_conflict is not None:
+                        raise ProjectNameConflictError(cleaned_name)
 
                 if existing_project_id is not None:
                     project_id = existing_project_id
-                    await conn.execute(
-                        update(projects_t)
-                        .where(projects_t.c.id == project_id)
-                        .values(
-                            name=cleaned_name,
-                            workspace_path=cleaned_path,
-                            manually_created=True,
-                            updated_at=now,
+                    if manually_created:
+                        await conn.execute(
+                            update(projects_t)
+                            .where(projects_t.c.id == project_id)
+                            .values(
+                                name=cleaned_name,
+                                workspace_path=cleaned_path,
+                                manually_created=True,
+                                updated_at=now,
+                            )
                         )
-                    )
                 else:
                     await conn.execute(
                         insert(projects_t).values(
@@ -368,7 +371,7 @@ class ProjectRepositoryMixin:
                             name=cleaned_name,
                             workspace_path=cleaned_path,
                             workspace_key=workspace_key,
-                            manually_created=True,
+                            manually_created=manually_created,
                             pinned=0,
                             created_at=now,
                             updated_at=now,
