@@ -4,7 +4,19 @@ import * as React from "react"
 import { useTheme } from "next-themes"
 
 import { getDesktopWorkbenchBridge } from "@/features/desktop/bridge"
-import appIcon from "../../../../build/icon-mac-source.png"
+
+export const WindowsTitleBarControlsContext = React.createContext<HTMLDivElement | null>(null)
+
+export function WindowsTitleBarProvider({ children }: { children: React.ReactNode }) {
+  const [controlsTarget, setControlsTarget] = React.useState<HTMLDivElement | null>(null)
+
+  return (
+    <WindowsTitleBarControlsContext.Provider value={controlsTarget}>
+      <WindowsTitleBar onControlsMount={setControlsTarget} />
+      {children}
+    </WindowsTitleBarControlsContext.Provider>
+  )
+}
 
 export function readTitleBarColors(element: HTMLElement) {
   const style = getComputedStyle(element)
@@ -27,7 +39,11 @@ export function readTitleBarColors(element: HTMLElement) {
   return { color: toHex(style.backgroundColor), symbolColor: toHex(style.color) }
 }
 
-export function WindowsTitleBar() {
+export function WindowsTitleBar({
+  onControlsMount,
+}: {
+  onControlsMount?: React.RefCallback<HTMLDivElement>
+} = {}) {
   const { resolvedTheme } = useTheme()
   const [enabled, setEnabled] = React.useState(false)
   const titleBarRef = React.useRef<HTMLDivElement>(null)
@@ -55,14 +71,12 @@ export function WindowsTitleBar() {
   if (!enabled) return null
 
   return (
-    <div ref={titleBarRef} className="aa-windows-title-bar aa-window-drag flex items-center gap-2 bg-sidebar px-3 text-xs text-sidebar-foreground">
-      <img
-        src={appIcon.src}
-        alt=""
-        className="size-4 shrink-0 object-contain"
-        draggable={false}
+    <div ref={titleBarRef} className="aa-windows-title-bar aa-window-drag flex items-center bg-sidebar px-3 text-sidebar-foreground">
+      <div
+        ref={onControlsMount}
+        data-slot="windows-title-bar-controls"
+        className="flex min-w-0 items-center"
       />
-      <span className="truncate">Agents Anywhere</span>
     </div>
   )
 }

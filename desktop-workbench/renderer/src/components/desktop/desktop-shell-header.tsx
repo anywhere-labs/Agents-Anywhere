@@ -1,16 +1,19 @@
 "use client"
 
 import * as React from "react"
+import { createPortal } from "react-dom"
 import { ArrowLeft, ArrowRight, Eraser, Info } from "lucide-react"
 import { useTranslations } from "next-intl"
 import { toast } from "sonner"
 
 import { DashboardSidebarToggle } from "@/components/dashboard-sidebar-toggle"
+import { WindowsTitleBarControlsContext } from "@/components/desktop/windows-title-bar"
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
 import { useWorkspace } from "@/components/workspace-context"
 import { getDesktopWorkbenchBridge } from "@/features/desktop/bridge"
 import { useDesktopConnector } from "@/features/desktop/desktop-connector-context"
+import { cn } from "@/lib/utils"
 
 const HEADER_SIDEBAR_MIN_WIDTH = 224
 
@@ -24,6 +27,7 @@ export function DesktopShellHeader({
   const t = useTranslations("desktopConnector")
   const tCommon = useTranslations("common")
   const { canGoBack, canGoForward, goBack, goForward } = useWorkspace()
+  const titleBarControls = React.useContext(WindowsTitleBarControlsContext)
   const { supported, busy, state, binding, reconnect } = useDesktopConnector()
   const [canClearCache, setCanClearCache] = React.useState(false)
   const [clearingCache, setClearingCache] = React.useState(false)
@@ -39,7 +43,7 @@ export function DesktopShellHeader({
   const sidebarWidthMotionClassName = sidebarResizing
     ? "transition-none"
     : "transition-[width] duration-[220ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none"
-  const shellControlClassName = sidebarOpen
+  const shellControlClassName = sidebarOpen || titleBarControls
     ? "rounded-md text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
     : "rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
 
@@ -60,8 +64,49 @@ export function DesktopShellHeader({
     }
   }, [t])
 
+  const navigationControls = (
+    <div className="aa-window-no-drag flex min-w-0 items-center gap-2">
+      <DashboardSidebarToggle
+        showOnDesktop
+        className={shellControlClassName}
+      />
+      <div className="flex items-center gap-1">
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          aria-label={tCommon("back")}
+          title={tCommon("back")}
+          onClick={goBack}
+          disabled={!canGoBack}
+          className={shellControlClassName}
+        >
+          <ArrowLeft className="size-4" />
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          aria-label={tCommon("forward")}
+          title={tCommon("forward")}
+          onClick={goForward}
+          disabled={!canGoForward}
+          className={shellControlClassName}
+        >
+          <ArrowRight className="size-4" />
+        </Button>
+      </div>
+    </div>
+  )
+
   return (
-    <header className="aa-window-drag relative flex h-11 shrink-0 items-center bg-background text-foreground">
+    <header
+      className={cn(
+        "aa-window-drag flex h-11 shrink-0 items-center bg-background text-foreground",
+        titleBarControls ? "absolute top-0 right-0 z-10" : "relative",
+      )}
+      style={titleBarControls ? { left: sidebarOpen ? "var(--desktop-sidebar-width)" : 0 } : undefined}
+    >
       <div
         aria-hidden="true"
         className="pointer-events-none absolute inset-x-0 bottom-0 h-px bg-border/80"
@@ -69,48 +114,21 @@ export function DesktopShellHeader({
       <div
         aria-hidden="true"
         className={`pointer-events-none absolute inset-y-0 left-0 bg-sidebar ${sidebarWidthMotionClassName}`}
-        style={{ width: sidebarOpen ? "var(--desktop-sidebar-width)" : 0 }}
+        style={{ width: sidebarOpen && !titleBarControls ? "var(--desktop-sidebar-width)" : 0 }}
       />
       <div
         className={sidebarOpen
           ? `relative flex h-full shrink-0 items-center text-sidebar-foreground ${sidebarWidthMotionClassName}`
           : `relative flex h-full shrink-0 items-center text-foreground ${sidebarWidthMotionClassName}`
         }
-        style={{ width: headerSidebarWidth }}
+        style={{ width: titleBarControls ? 0 : headerSidebarWidth }}
       >
-        <div className="w-[6.5rem] shrink-0" aria-hidden="true" />
-        <div className="aa-window-no-drag flex min-w-0 items-center gap-2">
-          <DashboardSidebarToggle
-            showOnDesktop
-            className={shellControlClassName}
-          />
-          <div className="flex items-center gap-1">
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              aria-label={tCommon("back")}
-              title={tCommon("back")}
-              onClick={goBack}
-              disabled={!canGoBack}
-              className={shellControlClassName}
-            >
-              <ArrowLeft className="size-4" />
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              aria-label={tCommon("forward")}
-              title={tCommon("forward")}
-              onClick={goForward}
-              disabled={!canGoForward}
-              className={shellControlClassName}
-            >
-              <ArrowRight className="size-4" />
-            </Button>
-          </div>
-        </div>
+        {titleBarControls ? createPortal(navigationControls, titleBarControls) : (
+          <>
+            <div className="w-[6.5rem] shrink-0" aria-hidden="true" />
+            {navigationControls}
+          </>
+        )}
       </div>
       <div
         data-slot="desktop-shell-header-session"
@@ -158,7 +176,7 @@ export function DesktopShellHeader({
           className="aa-window-no-drag flex shrink-0 items-center"
         />
       </div>
-      {!sidebarOpen ? (
+      {!sidebarOpen && !titleBarControls ? (
         <div
           aria-hidden="true"
           className="pointer-events-none absolute top-1/2 h-5 w-px -translate-y-1/2 bg-border/60"

@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import { ThemeProvider as NextThemesProvider, useTheme } from "next-themes"
-import { WindowsTitleBar } from "@/components/desktop/windows-title-bar"
+import { WindowsTitleBarProvider } from "@/components/desktop/windows-title-bar"
 
 function ThemeProvider({
   children,
@@ -17,8 +17,7 @@ function ThemeProvider({
       {...props}
     >
       <ThemeHotkey />
-      <WindowsTitleBar />
-      {children}
+      <WindowsTitleBarProvider>{children}</WindowsTitleBarProvider>
     </NextThemesProvider>
   )
 }

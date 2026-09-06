@@ -29,6 +29,10 @@ export async function openDevelopmentLoginWindow(
     show: false,
     parent: options.parent && !options.parent.isDestroyed() ? options.parent : undefined,
     title: APP_NAME,
+    titleBarStyle: process.platform === "win32" ? "hidden" : "default",
+    titleBarOverlay: process.platform === "win32"
+      ? { color: "#09090b", symbolColor: "#fafafa", height: 32 }
+      : undefined,
     autoHideMenuBar: true,
     backgroundColor: "#09090b",
     webPreferences: {
@@ -40,6 +44,33 @@ export async function openDevelopmentLoginWindow(
     },
   });
   developmentLoginWindow = window;
+
+  if (process.platform === "win32") {
+    window.webContents.on("dom-ready", () => {
+      void window.webContents.insertCSS(`
+        body {
+          padding-top: 32px !important;
+          box-sizing: border-box;
+        }
+        .min-h-screen {
+          min-height: calc(100vh - 32px) !important;
+        }
+        html::before {
+          content: "";
+          position: fixed;
+          top: 0;
+          left: 0;
+          width: env(titlebar-area-width, calc(100% - 138px));
+          height: 32px;
+          background: #09090b;
+          z-index: 2147483647;
+          -webkit-app-region: drag;
+        }
+      `).catch((error: unknown) => {
+        if (!window.isDestroyed()) console.warn("Failed to style the development login title bar.", error);
+      });
+    });
+  }
 
   let settled = false;
   const acceptCallback = (url: string): boolean => {
