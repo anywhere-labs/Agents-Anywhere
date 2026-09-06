@@ -196,6 +196,7 @@ struct ChatTimelineView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .traceChatLayout("timeline-viewport")
     }
     private func loadOlder() {
         guard model.session.isValid, model.session.hasOlderItems,
@@ -366,6 +367,7 @@ private struct ChatTimelineContent: View, Equatable {
         .padding(.horizontal, 24).padding(.top, 16)
         .frame(maxWidth: 760).frame(maxWidth: .infinity)
         .coordinateSpace(name: "chat.timeline.content")
+        .traceChatLayout("timeline-content", state: "groups=\(groups.count), footers=\(actions.count), running=\(model.isRunning)")
     }
 
 }

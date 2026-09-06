@@ -431,6 +431,11 @@ keyboard layout and real mobile-network behavior still need manual validation:
     drawer navigation under OSLog category `drawer-layout`: content/viewport height
     and offset distinguish reflow or scrolling from a drawing-only flash. These
     logs contain no message text and do not require a diagnostics overlay.
+    `Drawer component` lines narrow a content-size change to a group, row,
+    Copy/Share footer, or Markdown block. `natural` is the block's intrinsic size;
+    `reserved` includes its minimum-height guard. Membership/status changes are
+    reported separately from size changes so a 48-point footer and a paragraph
+    reflow cannot be mistaken for each other.
     Repeat while reading in the middle and while streaming. Expand/collapse the
     composer, show/dismiss the keyboard and respond to approval cards; check the
     bottom margin is applied once and that a manual upward scroll is respected.

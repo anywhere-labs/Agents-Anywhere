@@ -37,6 +37,7 @@ struct SessionTimelineRow: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .traceChatLayout("row:\(row.id)", state: "generation=\(row.layoutGeneration), status=\(row.value.status.rawValue)")
         .contextMenu {
             Button("复制内容", systemImage: "document.on.document") {
                 UIPasteboard.general.string = row.text.isEmpty ? row.value.raw["content"]?.formattedJSON : row.text
@@ -48,6 +49,7 @@ struct SessionTimelineRow: View {
 
     private var markdown: some View {
         ChatMarkdownView(text: row.text, isStreaming: row.isRevealing, resolvesFileReferences: true)
+            .environment(\.chatLayoutTraceOwner, row.id)
             .id(row.layoutGeneration)
             .frame(minHeight: row.value.isStreamingText ? lineHeight : nil, alignment: .topLeading)
     }

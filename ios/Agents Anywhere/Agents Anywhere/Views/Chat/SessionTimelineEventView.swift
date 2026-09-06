@@ -10,8 +10,12 @@ struct SessionTimelineGroupView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             content
-            if let turnAction { SessionTurnActions(action: turnAction) }
+                .traceChatLayout("group-content:\(group.id)")
+            if let turnAction {
+                SessionTurnActions(action: turnAction).traceChatLayout("actions:\(group.id)")
+            }
         }
+        .traceChatLayout("group:\(group.id)", state: "footer=\(turnAction != nil)")
     }
     @ViewBuilder private var content: some View {
         if group.kind == .single { rows }

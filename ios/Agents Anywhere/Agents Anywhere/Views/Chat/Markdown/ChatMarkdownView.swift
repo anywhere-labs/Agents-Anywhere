@@ -1,6 +1,10 @@
 import SwiftUI
 import Textual
 
+extension EnvironmentValues {
+    @Entry var chatLayoutTraceOwner = "markdown"
+}
+
 struct ChatMarkdownView: View {
     let text: String
     var isStreaming = false
@@ -42,6 +46,7 @@ private struct MarkdownBlockView: View, Equatable {
     @State private var hasSettled = false
     @State private var headingLedger = GlyphRevealLedger()
     @Environment(\.dynamicTypeSize) private var dynamicType
+    @Environment(\.chatLayoutTraceOwner) private var traceOwner
 
     static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.block == rhs.block && lhs.isStreaming == rhs.isStreaming && lhs.isTail == rhs.isTail
@@ -58,6 +63,7 @@ private struct MarkdownBlockView: View, Equatable {
             .font(.body)
             .foregroundStyle(.primary)
             .fixedSize(horizontal: false, vertical: true)
+            .traceChatLayout("markdown:\(traceOwner):\(block.id):natural")
             .onGeometryChange(for: CGSize.self, of: \.size) { size in
                 guard size.width > 1 else { return }
                 if abs(measuredWidth - size.width) > 1 {
@@ -71,6 +77,7 @@ private struct MarkdownBlockView: View, Equatable {
             // or attachment resolves. Preserve its last real height in that gap.
             .frame(minHeight: heightFloor, alignment: .topLeading)
             .frame(maxWidth: .infinity, alignment: .leading)
+            .traceChatLayout("markdown:\(traceOwner):\(block.id):reserved", state: "heightFloor=\(heightFloor), measuredWidth=\(measuredWidth)")
             .onChange(of: dynamicType) { heightFloor = 0; measuredWidth = 0 }
             .task(id: isTail) {
                 hasSettled = false
