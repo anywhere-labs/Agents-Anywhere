@@ -162,6 +162,9 @@ private struct SidebarDrawerInteractive<
                     screenSize.width * configuration.revealFraction.clamped(to: 0.01 ... 1),
                     1
                 )
+                let interaction = DrawerInteractionState(isOpen: isOpen, progress: progress,
+                    isAnimating: isAnimating, isDragging: dragStartProgress != nil)
+                let closeRegion = SidebarDrawerCloseRegion(leadingEdge: revealWidth * progress)
 
                 ZStack(alignment: .leading) {
                     drawerSystemBackground
@@ -175,6 +178,8 @@ private struct SidebarDrawerInteractive<
                         header: sidebarHeader(safeAreaInsets),
                         content: sidebarContent(safeAreaInsets)
                     )
+                    .allowsHitTesting(interaction.acceptsSidebarTouches)
+                    .accessibilityHidden(!interaction.acceptsSidebarTouches)
 
                     SidebarDrawerMainCard(
                         size: screenSize,
@@ -182,9 +187,20 @@ private struct SidebarDrawerInteractive<
                         progress: progress,
                         offset: revealWidth * progress,
                         overlayOpacity: contentOverlayOpacity,
-                        content: mainContent(safeAreaInsets),
-                        close: closeFromOverlay
+                        content: mainContent(safeAreaInsets)
                     )
+                    .allowsHitTesting(interaction.acceptsContentTouches)
+                    .accessibilityHidden(!interaction.acceptsContentTouches)
+
+                    // Only the screen-space strip occupied by the visible card
+                    // closes the drawer. Its untranslated hit targets are disabled.
+                    closeRegion.fill(.clear)
+                        .contentShape(.interaction, closeRegion)
+                        .onTapGesture(perform: closeFromOverlay)
+                        .allowsHitTesting(interaction.acceptsSidebarTouches)
+                        .accessibilityHidden(!interaction.acceptsSidebarTouches)
+                        .accessibilityLabel("关闭侧栏")
+                        .accessibilityAddTraits(.isButton)
 
 #if !canImport(UIKit)
                     if usesOpeningEdgeGestureRegion {
@@ -625,7 +641,6 @@ private struct SidebarDrawerMainCard<Content: View>: View {
     let offset: CGFloat
     let overlayOpacity: CGFloat
     let content: Content
-    let close: () -> Void
 
     var body: some View {
         let screenShape = ConcentricRectangle(
@@ -661,9 +676,7 @@ private struct SidebarDrawerMainCard<Content: View>: View {
             .overlay {
                 screenShape
                     .fill(.white.opacity(overlayOpacity))
-                    .contentShape(screenShape)
-                    .onTapGesture(perform: close)
-                    .allowsHitTesting(progress > 0.001)
+                    .allowsHitTesting(false)
             }
             .overlay {
                 screenShape

@@ -2,8 +2,8 @@ import SwiftUI
 import AppKit
 
 // A native, headless SwiftUI check for the phone card's render/layout boundary.
-// Compile this file with Views/Components/SidebarDrawerTranslation.swift; no
-// application window, simulator, account or network connection is needed.
+// Compile with SidebarDrawerTranslation.swift and SidebarDrawerCloseRegion.swift;
+// no application window, simulator, account or network connection is needed.
 @MainActor private final class Measurements {
     var frames: [CGRect] = []
 }
@@ -40,6 +40,7 @@ import AppKit
 
 @main @MainActor private struct DrawerLayoutProbe {
     static func main() {
+        verifyCloseHitRegion()
         var ordinaryOrigins = Set<CGFloat>()
         var stableOrigins = Set<CGFloat>()
         var stableWidths = Set<CGFloat>()
@@ -70,5 +71,27 @@ import AppKit
         precondition(renderDigests.count > 2, "Translated card did not change its rendered position")
         print("PASS: 44 native SwiftUI renders at 2x/3x; ignored translation keeps origin 0 and size 402x200 while rendered positions change.")
         print("Control origins: \(ordinaryOrigins.count); isolated origins: \(stableOrigins.count); isolated widths: \(stableWidths.count).")
+    }
+
+    private static func verifyCloseHitRegion() {
+        let bounds = CGRect(x: 0, y: 0, width: 402, height: 874)
+        // Check the actual SwiftUI Path used by contentShape, not a duplicate
+        // mathematical hit rule. Points in the sidebar must pass through it.
+        for edge: CGFloat in [0.333333, 99.25, 201, 301.5, 350] {
+            let path = SidebarDrawerCloseRegion(leadingEdge: edge).path(in: bounds)
+            for y: CGFloat in [1, 200, 500, 873] {
+                for x: CGFloat in [edge * 0.1, edge * 0.5, edge - 0.001] {
+                    precondition(!path.contains(CGPoint(x: x, y: y)), "Close layer captured a sidebar tap")
+                }
+                for x: CGFloat in [edge + 0.001, (edge + bounds.width) / 2, 401.9] {
+                    precondition(path.contains(CGPoint(x: x, y: y)), "Visible main-card tap could not close the drawer")
+                }
+            }
+        }
+        let shifted = SidebarDrawerCloseRegion(leadingEdge: 301.5)
+            .path(in: CGRect(x: 20, y: 40, width: 402, height: 874))
+        precondition(!shifted.contains(CGPoint(x: 200, y: 100)))
+        precondition(shifted.contains(CGPoint(x: 350, y: 100)))
+        print("PASS: close contentShape excludes sidebar points and includes only the exposed main card.")
     }
 }

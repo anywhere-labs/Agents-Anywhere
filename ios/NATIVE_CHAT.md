@@ -87,8 +87,13 @@ Semantic error and availability colors remain separate from the primary color.
   horizontal movement only changes rendering, including every interpolated
   spring frame. It cannot move the layout origin and vary the column width by a
   physical pixel (observed as 402/402.33 points with two paragraphs changing lines).
-  `geometryGroup()` plus a normal offset was insufficient for this case. Controls
-  and glass remain live; there is no bitmap snapshot, width freeze or gesture
+  `geometryGroup()` plus a normal offset was insufficient for this case. The
+  page keeps rendering, but its untranslated hit targets and accessibility
+  elements are inactive while the phone drawer is open or moving. A separate
+  screen-space `SidebarDrawerCloseRegion` covers only the exposed main-card strip;
+  sidebar taps never reach it. Sidebar controls activate after opening settles,
+  and page controls reactivate only after closing settles, not when the spring's
+  target first becomes zero. There is no bitmap snapshot, width freeze or gesture
   quantization. iPad keeps its default native split layout and animation.
 - Both history prompts support a fresh 24-point outward pull and release when
   already visible: pulling past the top loads older messages, and pulling past
@@ -344,7 +349,7 @@ than a “server unavailable” alert.
 
 Verified on 2026-09-06, without starting a server or simulator:
 
-- 144 headless Swift tests across nineteen suites pass against production client-core
+- 147 headless Swift tests across nineteen suites pass against production client-core
   sources. They cover API contracts, recovery/cache races, uncertain delivery,
   30 Hz presentation, echo handoff, target preparation, preference scope, schema
   payloads and interaction lifecycle/IME guards. Session-detail checks cover
@@ -364,6 +369,8 @@ Verified on 2026-09-06, without starting a server or simulator:
   connectivity/lifecycle recovery and account invalidation.
   Sidebar tests cover regular/compact selection and resize behavior, and confirm
   cached model lookup does not subscribe its caller to historical row payloads.
+  Phone interaction tests cover the settled sidebar, suspended page input during
+  open/close springs and interrupted pans, and reactivation after closing.
   Opening/history tests cover measured offset retention, scroll-independent
   presentation and optimistic echo handoff, realtime updates during opening,
   pulls, cancellation and opening without fetching earlier user messages.
@@ -374,8 +381,11 @@ Verified on 2026-09-06, without starting a server or simulator:
   without a window or simulator. Across 44 renders at 2x/3x with fractional pan
   positions, the old geometry-group/offset control changes its reported origin;
   the new transform retains origin zero and size 402x200 while rendered images
-  move. This isolates the transform contract; on-device text, touch and glass
-  behavior still require the manual drawer checks below.
+  move. It also checks the actual SwiftUI Path used by the close layer's
+  `contentShape`: sidebar points are excluded and visible-card points included
+  at fractional reveal widths. These are layout and hit-region checks, not an
+  end-to-end touch dispatch test; on-device interaction still needs the manual
+  drawer checks below.
 - The complete unsigned iOS Debug target builds for `generic/platform=iOS`, using
   the checked-in package resolutions and the Xcode beta toolchain. The app's
   existing iOS 26.5 deployment target remains unchanged.
@@ -391,6 +401,7 @@ Native transform regression on macOS, without launching the app:
 ```sh
 DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer xcrun swiftc -parse-as-library \
   'ios/Agents Anywhere/Agents Anywhere/Views/Components/SidebarDrawerTranslation.swift' \
+  'ios/Agents Anywhere/Agents Anywhere/Views/Components/SidebarDrawerCloseRegion.swift' \
   ios/Tests/DrawerLayoutProbe.swift -o /tmp/aa-drawer-layout-probe
 /tmp/aa-drawer-layout-probe
 ```
@@ -484,6 +495,9 @@ keyboard layout and real mobile-network behavior still need manual validation:
     The column width should remain constant during fractional drawer movement;
     check both the live drag and spring settlement, then tap the visible card to
     close the drawer and verify normal text selection, scrolling and composer taps.
+    With the phone drawer fully open, select several sessions, a device and the
+    account button; each sidebar action must receive its own tap. Only tapping
+    the exposed main-card strip closes the drawer without changing selection.
     Check Agent/device names and syncing/offline/working feedback in the header.
     Sync completion and takeover must not move the viewport. Resize the iPad
     split and change Dynamic Type in both directions; blocks should rewrap with
