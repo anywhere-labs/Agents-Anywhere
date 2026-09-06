@@ -9,7 +9,6 @@ from connector.runtime_protocol import (
     AgentRuntime,
     RuntimeConfig,
     RuntimeConfigSchema,
-    RuntimeInstancePolicy,
     RuntimeInvalidRequestError,
     RuntimeProvider,
     RuntimeResourceClaim,
@@ -58,14 +57,6 @@ class DshProvider(RuntimeProvider):
     @property
     def description(self) -> str:
         return "DeepSeek Harness local service runtime"
-
-    @property
-    def instance_policy(self) -> RuntimeInstancePolicy:
-        return "multiple"
-
-    @property
-    def max_instances(self) -> int | None:
-        return None
 
     async def discover(self) -> RuntimeTypeDescriptor:
         values = provider_config.default_config_values()
