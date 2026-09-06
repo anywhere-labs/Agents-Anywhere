@@ -7,7 +7,7 @@ Agents Anywhere 的 DSH 插件。当前已实现**没有安装 AA Desktop 时，
 ## 已实现
 
 ```text
-DSH 设置 → Agents Anywhere → 在浏览器中登录
+DSH 左侧边栏「设置」上方 → 插件连接 → 在弹窗中点击「在浏览器中登录」
   → Web 登录 / 注册、授权插件
   → 插件 127.0.0.1 回调，交换用户凭据
   → 复用或注册本机设备，启动插件内部的源码 Connector
@@ -38,7 +38,7 @@ DSH_HOME="$HOME/.dsh" npx -y -p @deepseek-ai/dsh@0.1.2-rc.1 \
   dsh plugin --profile desktop add "link:$PWD"
 ```
 
-链接安装方式已在全新临时 `DSH_HOME` / profile 中验证，并通过 `--dump-config` 确认插件层。安装后重启目标 DSH Desktop，再打开设置中的 **Agents Anywhere**。
+链接安装方式已在全新临时 `DSH_HOME` / profile 中验证，并通过 `--dump-config` 确认插件层。安装后重启目标 DSH Desktop，点击左侧边栏「设置」上方的 **插件连接**。
 
 旧 `dsh-bridge` 如果还在管理同一个账号或设备，应先在 DSH 中停用旧插件，再测试 Next；本项目不会接管旧插件或 Desktop 的进程与凭据。
 
@@ -77,13 +77,15 @@ corepack yarn dev
 
 ## 前端组件与样式
 
-设置页通过官方 `settings.section` 扩展点挂载，使用 `@deepseek-ai/dsh-client-ui-primitives` 的 `Button`、`Input`、`StateDot`。这些组件由 DSH 的平台模块提供，插件不打包自己的副本；`clsx` 作为普通辅助依赖内联。
+入口通过官方 `sidebar.footer.action` 扩展点挂载，位于左侧边栏「设置」按钮上方。展开时显示 Lucide `Smartphone` 图标和「插件连接」，收起时只显示图标并提供名称提示。点击入口打开官方 `Modal` 弹窗，支持关闭按钮、Esc 和点击遮罩关闭；关闭后保留 Host 的连接状态，再打开时重新检查本机。插件不再向设置页面注册入口。
 
-页面布局位于 `src/client/features/onboarding/section.module.css`，使用 CSS Modules 和官方 `--dsw-alias-*` / `--dsw-font-*` 主题变量。页面跟随 DSH 的明暗主题，不声明全局主题或固定颜色。
+弹窗使用 `@deepseek-ai/dsh-client-ui-primitives` 的 `Modal`、`Tooltip`、`Button`、`Input`、`StateDot`。这些组件由 DSH 的平台模块提供，插件不打包自己的副本；`clsx` 和实际使用的 Lucide 图标内联进 Client bundle。
+
+入口与弹窗布局位于 `src/client/features/onboarding/entry.module.css`，连接内容布局位于同目录的 `section.module.css`，使用 CSS Modules 和官方 `--dsw-alias-*` / `--dsw-font-*` 主题变量。页面跟随 DSH 的明暗主题，不声明全局主题或固定颜色。
 
 外部插件无法直接使用官方仓库未发布的构建 helper，因此 `scripts/client-css.ts` 按其输出契约处理 CSS：监听源文件、生成局部类名，在 Client factory 执行时注入带 `data-plugin` / `data-plugin-css` 的样式，供 DSH HMR 清理和重新加载。实现参考官方 `docs/web-styling.zh.md` 与 `packages/client/tsdown.client.ts`。
 
-`check:build` 在 headless DOM 中加载真实官方组件，验证登录、取消、地址保存和设置页卸载；同时检查样式去重及 HMR 清理后的重新注入。Node 中的 CSS loader 仅用于验证，不进入插件产物。
+`check:build` 在 headless DOM 中加载真实官方组件，验证侧边栏展开/收起、弹窗打开/关闭/焦点恢复、登录、取消、地址保存，以及卸载时弹窗与入口清理；同时检查样式去重及 HMR 清理后的重新注入。Node 中的 CSS loader 仅用于验证，不进入插件产物。
 
 ## 配置与本地状态
 
@@ -118,10 +120,10 @@ src/host/desktop/       共享安装记录的只读检测
 src/host/onboarding/    OAuth 回调、流程状态和 Web 交接
 src/host/account/       用户授权、设备绑定及凭据恢复
 src/host/connector/     内部 Python Connector 的进程管理
-src/host/rpc/           公开的设置页管理接口
+src/host/rpc/           公开的连接管理接口
 src/host/storage/       私有文件存储与实例锁
 src/host/dsh-runtime/   待实现的 DSH Agent 业务
-src/client/            DSH 设置页和 Host 调用
+src/client/            DSH 侧边栏入口、连接弹窗和 Host 调用
 scripts/               构建、源码复制与产物检查
 tests/                 单元及集成测试
 ```

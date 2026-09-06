@@ -47,7 +47,7 @@ export default defineConfig([
     dts: true,
     deps: {
       neverBundle: ['@deepseek-ai/cordis', 'react', 'react/jsx-runtime', '@deepseek-ai/dsh-client-ui-primitives'],
-      alwaysBundle: ['clsx'],
+      alwaysBundle: ['clsx', 'lucide-react'],
     },
     plugins: [clientCss(packageId, fileURLToPath(new URL('.', import.meta.url)))],
     outExtensions: () => ({ js: '.js', dts: '.d.ts' }),

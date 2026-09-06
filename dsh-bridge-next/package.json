@@ -31,7 +31,7 @@
       "inject": [
         "@deepseek-ai/dsh-client-ui-slots",
         "@deepseek-ai/dsh-client-connection",
-        "@deepseek-ai/dsh-client-ui-settings-general"
+        "@deepseek-ai/dsh-client-ui-sidebar"
       ]
     }
   },
@@ -76,6 +76,7 @@
   "packageManager": "yarn@4.18.0",
   "license": "MIT",
   "dependencies": {
-    "clsx": "2.1.1"
+    "clsx": "2.1.1",
+    "lucide-react": "1.41.0"
   }
 }

@@ -65,4 +65,4 @@ for (const match of clientSource.matchAll(/\brequire\(["']([^"']+)["']\)/g)) {
   assert.ok(allowedClientImports.has(match[1]!), `Unexpected client runtime import: ${match[1]}`)
 }
 
-console.log('构建产物检查通过：Host、官方 Client 组件交互、设置页注册与释放、CSS 热更新契约、类型声明和内部 Connector 源码。')
+console.log('构建产物检查通过：Host、侧边栏入口与官方弹窗交互、注册与释放、CSS 热更新契约、类型声明和内部 Connector 源码。')

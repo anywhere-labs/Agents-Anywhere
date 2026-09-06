@@ -61,11 +61,6 @@ export function OnboardingSection({ host }: { host: OnboardingHostApi }) {
   const failed = Boolean(error || snapshot?.stage === 'error' || detected === 'error')
   const state: StateDotState = failed ? 'error' : !snapshot || busy || connecting ? 'ongoing' : snapshot.stage === 'ready' ? 'done' : 'warning'
   return <section className={css.section} aria-busy={busy}>
-    <header className={css.heading}>
-      <span className={css.eyebrow}>AGENTS ANYWHERE</span>
-      <h2 className={css.title}>把这台电脑连接起来</h2>
-      <p className={css.description}>在 Web 和手机上继续使用你的 Agent。登录后，我们会为本机建立连接，并引导你完成设置。</p>
-    </header>
     <div className={clsx(css.status, failed && css.statusError)} role="status" aria-live="polite">
       <StateDot state={state} className={css.stateDot} />
       <div className={css.statusBody}>

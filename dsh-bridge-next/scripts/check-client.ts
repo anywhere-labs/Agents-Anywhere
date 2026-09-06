@@ -10,7 +10,7 @@ import type { OnboardingHostApi, OnboardingSnapshot } from '../src/contracts/ind
 
 /** Exercise the published factory and real primitives without a browser or DSH process. */
 export async function checkClient(source: string, packageId: string): Promise<void> {
-  const dom = new JSDOM('<!doctype html><html><head></head><body><main></main></body></html>', { url: 'http://localhost' })
+  const dom = new JSDOM('<!doctype html><html><head></head><body><main id="root"></main></body></html>', { url: 'http://localhost' })
   const { document } = dom.window
   const globals = { window: dom.window, document, navigator: dom.window.navigator, IS_REACT_ACT_ENVIRONMENT: true }
   const previous = Object.fromEntries(Object.keys(globals).map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]))
@@ -53,16 +53,17 @@ export async function checkClient(source: string, packageId: string): Promise<vo
     assert.deepEqual(Array.from(client.inject), ['slots', 'connection'])
 
     const ownedStyles = () => Array.from(document.querySelectorAll('style')).filter(style => style.dataset.plugin === packageId)
-    assert.equal(ownedStyles().length, 1, 'Client factory must install its scoped stylesheet')
-    assert.match(ownedStyles()[0]!.textContent!, /--dsw-alias-label-primary/)
+    const styleCount = ownedStyles().length
+    assert.ok(styleCount > 0, 'Client factory must install its scoped stylesheets')
+    assert.ok(ownedStyles().some(style => style.textContent?.includes('--dsw-alias-label-primary')))
     registration.factory(require)
-    assert.equal(ownedStyles().length, 1, 'Re-evaluating the factory must not duplicate styles')
+    assert.equal(ownedStyles().length, styleCount, 'Re-evaluating the factory must not duplicate styles')
     const foreignStyle = document.createElement('style')
     foreignStyle.dataset.plugin = 'another-plugin'
     document.head.appendChild(foreignStyle)
     for (const style of ownedStyles()) style.remove()
     registration.factory(require)
-    assert.equal(ownedStyles().length, 1, 'Factory must restore its stylesheet after DSH HMR cleanup')
+    assert.equal(ownedStyles().length, styleCount, 'Factory must restore its stylesheets after DSH HMR cleanup')
     assert.ok(foreignStyle.isConnected)
 
     let snapshot: OnboardingSnapshot = {
@@ -72,8 +73,9 @@ export async function checkClient(source: string, packageId: string): Promise<vo
       connectorId: null, connectorRunning: false, flowId: null,
     }
     const calls: { endpoint: string; payload: unknown }[] = []
-    let section: { Component: ComponentType<{ host: OnboardingHostApi }>; props: { host: OnboardingHostApi } } | undefined
-    let settingsCount = 0
+    type EntryProps = { host: OnboardingHostApi; wide: boolean }
+    let entry: { Component: ComponentType<EntryProps>; props: { host: OnboardingHostApi } } | undefined
+    let entryCount = 0
     client.apply({
       connection: { rpc: { call: async (channel: string, endpoint: string, payload: unknown) => {
         assert.equal(channel, '/api')
@@ -87,49 +89,92 @@ export async function checkClient(source: string, packageId: string): Promise<vo
       } } },
       effect(effect: () => () => void) { disposers.push(effect()) },
       slots: {
-        inject(name: string, register: () => () => void) { assert.equal(name, 'settings.section'); return register() },
-        register(options: { id: string; inject: () => { host: OnboardingHostApi } }, Component: ComponentType<{ host: OnboardingHostApi }>) {
+        inject(name: string, register: () => () => void) { assert.equal(name, 'sidebar.footer.action'); return register() },
+        register(options: { name: string; id: string; label: () => string; inject: () => { host: OnboardingHostApi } }, Component: ComponentType<EntryProps>) {
+          assert.equal(options.name, 'sidebar.footer.action', 'The entry belongs above Settings, not inside it')
           assert.equal(options.id, 'agents-anywhere-next')
-          section = { Component, props: options.inject() }
-          settingsCount++
-          return () => { settingsCount-- }
+          assert.equal(options.label(), '插件连接')
+          entry = { Component, props: options.inject() }
+          entryCount++
+          return () => { entryCount-- }
         },
       },
     })
-    assert.equal(settingsCount, 1)
-    assert.ok(section)
-    const { Component, props } = section
+    assert.equal(entryCount, 1)
+    assert.ok(entry)
+    const { Component, props } = entry
     const container = document.querySelector('main')!
     const root = createRoot(container)
     unmount = () => root.unmount()
-    await act(async () => { root.render(createElement(Component, props)) })
+    await act(async () => { root.render(createElement(Component, { ...props, wide: true })) })
     const button = (text: string) => {
-      const element = Array.from(container.querySelectorAll('button')).find(item => item.textContent === text)
+      const element = Array.from(document.querySelectorAll('button')).find(item => item.textContent === text || item.getAttribute('aria-label') === text)
       assert.ok(element, `Missing button: ${text}`)
       return element
     }
+    const dialog = () => document.querySelector<HTMLElement>('[role="dialog"][aria-label="插件连接"]')
+    const trigger = button('插件连接')
+    assert.equal(trigger.textContent, '插件连接')
+    assert.ok(trigger.querySelector('svg.lucide-smartphone'))
+    assert.equal(dialog(), null)
+    assert.equal(calls.length, 0, 'A closed connection panel must not poll the Host')
+    await act(async () => { trigger.click() })
+    assert.ok(dialog())
+    assert.equal(container.contains(dialog()), false, 'Official Modal must portal outside the sidebar')
+    assert.equal(container.hasAttribute('inert'), true)
+    assert.equal(trigger.getAttribute('aria-expanded'), 'true')
+    assert.equal(document.activeElement, button('关闭插件连接'))
     assert.equal(button('在浏览器中登录').disabled, false)
     await act(async () => { button('在浏览器中登录').click() })
     assert.ok(calls.some(call => call.endpoint === 'agentsAnywhereOnboarding/begin'))
     assert.deepEqual(openedUrls, [{ url: 'https://example.com/onboarding', target: '_blank', features: 'noopener,noreferrer' }])
-    assert.equal(container.querySelector('a')?.href, 'https://example.com/onboarding')
-    assert.equal(container.querySelector('[data-state]')?.getAttribute('data-state'), 'ongoing')
+    assert.equal(dialog()!.querySelector('a')?.href, 'https://example.com/onboarding')
+    assert.equal(dialog()!.querySelector('[data-state]')?.getAttribute('data-state'), 'ongoing')
+    await act(async () => { document.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true })) })
+    assert.equal(dialog(), null)
+    assert.equal(container.hasAttribute('inert'), false)
+    assert.equal(document.activeElement, trigger)
+    assert.equal(calls.filter(call => /\/(cancel|logout)$/.test(call.endpoint)).length, 0, 'Closing the dialog must preserve the Host connection flow')
+    await act(async () => { trigger.click() })
+    assert.equal(document.querySelectorAll('[role="dialog"]').length, 1)
     await act(async () => { button('取消本次连接').click() })
     assert.ok(calls.some(call => call.endpoint === 'agentsAnywhereOnboarding/cancel'))
-    assert.equal(container.querySelector('a'), null)
+    assert.equal(dialog()!.querySelector('a'), null)
 
-    const inputs = Array.from(container.querySelectorAll('input'))
+    const inputs = Array.from(dialog()!.querySelectorAll('input'))
     assert.equal(inputs.length, 2)
     assert.ok(inputs.every(input => input.required && input.type === 'url' && input.labels?.length === 1))
     assert.deepEqual(inputs.map(input => input.value), [snapshot.settings.webBaseUrl, snapshot.settings.apiBaseUrl])
-    await act(async () => { container.querySelector('form')!.dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true })) })
+    await act(async () => {
+      dialog()!.querySelector('details')!.open = true
+      dialog()!.querySelector('form')!.dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }))
+    })
     const configure = calls.find(call => call.endpoint === 'agentsAnywhereOnboarding/configure')
     assert.ok(configure)
     assert.deepEqual(JSON.parse(JSON.stringify(configure.payload)), { args: { settings: snapshot.settings } })
 
+    const saveButton = button('保存连接地址')
+    await act(async () => {
+      saveButton.focus()
+      saveButton.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }))
+    })
+    assert.equal(document.activeElement, button('关闭插件连接'))
+    await act(async () => { button('关闭插件连接').click() })
+    assert.equal(dialog(), null)
+    await act(async () => { root.render(createElement(Component, { ...props, wide: false })) })
+    assert.equal(trigger.textContent, '', 'Collapsed sidebar must keep only the icon and accessible name')
+    assert.ok(trigger.querySelector('svg.lucide-smartphone'))
+    await act(async () => { trigger.click() })
+    await act(async () => { (dialog()!.parentElement!.firstElementChild as HTMLElement).click() })
+    assert.equal(dialog(), null, 'Mask click must close the dialog')
+    assert.equal(container.hasAttribute('inert'), false)
+    await act(async () => { trigger.click() })
+
     await act(async () => { unmount!(); unmount = undefined })
     for (const dispose of disposers.splice(0).reverse()) dispose()
-    assert.equal(settingsCount, 0, 'Client unload must remove its settings section')
+    assert.equal(entryCount, 0, 'Client unload must remove its sidebar entry')
+    assert.equal(dialog(), null, 'Client unload must remove an open dialog')
+    assert.equal(container.hasAttribute('inert'), false, 'Client unload must restore the application root')
   } finally {
     if (unmount) await act(async () => unmount!())
     for (const dispose of disposers.reverse()) dispose()

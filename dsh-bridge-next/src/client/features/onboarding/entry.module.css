@@ -1,0 +1,51 @@
+.trigger {
+  display: flex;
+  width: calc(100% + 4px);
+  margin: 4px -2px;
+  min-width: 0;
+}
+
+.trigger .button {
+  justify-content: flex-start;
+  gap: 8px;
+  width: 100%;
+  height: 42px;
+  padding: 0 10px 0 8px;
+  border-radius: 12px;
+  font: var(--dsw-font-s-14);
+}
+
+.rail {
+  width: 36px;
+  margin: 8px 0 10px;
+}
+
+.rail .button {
+  justify-content: center;
+  height: 36px;
+  padding: 0;
+  border-radius: 50%;
+}
+
+.label {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.dialog {
+  width: min(560px, 100%);
+  max-height: calc(100dvh - 48px);
+}
+
+.dialogContent {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.trigger :focus-visible,
+.dialog :focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 3px;
+}

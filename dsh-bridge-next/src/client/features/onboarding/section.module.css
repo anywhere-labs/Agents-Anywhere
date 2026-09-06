@@ -4,29 +4,16 @@
   flex-direction: column;
   gap: 24px;
   width: 100%;
-  max-width: 680px;
-  padding: 24px;
   color: var(--dsw-alias-label-primary);
   font: var(--dsw-font-s-14);
 }
 
-.heading,
 .statusBody,
 .form {
   display: flex;
   flex-direction: column;
   gap: 12px;
   min-width: 0;
-}
-
-.eyebrow {
-  color: var(--dsw-alias-label-tertiary);
-  font: var(--dsw-font-xxs-strong-12);
-}
-
-.title {
-  margin: 0;
-  font: var(--dsw-font-xl-24);
 }
 
 .description {
@@ -124,6 +111,5 @@
 }
 
 @media (max-width: 480px) {
-  .section { padding: 16px; }
   .actions { flex-direction: column; }
 }
