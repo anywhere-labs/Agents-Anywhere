@@ -101,9 +101,10 @@ export function DesktopShellHeader({
 
   return (
     <header
+      data-slot="desktop-shell-header"
       className={cn(
         "aa-window-drag flex h-11 shrink-0 items-center bg-background text-foreground",
-        titleBarControls ? "absolute top-0 right-0 z-10" : "relative",
+        titleBarControls ? "absolute top-0 right-0" : "relative",
       )}
       style={titleBarControls ? { left: sidebarOpen ? "var(--desktop-sidebar-width)" : 0 } : undefined}
     >

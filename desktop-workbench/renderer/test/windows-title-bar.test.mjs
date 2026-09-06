@@ -123,36 +123,6 @@ test("title bar provider shares the mounted controls target with the workspace",
   assert.equal(rendered.children[1], children)
 })
 
-test("docked and expanded tool sidebars start below the native title bar and still reach the bottom", () => {
-  const sidebarSource = readFileSync(new URL("../src/components/session-tool-sidebar.tsx", import.meta.url), "utf8")
-  const sidebarAst = ts.createSourceFile("session-tool-sidebar.tsx", sidebarSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
-  let classExpression
-  function visit(node) {
-    if (ts.isJsxOpeningElement(node) && node.tagName.getText(sidebarAst) === "aside") {
-      const attribute = node.attributes.properties.find(property => ts.isJsxAttribute(property) && property.name.getText(sidebarAst) === "className")
-      classExpression = attribute.initializer.expression.getText(sidebarAst)
-    }
-    ts.forEachChild(node, visit)
-  }
-  visit(sidebarAst)
-  assert.ok(classExpression)
-  for (const fillsMain of [false, true]) {
-    for (const motionEnabled of [false, true]) {
-      const classes = vm.runInNewContext(classExpression, {
-        cn: (...values) => values.filter(Boolean).join(" "),
-        presented: true,
-        controller: { open: true },
-        fillsMain,
-        motionEnabled,
-      }).split(" ")
-      assert.ok(classes.includes("top-[var(--aa-title-bar-height,0px)]"))
-      assert.ok(classes.includes("bottom-0"))
-      assert.ok(!classes.includes("inset-y-0"))
-      assert.ok(!classes.includes("top-0"))
-    }
-  }
-})
-
 test("navigation moves into the Windows title bar once and retains existing actions and disabled states", () => {
   const headerSource = readFileSync(new URL("../src/components/desktop/desktop-shell-header.tsx", import.meta.url), "utf8")
   const headerAst = ts.createSourceFile("desktop-shell-header.tsx", headerSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
@@ -204,6 +174,7 @@ test("navigation moves into the Windows title bar once and retains existing acti
       assert.equal(portals.length, titleBarTarget ? 1 : 0)
       if (titleBarTarget) {
         assert.match(header.props.className, /absolute/)
+        assert.doesNotMatch(header.props.className, /\bz-\d+/)
         assert.equal(header.props.style.left, canGoBack ? "var(--desktop-sidebar-width)" : 0)
         assert.equal(portals[0].target, titleBarTarget)
         assert.match(portals[0].children.props.className, /aa-window-no-drag/)
@@ -216,4 +187,52 @@ test("navigation moves into the Windows title bar once and retains existing acti
       }
     }
   }
+})
+
+test("only Windows places the same keyed shell header after the workspace without trapping the collapse button", () => {
+  const shellSource = readFileSync(new URL("../src/components/demo.tsx", import.meta.url), "utf8")
+  const shellAst = ts.createSourceFile("demo.tsx", shellSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+  for (const titleBarTarget of [null, {}]) {
+    const component = loadFunction("DesktopResizableShell", {
+      React: {
+        useContext: () => titleBarTarget,
+        useState: initial => [typeof initial === "function" ? initial() : initial, () => {}],
+        useRef: initial => ({ current: initial }),
+        useEffect() {},
+        useCallback: callback => callback,
+        useMemo: callback => callback(),
+        createElement: (type, props, ...children) => ({ type, props, children }),
+      },
+      useSidebar: () => ({ open: true, setOpen() {} }),
+      WindowsTitleBarControlsContext: {},
+      DashboardSidebarControlsContext: { Provider: "Provider" },
+      DEFAULT_DESKTOP_LAYOUT: { "dashboard-sidebar": 256, "dashboard-main": 1024 },
+      DESKTOP_SIDEBAR_MIN_WIDTH: 224,
+      cn: (...values) => values.filter(Boolean).join(" "),
+      DesktopShellHeader: "DesktopShellHeader",
+      ResizablePanelGroup: "ResizablePanelGroup",
+      ResizablePanel: "ResizablePanel",
+      ResizableHandle: "ResizableHandle",
+      AppSidebar: "AppSidebar",
+      SidebarInset: "SidebarInset",
+      WorkspaceMain: "WorkspaceMain",
+      SessionToolSidebarsHost: "SessionToolSidebarsHost",
+    }, shellAst)
+    const shell = component().children[0]
+    const children = shell.children.filter(Boolean)
+    assert.deepEqual(children.map(child => child.type), titleBarTarget
+      ? ["ResizablePanelGroup", "DesktopShellHeader"]
+      : ["DesktopShellHeader", "ResizablePanelGroup"])
+    assert.equal(children.find(child => child.type === "DesktopShellHeader").props.key, "desktop-shell-header")
+  }
+})
+
+test("only Windows reserves native chrome above the unchanged right sidebar", () => {
+  const css = readFileSync(new URL("../src/app/globals.css", import.meta.url), "utf8")
+  assert.match(css, /html\[data-windows-title-bar\] \[data-slot="session-tool-sidebar"\]\s*\{\s*top: var\(--aa-title-bar-height\);\s*\}/)
+  const sidebar = readFileSync(new URL("../src/components/session-tool-sidebar.tsx", import.meta.url), "utf8")
+  assert.match(sidebar, /data-slot="session-tool-sidebar"/)
+  assert.match(sidebar, /fixed inset-y-0 z-40/)
+  const sessionHeader = readFileSync(new URL("../src/components/session-view-header.tsx", import.meta.url), "utf8")
+  assert.match(sessionHeader, /relative z-50 rounded-md hover:bg-muted/)
 })

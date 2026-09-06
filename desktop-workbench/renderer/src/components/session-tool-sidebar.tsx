@@ -584,11 +584,12 @@ export function SessionToolSidebar({
 
   return createPortal(
     <aside
+      data-slot="session-tool-sidebar"
       aria-label={t("sidebarLabel")}
       aria-hidden={!presented || !controller.open}
       inert={!presented || !controller.open ? true : undefined}
       className={cn(
-        "fixed top-[var(--aa-title-bar-height,0px)] bottom-0 z-40 flex min-w-0 flex-col overflow-hidden border-l border-border bg-background text-foreground",
+        "fixed inset-y-0 z-40 flex min-w-0 flex-col overflow-hidden border-l border-border bg-background text-foreground",
         presented && controller.open ? "visible" : "invisible",
         presented && controller.open ? "pointer-events-auto" : "pointer-events-none",
         motionEnabled && !fillsMain

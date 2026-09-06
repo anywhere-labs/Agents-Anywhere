@@ -181,6 +181,13 @@ function DesktopResizableShell() {
   const panelMotionClassName = sidebarResizeActive
     ? "[&>[data-panel]]:transition-none"
     : "[&>[data-panel]]:transition-[flex-grow] [&>[data-panel]]:duration-[220ms] [&>[data-panel]]:ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:[&>[data-panel]]:transition-none"
+  const shellHeader = (
+    <DesktopShellHeader
+      key="desktop-shell-header"
+      sidebarOpen={open}
+      sidebarResizing={sidebarResizeActive}
+    />
+  )
 
   return (
     <DashboardSidebarControlsContext.Provider value={sidebarControls}>
@@ -191,10 +198,7 @@ function DesktopResizableShell() {
           "--desktop-sidebar-width": `${Math.max(sidebarWidth, DESKTOP_SIDEBAR_MIN_WIDTH)}px`,
         } as React.CSSProperties}
       >
-        <DesktopShellHeader
-          sidebarOpen={open}
-          sidebarResizing={sidebarResizeActive}
-        />
+        {titleBarControls ? null : shellHeader}
         <ResizablePanelGroup
           id="agents-anywhere-dashboard-sidebar"
           defaultLayout={defaultLayout}
@@ -259,6 +263,7 @@ function DesktopResizableShell() {
             </SidebarInset>
           </ResizablePanel>
         </ResizablePanelGroup>
+        {titleBarControls ? shellHeader : null}
       </div>
       <SessionToolSidebarsHost />
     </DashboardSidebarControlsContext.Provider>

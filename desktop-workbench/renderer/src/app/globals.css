@@ -224,6 +224,10 @@ html[data-windows-title-bar] [data-slot="sidebar-container"] {
   top: var(--aa-title-bar-height);
 }
 
+html[data-windows-title-bar] [data-slot="session-tool-sidebar"] {
+  top: var(--aa-title-bar-height);
+}
+
 /* Hallmark · studied: yes · source: user login reference · existing Geist tokens
  * Pre-emit critique: P5 H5 E4 S5 R5 V4. The native window owns the chrome.
  */
