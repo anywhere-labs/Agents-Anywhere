@@ -74,37 +74,30 @@ struct ChatSidebarView: View {
                 }
 
                 if let repository {
-                    HStack {
-                        Menu {
-                            Picker("侧栏显示", selection: $showsSessionList) {
-                                Text("按项目").tag(false)
-                                Text("全部会话").tag(true)
-                            }
-                            Button("归档会话", systemImage: "archivebox") { showsArchives = true }
-                        } label: {
-                            Label(showsSessionList ? "全部会话" : "按项目", systemImage: "line.3.horizontal.decrease")
-                                .font(.subheadline).foregroundStyle(.secondary).frame(minHeight: 40)
-                        }
-                        Spacer()
-                        Button("归档会话", systemImage: "archivebox") { showsArchives = true }
-                            .labelStyle(.iconOnly).frame(width: 40, height: 40)
-                    }.padding(.horizontal, 10)
                     if showsSessionList {
-                ChatSidebarSessionSection(
-                    title: "Recent",
-                    sessions: recentSessions,
-                    selectedSessionId: selectedSessionId,
-                    isLoading: isLoadingSessions,
-                    emptyMessage: "No sessions yet",
-                    onOpen: onOpenSession,
-                    onRename: onRenameSession,
-                    onTogglePinned: onToggleSessionPinned,
-                    onArchive: onArchiveSession,
-                    onCopyId: onCopySessionId
-                )
+                        HStack {
+                            Text("Recent").font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
+                            Spacer()
+                            ChatSidebarListMenu(showsSessionList: $showsSessionList,
+                                onShowArchives: { showsArchives = true }) {}
+                        }
+                        .padding(.horizontal, 10).padding(.top, 16)
+                        ChatSidebarSessionSection(
+                            title: nil,
+                            sessions: recentSessions,
+                            selectedSessionId: selectedSessionId,
+                            isLoading: isLoadingSessions,
+                            emptyMessage: "No sessions yet",
+                            onOpen: onOpenSession,
+                            onRename: onRenameSession,
+                            onTogglePinned: onToggleSessionPinned,
+                            onArchive: onArchiveSession,
+                            onCopyId: onCopySessionId
+                        )
                         DashboardPageButton(repository: repository, scope: .init())
                     } else {
-                        ChatSidebarProjects(repository: repository, selectedSessionID: selectedSessionId,
+                        ChatSidebarProjects(repository: repository, showsSessionList: $showsSessionList,
+                            selectedSessionID: selectedSessionId, onShowArchives: { showsArchives = true },
                             onNewSession: onNewProjectSession, onOpenSession: onOpenSession,
                             onRenameSession: onRenameSession, onPinSession: onToggleSessionPinned,
                             onArchiveSession: onArchiveSession, onCopySession: onCopySessionId)
@@ -140,6 +133,27 @@ struct ChatSidebarView: View {
             PairDeviceSheet()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+    }
+}
+
+struct ChatSidebarListMenu<Filters: View>: View {
+    @Binding var showsSessionList: Bool
+    let onShowArchives: () -> Void
+    @ViewBuilder var filters: () -> Filters
+
+    var body: some View {
+        Menu {
+            Picker("侧栏显示", selection: $showsSessionList) {
+                Text("按项目").tag(false)
+                Text("全部会话").tag(true)
+            }
+            filters()
+            Divider()
+            Button("归档会话", systemImage: "archivebox", action: onShowArchives)
+        } label: {
+            Label("列表选项", systemImage: "ellipsis")
+                .labelStyle(.iconOnly).frame(width: 44, height: 44)
+        }
     }
 }
 
@@ -198,7 +212,7 @@ private struct ChatSidebarDeviceSection: View {
 }
 
 private struct ChatSidebarSessionSection: View {
-    let title: LocalizedStringResource
+    let title: LocalizedStringResource?
     let sessions: [ChatSidebarSession]
     let selectedSessionId: V2SessionID?
     var isLoading = false
@@ -211,7 +225,7 @@ private struct ChatSidebarSessionSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            ChatSidebarSectionLabel(title: title)
+            if let title { ChatSidebarSectionLabel(title: title) }
 
             if isLoading {
                 ChatSidebarLoadingRow(title: "Loading sessions...")
@@ -300,7 +314,7 @@ struct ChatSidebarSessionRow: View {
         Button(action: onOpen) {
             HStack(spacing: 10) {
                 Text(session.title ?? String(localized: "Untitled session"))
-                    .font(.body).foregroundStyle(isSelected ? .primary : .secondary)
+                    .font(.body).foregroundStyle(.primary)
                     .lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
                 ChatSidebarSessionIndicator(indicator: session.presentation.indicator)
             }
