@@ -26,6 +26,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
@@ -202,9 +203,10 @@ internal fun AppearancePopup(
             Column(
                 modifier = Modifier
                     .width(204.dp)
+                    .shadow(24.dp, RoundedCornerShape(14.dp), ambientColor = colors.appShadow, spotColor = colors.appShadow)
                     .clip(RoundedCornerShape(14.dp))
-                    .background(colors.raisedSurface)
-                    .border(1.dp, colors.border, RoundedCornerShape(14.dp)),
+                    .background(if (colors.isDark) Color(0xFF303030) else Color(0xFFF4F3EF))
+                    .border(1.dp, if (colors.isDark) Color(0xFF4A4A4A) else Color(0xFFD6D3CD), RoundedCornerShape(14.dp)),
             ) {
                 AppearanceMenuRow(
                     title = stringResource(R.string.profile_follow_system),
@@ -254,9 +256,10 @@ internal fun SidebarViewPopup(
             Column(
                 modifier = Modifier
                     .width(204.dp)
+                    .shadow(24.dp, RoundedCornerShape(14.dp), ambientColor = colors.appShadow, spotColor = colors.appShadow)
                     .clip(RoundedCornerShape(14.dp))
-                    .background(colors.raisedSurface)
-                    .border(1.dp, colors.border, RoundedCornerShape(14.dp)),
+                    .background(if (colors.isDark) Color(0xFF303030) else Color(0xFFF4F3EF))
+                    .border(1.dp, if (colors.isDark) Color(0xFF4A4A4A) else Color(0xFFD6D3CD), RoundedCornerShape(14.dp)),
             ) {
                 AppearanceMenuRow(
                     title = stringResource(R.string.profile_project_view),

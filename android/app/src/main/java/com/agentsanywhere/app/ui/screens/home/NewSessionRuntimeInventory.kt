@@ -15,11 +15,13 @@ import com.agentsanywhere.app.feature.devices.DeviceRuntimeList
 import com.agentsanywhere.app.feature.sessions.activeNewSessionRuntimes
 import com.agentsanywhere.app.feature.sessions.newSessionInventoryNeedsSettling
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
 
 internal class NewSessionRuntimeInventory {
     var results by mutableStateOf<Map<String, DeviceRuntimeList>>(emptyMap())
@@ -63,7 +65,9 @@ internal fun rememberNewSessionRuntimeInventory(
                 var attempt = 0
                 while (true) {
                     val result = try {
-                        load(id)
+                        withTimeout(10_000) { load(id) }
+                    } catch (error: TimeoutCancellationException) {
+                        Result.failure(IllegalStateException(fallbackError, error))
                     } catch (error: CancellationException) {
                         throw error
                     } catch (error: Exception) {

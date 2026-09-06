@@ -50,6 +50,7 @@ import com.agentsanywhere.app.feature.sessions.NewSessionPreferenceStore
 import com.agentsanywhere.app.feature.sessions.NewSessionRuntimeCapabilities
 import com.agentsanywhere.app.feature.sessions.NewSessionRuntimeSelectionState
 import com.agentsanywhere.app.feature.sessions.SessionsState
+import com.agentsanywhere.app.model.AgentDevice
 import com.agentsanywhere.app.model.AgentProject
 import com.agentsanywhere.app.feature.sessions.availableProjectName
 import com.agentsanywhere.app.feature.sessions.activeNewSessionRuntimes
@@ -84,6 +85,9 @@ fun NewSessionScreen(
     onLoadModelCatalog: suspend (String, String) -> Result<NewSessionModelCatalog>,
     onLoadPermissionCatalog: suspend (String, String) -> Result<NewSessionPermissionCatalog>,
     onPrepareSession: (NewSessionDraft) -> Unit,
+    onRefreshDevices: () -> Unit,
+    devicesRefreshing: Boolean,
+    onOpenDevice: (AgentDevice) -> Unit,
     initialProjectId: String? = null,
     projectOnly: Boolean = false,
     onCreateProject: suspend (String, String, String) -> Result<AgentProject> = { _, _, _ ->
@@ -109,6 +113,9 @@ fun NewSessionScreen(
         onLoad = onListRuntimes,
         loadError = stringResource(R.string.new_session_runtime_load_failed),
     )
+    LaunchedEffect(Unit) {
+        if (!projectOnly) onRefreshDevices()
+    }
     var localProject by remember { mutableStateOf<AgentProject?>(null) }
     val projects = remember(sessionsState.projects, localProject) {
         val local = localProject
@@ -145,7 +152,7 @@ fun NewSessionScreen(
     val workspaceListState = rememberLazyListState()
     var creatingProject by rememberSaveable { mutableStateOf(projectOnly) }
     val devices = if (creatingProject) onlineDevices else onlineDevices.filter { device ->
-        activeNewSessionRuntimes(inventory.results[device.id]?.runtimes.orEmpty()).isNotEmpty()
+        device.id !in inventory.errors && activeNewSessionRuntimes(inventory.results[device.id]?.runtimes.orEmpty()).isNotEmpty()
     }
     var projectName by rememberSaveable { mutableStateOf("") }
     var projectCreating by remember { mutableStateOf(false) }
@@ -271,6 +278,22 @@ fun NewSessionScreen(
     val selectedDeviceOs = selectedDevice?.deviceOs
     val isWindowsDevice = isWindowsDeviceOs(selectedDeviceOs)
     val selectedRuntime = runtimeSelection.selectedRuntime
+    val setupState = if (creatingProject) null else newSessionSetupState(
+        sessions = sessionsState,
+        inventory = inventory,
+        projectConnectorId = selectedProject?.connectorId,
+        selectedConnectorId = selectedDeviceId,
+        hasSelectedRuntime = selectedDevice != null && runtimeSelection.connectorId == selectedDevice.id && selectedRuntime != null,
+    )
+    LaunchedEffect(setupState?.reason) {
+        if (setupState != null) {
+            editingTitle = false
+            choosePath = false
+            expandedConfiguration = null
+            focusManager.clearFocus()
+            keyboard?.hide()
+        }
+    }
 
     suspend fun loadRuntimeDetails() {
         val connectorId = runtimeSelection.connectorId ?: return
@@ -775,6 +798,38 @@ fun NewSessionScreen(
                 onOpenEntry = { browseDirectory(it.path) },
                 onRetry = { browseDirectory(retryDirectoryPath) },
             )
+        }
+        return
+    }
+
+    if (setupState != null) {
+        ScreenScaffold {
+            Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.navigationBars)) {
+                NewSessionHeader(
+                    title = defaultTitle,
+                    editable = false,
+                    editing = false,
+                    darkMode = darkMode,
+                    focusRequester = focusRequester,
+                    onTitleChange = {},
+                    onSubmitTitle = {},
+                    onClose = { navigate(AppDestination.Sessions) },
+                    onEditToggle = {},
+                )
+                NewSessionSetupPanel(
+                    state = setupState,
+                    refreshing = devicesRefreshing || inventory.pendingInitial.isNotEmpty(),
+                    onConnectDevice = { navigate(AppDestination.DeviceSetup) },
+                    onOpenDevices = { device ->
+                        if (device == null) navigate(AppDestination.Devices) else onOpenDevice(device)
+                    },
+                    onRetry = {
+                        onRefreshDevices()
+                        inventory.refresh()
+                    },
+                    modifier = Modifier.weight(1f),
+                )
+            }
         }
         return
     }
