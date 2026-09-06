@@ -95,11 +95,12 @@ import Testing
         } catch let conflict as ProjectReuseRequired { #expect(conflict.project.id == "project") }
         #expect(http.calls.allSatisfy { $0.method == .get })
         http.respond = { call in
-            if call.method == .post { return try fixtureData("project") }
+            if call.method == .patch { return try fixtureData("project") }
             return try http.defaultResponse(call)
         }
         _ = try await store.createProject(name: "Renamed", connectorID: "device", path: "/workspace", reusing: "project")
-        #expect(http.calls.filter { $0.method == .post }.count == 1)
+        #expect(http.calls.filter { $0.method == .patch }.count == 1)
+        #expect(http.calls.allSatisfy { $0.method != .post })
     }
 
     @Test func projectVisibilityUsesServerCountsAndArchiveStateOnly() throws {

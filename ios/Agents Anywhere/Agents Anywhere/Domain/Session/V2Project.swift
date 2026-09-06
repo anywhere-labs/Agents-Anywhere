@@ -28,6 +28,7 @@ struct V2ProjectCreateRequest: Encodable {
     let name: String
     let connectorId: V2ConnectorID
     let workspacePath: String
+    var manuallyCreated = true
 }
 struct V2ProjectPatchRequest: Encodable { let name: String?; let pinned: Bool? }
 

@@ -66,7 +66,7 @@ import Testing
         await model.refresh(connectors: try devices())
         _ = model.selectProject("project")
         #expect(model.canCreate)
-        #expect(http.calls.allSatisfy { $0.method == .get })
+        #expect(http.calls.allSatisfy { $0.method == .get || $0.path.hasSuffix("fs/list") })
     }
 
     @Test func latePreparationCannotReenableOfflineDevice() async throws {
@@ -120,7 +120,7 @@ import Testing
             return try http.defaultResponse(call)
         }
         #expect(await model.create(text: "task") == nil)
-        #expect(http.calls.allSatisfy { $0.method == .get })
+        #expect(http.calls.allSatisfy { $0.method == .get || $0.path.hasSuffix("fs/list") })
         #expect(!model.creationUncertain)
         #expect(model.draft.text == "task")
     }
@@ -142,24 +142,24 @@ import Testing
         await model.refresh(connectors: try devices())
         _ = model.selectProject("project")
         #expect(await model.create(text: "next draft") == nil)
-        #expect(http.calls.filter { $0.method == .post }.count == 1)
+        #expect(http.calls.filter { $0.method == .post && !$0.path.hasSuffix("fs/list") }.count == 1)
         #expect(model.error != nil && model.draft.text == "next draft")
     }
 
-    @Test func deletedProjectAndFailedPreflightKeepTheDraftWithoutWriting() async throws {
+    @Test func missingProjectAndFailedResolutionKeepTheDraftWithoutWriting() async throws {
         let http = transport(); let model = make(http)
         await model.refresh(connectors: try devices())
         model.draft.text = "keep me"
-        #expect(!model.canCreate)
-        #expect(model.selectProject("project"))
+        #expect(model.canCreate, "Remote home can be sent without manually choosing a project")
+        #expect(model.selectWorkspace("/another-workspace"))
         http.respond = { call in
-            if call.path == "/projects" { return Data(#"{"projects":[],"serverTime":""}"#.utf8) }
+            if call.path == "/projects" { throw URLError(.timedOut) }
             if call.path.hasSuffix("/rti_work") { return try fixtureData("runtime") }
             return try http.defaultResponse(call)
         }
         #expect(await model.create(text: "keep me") == nil)
         #expect(!model.creationUncertain && model.projectID == nil)
-        #expect(model.draft.text == "keep me" && http.calls.allSatisfy { $0.method == .get })
+        #expect(model.draft.text == "keep me" && http.calls.allSatisfy { $0.method == .get || $0.path.hasSuffix("fs/list") })
     }
 
     @Test func successfulCreateUsesTypeAndInstanceAndDoesNotPersistDraft() async throws {
@@ -170,7 +170,7 @@ import Testing
         #expect(model.selectProject("project"))
         let result = await model.create(text: model.draft.text)
         #expect(result != nil)
-        let request = try #require(http.calls.first { $0.method == .post })
+        let request = try #require(http.calls.first { $0.path.hasSuffix("create-and-start") })
         #expect(request.body?["projectId"] == .string("project"))
         #expect(request.body?["runtime"] == .string("claude"))
         #expect(request.body?["runtimeId"] == .string("rti_work"))

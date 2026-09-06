@@ -25,7 +25,7 @@ struct ChatSidebarView: View {
 
     @State private var isShowingPairing = false
     @State private var showsArchives = false
-    @AppStorage("aa.native.sidebar.session-list") private var showsSessionList = false
+    @AppStorage(ProjectSidebarPreferences.sessionListKey) private var showsSessionList = false
 
     var body: some View {
         ScrollView {
@@ -43,17 +43,20 @@ struct ChatSidebarView: View {
                 }
 
                 if let setup = appState.nativeChatServices?.agentSetup {
-                    ForEach(setup.requests.filter { !$0.ready }) { request in
+                    ForEach(setup.requests) { request in
                         HStack {
-                            if request.error == nil { ProgressView().controlSize(.small) }
+                            if request.ready { AppSymbol("checkmark.circle") }
+                            else if request.error == nil { ProgressView().controlSize(.small) }
                             VStack(alignment: .leading) {
                                 Text(request.connector.name).font(.subheadline)
-                                Text(request.error ?? String(localized: "等待设备连接…")).font(.caption).foregroundStyle(.secondary)
+                                Text(request.ready ? String(localized: "设备已连接") : request.error ?? String(localized: "等待设备连接…"))
+                                    .font(.caption).foregroundStyle(.secondary)
                             }
                             Spacer(minLength: 0)
                             Menu {
+                                if request.ready { Button(String(localized: "配置 Agent")) { setup.configure(request.id) } }
                                 if request.error != nil { Button(String(localized: "重试")) { setup.retry(request.id) } }
-                                Button(String(localized: "停止等待")) { setup.finish(request.id) }
+                                Button(request.ready ? String(localized: "稍后配置") : String(localized: "停止等待")) { setup.finish(request.id) }
                             } label: { AppSymbol("ellipsis").frame(width: 36, height: 36) }
                         }.padding(.horizontal, 10).padding(.vertical, 8)
                     }

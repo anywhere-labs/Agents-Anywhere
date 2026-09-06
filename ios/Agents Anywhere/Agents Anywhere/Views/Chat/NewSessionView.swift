@@ -14,6 +14,7 @@ struct NewSessionView: View, Equatable {
     @State private var showsTarget = false
     @State private var showsWorkspace = false
     @State private var confirmsRetry = false
+    @AppStorage(ProjectSidebarPreferences.sessionListKey) private var showsSessionList = false
     @Environment(\.colorScheme) private var colorScheme
     @ScaledMetric(relativeTo: .body) private var bodyLineHeight: CGFloat = 22
 
@@ -41,17 +42,20 @@ struct NewSessionView: View, Equatable {
                         Text(String(localized: "运行目标")).font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
                         targetCard
                         Button { showsWorkspace = true } label: {
-                            HStack(spacing: 14) {
-                                AppSymbol("folder", size: 20).foregroundStyle(.primary).frame(width: 24)
-                                VStack(alignment: .leading, spacing: 5) {
-                                    Text(String(localized: "项目")).font(.subheadline.weight(.medium)).foregroundStyle(.primary)
-                                    Text(model.project.map { $0.name + " · " + $0.workspacePath } ?? String(localized: "选择已有项目或创建项目"))
-                                        .font(.footnote).foregroundStyle(.secondary).lineLimit(2)
+                            HStack(spacing: 6) {
+                                Text(workspaceName).font(.subheadline.weight(.medium)).foregroundStyle(.primary)
+                                    .lineLimit(1).layoutPriority(1)
+                                if !model.workspace.isEmpty {
+                                    Text(model.workspace).font(.system(.footnote, design: .monospaced))
+                                        .foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
                                 }
-                                Spacer(minLength: 8)
-                                AppSymbol("chevron.right", size: 14).foregroundStyle(.secondary)
+                                if model.loadingHomes.contains(model.connectorID), model.workspace.isEmpty {
+                                    ProgressView().controlSize(.mini)
+                                } else { AppSymbol("chevron.down", size: 12).foregroundStyle(.secondary) }
                             }
-                            .padding(18).background(.quaternary.opacity(0.5), in: .rect(cornerRadius: 22))
+                            .padding(.vertical, 12)
+                            .overlay(alignment: .bottom) { Rectangle().fill(.secondary.opacity(0.35)).frame(height: 1) }
+                            .contentShape(.rect)
                         }
                         .buttonStyle(.plain)
                         .disabled(model.connector == nil || model.isCreating)
@@ -156,13 +160,19 @@ struct NewSessionView: View, Equatable {
         } else if model.connector?.status != .online {
             status(String(localized: "目标设备离线"), detail: String(localized: "等待它重新连接，或选择其他在线设备。草稿会继续保留。"), icon: "bolt.horizontal.circle")
             Button(String(localized: "选择其他设备")) { showsTarget = true }
-        } else if model.project == nil {
-            status(String(localized: "选择任务所属的项目"), detail: String(localized: "项目决定会话使用的工作目录。"), icon: "folder")
-            Button(String(localized: "选择项目")) { showsWorkspace = true }
+        } else if model.workspace.isEmpty, let error = model.homeErrors[model.connectorID] {
+            status(String(localized: "无法解析设备家目录"), detail: error, icon: "folder")
+            Button(String(localized: "选择工作目录")) { showsWorkspace = true }
         } else if !model.isPreparing && model.runtime?.isReadyForSession != true {
             status(String(localized: "选择一个已就绪的 Agent"), detail: String(localized: "可在设备管理中配置或启动实例。"), icon: "sparkle")
             Button(String(localized: "选择 Agent")) { showsTarget = true }
         }
+    }
+
+    private var workspaceName: String {
+        if !showsSessionList, let project = model.project { return project.name }
+        if model.isHome || model.workspace.isEmpty { return String(localized: "Home 目录") }
+        return ProjectWorkspacePath.name(model.workspace)
     }
 
     private func status(_ title: String, detail: String, icon: String) -> some View {

@@ -11,6 +11,7 @@ struct WorkspaceFilesSheet: View {
     var session: V2SessionModel?
     var permitsReading = true
     var onSelectDirectory: ((String) -> Void)? = nil
+    var initialPath = "."
     @State private var destination: FileDestination?
     @State private var transfer: FileTransferRequest?
     @State private var detent: PresentationDetent = .medium
@@ -37,7 +38,7 @@ struct WorkspaceFilesSheet: View {
             WorkspaceDirectoryView(
                 connectorId: connectorId,
                 root: workspace.path,
-                path: ".",
+                path: initialPath,
                 title: deviceName,
                 service: service,
                 onOpenFile: openFile, onFileAction: startTransfer, canRead: canRead,
@@ -148,6 +149,12 @@ private struct WorkspaceDirectoryView: View {
     let onSelectDirectory: ((String) -> Void)?
 
     @State private var model = WorkspaceDirectoryModel()
+    @State private var requestedPath: String?
+    @State private var address: String?
+    private var effectivePath: String { requestedPath ?? path }
+    private var canSelect: Bool {
+        canRead && !model.isLoading && model.selectablePath != nil && (address == nil || address == model.resolvedPath)
+    }
 
     var body: some View {
         List {
@@ -207,6 +214,20 @@ private struct WorkspaceDirectoryView: View {
             }
         }
         .safeAreaInset(edge: .top, spacing: 0) {
+            VStack(alignment: .leading, spacing: 8) {
+                if onSelectDirectory != nil {
+                    HStack(spacing: 8) {
+                        Button(String(localized: "上一级目录"), appSymbol: "arrow.up") {
+                            if let parent = ProjectWorkspacePath.parent(model.resolvedPath) { navigate(parent) }
+                        }.labelStyle(.iconOnly).frame(width: 44, height: 44)
+                            .disabled(!canRead || model.isLoading || ProjectWorkspacePath.parent(model.resolvedPath) == nil)
+                        TextField(String(localized: "设备上的完整路径"), text: Binding(get: { address ?? currentDirectoryPath }, set: { address = $0 }))
+                            .font(.system(.footnote, design: .monospaced)).textInputAutocapitalization(.never).autocorrectionDisabled()
+                            .onSubmit { navigate(address ?? currentDirectoryPath) }
+                        Button(String(localized: "打开目录"), appSymbol: "arrow.right") { navigate(address ?? currentDirectoryPath) }
+                            .labelStyle(.iconOnly).frame(width: 44, height: 44).disabled(!canRead)
+                    }.padding(.horizontal, 12)
+                }
             Text(currentDirectoryPath)
                 .font(.system(.caption, design: .monospaced))
                 .foregroundStyle(.secondary)
@@ -221,12 +242,14 @@ private struct WorkspaceDirectoryView: View {
                         UIPasteboard.general.string = currentDirectoryPath
                     }
                 }
+            }.background(.bar)
         }
         .safeAreaInset(edge: .bottom) {
             if let onSelectDirectory {
                 AppGlassButton(String(localized: "使用此目录"), style: .prominent,
-                    disabled: !canRead || model.isLoading || model.resolvedPath.isEmpty || model.errorMessage != nil) {
-                    onSelectDirectory(currentDirectoryPath)
+                    disabled: !canSelect) {
+                    guard canSelect, let path = model.selectablePath else { return }
+                    onSelectDirectory(path)
                 }.padding(16).background(.bar)
             }
         }
@@ -235,16 +258,26 @@ private struct WorkspaceDirectoryView: View {
         .refreshable {
             await loadDirectory()
         }
-        .task(id: "\(path):\(canRead)") {
+        .task(id: DirectoryRequest(connector: connectorId, root: root, path: effectivePath, canRead: canRead)) {
             await loadDirectory()
         }
+        .onChange(of: model.resolvedPath) { _, new in if new == effectivePath { address = nil } }
     }
 
     private var currentDirectoryPath: String {
         // fs/list returns the device's resolved absolute directory. Keep its
         // POSIX/Windows spelling rather than interpreting it on the iOS host.
         if !model.resolvedPath.isEmpty { return model.resolvedPath }
-        return path == "." ? root : path
+        return effectivePath == "." ? root : effectivePath
+    }
+
+    private struct DirectoryRequest: Equatable { let connector: String; let root: String; let path: String; let canRead: Bool }
+    private func navigate(_ path: String) {
+        guard canRead else { return }
+        let value = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        let reloadsCurrent = effectivePath == value
+        address = value; requestedPath = value
+        if reloadsCurrent { Task { await loadDirectory() } }
     }
 
     private func loadDirectory() async {
@@ -252,7 +285,7 @@ private struct WorkspaceDirectoryView: View {
         await model.load(
             connectorId: connectorId,
             root: root,
-            path: path,
+            path: effectivePath,
             service: service
         )
     }

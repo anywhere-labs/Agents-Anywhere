@@ -4,7 +4,7 @@ import UIKit
 struct PairDeviceSheet: View {
     @EnvironmentObject private var appState: AppState
     @Environment(\.dismiss) private var dismiss
-    @State private var method: Method?
+    @State private var step = Step.connectionMethod
     @State private var name = String(localized: "New device")
     @State private var code = ""
     @State private var credential: V2ConnectorCreateResponse?
@@ -12,19 +12,20 @@ struct PairDeviceSheet: View {
     @State private var creationUncertain = false
     @State private var error: String?
     @State private var copied = false
-    private enum Method { case desktop, cli }
+    private enum Step { case connectionMethod, desktop, cliConfirm, name, cliMethod, pairCode, token }
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
-                    if let method {
-                        if method == .desktop { desktopInstructions } else { cliInstructions }
-                    } else {
+                    if step == .desktop { desktopInstructions }
+                    else if step == .cliConfirm { cliConfirmation }
+                    else if step != .connectionMethod { cliInstructions }
+                    else {
                         Text(String(localized: "选择设备的连接方式")).font(.title2.bold())
-                        AppGlassButton(String(localized: "桌面应用"), systemImage: "desktopcomputer", style: .prominent) { method = .desktop }
+                        AppGlassButton(String(localized: "桌面应用"), systemImage: "desktopcomputer", style: .prominent) { step = .desktop }
                         Text(String(localized: "在电脑上安装桌面应用，并登录同一账号。设备会自动显示在侧栏。")).foregroundStyle(.secondary)
-                        AppGlassButton(String(localized: "命令行"), systemImage: "terminal") { method = .cli }
+                        AppGlassButton(String(localized: "命令行"), systemImage: "terminal") { step = .cliConfirm }
                         Text(String(localized: "适合通过 CLI 连接远程主机或无界面的设备。")).foregroundStyle(.secondary)
                     }
                     if let error { Text(error).font(.footnote).foregroundStyle(.red) }
@@ -34,8 +35,8 @@ struct PairDeviceSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    if method != nil && credential == nil {
-                        Button(String(localized: "返回")) { method = nil; error = nil }.disabled(isWorking)
+                    if step != .connectionMethod {
+                        Button(String(localized: "返回"), appSymbol: "chevron.left", action: goBack).disabled(isWorking)
                     }
                 }
                 SheetCloseToolbar(disabled: isWorking) { dismiss() }
@@ -54,72 +55,128 @@ struct PairDeviceSheet: View {
         }
     }
 
+    private var cliConfirmation: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Text(String(localized: "确定要使用命令行吗？")).font(.title2.bold())
+            Text(String(localized: "此方式需要会使用终端以及 uv / uvx 命令行工具。"))
+            Text(String(localized: "如果使用 Windows 或 macOS，桌面程序的连接和日常使用更方便。"))
+                .foregroundStyle(.secondary)
+            AppGlassButton(String(localized: "继续使用命令行"), style: .prominent) { step = .name }
+            AppGlassButton(String(localized: "使用桌面程序")) { step = .desktop }
+        }
+    }
+
     @ViewBuilder private var cliInstructions: some View {
-        if let credential, let server = appState.serverURL {
+        if step == .name {
+            Text(String(localized: "为命令行设备命名")).font(.title2.bold())
+            TextField(String(localized: "设备名称"), text: $name).textFieldStyle(.roundedBorder).autocorrectionDisabled()
+            AppGlassButton(String(localized: "继续"), systemImage: "arrow.right", style: .prominent, isLoading: isWorking) {
+                UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                Task { await Task.yield(); await prepare() }
+            }.disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isWorking || !canConnect || creationUncertain)
+            if creationUncertain {
+                Text(String(localized: "服务器是否已创建设备尚未确认。请先关闭此页并刷新设备列表，确认结果后再创建。"))
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+        } else if let credential, let server = appState.serverURL {
             Text(credential.connector.name).font(.title2.bold())
-            Text(String(localized: "在目标设备运行以下命令，然后保持 CLI 运行。即使关闭此页面，我们也会继续等待设备连接。")).foregroundStyle(.secondary)
-            let command = V2PairingCommand.start(server: server, credential: credential)
+            if appState.nativeChatServices?.agentSetup.requests.first(where: { $0.id == credential.connector.id })?.ready != true {
+            if step == .cliMethod {
+                Text(String(localized: "选择配对方式")).foregroundStyle(.secondary)
+                AppGlassButton(String(localized: "使用配对码"), systemImage: "number", style: .prominent) { step = .pairCode }
+                Text(String(localized: "在设备上运行命令，将生成的六位配对码填回这里。"))
+                    .font(.footnote).foregroundStyle(.secondary)
+                AppGlassButton(String(localized: "使用 Token"), systemImage: "key") {
+                    step = .token
+                    appState.nativeChatServices?.agentSetup.watch(credential.connector)
+                }
+            } else if step == .pairCode {
+                Text(String(localized: "先在目标设备运行以下命令，再填写 CLI 显示的配对码。"))
+                    .foregroundStyle(.secondary)
+                commandBlock(V2PairingCommand.pair(server: server))
+                TextField("000000", text: $code).keyboardType(.numberPad).textContentType(.oneTimeCode)
+                    .font(.title2.monospaced()).textFieldStyle(.roundedBorder)
+                    .onChange(of: code) { _, value in code = String(value.filter { $0.isASCII && $0.isNumber }.prefix(6)) }
+                AppGlassButton(String(localized: "连接设备"), systemImage: "link", style: .prominent, isLoading: isWorking) {
+                    Task { await claim(credential) }
+                }.disabled(code.count != 6 || isWorking || !canConnect)
+            } else {
+                Text(String(localized: "在目标设备运行以下命令，然后保持 CLI 运行。即使关闭此页面，我们也会继续等待设备连接。"))
+                    .foregroundStyle(.secondary)
+                commandBlock(V2PairingCommand.start(server: server, credential: credential))
+                Text(String(localized: "命令包含设备凭据，请仅在你信任的设备上使用。"))
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+            }
+            if let setup = appState.nativeChatServices?.agentSetup,
+               let request = setup.requests.first(where: { $0.id == credential.connector.id }) {
+                if request.ready {
+                    Label(String(localized: "设备已连接"), appSymbol: "checkmark.circle").font(.headline)
+                    Text(String(localized: "可以现在配置 Agent，也可以稍后在设备页面添加。"))
+                        .font(.footnote).foregroundStyle(.secondary)
+                    AppGlassButton(String(localized: "配置 Agent"), style: .prominent) { setup.configure(request.id); dismiss() }
+                    AppGlassButton(String(localized: "稍后配置")) { setup.finish(request.id); dismiss() }
+                } else {
+                    HStack {
+                        if request.error == nil { ProgressView() }
+                        Text(request.error ?? String(localized: "等待设备连接…"))
+                    }.font(.subheadline)
+                }
+            }
+        }
+        if !canConnect { Text(String(localized: "连接恢复后可以继续，已填写的内容会保留。"))
+            .font(.footnote).foregroundStyle(.secondary) }
+    }
+
+    private func commandBlock(_ command: String) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
             Text(command).font(.footnote.monospaced()).textSelection(.enabled)
                 .padding(16).frame(maxWidth: .infinity, alignment: .leading)
                 .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 18))
             AppGlassButton(copied ? String(localized: "已复制") : String(localized: "复制命令"), systemImage: copied ? "checkmark" : "doc.on.doc") {
                 UIPasteboard.general.string = command; copied = true
             }
-            Text(String(localized: "命令包含设备凭据，请仅在你信任的设备上使用。")).font(.footnote).foregroundStyle(.secondary)
-            DisclosureGroup(String(localized: "使用六位配对码")) {
-                VStack(alignment: .leading, spacing: 14) {
-                    Text(String(localized: "也可以先在目标设备运行以下命令，再填写 CLI 显示的配对码。")).font(.footnote)
-                    Text(V2PairingCommand.pair(server: server)).font(.footnote.monospaced()).textSelection(.enabled)
-                    TextField("000000", text: $code).keyboardType(.numberPad).textContentType(.oneTimeCode)
-                        .font(.title2.monospaced()).textFieldStyle(.roundedBorder)
-                        .onChange(of: code) { _, value in code = String(value.filter { $0.isASCII && $0.isNumber }.prefix(6)) }
-                    AppGlassButton(String(localized: "连接设备"), systemImage: "link", style: .prominent, isLoading: isWorking) {
-                        Task { await claim(credential) }
-                    }.disabled(code.count != 6 || isWorking || !canConnect)
-                }.padding(.top, 12)
-            }
-            if let request = appState.nativeChatServices?.agentSetup.requests.first(where: { $0.id == credential.connector.id }) {
-                HStack {
-                    if request.ready { AppSymbol("checkmark.circle") } else { ProgressView() }
-                    Text(request.ready ? String(localized: "设备已连接，关闭此页后可添加 Agent") : String(localized: "等待设备连接…"))
-                }.font(.subheadline)
-            }
-        } else {
-            Text(String(localized: "为命令行设备命名")).font(.title2.bold())
-            TextField(String(localized: "设备名称"), text: $name).textFieldStyle(.roundedBorder).autocorrectionDisabled()
-            AppGlassButton(String(localized: "继续"), systemImage: "arrow.right", style: .prominent, isLoading: isWorking) {
-                Task { await prepare() }
-            }.disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isWorking || !canConnect || creationUncertain)
-            if creationUncertain {
-                Text(String(localized: "服务器是否已创建设备尚未确认。请先关闭此页并刷新设备列表，确认结果后再创建。")).font(.footnote).foregroundStyle(.secondary)
-            }
+        }.onChange(of: command) { _, _ in copied = false }
+    }
+    private func goBack() {
+        error = nil; copied = false
+        switch step {
+        case .pairCode, .token: step = .cliMethod
+        case .cliMethod: step = .name
+        case .name: step = .cliConfirm
+        default: step = .connectionMethod
         }
-        if !canConnect { Text(String(localized: "连接恢复后可以继续，已填写的内容会保留。")).font(.footnote).foregroundStyle(.secondary) }
     }
 
     private var canConnect: Bool { appState.nativeChatServices?.dashboardRepository.canWrite == true }
     private func prepare() async {
-        guard !isWorking, !creationUncertain else { return }
+        guard !isWorking, !creationUncertain, canConnect else { return }
         isWorking = true; error = nil
         defer { isWorking = false }
         do {
-            let response = try await appState.createDevicePairing(name: name)
-            credential = response
-            appState.nativeChatServices?.agentSetup.watch(response.connector)
+            if let previous = credential, let services = appState.nativeChatServices {
+                if name.trimmingCharacters(in: .whitespacesAndNewlines) != previous.connector.name {
+                    let connector = try await services.deviceManagement.renameConnector(connectorId: previous.connector.id, name: name)
+                    guard appState.nativeChatServices === services else { throw CancellationError() }
+                    appState.updateConnector(connector)
+                    credential = .init(connector: connector, connectorToken: previous.connectorToken, tokenPrefix: previous.tokenPrefix)
+                }
+            } else { credential = try await appState.createDevicePairing(name: name) }
+            step = .cliMethod
         } catch {
-            creationUncertain = !V2ClientFailure.isDefiniteWriteRejection(error)
+            creationUncertain = credential == nil && !V2ClientFailure.isDefiniteWriteRejection(error)
             self.error = error.localizedDescription
         }
     }
     private func claim(_ credential: V2ConnectorCreateResponse) async {
-        guard !isWorking else { return }
+        guard !isWorking, canConnect else { return }
         isWorking = true; error = nil
         defer { isWorking = false }
         do {
             let connector = try await appState.claimDevicePairing(code: code, name: credential.connector.name,
                 connectorId: credential.connector.id, connectorToken: credential.connectorToken)
             appState.nativeChatServices?.agentSetup.watch(connector)
-            dismiss()
+            code = ""
         } catch { self.error = error.localizedDescription }
     }
 }

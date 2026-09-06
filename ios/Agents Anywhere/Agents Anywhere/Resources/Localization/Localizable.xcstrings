@@ -2601,6 +2601,23 @@
         }
       }
     },
+    "Home 目录": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Home directory"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Home 目录"
+          }
+        }
+      }
+    },
     "Idle": {
       "extractionState": "manual",
       "localizations": {
@@ -6617,6 +6634,23 @@
         }
       }
     },
+    "上一级目录": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Parent directory"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "上一级目录"
+          }
+        }
+      }
+    },
     "上一项": {
       "extractionState": "manual",
       "localizations": {
@@ -7059,6 +7093,23 @@
         }
       }
     },
+    "使用 Token": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Use a token"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "使用 Token"
+          }
+        }
+      }
+    },
     "使用六位配对码": {
       "extractionState": "manual",
       "localizations": {
@@ -7072,6 +7123,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "使用六位配对码"
+          }
+        }
+      }
+    },
+    "使用桌面程序": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Use the desktop app"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "使用桌面程序"
           }
         }
       }
@@ -7110,6 +7178,23 @@
         }
       }
     },
+    "使用配对码": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Use a pairing code"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "使用配对码"
+          }
+        }
+      }
+    },
     "例如 Agents Anywhere": {
       "extractionState": "manual",
       "localizations": {
@@ -7140,6 +7225,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "侧栏显示"
+          }
+        }
+      }
+    },
+    "侧边栏显示会话": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Show sessions in sidebar"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "侧边栏显示会话"
           }
         }
       }
@@ -7225,6 +7327,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "停止等待"
+          }
+        }
+      }
+    },
+    "先在目标设备运行以下命令，再填写 CLI 显示的配对码。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Run this command on the device, then enter the pairing code shown by the CLI."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "先在目标设备运行以下命令，再填写 CLI 显示的配对码。"
           }
         }
       }
@@ -7943,6 +8062,23 @@
         }
       }
     },
+    "可以现在配置 Agent，也可以稍后在设备页面添加。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Configure an Agent now, or add one later from the device page."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "可以现在配置 Agent，也可以稍后在设备页面添加。"
+          }
+        }
+      }
+    },
     "可在设备管理中配置或启动实例。": {
       "extractionState": "manual",
       "localizations": {
@@ -8300,6 +8436,23 @@
         }
       }
     },
+    "在设备上运行命令，将生成的六位配对码填回这里。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Run the command on the device and enter its six-digit pairing code here."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在设备上运行命令，将生成的六位配对码填回这里。"
+          }
+        }
+      }
+    },
     "在这里继续你的任务": {
       "extractionState": "manual",
       "localizations": {
@@ -8534,6 +8687,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "好"
+          }
+        }
+      }
+    },
+    "如果使用 Windows 或 macOS，桌面程序的连接和日常使用更方便。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "On Windows or macOS, the desktop app makes connecting and everyday use easier."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "如果使用 Windows 或 macOS，桌面程序的连接和日常使用更方便。"
           }
         }
       }
@@ -9456,6 +9626,23 @@
         }
       }
     },
+    "打开目录": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Open directory"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "打开目录"
+          }
+        }
+      }
+    },
     "打开表单，填写后提交": {
       "extractionState": "manual",
       "localizations": {
@@ -9520,6 +9707,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "拒绝"
+          }
+        }
+      }
+    },
+    "按目录自动填写名称，重名时添加数字后缀。也可以自行修改。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The name is suggested from the directory, with a number added for duplicates. You can also edit it."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "按目录自动填写名称，重名时添加数字后缀。也可以自行修改。"
           }
         }
       }
@@ -9962,6 +10166,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "无法添加附件"
+          }
+        }
+      }
+    },
+    "无法解析设备家目录": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Could not resolve the device home directory"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法解析设备家目录"
           }
         }
       }
@@ -10697,6 +10918,23 @@
         }
       }
     },
+    "正在解析设备家目录…": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Resolving the device home directory…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在解析设备家目录…"
+          }
+        }
+      }
+    },
     "正在连接，首次同步后即可保留本地内容": {
       "extractionState": "manual",
       "localizations": {
@@ -10782,6 +11020,23 @@
         }
       }
     },
+    "此方式需要会使用终端以及 uv / uvx 命令行工具。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This method requires familiarity with the terminal and the uv / uvx command-line tools."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此方式需要会使用终端以及 uv / uvx 命令行工具。"
+          }
+        }
+      }
+    },
     "每条消息最多添加 5 个附件。": {
       "extractionState": "manual",
       "localizations": {
@@ -10812,6 +11067,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "没有设备"
+          }
+        }
+      }
+    },
+    "浏览文件系统": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Browse filesystem"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "浏览文件系统"
           }
         }
       }
@@ -11071,6 +11343,23 @@
         }
       }
     },
+    "确定要使用命令行吗？": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Use the command line?"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "确定要使用命令行吗？"
+          }
+        }
+      }
+    },
     "离线 · 可查看上次的实例": {
       "extractionState": "manual",
       "localizations": {
@@ -11118,6 +11407,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "移除此发送记录"
+          }
+        }
+      }
+    },
+    "稍后配置": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Set up later"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "稍后配置"
           }
         }
       }
@@ -11343,6 +11649,23 @@
         }
       }
     },
+    "继续使用命令行": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Continue with the command line"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "继续使用命令行"
+          }
+        }
+      }
+    },
     "编辑项目": {
       "extractionState": "manual",
       "localizations": {
@@ -11356,6 +11679,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "编辑项目"
+          }
+        }
+      }
+    },
+    "编辑项目时，设备和工作目录保持不变。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The device and working directory stay fixed when editing a project."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "编辑项目时，设备和工作目录保持不变。"
           }
         }
       }
@@ -11458,6 +11798,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "置顶"
+          }
+        }
+      }
+    },
+    "置顶项目": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pinned projects"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "置顶项目"
           }
         }
       }
@@ -11581,6 +11938,23 @@
         }
       }
     },
+    "设备已连接": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Device connected"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "设备已连接"
+          }
+        }
+      }
+    },
     "设备已连接。选择 Agent 后，就可以在项目中开始任务。": {
       "extractionState": "manual",
       "localizations": {
@@ -11628,6 +12002,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "设备或网络已离线"
+          }
+        }
+      }
+    },
+    "设备或网络已离线，已保存的目录仍可选择。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The device or network is offline. You can still choose a saved directory."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "设备或网络已离线，已保存的目录仍可选择。"
           }
         }
       }
@@ -11866,6 +12257,40 @@
           "stringUnit": {
             "state": "translated",
             "value": "请输入设备上的完整绝对路径。"
+          }
+        }
+      }
+    },
+    "请选择一个已成功加载的目录。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Select a directory that has loaded successfully."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请选择一个已成功加载的目录。"
+          }
+        }
+      }
+    },
+    "请选择在线设备后创建项目。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Select an online device to create a project."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请选择在线设备后创建项目。"
           }
         }
       }
@@ -12358,6 +12783,23 @@
         }
       }
     },
+    "选择工作目录": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choose working directory"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "选择工作目录"
+          }
+        }
+      }
+    },
     "选择已有项目或创建项目": {
       "extractionState": "manual",
       "localizations": {
@@ -12460,6 +12902,23 @@
         }
       }
     },
+    "选择配对方式": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choose a pairing method"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "选择配对方式"
+          }
+        }
+      }
+    },
     "选择项目": {
       "extractionState": "manual",
       "localizations": {
@@ -12490,6 +12949,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "配置 %@"
+          }
+        }
+      }
+    },
+    "配置 Agent": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Configure Agent"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "配置 Agent"
           }
         }
       }
@@ -12596,6 +13072,23 @@
         }
       }
     },
+    "重新解析家目录": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Retry home directory lookup"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "重新解析家目录"
+          }
+        }
+      }
+    },
     "重新连接": {
       "extractionState": "manual",
       "localizations": {
@@ -12677,6 +13170,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "项目"
+          }
+        }
+      }
+    },
+    "项目关联这个目录，不会在设备上新建文件夹。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This registers the directory as a project. It does not create a folder on the device."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "项目关联这个目录，不会在设备上新建文件夹。"
           }
         }
       }

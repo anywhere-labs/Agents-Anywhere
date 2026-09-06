@@ -57,6 +57,8 @@ import Testing
         try await eventually { http.calls.count == 1 }
         queue.pairingFormPresented = false
         queue.updateConnectors([connector])
+        #expect(queue.presentedConnector == nil, "Connecting never opts into Agent configuration")
+        queue.configure(connector.id)
         #expect(queue.presentedConnector?.id == connector.id)
         queue.invalidate(); gate.release()
         await Task.yield()

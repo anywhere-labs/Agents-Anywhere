@@ -4,6 +4,7 @@ struct AccountSettingsSheet: View {
     @EnvironmentObject private var appState: AppState
     @Environment(\.dismiss) private var dismiss
     @AppStorage(AppAppearance.storageKey) private var appearanceValue = AppAppearance.system.rawValue
+    @AppStorage(ProjectSidebarPreferences.sessionListKey) private var showsSessionList = false
     @State private var confirmsSignOut = false
     @State private var signOutError: String?
     @State private var toasts = ChatToastStore()
@@ -51,6 +52,9 @@ struct AccountSettingsSheet: View {
                     }
                 }
                 Section(String(localized: "Workspace")) {
+                    Toggle(isOn: $showsSessionList) {
+                        SettingsRow(title: String(localized: "侧边栏显示会话"), symbol: "sidebar.left")
+                    }.tint(.green)
                     NavigationLink { SettingsServerView() } label: {
                         SettingsRow(title: String(localized: "Server"), symbol: "server.rack", value: appState.serverURL?.host)
                     }

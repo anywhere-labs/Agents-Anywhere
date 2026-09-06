@@ -40,7 +40,7 @@ final class V2ClientServices {
             sessionAPI: api.sessions,
             realtimeAPI: api.realtime
         )
-        dashboardRepository = V2DashboardRepository(service: dashboard, localStore: localStore)
+        dashboardRepository = V2DashboardRepository(service: dashboard, localStore: localStore, scope: scope)
         sessionReads = V2SessionReadCoordinator { id in
             let response = try await api.sessions.markRead(sessionIds: [id])
             guard let receipt = response.sessions.first(where: { $0.id == id }) else { throw HTTPError.invalidResponse }
@@ -64,6 +64,7 @@ final class V2ClientServices {
         )
         newSession = NewSessionModel(scope: scope, devices: deviceManagement,
             preparation: sessionPreparation, creation: sessionCreation, projectAPI: api.projects)
+        newSession.onProjectResolved = { [weak self] in self?.dashboardRepository.upsertProject($0) }
         newSession.onStaged = { [weak self] submission in
             guard let self else { return }
             sessionRepository.stageCreation(submission)
@@ -134,7 +135,7 @@ final class V2ClientServices {
 
     func shutdown(removingCache: Bool = false) {
         onSelectPage = nil; onCreationBound = nil
-        newSession.onStaged = nil; newSession.onBound = nil; newSession.onFailed = nil
+        newSession.onStaged = nil; newSession.onBound = nil; newSession.onFailed = nil; newSession.onProjectResolved = nil
         Task { await localStore.close(removing: removingCache) }
         agentSetup.invalidate()
         agentModels.values.forEach { $0.invalidate() }; agentModels = [:]
