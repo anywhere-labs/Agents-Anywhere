@@ -740,13 +740,17 @@ async def connector_terminal_relay_ws(
         await websocket.close(code=1008, reason="invalid terminal relay token")
         return
 
+    if term.relay_mode == "attach":
+        try:
+            await websocket.app.state.store.get_connector(term.connector_id)
+        except KeyError:
+            await websocket.close(code=1008, reason="connector not found")
+            return
     await websocket.accept()
-    if await broker.attach_connector(terminal_id, token, websocket) is None:
-        await websocket.close(code=1008, reason="invalid terminal relay token")
-        return
     await websocket.send_json(
         {
             "type": "start",
+            "mode": term.relay_mode,
             "terminalId": term.id,
             "sessionId": term.session_id,
             "root": term.root,
@@ -761,16 +765,38 @@ async def connector_terminal_relay_ws(
             "persistent": term.persistent,
         }
     )
+    if await broker.attach_connector(terminal_id, token, websocket) is None:
+        await websocket.close(code=1008, reason="invalid terminal relay token")
+        return
+    hub = (
+        websocket.app.state.terminal_stream_hub if term.relay_mode == "attach" else None
+    )
     try:
         while True:
             message = await websocket.receive_json()
+            if not await broker.owns_connector_socket(terminal_id, websocket):
+                break
             mtype = message.get("type")
+            if term.relay_mode == "attach":
+                if mtype == "response":
+                    await broker.relay_response(terminal_id, message)
+                elif mtype in {"output", "replay", "exit", "error"}:
+                    await hub.publish_relay(term.connector_id, terminal_id, message)
+                    if mtype == "exit" and message.get("reason") == "closed":
+                        await broker.remove(terminal_id)
+                        break
+                elif mtype == "ready":
+                    pid = message.get("pid")
+                    await broker.mark_running(
+                        terminal_id, pid=pid if isinstance(pid, int) else None
+                    )
+                continue
             if mtype == "ready":
                 pid = message.get("pid")
                 await broker.mark_running(
                     terminal_id, pid=pid if isinstance(pid, int) else None
                 )
-            elif mtype == "output":
+            elif mtype in {"output", "replay"}:
                 data_b64 = message.get("data")
                 seq = message.get("seq")
                 if isinstance(data_b64, str) and isinstance(seq, int):

@@ -1273,6 +1273,49 @@ class FakeApprovalRpc:
         return {"resolved": True}
 
 
+class FakeTerminalRelaySocket:
+    def __init__(self, rpc, broker, terminal_id):
+        self.rpc = rpc
+        self.broker = broker
+        self.terminal_id = terminal_id
+        self.closed = False
+
+    async def send_json(self, message):
+        self.rpc.terminal_relay_messages.append(message)
+        kind = message["type"]
+        terminal = self.rpc.terminals[self.terminal_id]
+        if kind == "snapshot":
+            result = {
+                "terminal": terminal,
+                "baseSeq": 0,
+                "seq": 1,
+                "dataBase64": "b2s=",
+                "outputs": [{"seq": 1, "dataBase64": "b2s="}],
+            }
+        elif kind == "resize":
+            terminal.update(cols=message["cols"], rows=message["rows"])
+            result = {
+                "terminalId": self.terminal_id,
+                "cols": message["cols"],
+                "rows": message["rows"],
+            }
+        else:
+            result = {"terminalId": self.terminal_id, "written": True}
+        if "requestId" in message:
+            await self.broker.relay_response(
+                self.terminal_id,
+                {
+                    "type": "response",
+                    "requestId": message["requestId"],
+                    "ok": True,
+                    "result": result,
+                },
+            )
+
+    async def close(self, **kwargs):
+        self.closed = True
+
+
 class FakeLocalRpc:
     def __init__(self) -> None:
         self.requests: list[tuple[str, str, dict[str, Any], float]] = []
@@ -1284,6 +1327,7 @@ class FakeLocalRpc:
         self.interrupt_result: dict[str, Any] = {"interrupted": True}
         self.terminal_relay_broker: Any | None = None
         self.terminal_relay_sockets: dict[str, FakeWebSocket] = {}
+        self.terminal_relay_messages: list[dict[str, Any]] = []
         self.fail = False
         self.timeout_session_methods: set[str] = set()
 
@@ -1347,7 +1391,13 @@ class FakeLocalRpc:
             terminal_id = params["terminalId"]
             token = params["token"]
             if self.terminal_relay_broker is not None:
-                ws = FakeWebSocket()
+                ws = (
+                    FakeTerminalRelaySocket(
+                        self, self.terminal_relay_broker, terminal_id
+                    )
+                    if params.get("mode") == "attach"
+                    else FakeWebSocket()
+                )
                 await self.terminal_relay_broker.attach_connector(terminal_id, token, ws)
                 self.terminal_relay_sockets[terminal_id] = ws
             return {"terminalId": terminal_id, "connecting": True}
@@ -6358,6 +6408,7 @@ def test_connector_terminal_v2_forwards_lifecycle_to_connector(tmp_path):
     connector_id, _, _, headers = create_connector_and_session(client)
     fake_rpc = FakeLocalRpc()
     client.app.state.rpc = fake_rpc
+    fake_rpc.terminal_relay_broker = client.app.state.terminal_broker
     asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
 
     created = client.post(
@@ -6387,6 +6438,7 @@ def test_connector_terminal_v2_forwards_lifecycle_to_connector(tmp_path):
             "env": {},
             "label": "Shell",
             "persistent": False,
+            "outputTransport": "relay",
         },
         15,
     )
@@ -6428,7 +6480,7 @@ def test_connector_terminal_v2_forwards_lifecycle_to_connector(tmp_path):
         json={"cols": 100, "rows": 30},
     )
     assert resized.status_code == 200, resized.text
-    assert fake_rpc.requests[-1][1] == "terminal.resize"
+    assert fake_rpc.terminal_relay_messages[-1]["type"] == "resize"
 
     written = client.post(
         f"/connectors/{connector_id}/terminals-v2/{terminal_id}/write",
@@ -6436,11 +6488,21 @@ def test_connector_terminal_v2_forwards_lifecycle_to_connector(tmp_path):
         json={"dataBase64": "Cg=="},
     )
     assert written.status_code == 200, written.text
-    assert fake_rpc.requests[-1][1] == "terminal.write"
+    assert fake_rpc.terminal_relay_messages[-1]["type"] == "input"
+    assert not {"terminal.write", "terminal.resize", "terminal.snapshot"} & {
+        r[1] for r in fake_rpc.requests
+    }
 
     closed = client.delete(f"/connectors/{connector_id}/terminals-v2/{terminal_id}", headers=headers)
     assert closed.status_code == 200, closed.text
     assert fake_rpc.requests[-1][1] == "terminal.close"
+    assert asyncio.run(client.app.state.terminal_broker.get(terminal_id)) is None
+    other = asyncio.run(client.app.state.terminal_broker.register(
+        session_id="browse_other", connector_id="other", label="Shell",
+        cwd="/repo", shell="", cols=80, rows=24, purpose="relay", relay_mode="attach",
+    ))
+    client.delete(f"/connectors/{connector_id}/terminals-v2/{other.id}", headers=headers).raise_for_status()
+    assert asyncio.run(client.app.state.terminal_broker.get(other.id)) is not None
 
 
 def test_connector_terminal_v2_stream_uses_websocket_protocol(tmp_path):
@@ -6449,6 +6511,7 @@ def test_connector_terminal_v2_stream_uses_websocket_protocol(tmp_path):
     token = headers["Authorization"].removeprefix("Bearer ")
     fake_rpc = FakeLocalRpc()
     client.app.state.rpc = fake_rpc
+    fake_rpc.terminal_relay_broker = client.app.state.terminal_broker
     asyncio.run(client.app.state.store.set_connector_status(connector_id, "online"))
 
     created = client.post(
@@ -6464,36 +6527,27 @@ def test_connector_terminal_v2_stream_uses_websocket_protocol(tmp_path):
     ) as websocket:
         assert websocket.receive_json() == {"type": "replay", "data": "b2s=", "seq": 1}
 
+        # The main control channel can now fail without affecting terminal I/O.
+        fake_rpc.fail = True
         websocket.send_json({"type": "input", "data": "Cg=="})
-        assert wait_for_rpc_method(fake_rpc, "terminal.write")[1:] == (
-            "terminal.write",
-            {
-                "terminalId": terminal_id,
-                "sessionId": f"browse_{connector_id}",
-                "dataBase64": "Cg==",
-            },
-            5,
-        )
-
         websocket.send_json({"type": "resize", "cols": 120, "rows": 40})
-        assert wait_for_rpc_method(fake_rpc, "terminal.resize")[1:] == (
-            "terminal.resize",
-            {
-                "terminalId": terminal_id,
-                "sessionId": f"browse_{connector_id}",
-                "cols": 120,
-                "rows": 40,
-            },
-            5,
-        )
-
-        asyncio.run(
-            client.app.state.terminal_stream_hub.publish_output(
-                connector_id,
-                {"terminalId": terminal_id, "dataBase64": "bGl2ZQ==", "seq": 2},
-            )
+        websocket.send_json({"type": "ping"})
+        assert websocket.receive_json() == {"type": "pong"}
+        assert fake_rpc.terminal_relay_messages[-2:] == [
+            {"type": "input", "data": "Cg=="},
+            {"type": "resize", "cols": 120, "rows": 40},
+        ]
+        websocket.portal.call(
+            client.app.state.terminal_stream_hub.publish_relay,
+            connector_id,
+            terminal_id,
+            {"type": "output", "data": "bGl2ZQ==", "seq": 2},
         )
         assert websocket.receive_json() == {"type": "output", "data": "bGl2ZQ==", "seq": 2}
+        assert not {"terminal.write", "terminal.resize", "terminal.snapshot"} & {
+            r[1] for r in fake_rpc.requests
+        }
+    assert fake_rpc.terminals[terminal_id]["closed"] is False
 
 
 def test_terminal_broker_removes_connector_user_terminals_only(tmp_path):

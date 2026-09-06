@@ -88,6 +88,8 @@ class BackendRpcClient:
         self._preferences_reader = preferences_reader or read_local_preferences
         self.local_ops = create_local_ops(notify=self.send_backend_notification)
         self._terminal_relay = TerminalRelayRunner(config.server_url, self.local_ops)
+        self._terminal_relay_lock = asyncio.Lock()
+        self._terminal_relay_tasks: dict[str, tuple[str, asyncio.Task[None]]] = {}
         self._background_tasks: set[asyncio.Task[Any]] = set()
         self._rpc = ConnectorRpcChannel()
         self._protocol_revision_clock = ProtocolRevisionClock()
@@ -181,6 +183,10 @@ class BackendRpcClient:
                     )
                     await asyncio.sleep(self.config.reconnect_seconds)
         finally:
+            relay_tasks = [task for _, task in self._terminal_relay_tasks.values()]
+            for task in relay_tasks:
+                task.cancel()
+            await asyncio.gather(*relay_tasks, return_exceptions=True)
             await self._timeline_notifications.close()
             ingest_flush_task.cancel()
             sync_state_flush_task.cancel()
@@ -393,18 +399,40 @@ class BackendRpcClient:
             raise ValueError("terminalId is required")
         if not isinstance(token, str) or not token:
             raise ValueError("token is required")
-        task = asyncio.create_task(self._run_terminal_relay(terminal_id, token))
-        self._background_tasks.add(task)
-        task.add_done_callback(self._on_background_upload_done)
-        return {"terminalId": terminal_id, "connecting": True}
+        async with self._terminal_relay_lock:
+            attach = params.get("mode") == "attach"
+            if attach:
+                self.local_ops.terminal.prepare_relay(params)
+            previous = self._terminal_relay_tasks.get(terminal_id)
+            if previous is not None:
+                old_token, old_task = previous
+                if old_token == token and not old_task.done():
+                    return {"terminalId": terminal_id, "connecting": True}
+                old_task.cancel()
+                await asyncio.gather(old_task, return_exceptions=True)
+            task = asyncio.create_task(
+                self._run_terminal_relay(terminal_id, token, attach=attach)
+            )
+            self._terminal_relay_tasks[terminal_id] = (token, task)
+            self._background_tasks.add(task)
+
+            def completed(done: asyncio.Task[None]) -> None:
+                if self._terminal_relay_tasks.get(terminal_id) == (token, done):
+                    self._terminal_relay_tasks.pop(terminal_id, None)
+                self._on_background_upload_done(done)
+
+            task.add_done_callback(completed)
+            return {"terminalId": terminal_id, "connecting": True}
 
     def _schedule_background(self, awaitable: Any) -> None:
         task = asyncio.create_task(awaitable)
         self._background_tasks.add(task)
         task.add_done_callback(self._on_background_upload_done)
 
-    async def _run_terminal_relay(self, terminal_id: str, token: str) -> None:
-        await self._terminal_relay.run(terminal_id, token)
+    async def _run_terminal_relay(
+        self, terminal_id: str, token: str, *, attach: bool = False
+    ) -> None:
+        await self._terminal_relay.run(terminal_id, token, attach=attach)
 
     def _on_background_upload_done(self, task: asyncio.Task[Any]) -> None:
         self._background_tasks.discard(task)

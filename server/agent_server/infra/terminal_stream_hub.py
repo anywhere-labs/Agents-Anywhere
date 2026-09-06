@@ -14,8 +14,13 @@ from agent_server.infra.redis_coordinator import RedisCoordinator
 
 @dataclass
 class _ClientState:
-    ready: bool = False
-    pending: list[dict[str, Any]] = field(default_factory=list)
+    ready: asyncio.Event = field(default_factory=asyncio.Event)
+    queue: asyncio.Queue[dict[str, Any]] = field(
+        default_factory=lambda: asyncio.Queue(maxsize=128)
+    )
+    last_seq: int = 0
+    overflow: bool = False
+    writer: asyncio.Task[None] | None = None
 
 
 class TerminalStreamHub:
@@ -23,7 +28,8 @@ class TerminalStreamHub:
 
     The connector remains the source of truth for terminal lifecycle and
     scrollback. This hub only tracks currently attached browser sockets so
-    connector notifications can be delivered over WebSocket without polling.
+    relay frames can be delivered over WebSocket without polling. Each client
+    has a bounded writer queue so a slow browser cannot stall relay ingestion.
     """
 
     def __init__(self, coordinator: RedisCoordinator | None = None) -> None:
@@ -45,6 +51,9 @@ class TerminalStreamHub:
         )
 
     async def close(self) -> None:
+        for (connector_id, terminal_id), clients in list(self._clients.items()):
+            for websocket in list(clients):
+                await self.detach(connector_id, terminal_id, websocket)
         if self._listener_task is not None:
             self._listener_task.cancel()
             with suppress(asyncio.CancelledError):
@@ -58,20 +67,26 @@ class TerminalStreamHub:
         self, connector_id: str, terminal_id: str, websocket: WebSocket
     ) -> None:
         async with self._lock:
-            self._clients[(connector_id, terminal_id)][websocket] = _ClientState()
+            state = _ClientState()
+            self._clients[(connector_id, terminal_id)][websocket] = state
+            state.writer = asyncio.create_task(
+                self._write_client(connector_id, terminal_id, websocket, state)
+            )
 
     async def mark_ready(
-        self, connector_id: str, terminal_id: str, websocket: WebSocket
+        self,
+        connector_id: str,
+        terminal_id: str,
+        websocket: WebSocket,
+        *,
+        snapshot_seq: int = 0,
     ) -> None:
         async with self._lock:
             state = self._clients.get((connector_id, terminal_id), {}).get(websocket)
             if state is None:
                 return
-            state.ready = True
-            pending = list(state.pending)
-            state.pending.clear()
-        for payload in pending:
-            await self._send_one(connector_id, terminal_id, websocket, payload)
+            state.last_seq = snapshot_seq
+            state.ready.set()
 
     async def detach(
         self, connector_id: str, terminal_id: str, websocket: WebSocket
@@ -81,9 +96,17 @@ class TerminalStreamHub:
             clients = self._clients.get(key)
             if clients is None:
                 return
-            clients.pop(websocket, None)
+            state = clients.pop(websocket, None)
             if not clients:
                 self._clients.pop(key, None)
+        if (
+            state is not None
+            and state.writer is not None
+            and state.writer is not asyncio.current_task()
+        ):
+            state.writer.cancel()
+            with suppress(asyncio.CancelledError):
+                await state.writer
 
     async def publish_output(self, connector_id: str, params: dict[str, Any]) -> None:
         terminal_id = params.get("terminalId")
@@ -116,6 +139,12 @@ class TerminalStreamHub:
                 "reason": reason if isinstance(reason, str) else "exit",
             },
         )
+
+    async def publish_relay(
+        self, connector_id: str, terminal_id: str, payload: dict[str, Any]
+    ) -> None:
+        if payload.get("type") in {"output", "replay", "exit", "error"}:
+            await self._publish(connector_id, terminal_id, payload)
 
     async def _publish(
         self,
@@ -160,42 +189,38 @@ class TerminalStreamHub:
         key = (connector_id, terminal_id)
         async with self._lock:
             clients = dict(self._clients.get(key, {}))
-            for websocket, state in clients.items():
-                if not state.ready:
-                    state.pending.append(payload)
-        ready_clients = [
-            websocket for websocket, state in clients.items() if state.ready
-        ]
-        if not ready_clients:
-            return
+        for state in clients.values():
+            try:
+                state.queue.put_nowait(payload)
+            except asyncio.QueueFull:
+                state.overflow = True
+                state.ready.set()
 
-        dead: list[WebSocket] = []
-        for websocket in ready_clients:
-            if not await self._send_one(connector_id, terminal_id, websocket, payload):
-                dead.append(websocket)
-        if dead:
-            async with self._lock:
-                live = self._clients.get(key)
-                if live is None:
-                    return
-                for websocket in dead:
-                    live.pop(websocket, None)
-                if not live:
-                    self._clients.pop(key, None)
-
-    async def _send_one(
+    async def _write_client(
         self,
         connector_id: str,
         terminal_id: str,
         websocket: WebSocket,
-        payload: dict[str, Any],
-    ) -> bool:
+        state: _ClientState,
+    ) -> None:
         try:
-            await websocket.send_json(payload)
-            return True
+            await state.ready.wait()
+            while True:
+                if state.overflow:
+                    return
+                payload = await state.queue.get()
+                if payload.get("type") in {"output", "replay"}:
+                    seq = payload.get("seq")
+                    if not isinstance(seq, int) or seq <= state.last_seq:
+                        continue
+                    state.last_seq = seq
+                await asyncio.wait_for(websocket.send_json(payload), timeout=5)
         except Exception:
+            pass
+        finally:
             await self.detach(connector_id, terminal_id, websocket)
-            return False
+            with suppress(Exception):
+                await asyncio.wait_for(websocket.close(code=1013), timeout=1)
 
     @staticmethod
     def _as_text(value: object) -> str:

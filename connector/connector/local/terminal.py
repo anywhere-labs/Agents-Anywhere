@@ -155,6 +155,7 @@ class TerminalBackend:
             "chunksBytes": 0,
             "seq": 0,
             "output": output,
+            "relayOnly": output is not None or params.get("outputTransport") == "relay",
         }
         record["task"] = asyncio.create_task(self._pump_terminal_output(record))
         record["reaperTask"] = asyncio.create_task(self._reap_terminal(record))
@@ -221,6 +222,16 @@ class TerminalBackend:
         record = self._terminals.get(terminal_id)
         if record is None:
             return {"terminalId": terminal_id, "closed": True}
+        if record.get("relayOnly"):
+            await self._notify(
+                "terminal.exited",
+                {
+                    "terminalId": terminal_id,
+                    "sessionId": record["sessionId"],
+                    "exitCode": record["exitCode"],
+                    "reason": "closed",
+                },
+            )
         await self._kill_terminal(record)
         self._forget_terminal(terminal_id)
         return {"terminalId": terminal_id, "closed": True}
@@ -254,13 +265,35 @@ class TerminalBackend:
         )
         return self._terminal_view(record)
 
-    async def release(self, params: dict[str, Any]) -> dict[str, Any]:
+    def prepare_relay(self, params: dict[str, Any]) -> None:
+        terminal_id = required_string(params, "terminalId")
+        record = self._terminals.get(terminal_id)
+        if record is None or record["sessionId"] != required_string(
+            params, "sessionId"
+        ):
+            raise TerminalNotFoundError(f"terminal not found: {terminal_id}")
+        record["relayOnly"] = True
+
+    async def attach(
+        self, params: dict[str, Any], *, output: TerminalOutput
+    ) -> dict[str, Any]:
+        terminal_id = required_string(params, "terminalId")
+        self.prepare_relay(params)
+        record = self._terminals[terminal_id]
+        record["output"] = output
+        return await self.snapshot(params)
+
+    async def release(
+        self, params: dict[str, Any], *, output: TerminalOutput | None = None
+    ) -> dict[str, Any]:
         self._gc()
         terminal_id = required_string(params, "terminalId")
         record = self._terminals.get(terminal_id)
         if record is None:
             return {"terminalId": terminal_id, "released": True}
-        record["output"] = None
+        # A replaced relay must not detach the newer connection's output sink.
+        if output is None or record["output"] is output:
+            record["output"] = None
         return {"terminalId": terminal_id, "released": True}
 
     async def list(self, params: dict[str, Any]) -> dict[str, Any]:
@@ -273,7 +306,9 @@ class TerminalBackend:
             items.append(self._terminal_view(record))
         return {"terminals": items}
 
-    async def snapshot(self, params: dict[str, Any]) -> dict[str, Any]:
+    async def snapshot(
+        self, params: dict[str, Any], *, include_scrollback: bool = True
+    ) -> dict[str, Any]:
         self._gc()
         terminal_id = required_string(params, "terminalId")
         record = self._terminals.get(terminal_id)
@@ -289,7 +324,13 @@ class TerminalBackend:
             "terminal": self._terminal_view(record),
             "baseSeq": record["scrollbackBaseSeq"],
             "seq": record["seq"],
-            "dataBase64": base64.b64encode(bytes(record["scrollback"])).decode("ascii"),
+            # Incremental relay reads should not re-encode the entire 512 KiB
+            # buffer for each PTY chunk. A gap still requires a full replay.
+            "dataBase64": (
+                base64.b64encode(bytes(record["scrollback"])).decode("ascii")
+                if include_scrollback or from_seq < record["scrollbackBaseSeq"]
+                else ""
+            ),
             "outputs": outputs,
         }
 
@@ -438,6 +479,8 @@ class TerminalBackend:
             output = record.get("output") if record is not None else None
             if output is not None:
                 await output(method, params)
+                return
+            if record is not None and record.get("relayOnly"):
                 return
         if self.notify is not None:
             await self.notify(method, params)

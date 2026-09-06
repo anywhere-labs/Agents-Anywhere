@@ -35,17 +35,20 @@ from agent_server.deps import (
     current_user_id,
     get_rpc,
     get_store,
+    get_terminal_broker,
+    get_terminal_relay_service,
     get_terminal_service,
 )
 from agent_server.infra.connector_rpc import ConnectorRpcManager
 from agent_server.infra.repositories.facade import Store
-from agent_server.infra.terminal_broker import TerminalBroker
+from agent_server.infra.terminal_broker import TerminalBroker, TerminalRelayError
 from agent_server.services.connector_rpc import ConnectorUpstreamError
 from agent_server.services.terminal import (
     TerminalService,
     TerminalServiceError,
     terminal_connector_scope_id,
 )
+from agent_server.services.terminal_relay import TerminalRelayService
 from agent_server.services.workspace import request_connector, resolve_workspace_path
 
 router = APIRouter(prefix="/connectors", tags=["connector-terminal"])
@@ -144,6 +147,7 @@ async def connector_terminal_create_v2(
             "env": payload.env or {},
             "label": payload.label,
             "persistent": payload.persistent,
+            "outputTransport": "relay",
         },
         timeout=15,
     )
@@ -365,6 +369,7 @@ async def connector_terminal_close_v2(
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
     manager: ConnectorRpcManager = Depends(get_rpc),
+    broker: TerminalBroker = Depends(get_terminal_broker),
 ) -> RpcResponsePayload:
     await require_owned_online_connector(connector_id, user_id, db, manager)
     result = await request_connector(
@@ -377,6 +382,9 @@ async def connector_terminal_close_v2(
         },
         timeout=10,
     )
+    term = await broker.get(terminal_id)
+    if term is not None and term.connector_id == connector_id:
+        await broker.remove(terminal_id)
     await db.forget_connector_terminal_root(
         connector_id=connector_id, terminal_id=terminal_id
     )
@@ -415,20 +423,17 @@ async def connector_terminal_resize_v2(
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
     manager: ConnectorRpcManager = Depends(get_rpc),
+    relay: TerminalRelayService = Depends(get_terminal_relay_service),
 ) -> RpcResponsePayload:
     await require_owned_online_connector(connector_id, user_id, db, manager)
-    result = await request_connector(
-        manager,
-        connector_id,
-        "terminal.resize",
-        {
-            "terminalId": terminal_id,
-            "sessionId": terminal_connector_scope_id(connector_id),
-            "cols": payload.cols,
-            "rows": payload.rows,
-        },
-        timeout=10,
-    )
+    try:
+        result = await relay.request(
+            connector_id,
+            terminal_id,
+            {"type": "resize", "cols": payload.cols, "rows": payload.rows},
+        )
+    except TerminalRelayError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
     return RpcResponsePayload(ok=True, result=result)
 
 
@@ -443,22 +448,18 @@ async def connector_terminal_write_v2(
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
     manager: ConnectorRpcManager = Depends(get_rpc),
+    relay: TerminalRelayService = Depends(get_terminal_relay_service),
 ) -> RpcResponsePayload:
     await require_owned_online_connector(connector_id, user_id, db, manager)
     data_base64 = payload.get("dataBase64")
     if not isinstance(data_base64, str):
         raise HTTPException(status_code=422, detail="dataBase64 is required")
-    result = await request_connector(
-        manager,
-        connector_id,
-        "terminal.write",
-        {
-            "terminalId": terminal_id,
-            "sessionId": terminal_connector_scope_id(connector_id),
-            "dataBase64": data_base64,
-        },
-        timeout=10,
-    )
+    try:
+        result = await relay.request(
+            connector_id, terminal_id, {"type": "input", "data": data_base64}
+        )
+    except TerminalRelayError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
     return RpcResponsePayload(ok=True, result=result)
 
 
@@ -473,19 +474,15 @@ async def connector_terminal_snapshot_v2(
     user_id: str = Depends(current_user_id),
     db: Store = Depends(get_store),
     manager: ConnectorRpcManager = Depends(get_rpc),
+    relay: TerminalRelayService = Depends(get_terminal_relay_service),
 ) -> RpcResponsePayload:
     await require_owned_online_connector(connector_id, user_id, db, manager)
-    result = await request_connector(
-        manager,
-        connector_id,
-        "terminal.snapshot",
-        {
-            "terminalId": terminal_id,
-            "sessionId": terminal_connector_scope_id(connector_id),
-            "fromSeq": fromSeq,
-        },
-        timeout=10,
-    )
+    try:
+        result = await relay.request(
+            connector_id, terminal_id, {"type": "snapshot", "fromSeq": fromSeq}
+        )
+    except TerminalRelayError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
     if isinstance(result, dict) and isinstance(result.get("terminal"), dict):
         meta = await db.get_connector_terminal_root(
             connector_id=connector_id,
@@ -532,21 +529,17 @@ async def connector_terminal_stream_v2(
 
     manager: ConnectorRpcManager = websocket.app.state.rpc
     hub = websocket.app.state.terminal_stream_hub
+    broker = websocket.app.state.terminal_broker
+    relay = TerminalRelayService(db, manager, broker)
 
     await websocket.accept()
     await hub.attach(connector_id, terminal_id, websocket)
     try:
         try:
-            snapshot = await request_connector(
-                manager,
+            snapshot = await relay.request(
                 connector_id,
-                "terminal.snapshot",
-                {
-                    "terminalId": terminal_id,
-                    "sessionId": terminal_connector_scope_id(connector_id),
-                    "fromSeq": fromSeq,
-                },
-                timeout=10,
+                terminal_id,
+                {"type": "snapshot", "fromSeq": fromSeq},
             )
         except Exception as exc:
             code = getattr(exc, "status_code", 500)
@@ -569,7 +562,12 @@ async def connector_terminal_stream_v2(
                     "seq": seq if isinstance(seq, int) else fromSeq,
                 }
             )
-        await hub.mark_ready(connector_id, terminal_id, websocket)
+        await hub.mark_ready(
+            connector_id,
+            terminal_id,
+            websocket,
+            snapshot_seq=seq if isinstance(seq, int) else fromSeq,
+        )
 
         if (
             isinstance(terminal_snapshot, dict)
@@ -592,17 +590,10 @@ async def connector_terminal_stream_v2(
                 if not isinstance(data_b64, str):
                     continue
                 try:
-                    await request_connector(
-                        manager,
-                        connector_id,
-                        "terminal.write",
-                        {
-                            "terminalId": terminal_id,
-                            "sessionId": terminal_connector_scope_id(connector_id),
-                            "dataBase64": data_b64,
-                        },
-                        timeout=5,
-                    )
+                    if not await broker.send_to_connector(
+                        terminal_id, {"type": "input", "data": data_b64}
+                    ):
+                        raise TerminalRelayError("terminal relay is disconnected")
                 except Exception as exc:
                     code = getattr(exc, "status_code", 500)
                     detail = getattr(exc, "detail", str(exc))
@@ -618,18 +609,10 @@ async def connector_terminal_stream_v2(
                 cols = max(1, min(500, cols))
                 rows = max(1, min(200, rows))
                 try:
-                    await request_connector(
-                        manager,
-                        connector_id,
-                        "terminal.resize",
-                        {
-                            "terminalId": terminal_id,
-                            "sessionId": terminal_connector_scope_id(connector_id),
-                            "cols": cols,
-                            "rows": rows,
-                        },
-                        timeout=5,
-                    )
+                    if not await broker.send_to_connector(
+                        terminal_id, {"type": "resize", "cols": cols, "rows": rows}
+                    ):
+                        raise TerminalRelayError("terminal relay is disconnected")
                 except Exception as exc:
                     code = getattr(exc, "status_code", 500)
                     detail = getattr(exc, "detail", str(exc))
